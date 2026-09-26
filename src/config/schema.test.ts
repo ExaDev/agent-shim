@@ -17,6 +17,7 @@ import {
   IdentitySchema,
   OVERRIDABLE_CATEGORIES,
   PortableConfigSchema,
+  ProviderSchema,
   SHIPPED_CATEGORY_DEFAULTS,
   WhenSchema,
 } from "./schema";
@@ -160,6 +161,15 @@ describe("ConfigProfileSchema", () => {
     expect(ConfigProfileSchema.safeParse({ categorys: {} }).success).toBe(false);
   });
 
+  it("accepts a launch.provider selection", () => {
+    const profile = ConfigProfileSchema.parse({ launch: { provider: "z" } });
+    expect(profile.launch?.provider).toBe("z");
+  });
+
+  it("rejects an empty launch.provider name", () => {
+    expect(ConfigProfileSchema.safeParse({ launch: { provider: "" } }).success).toBe(false);
+  });
+
   it("cannot express a circular extends definition as a schema concern — nothing in its shape points back at a profile", () => {
     // `a` extends `b` extends `a` validates fine file-by-file; the walker in src/resolve/extends.ts owns cycle detection.
     expect(ConfigProfileSchema.parse({ extends: ["b"] }).extends).toEqual(["b"]);
@@ -214,6 +224,34 @@ describe("GlobalConfigSchema", () => {
     const config = GlobalConfigSchema.parse({ defaultConfigProfile: "base", walkUpLimit: "~/" });
     expect(config.defaultConfigProfile).toBe("base");
     expect(config.walkUpLimit).toBe("~/");
+  });
+});
+
+describe("ProviderSchema", () => {
+  it("accepts a full provider definition with static extra env", () => {
+    const provider = ProviderSchema.parse({
+      displayName: "GLM",
+      baseUrl: "https://api.z.ai/api/anthropic",
+      tokenEnv: "Z_API_TOKEN",
+      env: { ANTHROPIC_MODEL: "glm-4.6", ANTHROPIC_API_KEY: "" },
+    });
+    expect(provider.env).toEqual({ ANTHROPIC_MODEL: "glm-4.6", ANTHROPIC_API_KEY: "" });
+  });
+
+  it("makes env optional but every other field required", () => {
+    expect(ProviderSchema.safeParse({ displayName: "GLM", baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" }).success).toBe(true);
+    expect(ProviderSchema.safeParse({ displayName: "GLM", baseUrl: "https://api.z.ai" }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ displayName: "GLM", tokenEnv: "Z_API_TOKEN" }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" }).success).toBe(false);
+  });
+
+  it("rejects a baseUrl that is not a URL and a tokenEnv that is empty", () => {
+    expect(ProviderSchema.safeParse({ displayName: "x", baseUrl: "not-a-url", tokenEnv: "T" }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ displayName: "x", baseUrl: "https://api.z.ai", tokenEnv: "" }).success).toBe(false);
+  });
+
+  it("rejects an unknown top-level key, so a token pasted in as a value cannot hide in one", () => {
+    expect(ProviderSchema.safeParse({ displayName: "x", baseUrl: "https://api.z.ai", tokenEnv: "T", token: "sk-live" }).success).toBe(false);
   });
 });
 

@@ -13,6 +13,7 @@ import { isInvokedAsClaude, registerShimCommand, resolveOwnInstallDirs } from ".
 import { registerDoctorCommand } from "./doctor";
 import { registerIdentityCommand, tryRunAtIdentityShortcut } from "./identityManager";
 import { profileExists, registerProfileCommand } from "./configProfiles";
+import { registerProviderCommand } from "./providers";
 import { registerRulesCommand } from "./directoryRules";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
 import { registerRunCommand } from "./runCommand";
@@ -53,6 +54,7 @@ function buildClaudeUseProgram(): Command {
   const paths = resolveLayoutPaths();
   registerIdentityCommand(program, paths);
   registerProfileCommand(program, paths);
+  registerProviderCommand(program, paths);
   registerRulesCommand(program, paths);
   registerCheckCommand(program, paths);
   registerConfigureCommand(program, paths);

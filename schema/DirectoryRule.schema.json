@@ -102,6 +102,10 @@
         },
         "remoteControl": {
           "type": "boolean"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "additionalProperties": false

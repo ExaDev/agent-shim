@@ -9,6 +9,17 @@ describe("buildCliOverride", () => {
     expect(buildCliOverride({ env: {}, ...noFlags })).toBeUndefined();
   });
 
+  it("carries a --provider flag as the cliOverride layer's own launch selection", () => {
+    const result = buildCliOverride({ env: {}, ...noFlags, providerFlag: "z" });
+    expect(result?.launch).toEqual({ provider: "z" });
+    expect(result?.categories).toBeUndefined();
+    expect(result?.entries).toBeUndefined();
+  });
+
+  it("treats an empty --provider value as not supplied", () => {
+    expect(buildCliOverride({ env: {}, ...noFlags, providerFlag: "" })).toBeUndefined();
+  });
+
   it("builds a categories map from a single --category flag", () => {
     const result = buildCliOverride({ env: {}, ...noFlags, categoryFlags: ["history=true,knowledge=false"] });
     expect(result?.categories).toEqual({ history: true, knowledge: false });

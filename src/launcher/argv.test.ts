@@ -54,6 +54,21 @@ describe("parseLauncherArgv", () => {
     expect(result.rest).toEqual(["--print"]);
   });
 
+  it("consumes --provider <name> in both spaced and inline forms, before passthrough args", () => {
+    const spaced = parseLauncherArgv(["--provider", "z", "--print"]);
+    expect(spaced.provider).toBe("z");
+    expect(spaced.rest).toEqual(["--print"]);
+    const inline = parseLauncherArgv(["--provider=o", "--print"]);
+    expect(inline.provider).toBe("o");
+    expect(inline.rest).toEqual(["--print"]);
+  });
+
+  it("keeps the last --provider value when the flag repeats", () => {
+    const result = parseLauncherArgv(["--provider", "z", "--provider", "m"]);
+    expect(result.provider).toBe("m");
+    expect(result.rest).toEqual([]);
+  });
+
   it("accepts --config-profile=<name> inline form", () => {
     const result = parseLauncherArgv(["--config-profile=work", "--print"]);
     expect(result.configProfile).toBe("work");

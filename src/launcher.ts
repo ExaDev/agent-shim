@@ -4,11 +4,12 @@ import { buildCliOverride, type CliOverride } from "./launcher/cliOverride";
 import { recoverFarm, recoveryDiagnostics, resyncFarm } from "./launcher/farm";
 import { evaluateAmbientCredentialGuard } from "./launcher/guard";
 import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/identity";
-import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags } from "./launcher/flags";
+import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { IdentityLockBusyError } from "./launcher/lock";
 import type { FarmFs, FsPort, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
 import { spawnClaude } from "./launcher/spawn";
+import { resolveProvider } from "./providers";
 import type { CategoryClassification, CategoryClassificationOverlay, LaunchFlags } from "./config/schema";
 import type { CascadeInput } from "./resolve/walk";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
@@ -67,7 +68,7 @@ export interface RunLauncherParams {
 /**
  * Orchestrates one `claude` launch, in order:
  *
- * `CLAUDE_CONFIG_DIR` escape-hatch check, then the ambient-credential guard, the identity/config-profile decision, farm resync, version discovery, flag resolution, the extra-flags split, and finally spawn.
+ * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the ambient-credential guard, farm resync, version discovery, flag resolution, the extra-flags split, and finally spawn.
  *
  * The farm resync is skipped when `CLAUDE_CONFIG_DIR` was already set (the escape hatch means the user has named a configuration directory explicitly, and claude-use manages neither its contents nor its lifetime) and when no identity resolved at all (a bare launch against plain `~/.claude`, matching the legacy tool's own behaviour). In both cases there is no claude-use-managed farm for a resync to act on.
  */
@@ -138,17 +139,6 @@ export function runLauncher(params: RunLauncherParams): void {
     }
   }
 
-  const guardResult = evaluateAmbientCredentialGuard({
-    env,
-    allowAmbientCredential: loadedIdentity?.config.allowAmbientCredential ?? false,
-    allowAmbientCredentialOverride: env.CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL === "1",
-    identityName: identityDecision.name,
-  });
-  if (!guardResult.ok) {
-    log.error(guardResult.message);
-    proc.exit(1);
-  }
-
   const configProfileDecision = decideConfigProfile({
     env,
     cliFlagConfigProfile: params.cliFlagConfigProfile ?? parsedArgv.configProfile,
@@ -157,32 +147,65 @@ export function runLauncher(params: RunLauncherParams): void {
     globalDefaultConfigProfile: params.globalDefaultConfigProfile,
   });
 
+  // The cascade is loaded once here, ahead of both the provider decision below and the farm resync further down. A provider name can be pinned by any cascade layer exactly like a launch flag, so it has to be knowable before the ambient-credential guard runs: a provider launch injects its own credential into the child after the guard, which is exactly what the guard would otherwise refuse over. Loading once and passing the same value into the resync also avoids reading the config files twice.
+  const farmContext =
+    farm !== undefined && farmIdentity !== undefined
+      ? { farm, identity: farmIdentity, cascade: farm.loadCascade(configProfileDecision.name, cliOverride) }
+      : undefined;
+
+  const provider = resolveProvider({
+    paths,
+    port: fs,
+    env,
+    ...(parsedArgv.provider === undefined ? {} : { cliProvider: parsedArgv.provider }),
+    ...(farmContext === undefined ? {} : { cascade: farmContext.cascade }),
+  });
+  if (provider !== undefined && !provider.ok) {
+    log.error(provider.message);
+    proc.exit(provider.status);
+  }
+  const resolvedProvider: ResolvedProvider | undefined = provider?.ok === true ? provider.provider : undefined;
+
+  const guardResult = evaluateAmbientCredentialGuard({
+    env,
+    allowAmbientCredential: loadedIdentity?.config.allowAmbientCredential ?? false,
+    allowAmbientCredentialOverride: env.CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL === "1",
+    identityName: identityDecision.name,
+    providerSelected: resolvedProvider !== undefined,
+  });
+  if (!guardResult.ok) {
+    log.error(guardResult.message);
+    proc.exit(1);
+  }
+
   log.info(
     `claude-use: identity ${identityDecision.name ?? "(none)"} (${identityDecision.source}), ` +
-      `config profile ${configProfileDecision.name ?? "(none)"} (${configProfileDecision.source})`,
+      `config profile ${configProfileDecision.name ?? "(none)"} (${configProfileDecision.source})` +
+      (resolvedProvider === undefined ? "" : `, provider ${resolvedProvider.name}`),
   );
 
   // The farm resync sits here, between the identity/profile decision above and flag resolution below, because it needs the first and produces an input to the second: the cascade it resolves carries this launch's `launch` flags, which is why `resolveLaunchFlags` is called with them rather than with the environment alone.
   let cascadeLaunch: LaunchFlags | undefined;
-  if (farm !== undefined && farmIdentity !== undefined) {
+  if (farmContext !== undefined) {
+    const { farm: resyncFarmRuntime, identity: resyncIdentity, cascade } = farmContext;
     let result;
     try {
       result = resyncFarm({
-        fs: farm.fs,
+        fs: resyncFarmRuntime.fs,
         identitiesDir: paths.identitiesDir,
-        identity: farmIdentity,
+        identity: resyncIdentity,
         ...(configProfileDecision.name === undefined ? {} : { configProfile: configProfileDecision.name }),
-        claudeHome: farm.claudeHome,
-        home: farm.home,
-        cwd: farm.cwd,
+        claudeHome: resyncFarmRuntime.claudeHome,
+        home: resyncFarmRuntime.home,
+        cwd: resyncFarmRuntime.cwd,
         env,
-        ...(farm.branch === undefined ? {} : { branch: farm.branch }),
-        ...(farm.branchDetached === undefined ? {} : { branchDetached: farm.branchDetached }),
-        cascade: farm.loadCascade(configProfileDecision.name, cliOverride),
-        classification: farm.classification,
-        now: farm.now,
-        uniqueSuffix: farm.uniqueSuffix,
-        lock: farm.lock,
+        ...(resyncFarmRuntime.branch === undefined ? {} : { branch: resyncFarmRuntime.branch }),
+        ...(resyncFarmRuntime.branchDetached === undefined ? {} : { branchDetached: resyncFarmRuntime.branchDetached }),
+        cascade,
+        classification: resyncFarmRuntime.classification,
+        now: resyncFarmRuntime.now,
+        uniqueSuffix: resyncFarmRuntime.uniqueSuffix,
+        lock: resyncFarmRuntime.lock,
       });
     } catch (error) {
       if (error instanceof IdentityLockBusyError) {
@@ -203,7 +226,7 @@ export function runLauncher(params: RunLauncherParams): void {
       result.noOp
         ? `claude-use: farm at ${result.farmRoot} already matches the resolved cascade`
         : `claude-use: farm at ${result.farmRoot} resynced (${String(result.manifest.links.length)} link(s), ` +
-          `${String(result.manifest.materialised.length)} built director(ies)${result.adopted.length === 0 ? "" : `, ${String(result.adopted.length)} adopted into ${farm.claudeHome}`})`,
+          `${String(result.manifest.materialised.length)} built director(ies)${result.adopted.length === 0 ? "" : `, ${String(result.adopted.length)} adopted into ${resyncFarmRuntime.claudeHome}`})`,
     );
     cascadeLaunch = result.resolved.flattened.launch;
   }
@@ -221,6 +244,7 @@ export function runLauncher(params: RunLauncherParams): void {
     configDirEscapeHatch: configDirEscapeHatchApplies,
     resolvedIdentityName: identityDecision.name,
     identitiesDir: paths.identitiesDir,
+    ...(resolvedProvider === undefined ? {} : { provider: resolvedProvider }),
   });
 
   spawnClaude({ bin: discovered.path, args: finalArgv, env: finalEnv, spawn, proc });

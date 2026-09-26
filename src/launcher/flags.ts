@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import type { LaunchFlags } from "../config/schema";
+import type { LaunchFlags, Provider } from "../config/schema";
 
 /** The fully resolved launch flags for one launch. */
 export interface ResolvedLaunchFlags {
@@ -65,6 +65,13 @@ export function buildArgv(params: BuildArgvParams): string[] {
   return [...params.toolFlags, ...params.extraFlags, ...params.passthrough];
 }
 
+/** The provider resolved for this launch, with its token already read out of the parent environment. */
+export interface ResolvedProvider {
+  readonly name: string;
+  readonly definition: Provider;
+  readonly token: string;
+}
+
 /** Inputs to `buildEnv`. */
 export interface BuildEnvParams {
   readonly baseEnv: Readonly<Record<string, string | undefined>>;
@@ -73,21 +80,36 @@ export interface BuildEnvParams {
   /** The identity name resolved for this launch, when one was resolved. */
   readonly resolvedIdentityName?: string;
   readonly identitiesDir: string;
+  /** The provider resolved for this launch, when one was resolved. Its token is supplied by the caller because reading it and refusing an unset one needs the caller's log/exit ports. */
+  readonly provider?: ResolvedProvider;
 }
 
 /**
  * Builds the environment the real `claude` binary is spawned with.
  *
- * When the `CLAUDE_CONFIG_DIR`-already-set escape hatch applied, or no identity was resolved at all (a bare launch with no active identity, matching the legacy script's own "no profile means plain `~/.claude`" behaviour), the base environment is passed through unchanged. Otherwise `CLAUDE_CONFIG_DIR` is set to the resolved identity's own directory under `identitiesDir` — farm population into that directory is Phase 5's job, not this function's.
+ * When the `CLAUDE_CONFIG_DIR`-already-set escape hatch applied, or no identity was resolved at all (a bare launch with no active identity, matching the legacy script's own "no profile means plain `~/.claude`" behaviour), `CLAUDE_CONFIG_DIR` is left untouched. Otherwise `CLAUDE_CONFIG_DIR` is set to the resolved identity's own directory under `identitiesDir` — farm population into that directory is Phase 5's job, not this function's.
+ *
+ * A resolved provider is applied regardless of the identity outcome, because it selects which API endpoint the child talks to, not which login's data it sees: `ANTHROPIC_BASE_URL` points at the provider, `ANTHROPIC_AUTH_TOKEN` carries the token read from the provider's `tokenEnv`, `CLAUDE_USE_PROVIDER` names the provider for the statusline, and the provider's own `env` entries land verbatim. `ANTHROPIC_API_KEY` is explicitly cleared (to the empty string, which Claude Code treats as unset) unless the provider's `env` names its own value: an ambient `ANTHROPIC_API_KEY` inherited from the parent would outrank the token just set, silently authenticating the child as the ambient key instead of the provider.
  *
  * `$CLAUDE_EXTRA_FLAGS` is never stripped from the child's environment: some wrappers set it two process-levels up and rely on inheritance through a `claude` invoked from inside a running session.
  */
 export function buildEnv(params: BuildEnvParams): Record<string, string | undefined> {
-  if (params.configDirEscapeHatch || params.resolvedIdentityName === undefined) {
-    return { ...params.baseEnv };
+  const env: Record<string, string | undefined> = { ...params.baseEnv };
+
+  if (!params.configDirEscapeHatch && params.resolvedIdentityName !== undefined) {
+    env.CLAUDE_CONFIG_DIR = path.join(params.identitiesDir, params.resolvedIdentityName);
   }
-  return {
-    ...params.baseEnv,
-    CLAUDE_CONFIG_DIR: path.join(params.identitiesDir, params.resolvedIdentityName),
-  };
+
+  if (params.provider !== undefined) {
+    const providerEnv = params.provider.definition.env ?? {};
+    env.ANTHROPIC_BASE_URL = params.provider.definition.baseUrl;
+    env.ANTHROPIC_AUTH_TOKEN = params.provider.token;
+    env.ANTHROPIC_API_KEY = providerEnv.ANTHROPIC_API_KEY ?? "";
+    env.CLAUDE_USE_PROVIDER = params.provider.definition.displayName;
+    for (const [key, value] of Object.entries(providerEnv)) {
+      env[key] = value;
+    }
+  }
+
+  return env;
 }

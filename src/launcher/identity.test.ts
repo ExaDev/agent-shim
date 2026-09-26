@@ -8,6 +8,7 @@ function fakeFs(overrides: Partial<FsPort> = {}): FsPort {
   return {
     readFileUtf8: () => undefined,
     readConfigFile: () => undefined,
+    readdir: () => [],
     ...overrides,
   };
 }

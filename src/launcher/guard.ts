@@ -60,6 +60,10 @@ export interface EvaluateAmbientCredentialGuardParams {
   readonly allowAmbientCredentialOverride: boolean;
   /** The active identity's name, for the message's persistent-opt-in command. Undefined when no identity is known. */
   readonly identityName?: string;
+  /**
+   * True when this launch routes through an API provider. The guard inspects the PARENT environment, before `buildEnv` runs; a provider launch has its `ANTHROPIC_AUTH_TOKEN` injected and its `ANTHROPIC_API_KEY` cleared by `buildEnv` itself, so an ambient credential in the parent environment never reaches the child and there is nothing left for this guard to protect against. Everything else about the guard (including `IdentitySchema.allowAmbientCredential`) is unchanged by this flag.
+   */
+  readonly providerSelected?: boolean;
 }
 
 /** The result of one guard evaluation: either launch may proceed, or it must be refused with an explanatory message. */
@@ -68,7 +72,7 @@ export type AmbientCredentialGuardResult =
   | { readonly ok: false; readonly variable: AmbientCredentialVar; readonly message: string };
 
 /**
- * Evaluates the ambient-credential guard: refuses unless no guarded variable is set, or the active identity opted in (`allowAmbientCredential: true`), or this one invocation opted in (`CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1`).
+ * Evaluates the ambient-credential guard: refuses unless no guarded variable is set, or the active identity opted in (`allowAmbientCredential: true`), or this one invocation opted in (`CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1`), or a provider takes over the child's credential (see `providerSelected`).
  *
  * This guard is about credential isolation, not identity/config-dir selection — it must still run even when the `CLAUDE_CONFIG_DIR`-already-set escape hatch applies (callers pass `allowAmbientCredential: false` and no `identityName` in that case, since there is no active identity to consult).
  */
@@ -79,7 +83,7 @@ export function evaluateAmbientCredentialGuard(
   if (detected === undefined) {
     return { ok: true };
   }
-  if (params.allowAmbientCredentialOverride || params.allowAmbientCredential) {
+  if (params.allowAmbientCredentialOverride || params.allowAmbientCredential || params.providerSelected === true) {
     return { ok: true };
   }
   return {

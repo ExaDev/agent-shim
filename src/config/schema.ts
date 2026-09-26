@@ -86,8 +86,23 @@ export type Entries = z.infer<typeof EntriesSchema>;
 const LaunchSchema = z.strictObject({
   skipPermissions: z.boolean().optional(),
   remoteControl: z.boolean().optional(),
+  provider: z.string().min(1).optional(),
 });
 export type LaunchFlags = z.infer<typeof LaunchSchema>;
+
+/**
+ * A named API provider at `~/.claude-use/providers/<name>.json`: which base URL the child Claude Code talks to, which environment variable holds its token, and any static extra environment entries the child needs to use that endpoint.
+ *
+ * `tokenEnv` is deliberately the NAME of an environment variable (e.g. `Z_API_TOKEN`), never a token value: a provider file is ordinary committed config, and the credential itself must stay in the environment or a secret store where it belongs.
+ */
+export const ProviderSchema = z.strictObject({
+  $schema: z.string().optional(),
+  displayName: z.string().min(1),
+  baseUrl: z.url(),
+  tokenEnv: z.string().min(1),
+  env: z.record(z.string().min(1), z.string()).optional(),
+});
+export type Provider = z.infer<typeof ProviderSchema>;
 
 /**
  * A named, reusable configuration profile at `~/.claude-use/config-profiles/<name>.json`.

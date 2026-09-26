@@ -2,6 +2,7 @@ import { describe, expect, it, vi, type Mock } from "vitest";
 
 import { runLauncher, type FarmRuntime, type RunLauncherParams } from "./launcher";
 import { identityLockPath } from "./launcher/lock";
+import { PROVIDER_MISSING_TOKEN_EXIT } from "./providers";
 import type { FsPort, LogPort, ProcPort, SpawnPort, SpawnResult } from "./launcher/ports";
 import { buildLayoutPaths } from "./paths";
 import type { CascadeInput } from "./resolve/walk";
@@ -36,6 +37,11 @@ function fakeFs(files: Record<string, unknown>): FsPort {
       const value = files[filePath];
       return value === undefined || typeof value === "string" ? undefined : value;
     },
+    readdir: (dir) =>
+      Object.keys(files)
+        .filter((file) => file.startsWith(`${dir}/`))
+        .map((file) => file.slice(dir.length + 1).split("/")[0] ?? "")
+        .filter((name) => name !== ""),
   };
 }
 
@@ -55,6 +61,16 @@ function fakeLog(): LogPort & { infos: string[]; warns: string[]; errors: string
 
 function fakeSpawn(result: SpawnResult = { status: 0, signal: null }): SpawnPort & { spawnSync: Mock<SpawnPort["spawnSync"]> } {
   return { spawnSync: vi.fn<SpawnPort["spawnSync"]>().mockReturnValue(result) };
+}
+
+/** The env the child was spawned with, from the first spawn call: for tests that assert a few specific keys of an otherwise large environment. */
+function spawnedEnv(spawn: ReturnType<typeof fakeSpawn>): Record<string, string | undefined> {
+  const call = spawn.spawnSync.mock.calls[0];
+  if (call === undefined) {
+    throw new Error("expected spawnSync to have been called");
+  }
+  const options = call[2];
+  return options.env;
 }
 
 const discovered: DiscoveredClaudeBinary = { path: "/home/testuser/.local/share/claude/versions/2.1.0", source: "versions-dir", version: "2.1.0" };
@@ -304,6 +320,164 @@ function fakeFarm(fs: FakeFarmFs, cliOverride?: CascadeInput["cliOverride"]): Fa
   };
 }
 
+describe("runLauncher provider selection", () => {
+  const providerZ = {
+    displayName: "GLM",
+    baseUrl: "https://api.z.ai/api/anthropic",
+    tokenEnv: "Z_API_TOKEN",
+    env: { ANTHROPIC_MODEL: "glm-4.6" },
+  };
+  const providerO = {
+    displayName: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    tokenEnv: "OPENROUTER_API_KEY",
+  };
+
+  it("launches through a provider selected by the --provider flag", () => {
+    const spawn = fakeSpawn();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
+      spawn,
+      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z", "--print"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+    });
+
+    expect(spawn.spawnSync).toHaveBeenCalledWith(discovered.path, ["--print"], {
+      stdio: "inherit",
+      env: {
+        Z_API_TOKEN: "tok-z",
+        ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "tok-z",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "glm-4.6",
+        CLAUDE_USE_PROVIDER: "GLM",
+      },
+    });
+  });
+
+  it("refuses with exit 1 and names the known providers when the provider is unknown", () => {
+    const spawn = fakeSpawn();
+    const log = fakeLog();
+
+    const code = runAndCaptureExit({
+      paths,
+      fs: fakeFs({
+        [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ,
+        [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO,
+      }),
+      spawn,
+      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "missing", "--print"]),
+      log,
+      resolveClaudeBinary: () => discovered,
+    });
+
+    expect(code).toBe(1);
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+    expect(log.errors[0]).toContain('no provider named "missing"');
+    expect(log.errors[0]).toContain("o, z");
+  });
+
+  it("refuses with exit 64 when the provider's token environment variable is unset or empty", () => {
+    const spawn = fakeSpawn();
+    const log = fakeLog();
+
+    const code = runAndCaptureExit({
+      paths,
+      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
+      spawn,
+      proc: fakeProc({ Z_API_TOKEN: "" }, ["--provider", "z"]),
+      log,
+      resolveClaudeBinary: () => discovered,
+    });
+
+    expect(code).toBe(PROVIDER_MISSING_TOKEN_EXIT);
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+    expect(log.errors).toEqual(["claude-use: provider z needs Z_API_TOKEN set in your environment"]);
+  });
+
+  it("resolves a provider pinned by a cascade layer when no flag was given", () => {
+    const fs = createFakeFarmFs({});
+    const spawn = fakeSpawn();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO }),
+      spawn,
+      proc: fakeProc({ OPENROUTER_API_KEY: "tok-o" }, ["@work"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      farm: fakeFarm(fs, { launch: { provider: "o" } }),
+    });
+
+    const env = spawnedEnv(spawn);
+    expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.claude-use/identities/work`);
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://openrouter.ai/api/v1");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-o");
+    expect(env.CLAUDE_USE_PROVIDER).toBe("OpenRouter");
+  });
+
+  it("lets a --provider flag beat the cascade's own provider selection", () => {
+    const fs = createFakeFarmFs({});
+    const spawn = fakeSpawn();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({
+        [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ,
+        [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO,
+      }),
+      spawn,
+      proc: fakeProc({ Z_API_TOKEN: "tok-z", OPENROUTER_API_KEY: "tok-o" }, ["@work", "--provider", "z"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      farm: fakeFarm(fs, { launch: { provider: "o" } }),
+    });
+
+    const env = spawnedEnv(spawn);
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
+  });
+
+  it("does not trip the ambient-credential guard when a provider supplies the child's token", () => {
+    const spawn = fakeSpawn();
+
+    const code = runAndCaptureExit({
+      paths,
+      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
+      spawn,
+      proc: fakeProc({ Z_API_TOKEN: "tok-z", ANTHROPIC_AUTH_TOKEN: "sk-leftover-from-old-wrapper" }, ["--provider", "z"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+    });
+
+    expect(code).toBe(0);
+    const env = spawnedEnv(spawn);
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
+    expect(env.ANTHROPIC_API_KEY).toBe("");
+  });
+
+  it("still refuses an ambient ANTHROPIC_AUTH_TOKEN when no provider is selected", () => {
+    const spawn = fakeSpawn();
+    const log = fakeLog();
+
+    const code = runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc({ ANTHROPIC_AUTH_TOKEN: "sk-ambient" }, ["--print"]),
+      log,
+      resolveClaudeBinary: () => discovered,
+    });
+
+    expect(code).toBe(1);
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+    expect(log.errors[0]).toContain("ANTHROPIC_AUTH_TOKEN");
+  });
+});
+
 describe("runLauncher farm resync", () => {
   it("resyncs the identity's farm before spawning, and applies the cascade's own launch flags", () => {
     const fs = createFakeFarmFs({
@@ -466,6 +640,7 @@ describe("runLauncher crash recovery ordering", () => {
         }
         return undefined;
       },
+      readdir: () => [],
     };
 
     runAndCaptureExit({

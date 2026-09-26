@@ -13,6 +13,7 @@ import {
   EntryValueSchema,
   GlobalConfigSchema,
   IdentitySchema,
+  ProviderSchema,
   WhenSchema,
 } from "../src/config/schema";
 
@@ -35,6 +36,7 @@ const schemas: Record<string, z.ZodType> = {
   DirectoryRules: DirectoryRulesSchema,
   GlobalConfig: GlobalConfigSchema,
   Identity: IdentitySchema,
+  Provider: ProviderSchema,
   CategoryClassification: CategoryClassificationSchema,
 };
 
