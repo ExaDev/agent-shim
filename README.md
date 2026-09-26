@@ -55,6 +55,8 @@ Every top-level entry in `~/.claude` is classified into one of five categories, 
 
 Sharing composes through a cascade (shipped defaults, then a user-global override, then the active configuration profile, then directory rules for `$PWD`, shallowest to deepest); a specific path override always outranks a category default regardless of which layer set it. A committed `.claude-use.json` at a project's root makes this portable: anyone who clones the repo and runs `claude` inside it gets the same isolation rules with no local setup.
 
+`claude` refuses to launch while `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` or a `CLAUDE_CODE_USE_BEDROCK`/`VERTEX`/`FOUNDRY` variable is set in the environment, because those outrank every identity's stored credential and would make all identities authenticate as the same account. Opt in deliberately with `CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1` for one launch or `claude-use identity set <name> --allow-ambient-credential`.
+
 The full mechanics, including the merge algorithm, conditional sharing rules (age, size, git branch, environment), the ambient-credential launch guard, and how `~/.claude/projects/` history is pattern-matched, are in [docs/configuration-model.md](docs/configuration-model.md). Worked examples are in [docs/examples.md](docs/examples.md).
 
 ## CLI reference
@@ -140,7 +142,7 @@ pnpm schema      # regenerate schema/*.schema.json from src/config/schema.ts; CI
 
 Run a single test file directly with `pnpm exec vitest run <path>`. Tests never touch a real identity: `vitest.config.ts` sets `CLAUDE_USE_HOME` to a throwaway directory, and a setup file refuses to run at all if that variable is unset or resolves to the real `~/.claude-use`.
 
-Commits are gated by Husky hooks: `commit-msg` enforces conventional-commit format, `pre-commit` runs `eslint --fix` on staged files and rejects merge/squash commits and mass deletions on `main`, `pre-push` runs the full test suite.
+Commits are gated by Husky hooks: `commit-msg` enforces conventional-commit format, `pre-commit` runs `eslint --fix` on staged files and rejects merge/squash commits and mass deletions on `main`, and `pre-push` runs the full test suite and also rejects a push that would delete more than 100 files on the remote.
 
 A fresh clone needs one extra step before committing anything, since git stores filter definitions in `.git/config` rather than in the repository:
 
