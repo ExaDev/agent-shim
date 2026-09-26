@@ -202,6 +202,29 @@ shares exactly the project-history subdirectories for every real path under `~/w
 
 This whole mechanism assumes POSIX-style absolute paths (forward-slash separators). That's a non-issue today since the initial [build target](release-process.md#build-node-sea) is macOS only; if another platform is ever added, this section — and Claude Code's own encoding behaviour on that platform — needs independent re-verification, not an assumption that the same rule carries over.
 
+## Providers
+
+A provider is a named API endpoint a session can be routed through instead of `api.anthropic.com`: an Anthropic-compatible relay, an OpenRouter-style aggregator, or any other base URL that speaks the Messages API. Providers replace the hand-written shell wrappers (`z` for GLM, `m` for MiniMax, `o` for OpenRouter, `s` for Synthetic) with first-class config, so the same identity, farm, and cascade machinery applies to them unchanged.
+
+Each provider lives in its own file at `~/.claude-use/providers/<name>.json`:
+
+```json
+{
+  "displayName": "GLM",
+  "baseUrl": "https://api.z.ai/api/anthropic",
+  "tokenEnv": "Z_API_TOKEN",
+  "env": { "ANTHROPIC_MODEL": "glm-4.6" }
+}
+```
+
+`tokenEnv` is the NAME of an environment variable holding the token, never the token itself: a provider file is ordinary committed config, and the credential stays in the environment or a secret store where it belongs. `env` carries any further static environment entries the child needs to use that endpoint (model maps like `ANTHROPIC_MODEL`/`ANTHROPIC_DEFAULT_*_MODEL`, `API_TIMEOUT_MS`, an explicit `ANTHROPIC_API_KEY: ""` for endpoints where the auth token must take over, and so on).
+
+Selection works exactly like the launch flags below: `launch.provider` in any cascade layer (global config, a configuration profile, a directory rule, a committed `.claude-use.json`), with a one-off `claude --provider <name>` flag outranking every layer. When a provider is resolved, the child's environment gains `ANTHROPIC_BASE_URL` (the provider's base URL), `ANTHROPIC_AUTH_TOKEN` (the token read from `tokenEnv`), every entry of the provider's `env`, and `CLAUDE_USE_PROVIDER` (the display name, for statusline use). `ANTHROPIC_API_KEY` is explicitly cleared to the empty string unless the provider's own `env` names a value, so an ambient key inherited from the parent environment cannot outrank the token that was just set.
+
+Two refusals, both before anything is spawned: an unknown provider name exits 1 with the known provider names listed, and a provider whose `tokenEnv` is unset or empty in the parent environment exits 64 with `claude-use: provider <name> needs <VAR> set in your environment`.
+
+The ambient-credential guard (below) checks the parent environment and is unaffected by a provider launch: the guard runs before the child environment is built, and the provider's own token is injected into the child after it, so claude-use itself supplies the credential. An ambient `ANTHROPIC_AUTH_TOKEN` left over in a parent shell is therefore not refused when a provider is selected, because the child never sees it; with no provider selected, the guard refuses it as always.
+
 ## Launch flags
 
 `skipPermissions` and `remoteControl` resolve through the same cascade as everything else (shipped default: both off), plus a one-off environment variable escape hatch:
