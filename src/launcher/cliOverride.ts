@@ -42,6 +42,7 @@ function toEntries(pairs: Readonly<Record<string, boolean>>): Entries {
 /** Inputs to `buildCliOverride`: the raw, still-unparsed flag values `parseLauncherArgv` collected, plus the environment for their `CLAUDE_USE_*_OVERRIDE` alternatives. */
 export interface BuildCliOverrideParams {
   readonly env: Readonly<Record<string, string | undefined>>;
+  readonly providerFlag?: string;
   readonly categoryFlags: readonly string[];
   readonly shareFlags: readonly string[];
   readonly hideFlags: readonly string[];
@@ -51,6 +52,7 @@ export interface BuildCliOverrideParams {
 export interface CliOverride {
   readonly categories?: CategoryMap;
   readonly entries?: Entries;
+  readonly launch?: { readonly provider?: string };
 }
 
 /**
@@ -86,12 +88,14 @@ export function buildCliOverride(params: BuildCliOverrideParams): CliOverride | 
 
   const hasCategories = Object.keys(categoryPairs).length > 0;
   const hasEntries = Object.keys(entryPairs).length > 0;
-  if (!hasCategories && !hasEntries) {
+  const hasProvider = params.providerFlag !== undefined && params.providerFlag !== "";
+  if (!hasCategories && !hasEntries && !hasProvider) {
     return undefined;
   }
 
   return {
     ...(hasCategories ? { categories: toCategoryMap(categoryPairs) } : {}),
     ...(hasEntries ? { entries: toEntries(entryPairs) } : {}),
+    ...(hasProvider ? { launch: { provider: params.providerFlag } } : {}),
   };
 }

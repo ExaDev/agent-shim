@@ -1,0 +1,38 @@
+{
+  "$id": "https://github.com/ExaDev/claude-use/schema/Provider.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "baseUrl": {
+      "type": "string",
+      "format": "uri"
+    },
+    "tokenEnv": {
+      "type": "string",
+      "minLength": 1
+    },
+    "env": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "displayName",
+    "baseUrl",
+    "tokenEnv"
+  ],
+  "additionalProperties": false
+}

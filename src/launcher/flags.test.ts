@@ -131,4 +131,89 @@ describe("buildEnv", () => {
     });
     expect(env.CLAUDE_EXTRA_FLAGS).toBe("--continue continue");
   });
+
+  it("applies a resolved provider on top of the identity's CLAUDE_CONFIG_DIR", () => {
+    const env = buildEnv({
+      baseEnv,
+      configDirEscapeHatch: false,
+      resolvedIdentityName: "work",
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      provider: {
+        name: "z",
+        definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" },
+        token: "tok-from-z",
+      },
+    });
+    expect(env.CLAUDE_CONFIG_DIR).toBe("/home/testuser/.claude-use/identities/work");
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
+    expect(env.CLAUDE_USE_PROVIDER).toBe("GLM");
+  });
+
+  it("applies a resolved provider even when no identity was resolved, since it selects an endpoint, not a login", () => {
+    const env = buildEnv({
+      baseEnv,
+      configDirEscapeHatch: false,
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      provider: {
+        name: "z",
+        definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" },
+        token: "tok-from-z",
+      },
+    });
+    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
+  });
+
+  it("clears an ambient ANTHROPIC_API_KEY so the provider's token takes effect, unless the provider's own env names a value", () => {
+    const base = { ...baseEnv, ANTHROPIC_API_KEY: "sk-ambient" };
+    const cleared = buildEnv({
+      baseEnv: base,
+      configDirEscapeHatch: false,
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      provider: {
+        name: "z",
+        definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" },
+        token: "tok-from-z",
+      },
+    });
+    expect(cleared.ANTHROPIC_API_KEY).toBe("");
+    const named = buildEnv({
+      baseEnv: base,
+      configDirEscapeHatch: false,
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      provider: {
+        name: "o",
+        definition: {
+          displayName: "OpenRouter",
+          baseUrl: "https://openrouter.ai/api/v1",
+          tokenEnv: "OPENROUTER_API_KEY",
+          env: { ANTHROPIC_API_KEY: "" },
+        },
+        token: "tok-from-o",
+      },
+    });
+    expect(named.ANTHROPIC_API_KEY).toBe("");
+    expect(named.ANTHROPIC_BASE_URL).toBe("https://openrouter.ai/api/v1");
+  });
+
+  it("lands every entry of the provider's own env verbatim in the child environment", () => {
+    const env = buildEnv({
+      baseEnv,
+      configDirEscapeHatch: false,
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      provider: {
+        name: "z",
+        definition: {
+          displayName: "GLM",
+          baseUrl: "https://api.z.ai/api/anthropic",
+          tokenEnv: "Z_API_TOKEN",
+          env: { ANTHROPIC_MODEL: "glm-4.6", API_TIMEOUT_MS: "600000" },
+        },
+        token: "tok-from-z",
+      },
+    });
+    expect(env.ANTHROPIC_MODEL).toBe("glm-4.6");
+    expect(env.API_TIMEOUT_MS).toBe("600000");
+  });
 });

@@ -30,6 +30,16 @@ export const realFsPort: FsPort = {
     }
   },
   readConfigFile: cosmiconfigReader(),
+  readdir(dirPath) {
+    try {
+      return fs.readdirSync(dirPath);
+    } catch (error) {
+      if (isEnoent(error)) {
+        return [];
+      }
+      throw error;
+    }
+  },
 };
 
 function isErrorWithCode(error: unknown, code: string): boolean {

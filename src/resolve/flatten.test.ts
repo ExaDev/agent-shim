@@ -134,6 +134,18 @@ describe("phase one: launch flags", () => {
     );
     expect(flattened.launch).toEqual({ skipPermissions: true, remoteControl: false });
   });
+
+  it("resolves the provider selection last-layer-wins alongside the other flags", () => {
+    const flattened = flattenLayers(
+      [
+        layer(0, { launch: { provider: "z" } }),
+        layer(1, { launch: { skipPermissions: true } }),
+        layer(2, { launch: { provider: "o" } }),
+      ],
+      { home: FAKE_HOME },
+    );
+    expect(flattened.launch).toEqual({ skipPermissions: true, provider: "o" });
+  });
 });
 
 describe("matchingRules", () => {

@@ -13,6 +13,8 @@ export interface LayoutPaths {
   readonly identitiesDir: string;
   /** Directory holding named, reusable configuration profile JSON files. */
   readonly configProfilesDir: string;
+  /** Directory holding one `<name>.json` provider definition per API provider. */
+  readonly providersDir: string;
   /** Path to the directory-rules.json file describing directory-scoped identity/profile pins. */
   readonly directoryRulesFile: string;
   /** Path to the persisted active-identity file (the identity `claude-use identity use` selected). */
@@ -55,6 +57,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     root,
     identitiesDir: path.join(root, "identities"),
     configProfilesDir: path.join(root, "config-profiles"),
+    providersDir: path.join(root, "providers"),
     directoryRulesFile: path.join(root, "directory-rules.json"),
     activeIdentityFile: path.join(root, "active-identity"),
     globalConfigFile: path.join(root, "config.json"),

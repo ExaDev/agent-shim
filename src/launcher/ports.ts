@@ -8,6 +8,8 @@ export interface FsPort {
   readonly readFileUtf8: (filePath: string) => string | undefined;
   /** Reads and parses a config file (JSON/YAML/JS via cosmiconfig in the real implementation), returning undefined when it does not exist. Mirrors `src/config/load.ts`'s own injected reader shape so `loadIdentity` can compose directly with `loadConfigFile`. */
   readonly readConfigFile: ConfigFileReader;
+  /** Lists one directory's immediate child names, or an empty list when it does not exist. Used to name the known providers in an unknown-provider refusal. */
+  readonly readdir: (dir: string) => readonly string[];
 }
 
 /** What one node of a tree is, as reported by an `lstat` that never follows symlinks. */
