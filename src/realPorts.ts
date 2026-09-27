@@ -265,7 +265,12 @@ export function realHeadroomPort(paths: LayoutPaths): HeadroomPort {
           spawnSupervisor: spawnHeadroomSupervisor,
         },
       });
-      return { port: up.port, projectId: resolveGitRoot(realRunPort, process.cwd()) ?? process.cwd() };
+      return {
+        port: up.port,
+        mitmPort: up.mitmPort,
+        caCertPath: paths.headroomCaCertFile,
+        projectId: resolveGitRoot(realRunPort, process.cwd()) ?? process.cwd(),
+      };
     },
     release: () => {
       removeSession(realFarmFs, paths.headroomSessionsDir, process.pid);

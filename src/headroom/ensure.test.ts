@@ -13,6 +13,7 @@ const SLEEPS_BEFORE_RECOVERY = 3;
 const SLEEPS_BEFORE_OTHER_SUPERVENDOR_READY = 2;
 const HEADROOM_PID = 501;
 const PORT = 8123;
+const MITM_PORT = 8124;
 /** A supervisor pid that is dead in every test that names it, distinct from the live fake's SUPERVISOR_PID. */
 const DEAD_SUPERVISOR_PID = 999;
 
@@ -40,6 +41,7 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean } = {}) {
         supervisorPid: SUPERVISOR_PID,
         headroomPid: HEADROOM_PID,
         port,
+        mitmPort: MITM_PORT,
         version: "headroom 0.39.1",
       });
     },
@@ -69,7 +71,7 @@ describe("ensureHeadroom", () => {
   it("starts a supervisor when nothing is running and waits for its ready state, then registers the session", () => {
     const world = makeWorld();
     const result = ensureHeadroom({ paths, launcherPid: 42, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ port: PORT, mitmPort: MITM_PORT });
     expect(world.spawns).toHaveLength(1);
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/42.json`)).toBeDefined();
   });
@@ -78,7 +80,7 @@ describe("ensureHeadroom", () => {
     const world = makeWorld();
     world.writeReadyState();
     const result = ensureHeadroom({ paths, launcherPid: 43, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ port: PORT, mitmPort: MITM_PORT });
     expect(world.spawns).toHaveLength(0);
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/43.json`)).toBeDefined();
   });
@@ -91,7 +93,7 @@ describe("ensureHeadroom", () => {
       port: PORT,
     });
     const result = ensureHeadroom({ paths, launcherPid: 44, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ port: PORT, mitmPort: MITM_PORT });
     expect(world.spawns).toHaveLength(1);
   });
 
@@ -106,8 +108,28 @@ describe("ensureHeadroom", () => {
     world.alive.add(DEAD_SUPERVISOR_PID);
     world.zombies.add(DEAD_SUPERVISOR_PID);
     const result = ensureHeadroom({ paths, launcherPid: 51, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ port: PORT, mitmPort: MITM_PORT });
     expect(world.spawns).toHaveLength(1);
+  });
+
+  it("keeps waiting while a live supervisor has the daemon up but the MITM proxy not yet bound, and returns once both are ready", () => {
+    const world = makeWorld({ spawnWritesReadyState: false });
+    // The daemon half arrives first; the proxy half arrives partway through the wait.
+    writeHeadroomState(world.fs, paths.headroomStateFile, {
+      supervisorPid: SUPERVISOR_PID,
+      headroomPid: HEADROOM_PID,
+      port: PORT,
+    });
+    let sleeps = 0;
+    world.onSleep = () => {
+      sleeps += 1;
+      if (sleeps === SLEEPS_BEFORE_RECOVERY) {
+        world.writeReadyState();
+      }
+    };
+    const result = ensureHeadroom({ paths, launcherPid: 52, ports: world.ports });
+    expect(result).toEqual({ port: PORT, mitmPort: MITM_PORT });
+    expect(sleeps).toBeGreaterThanOrEqual(SLEEPS_BEFORE_RECOVERY);
   });
 
   it("keeps waiting while a live supervisor restarts a dead daemon, and returns once it is back", () => {
@@ -126,7 +148,7 @@ describe("ensureHeadroom", () => {
       }
     };
     const result = ensureHeadroom({ paths, launcherPid: 45, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ port: PORT, mitmPort: MITM_PORT });
     expect(sleeps).toBeGreaterThanOrEqual(SLEEPS_BEFORE_RECOVERY);
   });
 
@@ -143,7 +165,7 @@ describe("ensureHeadroom", () => {
       }
     };
     const result = ensureHeadroom({ paths, launcherPid: 46, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ port: PORT, mitmPort: MITM_PORT });
     expect(world.spawns).toHaveLength(0);
   });
 
@@ -153,7 +175,7 @@ describe("ensureHeadroom", () => {
     world.fs.writeFileUtf8(paths.headroomLockFile, JSON.stringify({ pid: OTHER_LAUNCHER_PID, at: 0 }));
     // 777 deliberately not in the alive set.
     const result = ensureHeadroom({ paths, launcherPid: 47, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ port: PORT, mitmPort: MITM_PORT });
     expect(world.spawns).toHaveLength(1);
   });
 

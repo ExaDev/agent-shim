@@ -246,7 +246,8 @@ export function runLauncher(params: RunLauncherParams): void {
   const headroomPort = params.headroom;
   if (resolvedFlags.headroom && headroomPort !== undefined) {
     headroom = headroomPort.ensure();
-    log.info(`claude-use: routing through headroom on 127.0.0.1:${String(headroom.port)} (project ${headroom.projectId})`);
+    const mode = resolvedProvider === undefined ? `OAuth via MITM proxy on 127.0.0.1:${String(headroom.mitmPort)}` : "provider";
+    log.info(`claude-use: routing through headroom on 127.0.0.1:${String(headroom.port)} (${mode}, project ${headroom.projectId})`);
   } else if (resolvedFlags.headroom) {
     log.error("claude-use: headroom routing was requested but this launcher has no headroom port wired; refusing to launch without it.");
     proc.exit(1);

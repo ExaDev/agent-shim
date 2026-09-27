@@ -1,5 +1,6 @@
 import { HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES, HEADROOM_DEFAULT_SOURCE } from "../config/schema";
 import type { LayoutPaths } from "../paths";
+import type { MitmServerHandle } from "./mitm";
 import {
   hashAllowlist,
   headroomAllowlist,
@@ -9,6 +10,7 @@ import {
   readHeadroomState,
   writeHeadroomState,
   type HeadroomFs,
+  type HeadroomState,
 } from "./state";
 
 /** Everything the supervisor needs to run the daemon, resolved from the global config and the filesystem before it starts. */
@@ -59,6 +61,10 @@ export interface SupervisorPorts {
   readonly install: (spec: string) => { readonly ok: boolean; readonly error?: string };
   /** The installed `headroom --version` output, or undefined when the binary is not on PATH. */
   readonly headroomVersion: () => string | undefined;
+  /**
+   * Starts this supervisor's second server: the in-process MITM CONNECT proxy on a loopback port, binding `preferredPort` when it is free and any free port otherwise. The proxy forwards the intercept host's headroom-served paths to `headroomPort()` (read live, because the daemon can crash and restart on a different port while the proxy keeps listening) and tunnels everything else untouched. Resolves once listening; rejects when no port can be bound.
+   */
+  readonly startMitm: (preferredPort: number | undefined, headroomPort: () => number | undefined) => Promise<MitmServerHandle>;
   readonly log: (line: string) => void;
 }
 
@@ -207,7 +213,7 @@ export interface RunSupervisorOptions {
 export const HEADROOM_SUPERVISOR_STILL_RUNNING = -1;
 
 /**
- * Runs the headroom supervisor loop: install, start, keep alive, restart on crash, restart on drift once no session would be cut off, and shut down after the configured idle period with an empty session registry. Returns the process exit code (0 for an idle shutdown, 1 for a fatal setup failure).
+ * Runs the headroom supervisor loop: install, bind this process's MITM proxy, start the daemon, keep both alive (the proxy lives in this process, so only the daemon needs restarting, for crash or drift), and shut both down after the configured idle period with an empty session registry. Returns the process exit code (0 for an idle shutdown, 1 for a fatal setup failure).
  *
  * Every effect flows through `ports`, so the whole loop is unit-testable with a fake clock, filesystem, and processes. The loop awaits its sleeps, which in the real implementation run on a timer: between ticks the event loop turns, the spawned child's exit event is delivered (and the child thereby reaped), and the next tick's liveness check reads the truth.
  */
@@ -222,11 +228,22 @@ export async function runSupervisor(
   let installedSource = previousState?.installedSource;
   // The sticky address, inherited from the previous generation and updated on every successful start: even a fatal give-up keeps it, so the next generation starts where this one served.
   let lastPort = previousState?.lastPort;
+  // The MITM proxy's sticky address, the same rule for the second server: every OAuth session's HTTPS_PROXY was frozen at launch pointing at it, so it survives every shutdown too.
+  let lastMitmPort = previousState?.lastMitmPort;
+  let daemonPort: number | undefined;
+
+  /** The sticky addresses, attached to every state write so the next generation inherits them whatever else the write says. */
+  const sticky = (): Pick<HeadroomState, "lastPort" | "lastMitmPort"> => ({
+    ...(lastPort === undefined ? {} : { lastPort }),
+    ...(lastMitmPort === undefined ? {} : { lastMitmPort }),
+  });
+
+  let mitm: MitmServerHandle | undefined;
 
   const fail = (message: string): number => {
     writeHeadroomState(fs, paths.headroomStateFile, {
       lastError: message,
-      ...(lastPort === undefined ? {} : { lastPort }),
+      ...sticky(),
     });
     fs.removeRecursive(paths.headroomLockFile);
     ports.log(`claude-use headroom supervisor: ${message}`);
@@ -258,8 +275,22 @@ export async function runSupervisor(
   }
   const version = ports.headroomVersion() ?? "unknown";
 
-  // Fresh ownership: whatever came before, this supervisor is now the one keeping headroom alive. `lastPort` is carried over so a new generation starts where the last one served.
-  writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: ports.ownPid, version, installedSource, ...(lastPort === undefined ? {} : { lastPort }) });
+  // The second server this supervisor owns, bound before any headroom start attempt so state names both ports from the moment this generation serves. The live `daemonPort` accessor is what lets the proxy follow a restart that moves the daemon.
+  try {
+    mitm = await ports.startMitm(lastMitmPort, () => daemonPort);
+  } catch (error) {
+    return fail(`could not start the MITM proxy: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  lastMitmPort = mitm.port;
+  if (previousState?.lastMitmPort !== undefined && mitm.port !== previousState.lastMitmPort) {
+    ports.log(
+      `claude-use headroom supervisor: sticky MITM port ${String(previousState.lastMitmPort)} was occupied; moving to ${String(mitm.port)} ` +
+        `(OAuth sessions launched against the old port are stale until they relaunch)`,
+    );
+  }
+
+  // Fresh ownership: whatever came before, this supervisor is now the one keeping headroom alive. The sticky addresses are carried over so a new generation starts where the last one served.
+  writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: ports.ownPid, version, installedSource, mitmPort: mitm.port, ...sticky() });
   ports.log(`claude-use headroom supervisor ${String(ports.ownPid)}: managing headroom on allowlist [${allowlistOf(ports).join(", ")}]`);
 
   const orphanPid = previousState?.headroomPid;
@@ -290,13 +321,15 @@ export async function runSupervisor(
       if (crashed) {
         ports.log(`claude-use headroom supervisor: headroom pid ${String(headroomPid)} died`);
         headroomPid = undefined;
+        daemonPort = undefined;
         runningHash = undefined;
-        // Clear the daemon fields immediately: until the replacement is ready, state must not claim a serving port for a process that just died, or `headroom status` and waiting launchers read a healthy daemon that no longer exists. `lastPort` stays, so the replacement restarts on the same address.
+        // Clear the daemon fields immediately: until the replacement is ready, state must not claim a serving port for a process that just died, or `headroom status` and waiting launchers read a healthy daemon that no longer exists. The MITM proxy keeps serving (it is in this process), but its headroom-served paths answer 502 until the daemon is back. `lastPort` stays, so the replacement restarts on the same address.
         writeHeadroomState(fs, paths.headroomStateFile, {
           supervisorPid: ports.ownPid,
           version,
           installedSource,
-          ...(lastPort === undefined ? {} : { lastPort }),
+          mitmPort: mitm.port,
+          ...sticky(),
         });
       }
       if (consecutiveFailures >= HEADROOM_START_RETRY_BUDGET) {
@@ -315,6 +348,7 @@ export async function runSupervisor(
       if (ready) {
         consecutiveFailures = 0;
         headroomPid = pid;
+        daemonPort = port;
         runningHash = allowlistHash;
         lastPort = port;
         if (previousSticky !== undefined && port !== previousSticky) {
@@ -326,10 +360,11 @@ export async function runSupervisor(
           supervisorPid: ports.ownPid,
           headroomPid: pid,
           port,
-          lastPort: port,
+          mitmPort: mitm.port,
           version,
           allowlistHash,
           installedSource: config.source,
+          ...sticky(),
         });
         // The start lock has done its job: state now names a live supervisor, so every future launcher finds it there instead.
         fs.removeRecursive(paths.headroomLockFile);
@@ -352,6 +387,7 @@ export async function runSupervisor(
           ports.log("claude-use headroom supervisor: configuration drifted and no sessions are live; restarting headroom");
           ports.stopProcess(headroomPid);
           headroomPid = undefined;
+          daemonPort = undefined;
           runningHash = undefined;
           continue;
         }
@@ -363,13 +399,15 @@ export async function runSupervisor(
         const idleMs = ports.now() - idleSince;
         if (idleMs >= config.idleShutdownMinutes * MS_PER_MINUTE) {
           ports.log(
-            `claude-use headroom supervisor: no sessions for ${String(config.idleShutdownMinutes)} minute(s); stopping headroom and exiting`,
+            `claude-use headroom supervisor: no sessions for ${String(config.idleShutdownMinutes)} minute(s); stopping headroom and the MITM proxy, and exiting`,
           );
           ports.stopProcess(headroomPid);
-          // `lastPort` survives the shutdown so the next generation starts where this one served, whatever else it inherits.
+          daemonPort = undefined;
+          await mitm.close();
+          // The sticky addresses survive the shutdown so the next generation starts where this one served, whatever else it inherits.
           writeHeadroomState(fs, paths.headroomStateFile, {
             version,
-            ...(lastPort === undefined ? {} : { lastPort }),
+            ...sticky(),
           });
           return 0;
         }
