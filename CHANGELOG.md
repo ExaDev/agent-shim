@@ -1,3 +1,10 @@
+## [2.5.0](https://github.com/ExaDev/claude-use/compare/v2.4.2...v2.5.0) (2026-09-27)
+
+### Features
+
+* route launches through a supervised headroom daemon ([47912fd](https://github.com/ExaDev/claude-use/commit/47912fd1783984435e33ac0ba3220d4af805dcf7))
+* route launches through named API providers ([9d41cb6](https://github.com/ExaDev/claude-use/commit/9d41cb606add2eeb835f3d50194209c6f1354338))
+
 ## [2.4.2](https://github.com/ExaDev/claude-use/compare/v2.4.1...v2.4.2) (2026-09-17)
 
 ### Bug Fixes
