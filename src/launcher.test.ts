@@ -391,6 +391,28 @@ describe("runLauncher headroom routing", () => {
     expect(spawnedEnv(spawn).HEADROOM_PROXY_URL).toBe("http://127.0.0.1:9999");
   });
 
+  it("resolves headroom from the cascade on an escape-hatch launch, where no farm resync runs", () => {
+    const fs = createFakeFarmFs({});
+    const spawn = fakeSpawn();
+    const headroom = fakeHeadroomPort();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc({ CLAUDE_CONFIG_DIR: "/somewhere/explicit" }, ["--print"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      farm: fakeFarm(fs, { launch: { headroom: true } }),
+      headroom,
+    });
+
+    // No identity resolved under the escape hatch, so no farm resync happens; the launch flags still come from the cascade, the same way provider selection does.
+    expect(headroom.ensures).toBe(1);
+    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
+    expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe("/somewhere/explicit");
+  });
+
   it("routes a provider through headroom: proxy base URL, provider upstream in the per-request header, token from the provider", () => {
     const spawn = fakeSpawn();
     const headroom = fakeHeadroomPort();

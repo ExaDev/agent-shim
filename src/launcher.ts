@@ -10,6 +10,8 @@ import { IdentityLockBusyError } from "./launcher/lock";
 import type { FarmFs, FsPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
 import { spawnClaude } from "./launcher/spawn";
 import { resolveProvider } from "./providers";
+import { flattenLayers } from "./resolve/flatten";
+import { assembleCascade } from "./resolve/walk";
 import type { CategoryClassification, CategoryClassificationOverlay, LaunchFlags } from "./config/schema";
 import type { CascadeInput } from "./resolve/walk";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
@@ -231,6 +233,9 @@ export function runLauncher(params: RunLauncherParams): void {
           `${String(result.manifest.materialised.length)} built director(ies)${result.adopted.length === 0 ? "" : `, ${String(result.adopted.length)} adopted into ${resyncFarmRuntime.claudeHome}`})`,
     );
     cascadeLaunch = result.resolved.flattened.launch;
+  } else if (params.farm !== undefined) {
+    // Escape-hatch and bare launches have no farm to resync (the local `farm` is undefined exactly then), but launch flags are claude-use's own behaviour, not the farm's: a global `launch.headroom` (or any other launch setting) must still apply when CLAUDE_CONFIG_DIR was already set or no identity resolved. Provider selection above already read this same cascade; this resolves only its launch block and writes nothing.
+    cascadeLaunch = flattenLayers(assembleCascade(params.farm.loadCascade(configProfileDecision.name, cliOverride)).layers, { home: params.farm.home }).launch;
   }
 
   const discovered = params.resolveClaudeBinary();
