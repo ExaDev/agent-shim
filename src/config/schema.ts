@@ -94,15 +94,19 @@ export type LaunchFlags = z.infer<typeof LaunchSchema>;
 /**
  * A named API provider at `~/.claude-use/providers/<name>.json`: which base URL the child Claude Code talks to, which environment variable holds its token, and any static extra environment entries the child needs to use that endpoint.
  *
- * `tokenEnv` is deliberately the NAME of an environment variable (e.g. `Z_API_TOKEN`), never a token value: a provider file is ordinary committed config, and the credential itself must stay in the environment or a secret store where it belongs.
+ * `tokenEnv` is deliberately the NAME of an environment variable (e.g. `Z_API_TOKEN`), never a token value: a provider file is ordinary committed config, and the credential itself must stay in the environment or a secret store where it belongs. It may be omitted only by a provider whose `env` itself carries an `ANTHROPIC_AUTH_TOKEN` entry: local proxies that take a fixed dummy token (a codex-translation proxy ignoring credentials entirely) have no real secret to keep out of the file, and requiring a tokenEnv would force a pointless env var; anything with a real credential must still name it.
  */
-export const ProviderSchema = z.strictObject({
-  $schema: z.string().optional(),
-  displayName: z.string().min(1),
-  baseUrl: z.url(),
-  tokenEnv: z.string().min(1),
-  env: z.record(z.string().min(1), z.string()).optional(),
-});
+export const ProviderSchema = z
+  .strictObject({
+    $schema: z.string().optional(),
+    displayName: z.string().min(1),
+    baseUrl: z.url(),
+    tokenEnv: z.string().min(1).optional(),
+    env: z.record(z.string().min(1), z.string()).optional(),
+  })
+  .refine((provider) => provider.tokenEnv !== undefined || (provider.env?.ANTHROPIC_AUTH_TOKEN ?? "") !== "", {
+    message: "a provider needs either tokenEnv (the name of the environment variable holding its token) or a non-empty env.ANTHROPIC_AUTH_TOKEN",
+  });
 export type Provider = z.infer<typeof ProviderSchema>;
 
 /**

@@ -557,6 +557,30 @@ describe("runLauncher provider selection", () => {
     expect(log.errors).toEqual(["claude-use: provider z needs Z_API_TOKEN set in your environment"]);
   });
 
+  it("launches a fixed-credential provider without tokenEnv, passing the guard and setting the token from its env", () => {
+    const spawn = fakeSpawn();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({
+        [`${FAKE_HOME}/.claude-use/providers/codex.json`]: {
+          displayName: "Codex",
+          baseUrl: "http://127.0.0.1:18789",
+          env: { ANTHROPIC_AUTH_TOKEN: "codex-subscription-local", ANTHROPIC_API_KEY: "" },
+        },
+      }),
+      spawn,
+      proc: fakeProc({}, ["--provider", "codex", "--print"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+    });
+
+    const env = spawnedEnv(spawn);
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:18789");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("codex-subscription-local");
+    expect(env.CLAUDE_USE_PROVIDER).toBe("Codex");
+  });
+
   it("resolves a provider pinned by a cascade layer when no flag was given", () => {
     const fs = createFakeFarmFs({});
     const spawn = fakeSpawn();
