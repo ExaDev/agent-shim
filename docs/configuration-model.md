@@ -225,13 +225,32 @@ Two refusals, both before anything is spawned: an unknown provider name exits 1 
 
 The ambient-credential guard (below) checks the parent environment and is unaffected by a provider launch: the guard runs before the child environment is built, and the provider's own token is injected into the child after it, so claude-use itself supplies the credential. An ambient `ANTHROPIC_AUTH_TOKEN` left over in a parent shell is therefore not refused when a provider is selected, because the child never sees it; with no provider selected, the guard refuses it as always.
 
+## Headroom routing
+
+`launch.headroom: true` (in a configuration profile, the global config, a directory rule, or a committed `.claude-use.json`, resolved through the same cascade as every other launch flag) or a one-off `CLAUDE_USE_HEADROOM=1 claude` routes the whole session through a local [headroom](https://github.com/ExaDev/headroom) daemon instead of straight to the provider: the child's `ANTHROPIC_BASE_URL` becomes the daemon's loopback address, `HEADROOM_PROXY_URL` names it too, and `ANTHROPIC_CUSTOM_HEADERS` gains `x-headroom-project-id` (the git repository root of the working directory, or the directory itself outside a repository) plus, when a provider is also selected, `x-headroom-base-url` carrying the provider's real upstream so one daemon can serve several providers per request.
+
+claude-use fully orchestrates the daemon; you never start, stop, or upgrade headroom by hand. The first launch that resolves headroom on spawns a detached supervisor (a background copy of the `claude-use` binary running a hidden internal subcommand), which installs headroom with `uv tool install` when the binary is missing or its version does not satisfy the configured source, starts `headroom proxy` on a free loopback port with `HEADROOM_ALLOWED_BASE_URLS` set to every provider's base URL plus `https://api.anthropic.com`, waits for its `/readyz` to answer, and only then records the port where launches can find it. A proxy that crashes is restarted with bounded exponential backoff; after five consecutive failures to become ready the supervisor records the error in its state and gives up, and the next launch fails loudly with the daemon log path rather than silently bypassing headroom. When the allowlist or install source drifts (a provider file changed, the configured source changed), the daemon is restarted only once no session is live, so a running session is never cut off; when no session has been live for `idleShutdownMinutes` (15 by default), the supervisor stops the daemon and exits, freeing its memory.
+
+Coordination lives under `~/.claude-use/headroom/`: `state.json` (supervisor pid, daemon pid, port, version, allowlist hash, last error), an exclusive-create start lock so concurrent launches start at most one supervisor, and `sessions/<launcher-pid>.json` files as the session registry, pruned automatically when a launcher pid is no longer alive. `claude-use headroom status` reports all of it read-only, and `claude-use doctor` includes the daemon in its audit.
+
+Two settings live in the global `~/.claude-use/config.json` under `headroom` (they describe one daemon per machine, so they are deliberately global-only, never per-directory):
+
+```json
+{ "headroom": { "source": "headroom[proxy] @ git+https://github.com/ExaDev/headroom", "idleShutdownMinutes": 15 } }
+```
+
+`source` is the install spec handed to `uv tool install` (any PEP 508 form works; a pinned `headroom==0.39.0` is checked against the installed version on every start), and `idleShutdownMinutes` is how long an idle daemon lingers before shutdown.
+
+**The cache-sharing model.** Everything routed through one daemon shares that daemon's caches: the semantic cache (response reuse across identical requests) is shared across accounts, which is the point of running one daemon per machine; headroom's memory state is scoped per project by the `x-headroom-project-id` header, so two projects talking to the same daemon keep separate memory; and the provider (which account's endpoint, which model mapping) is selected per request by `x-headroom-base-url`. Sharing a daemon with other people therefore means giving them the daemon's address under a shared `HEADROOM_PROXY_TOKEN`, which is also what headroom binds memory identity to: point a colleague at your daemon and they share its caches and per-project memory as that token's identity, so treat the token like any other shared credential.
+
 ## Launch flags
 
-`skipPermissions` and `remoteControl` resolve through the same cascade as everything else (shipped default: both off), plus a one-off environment variable escape hatch:
+`skipPermissions` and `remoteControl` resolve through the same cascade as everything else (shipped default: both off), plus a one-off environment variable escape hatch. `provider` and `headroom` (see the sections above) resolve exactly the same way:
 
 ```bash
 CLAUDE_USE_SKIP_PERMISSIONS=1 claude
 CLAUDE_USE_REMOTE_CONTROL=1 claude
+CLAUDE_USE_HEADROOM=1 claude
 ```
 
 `$CLAUDE_EXTRA_FLAGS` is passed straight through to the underlying `claude` binary.

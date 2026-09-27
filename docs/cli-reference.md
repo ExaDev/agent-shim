@@ -12,6 +12,7 @@ The full flag/command reference table, the complete command list, `configure`'s 
 | **An individual entry** | `claude-use profile set <name> --entry "path"=true`; or `claude-use configure <identity> <path>` | `claude --share <path>[,<path>,...]` / `claude --hide <path>[,<path>,...]` / `CLAUDE_USE_ENTRY_OVERRIDE="path=true,otherpath=false"` | `claude-use configure <identity> <path>` run from inside the ruled directory; or `.claude-use.json`'s `"entries"` |
 | **Launch flags** | `claude-use profile set <name> [--skip-permissions] [--remote-control]` | `CLAUDE_USE_SKIP_PERMISSIONS=1 claude` / `CLAUDE_USE_REMOTE_CONTROL=1 claude` | rule's inline `"launch"` field; or `.claude-use.json`'s `"launch"` |
 | **Provider** | `claude-use provider add <name> ...` defines one (under `~/.claude-use/providers/`); a profile pins it with `launch.provider` in `claude-use profile set <name>`'s file | `claude --provider <name>` | rule's inline `"launch": { "provider": ... }` field; or `.claude-use.json`'s `"launch"` |
+| **Headroom routing** | `claude-use profile set <name> --headroom` (or `--no-headroom`); the daemon's own `source`/`idleShutdownMinutes` live in the `headroom` block of `~/.claude-use/config.json`, global-only | `CLAUDE_USE_HEADROOM=1 claude` | rule's inline `"launch": { "headroom": true }` field; or `.claude-use.json`'s `"launch"` |
 | **Ambient-credential guard** | `claude-use identity set <name> --allow-ambient-credential` (per identity, in its `identity.json`) | `CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1 claude` | not applicable — this guard is about the active identity's own credential, not a directory context |
 
 The scriptable `claude-use profile set ...` commands exist alongside the interactive picker specifically so this is automatable — CI, setup scripts, or a `.claude-use.json` generator don't need to drive an interactive prompt. `claude-use profile set`'s `--category` and `--entry` options, and `claude`'s own `--category`/`--share`/`--hide` flags, are each repeatable in one invocation (`claude --share <path> --share <path>`, `claude-use profile set work --category history=true --category knowledge=false`) and each also accepts a comma-separated list of values in a single flag — `<key>=<bool>` pairs for `--category`/`--entry`, plain paths for `--share`/`--hide` — the same convention `claude-use profile create --extends <names>` uses for a comma-separated list of profile names, so setting several categories or entries in one launch or on one profile doesn't need one invocation per key. A `--share`/`--hide` path (and the `CLAUDE_USE_ENTRY_OVERRIDE` env var's keys) still needs its `<category>/` prefix like every other entries key (e.g. `claude --share knowledge/skills/commit`) — see [Category-based sharing](configuration-model.md#category-based-sharing). `CLAUDE_EXTRA_FLAGS` (below) is a different thing entirely, a passthrough to the real Claude Code binary, not a `claude-use` override: it's a single opaque string, split on whitespace before being appended to the real binary's argv — a flag value that itself needs an embedded space isn't expressible through it.
@@ -32,12 +33,14 @@ claude-use profile list
 claude-use profile set-default <name>
 claude-use profile set <name> --category <cat>=<bool>[,<cat>=<bool>,...]
 claude-use profile set <name> --entry "<path>"=<bool>[,"<path>"=<bool>,...]
-claude-use profile set <name> [--skip-permissions] [--remote-control]
+claude-use profile set <name> [--skip-permissions] [--remote-control] [--headroom]
 
 claude-use provider add <name> --display-name <name> --base-url <url> --token-env <VAR> [--env KEY=VALUE]
 claude-use provider list
 claude-use provider show <name>
 claude-use provider remove <name>
+
+claude-use headroom status
 
 claude-use rules add <path> [--profile <name>] [--identity <name>]
 claude-use rules list
