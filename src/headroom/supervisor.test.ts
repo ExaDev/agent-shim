@@ -344,7 +344,7 @@ describe("runSupervisor", () => {
     const world = makeWorld();
     writeHeadroomState(world.fs, paths.headroomStateFile, {
       supervisorPid: 1,
-      installedSource: "headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom",
+      installedSource: "headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@feat/per-session-savings",
     });
     await runSupervisor(resolveSupervisorConfig({ source: "headroom==0.39.0" }), world.ports, { tickLimit: TICKS_SHORT });
     expect(world.installs).toEqual(["headroom==0.39.0"]);
