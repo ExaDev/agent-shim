@@ -28,6 +28,13 @@ src/
     spawn.ts              # spawnClaude — spawns the real binary, propagates its exit code
   identityManager.ts      # `claude-use identity` subcommands
   configProfiles.ts       # `claude-use profile` subcommands (scriptable set/set-default alongside `create`/`list`)
+  providers.ts            # `claude-use provider` subcommands + the launch-time provider resolution the launcher calls
+  headroom/                # the headroom routing daemon: coordination state, the launcher-side ensure step, the supervisor loop, and the `headroom status` / hidden `__headroom-supervisor` commands
+    state.ts               # state.json, the session registry, the start lock, allowlist computation — pure over an injected HeadroomFs
+    ensure.ts               # the launcher's lock-and-poll bring-up: start at most one supervisor, wait for ready state, register the session
+    supervisor.ts           # install/start/restart/drift/idle decision loop, pure over injected SupervisorPorts
+    headers.ts              # ANTHROPIC_CUSTOM_HEADERS merge (Name: Value lines, later block wins per name)
+    commands.ts             # real ports for the supervisor, `headroom status`, command registration
   directoryRules.ts       # `claude-use rules` subcommands
   configure.ts            # `claude-use configure` interactive picker (@clack/prompts)
   check.ts                # `claude-use check` dry-run inspector — cascade resolution, ambient-credential/Keychain/settings-secrets diagnostics — no farm writes, no spawn
@@ -89,6 +96,12 @@ Every config file this tool reads — the global config, named configuration pro
 ### Why `extends` isn't cosmiconfig's `$import`
 
 cosmiconfig also supports an `$import` directive that deep-merges imported files, later imports winning — close to what `extends` needs. (Its default `mergeImportArrays: true` concatenates arrays — imported items first, then local — rather than fully replacing them; only `mergeImportArrays: false` gives array fields the same "later wins" outright-replacement behaviour objects and primitives already get.) It isn't used for two reasons: it resolves imports by relative file path, not by profile name, so a name-to-path resolution step is needed regardless; and it has no awareness of the entries-beat-categories, most-specific-path-wins rule, which has to be bespoke either way. `resolve/flatten.ts` implements one flatten function, reused for both the `extends` chain and the outer cascade, rather than splitting the same conceptual merge across two implementations that could drift apart.
+
+### The headroom daemon
+
+When a launch resolves `headroom` on, the launcher (synchronous end to end, right through to `spawnSync`) never talks to the daemon process directly and never starts `headroom` itself. It goes through an injected `HeadroomPort` whose real implementation does exactly three things synchronously: take an exclusive-create start lock under `<home>/headroom/` (so concurrent launches spawn at most one supervisor), re-exec this very binary detached as `claude-use __headroom-supervisor` (a hidden subcommand; a SEA binary re-execs itself, the npm bundle re-execs Node against its script path), and poll `state.json` until it names a live supervisor, a live daemon pid, and a port, then register the launching pid in `sessions/`. The port number in state is written only after the supervisor's own `/readyz` probe has passed, so "state has a port" is by construction "the proxy answers".
+
+The supervisor is the only thing that starts, stops, restarts, or upgrades headroom. Its whole lifecycle (install via `uv tool install` when the binary is missing or its version fails the configured source, crash restarts with bounded exponential backoff and a retry budget, drift restarts deferred until the session registry is empty, idle shutdown) lives in `src/headroom/supervisor.ts` as one pure-ish loop over injected `SupervisorPorts`, so every decision is tested against a fake clock, filesystem, and process table. Coordination between separate OS processes is entirely file-based (state, lock, session files) with pid liveness as the source of truth, which is what lets a synchronous launcher, a detached supervisor, and several concurrent sessions cooperate without any of them holding a socket open to another.
 
 ### Resolver mechanics
 

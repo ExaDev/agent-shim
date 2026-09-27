@@ -75,12 +75,14 @@ claude-use profile list
 claude-use profile set-default <name>
 claude-use profile set <name> --category <cat>=<bool>[,<cat>=<bool>,...]
 claude-use profile set <name> --entry "<path>"=<bool>[,"<path>"=<bool>,...]
-claude-use profile set <name> [--skip-permissions] [--remote-control]
+claude-use profile set <name> [--skip-permissions] [--remote-control] [--headroom]
 
 claude-use provider add <name> --display-name <name> --base-url <url> --token-env <VAR> [--env KEY=VALUE]
 claude-use provider list
 claude-use provider show <name>
 claude-use provider remove <name>
+
+claude-use headroom status
 
 claude-use rules add <path> [--profile <name>] [--identity <name>]
 claude-use rules list
@@ -164,7 +166,7 @@ Issues and pull requests are welcome. Please keep the tool itself free of assump
 
 ## References
 
-- [docs/configuration-model.md](docs/configuration-model.md): identities, configuration profiles, category-based sharing, the cascade merge algorithm, directory rules, conditional matching, portable `.claude-use.json`, `~/.claude/projects/` pattern matching, providers, and launch flags.
+- [docs/configuration-model.md](docs/configuration-model.md): identities, configuration profiles, category-based sharing, the cascade merge algorithm, directory rules, conditional matching, portable `.claude-use.json`, `~/.claude/projects/` pattern matching, providers, headroom routing, and launch flags.
 - [docs/cli-reference.md](docs/cli-reference.md): the full flag and environment-variable table, `configure`'s file-write precedence, and the `check`/`doctor` debugging commands.
 - [docs/examples.md](docs/examples.md): worked configuration examples and a permutation reference.
 - [docs/architecture.md](docs/architecture.md): the source layout file by file, error reporting design, schema rationale, and resolver mechanics.
