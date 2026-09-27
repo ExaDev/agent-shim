@@ -38,7 +38,7 @@ export interface FarmRuntime {
   readonly uniqueSuffix: string;
   readonly lock: {
     readonly pid: number;
-    readonly isProcessAlive: (pid: number) => boolean;
+    readonly isRunning: (pid: number) => boolean;
     readonly sleep: (ms: number) => void;
     readonly staleAfterMs?: number;
     readonly retryDelayMs?: number;

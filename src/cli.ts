@@ -26,7 +26,7 @@ import {
   realFarmFs,
   realFsPort,
   realHeadroomPort,
-  realIsProcessAlive,
+  realIsProcessRunning,
   realLogPort,
   realOwnExecutablePath,
   realProcPort,
@@ -103,7 +103,8 @@ function buildFarmRuntime(paths: LayoutPaths): {
         }).input,
       now: () => Date.now(),
       uniqueSuffix: `${String(process.pid)}.${randomUUID()}`,
-      lock: { pid: process.pid, isProcessAlive: realIsProcessAlive, sleep: realSleepSync },
+      // Zombie-aware on purpose: a previous launcher that crashed out of a resync without releasing the lock may sit unreaped, still answering signal 0 as alive, and must read as a dead holder so this launch takes the lock over instead of timing out.
+      lock: { pid: process.pid, isRunning: realIsProcessRunning, sleep: realSleepSync },
     },
     ...(selections.identity === undefined ? {} : { directoryIdentity: selections.identity }),
     ...(selections.configProfile === undefined ? {} : { directoryConfigProfile: selections.configProfile }),

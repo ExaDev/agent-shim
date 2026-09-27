@@ -37,7 +37,7 @@ describe("acquireIdentityLock", () => {
       fs,
       nowMs: () => T0,
       pid: PID_HOLDER,
-      isProcessAlive: () => true,
+      isRunning: () => true,
       sleep: sleeper.sleep,
     });
 
@@ -59,7 +59,7 @@ describe("acquireIdentityLock", () => {
       fs,
       nowMs: () => T0,
       pid: PID_HOLDER,
-      isProcessAlive: () => true,
+      isRunning: () => true,
       sleep: sleeper.sleep,
     });
 
@@ -70,7 +70,7 @@ describe("acquireIdentityLock", () => {
         fs,
         nowMs: () => T0_PLUS_100_MS,
         pid: PID_WAITER,
-        isProcessAlive: () => true,
+        isRunning: () => true,
         sleep: sleeper.sleep,
         maxAttempts: MAX_ATTEMPTS,
         retryDelayMs: RETRY_DELAY_MS,
@@ -86,7 +86,7 @@ describe("acquireIdentityLock", () => {
       fs,
       nowMs: () => T0_PLUS_200_MS,
       pid: PID_WAITER,
-      isProcessAlive: () => true,
+      isRunning: () => true,
       sleep: sleeper.sleep,
       maxAttempts: MAX_ATTEMPTS,
     });
@@ -101,7 +101,7 @@ describe("acquireIdentityLock", () => {
       fs,
       nowMs: () => T0,
       pid: PID_HOLDER_VERBOSE,
-      isProcessAlive: () => true,
+      isRunning: () => true,
       sleep: fakeSleep().sleep,
     });
 
@@ -112,7 +112,7 @@ describe("acquireIdentityLock", () => {
         fs,
         nowMs: () => T0,
         pid: PID_WAITER,
-        isProcessAlive: () => true,
+        isRunning: () => true,
         sleep: fakeSleep().sleep,
         maxAttempts: 1,
       }),
@@ -127,7 +127,7 @@ describe("acquireIdentityLock", () => {
       fs,
       nowMs: () => T0,
       pid: PID_HOLDER,
-      isProcessAlive: () => true,
+      isRunning: () => true,
       sleep: fakeSleep().sleep,
     });
 
@@ -138,7 +138,7 @@ describe("acquireIdentityLock", () => {
       fs,
       nowMs: () => T0_PLUS_1_MS,
       pid: PID_WAITER,
-      isProcessAlive: (pid) => pid === PID_WAITER,
+      isRunning: (pid) => pid === PID_WAITER,
       sleep: sleeper.sleep,
       maxAttempts: MAX_ATTEMPTS,
     });
@@ -155,7 +155,7 @@ describe("acquireIdentityLock", () => {
       fs,
       nowMs: () => T0,
       pid: PID_HOLDER,
-      isProcessAlive: () => true,
+      isRunning: () => true,
       sleep: fakeSleep().sleep,
     });
 
@@ -165,7 +165,7 @@ describe("acquireIdentityLock", () => {
       fs,
       nowMs: () => T0 + PAST_STALENESS_WINDOW_MS,
       pid: PID_WAITER,
-      isProcessAlive: () => true,
+      isRunning: () => true,
       sleep: fakeSleep().sleep,
       maxAttempts: MAX_ATTEMPTS,
     });
@@ -184,7 +184,7 @@ describe("acquireIdentityLock", () => {
       fs,
       nowMs: () => T0,
       pid: PID_WAITER,
-      isProcessAlive: () => true,
+      isRunning: () => true,
       sleep: fakeSleep().sleep,
       maxAttempts: MAX_ATTEMPTS,
     });
@@ -200,7 +200,7 @@ describe("acquireIdentityLock", () => {
       fs,
       nowMs: () => T0,
       pid: PID_HOLDER,
-      isProcessAlive: () => true,
+      isRunning: () => true,
       sleep: fakeSleep().sleep,
     });
 
@@ -211,7 +211,7 @@ describe("acquireIdentityLock", () => {
       fs,
       nowMs: () => T0_PLUS_1_MS,
       pid: PID_WAITER,
-      isProcessAlive: (pid) => pid === PID_WAITER,
+      isRunning: (pid) => pid === PID_WAITER,
       sleep: fakeSleep().sleep,
     });
     first.release();

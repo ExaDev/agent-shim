@@ -459,7 +459,7 @@ export function recoverFarm(params: RecoverFarmParams): RecoveryResult {
     fs: params.fs,
     nowMs: params.now,
     pid: params.lock.pid,
-    isProcessAlive: params.lock.isProcessAlive,
+    isRunning: params.lock.isRunning,
     sleep: params.lock.sleep,
     ...(params.lock.staleAfterMs === undefined ? {} : { staleAfterMs: params.lock.staleAfterMs }),
     ...(params.lock.retryDelayMs === undefined ? {} : { retryDelayMs: params.lock.retryDelayMs }),
@@ -583,7 +583,7 @@ export interface ResyncFarmParams {
   readonly uniqueSuffix: string;
   readonly lock: {
     readonly pid: number;
-    readonly isProcessAlive: (pid: number) => boolean;
+    readonly isRunning: (pid: number) => boolean;
     readonly sleep: (ms: number) => void;
     readonly staleAfterMs?: number;
     readonly retryDelayMs?: number;
@@ -660,7 +660,7 @@ export function resyncFarm(params: ResyncFarmParams): ResyncFarmResult {
     fs: params.fs,
     nowMs: params.now,
     pid: params.lock.pid,
-    isProcessAlive: params.lock.isProcessAlive,
+    isRunning: params.lock.isRunning,
     sleep: params.lock.sleep,
     ...(params.lock.staleAfterMs === undefined ? {} : { staleAfterMs: params.lock.staleAfterMs }),
     ...(params.lock.retryDelayMs === undefined ? {} : { retryDelayMs: params.lock.retryDelayMs }),

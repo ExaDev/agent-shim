@@ -40,7 +40,7 @@ function params(fs: FakeFarmFs, overrides: Partial<ResyncFarmParams> = {}): Resy
     classification: { defaults: shippedClassification },
     now: () => FAKE_NOW_MS,
     uniqueSuffix: "test",
-    lock: { pid: 42, isProcessAlive: () => true, sleep: fakeSleep().sleep },
+    lock: { pid: 42, isRunning: () => true, sleep: fakeSleep().sleep },
     ...overrides,
   };
 }
@@ -277,7 +277,7 @@ describe("resyncFarm", () => {
         params(fs, {
           uniqueSuffix: "blocked",
           cascade: cascade({ categories: { history: true } }),
-          lock: { pid: 42, isProcessAlive: () => true, sleep: fakeSleep().sleep, maxAttempts: 2 },
+          lock: { pid: 42, isRunning: () => true, sleep: fakeSleep().sleep, maxAttempts: 2 },
         }),
       ),
     ).toThrow(IdentityLockBusyError);

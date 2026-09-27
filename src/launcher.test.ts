@@ -321,7 +321,7 @@ function fakeFarm(fs: FakeFarmFs, cliOverride?: CascadeInput["cliOverride"]): Fa
     }),
     now: () => FAKE_NOW_MS,
     uniqueSuffix: "launcher-test",
-    lock: { pid: 42, isProcessAlive: () => true, sleep: fakeSleep().sleep, maxAttempts: 2 },
+    lock: { pid: 42, isRunning: () => true, sleep: fakeSleep().sleep, maxAttempts: 2 },
   };
 }
 

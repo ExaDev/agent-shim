@@ -50,8 +50,8 @@ export interface AcquireIdentityLockParams {
   readonly fs: FarmFs;
   readonly nowMs: () => number;
   readonly pid: number;
-  /** Answers whether a process is still running, so a lock left behind by a crash is recognised rather than waited out for the full staleness window. */
-  readonly isProcessAlive: (pid: number) => boolean;
+  /** Answers whether a process is still running, so a lock left behind by a crash is recognised rather than waited out for the full staleness window. Zombie-aware: a holder that exited without being reaped still answers signal 0 as alive, but will never release the lock itself. */
+  readonly isRunning: (pid: number) => boolean;
   /** Blocks for the given number of milliseconds. Synchronous by necessity: the whole launcher is synchronous, right through to `spawnSync`. */
   readonly sleep: (ms: number) => void;
   readonly staleAfterMs?: number;
@@ -131,7 +131,7 @@ export function acquireIdentityLock(params: AcquireIdentityLockParams): Identity
     }
     lastHolderPid = existing.pid;
     const expired = params.nowMs() - existing.acquiredAtMs > staleAfterMs;
-    if (expired || !params.isProcessAlive(existing.pid)) {
+    if (expired || !params.isRunning(existing.pid)) {
       params.fs.removeRecursive(lockPath);
       continue;
     }
