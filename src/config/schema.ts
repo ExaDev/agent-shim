@@ -87,6 +87,7 @@ const LaunchSchema = z.strictObject({
   skipPermissions: z.boolean().optional(),
   remoteControl: z.boolean().optional(),
   provider: z.string().min(1).optional(),
+  headroom: z.boolean().optional(),
 });
 export type LaunchFlags = z.infer<typeof LaunchSchema>;
 
@@ -145,6 +146,26 @@ export const PortableConfigSchema = ConfigProfileSchema.omit({ description: true
 });
 export type PortableConfig = z.infer<typeof PortableConfigSchema>;
 
+/**
+ * The user-global headroom daemon block: how claude-use installs and supervises the local headroom proxy when a launch routes through it. Deliberately global-only: the daemon is one per machine (one per CLAUDE_USE_HOME), so a per-directory or per-profile setting would be a claim about the same singleton from several places at once.
+ */
+const HeadroomGlobalConfigSchema = z.strictObject({
+  /** Install spec handed to `uv tool install`. Defaults to HEADROOM_DEFAULT_SOURCE. */
+  source: z.string().min(1).optional(),
+  /** How long the daemon may sit with no registered sessions before the supervisor stops it. Defaults to HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES. */
+  idleShutdownMinutes: z.number().int().positive().optional(),
+});
+
+/**
+ * The default `headroom.source` install spec: the ExaDev headroom repository, with the `proxy` extra that provides the `headroom proxy` entry point. Kept here rather than in the supervisor because it is the schema's own documented default, referenced by `HeadroomGlobalConfigSchema`'s field docs.
+ */
+export const HEADROOM_DEFAULT_SOURCE = "headroom[proxy] @ git+https://github.com/ExaDev/headroom";
+
+/**
+ * The default `headroom.idleShutdownMinutes`: long enough that back-to-back sessions keep the daemon warm through a coffee break, short enough that an abandoned daemon frees its memory the same working day rather than squatting until reboot.
+ */
+export const HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES = 15;
+
 /** The user-global `~/.claude-use/config.json`. */
 export const GlobalConfigSchema = z.strictObject({
   $schema: z.string().optional(),
@@ -153,6 +174,7 @@ export const GlobalConfigSchema = z.strictObject({
   categories: CategoryMapSchema.optional(),
   entries: EntriesSchema.optional(),
   launch: LaunchSchema.optional(),
+  headroom: HeadroomGlobalConfigSchema.optional(),
 });
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 

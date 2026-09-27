@@ -179,6 +179,7 @@ interface ProfileSetOptions {
   readonly entry?: Record<string, boolean>;
   readonly skipPermissions?: boolean;
   readonly remoteControl?: boolean;
+  readonly headroom?: boolean;
 }
 
 /** Registers the `claude-use profile` subcommand tree onto `program`. */
@@ -258,6 +259,8 @@ export function registerProfileCommand(program: Command, paths: LayoutPaths): vo
     .option("--no-skip-permissions", "Set this profile's skipPermissions launch flag to false.")
     .option("--remote-control", "Set this profile's remoteControl launch flag to true.")
     .option("--no-remote-control", "Set this profile's remoteControl launch flag to false.")
+    .option("--headroom", "Set this profile's headroom launch flag to true.")
+    .option("--no-headroom", "Set this profile's headroom launch flag to false.")
     .action((name: string, options: ProfileSetOptions) => {
       requireProfileExists(paths, name);
       let touched = false;
@@ -276,12 +279,15 @@ export function registerProfileCommand(program: Command, paths: LayoutPaths): vo
       if (options.remoteControl !== undefined) {
         launchPatch.remoteControl = options.remoteControl;
       }
+      if (options.headroom !== undefined) {
+        launchPatch.headroom = options.headroom;
+      }
       if (Object.keys(launchPatch).length > 0) {
         setProfileLaunchFlags(paths, name, launchPatch);
         touched = true;
       }
       if (!touched) {
-        console.log("Nothing to change: pass --category, --entry, --skip-permissions, or --remote-control.");
+        console.log("Nothing to change: pass --category, --entry, --skip-permissions, --remote-control, or --headroom.");
         return;
       }
       console.log(`Updated configuration profile "${name}".`);

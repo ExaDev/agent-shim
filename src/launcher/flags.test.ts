@@ -4,13 +4,14 @@ import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags } from "./flags"
 
 describe("resolveLaunchFlags", () => {
   it("defaults both flags to off when nothing sets them — a deliberate change from the legacy always-on script", () => {
-    expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false });
+    expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false, headroom: false });
   });
 
   it("turns skipPermissions on via the CLAUDE_USE_SKIP_PERMISSIONS=1 escape hatch", () => {
     expect(resolveLaunchFlags({ env: { CLAUDE_USE_SKIP_PERMISSIONS: "1" } })).toEqual({
       skipPermissions: true,
       remoteControl: false,
+      headroom: false,
     });
   });
 
@@ -18,48 +19,64 @@ describe("resolveLaunchFlags", () => {
     expect(resolveLaunchFlags({ env: { CLAUDE_USE_REMOTE_CONTROL: "1" } })).toEqual({
       skipPermissions: false,
       remoteControl: true,
+      headroom: false,
     });
   });
 
   it("does not treat any value other than the literal string '1' as set", () => {
     expect(
       resolveLaunchFlags({ env: { CLAUDE_USE_SKIP_PERMISSIONS: "true", CLAUDE_USE_REMOTE_CONTROL: "0" } }),
-    ).toEqual({ skipPermissions: false, remoteControl: false });
+    ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false });
   });
 
   it("honours a cascade value once one is supplied, independent of the env escape hatch", () => {
     expect(resolveLaunchFlags({ env: {}, cascade: { skipPermissions: true, remoteControl: true } })).toEqual({
       skipPermissions: true,
       remoteControl: true,
+      headroom: false,
     });
   });
 
   it("ORs the cascade value with the env escape hatch rather than one overriding the other", () => {
     expect(
       resolveLaunchFlags({ env: { CLAUDE_USE_REMOTE_CONTROL: "1" }, cascade: { skipPermissions: true } }),
-    ).toEqual({ skipPermissions: true, remoteControl: true });
+    ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false });
+  });
+
+  it("turns headroom on via the CLAUDE_USE_HEADROOM=1 escape hatch", () => {
+    expect(resolveLaunchFlags({ env: { CLAUDE_USE_HEADROOM: "1" } })).toEqual({
+      skipPermissions: false,
+      remoteControl: false,
+      headroom: true,
+    });
+  });
+
+  it("resolves headroom from a cascade value and ORs it with the escape hatch", () => {
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true } }).headroom).toBe(true);
+    expect(resolveLaunchFlags({ env: { CLAUDE_USE_HEADROOM: "0" }, cascade: { headroom: false } }).headroom).toBe(false);
+    expect(resolveLaunchFlags({ env: { CLAUDE_USE_HEADROOM: "1" }, cascade: { headroom: false } }).headroom).toBe(true);
   });
 });
 
 describe("buildFlagArgs", () => {
   it("emits nothing when both flags are off", () => {
-    expect(buildFlagArgs({ skipPermissions: false, remoteControl: false })).toEqual([]);
+    expect(buildFlagArgs({ skipPermissions: false, remoteControl: false, headroom: false })).toEqual([]);
   });
 
   it("emits --dangerously-skip-permissions when skipPermissions is on", () => {
-    expect(buildFlagArgs({ skipPermissions: true, remoteControl: false })).toEqual([
+    expect(buildFlagArgs({ skipPermissions: true, remoteControl: false, headroom: false })).toEqual([
       "--dangerously-skip-permissions",
     ]);
   });
 
   it("emits --remote-control= with a literal trailing equals and empty value, never bare --remote-control", () => {
-    const args = buildFlagArgs({ skipPermissions: false, remoteControl: true });
+    const args = buildFlagArgs({ skipPermissions: false, remoteControl: true, headroom: false });
     expect(args).toEqual(["--remote-control="]);
     expect(args).not.toContain("--remote-control");
   });
 
   it("emits both flags, skip-permissions before remote-control, matching the legacy script's own order", () => {
-    expect(buildFlagArgs({ skipPermissions: true, remoteControl: true })).toEqual([
+    expect(buildFlagArgs({ skipPermissions: true, remoteControl: true, headroom: false })).toEqual([
       "--dangerously-skip-permissions",
       "--remote-control=",
     ]);
@@ -215,5 +232,56 @@ describe("buildEnv", () => {
     });
     expect(env.ANTHROPIC_MODEL).toBe("glm-4.6");
     expect(env.API_TIMEOUT_MS).toBe("600000");
+  });
+
+  it("routes through headroom on top of a provider: the proxy becomes the base URL and the provider's upstream moves into a per-request header", () => {
+    const env = buildEnv({
+      baseEnv,
+      configDirEscapeHatch: false,
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      provider: {
+        name: "z",
+        definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" },
+        token: "tok-from-z",
+      },
+      headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
+    });
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
+    expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-headroom-project-id: /home/testuser/work/repo\nx-headroom-base-url: https://api.z.ai/api/anthropic");
+  });
+
+  it("routes through headroom without a provider: only the project-id header, no base-url override", () => {
+    const env = buildEnv({
+      baseEnv,
+      configDirEscapeHatch: false,
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
+    });
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-headroom-project-id: /home/testuser/work/repo");
+  });
+
+  it("merges a provider's own ANTHROPIC_CUSTOM_HEADERS with headroom's entries", () => {
+    const env = buildEnv({
+      baseEnv: { ...baseEnv, ANTHROPIC_CUSTOM_HEADERS: "x-from-parent: yes" },
+      configDirEscapeHatch: false,
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      provider: {
+        name: "o",
+        definition: {
+          displayName: "OpenRouter",
+          baseUrl: "https://openrouter.ai/api/v1",
+          tokenEnv: "OPENROUTER_API_KEY",
+          env: { ANTHROPIC_CUSTOM_HEADERS: "x-from-provider: indeed" },
+        },
+        token: "tok-from-o",
+      },
+      headroom: { port: 8123, projectId: "/repo" },
+    });
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(
+      "x-from-parent: yes\nx-from-provider: indeed\nx-headroom-project-id: /repo\nx-headroom-base-url: https://openrouter.ai/api/v1",
+    );
   });
 });

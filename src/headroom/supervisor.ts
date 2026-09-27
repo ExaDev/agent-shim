@@ -1,0 +1,303 @@
+import { HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES, HEADROOM_DEFAULT_SOURCE } from "../config/schema";
+import type { LayoutPaths } from "../paths";
+import {
+  hashAllowlist,
+  headroomAllowlist,
+  listSessions,
+  pruneDeadSessions,
+  readAllProviders,
+  readHeadroomState,
+  writeHeadroomState,
+  type HeadroomFs,
+} from "./state";
+
+/** Everything the supervisor needs to run the daemon, resolved from the global config and the filesystem before it starts. */
+export interface HeadroomSupervisorConfig {
+  /** The install spec as configured (`headroom.source`), already defaulted. */
+  readonly source: string;
+  /** `headroom.idleShutdownMinutes`, already defaulted. */
+  readonly idleShutdownMinutes: number;
+}
+
+/** How the supervisor resolves the configured source against its defaults. */
+export function resolveSupervisorConfig(configured: { readonly source?: string; readonly idleShutdownMinutes?: number }): HeadroomSupervisorConfig {
+  return {
+    source: configured.source ?? HEADROOM_DEFAULT_SOURCE,
+    idleShutdownMinutes: configured.idleShutdownMinutes ?? HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES,
+  };
+}
+
+/**
+ * Every effect the supervisor performs, injected so the whole lifecycle is testable against fakes: no real process, port, clock, or HTTP call ever happens in a unit test.
+ */
+export interface SupervisorPorts {
+  readonly fs: HeadroomFs;
+  readonly paths: LayoutPaths;
+  readonly ownPid: number;
+  readonly now: () => number;
+  /** Blocks for `ms`; the real implementation is the same synchronous Atomics.wait sleep the launcher uses. */
+  readonly sleep: (ms: number) => void;
+  readonly isProcessAlive: (pid: number) => boolean;
+  /** Returns a free loopback port. Async because the only reliable way to reserve one is to bind and release a socket. */
+  readonly freePort: () => Promise<number>;
+  /** Starts `headroom proxy` bound to `port` with the given allowlist, returning its pid. Output goes to the daemon log. */
+  readonly spawnHeadroom: (port: number, allowlist: readonly string[]) => number;
+  /** Stops a process the supervisor owns, escalating as needed. */
+  readonly stopProcess: (pid: number) => void;
+  /** True once `GET /readyz` on the port succeeds. */
+  readonly ready: (port: number) => Promise<boolean>;
+  /** Runs `uv tool install <spec>`, logging output to the daemon log. Returns ok=false with the error when `uv` is absent or the install fails. */
+  readonly install: (spec: string) => { readonly ok: boolean; readonly error?: string };
+  /** The installed `headroom --version` output, or undefined when the binary is not on PATH. */
+  readonly headroomVersion: () => string | undefined;
+  readonly log: (line: string) => void;
+}
+
+/** First retry delay after a failed start. Half a second keeps a transient blip invisible to the next launch. */
+export const HEADROOM_BACKOFF_BASE_MS = 500;
+/** Ceiling for the retry delay: with no live sessions there is no user waiting, so half a minute between attempts is the most the daemon log should grow. */
+export const HEADROOM_BACKOFF_CAP_MS = 30_000;
+/** Consecutive failed starts before the supervisor gives up, records `lastError`, and exits: a proxy that cannot come up five times in a row is broken, not unlucky. */
+export const HEADROOM_START_RETRY_BUDGET = 5;
+/** How long one started proxy has to answer `/readyz` before the attempt counts as failed. A cold Python process on loopback takes seconds, not minutes. */
+const HEADROOM_READY_TIMEOUT_MS = 15_000;
+/** The supervisor's own tick rate for crash detection, drift checks, and idle shutdown. */
+export const HEADROOM_POLL_MS = 1_000;
+
+/** Milliseconds per minute, so the idle shutdown threshold reads as the config field it derives from. */
+const MS_PER_MINUTE = 60_000;
+
+/** The backoff for attempt `attempt` (1-based): base doubled per failure, capped. */
+export function backoffForAttempt(attempt: number): number {
+  return Math.min(HEADROOM_BACKOFF_CAP_MS, HEADROOM_BACKOFF_BASE_MS * 2 ** (attempt - 1));
+}
+
+/**
+ * Whether an installed `headroom --version` string satisfies the configured source. A source carrying a PEP 440 specifier (`headroom>=0.39`, `headroom==0.39.1`) is checked against the version; anything else (a bare git URL, the default) carries no version to check and is satisfied by any install, with drift handled by comparing `installedSource` instead.
+ */
+export function versionSatisfies(version: string | undefined, source: string): boolean {
+  if (version === undefined) {
+    return false;
+  }
+  const specifier = /==|>=|<=|!=|>|<|~=/.exec(source);
+  if (specifier === null) {
+    return true;
+  }
+  const installed = parseVersion(version);
+  const wanted = parseVersion(source.slice(specifier.index + specifier[0].length));
+  if (installed === undefined || wanted === undefined) {
+    return true;
+  }
+  const cmp = compareVersions(installed, wanted);
+  switch (specifier[0]) {
+    case "==":
+      return cmp === 0;
+    case "!=":
+      return cmp !== 0;
+    case ">=":
+      return cmp >= 0;
+    case "<=":
+      return cmp <= 0;
+    case ">":
+      return cmp > 0;
+    case "<":
+      return cmp < 0;
+    case "~=":
+      // Compatible release: same major.minor prefix, not older. With the wanted version's last component dropped, plain >= over the prefix.
+      return compareVersions(installed.slice(0, Math.max(0, wanted.length - 1)), wanted.slice(0, Math.max(0, wanted.length - 1))) === 0 && cmp >= 0;
+    default:
+      return true;
+  }
+}
+
+/** The numeric components of the first version-looking token in `input`, or undefined when there is none. */
+function parseVersion(input: string): readonly number[] | undefined {
+  const match = /(\d+)(\.\d+)*/.exec(input);
+  if (match === null) {
+    return undefined;
+  }
+  return match[0].split(".").map((part) => Number.parseInt(part, 10));
+}
+
+function compareVersions(a: readonly number[], b: readonly number[]): number {
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const left = a[index] ?? 0;
+    const right = b[index] ?? 0;
+    if (left !== right) {
+      return left - right;
+    }
+  }
+  return 0;
+}
+
+/** Options for `runSupervisor`. */
+export interface RunSupervisorOptions {
+  /**
+   * Bounds the supervisor loop's iterations. The real supervisor runs until it exits on its own (idle shutdown or fatal error); a bounded run is how tests observe steady-state behaviour (drift deferral, restart-on-crash, pruning) without an infinite loop, and such a run returns `HEADROOM_SUPERVISOR_STILL_RUNNING` instead of an exit code.
+   */
+  readonly tickLimit?: number;
+}
+
+/** Returned by a tick-bounded `runSupervisor` that reached its limit while still managing the daemon: not an exit code, and never produced without `tickLimit`. */
+export const HEADROOM_SUPERVISOR_STILL_RUNNING = -1;
+
+/**
+ * Runs the headroom supervisor loop: install, start, keep alive, restart on crash, restart on drift once no session would be cut off, and shut down after the configured idle period with an empty session registry. Returns the process exit code (0 for an idle shutdown, 1 for a fatal setup failure).
+ *
+ * Every effect flows through `ports`, so the whole loop is unit-testable with a fake clock, filesystem, and processes. The function is `async` only for the readiness probe; nothing else awaits.
+ */
+export async function runSupervisor(
+  config: HeadroomSupervisorConfig,
+  ports: SupervisorPorts,
+  options: RunSupervisorOptions = {},
+): Promise<number> {
+  const { fs, paths } = ports;
+
+  const fail = (message: string): number => {
+    writeHeadroomState(fs, paths.headroomStateFile, { lastError: message });
+    fs.removeRecursive(paths.headroomLockFile);
+    ports.log(`claude-use headroom supervisor: ${message}`);
+    return 1;
+  };
+
+  let installedSource = readHeadroomState(fs, paths.headroomStateFile)?.installedSource;
+
+  /**
+   * Installs headroom when the binary is missing, its version fails the configured source's specifier, or the configured source changed since the last install this supervisor performed. An absent `installedSource` with a satisfying binary does NOT install: a user's own `uv tool install headroom` is a legitimate install to respect.
+   */
+  const ensureInstalled = (): boolean => {
+    const version = ports.headroomVersion();
+    const versionOk = version !== undefined && versionSatisfies(version, config.source);
+    if (versionOk && (installedSource === undefined || installedSource === config.source)) {
+      // Adopting the satisfying install as this source's: an absent record with a healthy binary is a user's own install to respect, and recording it here is what stops every later tick reading as source drift.
+      installedSource = config.source;
+      return true;
+    }
+    ports.log(`claude-use headroom supervisor: installing headroom from ${config.source}`);
+    const result = ports.install(config.source);
+    if (!result.ok) {
+      return false;
+    }
+    installedSource = config.source;
+    return true;
+  };
+
+  if (!ensureInstalled()) {
+    return fail(`could not install headroom from ${config.source}: install failed (is uv installed and on PATH?)`);
+  }
+  const version = ports.headroomVersion() ?? "unknown";
+
+  // Fresh ownership: whatever came before, this supervisor is now the one keeping headroom alive.
+  writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: ports.ownPid, version, installedSource });
+  ports.log(`claude-use headroom supervisor ${String(ports.ownPid)}: managing headroom on allowlist [${allowlistOf(ports).join(", ")}]`);
+
+  let headroomPid: number | undefined;
+  let runningHash: string | undefined;
+  let consecutiveFailures = 0;
+  let idleSince: number | undefined;
+  let ticks = 0;
+
+  for (;;) {
+    if (options.tickLimit !== undefined && ticks >= options.tickLimit) {
+      return HEADROOM_SUPERVISOR_STILL_RUNNING;
+    }
+    ticks += 1;
+    // Recomputed every tick: provider files can change on disk at any moment, and the allowlist is the daemon's whole security posture.
+    const allowlist = allowlistOf(ports);
+    const allowlistHash = hashAllowlist(allowlist);
+    pruneDeadSessions(fs, paths.headroomSessionsDir, ports.isProcessAlive);
+
+    const crashed = headroomPid !== undefined && !ports.isProcessAlive(headroomPid);
+    if (headroomPid === undefined || crashed) {
+      if (crashed) {
+        ports.log(`claude-use headroom supervisor: headroom pid ${String(headroomPid)} died`);
+        headroomPid = undefined;
+        runningHash = undefined;
+      }
+      if (consecutiveFailures >= HEADROOM_START_RETRY_BUDGET) {
+        return fail(`headroom failed to become ready ${String(consecutiveFailures)} times in a row; giving up`);
+      }
+      // A plain crash-restart keeps the existing install; only a changed source needs another install pass.
+      if (installedSource !== config.source && !ensureInstalled()) {
+        return fail(`could not install headroom from ${config.source}: install failed (is uv installed and on PATH?)`);
+      }
+      const port = await ports.freePort();
+      const pid = ports.spawnHeadroom(port, allowlist);
+      const ready = await waitUntilReady(ports, port);
+      if (ready) {
+        consecutiveFailures = 0;
+        headroomPid = pid;
+        runningHash = allowlistHash;
+        writeHeadroomState(fs, paths.headroomStateFile, {
+          supervisorPid: ports.ownPid,
+          headroomPid: pid,
+          port,
+          version,
+          allowlistHash,
+          installedSource: config.source,
+        });
+        // The start lock has done its job: state now names a live supervisor, so every future launcher finds it there instead.
+        fs.removeRecursive(paths.headroomLockFile);
+        idleSince = undefined;
+        ports.log(`claude-use headroom supervisor: headroom pid ${String(pid)} ready on 127.0.0.1:${String(port)}`);
+      } else {
+        ports.stopProcess(pid);
+        consecutiveFailures += 1;
+        ports.log(
+          `claude-use headroom supervisor: headroom did not become ready on port ${String(port)} ` +
+            `(attempt ${String(consecutiveFailures)} of ${String(HEADROOM_START_RETRY_BUDGET)})`,
+        );
+        ports.sleep(backoffForAttempt(consecutiveFailures));
+        continue;
+      }
+    } else {
+      // Running: drift first. A changed allowlist or install spec means the daemon would serve different upstreams than the configuration asks for, but restarting would cut off live sessions, so it waits for a quiet registry.
+      if (runningHash !== allowlistHash || installedSource !== config.source) {
+        if (listSessions(fs, paths.headroomSessionsDir).length === 0) {
+          ports.log("claude-use headroom supervisor: configuration drifted and no sessions are live; restarting headroom");
+          ports.stopProcess(headroomPid);
+          headroomPid = undefined;
+          runningHash = undefined;
+          continue;
+        }
+      }
+
+      const sessions = listSessions(fs, paths.headroomSessionsDir);
+      if (sessions.length === 0) {
+        idleSince ??= ports.now();
+        const idleMs = ports.now() - idleSince;
+        if (idleMs >= config.idleShutdownMinutes * MS_PER_MINUTE) {
+          ports.log(
+            `claude-use headroom supervisor: no sessions for ${String(config.idleShutdownMinutes)} minute(s); stopping headroom and exiting`,
+          );
+          ports.stopProcess(headroomPid);
+          writeHeadroomState(fs, paths.headroomStateFile, { version });
+          return 0;
+        }
+      } else {
+        idleSince = undefined;
+      }
+    }
+
+    ports.sleep(HEADROOM_POLL_MS);
+  }
+}
+
+/** The allowlist as it stands right now: every provider's base URL plus Claude Code's own API. */
+function allowlistOf(ports: SupervisorPorts): readonly string[] {
+  return headroomAllowlist(readAllProviders(ports.fs, ports.paths.providersDir).map((entry) => entry.provider));
+}
+
+/** Polls `/readyz` until it answers or `HEADROOM_READY_TIMEOUT_MS` elapses. */
+async function waitUntilReady(ports: SupervisorPorts, port: number): Promise<boolean> {
+  const deadline = ports.now() + HEADROOM_READY_TIMEOUT_MS;
+  for (;;) {
+    if (await ports.ready(port)) {
+      return true;
+    }
+    if (ports.now() >= deadline) {
+      return false;
+    }
+    ports.sleep(HEADROOM_POLL_MS);
+  }
+}

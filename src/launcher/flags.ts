@@ -1,11 +1,14 @@
 import path from "node:path";
 
 import type { LaunchFlags, Provider } from "../config/schema";
+import { mergeAnthropicCustomHeaders } from "../headroom/headers";
+import type { HeadroomUp } from "./ports";
 
 /** The fully resolved launch flags for one launch. */
 export interface ResolvedLaunchFlags {
   readonly skipPermissions: boolean;
   readonly remoteControl: boolean;
+  readonly headroom: boolean;
 }
 
 function isEnvFlagSet(value: string | undefined): boolean {
@@ -22,7 +25,7 @@ export interface ResolveLaunchFlagsParams {
 }
 
 /**
- * Resolves `skipPermissions`/`remoteControl` for one launch: the cascade's own value (once Phase 5 wires it) OR-ed with the one-off environment variable escape hatch, defaulting to OFF for both when neither says otherwise.
+ * Resolves `skipPermissions`/`remoteControl`/`headroom` for one launch: the cascade's own value (once Phase 5 wires it) OR-ed with the one-off environment variable escape hatch, defaulting to OFF for all three when neither says otherwise.
  *
  * This default-off posture is a deliberate change from the legacy bash tool, which passed `--dangerously-skip-permissions` unconditionally on every launch.
  */
@@ -30,6 +33,7 @@ export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLa
   return {
     skipPermissions: params.cascade?.skipPermissions === true || isEnvFlagSet(params.env.CLAUDE_USE_SKIP_PERMISSIONS),
     remoteControl: params.cascade?.remoteControl === true || isEnvFlagSet(params.env.CLAUDE_USE_REMOTE_CONTROL),
+    headroom: params.cascade?.headroom === true || isEnvFlagSet(params.env.CLAUDE_USE_HEADROOM),
   };
 }
 
@@ -82,6 +86,8 @@ export interface BuildEnvParams {
   readonly identitiesDir: string;
   /** The provider resolved for this launch, when one was resolved. Its token is supplied by the caller because reading it and refusing an unset one needs the caller's log/exit ports. */
   readonly provider?: ResolvedProvider;
+  /** The headroom daemon this launch routes through, when headroom resolved on. The provider's own base URL moves into the per-request `x-headroom-base-url` header; the child itself talks only to the local proxy. */
+  readonly headroom?: HeadroomUp;
 }
 
 /**
@@ -91,10 +97,15 @@ export interface BuildEnvParams {
  *
  * A resolved provider is applied regardless of the identity outcome, because it selects which API endpoint the child talks to, not which login's data it sees: `ANTHROPIC_BASE_URL` points at the provider, `ANTHROPIC_AUTH_TOKEN` carries the token read from the provider's `tokenEnv`, `CLAUDE_USE_PROVIDER` names the provider for the statusline, and the provider's own `env` entries land verbatim. `ANTHROPIC_API_KEY` is explicitly cleared (to the empty string, which Claude Code treats as unset) unless the provider's `env` names its own value: an ambient `ANTHROPIC_API_KEY` inherited from the parent would outrank the token just set, silently authenticating the child as the ambient key instead of the provider.
  *
+ * A resolved headroom daemon is applied last, on top of the provider: the child's `ANTHROPIC_BASE_URL` becomes the local proxy (never the provider's own URL), `HEADROOM_PROXY_URL` names the proxy for anything else that wants it, and `ANTHROPIC_CUSTOM_HEADERS` gains the `x-headroom-project-id` (memory scoping) and, when a provider is active, `x-headroom-base-url` (per-request upstream selection) entries, merged with any headers the provider's own `env` or the parent environment already set.
+ *
  * `$CLAUDE_EXTRA_FLAGS` is never stripped from the child's environment: some wrappers set it two process-levels up and rely on inheritance through a `claude` invoked from inside a running session.
  */
 export function buildEnv(params: BuildEnvParams): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...params.baseEnv };
+  // Captured before the provider application below, which would otherwise overwrite it: the parent's own custom headers and the provider's must MERGE when headroom adds its entries, not replace each other.
+  const parentCustomHeaders = params.baseEnv.ANTHROPIC_CUSTOM_HEADERS;
+  let providerCustomHeaders: string | undefined;
 
   if (!params.configDirEscapeHatch && params.resolvedIdentityName !== undefined) {
     env.CLAUDE_CONFIG_DIR = path.join(params.identitiesDir, params.resolvedIdentityName);
@@ -102,6 +113,7 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
 
   if (params.provider !== undefined) {
     const providerEnv = params.provider.definition.env ?? {};
+    providerCustomHeaders = providerEnv.ANTHROPIC_CUSTOM_HEADERS;
     env.ANTHROPIC_BASE_URL = params.provider.definition.baseUrl;
     env.ANTHROPIC_AUTH_TOKEN = params.provider.token;
     env.ANTHROPIC_API_KEY = providerEnv.ANTHROPIC_API_KEY ?? "";
@@ -109,6 +121,25 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
     for (const [key, value] of Object.entries(providerEnv)) {
       env[key] = value;
     }
+  }
+
+  if (params.headroom !== undefined) {
+    // The child talks only to the local proxy; the provider's real upstream moves into the per-request header below, which is what lets one daemon serve several providers at once.
+    const proxyUrl = `http://127.0.0.1:${String(params.headroom.port)}`;
+    env.ANTHROPIC_BASE_URL = proxyUrl;
+    env.HEADROOM_PROXY_URL = proxyUrl;
+    env.ANTHROPIC_CUSTOM_HEADERS = mergeAnthropicCustomHeaders(
+      [
+        ...(parentCustomHeaders === undefined ? [] : [parentCustomHeaders]),
+        ...(providerCustomHeaders === undefined ? [] : [providerCustomHeaders]),
+      ],
+      [
+        { name: "x-headroom-project-id", value: params.headroom.projectId },
+        ...(params.provider === undefined
+          ? []
+          : [{ name: "x-headroom-base-url", value: params.provider.definition.baseUrl }]),
+      ],
+    );
   }
 
   return env;

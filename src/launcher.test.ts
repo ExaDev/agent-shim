@@ -3,7 +3,7 @@ import { describe, expect, it, vi, type Mock } from "vitest";
 import { runLauncher, type FarmRuntime, type RunLauncherParams } from "./launcher";
 import { identityLockPath } from "./launcher/lock";
 import { PROVIDER_MISSING_TOKEN_EXIT } from "./providers";
-import type { FsPort, LogPort, ProcPort, SpawnPort, SpawnResult } from "./launcher/ports";
+import type { FsPort, HeadroomPort, LogPort, ProcPort, SpawnPort, SpawnResult } from "./launcher/ports";
 import { buildLayoutPaths } from "./paths";
 import type { CascadeInput } from "./resolve/walk";
 import { createFakeFarmFs, fakeSleep, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, shippedClassification, type FakeFarmFs } from "./test-helpers";
@@ -74,6 +74,11 @@ function spawnedEnv(spawn: ReturnType<typeof fakeSpawn>): Record<string, string 
 }
 
 const discovered: DiscoveredClaudeBinary = { path: "/home/testuser/.local/share/claude/versions/2.1.0", source: "versions-dir", version: "2.1.0" };
+
+/** The loopback port the fake headroom daemon pretends to listen on. */
+const HEADROOM_PORT = 8123;
+/** A second port, so one test can prove the daemon in use is the one ensure() reported. */
+const OTHER_HEADROOM_PORT = 9999;
 
 function runAndCaptureExit(params: RunLauncherParams): number {
   try {
@@ -319,6 +324,138 @@ function fakeFarm(fs: FakeFarmFs, cliOverride?: CascadeInput["cliOverride"]): Fa
     lock: { pid: 42, isProcessAlive: () => true, sleep: fakeSleep().sleep, maxAttempts: 2 },
   };
 }
+
+describe("runLauncher headroom routing", () => {
+  function fakeHeadroomPort(
+    port = HEADROOM_PORT,
+    projectId = "/home/testuser/work/repo",
+  ): HeadroomPort & { readonly ensures: number; readonly releases: number } {
+    let ensures = 0;
+    let releases = 0;
+    return {
+      get ensures() {
+        return ensures;
+      },
+      get releases() {
+        return releases;
+      },
+      ensure: () => {
+        ensures += 1;
+        return { port, projectId };
+      },
+      release: () => {
+        releases += 1;
+      },
+    };
+  }
+
+  it("brings the daemon up via the injected port and wires the child env to the local proxy when CLAUDE_USE_HEADROOM=1", () => {
+    const spawn = fakeSpawn();
+    const headroom = fakeHeadroomPort();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--print"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      headroom,
+    });
+
+    expect(headroom.ensures).toBe(1);
+    const env = spawnedEnv(spawn);
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
+    expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-headroom-project-id: /home/testuser/work/repo");
+    expect(headroom.releases).toBeGreaterThan(0);
+  });
+
+  it("resolves headroom through the cascade like any other launch flag", () => {
+    const fs = createFakeFarmFs({});
+    const spawn = fakeSpawn();
+    const headroom = fakeHeadroomPort(OTHER_HEADROOM_PORT, "/repo");
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc({}, ["@work"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      farm: fakeFarm(fs, { launch: { headroom: true } }),
+      headroom,
+    });
+
+    expect(headroom.ensures).toBe(1);
+    expect(spawnedEnv(spawn).HEADROOM_PROXY_URL).toBe("http://127.0.0.1:9999");
+  });
+
+  it("routes a provider through headroom: proxy base URL, provider upstream in the per-request header, token from the provider", () => {
+    const spawn = fakeSpawn();
+    const headroom = fakeHeadroomPort();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({
+        [`${FAKE_HOME}/.claude-use/providers/z.json`]: {
+          displayName: "GLM",
+          baseUrl: "https://api.z.ai/api/anthropic",
+          tokenEnv: "Z_API_TOKEN",
+        },
+      }),
+      spawn,
+      proc: fakeProc({ Z_API_TOKEN: "tok-z", CLAUDE_USE_HEADROOM: "1" }, ["--provider", "z"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      headroom,
+    });
+
+    const env = spawnedEnv(spawn);
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(
+      "x-headroom-project-id: /home/testuser/work/repo\nx-headroom-base-url: https://api.z.ai/api/anthropic",
+    );
+  });
+
+  it("refuses loudly when headroom resolved on but no headroom port was wired", () => {
+    const spawn = fakeSpawn();
+    const log = fakeLog();
+
+    const code = runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--print"]),
+      log,
+      resolveClaudeBinary: () => discovered,
+    });
+
+    expect(code).toBe(1);
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+    expect(log.errors[0]).toContain("no headroom port");
+  });
+
+  it("never touches the headroom port when headroom resolved off", () => {
+    const spawn = fakeSpawn();
+    const headroom = fakeHeadroomPort();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc({}, ["--print"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      headroom,
+    });
+
+    expect(headroom.ensures).toBe(0);
+    expect(headroom.releases).toBe(0);
+    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBeUndefined();
+  });
+});
 
 describe("runLauncher provider selection", () => {
   const providerZ = {

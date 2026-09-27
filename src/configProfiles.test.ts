@@ -185,6 +185,15 @@ describe("configProfiles", () => {
       expect(updated.launch).toEqual({ skipPermissions: true, remoteControl: true });
     });
 
+    it("merges headroom with the other launch flags", () => {
+      createProfile(paths, "base");
+      setProfileLaunchFlags(paths, "base", { skipPermissions: true });
+      expect(setProfileLaunchFlags(paths, "base", { headroom: true }).launch).toEqual({
+        skipPermissions: true,
+        headroom: true,
+      });
+    });
+
     it("throws ProfileNotFoundError for a profile that does not exist", () => {
       expect(() => setProfileLaunchFlags(paths, "ghost", { skipPermissions: true })).toThrow(ProfileNotFoundError);
     });

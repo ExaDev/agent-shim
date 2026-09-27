@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -6,7 +6,10 @@ import { isSea } from "node:sea";
 
 import { cosmiconfigReader } from "./config/load";
 import { discoverClaudeBinary, type DiscoveredClaudeBinary, type VersionsDirEntry } from "./versionDiscovery";
-import type { FarmFs, FsPort, LogPort, ProcPort, RunPort, SpawnPort } from "./launcher/ports";
+import { ensureHeadroom } from "./headroom/ensure";
+import { removeSession } from "./headroom/state";
+import type { LayoutPaths } from "./paths";
+import type { FarmFs, FsPort, HeadroomPort, LogPort, ProcPort, RunPort, SpawnPort } from "./launcher/ports";
 
 function isEnoent(error: unknown): boolean {
   return (
@@ -170,6 +173,65 @@ export function resolveGitBranch(run: RunPort, cwd: string): { branch?: string; 
     return { branchDetached: true };
   }
   return { branch: name, branchDetached: false };
+}
+
+/** The repository root containing `cwd`, or undefined outside a repository: headroom's per-project identity (`x-headroom-project-id`). */
+function resolveGitRoot(run: RunPort, cwd: string): string | undefined {
+  const result = run.run("git", ["-C", cwd, "rev-parse", "--show-toplevel"]);
+  if (result.status !== 0) {
+    return undefined;
+  }
+  const root = result.stdout.trim();
+  return root === "" ? undefined : root;
+}
+
+/**
+ * Spawns the detached headroom supervisor: a background copy of this very executable running the hidden `__headroom-supervisor` subcommand, its output appended to the daemon log, unref'd so the launcher never waits on it. `CLAUDE_USE_HOME` is passed explicitly so the supervisor lands on the same root as its spawner even when the launcher was started with the variable set only for itself.
+ */
+function spawnHeadroomSupervisor(paths: LayoutPaths): number {
+  fs.mkdirSync(paths.logsDir, { recursive: true });
+  const logFd = fs.openSync(paths.headroomLogPath, "a");
+  try {
+    // A SEA binary re-execs itself directly; the npm-published bundle needs the script path for Node to run.
+    const args = isSea() ? ["__headroom-supervisor"] : [realContentSourcePath(), "__headroom-supervisor"];
+    const child = spawn(process.execPath, args, {
+      detached: true,
+      stdio: ["ignore", logFd, logFd],
+      env: { ...process.env, CLAUDE_USE_HOME: paths.root },
+    });
+    child.unref();
+    if (child.pid === undefined) {
+      throw new Error("spawning the headroom supervisor returned no pid");
+    }
+    return child.pid;
+  } finally {
+    fs.closeSync(logFd);
+  }
+}
+
+/**
+ * The real `HeadroomPort` for one launch: `ensure` runs the lock-and-poll coordination against the real filesystem and process table and derives the per-project identity from the real git repository containing the working directory; `release` removes this launcher's session-registry entry.
+ */
+export function realHeadroomPort(paths: LayoutPaths): HeadroomPort {
+  return {
+    ensure: () => {
+      const up = ensureHeadroom({
+        paths,
+        launcherPid: process.pid,
+        ports: {
+          fs: realFarmFs,
+          isProcessAlive: realIsProcessAlive,
+          now: () => Date.now(),
+          sleep: realSleepSync,
+          spawnSupervisor: spawnHeadroomSupervisor,
+        },
+      });
+      return { port: up.port, projectId: resolveGitRoot(realRunPort, process.cwd()) ?? process.cwd() };
+    },
+    release: () => {
+      removeSession(realFarmFs, paths.headroomSessionsDir, process.pid);
+    },
+  };
 }
 
 /** The real `SpawnPort`, backed by `node:child_process`'s `spawnSync` — the Node equivalent of the legacy bash tool's `exec`. */

@@ -146,6 +146,14 @@ describe("phase one: launch flags", () => {
     );
     expect(flattened.launch).toEqual({ skipPermissions: true, provider: "o" });
   });
+
+  it("resolves headroom last-layer-wins like every other launch flag", () => {
+    const flattened = flattenLayers(
+      [layer(0, { launch: { headroom: true } }), layer(1, { launch: { headroom: false } })],
+      { home: FAKE_HOME },
+    );
+    expect(flattened.launch).toEqual({ headroom: false });
+  });
 });
 
 describe("matchingRules", () => {

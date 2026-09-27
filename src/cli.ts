@@ -11,6 +11,7 @@ import { CliError } from "./cliError";
 import { realPromptsPort, registerConfigureCommand, runProfileWizard } from "./configure";
 import { isInvokedAsClaude, registerShimCommand, resolveOwnInstallDirs } from "./claudeShim";
 import { registerDoctorCommand } from "./doctor";
+import { registerHeadroomCommand } from "./headroom/commands";
 import { registerIdentityCommand, tryRunAtIdentityShortcut } from "./identityManager";
 import { profileExists, registerProfileCommand } from "./configProfiles";
 import { registerProviderCommand } from "./providers";
@@ -24,6 +25,7 @@ import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import {
   realFarmFs,
   realFsPort,
+  realHeadroomPort,
   realIsProcessAlive,
   realLogPort,
   realOwnExecutablePath,
@@ -60,6 +62,7 @@ function buildClaudeUseProgram(): Command {
   registerConfigureCommand(program, paths);
   registerDoctorCommand(program, paths);
   registerShimCommand(program, paths);
+  registerHeadroomCommand(program, paths);
   registerRunCommand(program, runClaude);
 
   return program;
@@ -173,6 +176,7 @@ async function runClaude(argvOverride?: readonly string[]): Promise<void> {
     log: realLogPort,
     resolveClaudeBinary: realResolveClaudeBinary(resolveOwnInstallDirs(paths, realOwnExecutablePath())),
     farm: farm.runtime,
+    headroom: realHeadroomPort(paths),
     ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
     ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
     ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),

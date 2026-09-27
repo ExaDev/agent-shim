@@ -107,6 +107,24 @@
         "provider": {
           "type": "string",
           "minLength": 1
+        },
+        "headroom": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "headroom": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "idleShutdownMinutes": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "additionalProperties": false
