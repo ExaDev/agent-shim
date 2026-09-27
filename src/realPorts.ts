@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { isSea } from "node:sea";
 
@@ -224,6 +225,26 @@ function spawnHeadroomSupervisor(paths: LayoutPaths): number {
   } finally {
     fs.closeSync(logFd);
   }
+}
+
+/**
+ * Whether nothing is currently listening on one specific loopback port: binds it on 127.0.0.1 and releases, so the headroom supervisor can decide whether its sticky `lastPort` is still reusable. The same bind-and-release technique the supervisor's `freePort` uses, applied to a number the caller already cares about rather than asking the OS to pick one.
+ */
+export async function realIsPortFree(port: number): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const server = net.createServer();
+    server.unref();
+    // First resolution wins: an error while binding means the port is taken, and the later close event must not overwrite that answer.
+    server.once("error", () => {
+      resolve(false);
+    });
+    server.once("close", () => {
+      resolve(true);
+    });
+    server.listen(port, "127.0.0.1", () => {
+      server.close();
+    });
+  });
 }
 
 /**

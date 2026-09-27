@@ -26,6 +26,7 @@ const SESSION_PID = 321;
 const ZOMBIE_SESSION_PID = 322;
 const ORPHAN_DAEMON_PID = 888;
 const ORPHAN_DAEMON_PORT = 4321;
+const STICKY_PORT = 4100;
 const OWN_PID = 4242;
 const TICKS_INSTALL_TEST = 3;
 const TICKS_SHORT = 2;
@@ -66,6 +67,8 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
   let installOk = true;
   const alive = new Set<number>([process.pid]);
   const zombies = new Set<number>();
+  const occupied = new Set<number>();
+  let freePortCalls = 0;
   const spawns: { pid: number; port: number; allowlist: readonly string[] }[] = [];
   const stops: number[] = [];
   const installs: string[] = [];
@@ -74,14 +77,26 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
   let onSleep: (() => void) | undefined;
 
   /** Resolves on a later microtask, the way a real readiness probe awaits I/O; also keeps the promise-shaped fakes honest under the async rules. */
-async function settled<T>(value: T): Promise<T> {
-  return await Promise.resolve(value);
-}
+  async function settled<T>(value: T): Promise<T> {
+    return await Promise.resolve(value);
+  }
 
-const world = {
+  /** A dead daemon closes its listener, whatever its port was: without this, a reused port would keep answering /readyz from beyond the grave. */
+  function dropReadyPort(pid: number): void {
+    for (let index = spawns.length - 1; index >= 0; index -= 1) {
+      const spawn = spawns[index];
+      if (spawn?.pid === pid) {
+        readyPorts.delete(spawn.port);
+        return;
+      }
+    }
+  }
+
+  const world = {
     fs,
     alive,
     zombies,
+    occupied,
     spawns,
     stops,
     installs,
@@ -104,11 +119,14 @@ const world = {
     kill(pid: number): void {
       alive.delete(pid);
       zombies.delete(pid);
+      dropReadyPort(pid);
     },
     /** The observed macOS failure mode: the process died but nothing reaped it, so signal 0 still answers while nothing is running. */
     zombify(pid: number): void {
       zombies.add(pid);
+      dropReadyPort(pid);
     },
+    freePortCallCount: () => freePortCalls,
     writeSessionFile(pid: number): void {
       alive.add(pid);
       writeSession(fs, paths.headroomSessionsDir, { pid, startedAt: clock });
@@ -128,9 +146,11 @@ const world = {
       },
       isRunning: (pid: number) => alive.has(pid) && !zombies.has(pid),
       freePort: async () => {
+        freePortCalls += 1;
         nextPort += 1;
         return await settled(nextPort);
       },
+      isPortFree: async (port: number) => await settled(!occupied.has(port)),
       spawnHeadroom: (port: number, allowlist: readonly string[]) => {
         nextPid += 1;
         alive.add(nextPid);
@@ -331,6 +351,59 @@ describe("runSupervisor", () => {
     expect(world.stops).toContain(ORPHAN_DAEMON_PID);
     expect(world.spawns).toHaveLength(1);
     expect(world.alive.has(ORPHAN_DAEMON_PID)).toBe(false);
+  });
+
+  it("reuses the sticky port from state on start and on every restart while it stays free, so live sessions keep their address", async () => {
+    const world = makeWorld();
+    writeHeadroomState(world.fs, paths.headroomStateFile, { lastPort: STICKY_PORT });
+    let crashed = false;
+    world.onSleep = () => {
+      if (!crashed && world.spawns.length === 1) {
+        const first = world.spawns[0];
+        if (first !== undefined) {
+          world.kill(first.pid);
+          crashed = true;
+        }
+      }
+    };
+    const code = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_CRASH_RESTART });
+    expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
+    expect(world.spawns).toHaveLength(2);
+    expect(world.spawns.map((spawn) => spawn.port)).toEqual([STICKY_PORT, STICKY_PORT]);
+    expect(world.freePortCallCount()).toBe(0);
+    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    expect(state.port).toBe(STICKY_PORT);
+    expect(state.lastPort).toBe(STICKY_PORT);
+  });
+
+  it("falls back to a fresh port and records the move when the sticky port is occupied", async () => {
+    const world = makeWorld();
+    writeHeadroomState(world.fs, paths.headroomStateFile, { lastPort: STICKY_PORT });
+    world.occupied.add(STICKY_PORT);
+    await runSupervisor(config, world.ports, { tickLimit: TICKS_SHORT });
+    const fresh = world.spawns[0];
+    if (fresh === undefined) {
+      throw new Error("expected a spawn");
+    }
+    expect(fresh.port).not.toBe(STICKY_PORT);
+    expect(world.freePortCallCount()).toBe(1);
+    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    expect(state.lastPort).toBe(fresh.port);
+    expect(world.logLines.some((line) => line.includes(`sticky port ${String(STICKY_PORT)} was occupied`))).toBe(true);
+  });
+
+  it("keeps lastPort across an idle shutdown and seeds the next supervisor generation with it", async () => {
+    const world = makeWorld();
+    writeHeadroomState(world.fs, paths.headroomStateFile, { lastPort: STICKY_PORT });
+    const idleCode = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_ONE_MINUTE }, world.ports);
+    expect(idleCode).toBe(0);
+    const shutDown = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    expect(shutDown.port).toBeUndefined();
+    expect(shutDown.lastPort).toBe(STICKY_PORT);
+    const nextCode = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_SHORT });
+    expect(nextCode).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
+    expect(world.spawns[0]?.port).toBe(STICKY_PORT);
+    expect(world.freePortCallCount()).toBe(0);
   });
 
   it("gives up after the retry budget when the daemon never becomes ready, recording lastError", async () => {
