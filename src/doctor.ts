@@ -26,7 +26,7 @@ import { isIdentityDirectoryName } from "./identityManager";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
 import type { RunPort } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
-import { findExecutableInDir, realFsPort, realIsProcessAlive, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
+import { findExecutableInDir, realFsPort, realIsProcessRunning, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
 import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./resolve/extends";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 
@@ -132,10 +132,10 @@ export interface RunDoctorParams {
   readonly run?: RunPort;
   /** `process.platform` in real use; the Keychain check only ever runs when this is `"darwin"`. */
   readonly platform: string;
-  /** The headroom daemon's state.json plus a liveness predicate for the pids it names. Omit the raw text when the daemon has never run; that is a pass, not a failure. */
+  /** The headroom daemon's state.json plus a zombie-aware liveness predicate for the pids it names (a defunct daemon holds no port but still answers signal 0). Omit the raw text when the daemon has never run; that is a pass, not a failure. */
   readonly headroom: {
     readonly state: DoctorFileInput;
-    readonly isProcessAlive: (pid: number) => boolean;
+    readonly isRunning: (pid: number) => boolean;
   };
 }
 
@@ -383,8 +383,8 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
       push("headroom", "fail", validated.message);
     } else {
       const state = validated.data;
-      const supervisorAlive = state.supervisorPid !== undefined && params.headroom.isProcessAlive(state.supervisorPid);
-      const headroomAlive = state.headroomPid !== undefined && params.headroom.isProcessAlive(state.headroomPid);
+      const supervisorAlive = state.supervisorPid !== undefined && params.headroom.isRunning(state.supervisorPid);
+      const headroomAlive = state.headroomPid !== undefined && params.headroom.isRunning(state.headroomPid);
       if (state.supervisorPid === undefined) {
         if (state.lastError === undefined) {
           push("headroom", "pass", "Headroom daemon is stopped (idle shutdown) with no recorded error.");
@@ -603,7 +603,7 @@ export function registerDoctorCommand(program: Command, paths: LayoutPaths): voi
         },
         run: realRunPort,
         platform: process.platform,
-        headroom: { state: { path: paths.headroomStateFile, raw: realFsPort.readFileUtf8(paths.headroomStateFile) }, isProcessAlive: realIsProcessAlive },
+        headroom: { state: { path: paths.headroomStateFile, raw: realFsPort.readFileUtf8(paths.headroomStateFile) }, isRunning: realIsProcessRunning },
       });
 
       for (const line of formatDoctorReport(report)) {

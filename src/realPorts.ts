@@ -142,13 +142,30 @@ export function realSleepSync(ms: number): void {
 }
 
 /** Whether a process is still running. Signal 0 performs the permission and existence checks without delivering anything; `EPERM` means the process exists but belongs to another user. */
-export function realIsProcessAlive(pid: number): boolean {
+function realIsProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
     return isErrorWithCode(error, "EPERM");
   }
+}
+
+/**
+ * Whether `pid` is a zombie: a process that has exited but whose parent has not reaped it. Read from `ps`'s process-state column, the one source that distinguishes "exited, awaiting reap" from "running": a defunct process still answers `kill(pid, 0)` (so `realIsProcessAlive` alone cannot see the difference), while `ps -o stat=` reports `Z` for exactly that state.
+ *
+ * When `ps` is unavailable (no POSIX userland, i.e. Windows) the answer is "not a zombie", falling back to plain signal-0 semantics rather than guessing every process dead.
+ */
+function realIsProcessZombie(pid: number): boolean {
+  const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
+  return result.status === 0 && result.stdout.trim().startsWith("Z");
+}
+
+/**
+ * Whether `pid` is a live, schedulable process: signal-0 alive AND not a zombie. This is the liveness notion every headroom coordination decision must use, because a defunct daemon holds no port and a defunct supervisor will never write state, yet both still "exist" as far as signal 0 is concerned.
+ */
+export function realIsProcessRunning(pid: number): boolean {
+  return realIsProcessAlive(pid) && !realIsProcessZombie(pid);
 }
 
 /** The real `RunPort`, used for auxiliary commands whose output this process needs to read — git branch detection for `when: { branch }` conditions, and `check.ts`'s macOS Keychain lookup. */
@@ -220,7 +237,8 @@ export function realHeadroomPort(paths: LayoutPaths): HeadroomPort {
         launcherPid: process.pid,
         ports: {
           fs: realFarmFs,
-          isProcessAlive: realIsProcessAlive,
+          // Zombie-aware on purpose: a supervisor that died while still a child of this launcher sits unreaped until the launcher itself exits, and a defunct supervisor answering signal 0 as alive would stretch every launch to the full start timeout.
+          isRunning: realIsProcessRunning,
           now: () => Date.now(),
           sleep: realSleepSync,
           spawnSupervisor: spawnHeadroomSupervisor,

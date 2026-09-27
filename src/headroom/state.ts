@@ -140,15 +140,17 @@ export function listSessions(fs: HeadroomFs, sessionsDir: string): readonly Head
   return sessions.sort((a, b) => a.pid - b.pid);
 }
 
-/** Removes every registry entry whose pid is no longer alive: a launcher that died without releasing its entry must not keep the daemon awake or block a drift restart forever. Returns the pids removed. */
+/**
+ * Removes every registry entry whose pid is no longer running: a launcher that died without releasing its entry must not keep the daemon awake or block a drift restart forever. The predicate must be zombie-aware (see `realIsProcessRunning`): a launcher that exited but was never reaped still answers signal 0 as alive, which would keep its session registered indefinitely.
+ */
 export function pruneDeadSessions(
   fs: HeadroomFs,
   sessionsDir: string,
-  isProcessAlive: (pid: number) => boolean,
+  isRunning: (pid: number) => boolean,
 ): readonly number[] {
   const removed: number[] = [];
   for (const session of listSessions(fs, sessionsDir)) {
-    if (!isProcessAlive(session.pid)) {
+    if (!isRunning(session.pid)) {
       removeSession(fs, sessionsDir, session.pid);
       removed.push(session.pid);
     }

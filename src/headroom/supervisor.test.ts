@@ -10,8 +10,11 @@ import {
   HEADROOM_BACKOFF_CAP_MS,
   HEADROOM_POLL_MS,
   HEADROOM_START_RETRY_BUDGET,
+  KILL_GRACE_MS,
   resolveSupervisorConfig,
   runSupervisor,
+  stopSupervisedProcess,
+  TERM_GRACE_MS,
   versionSatisfies,
   type SupervisorPorts,
 } from "./supervisor";
@@ -20,6 +23,9 @@ import { hashAllowlist, headroomAllowlist, writeHeadroomState, writeSession } fr
 const paths = buildLayoutPaths("/home/testuser/.claude-use");
 
 const SESSION_PID = 321;
+const ZOMBIE_SESSION_PID = 322;
+const ORPHAN_DAEMON_PID = 888;
+const ORPHAN_DAEMON_PORT = 4321;
 const OWN_PID = 4242;
 const TICKS_INSTALL_TEST = 3;
 const TICKS_SHORT = 2;
@@ -37,7 +43,9 @@ const ATTEMPT_FOUR = 4;
 const DRIFT_DONE_PHASE = 3;
 
 /**
- * The fake world `runSupervisor` runs against: a fake filesystem seeded with providers, a clock advanced only by the supervisor's own sleeps, a live-pid set, and controllable readiness, install, and version results. `onSleep` lets a test script the outside world (a provider file appearing, a session ending) between ticks.
+ * The fake world `runSupervisor` runs against: a fake filesystem seeded with providers, a clock advanced only by the supervisor's own sleeps, a modelled process table, and controllable readiness, install, and version results. `onSleep` lets a test script the outside world (a provider file appearing, a session ending) between ticks.
+ *
+ * The process model distinguishes exactly what the real one does: `alive` is signal-0-style existence, `zombies` holds pids that exited without being reaped (still "existing", never running), and `kill` models the ChildProcess exit event (death observed and the child reaped, the way the real supervisor's exit listener does).
  */
 function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[] = []) {
   const fs = createFakeFarmFs({});
@@ -57,6 +65,7 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
   let version: string | undefined = "headroom 0.39.1";
   let installOk = true;
   const alive = new Set<number>([process.pid]);
+  const zombies = new Set<number>();
   const spawns: { pid: number; port: number; allowlist: readonly string[] }[] = [];
   const stops: number[] = [];
   const installs: string[] = [];
@@ -72,6 +81,7 @@ async function settled<T>(value: T): Promise<T> {
 const world = {
     fs,
     alive,
+    zombies,
     spawns,
     stops,
     installs,
@@ -90,8 +100,14 @@ const world = {
     set installOk(value: boolean) {
       installOk = value;
     },
+    /** The ChildProcess exit event arriving: death observed, child reaped, no zombie remains. */
     kill(pid: number): void {
       alive.delete(pid);
+      zombies.delete(pid);
+    },
+    /** The observed macOS failure mode: the process died but nothing reaped it, so signal 0 still answers while nothing is running. */
+    zombify(pid: number): void {
+      zombies.add(pid);
     },
     writeSessionFile(pid: number): void {
       alive.add(pid);
@@ -102,14 +118,15 @@ const world = {
       paths,
       ownPid: OWN_PID,
       now: () => clock,
-      sleep: (ms: number) => {
+      sleep: async (ms: number) => {
         clock += ms;
         sleepDelays.push(ms);
         if (onSleep !== undefined) {
           onSleep();
         }
+        await settled(undefined);
       },
-      isProcessAlive: (pid: number) => alive.has(pid),
+      isRunning: (pid: number) => alive.has(pid) && !zombies.has(pid),
       freePort: async () => {
         nextPort += 1;
         return await settled(nextPort);
@@ -117,6 +134,7 @@ const world = {
       spawnHeadroom: (port: number, allowlist: readonly string[]) => {
         nextPid += 1;
         alive.add(nextPid);
+        zombies.delete(nextPid);
         spawns.push({ pid: nextPid, port, allowlist: [...allowlist] });
         if (autoReady) {
           readyPorts.add(port);
@@ -235,7 +253,7 @@ describe("runSupervisor", () => {
     expect(String(state.lastError)).toContain("could not install headroom");
   });
 
-  it("restarts a daemon that crashed while sessions were live", async () => {
+  it("restarts a daemon whose exit event reports the crash while sessions were live", async () => {
     const world = makeWorld();
     let crashed = false;
     world.onSleep = () => {
@@ -251,6 +269,68 @@ describe("runSupervisor", () => {
     const code = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_CRASH_RESTART });
     expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     expect(world.spawns).toHaveLength(2);
+  });
+
+  it("treats a zombie daemon as dead and restarts it even though a signal-0 existence check would still report it alive", async () => {
+    const world = makeWorld();
+    let zombified = false;
+    world.onSleep = () => {
+      if (!zombified && world.spawns.length === 1) {
+        const first = world.spawns[0];
+        if (first !== undefined) {
+          world.zombify(first.pid);
+          zombified = true;
+        }
+      }
+    };
+    const code = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_CRASH_RESTART });
+    expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
+    const first = world.spawns[0];
+    if (first === undefined) {
+      throw new Error("expected a first spawn");
+    }
+    // The zombie still "exists" in the modelled table, which is exactly what made the signal-0 check miss it.
+    expect(world.alive.has(first.pid)).toBe(true);
+    expect(world.zombies.has(first.pid)).toBe(true);
+    expect(world.spawns).toHaveLength(2);
+  });
+
+  it("clears the daemon fields from state the moment a crash is detected, so status never claims a dead port", async () => {
+    const world = makeWorld();
+    let zombified = false;
+    world.onSleep = () => {
+      if (!zombified && world.spawns.length === 1) {
+        const first = world.spawns[0];
+        if (first !== undefined) {
+          // The replacement never becomes ready, so the run stops in the crashed-and-restarting window where the cleared state is observable.
+          world.autoReady = false;
+          world.zombify(first.pid);
+          zombified = true;
+        }
+      }
+    };
+    await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_SHORT });
+    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    expect(state.port).toBeUndefined();
+    expect(state.headroomPid).toBeUndefined();
+    expect(state.supervisorPid).toBe(OWN_PID);
+    expect(world.spawns.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stops an orphan daemon left behind by a dead predecessor before starting its own", async () => {
+    const world = makeWorld();
+    world.alive.add(ORPHAN_DAEMON_PID);
+    writeHeadroomState(world.fs, paths.headroomStateFile, {
+      supervisorPid: 1,
+      headroomPid: ORPHAN_DAEMON_PID,
+      port: ORPHAN_DAEMON_PORT,
+      installedSource: HEADROOM_DEFAULT_SOURCE,
+    });
+    const code = await runSupervisor(config, world.ports, { tickLimit: TICKS_SHORT });
+    expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
+    expect(world.stops).toContain(ORPHAN_DAEMON_PID);
+    expect(world.spawns).toHaveLength(1);
+    expect(world.alive.has(ORPHAN_DAEMON_PID)).toBe(false);
   });
 
   it("gives up after the retry budget when the daemon never becomes ready, recording lastError", async () => {
@@ -332,12 +412,15 @@ describe("runSupervisor", () => {
     expect(world.stops).toHaveLength(0);
   });
 
-  it("prunes registry entries whose launcher pid has died", async () => {
+  it("prunes registry entries whose launcher pid has died, including a zombie the signal-0 table still lists", async () => {
     const world = makeWorld();
     world.writeSessionFile(SESSION_PID);
     world.alive.delete(SESSION_PID);
+    world.writeSessionFile(ZOMBIE_SESSION_PID);
+    world.zombify(ZOMBIE_SESSION_PID);
     await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_INSTALL_TEST });
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/${String(SESSION_PID)}.json`)).toBeUndefined();
+    expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/${String(ZOMBIE_SESSION_PID)}.json`)).toBeUndefined();
   });
 
   it("reinstalls when the configured source changed since the last install", async () => {
@@ -348,5 +431,78 @@ describe("runSupervisor", () => {
     });
     await runSupervisor(resolveSupervisorConfig({ source: "headroom==0.39.0" }), world.ports, { tickLimit: TICKS_SHORT });
     expect(world.installs).toEqual(["headroom==0.39.0"]);
+  });
+});
+
+describe("stopSupervisedProcess", () => {
+  const STOP_PID = 900;
+
+  /** How the modelled target responds: exiting on SIGTERM, ignoring SIGTERM until killed, surviving even SIGKILL, or being gone before the first signal. */
+  type StopBehaviour = "dies-on-term" | "ignores-term" | "unkillable" | "already-gone";
+
+  function stopWorld(behaviour: StopBehaviour) {
+    const signals: NodeJS.Signals[] = [];
+    let clock = 0;
+    return {
+      signals,
+      elapsed: () => clock,
+      primitives: {
+        signal: (pid: number, signal: NodeJS.Signals) => {
+          signals.push(signal);
+          if (behaviour === "already-gone") {
+            throw new Error(`kill(${String(pid)}) failed: no such process`);
+          }
+        },
+        isRunning: () => {
+          if (behaviour === "already-gone") {
+            return false;
+          }
+          if (behaviour === "dies-on-term") {
+            return !signals.includes("SIGTERM");
+          }
+          if (behaviour === "ignores-term") {
+            return !signals.includes("SIGKILL");
+          }
+          return true;
+        },
+        waitMs: (ms: number) => {
+          clock += ms;
+        },
+        now: () => clock,
+      },
+    };
+  }
+
+  it("never escalates when the process exits on SIGTERM", () => {
+    const world = stopWorld("dies-on-term");
+    expect(stopSupervisedProcess(STOP_PID, world.primitives)).toBe("exited-on-term");
+    expect(world.signals).toEqual(["SIGTERM"]);
+  });
+
+  it("escalates to SIGKILL once the SIGTERM grace expires, because this proxy ignores SIGTERM", () => {
+    const world = stopWorld("ignores-term");
+    expect(stopSupervisedProcess(STOP_PID, world.primitives)).toBe("killed");
+    expect(world.signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(world.elapsed()).toBeGreaterThanOrEqual(TERM_GRACE_MS);
+  });
+
+  it("reports still-running when even SIGKILL does not clear the process within its grace", () => {
+    const world = stopWorld("unkillable");
+    expect(stopSupervisedProcess(STOP_PID, world.primitives)).toBe("still-running");
+    expect(world.signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(world.elapsed()).toBeGreaterThanOrEqual(TERM_GRACE_MS + KILL_GRACE_MS);
+  });
+
+  it("sends nothing further when the process is already gone", () => {
+    const world = stopWorld("already-gone");
+    expect(stopSupervisedProcess(STOP_PID, world.primitives)).toBe("exited-on-term");
+    expect(world.signals).toEqual(["SIGTERM"]);
+  });
+
+  it("isRunning is consulted with the zombie-aware notion: a defunct target reads as gone", () => {
+    // The dies-on-term model above exercises the happy path; this pins the contract the real implementation relies on: isRunning false means no escalation, whatever signal-0 would say.
+    const world = stopWorld("already-gone");
+    expect(stopSupervisedProcess(STOP_PID, world.primitives)).toBe("exited-on-term");
+    expect(world.signals).not.toContain("SIGKILL");
   });
 });

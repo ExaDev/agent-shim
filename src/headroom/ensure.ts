@@ -27,7 +27,8 @@ export class HeadroomStartError extends CliError {
 /** Every effect the ensure step performs, injected so it runs against fakes in tests. */
 export interface EnsureHeadroomPorts {
   readonly fs: HeadroomFs;
-  readonly isProcessAlive: (pid: number) => boolean;
+  /** Zombie-aware liveness: a supervisor or daemon that exited without being reaped still answers signal 0 as alive, but will never serve a request or write state, so it must read as dead here (see `realIsProcessRunning`). */
+  readonly isRunning: (pid: number) => boolean;
   readonly now: () => number;
   readonly sleep: (ms: number) => void;
   /** Spawns the detached supervisor process that owns the headroom daemon, returning its pid. */
@@ -52,11 +53,11 @@ export function ensureHeadroom(params: {
 
   for (;;) {
     const state = readHeadroomState(ports.fs, paths.headroomStateFile);
-    if (state?.supervisorPid !== undefined && ports.isProcessAlive(state.supervisorPid)) {
+    if (state?.supervisorPid !== undefined && ports.isRunning(state.supervisorPid)) {
       const daemonUp =
         state.port !== undefined &&
         state.headroomPid !== undefined &&
-        ports.isProcessAlive(state.headroomPid);
+        ports.isRunning(state.headroomPid);
       if (daemonUp && state.port !== undefined) {
         writeSession(ports.fs, paths.headroomSessionsDir, { pid: params.launcherPid, startedAt: ports.now() });
         return { port: state.port };
@@ -78,7 +79,7 @@ export function ensureHeadroom(params: {
         spawnedSupervisor = true;
       } else {
         const lock = readStartLock(ports.fs, paths.headroomLockFile);
-        if (lock === undefined || !ports.isProcessAlive(lock.pid)) {
+        if (lock === undefined || !ports.isRunning(lock.pid)) {
           // A dead holder's lock is litter from a launcher that died before the supervisor it spawned could clear it.
           ports.fs.removeRecursive(paths.headroomLockFile);
           continue;
