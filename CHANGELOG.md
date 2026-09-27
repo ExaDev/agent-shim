@@ -1,3 +1,9 @@
+## [2.8.0](https://github.com/ExaDev/claude-use/compare/v2.7.0...v2.8.0) (2026-09-27)
+
+### Features
+
+* add --headroom/--no-headroom one-off launch flags ([94e1a2c](https://github.com/ExaDev/claude-use/commit/94e1a2cf29daec32df1aaefcfb9b40ccd96b0f6c))
+
 ## [2.7.0](https://github.com/ExaDev/claude-use/compare/v2.6.0...v2.7.0) (2026-09-27)
 
 ### Features
