@@ -45,6 +45,8 @@ export interface SupervisorPorts {
   readonly isRunning: (pid: number) => boolean;
   /** Returns a free loopback port. Async because the only reliable way to reserve one is to bind and release a socket. */
   readonly freePort: () => Promise<number>;
+  /** Whether nothing is currently listening on one specific loopback port: the check that decides whether the sticky `lastPort` can be reused. The same bind-and-release technique `freePort` uses, applied to a number the caller already cares about. */
+  readonly isPortFree: (port: number) => Promise<boolean>;
   /**
    * Starts `headroom proxy` bound to `port` with the given allowlist, returning its pid. Output goes to the daemon log. The implementation must keep the ChildProcess handle and attach an exit listener (detaching the process is fine; unref'ing a child you still need events from is not, since without the listener nothing reaps it and it lingers as a zombie).
    */
@@ -216,15 +218,20 @@ export async function runSupervisor(
 ): Promise<number> {
   const { fs, paths } = ports;
 
+  const previousState = readHeadroomState(fs, paths.headroomStateFile);
+  let installedSource = previousState?.installedSource;
+  // The sticky address, inherited from the previous generation and updated on every successful start: even a fatal give-up keeps it, so the next generation starts where this one served.
+  let lastPort = previousState?.lastPort;
+
   const fail = (message: string): number => {
-    writeHeadroomState(fs, paths.headroomStateFile, { lastError: message });
+    writeHeadroomState(fs, paths.headroomStateFile, {
+      lastError: message,
+      ...(lastPort === undefined ? {} : { lastPort }),
+    });
     fs.removeRecursive(paths.headroomLockFile);
     ports.log(`claude-use headroom supervisor: ${message}`);
     return 1;
   };
-
-  const previousState = readHeadroomState(fs, paths.headroomStateFile);
-  let installedSource = previousState?.installedSource;
 
   /**
    * Installs headroom when the binary is missing, its version fails the configured source's specifier, or the configured source changed since the last install this supervisor performed. An absent `installedSource` with a satisfying binary does NOT install: a user's own `uv tool install headroom` is a legitimate install to respect.
@@ -251,13 +258,13 @@ export async function runSupervisor(
   }
   const version = ports.headroomVersion() ?? "unknown";
 
-  // Fresh ownership: whatever came before, this supervisor is now the one keeping headroom alive.
-  writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: ports.ownPid, version, installedSource });
+  // Fresh ownership: whatever came before, this supervisor is now the one keeping headroom alive. `lastPort` is carried over so a new generation starts where the last one served.
+  writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: ports.ownPid, version, installedSource, ...(lastPort === undefined ? {} : { lastPort }) });
   ports.log(`claude-use headroom supervisor ${String(ports.ownPid)}: managing headroom on allowlist [${allowlistOf(ports).join(", ")}]`);
 
   const orphanPid = previousState?.headroomPid;
   if (orphanPid !== undefined && ports.isRunning(orphanPid)) {
-    // A predecessor's daemon that outlived it (its supervisor died by a signal nothing could intercept, say) would keep squatting on its port forever: nothing supervises it, nothing idles it out. Take it over before starting our own.
+    // A predecessor's daemon that outlived it (its supervisor died by a signal nothing could intercept, say) would keep squatting on its port forever: nothing supervises it, nothing idles it out. Take it over before starting its own.
     ports.log(`claude-use headroom supervisor: stopping daemon pid ${String(orphanPid)} left behind by the previous supervisor`);
     ports.stopProcess(orphanPid);
   }
@@ -284,8 +291,13 @@ export async function runSupervisor(
         ports.log(`claude-use headroom supervisor: headroom pid ${String(headroomPid)} died`);
         headroomPid = undefined;
         runningHash = undefined;
-        // Clear the daemon fields immediately: until the replacement is ready, state must not claim a serving port for a process that just died, or `headroom status` and waiting launchers read a healthy daemon that no longer exists.
-        writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: ports.ownPid, version, installedSource });
+        // Clear the daemon fields immediately: until the replacement is ready, state must not claim a serving port for a process that just died, or `headroom status` and waiting launchers read a healthy daemon that no longer exists. `lastPort` stays, so the replacement restarts on the same address.
+        writeHeadroomState(fs, paths.headroomStateFile, {
+          supervisorPid: ports.ownPid,
+          version,
+          installedSource,
+          ...(lastPort === undefined ? {} : { lastPort }),
+        });
       }
       if (consecutiveFailures >= HEADROOM_START_RETRY_BUDGET) {
         return fail(`headroom failed to become ready ${String(consecutiveFailures)} times in a row; giving up`);
@@ -294,17 +306,27 @@ export async function runSupervisor(
       if (installedSource !== config.source && !ensureInstalled()) {
         return fail(`could not install headroom from ${config.source}: install failed (is uv installed and on PATH?)`);
       }
-      const port = await ports.freePort();
+      // The address must stay stable across restarts: every live session's environment was frozen at launch with HEADROOM_PROXY_URL pointing at the daemon, so a restart that moves strands those sessions on a dead address for the rest of their lives. The sticky lastPort is reused whenever it is still free; only a genuinely occupied port justifies moving, and then the old sessions are unavoidably stale until they relaunch, which is why the move is logged.
+      const previousSticky = lastPort;
+      const port =
+        lastPort !== undefined && (await ports.isPortFree(lastPort)) ? lastPort : await ports.freePort();
       const pid = ports.spawnHeadroom(port, allowlist);
       const ready = await waitUntilReady(ports, port);
       if (ready) {
         consecutiveFailures = 0;
         headroomPid = pid;
         runningHash = allowlistHash;
+        lastPort = port;
+        if (previousSticky !== undefined && port !== previousSticky) {
+          ports.log(
+            `claude-use headroom supervisor: sticky port ${String(previousSticky)} was occupied; moving to ${String(port)} (sessions launched against the old port are stale until they relaunch)`,
+          );
+        }
         writeHeadroomState(fs, paths.headroomStateFile, {
           supervisorPid: ports.ownPid,
           headroomPid: pid,
           port,
+          lastPort: port,
           version,
           allowlistHash,
           installedSource: config.source,
@@ -344,7 +366,11 @@ export async function runSupervisor(
             `claude-use headroom supervisor: no sessions for ${String(config.idleShutdownMinutes)} minute(s); stopping headroom and exiting`,
           );
           ports.stopProcess(headroomPid);
-          writeHeadroomState(fs, paths.headroomStateFile, { version });
+          // `lastPort` survives the shutdown so the next generation starts where this one served, whatever else it inherits.
+          writeHeadroomState(fs, paths.headroomStateFile, {
+            version,
+            ...(lastPort === undefined ? {} : { lastPort }),
+          });
           return 0;
         }
       } else {

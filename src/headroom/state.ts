@@ -18,6 +18,10 @@ export const HeadroomStateSchema = z.strictObject({
   headroomPid: z.number().int().positive().optional(),
   /** The loopback port the proxy listens on. Absent until the proxy has passed its readiness check, so "port is set" is itself the ready signal a launcher polls for. */
   port: z.number().int().positive().optional(),
+  /**
+   * The sticky port preference: the address the daemon last served on, kept across crashes, restarts, and idle shutdowns so the next start reuses it. Distinct from `port` on purpose: `port` is the ready signal (absent whenever nothing is serving), while `lastPort` survives every shutdown, because every live session's environment was frozen at launch pointing at this address and a restart that moves strands them.
+   */
+  lastPort: z.number().int().positive().optional(),
   /** The `headroom --version` output of the running install. */
   version: z.string().optional(),
   /** Hash of the allowlist the running proxy was started with, so a provider-file change is detected as drift. */

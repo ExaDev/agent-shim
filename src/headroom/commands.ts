@@ -5,7 +5,7 @@ import type { Command } from "commander";
 
 import { readGlobalConfig } from "../configProfiles";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, realIsProcessRunning, realSleepSync } from "../realPorts";
+import { realFarmFs, realIsPortFree, realIsProcessRunning, realSleepSync } from "../realPorts";
 import {
   hashAllowlist,
   headroomAllowlist,
@@ -148,6 +148,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
     },
     isRunning: headroomPidRunning,
     freePort: realFreePort,
+    isPortFree: realIsPortFree,
     spawnHeadroom: (port, allowlist) => {
       fs.mkdirSync(paths.logsDir, { recursive: true });
       const logFd = fs.openSync(paths.headroomLogPath, "a");
