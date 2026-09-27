@@ -1,3 +1,10 @@
+## [2.5.2](https://github.com/ExaDev/claude-use/compare/v2.5.1...v2.5.2) (2026-09-27)
+
+### Bug Fixes
+
+* name the headroom distribution correctly in the default install spec ([a6167cd](https://github.com/ExaDev/claude-use/commit/a6167cd63809251877f06a1ad827d7a4f3675fa2))
+* pin the headroom source to the per-session-savings branch ([10be19c](https://github.com/ExaDev/claude-use/commit/10be19c1a164ad52cefee0b05250b7bf1bab5ca6))
+
 ## [2.5.1](https://github.com/ExaDev/claude-use/compare/v2.5.0...v2.5.1) (2026-09-27)
 
 ### Bug Fixes
