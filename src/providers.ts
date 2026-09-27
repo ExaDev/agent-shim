@@ -121,7 +121,7 @@ function listProviderNames(readdir: (dir: string) => readonly string[], provider
 export interface AddProviderInput {
   readonly displayName: string;
   readonly baseUrl: string;
-  readonly tokenEnv: string;
+  readonly tokenEnv?: string;
   readonly env?: Readonly<Record<string, string>>;
 }
 
@@ -138,7 +138,7 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
   const parsed = ProviderSchema.safeParse({
     displayName: input.displayName,
     baseUrl: input.baseUrl,
-    tokenEnv: input.tokenEnv,
+    ...(input.tokenEnv === undefined ? {} : { tokenEnv: input.tokenEnv }),
     ...(input.env === undefined || Object.keys(input.env).length === 0 ? {} : { env: input.env }),
   });
   if (!parsed.success) {
@@ -214,12 +214,18 @@ export function resolveProvider(params: ResolveProviderParams): ProviderResoluti
     };
   }
 
-  const token = params.env[definition.tokenEnv];
+  // tokenEnv names the variable holding the credential; a provider without one carries a
+  // fixed ANTHROPIC_AUTH_TOKEN in its own env (a local proxy's dummy token), which
+  // ProviderSchema guarantees is present and non-empty.
+  const token = definition.tokenEnv !== undefined ? params.env[definition.tokenEnv] : definition.env?.ANTHROPIC_AUTH_TOKEN;
   if (token === undefined || token === "") {
     return {
       ok: false,
       status: PROVIDER_MISSING_TOKEN_EXIT,
-      message: `claude-use: provider ${name} needs ${definition.tokenEnv} set in your environment`,
+      message:
+        definition.tokenEnv !== undefined
+          ? `claude-use: provider ${name} needs ${definition.tokenEnv} set in your environment`
+          : `claude-use: provider ${name} has no usable credential: its env.ANTHROPIC_AUTH_TOKEN is empty`,
     };
   }
 
@@ -249,16 +255,20 @@ export function registerProviderCommand(program: Command, paths: LayoutPaths): v
     .description("Create a new API provider definition.")
     .requiredOption("--display-name <name>", "Human-readable name, exported to the child as CLAUDE_USE_PROVIDER.")
     .requiredOption("--base-url <url>", "Anthropic-compatible base URL the child's requests are sent to.")
-    .requiredOption("--token-env <var>", "NAME of the environment variable holding the provider's token (never the token itself).")
+    .option("--token-env <var>", "NAME of the environment variable holding the provider's token (never the token itself). Optional only when --env carries ANTHROPIC_AUTH_TOKEN (a local proxy's fixed dummy token).")
     .option("--env <pair>", "Extra KEY=VALUE environment entry for the child (repeatable).", collectEnvPairs)
-    .action((name: string, options: Readonly<{ displayName: string; baseUrl: string; tokenEnv: string; env?: Record<string, string> }>) => {
+    .action((name: string, options: Readonly<{ displayName: string; baseUrl: string; tokenEnv?: string; env?: Record<string, string> }>) => {
       addProvider(paths, name, {
         displayName: options.displayName,
         baseUrl: options.baseUrl,
-        tokenEnv: options.tokenEnv,
+        ...(options.tokenEnv === undefined ? {} : { tokenEnv: options.tokenEnv }),
         ...(options.env === undefined ? {} : { env: options.env }),
       });
-      console.log(`Created provider "${name}" (${options.baseUrl}, token from ${options.tokenEnv}).`);
+      console.log(
+        options.tokenEnv === undefined
+          ? `Created provider "${name}" (${options.baseUrl}, fixed env credential).`
+          : `Created provider "${name}" (${options.baseUrl}, token from ${options.tokenEnv}).`,
+      );
     });
 
   provider

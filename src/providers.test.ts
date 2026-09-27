@@ -152,6 +152,27 @@ describe("providers", () => {
       });
     });
 
+    it("resolves a fixed-credential provider without tokenEnv, taking the token from its env", () => {
+      addProvider(paths, "codex", {
+        displayName: "Codex",
+        baseUrl: "http://127.0.0.1:18789",
+        env: { ANTHROPIC_AUTH_TOKEN: "codex-subscription-local", ANTHROPIC_API_KEY: "" },
+      });
+      const result = resolveProvider({ paths, port: tempFsPort(), env: {}, cliProvider: "codex" });
+      expect(result).toEqual({
+        ok: true,
+        provider: {
+          name: "codex",
+          definition: {
+            displayName: "Codex",
+            baseUrl: "http://127.0.0.1:18789",
+            env: { ANTHROPIC_AUTH_TOKEN: "codex-subscription-local", ANTHROPIC_API_KEY: "" },
+          },
+          token: "codex-subscription-local",
+        },
+      });
+    });
+
     it("falls back to the cascade's launch.provider selection when no flag was given", () => {
       addProvider(paths, "z", zInput);
       const cascade = {

@@ -238,6 +238,25 @@ describe("ProviderSchema", () => {
     expect(provider.env).toEqual({ ANTHROPIC_MODEL: "glm-4.6", ANTHROPIC_API_KEY: "" });
   });
 
+  it("accepts a provider with no tokenEnv when its env carries a non-empty ANTHROPIC_AUTH_TOKEN", () => {
+    const parsed = ProviderSchema.safeParse({
+      displayName: "Codex",
+      baseUrl: "http://127.0.0.1:18789",
+      env: { ANTHROPIC_AUTH_TOKEN: "codex-subscription-local", ANTHROPIC_API_KEY: "" },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects a provider with neither tokenEnv nor an env credential", () => {
+    expect(ProviderSchema.safeParse({ displayName: "Codex", baseUrl: "http://127.0.0.1:18789" }).success).toBe(false);
+    expect(
+      ProviderSchema.safeParse({ displayName: "Codex", baseUrl: "http://127.0.0.1:18789", env: { ANTHROPIC_API_KEY: "" } }).success,
+    ).toBe(false);
+    expect(
+      ProviderSchema.safeParse({ displayName: "Codex", baseUrl: "http://127.0.0.1:18789", env: { ANTHROPIC_AUTH_TOKEN: "" } }).success,
+    ).toBe(false);
+  });
+
   it("makes env optional but every other field required", () => {
     expect(ProviderSchema.safeParse({ displayName: "GLM", baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" }).success).toBe(true);
     expect(ProviderSchema.safeParse({ displayName: "GLM", baseUrl: "https://api.z.ai" }).success).toBe(false);
