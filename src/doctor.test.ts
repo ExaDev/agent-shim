@@ -31,7 +31,7 @@ function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorParams {
     claudeShim: { state: undefined, targetExists: false },
     pathResolution: { ownExecutablePath: "/home/u/.local/bin/claude-use", claudeUse: { status: "ok" } },
     platform: "linux",
-    headroom: { state: { path: "/claude-use/headroom/state.json", raw: undefined }, isProcessAlive: () => false },
+    headroom: { state: { path: "/claude-use/headroom/state.json", raw: undefined }, isRunning: () => false },
     ...overrides,
   };
 }
@@ -69,7 +69,7 @@ describe("runDoctor: headroom", () => {
   });
 
   it("fails on a malformed state.json instead of guessing", () => {
-    const report = runDoctor(baseParams({ headroom: { state: { path: "/claude-use/headroom/state.json", raw: "{bad" }, isProcessAlive: () => false } }));
+    const report = runDoctor(baseParams({ headroom: { state: { path: "/claude-use/headroom/state.json", raw: "{bad" }, isRunning: () => false } }));
     expect(findingsFor(report, "headroom").some((finding) => finding.severity === "fail")).toBe(true);
   });
 
@@ -79,7 +79,7 @@ describe("runDoctor: headroom", () => {
       baseParams({
         headroom: {
           state: { path: "/claude-use/headroom/state.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT, version: "headroom 0.39.1" }) },
-          isProcessAlive: (pid: number) => alive.has(pid),
+          isRunning: (pid: number) => alive.has(pid),
         },
       }),
     );
@@ -93,7 +93,7 @@ describe("runDoctor: headroom", () => {
       baseParams({
         headroom: {
           state: { path: "/claude-use/headroom/state.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT }) },
-          isProcessAlive: () => false,
+          isRunning: () => false,
         },
       }),
     );
@@ -111,7 +111,7 @@ describe("runDoctor: headroom", () => {
             path: "/claude-use/headroom/state.json",
             raw: JSON.stringify({ supervisorPid: REPLACEMENT_SUPERVISOR_PID, headroomPid: REPLACEMENT_DAEMON_PID, port: HEADROOM_PORT, lastError: "previous crash" }),
           },
-          isProcessAlive: (pid: number) => alive.has(pid),
+          isRunning: (pid: number) => alive.has(pid),
         },
       }),
     );

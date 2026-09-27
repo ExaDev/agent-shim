@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import net from "node:net";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type { Command } from "commander";
 
 import { readGlobalConfig } from "../configProfiles";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, realIsProcessAlive, realSleepSync } from "../realPorts";
+import { realFarmFs, realIsProcessRunning, realSleepSync } from "../realPorts";
 import {
   hashAllowlist,
   headroomAllowlist,
@@ -16,7 +16,7 @@ import {
   type HeadroomSession,
   type HeadroomState,
 } from "./state";
-import { resolveSupervisorConfig, runSupervisor, type SupervisorPorts } from "./supervisor";
+import { resolveSupervisorConfig, runSupervisor, stopSupervisedProcess, type SupervisorPorts } from "./supervisor";
 
 /** One session-registry entry plus whether its launcher pid is still running. */
 interface HeadroomSessionStatus extends HeadroomSession {
@@ -41,17 +41,17 @@ export interface HeadroomStatus {
 export function collectHeadroomStatus(
   fsPort: HeadroomFs,
   paths: LayoutPaths,
-  isProcessAlive: (pid: number) => boolean,
+  isRunning: (pid: number) => boolean,
 ): HeadroomStatus {
   const state = readHeadroomState(fsPort, paths.headroomStateFile) ?? {};
   const allowlist = headroomAllowlist(readAllProviders(fsPort, paths.providersDir).map((entry) => entry.provider));
   return {
     state,
-    supervisorAlive: state.supervisorPid !== undefined && isProcessAlive(state.supervisorPid),
-    headroomAlive: state.headroomPid !== undefined && isProcessAlive(state.headroomPid),
+    supervisorAlive: state.supervisorPid !== undefined && isRunning(state.supervisorPid),
+    headroomAlive: state.headroomPid !== undefined && isRunning(state.headroomPid),
     sessions: listSessions(fsPort, paths.headroomSessionsDir).map((session) => ({
       ...session,
-      alive: isProcessAlive(session.pid),
+      alive: isRunning(session.pid),
     })),
     allowlist,
     allowlistDrifted: state.allowlistHash !== undefined && state.allowlistHash !== hashAllowlist(allowlist),
@@ -115,14 +115,23 @@ async function realFreePort(): Promise<number> {
   });
 }
 
-/** The pid of the headroom process this supervisor currently owns, so the exit hook below never orphans it. */
-let supervisedHeadroomPid: number | undefined;
+/**
+ * The headroom processes this supervisor owns, by pid. Keeping the ChildProcess handles is what reaps the children: consuming the exit event is libuv's cue to waitpid, and a child nobody listens for is a child nobody reaps (the original zombie bug). The entry is removed on exit, so the map also names exactly what the exit hook below must not leave behind.
+ */
+const ownedHeadroom = new Map<number, ChildProcess>();
 
-/** How long a stopped daemon gets to exit on SIGTERM before the supervisor escalates to SIGKILL: enough to drain an in-flight request, not enough to stall the loop. */
-const STOP_GRACE_MS = 1500;
+/**
+ * Pids whose exit event has arrived: authoritative deadness, known the moment the child dies rather than at the next liveness poll, and regardless of what the not-yet-reaped remains still look like in the process table.
+ */
+const exitedHeadroom = new Set<number>();
 
 /** Per-attempt timeout on the readiness probe: a loopback request either answers quickly or the attempt has failed. */
 const READY_FETCH_TIMEOUT_MS = 2000;
+
+/** Dead by exit event or by the zombie-aware table check, whichever says so first. */
+function headroomPidRunning(pid: number): boolean {
+  return !exitedHeadroom.has(pid) && realIsProcessRunning(pid);
+}
 
 /** The real `SupervisorPorts`: real processes, ports, clock, filesystem, and network. */
 function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
@@ -131,8 +140,13 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
     paths,
     ownPid: process.pid,
     now: () => Date.now(),
-    sleep: realSleepSync,
-    isProcessAlive: realIsProcessAlive,
+    // A real timer, not the launcher's blocking Atomics.wait: the supervisor lives on its event loop, and the child's exit event can only be delivered while the loop turns.
+    sleep: async (ms) => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+      });
+    },
+    isRunning: headroomPidRunning,
     freePort: realFreePort,
     spawnHeadroom: (port, allowlist) => {
       fs.mkdirSync(paths.logsDir, { recursive: true });
@@ -143,31 +157,36 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
           stdio: ["ignore", logFd, logFd],
           env: { ...process.env, HEADROOM_ALLOWED_BASE_URLS: allowlist.join(",") },
         });
-        child.unref();
         if (child.pid === undefined) {
           throw new Error("spawning headroom returned no pid");
         }
-        supervisedHeadroomPid = child.pid;
-        return child.pid;
+        const pid = child.pid;
+        // Deliberately NOT unref'd: this supervisor needs the child's exit event (both the reaping and the crash signal), and a handle taken off the event loop stops delivering it. `detached: true` keeps headroom out of this process's process group so a supervisor crash does not signal it; the exit hook below still kills it on the orderly exit paths.
+        ownedHeadroom.set(pid, child);
+        child.once("exit", (code, signal) => {
+          ownedHeadroom.delete(pid);
+          exitedHeadroom.add(pid);
+          fs.appendFileSync(paths.headroomLogPath, `${new Date().toISOString()} claude-use headroom supervisor: headroom exited (${signal ?? `code ${String(code)}`})\n`);
+        });
+        return pid;
       } finally {
         fs.closeSync(logFd);
       }
     },
     stopProcess: (pid) => {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // Already dead: the supervisor only ever stops pids it believes are running.
-      }
-      // Grace period, then force: a proxy mid-request deserves a chance to drain, but the supervisor must not wait on it forever.
-      realSleepSync(STOP_GRACE_MS);
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // It exited after SIGTERM, which is the good outcome.
-      }
-      if (supervisedHeadroomPid === pid) {
-        supervisedHeadroomPid = undefined;
+      const outcome = stopSupervisedProcess(pid, {
+        signal: (target, signal) => {
+          process.kill(target, signal);
+        },
+        isRunning: headroomPidRunning,
+        waitMs: realSleepSync,
+        now: () => Date.now(),
+      });
+      if (outcome === "still-running") {
+        fs.appendFileSync(
+          paths.headroomLogPath,
+          `${new Date().toISOString()} claude-use headroom supervisor: pid ${String(pid)} survived SIGKILL within its grace; it is stuck uninterruptibly\n`,
+        );
       }
     },
     ready: async (port) => {
@@ -210,7 +229,7 @@ export function registerHeadroomCommand(program: Command, paths: LayoutPaths): v
     .command("status")
     .description("Report the headroom daemon's supervisor, process, port, sessions, and last error. Read-only.")
     .action(() => {
-      for (const line of formatHeadroomStatus(collectHeadroomStatus(realFarmFs, paths, realIsProcessAlive))) {
+      for (const line of formatHeadroomStatus(collectHeadroomStatus(realFarmFs, paths, realIsProcessRunning))) {
         console.log(line);
       }
     });
@@ -222,15 +241,22 @@ export function registerHeadroomCommand(program: Command, paths: LayoutPaths): v
     .action(async () => {
       const globalConfig = readGlobalConfig(paths);
       const config = resolveSupervisorConfig(globalConfig?.headroom ?? {});
-      // If this supervisor dies without reaching its own shutdown path, take headroom with it rather than leaving an unsupervised daemon behind.
+      // If this supervisor exits without reaching its own shutdown path (idle or fatal), take every daemon it still owns with it rather than leaving an unsupervised proxy behind. SIGKILL, not the escalating stop: an exit hook is synchronous and already out of time.
       process.on("exit", () => {
-        if (supervisedHeadroomPid !== undefined) {
+        for (const pid of ownedHeadroom.keys()) {
           try {
-            process.kill(supervisedHeadroomPid, "SIGTERM");
+            process.kill(pid, "SIGKILL");
           } catch {
             // Already gone.
           }
         }
+      });
+      // Signal death skips `exit` handlers entirely unless the signal itself is handled, so an unhandled SIGTERM would leave the daemon orphaned. Routing both signals through an orderly exit is what makes the hook above run for them.
+      process.on("SIGTERM", () => {
+        process.exit(0);
+      });
+      process.on("SIGINT", () => {
+        process.exit(0);
       });
       const code = await runSupervisor(config, realSupervisorPorts(paths));
       process.exit(code);

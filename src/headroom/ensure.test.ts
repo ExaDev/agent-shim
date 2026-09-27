@@ -13,6 +13,8 @@ const SLEEPS_BEFORE_RECOVERY = 3;
 const SLEEPS_BEFORE_OTHER_SUPERVENDOR_READY = 2;
 const HEADROOM_PID = 501;
 const PORT = 8123;
+/** A supervisor pid that is dead in every test that names it, distinct from the live fake's SUPERVISOR_PID. */
+const DEAD_SUPERVISOR_PID = 999;
 
 /**
  * The fake world `ensureHeadroom` runs against: a fake filesystem, a clock that only advances when the code sleeps, a live-pid set, and a `spawnSupervisor` that records itself and can simulate the freshly spawned supervisor writing a ready state (immediately, or lazily on a later poll via `onSleep`).
@@ -22,11 +24,13 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean } = {}) {
   let clock = 0;
   let onSleep: (() => void) | undefined;
   const alive = new Set<number>([SUPERVISOR_PID, HEADROOM_PID, process.pid]);
+  const zombies = new Set<number>();
   const spawns: number[] = [];
 
   const world = {
     fs,
     alive,
+    zombies,
     spawns,
     set onSleep(hook: (() => void) | undefined) {
       onSleep = hook;
@@ -41,7 +45,7 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean } = {}) {
     },
     ports: {
       fs,
-      isProcessAlive: (pid: number) => alive.has(pid),
+      isRunning: (pid: number) => alive.has(pid) && !zombies.has(pid),
       now: () => clock,
       sleep: (ms: number) => {
         clock += ms;
@@ -82,7 +86,7 @@ describe("ensureHeadroom", () => {
   it("spawns a replacement supervisor when the recorded one is dead", () => {
     const world = makeWorld();
     writeHeadroomState(world.fs, paths.headroomStateFile, {
-      supervisorPid: 999,
+      supervisorPid: DEAD_SUPERVISOR_PID,
       headroomPid: HEADROOM_PID,
       port: PORT,
     });
@@ -91,11 +95,26 @@ describe("ensureHeadroom", () => {
     expect(world.spawns).toHaveLength(1);
   });
 
+  it("spawns a replacement supervisor when the recorded one is an unreaped zombie that signal 0 still reports alive", () => {
+    const world = makeWorld();
+    writeHeadroomState(world.fs, paths.headroomStateFile, {
+      supervisorPid: DEAD_SUPERVISOR_PID,
+      headroomPid: HEADROOM_PID,
+      port: PORT,
+    });
+    // The supervisor died without being reaped: it still "exists" in the table, but nothing is running there.
+    world.alive.add(DEAD_SUPERVISOR_PID);
+    world.zombies.add(DEAD_SUPERVISOR_PID);
+    const result = ensureHeadroom({ paths, launcherPid: 51, ports: world.ports });
+    expect(result).toEqual({ port: PORT });
+    expect(world.spawns).toHaveLength(1);
+  });
+
   it("keeps waiting while a live supervisor restarts a dead daemon, and returns once it is back", () => {
     const world = makeWorld({ spawnWritesReadyState: false });
     writeHeadroomState(world.fs, paths.headroomStateFile, {
       supervisorPid: SUPERVISOR_PID,
-      headroomPid: 999,
+      headroomPid: DEAD_SUPERVISOR_PID,
       port: PORT,
     });
     // The supervisor brings the daemon back partway through the wait.

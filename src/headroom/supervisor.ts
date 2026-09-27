@@ -35,14 +35,21 @@ export interface SupervisorPorts {
   readonly paths: LayoutPaths;
   readonly ownPid: number;
   readonly now: () => number;
-  /** Blocks for `ms`; the real implementation is the same synchronous Atomics.wait sleep the launcher uses. */
-  readonly sleep: (ms: number) => void;
-  readonly isProcessAlive: (pid: number) => boolean;
+  /**
+   * Waits `ms`, yielding to the event loop while it does. Deliberately NOT a synchronous Atomics.wait-style sleep: the real supervisor learns of its child's death through the ChildProcess exit event, and a blocking sleep would stop the event loop from ever delivering it (the exact failure that left an unreaped zombie answering liveness checks as alive).
+   */
+  readonly sleep: (ms: number) => Promise<void>;
+  /**
+   * Zombie-aware liveness, and for a daemon this supervisor spawned, exit-event-backed: the implementation keeps the spawned ChildProcess handle, consumes its exit event (which is also what reaps it), and reports the pid as not running from that moment. A bare signal-0 check is not enough, because a defunct process still answers it.
+   */
+  readonly isRunning: (pid: number) => boolean;
   /** Returns a free loopback port. Async because the only reliable way to reserve one is to bind and release a socket. */
   readonly freePort: () => Promise<number>;
-  /** Starts `headroom proxy` bound to `port` with the given allowlist, returning its pid. Output goes to the daemon log. */
+  /**
+   * Starts `headroom proxy` bound to `port` with the given allowlist, returning its pid. Output goes to the daemon log. The implementation must keep the ChildProcess handle and attach an exit listener (detaching the process is fine; unref'ing a child you still need events from is not, since without the listener nothing reaps it and it lingers as a zombie).
+   */
   readonly spawnHeadroom: (port: number, allowlist: readonly string[]) => number;
-  /** Stops a process the supervisor owns, escalating as needed. */
+  /** Stops a process the supervisor owns, escalating SIGTERM to SIGKILL on a bounded timeout (see `stopSupervisedProcess`). */
   readonly stopProcess: (pid: number) => void;
   /** True once `GET /readyz` on the port succeeds. */
   readonly ready: (port: number) => Promise<boolean>;
@@ -66,6 +73,62 @@ export const HEADROOM_POLL_MS = 1_000;
 
 /** Milliseconds per minute, so the idle shutdown threshold reads as the config field it derives from. */
 const MS_PER_MINUTE = 60_000;
+
+/** The process-control primitives the escalating stop needs, injected so the escalation itself is unit-testable against a process that ignores SIGTERM. */
+export interface StopProcessPrimitives {
+  /** Delivers a signal; throws when the target is already gone. */
+  readonly signal: (pid: number, signal: NodeJS.Signals) => void;
+  /** Zombie-aware liveness: a defunct process is not running. */
+  readonly isRunning: (pid: number) => boolean;
+  /** Synchronous wait between liveness polls; blocking is correct here, since nothing productive can happen until the target is gone or the grace expires. */
+  readonly waitMs: (ms: number) => void;
+  readonly now: () => number;
+}
+
+/** How `stopSupervisedProcess` ended. `still-running` means even SIGKILL did not clear the pid within its grace (an uninterruptible process); callers log it loudly. */
+export type StopOutcome = "exited-on-term" | "killed" | "still-running";
+
+/** Poll interval while waiting for a stopped process to disappear: often enough to escalate quickly, rarely enough not to spin. */
+const STOP_POLL_MS = 100;
+/** Grace after SIGTERM before escalating to SIGKILL: enough for a proxy to drain an in-flight request, short enough that a restart is not visibly stalled. This proxy's server has been observed to ignore SIGTERM outright, so the escalation is not optional. */
+export const TERM_GRACE_MS = 1500;
+/** Grace after SIGKILL before declaring the process unkillable. SIGKILL is immediate at the kernel level; this only bounds the wait for the scheduler to reap it. */
+export const KILL_GRACE_MS = 1500;
+
+/**
+ * Stops a process the supervisor owns: SIGTERM, wait up to `TERM_GRACE_MS`; SIGKILL, wait up to `KILL_GRACE_MS`; then report. Liveness during the waits must be zombie-aware: an unreaped target still answers signal 0, which would read as "survived SIGKILL".
+ */
+export function stopSupervisedProcess(pid: number, primitives: StopProcessPrimitives): StopOutcome {
+  const send = (signal: NodeJS.Signals): void => {
+    try {
+      primitives.signal(pid, signal);
+    } catch {
+      // Already gone: the stop's job is done, whichever signal was about to be sent.
+    }
+  };
+
+  send("SIGTERM");
+  if (awaitExit(pid, primitives, TERM_GRACE_MS)) {
+    return "exited-on-term";
+  }
+  send("SIGKILL");
+  if (awaitExit(pid, primitives, KILL_GRACE_MS)) {
+    return "killed";
+  }
+  return "still-running";
+}
+
+/** Polls `isRunning` until the pid is gone or `budgetMs` elapses. */
+function awaitExit(pid: number, primitives: StopProcessPrimitives, budgetMs: number): boolean {
+  const deadline = primitives.now() + budgetMs;
+  while (primitives.isRunning(pid)) {
+    if (primitives.now() >= deadline) {
+      return false;
+    }
+    primitives.waitMs(STOP_POLL_MS);
+  }
+  return true;
+}
 
 /** The backoff for attempt `attempt` (1-based): base doubled per failure, capped. */
 export function backoffForAttempt(attempt: number): number {
@@ -144,7 +207,7 @@ export const HEADROOM_SUPERVISOR_STILL_RUNNING = -1;
 /**
  * Runs the headroom supervisor loop: install, start, keep alive, restart on crash, restart on drift once no session would be cut off, and shut down after the configured idle period with an empty session registry. Returns the process exit code (0 for an idle shutdown, 1 for a fatal setup failure).
  *
- * Every effect flows through `ports`, so the whole loop is unit-testable with a fake clock, filesystem, and processes. The function is `async` only for the readiness probe; nothing else awaits.
+ * Every effect flows through `ports`, so the whole loop is unit-testable with a fake clock, filesystem, and processes. The loop awaits its sleeps, which in the real implementation run on a timer: between ticks the event loop turns, the spawned child's exit event is delivered (and the child thereby reaped), and the next tick's liveness check reads the truth.
  */
 export async function runSupervisor(
   config: HeadroomSupervisorConfig,
@@ -160,7 +223,8 @@ export async function runSupervisor(
     return 1;
   };
 
-  let installedSource = readHeadroomState(fs, paths.headroomStateFile)?.installedSource;
+  const previousState = readHeadroomState(fs, paths.headroomStateFile);
+  let installedSource = previousState?.installedSource;
 
   /**
    * Installs headroom when the binary is missing, its version fails the configured source's specifier, or the configured source changed since the last install this supervisor performed. An absent `installedSource` with a satisfying binary does NOT install: a user's own `uv tool install headroom` is a legitimate install to respect.
@@ -191,6 +255,13 @@ export async function runSupervisor(
   writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: ports.ownPid, version, installedSource });
   ports.log(`claude-use headroom supervisor ${String(ports.ownPid)}: managing headroom on allowlist [${allowlistOf(ports).join(", ")}]`);
 
+  const orphanPid = previousState?.headroomPid;
+  if (orphanPid !== undefined && ports.isRunning(orphanPid)) {
+    // A predecessor's daemon that outlived it (its supervisor died by a signal nothing could intercept, say) would keep squatting on its port forever: nothing supervises it, nothing idles it out. Take it over before starting our own.
+    ports.log(`claude-use headroom supervisor: stopping daemon pid ${String(orphanPid)} left behind by the previous supervisor`);
+    ports.stopProcess(orphanPid);
+  }
+
   let headroomPid: number | undefined;
   let runningHash: string | undefined;
   let consecutiveFailures = 0;
@@ -205,14 +276,16 @@ export async function runSupervisor(
     // Recomputed every tick: provider files can change on disk at any moment, and the allowlist is the daemon's whole security posture.
     const allowlist = allowlistOf(ports);
     const allowlistHash = hashAllowlist(allowlist);
-    pruneDeadSessions(fs, paths.headroomSessionsDir, ports.isProcessAlive);
+    pruneDeadSessions(fs, paths.headroomSessionsDir, ports.isRunning);
 
-    const crashed = headroomPid !== undefined && !ports.isProcessAlive(headroomPid);
+    const crashed = headroomPid !== undefined && !ports.isRunning(headroomPid);
     if (headroomPid === undefined || crashed) {
       if (crashed) {
         ports.log(`claude-use headroom supervisor: headroom pid ${String(headroomPid)} died`);
         headroomPid = undefined;
         runningHash = undefined;
+        // Clear the daemon fields immediately: until the replacement is ready, state must not claim a serving port for a process that just died, or `headroom status` and waiting launchers read a healthy daemon that no longer exists.
+        writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: ports.ownPid, version, installedSource });
       }
       if (consecutiveFailures >= HEADROOM_START_RETRY_BUDGET) {
         return fail(`headroom failed to become ready ${String(consecutiveFailures)} times in a row; giving up`);
@@ -247,7 +320,7 @@ export async function runSupervisor(
           `claude-use headroom supervisor: headroom did not become ready on port ${String(port)} ` +
             `(attempt ${String(consecutiveFailures)} of ${String(HEADROOM_START_RETRY_BUDGET)})`,
         );
-        ports.sleep(backoffForAttempt(consecutiveFailures));
+        await ports.sleep(backoffForAttempt(consecutiveFailures));
         continue;
       }
     } else {
@@ -279,7 +352,7 @@ export async function runSupervisor(
       }
     }
 
-    ports.sleep(HEADROOM_POLL_MS);
+    await ports.sleep(HEADROOM_POLL_MS);
   }
 }
 
@@ -298,6 +371,6 @@ async function waitUntilReady(ports: SupervisorPorts, port: number): Promise<boo
     if (ports.now() >= deadline) {
       return false;
     }
-    ports.sleep(HEADROOM_POLL_MS);
+    await ports.sleep(HEADROOM_POLL_MS);
   }
 }
