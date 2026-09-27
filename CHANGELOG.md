@@ -1,3 +1,10 @@
+## [2.5.3](https://github.com/ExaDev/claude-use/compare/v2.5.2...v2.5.3) (2026-09-27)
+
+### Bug Fixes
+
+* reap the headroom proxy and read zombie pids as dead ([e31eb21](https://github.com/ExaDev/claude-use/commit/e31eb217c1afa47c8828e6abc60575761aa5530b))
+* treat a zombie identity-lock holder as dead ([72ff6f2](https://github.com/ExaDev/claude-use/commit/72ff6f2e2caf7e068c175a55be79ad9fc96c2467))
+
 ## [2.5.2](https://github.com/ExaDev/claude-use/compare/v2.5.1...v2.5.2) (2026-09-27)
 
 ### Bug Fixes
