@@ -77,6 +77,7 @@ const discovered: DiscoveredClaudeBinary = { path: "/home/testuser/.local/share/
 
 /** The loopback port the fake headroom daemon pretends to listen on. */
 const HEADROOM_PORT = 8123;
+const HEADROOM_MITM_PORT = 8124;
 /** A second port, so one test can prove the daemon in use is the one ensure() reported. */
 const OTHER_HEADROOM_PORT = 9999;
 
@@ -329,6 +330,7 @@ describe("runLauncher headroom routing", () => {
   function fakeHeadroomPort(
     port = HEADROOM_PORT,
     projectId = "/home/testuser/work/repo",
+    mitmPort = HEADROOM_MITM_PORT,
   ): HeadroomPort & { readonly ensures: number; readonly releases: number } {
     let ensures = 0;
     let releases = 0;
@@ -341,7 +343,7 @@ describe("runLauncher headroom routing", () => {
       },
       ensure: () => {
         ensures += 1;
-        return { port, projectId };
+        return { port, mitmPort, caCertPath: "/home/testuser/.claude-use/headroom/ca/ca.pem", projectId };
       },
       release: () => {
         releases += 1;
@@ -349,7 +351,7 @@ describe("runLauncher headroom routing", () => {
     };
   }
 
-  it("brings the daemon up via the injected port and wires the child env to the local proxy when CLAUDE_USE_HEADROOM=1", () => {
+  it("brings the daemon up via the injected port and wires an OAuth launch to the MITM proxy when CLAUDE_USE_HEADROOM=1", () => {
     const spawn = fakeSpawn();
     const headroom = fakeHeadroomPort();
 
@@ -365,7 +367,10 @@ describe("runLauncher headroom routing", () => {
 
     expect(headroom.ensures).toBe(1);
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
+    // No provider resolved, so this is an OAuth launch: the base URL stays unset (Remote Control requires the real API) and routing happens at the HTTPS_PROXY layer.
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:8124");
+    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/headroom/ca/ca.pem");
     expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-headroom-project-id: /home/testuser/work/repo");
     expect(headroom.releases).toBeGreaterThan(0);
@@ -407,9 +412,10 @@ describe("runLauncher headroom routing", () => {
       headroom,
     });
 
-    // No identity resolved under the escape hatch, so no farm resync happens; the launch flags still come from the cascade, the same way provider selection does.
+    // No identity resolved under the escape hatch, so no farm resync happens; the launch flags still come from the cascade, the same way provider selection does. With no provider selected this is an OAuth launch, so routing shows up as HTTPS_PROXY rather than a base-URL override.
     expect(headroom.ensures).toBe(1);
-    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
+    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://127.0.0.1:8124");
     expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe("/somewhere/explicit");
   });
 

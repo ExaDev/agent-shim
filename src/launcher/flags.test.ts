@@ -244,23 +244,38 @@ describe("buildEnv", () => {
         definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" },
         token: "tok-from-z",
       },
-      headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
+      headroom: { port: 8123, mitmPort: 8124, caCertPath: "/home/testuser/.claude-use/headroom/ca/ca.pem", projectId: "/home/testuser/work/repo" },
     });
     expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
     expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
+    expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-headroom-project-id: /home/testuser/work/repo\nx-headroom-base-url: https://api.z.ai/api/anthropic");
   });
 
-  it("routes through headroom without a provider: only the project-id header, no base-url override", () => {
+  it("routes an OAuth launch (no provider) through the MITM proxy: HTTPS_PROXY and the CA are set, ANTHROPIC_BASE_URL stays unset so Remote Control keeps working", () => {
     const env = buildEnv({
       baseEnv,
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.claude-use/identities",
-      headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
+      headroom: { port: 8123, mitmPort: 8124, caCertPath: "/home/testuser/.claude-use/headroom/ca/ca.pem", projectId: "/home/testuser/work/repo" },
     });
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:8124");
+    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/headroom/ca/ca.pem");
+    expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-headroom-project-id: /home/testuser/work/repo");
+  });
+
+  it("leaves a parent-set ANTHROPIC_BASE_URL untouched in the OAuth mode rather than clearing it", () => {
+    const env = buildEnv({
+      baseEnv: { ...baseEnv, ANTHROPIC_BASE_URL: "https://custom-gateway.example" },
+      configDirEscapeHatch: false,
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      headroom: { port: 8123, mitmPort: 8124, caCertPath: "/home/testuser/.claude-use/headroom/ca/ca.pem", projectId: "/repo" },
+    });
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://custom-gateway.example");
   });
 
   it("merges a provider's own ANTHROPIC_CUSTOM_HEADERS with headroom's entries", () => {
@@ -278,7 +293,7 @@ describe("buildEnv", () => {
         },
         token: "tok-from-o",
       },
-      headroom: { port: 8123, projectId: "/repo" },
+      headroom: { port: 8123, mitmPort: 8124, caCertPath: "/home/testuser/.claude-use/headroom/ca/ca.pem", projectId: "/repo" },
     });
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(
       "x-from-parent: yes\nx-from-provider: indeed\nx-headroom-project-id: /repo\nx-headroom-base-url: https://openrouter.ai/api/v1",

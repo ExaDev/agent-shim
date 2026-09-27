@@ -86,7 +86,7 @@ export interface BuildEnvParams {
   readonly identitiesDir: string;
   /** The provider resolved for this launch, when one was resolved. Its token is supplied by the caller because reading it and refusing an unset one needs the caller's log/exit ports. */
   readonly provider?: ResolvedProvider;
-  /** The headroom daemon this launch routes through, when headroom resolved on. The provider's own base URL moves into the per-request `x-headroom-base-url` header; the child itself talks only to the local proxy. */
+  /** The headroom daemon this launch routes through, when headroom resolved on. How the child is routed depends on the mode: with a provider, the child talks to the daemon directly and the provider's own base URL moves into the per-request `x-headroom-base-url` header; without one (an OAuth launch), the child keeps talking to the real API through the supervisor's MITM proxy, because Claude Code enables Remote Control and connectors only against `api.anthropic.com`. */
   readonly headroom?: HeadroomUp;
 }
 
@@ -97,7 +97,7 @@ export interface BuildEnvParams {
  *
  * A resolved provider is applied regardless of the identity outcome, because it selects which API endpoint the child talks to, not which login's data it sees: `ANTHROPIC_BASE_URL` points at the provider, `ANTHROPIC_AUTH_TOKEN` carries the token read from the provider's `tokenEnv`, `CLAUDE_USE_PROVIDER` names the provider for the statusline, and the provider's own `env` entries land verbatim. `ANTHROPIC_API_KEY` is explicitly cleared (to the empty string, which Claude Code treats as unset) unless the provider's `env` names its own value: an ambient `ANTHROPIC_API_KEY` inherited from the parent would outrank the token just set, silently authenticating the child as the ambient key instead of the provider.
  *
- * A resolved headroom daemon is applied last, on top of the provider: the child's `ANTHROPIC_BASE_URL` becomes the local proxy (never the provider's own URL), `HEADROOM_PROXY_URL` names the proxy for anything else that wants it, and `ANTHROPIC_CUSTOM_HEADERS` gains the `x-headroom-project-id` (memory scoping) and, when a provider is active, `x-headroom-base-url` (per-request upstream selection) entries, merged with any headers the provider's own `env` or the parent environment already set.
+ * A resolved headroom daemon is applied last, on top of the provider, and picks its routing mode from provider presence alone (no user-facing setting decides it): with a provider, the child's `ANTHROPIC_BASE_URL` becomes the local proxy (never the provider's own URL) and the provider's upstream moves into the `x-headroom-base-url` header, exactly as before. Without a provider (an OAuth launch), the base URL is left untouched and routing happens one layer down instead: `HTTPS_PROXY` points the child at the supervisor's MITM proxy and `NODE_EXTRA_CA_CERTS` trusts its CA, so the child still believes it is talking to the real `api.anthropic.com` (the belief Remote Control and connectors require) while the proxy's terminated TLS feeds headroom's paths to the daemon. `HEADROOM_PROXY_URL` names the daemon for anything else that wants it, and `ANTHROPIC_CUSTOM_HEADERS` gains `x-headroom-project-id` (memory scoping) in both modes, merged with any headers the provider's own `env` or the parent environment already set.
  *
  * `$CLAUDE_EXTRA_FLAGS` is never stripped from the child's environment: some wrappers set it two process-levels up and rely on inheritance through a `claude` invoked from inside a running session.
  */
@@ -124,10 +124,7 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
   }
 
   if (params.headroom !== undefined) {
-    // The child talks only to the local proxy; the provider's real upstream moves into the per-request header below, which is what lets one daemon serve several providers at once.
-    const proxyUrl = `http://127.0.0.1:${String(params.headroom.port)}`;
-    env.ANTHROPIC_BASE_URL = proxyUrl;
-    env.HEADROOM_PROXY_URL = proxyUrl;
+    env.HEADROOM_PROXY_URL = `http://127.0.0.1:${String(params.headroom.port)}`;
     env.ANTHROPIC_CUSTOM_HEADERS = mergeAnthropicCustomHeaders(
       [
         ...(parentCustomHeaders === undefined ? [] : [parentCustomHeaders]),
@@ -140,6 +137,14 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
           : [{ name: "x-headroom-base-url", value: params.provider.definition.baseUrl }]),
       ],
     );
+    if (params.provider !== undefined) {
+      // Provider mode: the child talks only to the local proxy; the provider's real upstream moves into the per-request header above, which is what lets one daemon serve several providers at once.
+      env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${String(params.headroom.port)}`;
+    } else {
+      // OAuth mode: ANTHROPIC_BASE_URL is left exactly as the parent environment had it (unset for a normal OAuth launch), because Claude Code enables Remote Control and connectors only against the real api.anthropic.com. Compression still happens: the proxy terminates that host's TLS and hands headroom-served paths to the daemon.
+      env.HTTPS_PROXY = `http://127.0.0.1:${String(params.headroom.mitmPort)}`;
+      env.NODE_EXTRA_CA_CERTS = params.headroom.caCertPath;
+    }
   }
 
   return env;

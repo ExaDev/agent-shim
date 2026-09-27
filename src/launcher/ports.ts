@@ -105,6 +105,10 @@ export interface LogPort {
 export interface HeadroomUp {
   /** The loopback port the local headroom proxy listens on. */
   readonly port: number;
+  /** The loopback port the supervisor's MITM CONNECT proxy listens on: what an OAuth launch points HTTPS_PROXY at. */
+  readonly mitmPort: number;
+  /** Path to the MITM proxy's CA certificate, what an OAuth launch points NODE_EXTRA_CA_CERTS at so the child trusts the terminated TLS. */
+  readonly caCertPath: string;
   /** The project identity headroom scopes memory state to: the git repo root of the launch directory, or the directory itself outside a repository. */
   readonly projectId: string;
 }

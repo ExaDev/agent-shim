@@ -136,6 +136,8 @@ export interface RunDoctorParams {
   readonly headroom: {
     readonly state: DoctorFileInput;
     readonly isRunning: (pid: number) => boolean;
+    /** The MITM proxy's CA certificate, pre-resolved by the wiring layer (a path plus whether the file exists), like `claudeShim.targetExists`: an OAuth launch points NODE_EXTRA_CA_CERTS at it, so a serving proxy without its CA file is a real finding. */
+    readonly caCert: { readonly path: string; readonly exists: boolean };
   };
 }
 
@@ -412,10 +414,18 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
           `Headroom state names daemon pid ${String(state.headroomPid)}, which is not running; its supervisor should be restarting it.`,
         );
       } else {
+        const mitm = state.mitmPort === undefined ? "" : `, MITM proxy on 127.0.0.1:${String(state.mitmPort)} (CA ${params.headroom.caCert.path})`;
         push(
           "headroom",
           "pass",
-          `Headroom daemon is up on 127.0.0.1:${String(state.port)} (supervisor ${String(state.supervisorPid)}, daemon ${String(state.headroomPid)}).`,
+          `Headroom daemon is up on 127.0.0.1:${String(state.port)}${mitm} (supervisor ${String(state.supervisorPid)}, daemon ${String(state.headroomPid)}).`,
+        );
+      }
+      if (state.mitmPort !== undefined && !params.headroom.caCert.exists) {
+        push(
+          "headroom",
+          "warn",
+          `The MITM proxy is serving on 127.0.0.1:${String(state.mitmPort)} but its CA certificate is missing at ${params.headroom.caCert.path}; OAuth launches cannot trust the proxy's TLS until it is regenerated.`,
         );
       }
       if (state.lastError !== undefined && supervisorAlive) {
@@ -603,7 +613,11 @@ export function registerDoctorCommand(program: Command, paths: LayoutPaths): voi
         },
         run: realRunPort,
         platform: process.platform,
-        headroom: { state: { path: paths.headroomStateFile, raw: realFsPort.readFileUtf8(paths.headroomStateFile) }, isRunning: realIsProcessRunning },
+        headroom: {
+          state: { path: paths.headroomStateFile, raw: realFsPort.readFileUtf8(paths.headroomStateFile) },
+          isRunning: realIsProcessRunning,
+          caCert: { path: paths.headroomCaCertFile, exists: realFsPort.readFileUtf8(paths.headroomCaCertFile) !== undefined },
+        },
       });
 
       for (const line of formatDoctorReport(report)) {

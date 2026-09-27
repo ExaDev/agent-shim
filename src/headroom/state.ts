@@ -19,6 +19,14 @@ export const HeadroomStateSchema = z.strictObject({
   /** The loopback port the proxy listens on. Absent until the proxy has passed its readiness check, so "port is set" is itself the ready signal a launcher polls for. */
   port: z.number().int().positive().optional(),
   /**
+   * The loopback port the supervisor's in-process MITM CONNECT proxy listens on. Absent whenever no supervisor is serving it, so "mitmPort is set" is the ready signal an OAuth launch polls for alongside `port`.
+   */
+  mitmPort: z.number().int().positive().optional(),
+  /**
+   * The sticky MITM port preference, the exact analogue of `lastPort` for the second server: it survives every shutdown, because every OAuth session's environment was frozen at launch with HTTPS_PROXY pointing at this address and a restart that moves strands them.
+   */
+  lastMitmPort: z.number().int().positive().optional(),
+  /**
    * The sticky port preference: the address the daemon last served on, kept across crashes, restarts, and idle shutdowns so the next start reuses it. Distinct from `port` on purpose: `port` is the ready signal (absent whenever nothing is serving), while `lastPort` survives every shutdown, because every live session's environment was frozen at launch pointing at this address and a restart that moves strands them.
    */
   lastPort: z.number().int().positive().optional(),
