@@ -12,6 +12,12 @@ import type { RunPort } from "./launcher/ports";
 
 const DISCOVERED_BINARY = { ok: true, binary: { path: "/opt/claude/2.1.0", source: "versions-dir", version: "2.1.0" } } as const;
 
+const ALIVE_SUPERVISOR_PID = 11;
+const ALIVE_DAEMON_PID = 12;
+const REPLACEMENT_SUPERVISOR_PID = 21;
+const REPLACEMENT_DAEMON_PID = 22;
+const HEADROOM_PORT = 8123;
+
 function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorParams {
   return {
     env: {},
@@ -25,6 +31,7 @@ function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorParams {
     claudeShim: { state: undefined, targetExists: false },
     pathResolution: { ownExecutablePath: "/home/u/.local/bin/claude-use", claudeUse: { status: "ok" } },
     platform: "linux",
+    headroom: { state: { path: "/claude-use/headroom/state.json", raw: undefined }, isProcessAlive: () => false },
     ...overrides,
   };
 }
@@ -51,6 +58,66 @@ function profile(name: string, body: Record<string, unknown> = {}, overrides: Pa
 function findingsFor(report: ReturnType<typeof runDoctor>, section: string) {
   return report.findings.filter((finding) => finding.section === section);
 }
+
+describe("runDoctor: headroom", () => {
+  it("passes with a note when the daemon has never run", () => {
+    const report = runDoctor(baseParams());
+    const findings = findingsFor(report, "headroom");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.severity).toBe("pass");
+    expect(findings[0]?.message).toContain("ever run");
+  });
+
+  it("fails on a malformed state.json instead of guessing", () => {
+    const report = runDoctor(baseParams({ headroom: { state: { path: "/claude-use/headroom/state.json", raw: "{bad" }, isProcessAlive: () => false } }));
+    expect(findingsFor(report, "headroom").some((finding) => finding.severity === "fail")).toBe(true);
+  });
+
+  it("passes when supervisor and daemon pids are both alive", () => {
+    const alive = new Set([ALIVE_SUPERVISOR_PID, ALIVE_DAEMON_PID]);
+    const report = runDoctor(
+      baseParams({
+        headroom: {
+          state: { path: "/claude-use/headroom/state.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT, version: "headroom 0.39.1" }) },
+          isProcessAlive: (pid: number) => alive.has(pid),
+        },
+      }),
+    );
+    const findings = findingsFor(report, "headroom");
+    expect(findings.every((finding) => finding.severity === "pass")).toBe(true);
+    expect(findings[0]?.message).toContain(`127.0.0.1:${String(HEADROOM_PORT)}`);
+  });
+
+  it("warns, without failing the report, when the recorded supervisor is no longer running", () => {
+    const report = runDoctor(
+      baseParams({
+        headroom: {
+          state: { path: "/claude-use/headroom/state.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT }) },
+          isProcessAlive: () => false,
+        },
+      }),
+    );
+    const findings = findingsFor(report, "headroom");
+    expect(findings.some((finding) => finding.severity === "warn")).toBe(true);
+    expect(report.ok).toBe(true);
+  });
+
+  it("warns about a recorded lastError even while a replacement supervisor runs", () => {
+    const alive = new Set([REPLACEMENT_SUPERVISOR_PID, REPLACEMENT_DAEMON_PID]);
+    const report = runDoctor(
+      baseParams({
+        headroom: {
+          state: {
+            path: "/claude-use/headroom/state.json",
+            raw: JSON.stringify({ supervisorPid: REPLACEMENT_SUPERVISOR_PID, headroomPid: REPLACEMENT_DAEMON_PID, port: HEADROOM_PORT, lastError: "previous crash" }),
+          },
+          isProcessAlive: (pid: number) => alive.has(pid),
+        },
+      }),
+    );
+    expect(findingsFor(report, "headroom").some((finding) => finding.severity === "warn" && finding.message.includes("previous crash"))).toBe(true);
+  });
+});
 
 describe("runDoctor: ambient-credential", () => {
   it("passes when no ambient-credential variable is set", () => {

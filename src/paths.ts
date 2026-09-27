@@ -25,6 +25,18 @@ export interface LayoutPaths {
   readonly categoriesLocalFile: string;
   /** Path to the claude-shim.json marker recording where `claude-use shim enable` last placed a `claude`-named copy of this executable, and how. */
   readonly claudeShimFile: string;
+  /** Directory holding the headroom daemon's coordination state: state.json, the start lock, and the session registry. */
+  readonly headroomDir: string;
+  /** Path to the headroom supervisor's state.json: pids, port, version, allowlist hash, last error. */
+  readonly headroomStateFile: string;
+  /** Path to the exclusive-create marker guarding "who spawns the supervisor" so concurrent launches start at most one. */
+  readonly headroomLockFile: string;
+  /** Directory holding one `<launcher-pid>.json` session-registry entry per live launch routed through headroom. */
+  readonly headroomSessionsDir: string;
+  /** Directory holding daemon logs (the headroom proxy's stdout/stderr and the supervisor's own output). */
+  readonly logsDir: string;
+  /** Path to the headroom daemon's combined log, appended to by both the supervisor and the proxy it owns. */
+  readonly headroomLogPath: string;
 }
 
 /**
@@ -63,6 +75,12 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     globalConfigFile: path.join(root, "config.json"),
     categoriesLocalFile: path.join(root, "categories.local.json"),
     claudeShimFile: path.join(root, "claude-shim.json"),
+    headroomDir: path.join(root, "headroom"),
+    headroomStateFile: path.join(root, "headroom", "state.json"),
+    headroomLockFile: path.join(root, "headroom", "start.lock"),
+    headroomSessionsDir: path.join(root, "headroom", "sessions"),
+    logsDir: path.join(root, "logs"),
+    headroomLogPath: path.join(root, "logs", "headroom.log"),
   };
 }
 

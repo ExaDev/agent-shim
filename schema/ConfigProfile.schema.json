@@ -109,6 +109,9 @@
         "provider": {
           "type": "string",
           "minLength": 1
+        },
+        "headroom": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

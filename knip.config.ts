@@ -8,6 +8,8 @@ const config: KnipConfig = {
     "@semantic-release/npm",
     "conventional-changelog-conventionalcommits",
   ],
+  // Runtime-invoked external tools, not npm dependencies: the headroom supervisor spawns `uv tool install` and the headroom proxy itself, so their names appear as spawn literals knip cannot resolve to a package.
+  ignoreBinaries: ["headroom", "uv"],
 };
 
 export default config;

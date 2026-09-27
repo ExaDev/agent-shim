@@ -10,6 +10,10 @@ export interface SpawnClaudeParams {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly spawn: SpawnPort;
   readonly proc: ProcPort;
+  /**
+   * Runs immediately before the child's exit code propagates. The real `process.exit` never unwinds a `finally` block, so a caller with cleanup to do on the success path (releasing a headroom session registration, say) cannot rely on one; it passes the cleanup here instead.
+   */
+  readonly beforeExit?: () => void;
 }
 
 // The conventional shell exit-code offset for a signal-terminated process (matching what a real shell's `exec` would report): 128 plus the signal's own number.
@@ -37,6 +41,9 @@ export function spawnClaude(params: SpawnClaudeParams): never {
   const result = params.spawn.spawnSync(params.bin, params.args, { stdio: "inherit", env: params.env });
   if (result.error !== undefined) {
     throw result.error;
+  }
+  if (params.beforeExit !== undefined) {
+    params.beforeExit();
   }
   return params.proc.exit(exitCodeFor(result));
 }

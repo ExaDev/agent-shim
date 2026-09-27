@@ -1,0 +1,171 @@
+import { describe, expect, it } from "vitest";
+
+import { buildLayoutPaths } from "../paths";
+import { createFakeFarmFs } from "../test-helpers";
+import { ensureHeadroom, HeadroomStartError } from "./ensure";
+import { writeHeadroomState, writeSession } from "./state";
+
+const paths = buildLayoutPaths("/home/testuser/.claude-use");
+
+const SUPERVISOR_PID = 500;
+const OTHER_LAUNCHER_PID = 777;
+const SLEEPS_BEFORE_RECOVERY = 3;
+const SLEEPS_BEFORE_OTHER_SUPERVENDOR_READY = 2;
+const HEADROOM_PID = 501;
+const PORT = 8123;
+
+/**
+ * The fake world `ensureHeadroom` runs against: a fake filesystem, a clock that only advances when the code sleeps, a live-pid set, and a `spawnSupervisor` that records itself and can simulate the freshly spawned supervisor writing a ready state (immediately, or lazily on a later poll via `onSleep`).
+ */
+function makeWorld(options: { readonly spawnWritesReadyState?: boolean } = {}) {
+  const fs = createFakeFarmFs({});
+  let clock = 0;
+  let onSleep: (() => void) | undefined;
+  const alive = new Set<number>([SUPERVISOR_PID, HEADROOM_PID, process.pid]);
+  const spawns: number[] = [];
+
+  const world = {
+    fs,
+    alive,
+    spawns,
+    set onSleep(hook: (() => void) | undefined) {
+      onSleep = hook;
+    },
+    writeReadyState(port = PORT): void {
+      writeHeadroomState(fs, paths.headroomStateFile, {
+        supervisorPid: SUPERVISOR_PID,
+        headroomPid: HEADROOM_PID,
+        port,
+        version: "headroom 0.39.1",
+      });
+    },
+    ports: {
+      fs,
+      isProcessAlive: (pid: number) => alive.has(pid),
+      now: () => clock,
+      sleep: (ms: number) => {
+        clock += ms;
+        if (onSleep !== undefined) {
+          onSleep();
+        }
+      },
+      spawnSupervisor: () => {
+        spawns.push(SUPERVISOR_PID);
+        if (options.spawnWritesReadyState !== false) {
+          world.writeReadyState();
+        }
+        return SUPERVISOR_PID;
+      },
+    },
+  };
+  return world;
+}
+
+describe("ensureHeadroom", () => {
+  it("starts a supervisor when nothing is running and waits for its ready state, then registers the session", () => {
+    const world = makeWorld();
+    const result = ensureHeadroom({ paths, launcherPid: 42, ports: world.ports });
+    expect(result).toEqual({ port: PORT });
+    expect(world.spawns).toHaveLength(1);
+    expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/42.json`)).toBeDefined();
+  });
+
+  it("reuses an already-healthy daemon without spawning anything", () => {
+    const world = makeWorld();
+    world.writeReadyState();
+    const result = ensureHeadroom({ paths, launcherPid: 43, ports: world.ports });
+    expect(result).toEqual({ port: PORT });
+    expect(world.spawns).toHaveLength(0);
+    expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/43.json`)).toBeDefined();
+  });
+
+  it("spawns a replacement supervisor when the recorded one is dead", () => {
+    const world = makeWorld();
+    writeHeadroomState(world.fs, paths.headroomStateFile, {
+      supervisorPid: 999,
+      headroomPid: HEADROOM_PID,
+      port: PORT,
+    });
+    const result = ensureHeadroom({ paths, launcherPid: 44, ports: world.ports });
+    expect(result).toEqual({ port: PORT });
+    expect(world.spawns).toHaveLength(1);
+  });
+
+  it("keeps waiting while a live supervisor restarts a dead daemon, and returns once it is back", () => {
+    const world = makeWorld({ spawnWritesReadyState: false });
+    writeHeadroomState(world.fs, paths.headroomStateFile, {
+      supervisorPid: SUPERVISOR_PID,
+      headroomPid: 999,
+      port: PORT,
+    });
+    // The supervisor brings the daemon back partway through the wait.
+    let sleeps = 0;
+    world.onSleep = () => {
+      sleeps += 1;
+      if (sleeps === SLEEPS_BEFORE_RECOVERY) {
+        world.writeReadyState();
+      }
+    };
+    const result = ensureHeadroom({ paths, launcherPid: 45, ports: world.ports });
+    expect(result).toEqual({ port: PORT });
+    expect(sleeps).toBeGreaterThanOrEqual(SLEEPS_BEFORE_RECOVERY);
+  });
+
+  it("does not spawn while another live launcher holds the start lock, and waits for that launcher's supervisor", () => {
+    const world = makeWorld();
+    world.fs.mkdirp(paths.headroomDir);
+    world.fs.writeFileUtf8(paths.headroomLockFile, JSON.stringify({ pid: OTHER_LAUNCHER_PID, at: 0 }));
+    world.alive.add(OTHER_LAUNCHER_PID);
+    let sleeps = 0;
+    world.onSleep = () => {
+      sleeps += 1;
+      if (sleeps === SLEEPS_BEFORE_OTHER_SUPERVENDOR_READY) {
+        world.writeReadyState();
+      }
+    };
+    const result = ensureHeadroom({ paths, launcherPid: 46, ports: world.ports });
+    expect(result).toEqual({ port: PORT });
+    expect(world.spawns).toHaveLength(0);
+  });
+
+  it("takes over a start lock whose holder is dead", () => {
+    const world = makeWorld();
+    world.fs.mkdirp(paths.headroomDir);
+    world.fs.writeFileUtf8(paths.headroomLockFile, JSON.stringify({ pid: OTHER_LAUNCHER_PID, at: 0 }));
+    // 777 deliberately not in the alive set.
+    const result = ensureHeadroom({ paths, launcherPid: 47, ports: world.ports });
+    expect(result).toEqual({ port: PORT });
+    expect(world.spawns).toHaveLength(1);
+  });
+
+  it("refuses immediately when a live supervisor has recorded a fatal lastError", () => {
+    const world = makeWorld();
+    writeHeadroomState(world.fs, paths.headroomStateFile, {
+      supervisorPid: SUPERVISOR_PID,
+      lastError: "headroom failed to become ready 5 times in a row",
+    });
+    expect(() => ensureHeadroom({ paths, launcherPid: 48, ports: world.ports })).toThrow(HeadroomStartError);
+    expect(world.spawns).toHaveLength(0);
+  });
+
+  it("times out loudly, naming the daemon log path, when nothing ever becomes ready", () => {
+    const world = makeWorld({ spawnWritesReadyState: false });
+    let error: unknown;
+    try {
+      ensureHeadroom({ paths, launcherPid: 49, ports: world.ports });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(HeadroomStartError);
+    expect((error as HeadroomStartError).message).toContain(paths.headroomLogPath);
+    expect(world.spawns).toHaveLength(1);
+  });
+
+  it("does not re-register a session that already exists; writeSession is idempotent per pid", () => {
+    const world = makeWorld();
+    world.writeReadyState();
+    writeSession(world.fs, paths.headroomSessionsDir, { pid: 50, startedAt: 123 });
+    ensureHeadroom({ paths, launcherPid: 50, ports: world.ports });
+    expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/50.json`)).toBeDefined();
+  });
+});

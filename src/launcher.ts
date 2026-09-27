@@ -7,7 +7,7 @@ import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/id
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { IdentityLockBusyError } from "./launcher/lock";
-import type { FarmFs, FsPort, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
+import type { FarmFs, FsPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
 import { spawnClaude } from "./launcher/spawn";
 import { resolveProvider } from "./providers";
 import type { CategoryClassification, CategoryClassificationOverlay, LaunchFlags } from "./config/schema";
@@ -63,12 +63,14 @@ export interface RunLauncherParams {
   readonly globalDefaultConfigProfile?: string;
   /** Wires the farm resync. Omitted only by a caller that has no farm to manage. */
   readonly farm?: FarmRuntime;
+  /** Wires headroom routing. Omitted by a caller that cannot route through the daemon; a launch that resolves `headroom` on with no port wired is refused loudly rather than silently bypassing it. */
+  readonly headroom?: HeadroomPort;
 }
 
 /**
  * Orchestrates one `claude` launch, in order:
  *
- * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the ambient-credential guard, farm resync, version discovery, flag resolution, the extra-flags split, and finally spawn.
+ * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the ambient-credential guard, farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and finally spawn.
  *
  * The farm resync is skipped when `CLAUDE_CONFIG_DIR` was already set (the escape hatch means the user has named a configuration directory explicitly, and claude-use manages neither its contents nor its lifetime) and when no identity resolved at all (a bare launch against plain `~/.claude`, matching the legacy tool's own behaviour). In both cases there is no claude-use-managed farm for a resync to act on.
  */
@@ -234,6 +236,17 @@ export function runLauncher(params: RunLauncherParams): void {
   const discovered = params.resolveClaudeBinary();
 
   const resolvedFlags = resolveLaunchFlags({ env, ...(cascadeLaunch === undefined ? {} : { cascade: cascadeLaunch }) });
+
+  let headroom: HeadroomUp | undefined;
+  const headroomPort = params.headroom;
+  if (resolvedFlags.headroom && headroomPort !== undefined) {
+    headroom = headroomPort.ensure();
+    log.info(`claude-use: routing through headroom on 127.0.0.1:${String(headroom.port)} (project ${headroom.projectId})`);
+  } else if (resolvedFlags.headroom) {
+    log.error("claude-use: headroom routing was requested but this launcher has no headroom port wired; refusing to launch without it.");
+    proc.exit(1);
+  }
+
   const finalArgv = buildArgv({
     toolFlags: buildFlagArgs(resolvedFlags),
     extraFlags: splitExtraFlags(env.CLAUDE_EXTRA_FLAGS),
@@ -245,7 +258,23 @@ export function runLauncher(params: RunLauncherParams): void {
     resolvedIdentityName: identityDecision.name,
     identitiesDir: paths.identitiesDir,
     ...(resolvedProvider === undefined ? {} : { provider: resolvedProvider }),
+    ...(headroom === undefined ? {} : { headroom }),
   });
 
-  spawnClaude({ bin: discovered.path, args: finalArgv, env: finalEnv, spawn, proc });
+  if (headroom === undefined || headroomPort === undefined) {
+    spawnClaude({ bin: discovered.path, args: finalArgv, env: finalEnv, spawn, proc });
+  }
+  // The session registration is released twice by design: `beforeExit` covers the real success path (where `process.exit` never unwinds a `finally`), and the `finally` below covers a thrown spawn error, where it does. `release` is idempotent, so the double call in a test fake (whose `exit` throws rather than terminates) is harmless.
+  try {
+    spawnClaude({
+      bin: discovered.path,
+      args: finalArgv,
+      env: finalEnv,
+      spawn,
+      proc,
+      beforeExit: headroomPort.release,
+    });
+  } finally {
+    headroomPort.release();
+  }
 }

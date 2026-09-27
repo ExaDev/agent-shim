@@ -100,3 +100,21 @@ export interface LogPort {
   readonly warn: (message: string) => void;
   readonly error: (message: string) => void;
 }
+
+/** The running headroom daemon one launch routed through, as `HeadroomPort.ensure` reports it. */
+export interface HeadroomUp {
+  /** The loopback port the local headroom proxy listens on. */
+  readonly port: number;
+  /** The project identity headroom scopes memory state to: the git repo root of the launch directory, or the directory itself outside a repository. */
+  readonly projectId: string;
+}
+
+/**
+ * Everything the launcher needs from the headroom daemon, injected so its daemon-supervision side effects stay behind a port and the launcher's own logic stays pure over it (`src/realPorts.ts` wires the real one; tests wire fakes).
+ *
+ * `ensure` brings the daemon up (spawning the detached supervisor when nothing healthy is running) and registers this launch in its session registry; `release` removes that registration when the spawned `claude` exits.
+ */
+export interface HeadroomPort {
+  readonly ensure: () => HeadroomUp;
+  readonly release: () => void;
+}

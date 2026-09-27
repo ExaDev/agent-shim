@@ -21,11 +21,12 @@ import {
   GlobalConfigSchema,
   IdentitySchema,
 } from "./config/schema";
+import { HeadroomStateSchema } from "./headroom/state";
 import { isIdentityDirectoryName } from "./identityManager";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
 import type { RunPort } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
-import { findExecutableInDir, realFsPort, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
+import { findExecutableInDir, realFsPort, realIsProcessAlive, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
 import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./resolve/extends";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 
@@ -42,7 +43,8 @@ type DoctorSection =
   | "directory-rules"
   | "global-config"
   | "categories-local"
-  | "active-identity";
+  | "active-identity"
+  | "headroom";
 
 /** One line of `claude-use doctor`'s report. `subject` names the identity/profile/rule the finding is about, when the section has more than one of those. */
 interface DoctorFinding {
@@ -130,6 +132,11 @@ export interface RunDoctorParams {
   readonly run?: RunPort;
   /** `process.platform` in real use; the Keychain check only ever runs when this is `"darwin"`. */
   readonly platform: string;
+  /** The headroom daemon's state.json plus a liveness predicate for the pids it names. Omit the raw text when the daemon has never run; that is a pass, not a failure. */
+  readonly headroom: {
+    readonly state: DoctorFileInput;
+    readonly isProcessAlive: (pid: number) => boolean;
+  };
 }
 
 /** Parses and validates one optional JSON file's raw text against `schema`, without ever throwing — a missing file, invalid JSON, and a schema violation are each reported as their own failure message rather than aborting the caller. */
@@ -368,6 +375,55 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     );
   }
 
+  if (params.headroom.state.raw === undefined) {
+    push("headroom", "pass", "No headroom daemon has ever run; nothing to check.");
+  } else {
+    const validated = validateJson(HeadroomStateSchema, params.headroom.state);
+    if (!validated.ok) {
+      push("headroom", "fail", validated.message);
+    } else {
+      const state = validated.data;
+      const supervisorAlive = state.supervisorPid !== undefined && params.headroom.isProcessAlive(state.supervisorPid);
+      const headroomAlive = state.headroomPid !== undefined && params.headroom.isProcessAlive(state.headroomPid);
+      if (state.supervisorPid === undefined) {
+        if (state.lastError === undefined) {
+          push("headroom", "pass", "Headroom daemon is stopped (idle shutdown) with no recorded error.");
+        } else {
+          push("headroom", "warn", `Headroom supervisor is not running; last error: ${state.lastError}`);
+        }
+      } else if (!supervisorAlive) {
+        push(
+          "headroom",
+          "warn",
+          `Headroom state names supervisor pid ${String(state.supervisorPid)}, which is not running; the next launch through headroom will start a replacement.`,
+        );
+      } else if (state.headroomPid === undefined || state.port === undefined) {
+        push(
+          "headroom",
+          "warn",
+          state.lastError === undefined
+            ? "Headroom supervisor is running but the daemon has no healthy process; it should be restarting it."
+            : `Headroom supervisor is running but the daemon is down; last error: ${state.lastError}`,
+        );
+      } else if (!headroomAlive) {
+        push(
+          "headroom",
+          "warn",
+          `Headroom state names daemon pid ${String(state.headroomPid)}, which is not running; its supervisor should be restarting it.`,
+        );
+      } else {
+        push(
+          "headroom",
+          "pass",
+          `Headroom daemon is up on 127.0.0.1:${String(state.port)} (supervisor ${String(state.supervisorPid)}, daemon ${String(state.headroomPid)}).`,
+        );
+      }
+      if (state.lastError !== undefined && supervisorAlive) {
+        push("headroom", "warn", `Headroom recorded a previous error: ${state.lastError}`);
+      }
+    }
+  }
+
   if (params.activeIdentity.raw === undefined) {
     push("active-identity", "pass", "No active identity set.");
   } else {
@@ -394,6 +450,7 @@ const SECTION_TITLES: Readonly<Record<DoctorSection, string>> = {
   keychain: "macOS Keychain",
   "directory-rules": "Directory rules",
   "global-config": "Global config",
+  headroom: "Headroom daemon",
   "categories-local": "categories.local.json",
   "active-identity": "Active identity",
 };
@@ -408,6 +465,7 @@ const SECTION_ORDER: readonly DoctorSection[] = [
   "keychain",
   "directory-rules",
   "global-config",
+  "headroom",
   "categories-local",
   "active-identity",
 ];
@@ -545,6 +603,7 @@ export function registerDoctorCommand(program: Command, paths: LayoutPaths): voi
         },
         run: realRunPort,
         platform: process.platform,
+        headroom: { state: { path: paths.headroomStateFile, raw: realFsPort.readFileUtf8(paths.headroomStateFile) }, isProcessAlive: realIsProcessAlive },
       });
 
       for (const line of formatDoctorReport(report)) {
