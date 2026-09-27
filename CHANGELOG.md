@@ -1,3 +1,9 @@
+## [2.5.4](https://github.com/ExaDev/claude-use/compare/v2.5.3...v2.5.4) (2026-09-27)
+
+### Bug Fixes
+
+* keep the headroom daemon's port stable across restarts ([bb7da4f](https://github.com/ExaDev/claude-use/commit/bb7da4f385478920eefd9f5b6013a55332e38621))
+
 ## [2.5.3](https://github.com/ExaDev/claude-use/compare/v2.5.2...v2.5.3) (2026-09-27)
 
 ### Bug Fixes
