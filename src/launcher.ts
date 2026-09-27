@@ -240,7 +240,11 @@ export function runLauncher(params: RunLauncherParams): void {
 
   const discovered = params.resolveClaudeBinary();
 
-  const resolvedFlags = resolveLaunchFlags({ env, ...(cascadeLaunch === undefined ? {} : { cascade: cascadeLaunch }) });
+  const resolvedFlags = resolveLaunchFlags({
+    env,
+    ...(cascadeLaunch === undefined ? {} : { cascade: cascadeLaunch }),
+    ...(parsedArgv.headroom === undefined ? {} : { headroomFlag: parsedArgv.headroom }),
+  });
 
   let headroom: HeadroomUp | undefined;
   const headroomPort = params.headroom;

@@ -69,6 +69,20 @@ describe("parseLauncherArgv", () => {
     expect(result.rest).toEqual([]);
   });
 
+  it("parses --headroom and --no-headroom as consumed boolean flags, later occurrence winning", () => {
+    expect(parseLauncherArgv(["--headroom", "-p"]).headroom).toBe(true);
+    expect(parseLauncherArgv(["--no-headroom", "-p"]).headroom).toBe(false);
+    expect(parseLauncherArgv(["--no-headroom", "--headroom", "-p"]).headroom).toBe(true);
+    expect(parseLauncherArgv(["--headroom", "--no-headroom", "-p"]).headroom).toBe(false);
+    const parsed = parseLauncherArgv(["--headroom", "fix", "the", "bug"]);
+    expect(parsed.headroom).toBe(true);
+    expect(parsed.rest).toEqual(["fix", "the", "bug"]);
+  });
+
+  it("leaves headroom undefined when neither flag is given", () => {
+    expect(parseLauncherArgv(["-p", "hi"]).headroom).toBeUndefined();
+  });
+
   it("accepts --config-profile=<name> inline form", () => {
     const result = parseLauncherArgv(["--config-profile=work", "--print"]);
     expect(result.configProfile).toBe("work");

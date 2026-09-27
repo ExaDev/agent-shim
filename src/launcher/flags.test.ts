@@ -43,6 +43,19 @@ describe("resolveLaunchFlags", () => {
     ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false });
   });
 
+  it("lets a --headroom/--no-headroom flag outrank both the env escape hatch and the cascade", () => {
+    expect(resolveLaunchFlags({ env: { CLAUDE_USE_HEADROOM: "1" }, headroomFlag: false }).headroom).toBe(false);
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true }, headroomFlag: false }).headroom).toBe(false);
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: false }, headroomFlag: true }).headroom).toBe(true);
+    expect(resolveLaunchFlags({ env: {}, headroomFlag: true }).headroom).toBe(true);
+  });
+
+  it("keeps the env escape hatch over the cascade for headroom when no flag was given", () => {
+    expect(resolveLaunchFlags({ env: { CLAUDE_USE_HEADROOM: "1" }, cascade: { headroom: false } }).headroom).toBe(true);
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true } }).headroom).toBe(true);
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: false } }).headroom).toBe(false);
+  });
+
   it("turns headroom on via the CLAUDE_USE_HEADROOM=1 escape hatch", () => {
     expect(resolveLaunchFlags({ env: { CLAUDE_USE_HEADROOM: "1" } })).toEqual({
       skipPermissions: false,
