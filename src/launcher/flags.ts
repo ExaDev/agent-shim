@@ -21,6 +21,8 @@ export interface ResolveLaunchFlagsParams {
    * The already-resolved cascade value for launch flags, when one exists. Undefined for this phase, since the cascade/farm resync that would produce it lands in Phase 5 — `resolveLaunchFlags` treats an absent cascade exactly like one that set nothing, so this function needs no change once Phase 5 starts supplying a real value here.
    */
   readonly cascade?: LaunchFlags;
+  /** The launch's --headroom/--no-headroom flag, when either was given. Beats both the CLAUDE_USE_HEADROOM escape hatch and the cascade. */
+  readonly headroomFlag?: boolean;
   readonly env: Readonly<Record<string, string | undefined>>;
 }
 
@@ -33,7 +35,8 @@ export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLa
   return {
     skipPermissions: params.cascade?.skipPermissions === true || isEnvFlagSet(params.env.CLAUDE_USE_SKIP_PERMISSIONS),
     remoteControl: params.cascade?.remoteControl === true || isEnvFlagSet(params.env.CLAUDE_USE_REMOTE_CONTROL),
-    headroom: params.cascade?.headroom === true || isEnvFlagSet(params.env.CLAUDE_USE_HEADROOM),
+    // Precedence: an explicit --headroom/--no-headroom flag decides outright, then the CLAUDE_USE_HEADROOM escape hatch, then the cascade. The flag outranks the environment variable because it is the more deliberate of the two one-off forms (typed on this very command line, not inherited from a shell profile).
+    headroom: params.headroomFlag ?? (isEnvFlagSet(params.env.CLAUDE_USE_HEADROOM) || params.cascade?.headroom === true),
   };
 }
 

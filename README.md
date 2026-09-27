@@ -84,6 +84,9 @@ claude-use provider remove <name>
 
 claude-use headroom status
 
+claude @<identity> --headroom            # one launch routed through headroom
+claude --no-headroom                       # one launch routed direct, overriding every layer
+
 claude-use rules add <path> [--profile <name>] [--identity <name>]
 claude-use rules list
 claude-use rules remove <path>

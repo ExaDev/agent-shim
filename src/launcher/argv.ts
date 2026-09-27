@@ -6,6 +6,8 @@ export interface ParsedLauncherArgv {
   readonly configProfile?: string;
   /** An explicit `--provider <name>` flag, when one was present. */
   readonly provider?: string;
+  /** The last `--headroom`/`--no-headroom` occurrence, when either was given. Like the valued flags, both forms are consumed here and never forwarded. */
+  readonly headroom?: boolean;
   /** Every `--category <cat>=<bool>[,...]` flag's raw value, in the order given — later values win on key collision when merged. */
   readonly categoryFlags: readonly string[];
   /** Every `--share <path>[,...]` flag's raw value, in the order given. */
@@ -43,6 +45,7 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
 
   let configProfile: string | undefined;
   let provider: string | undefined;
+  let headroom: boolean | undefined;
   const categoryFlags: string[] = [];
   const shareFlags: string[] = [];
   const hideFlags: string[] = [];
@@ -53,6 +56,12 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
     if (token === undefined) {
       continue;
     }
+    if (token === "--headroom" || token === "--no-headroom") {
+      // Later occurrence wins, matching the repeatable valued flags' own convention.
+      headroom = token === "--headroom";
+      continue;
+    }
+
     const matched = matchValuedFlag(token);
     if (matched === undefined) {
       rest.push(token);
@@ -90,6 +99,7 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
     ...(hasIdentity ? { identity: first.slice(1) } : {}),
     ...(configProfile === undefined ? {} : { configProfile }),
     ...(provider === undefined ? {} : { provider }),
+    ...(headroom === undefined ? {} : { headroom }),
     categoryFlags,
     shareFlags,
     hideFlags,

@@ -483,6 +483,42 @@ describe("runLauncher headroom routing", () => {
     expect(headroom.releases).toBe(0);
     expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBeUndefined();
   });
+
+  it("a --no-headroom flag beats the env escape hatch and the cascade", () => {
+    const spawn = fakeSpawn();
+    const headroom = fakeHeadroomPort();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--no-headroom", "--print"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      headroom,
+    });
+
+    expect(headroom.ensures).toBe(0);
+    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBeUndefined();
+  });
+
+  it("a --headroom flag turns routing on without the env escape hatch or a cascade setting", () => {
+    const spawn = fakeSpawn();
+    const headroom = fakeHeadroomPort();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc({}, ["--headroom", "--print"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      headroom,
+    });
+
+    expect(headroom.ensures).toBe(1);
+    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://127.0.0.1:8124");
+  });
 });
 
 describe("runLauncher provider selection", () => {
