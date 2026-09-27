@@ -1,3 +1,9 @@
+## [2.6.0](https://github.com/ExaDev/claude-use/compare/v2.5.4...v2.6.0) (2026-09-27)
+
+### Features
+
+* allow a provider to carry a fixed credential instead of tokenEnv ([5598e3c](https://github.com/ExaDev/claude-use/commit/5598e3ca7098605bc773ec96e622a2ebfed0f8e3))
+
 ## [2.5.4](https://github.com/ExaDev/claude-use/compare/v2.5.3...v2.5.4) (2026-09-27)
 
 ### Bug Fixes
