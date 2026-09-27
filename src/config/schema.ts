@@ -159,7 +159,7 @@ const HeadroomGlobalConfigSchema = z.strictObject({
 /**
  * The default `headroom.source` install spec: the ExaDev headroom repository, with the `proxy` extra that provides the `headroom proxy` entry point. Kept here rather than in the supervisor because it is the schema's own documented default, referenced by `HeadroomGlobalConfigSchema`'s field docs.
  */
-export const HEADROOM_DEFAULT_SOURCE = "headroom[proxy] @ git+https://github.com/ExaDev/headroom";
+export const HEADROOM_DEFAULT_SOURCE = "headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom";
 
 /**
  * The default `headroom.idleShutdownMinutes`: long enough that back-to-back sessions keep the daemon warm through a coffee break, short enough that an abandoned daemon frees its memory the same working day rather than squatting until reboot.
