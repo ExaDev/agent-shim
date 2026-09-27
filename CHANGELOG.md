@@ -1,3 +1,9 @@
+## [2.5.1](https://github.com/ExaDev/claude-use/compare/v2.5.0...v2.5.1) (2026-09-27)
+
+### Bug Fixes
+
+* resolve launch flags from the cascade on escape-hatch launches ([98e7e48](https://github.com/ExaDev/claude-use/commit/98e7e48020fe5872c5c6eba23f4d76372ea1a6bf))
+
 ## [2.5.0](https://github.com/ExaDev/claude-use/compare/v2.4.2...v2.5.0) (2026-09-27)
 
 ### Features
