@@ -1,3 +1,9 @@
+## [2.7.0](https://github.com/ExaDev/claude-use/compare/v2.6.0...v2.7.0) (2026-09-27)
+
+### Features
+
+* route OAuth sessions through a TLS-terminating MITM proxy for headroom ([48ce107](https://github.com/ExaDev/claude-use/commit/48ce1070837fc7a6f9c087635a2e874c1e10e8a0))
+
 ## [2.6.0](https://github.com/ExaDev/claude-use/compare/v2.5.4...v2.6.0) (2026-09-27)
 
 ### Features
