@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { collectHeadroomStatus, formatHeadroomStatus } from "./commands";
+import { collectHeadroomStatus, formatHeadroomStatus, headroomSpawnEnv } from "./commands";
 import { hashAllowlist, headroomAllowlist, writeHeadroomState, writeSession } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.claude-use");
@@ -89,5 +89,19 @@ describe("formatHeadroomStatus", () => {
     expect(lines[2]).toBe("mitm proxy: not running");
     expect(lines[3]).toBe("allowlist: https://api.anthropic.com");
     expect(lines[4]).toBe("sessions: none");
+  });
+});
+
+describe("headroomSpawnEnv", () => {
+  it("defaults HEADROOM_HTTP2 to 0 and joins the allowlist into the environment", () => {
+    const env = headroomSpawnEnv({ PATH: "/usr/bin" }, ["https://api.anthropic.com", "https://api.z.ai/api/anthropic"]);
+    expect(env.HEADROOM_HTTP2).toBe("0");
+    expect(env.HEADROOM_ALLOWED_BASE_URLS).toBe("https://api.anthropic.com,https://api.z.ai/api/anthropic");
+    expect(env.PATH).toBe("/usr/bin");
+  });
+
+  it("leaves an explicit HEADROOM_HTTP2 from the parent environment in place", () => {
+    const env = headroomSpawnEnv({ HEADROOM_HTTP2: "1" }, ["https://api.anthropic.com"]);
+    expect(env.HEADROOM_HTTP2).toBe("1");
   });
 });
