@@ -151,6 +151,17 @@ function headroomPidRunning(pid: number): boolean {
   return !exitedHeadroom.has(pid) && realIsProcessRunning(pid);
 }
 
+/**
+ * Environment for the supervised headroom proxy. `HEADROOM_HTTP2` defaults to `0`: headroom's HTTP/2 upstream pool multiplexes every request over shared keep-alive connections, and when a provider retires one (GOAWAY is routine load-balancer behaviour, not an error) every in-flight request on it dies at once; headroom retries exactly once, and that retry regularly lands on another dying connection from the same co-aged pool, which surfaces to Claude Code as "No response from API" after its full timeout budget. HTTP/1.1 gives each request its own connection, so a retirement can only kill the one request already being retried. An explicit `HEADROOM_HTTP2` in the parent environment wins, so the default can be overridden without editing claude-use once headroom fixes its pool management.
+ */
+export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readonly string[]): NodeJS.ProcessEnv {
+  return {
+    ...parentEnv,
+    HEADROOM_ALLOWED_BASE_URLS: allowlist.join(","),
+    HEADROOM_HTTP2: parentEnv.HEADROOM_HTTP2 ?? "0",
+  };
+}
+
 /** The real `SupervisorPorts`: real processes, ports, clock, filesystem, and network. */
 function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
   return {
@@ -174,7 +185,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
         const child = spawn("headroom", ["proxy", "--host", "127.0.0.1", "--port", String(port)], {
           detached: true,
           stdio: ["ignore", logFd, logFd],
-          env: { ...process.env, HEADROOM_ALLOWED_BASE_URLS: allowlist.join(",") },
+          env: headroomSpawnEnv(process.env, allowlist),
         });
         if (child.pid === undefined) {
           throw new Error("spawning headroom returned no pid");
