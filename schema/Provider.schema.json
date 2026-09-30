@@ -1,183 +1,413 @@
 {
   "$id": "https://github.com/ExaDev/claude-use/schema/Provider.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "properties": {
-    "$schema": {
-      "type": "string"
-    },
-    "displayName": {
-      "type": "string",
-      "minLength": 1
-    },
-    "baseUrl": {
-      "type": "string",
-      "format": "uri"
-    },
-    "credential": {
+  "oneOf": [
+    {
       "type": "object",
       "properties": {
-        "sources": {
-          "minItems": 1,
-          "type": "array",
-          "items": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "env": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "env"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "file": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "file"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "command": {
-                    "type": "array",
-                    "prefixItems": [
-                      {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    ],
-                    "items": {
-                      "type": "string"
-                    },
-                    "minItems": 1
-                  },
-                  "interactive": {
-                    "type": "boolean"
-                  },
-                  "timeoutMs": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  }
-                },
-                "required": [
-                  "command"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "op": {
-                    "type": "string",
-                    "format": "starts_with",
-                    "pattern": "^op:\\/\\/.*"
-                  },
-                  "interactive": {
-                    "type": "boolean"
-                  },
-                  "timeoutMs": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  }
-                },
-                "required": [
-                  "op"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "keychain": {
+        "$schema": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "const": "http"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "credential": {
+          "type": "object",
+          "properties": {
+            "sources": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
                     "type": "object",
                     "properties": {
-                      "service": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "account": {
+                      "env": {
                         "type": "string",
                         "minLength": 1
                       }
                     },
                     "required": [
-                      "service"
+                      "env"
                     ],
                     "additionalProperties": false
                   },
-                  "interactive": {
-                    "type": "boolean"
+                  {
+                    "type": "object",
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "file"
+                    ],
+                    "additionalProperties": false
                   },
-                  "timeoutMs": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
+                  {
+                    "type": "object",
+                    "properties": {
+                      "command": {
+                        "type": "array",
+                        "prefixItems": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        ],
+                        "items": {
+                          "type": "string"
+                        },
+                        "minItems": 1
+                      },
+                      "interactive": {
+                        "type": "boolean"
+                      },
+                      "timeoutMs": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "command"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "op": {
+                        "type": "string",
+                        "format": "starts_with",
+                        "pattern": "^op:\\/\\/.*"
+                      },
+                      "interactive": {
+                        "type": "boolean"
+                      },
+                      "timeoutMs": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "op"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "keychain": {
+                        "type": "object",
+                        "properties": {
+                          "service": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "account": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "service"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "interactive": {
+                        "type": "boolean"
+                      },
+                      "timeoutMs": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "keychain"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "literal": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "literal"
+                    ],
+                    "additionalProperties": false
                   }
-                },
-                "required": [
-                  "keychain"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "literal": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "literal"
-                ],
-                "additionalProperties": false
+                ]
               }
-            ]
-          }
+            },
+            "target": {
+              "type": "string",
+              "enum": [
+                "bearer",
+                "apiKey"
+              ]
+            }
+          },
+          "required": [
+            "sources"
+          ],
+          "additionalProperties": false
         },
-        "target": {
-          "type": "string",
-          "enum": [
-            "bearer",
-            "apiKey"
-          ]
+        "env": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "required": [
-        "sources"
+        "displayName",
+        "baseUrl",
+        "credential"
       ],
       "additionalProperties": false
     },
-    "env": {
+    {
       "type": "object",
-      "propertyNames": {
-        "type": "string",
-        "minLength": 1
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "const": "codex"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "credential": {
+          "type": "object",
+          "properties": {
+            "sources": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "env": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "env"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "file"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "command": {
+                        "type": "array",
+                        "prefixItems": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        ],
+                        "items": {
+                          "type": "string"
+                        },
+                        "minItems": 1
+                      },
+                      "interactive": {
+                        "type": "boolean"
+                      },
+                      "timeoutMs": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "command"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "op": {
+                        "type": "string",
+                        "format": "starts_with",
+                        "pattern": "^op:\\/\\/.*"
+                      },
+                      "interactive": {
+                        "type": "boolean"
+                      },
+                      "timeoutMs": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "op"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "keychain": {
+                        "type": "object",
+                        "properties": {
+                          "service": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "account": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "service"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "interactive": {
+                        "type": "boolean"
+                      },
+                      "timeoutMs": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "keychain"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "literal": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "literal"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "target": {
+              "type": "string",
+              "enum": [
+                "bearer",
+                "apiKey"
+              ]
+            }
+          },
+          "required": [
+            "sources"
+          ],
+          "additionalProperties": false
+        },
+        "env": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "codex": {
+          "type": "object",
+          "properties": {
+            "defaultModel": {
+              "type": "string",
+              "minLength": 1
+            },
+            "models": {
+              "type": "object",
+              "properties": {
+                "fable": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "opus": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sonnet": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "haiku": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            },
+            "effort": {
+              "type": "string",
+              "enum": [
+                "none",
+                "low",
+                "medium",
+                "high"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
       },
-      "additionalProperties": {
-        "type": "string"
-      }
+      "required": [
+        "kind",
+        "displayName",
+        "credential"
+      ],
+      "additionalProperties": false
     }
-  },
-  "required": [
-    "displayName",
-    "baseUrl",
-    "credential"
-  ],
-  "additionalProperties": false
+  ]
 }
