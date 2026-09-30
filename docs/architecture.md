@@ -40,6 +40,14 @@ src/
     mitm.ts                 # the MITM CONNECT proxy OAuth launches route through: node-forge CA/leaf minting, the routing decisions, and the real effects over node's net/tls/http
     headers.ts              # ANTHROPIC_CUSTOM_HEADERS merge (Name: Value lines, later block wins per name)
     commands.ts             # real ports for the supervisor, `headroom status`, command registration
+  codex/                    # the codex translation daemon serving `kind: codex` providers (the port of the old codex-claude-proxy.mjs)
+    anthropic.ts, translate.ts, events.ts   # the pure core: Zod-validated Anthropic Messages and Codex Responses shapes, the translation between them, and the Codex SSE events translated back to Anthropic SSE
+    relay.ts, route.ts        # the request/response relay, mounted behind a transport-neutral route so a future front-door proxy can serve it as one route among several
+    auth.ts, agent.ts         # the ~/.codex/auth.json store (one refresh in flight, re-read before refresh, atomic write, rotated token persisted before use) and the undici agent with the 10s keep-alive ceiling
+    upstream.ts, upstreamPort.ts   # the upstream client (per-session `session_id` derived from `metadata.user_id`) and its injected port
+    http.ts, quota.ts         # named HTTP statuses, and upstream quota/limit responses forwarded as Anthropic-shaped errors
+    server.ts, supervisor.ts, ensure.ts, state.ts   # the listener, the supervisor-plus-worker lifecycle (sticky port, session registry, idle shutdown), the launcher's lock-and-poll bring-up, and the coordination state
+    commands.ts               # `codex status` and the hidden supervisor/worker subcommands
   directoryRules.ts       # the `rule` noun: add/set/list/show/remove
   configure.ts            # `claude-use configure` interactive picker (@clack/prompts)
   check.ts                # `claude-use check` dry-run inspector — cascade resolution, credential/ambient-credential/Keychain/settings-secrets diagnostics — no farm writes, no spawn

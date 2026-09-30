@@ -67,8 +67,10 @@ claude-use profile show <name> [--json]
 claude-use profile remove <name> [--yes]
 claude-use profile use <name>               # the global default configuration profile
 
-claude-use provider add <name> --display-name <name> --base-url <url> (--credential <source>)... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]...
-claude-use provider set <name> [--display-name <name>] [--base-url <url>] [--credential <source>]... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]...
+claude-use provider add <name> --display-name <name> (--base-url <url> | --kind codex) (--credential <source>)... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]...
+                                              [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>]
+claude-use provider set <name> [--display-name <name>] ([--base-url <url>] | --kind codex) [--credential <source>]... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]...
+                                              [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>]
 claude-use provider list [--json]
 claude-use provider show <name> [--json]
 claude-use provider remove <name> [--yes]
@@ -83,6 +85,7 @@ claude-use configure [path] [--identity <identity>]
 claude-use check [path] [--identity <identity>] [--json] [--strict]
 claude-use doctor [--json]
 claude-use headroom status [--json]
+claude-use codex status [--json]
 claude-use completion <bash|zsh|fish>
 claude-use shim enable [--dir <path>] [--force]
 claude-use shim disable [--dir <path>] [--force]

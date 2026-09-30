@@ -242,7 +242,7 @@ On the command line, `--credential <source>` (repeatable, tried in the order giv
 
 ## Providers
 
-A provider is a named API endpoint a session can be routed through instead of `api.anthropic.com`: an Anthropic-compatible relay, an OpenRouter-style aggregator, or any other base URL that speaks the Messages API. Providers replace the hand-written shell wrappers (`z` for GLM, `m` for MiniMax, `o` for OpenRouter, `s` for Synthetic) with first-class config, so the same identity, farm, and cascade machinery applies to them unchanged.
+A provider is a named API endpoint a session can be routed through instead of `api.anthropic.com`: an Anthropic-compatible relay, an OpenRouter-style aggregator, or any other base URL that speaks the Messages API. Providers replace the hand-written shell wrappers (`z` for GLM, `m` for MiniMax, `o` for OpenRouter, `s` for Synthetic) with first-class config, so the same identity, farm, and cascade machinery applies to them unchanged. A provider is one of two kinds: `http` (the default when `kind` is absent), the fixed endpoint described above, or `codex`, which routes through claude-use's own translation daemon instead of any base URL.
 
 Each provider lives in its own file at `~/.claude-use/providers/<name>.json`:
 
@@ -265,15 +265,18 @@ A provider's `credential` block (see [Credentials](#credentials)) is required an
 }
 ```
 
-A local proxy that accepts any token:
+A `codex` provider, which has no `baseUrl` at all:
 
 ```json
 {
+  "kind": "codex",
   "displayName": "Codex",
-  "baseUrl": "http://127.0.0.1:18789",
-  "credential": { "sources": [{ "literal": "codex-local" }] }
+  "credential": { "sources": [{ "literal": "codex-local" }] },
+  "codex": { "models": { "sonnet": "gpt-5.6-terra" }, "effort": "low" }
 }
 ```
+
+The `codex` kind replaces the hand-written `codex-claude-proxy.mjs` script and its `cx` wrapper. A launch that selects a codex provider starts a supervised translation daemon (a supervisor plus a worker, on one sticky loopback port) and points the child at `http://127.0.0.1:<port>/providers/<name>`, so one daemon serves any number of codex providers, each with its own translation settings. The daemon translates the Anthropic Messages API onto ChatGPT's Codex backend, authenticating upstream with the Codex CLI's own login in `~/.codex/auth.json` (honouring `CODEX_HOME`), refreshing it with one refresh in flight, re-reading the file before every refresh (the Codex CLI writes it too), and writing it back atomically with a rotated refresh token persisted before it is used. Upstream `session_id` is derived per session from `metadata.user_id`, so each Claude Code session is one backend session instead of the whole daemon being one. The optional `codex` block sets `defaultModel`, per-tier `models` (fable, opus, sonnet, haiku, matched by substring of the requested model name) and `effort` (none, low, medium, high); these replace the old script's `CODEX_CLAUDE_*` environment variables, which no longer exist. The daemon re-reads provider files on every request, so edits apply without a restart, and it shuts down after `codex.idleShutdownMinutes` (15 by default) with no live session. `claude-use codex status` reports the daemon read-only. A codex provider still needs a credential, because Claude Code itself wants a token to send; `literal` is the right source, since the daemon ignores it.
 
 `env` carries any further static environment entries the child needs to use that endpoint (model maps like `ANTHROPIC_MODEL`/`ANTHROPIC_DEFAULT_*_MODEL`, `API_TIMEOUT_MS`, and so on). It may not name `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, even with an empty value: the credential target sets one and the launcher removes the others, so an entry there would either be overwritten or be a second credential hiding outside the block.
 
@@ -319,6 +322,8 @@ Two settings live in the global `~/.claude-use/config.json` under `headroom` (th
 ```
 
 `source` is the install spec handed to `uv tool install` (any PEP 508 form works; a pinned `headroom==0.39.0` is checked against the installed version on every start), and `idleShutdownMinutes` is how long an idle daemon lingers before shutdown.
+
+**Codex providers under headroom.** A launch that selects a codex provider brings the codex daemon up before headroom, and the headroom allowlist includes the codex daemon's address (every provider's base URL already is the allowlist, and a codex provider's base URL is the daemon). The consequence of the drift rule above: the first codex launch after adding a codex provider, while headroom is already serving live sessions, is refused until headroom has restarted once no session is live, because the running daemon's allowlist predates the daemon's address. Launches succeed normally from then on.
 
 **The cache-sharing model.** Everything routed through one daemon shares that daemon's caches: the semantic cache (response reuse across identical requests) is shared across accounts, which is the point of running one daemon per machine; headroom's memory state is scoped per project by the `x-headroom-project-id` header, so two projects talking to the same daemon keep separate memory; and the provider (which account's endpoint, which model mapping) is selected per request by `x-headroom-base-url`. Sharing a daemon with other people therefore means giving them the daemon's address under a shared `HEADROOM_PROXY_TOKEN`, which is also what headroom binds memory identity to: point a colleague at your daemon and they share its caches and per-project memory as that token's identity, so treat the token like any other shared credential.
 
