@@ -1,14 +1,17 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ConfigValidationError } from "./config/load";
-import type { FsPort, RunPort } from "./launcher/ports";
+import type { FsPort } from "./launcher/ports";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import {
   addProvider,
   InvalidProviderNameError,
+  LEGACY_LITERAL_PLACEHOLDER,
+  legacyProviderConversion,
+  LegacyProviderFileError,
   listProviders,
   loadProvider,
   ProviderAlreadyExistsError,
@@ -18,6 +21,7 @@ import {
   removeProvider,
   resolveProvider,
 } from "./providers";
+import { fakeCredentials } from "./test-helpers";
 
 /** A minimal real-filesystem `FsPort` over the temp root, so `resolveProvider` is exercised against files `addProvider` actually wrote, the same way the real launcher reads them. */
 function tempFsPort(): FsPort {
@@ -46,11 +50,6 @@ function tempFsPort(): FsPort {
   };
 }
 
-/** A `RunPort` that answers every command with one scripted result and records the calls. */
-function fakeRun(result: Readonly<{ status: number | null; stdout?: string; stderr?: string }>): RunPort & { run: ReturnType<typeof vi.fn<RunPort["run"]>> } {
-  return { run: vi.fn<RunPort["run"]>().mockReturnValue({ status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }) };
-}
-
 describe("providers", () => {
   let root: string;
   let paths: LayoutPaths;
@@ -64,53 +63,55 @@ describe("providers", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  const zInput = { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", sources: [{ env: "Z_API_TOKEN" }] };
+
   describe("addProvider", () => {
     it("writes a provider file that reads back identically", () => {
-      const provider = addProvider(paths, "z", {
-        displayName: "GLM",
-        baseUrl: "https://api.z.ai/api/anthropic",
-        tokenEnv: "Z_API_TOKEN",
-        env: { ANTHROPIC_MODEL: "glm-4.6" },
-      });
+      const provider = addProvider(paths, "z", { ...zInput, env: { ANTHROPIC_MODEL: "glm-4.6" } });
       expect(provider).toEqual({
         displayName: "GLM",
         baseUrl: "https://api.z.ai/api/anthropic",
-        tokenEnv: "Z_API_TOKEN",
+        credential: { sources: [{ env: "Z_API_TOKEN" }] },
         env: { ANTHROPIC_MODEL: "glm-4.6" },
       });
       expect(readProvider(paths, "z")).toEqual(provider);
       expect(providerExists(paths, "z")).toBe(true);
     });
 
+    it("persists an ordered source list and a target", () => {
+      const provider = addProvider(paths, "anthropic-api", {
+        displayName: "Anthropic API",
+        baseUrl: "https://api.anthropic.com",
+        sources: [{ env: "ANTHROPIC_KEY" }, { op: "op://vault/anthropic/key" }],
+        target: "apiKey",
+      });
+      expect(readProvider(paths, "anthropic-api")?.credential).toEqual({ sources: [{ env: "ANTHROPIC_KEY" }, { op: "op://vault/anthropic/key" }], target: "apiKey" });
+      expect(provider.credential.target).toBe("apiKey");
+    });
+
     it("throws ProviderAlreadyExistsError when the provider already exists", () => {
-      addProvider(paths, "z", { displayName: "GLM", baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" });
-      expect(() => addProvider(paths, "z", { displayName: "GLM", baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" })).toThrow(
-        ProviderAlreadyExistsError,
-      );
+      addProvider(paths, "z", zInput);
+      expect(() => addProvider(paths, "z", zInput)).toThrow(ProviderAlreadyExistsError);
     });
 
     it("throws InvalidProviderNameError for a name that could escape the providers directory", () => {
-      expect(() => addProvider(paths, "-bad-start", { displayName: "x", baseUrl: "https://a.example", tokenEnv: "T" })).toThrow(
-        InvalidProviderNameError,
-      );
-      expect(() => addProvider(paths, "../escape", { displayName: "x", baseUrl: "https://a.example", tokenEnv: "T" })).toThrow(
-        InvalidProviderNameError,
-      );
+      expect(() => addProvider(paths, "-bad-start", zInput)).toThrow(InvalidProviderNameError);
+      expect(() => addProvider(paths, "../escape", zInput)).toThrow(InvalidProviderNameError);
     });
 
-    it("throws ConfigValidationError, not a raw ZodError, for a baseUrl that is not a URL", () => {
-      expect(() => addProvider(paths, "z", { displayName: "GLM", baseUrl: "not-a-url", tokenEnv: "Z_API_TOKEN" })).toThrow(
-        ConfigValidationError,
-      );
+    it("throws ConfigValidationError, not a raw ZodError, for a baseUrl that is not a URL or an empty source list", () => {
+      expect(() => addProvider(paths, "z", { ...zInput, baseUrl: "not-a-url" })).toThrow(ConfigValidationError);
+      expect(() => addProvider(paths, "z", { ...zInput, sources: [] })).toThrow(ConfigValidationError);
     });
   });
 
   describe("listProviders", () => {
-    it("lists providers sorted by name and skips a file that fails validation", () => {
-      addProvider(paths, "z", { displayName: "GLM", baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" });
-      addProvider(paths, "m", { displayName: "MiniMax", baseUrl: "https://api.minimax.io", tokenEnv: "MINIMAX_API_KEY" });
+    it("lists providers sorted by name and skips a file that fails validation or is in the old format", () => {
+      addProvider(paths, "z", zInput);
+      addProvider(paths, "m", { ...zInput, displayName: "MiniMax" });
       fs.mkdirSync(paths.providersDir, { recursive: true });
       fs.writeFileSync(path.join(paths.providersDir, "broken.json"), "{\"displayName\": \"no baseUrl\"}");
+      fs.writeFileSync(path.join(paths.providersDir, "old.json"), JSON.stringify({ displayName: "Old", baseUrl: "https://a.example", tokenEnv: "T" }));
 
       const names = listProviders(paths).map((entry) => entry.name);
       expect(names).toEqual(["m", "z"]);
@@ -123,7 +124,7 @@ describe("providers", () => {
 
   describe("removeProvider", () => {
     it("deletes the provider file and then reports it as gone", () => {
-      addProvider(paths, "z", { displayName: "GLM", baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" });
+      addProvider(paths, "z", zInput);
       removeProvider(paths, "z");
       expect(providerExists(paths, "z")).toBe(false);
       expect(() => {
@@ -134,48 +135,93 @@ describe("providers", () => {
 
   describe("loadProvider", () => {
     it("reads through an injected FsPort and returns undefined for a missing provider", () => {
-      addProvider(paths, "z", { displayName: "GLM", baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" });
+      addProvider(paths, "z", zInput);
       const port = tempFsPort();
       expect(loadProvider(paths.providersDir, "z", port)?.displayName).toBe("GLM");
       expect(loadProvider(paths.providersDir, "missing", port)).toBeUndefined();
     });
+
+    it("refuses an old-format provider file with its exact replacement instead of a bare schema error", () => {
+      fs.mkdirSync(paths.providersDir, { recursive: true });
+      fs.writeFileSync(path.join(paths.providersDir, "z.json"), JSON.stringify({ displayName: "GLM", baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" }));
+      expect(() => loadProvider(paths.providersDir, "z", tempFsPort())).toThrow(LegacyProviderFileError);
+      expect(() => readProvider(paths, "z")).toThrow(/uses tokenEnv, which a credential block replaced/);
+    });
+  });
+
+  describe("legacyProviderConversion", () => {
+    it("converts tokenEnv, authScheme and credential env entries, keeping every other field", () => {
+      expect(
+        legacyProviderConversion({
+          displayName: "OpenRouter",
+          baseUrl: "https://openrouter.ai/api",
+          tokenEnv: "OPENROUTER_API_KEY",
+          authScheme: "apiKey",
+          env: { ANTHROPIC_API_KEY: "", API_TIMEOUT_MS: "600000" },
+        }),
+      ).toEqual({
+        fields: ["tokenEnv", "authScheme", "env.ANTHROPIC_API_KEY"],
+        replacement: {
+          displayName: "OpenRouter",
+          baseUrl: "https://openrouter.ai/api",
+          credential: { sources: [{ env: "OPENROUTER_API_KEY" }], target: "apiKey" },
+          env: { API_TIMEOUT_MS: "600000" },
+        },
+      });
+    });
+
+    it("converts tokenCommand to a command source", () => {
+      expect(legacyProviderConversion({ displayName: "x", baseUrl: "https://a.example", tokenCommand: ["pass", "show", "x"] })?.replacement).toEqual({
+        displayName: "x",
+        baseUrl: "https://a.example",
+        credential: { sources: [{ command: ["pass", "show", "x"] }] },
+      });
+    });
+
+    it("converts a fixed env.ANTHROPIC_AUTH_TOKEN to a literal source without printing its value", () => {
+      const conversion = legacyProviderConversion({
+        displayName: "Codex",
+        baseUrl: "http://127.0.0.1:18789",
+        env: { ANTHROPIC_AUTH_TOKEN: "fixed-proxy-value", ANTHROPIC_API_KEY: "" },
+      });
+      expect(conversion?.replacement).toEqual({
+        displayName: "Codex",
+        baseUrl: "http://127.0.0.1:18789",
+        credential: { sources: [{ literal: LEGACY_LITERAL_PLACEHOLDER }] },
+      });
+      expect(JSON.stringify(conversion)).not.toContain("fixed-proxy-value");
+    });
+
+    it("leaves a current-format or merely invalid file alone", () => {
+      expect(legacyProviderConversion({ displayName: "x", baseUrl: "https://a.example", credential: { sources: [{ env: "T" }] } })).toBeUndefined();
+      expect(legacyProviderConversion({ displayName: "x" })).toBeUndefined();
+      expect(legacyProviderConversion("not an object")).toBeUndefined();
+    });
   });
 
   describe("resolveProvider", () => {
-    const zInput = { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" };
-
     it("returns undefined when nothing selected a provider", () => {
-      expect(resolveProvider({ paths, port: tempFsPort(), env: {} })).toBeUndefined();
+      expect(resolveProvider({ paths, port: tempFsPort(), env: {}, credentials: fakeCredentials() })).toBeUndefined();
     });
 
-    it("resolves the --provider flag into a definition plus the token read from the environment", () => {
+    it("resolves the --provider flag into a definition plus the credential its block resolves to", () => {
       addProvider(paths, "z", zInput);
-      const result = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, cliProvider: "z" });
-      expect(result).toEqual({
-        ok: true,
-        provider: { name: "z", definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" }, token: "tok-z" },
-      });
-    });
-
-    it("resolves a fixed-credential provider without tokenEnv, taking the token from its env", () => {
-      addProvider(paths, "codex", {
-        displayName: "Codex",
-        baseUrl: "http://127.0.0.1:18789",
-        env: { ANTHROPIC_AUTH_TOKEN: "codex-subscription-local", ANTHROPIC_API_KEY: "" },
-      });
-      const result = resolveProvider({ paths, port: tempFsPort(), env: {}, cliProvider: "codex" });
+      const result = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, credentials: fakeCredentials(), cliProvider: "z" });
       expect(result).toEqual({
         ok: true,
         provider: {
-          name: "codex",
-          definition: {
-            displayName: "Codex",
-            baseUrl: "http://127.0.0.1:18789",
-            env: { ANTHROPIC_AUTH_TOKEN: "codex-subscription-local", ANTHROPIC_API_KEY: "" },
-          },
-          token: "codex-subscription-local",
+          name: "z",
+          definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z_API_TOKEN" }] } },
+          credential: { target: "bearer", token: "tok-z", source: { env: "Z_API_TOKEN" }, warnings: [] },
         },
+        warnings: [],
       });
+    });
+
+    it("resolves a literal-credential provider for a local proxy with nothing in the environment", () => {
+      addProvider(paths, "codex", { displayName: "Codex", baseUrl: "http://127.0.0.1:18789", sources: [{ literal: "codex-local" }] });
+      const result = resolveProvider({ paths, port: tempFsPort(), env: {}, credentials: fakeCredentials(), cliProvider: "codex" });
+      expect(result).toMatchObject({ ok: true, provider: { credential: { token: "codex-local" } } });
     });
 
     it("falls back to the cascade's launch.provider selection when no flag was given", () => {
@@ -185,13 +231,13 @@ describe("providers", () => {
         loadProfile: () => undefined,
         cliOverride: { launch: { provider: "z" } },
       };
-      const result = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, cascade });
+      const result = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, credentials: fakeCredentials(), cascade });
       expect(result?.ok).toBe(true);
     });
 
     it("refuses an unknown provider with a message naming the known providers", () => {
       addProvider(paths, "z", zInput);
-      const result = resolveProvider({ paths, port: tempFsPort(), env: {}, cliProvider: "missing" });
+      const result = resolveProvider({ paths, port: tempFsPort(), env: {}, credentials: fakeCredentials(), cliProvider: "missing" });
       expect(result).toEqual({
         ok: false,
         status: 1,
@@ -199,94 +245,21 @@ describe("providers", () => {
       });
     });
 
-    it("refuses with status 64 when the token environment variable is unset or empty", () => {
-      addProvider(paths, "z", zInput);
-      const unset = resolveProvider({ paths, port: tempFsPort(), env: {}, cliProvider: "z" });
-      expect(unset).toEqual({
+    it("refuses with status 64 naming every source when none yields a token", () => {
+      addProvider(paths, "z", { ...zInput, sources: [{ env: "Z_API_TOKEN" }, { command: ["pass", "show", "z"] }] });
+      const credentials = fakeCredentials({ command: { status: 1, stderr: "not in store" } });
+      const result = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "" }, credentials, cliProvider: "z" });
+      expect(result).toEqual({
         ok: false,
         status: 64,
-        message: "claude-use: provider z needs Z_API_TOKEN set in your environment",
-      });
-      const empty = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "" }, cliProvider: "z" });
-      expect(empty).toEqual(unset);
-    });
-
-    describe("tokenCommand", () => {
-      const commandInput = {
-        displayName: "Anthropic API",
-        baseUrl: "https://api.anthropic.com",
-        tokenCommand: ["op", "read", "op://vault/item/field"] as [string, ...string[]],
-        authScheme: "apiKey" as const,
-      };
-
-      it("uses the command's trimmed stdout as the token, running it as an argv without a shell", () => {
-        addProvider(paths, "anthropic-api", commandInput);
-        const run = fakeRun({ status: 0, stdout: "sk-ant-secret\n" });
-        const result = resolveProvider({ paths, port: tempFsPort(), env: {}, run, cliProvider: "anthropic-api" });
-        expect(result).toMatchObject({ ok: true, provider: { name: "anthropic-api", token: "sk-ant-secret" } });
-        expect(run.run).toHaveBeenCalledExactlyOnceWith("op", ["read", "op://vault/item/field"]);
-      });
-
-      it("does not run the command for a provider that uses tokenEnv", () => {
-        addProvider(paths, "z", zInput);
-        const run = fakeRun({ status: 0, stdout: "from-command" });
-        const result = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, run, cliProvider: "z" });
-        expect(result).toMatchObject({ ok: true, provider: { token: "tok-z" } });
-        expect(run.run).not.toHaveBeenCalled();
-      });
-
-      it("refuses with status 64 when the command exits non-zero, naming the status and stderr but never stdout", () => {
-        addProvider(paths, "anthropic-api", commandInput);
-        const run = fakeRun({ status: 1, stdout: "sk-ant-REDACTED", stderr: "item not found\n" });
-        const result = resolveProvider({ paths, port: tempFsPort(), env: {}, run, cliProvider: "anthropic-api" });
-        expect(result).toEqual({
-          ok: false,
-          status: 64,
-          message: "claude-use: provider anthropic-api: token command op exited with status 1: item not found",
-        });
-      });
-
-      it("refuses with status 64 when the command cannot be run or is killed", () => {
-        addProvider(paths, "anthropic-api", commandInput);
-        const result = resolveProvider({ paths, port: tempFsPort(), env: {}, run: fakeRun({ status: null }), cliProvider: "anthropic-api" });
-        expect(result).toEqual({
-          ok: false,
-          status: 64,
-          message: "claude-use: provider anthropic-api: token command op could not be run or was killed by a signal",
-        });
-      });
-
-      it("refuses with status 64 when the command succeeds but prints only whitespace", () => {
-        addProvider(paths, "anthropic-api", commandInput);
-        const result = resolveProvider({ paths, port: tempFsPort(), env: {}, run: fakeRun({ status: 0, stdout: " \n" }), cliProvider: "anthropic-api" });
-        expect(result).toEqual({
-          ok: false,
-          status: 64,
-          message: "claude-use: provider anthropic-api: token command op printed no token",
-        });
-      });
-
-      it("refuses rather than launching without a credential when no command runner is wired", () => {
-        addProvider(paths, "anthropic-api", commandInput);
-        const result = resolveProvider({ paths, port: tempFsPort(), env: {}, cliProvider: "anthropic-api" });
-        expect(result).toMatchObject({ ok: false, status: 1 });
+        message: "claude-use: provider z has no usable credential: env Z_API_TOKEN is unset or empty; command pass exited with status 1: not in store",
       });
     });
-  });
 
-  describe("addProvider with tokenCommand and authScheme", () => {
-    it("persists both fields and rejects a second token source", () => {
-      const provider = addProvider(paths, "anthropic-api", {
-        displayName: "Anthropic API",
-        baseUrl: "https://api.anthropic.com",
-        tokenCommand: ["op", "read", "ref"],
-        authScheme: "apiKey",
-      });
-      expect(readProvider(paths, "anthropic-api")).toEqual(provider);
-      expect(provider).toMatchObject({ tokenCommand: ["op", "read", "ref"], authScheme: "apiKey" });
-      expect(() =>
-        addProvider(paths, "both", { displayName: "x", baseUrl: "https://api.z.ai", tokenEnv: "T", tokenCommand: ["cmd"] }),
-      ).toThrow(ConfigValidationError);
+    it("refuses rather than launching without a credential when no credential port is wired", () => {
+      addProvider(paths, "z", zInput);
+      const result = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, cliProvider: "z" });
+      expect(result).toMatchObject({ ok: false, status: 1 });
     });
   });
 });

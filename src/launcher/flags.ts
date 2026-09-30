@@ -2,6 +2,7 @@ import path from "node:path";
 
 import { parseEnvBool } from "../cli/parsers";
 import type { LaunchFlags, Provider } from "../config/schema";
+import { credentialVariables, type ResolvedCredential } from "../credential";
 import { mergeAnthropicCustomHeaders } from "../headroom/headers";
 import type { HeadroomUp } from "./ports";
 
@@ -84,11 +85,11 @@ export function buildArgv(params: BuildArgvParams): string[] {
   return [...params.toolFlags, ...params.extraFlags, ...params.passthrough];
 }
 
-/** The provider resolved for this launch, with its token already obtained from the parent environment, the token command or the provider's fixed env credential. */
+/** The provider resolved for this launch, with its credential already resolved from the provider's credential block. */
 export interface ResolvedProvider {
   readonly name: string;
   readonly definition: Provider;
-  readonly token: string;
+  readonly credential: ResolvedCredential;
 }
 
 /** Inputs to `buildEnv`. */
@@ -99,8 +100,10 @@ export interface BuildEnvParams {
   /** The identity name resolved for this launch, when one was resolved. */
   readonly resolvedIdentityName?: string;
   readonly identitiesDir: string;
-  /** The provider resolved for this launch, when one was resolved. Its token is supplied by the caller because reading it and refusing an unset one needs the caller's log/exit ports. */
+  /** The provider resolved for this launch, when one was resolved. Its credential is resolved by the caller because refusing an unusable one needs the caller's log/exit ports. */
   readonly provider?: ResolvedProvider;
+  /** The launching identity's own resolved credential, when it has a credential block and no provider was selected. A provider's credential authenticates against the provider's endpoint, so the identity's is never applied alongside one. */
+  readonly identityCredential?: ResolvedCredential;
   /** The headroom daemon this launch routes through, when headroom resolved on. How the child is routed depends on the mode: with a provider, the child talks to the daemon directly and the provider's own base URL moves into the per-request `x-headroom-base-url` header; without one (an OAuth launch), the child keeps talking to the real API through the supervisor's MITM proxy, because Claude Code enables Remote Control and connectors only against `api.anthropic.com`. */
   readonly headroom?: HeadroomUp;
 }
@@ -110,7 +113,7 @@ export interface BuildEnvParams {
  *
  * When the `CLAUDE_CONFIG_DIR`-already-set escape hatch applied, or no identity was resolved at all (a bare launch with no active identity, matching the legacy script's own "no profile means plain `~/.claude`" behaviour), `CLAUDE_CONFIG_DIR` is left untouched. Otherwise `CLAUDE_CONFIG_DIR` is set to the resolved identity's own directory under `identitiesDir` — farm population into that directory is Phase 5's job, not this function's.
  *
- * A resolved provider is applied regardless of the identity outcome, because it selects which API endpoint the child talks to, not which login's data it sees: `ANTHROPIC_BASE_URL` points at the provider, `ANTHROPIC_AUTH_TOKEN` carries the token resolved from the provider's `tokenEnv`, `tokenCommand` or fixed env credential, `CLAUDE_USE_PROVIDER` names the provider for the statusline, and the provider's own `env` entries land verbatim. `ANTHROPIC_API_KEY` is explicitly cleared (to the empty string, which Claude Code treats as unset) unless the provider's `env` names its own value: an ambient `ANTHROPIC_API_KEY` inherited from the parent would outrank the token just set, silently authenticating the child as the ambient key instead of the provider. A provider with `authScheme: "apiKey"` inverts that pair: `ANTHROPIC_API_KEY` carries the token and `ANTHROPIC_AUTH_TOKEN` is cleared, so an ambient bearer token cannot outrank it either.
+ * A resolved provider is applied regardless of the identity outcome, because it selects which API endpoint the child talks to, not which login's data it sees: `ANTHROPIC_BASE_URL` points at the provider, `CLAUDE_USE_PROVIDER` names the provider for the statusline, the provider's own `env` entries land verbatim, and its resolved credential is exported as its target's variable (`credentialVariables`), with the other credential variables removed so an ambient one inherited from the parent cannot outrank it. Without a provider, an identity's own resolved credential is exported the same way. The token only ever reaches this environment, never the child's argv or a log line.
  *
  * A resolved headroom daemon is applied last, on top of the provider, and picks its routing mode from provider presence alone (no user-facing setting decides it): with a provider, the child's `ANTHROPIC_BASE_URL` becomes the local proxy (never the provider's own URL) and the provider's upstream moves into the `x-headroom-base-url` header, exactly as before. Without a provider (an OAuth launch), the base URL is left untouched and routing happens one layer down instead: `HTTPS_PROXY` points the child at the supervisor's MITM proxy and `NODE_EXTRA_CA_CERTS` trusts its CA, so the child still believes it is talking to the real `api.anthropic.com` (the belief Remote Control and connectors require) while the proxy's terminated TLS feeds headroom's paths to the daemon. `HEADROOM_PROXY_URL` names the daemon for anything else that wants it, and `ANTHROPIC_CUSTOM_HEADERS` gains `x-headroom-project-id` (memory scoping) in both modes, merged with any headers the provider's own `env` or the parent environment already set.
  *
@@ -130,16 +133,17 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
     const providerEnv = params.provider.definition.env ?? {};
     providerCustomHeaders = providerEnv.ANTHROPIC_CUSTOM_HEADERS;
     env.ANTHROPIC_BASE_URL = params.provider.definition.baseUrl;
-    env.ANTHROPIC_AUTH_TOKEN = params.provider.token;
-    env.ANTHROPIC_API_KEY = providerEnv.ANTHROPIC_API_KEY ?? "";
     env.CLAUDE_USE_PROVIDER = params.provider.definition.displayName;
     for (const [key, value] of Object.entries(providerEnv)) {
       env[key] = value;
     }
-    if (params.provider.definition.authScheme === "apiKey") {
-      // Applied after the provider's own env so a fixed env.ANTHROPIC_AUTH_TOKEN (the token source for such a provider) cannot reappear; ProviderSchema already rejects a non-empty env.ANTHROPIC_API_KEY for this scheme. The empty string is how Claude Code is told a variable is unset.
-      env.ANTHROPIC_API_KEY = params.provider.token;
-      env.ANTHROPIC_AUTH_TOKEN = "";
+  }
+
+  // A provider's credential outranks the identity's, which the launcher does not even resolve alongside one. ProviderSchema keeps every credential variable out of the provider's env, so nothing above can undo this.
+  const credential = params.provider?.credential ?? params.identityCredential;
+  if (credential !== undefined) {
+    for (const [variable, value] of Object.entries(credentialVariables(credential.target, credential.token))) {
+      env[variable] = value;
     }
   }
 

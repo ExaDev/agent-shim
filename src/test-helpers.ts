@@ -10,7 +10,8 @@ import type { EntryFact, EntryFacts } from "./resolve/types";
 import { vi, type Mock } from "vitest";
 
 import { runLauncher, type FarmRuntime, type RunLauncherParams } from "./launcher";
-import type { FsPort, LogPort, ProcPort, RunPort, SpawnPort, SpawnResult } from "./launcher/ports";
+import type { CredentialCommandResult, CredentialPort } from "./credential";
+import type { FsPort, LogPort, ProcPort, SpawnPort, SpawnResult } from "./launcher/ports";
 import { buildLayoutPaths } from "./paths";
 import type { CascadeInput } from "./resolve/walk";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
@@ -410,9 +411,31 @@ export function spawnedEnv(spawn: ReturnType<typeof fakeSpawn>): Record<string, 
   return options.env;
 }
 
-/** A `RunPort` answering every command with one scripted result, recording each call. */
-export function fakeRun(stdout: string, status = 0): RunPort & { run: Mock<RunPort["run"]> } {
-  return { run: vi.fn<RunPort["run"]>().mockReturnValue({ status, stdout, stderr: "" }) };
+/** What a `fakeCredentials` port answers: secret files by path, one scripted result for every command, and whether a person is present. */
+export interface FakeCredentialOptions {
+  readonly files?: Readonly<Record<string, { readonly content: string; readonly mode?: number }>>;
+  readonly command?: Partial<CredentialCommandResult>;
+  readonly personPresent?: boolean;
+}
+
+/** An owner-only secret file's mode, the one `file` sources accept. */
+const OWNER_ONLY_MODE = 0o100600;
+
+/** A `CredentialPort` over scripted answers, recording each call, so no test runs `op`, reads the Keychain or needs a terminal. Every command succeeds with empty stdout unless `command` says otherwise, and a person is present unless `personPresent` is false. */
+export function fakeCredentials(options: FakeCredentialOptions = {}): CredentialPort & {
+  readonly runCommand: Mock<CredentialPort["runCommand"]>;
+  readonly readSecretFile: Mock<CredentialPort["readSecretFile"]>;
+} {
+  return {
+    readSecretFile: vi.fn<CredentialPort["readSecretFile"]>((filePath) => {
+      const file = options.files?.[filePath];
+      return file === undefined ? { found: false } : { found: true, content: file.content, mode: file.mode ?? OWNER_ONLY_MODE };
+    }),
+    runCommand: vi
+      .fn<CredentialPort["runCommand"]>()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", timedOut: false, ...options.command }),
+    personPresent: () => options.personPresent ?? true,
+  };
 }
 
 export const discovered: DiscoveredClaudeBinary = { path: "/home/testuser/.local/share/claude/versions/2.1.0", source: "versions-dir", version: "2.1.0" };

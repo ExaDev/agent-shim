@@ -3,13 +3,21 @@ import path from "node:path";
 import { Option, type Command } from "commander";
 
 import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
+import { collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX } from "./cli/credentialOption";
 import { collectRepeated, collectStringPair } from "./cli/parsers";
-import { ConfigValidationError, loadConfigFile } from "./config/load";
-import { readJson, writeJsonAtomic } from "./config/store";
-import { AUTH_SCHEMES, ProviderSchema, type AuthScheme, type Provider } from "./config/schema";
+import { ConfigValidationError } from "./config/load";
+import { writeJsonAtomic } from "./config/store";
+import {
+  CREDENTIAL_TARGET_VARS,
+  PROVIDER_CREDENTIAL_TARGETS,
+  ProviderSchema,
+  type CredentialSource,
+  type Provider,
+} from "./config/schema";
 import { CliError, UsageError } from "./cliError";
+import { CREDENTIAL_UNAVAILABLE_EXIT, describeCredential, resolveCredential, summariseCredential, type CredentialPort } from "./credential";
 import type { ResolvedProvider } from "./launcher/flags";
-import type { FsPort, RunPort } from "./launcher/ports";
+import type { FsPort } from "./launcher/ports";
 import { assembleCascade, type CascadeInput } from "./resolve/walk";
 import type { LayoutPaths } from "./paths";
 
@@ -53,16 +61,106 @@ export function providerExists(paths: LayoutPaths, name: string): boolean {
   return fs.existsSync(providerJsonPath(paths, name));
 }
 
+/** The provider fields the credential block replaced. A file still carrying any of them is reported with its exact replacement rather than a bare schema error. */
+const LEGACY_PROVIDER_FIELDS = ["tokenEnv", "tokenCommand", "authScheme"] as const;
+
+/** The credential variables an old provider file could set in its `env` block, which the credential block now owns. */
+const LEGACY_ENV_CREDENTIAL_KEYS: readonly string[] = Object.values(CREDENTIAL_TARGET_VARS);
+
+/** Written in a replacement in place of an old fixed `env.ANTHROPIC_AUTH_TOKEN` value, which is never printed: the person converting the file copies the value across themselves. */
+export const LEGACY_LITERAL_PLACEHOLDER = "<the value of env.ANTHROPIC_AUTH_TOKEN>";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** What converting one old-format provider file involves: the old fields it uses, and the whole file rewritten in the current format. */
+export interface LegacyProviderConversion {
+  readonly fields: readonly string[];
+  readonly replacement: Record<string, unknown>;
+}
+
+/**
+ * Recognises a provider file written in the format before the credential block (a `tokenEnv`, `tokenCommand` or `authScheme` field, or a credential variable in `env`, and no `credential`) and builds its exact replacement: `tokenEnv` becomes an `env` source, `tokenCommand` a `command` source, a non-empty fixed `env.ANTHROPIC_AUTH_TOKEN` a `literal` source (its value replaced by `LEGACY_LITERAL_PLACEHOLDER`, never printed), `authScheme` the `target`, and the credential variables leave `env`. Undefined for anything else, including a file that is merely invalid.
+ */
+export function legacyProviderConversion(raw: unknown): LegacyProviderConversion | undefined {
+  if (!isRecord(raw) || "credential" in raw) {
+    return undefined;
+  }
+  const env = isRecord(raw.env) ? raw.env : undefined;
+  const legacyEnvKeys = env === undefined ? [] : Object.keys(env).filter((key) => LEGACY_ENV_CREDENTIAL_KEYS.includes(key));
+  const fields = [...LEGACY_PROVIDER_FIELDS.filter((field) => field in raw), ...legacyEnvKeys.map((key) => `env.${key}`)];
+  if (fields.length === 0) {
+    return undefined;
+  }
+
+  const sources: unknown[] = [];
+  if (typeof raw.tokenEnv === "string") {
+    sources.push({ env: raw.tokenEnv });
+  }
+  if (Array.isArray(raw.tokenCommand)) {
+    sources.push({ command: raw.tokenCommand });
+  }
+  if (typeof env?.ANTHROPIC_AUTH_TOKEN === "string" && env.ANTHROPIC_AUTH_TOKEN !== "") {
+    sources.push({ literal: LEGACY_LITERAL_PLACEHOLDER });
+  }
+  const remainingEnv = env === undefined ? undefined : Object.fromEntries(Object.entries(env).filter(([key]) => !LEGACY_ENV_CREDENTIAL_KEYS.includes(key)));
+  const replacedKeys: readonly string[] = [...LEGACY_PROVIDER_FIELDS, "env"];
+  const rest = Object.fromEntries(Object.entries(raw).filter(([key]) => !replacedKeys.includes(key)));
+  return {
+    fields,
+    replacement: {
+      ...rest,
+      credential: { sources, ...(raw.authScheme === "apiKey" ? { target: "apiKey" } : {}) },
+      ...(remainingEnv === undefined || Object.keys(remainingEnv).length === 0 ? {} : { env: remainingEnv }),
+    },
+  };
+}
+
+/** Raised when a provider file is still in the format before the credential block, naming the old fields and giving the exact replacement. */
+export class LegacyProviderFileError extends CliError {
+  constructor(
+    readonly filePath: string,
+    readonly conversion: LegacyProviderConversion,
+  ) {
+    super(
+      `${filePath} uses ${conversion.fields.join(", ")}, which a credential block replaced. Rewrite it as:\n` +
+        JSON.stringify(conversion.replacement, null, 2),
+    );
+    this.name = "LegacyProviderFileError";
+  }
+}
+
+/** Validates one provider file's parsed content, refusing an old-format file with its replacement (`LegacyProviderFileError`) and any other invalid one with `ConfigValidationError`. */
+function parseProviderFile(filePath: string, raw: unknown): Provider {
+  const conversion = legacyProviderConversion(raw);
+  if (conversion !== undefined) {
+    throw new LegacyProviderFileError(filePath, conversion);
+  }
+  const parsed = ProviderSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new ConfigValidationError(filePath, parsed.error.issues);
+  }
+  return parsed.data;
+}
+
 /** Reads and validates one provider definition, or undefined when it does not exist. */
 export function readProvider(paths: LayoutPaths, name: string): Provider | undefined {
-  return readJson(providerJsonPath(paths, name), ProviderSchema);
+  const filePath = providerJsonPath(paths, name);
+  if (!fs.existsSync(filePath)) {
+    return undefined;
+  }
+  const raw: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  return parseProviderFile(filePath, raw);
 }
 
 /**
  * Reads and validates one provider definition through an injected `FsPort`, the same way `loadIdentity` reads an `identity.json`: the launcher never touches the real filesystem directly, so provider loading must flow through the port it is already handed.
  */
 export function loadProvider(providersDir: string, name: string, port: FsPort): Provider | undefined {
-  return loadConfigFile(path.join(providersDir, `${name}.json`), ProviderSchema, port.readConfigFile)?.config;
+  const filePath = path.join(providersDir, `${name}.json`);
+  const raw = port.readConfigFile(filePath);
+  return raw === undefined ? undefined : parseProviderFile(filePath, raw);
 }
 
 /** One provider definition as reported by `listProviders`. */
@@ -83,7 +181,7 @@ export function listProviders(paths: LayoutPaths): readonly ProviderListEntry[] 
     try {
       provider = readProvider(paths, name);
     } catch (error) {
-      if (!(error instanceof ConfigValidationError)) {
+      if (!(error instanceof ConfigValidationError || error instanceof LegacyProviderFileError)) {
         throw error;
       }
       console.error(`claude-use: providers/${name}.json is invalid and was skipped: ${error.message}`);
@@ -110,13 +208,15 @@ function listProviderNames(readdir: (dir: string) => readonly string[], provider
   return entries.filter((entry) => entry.endsWith(".json")).map((entry) => entry.slice(0, -".json".length)).sort();
 }
 
+/** The credential targets a provider may use. */
+type ProviderCredentialTarget = (typeof PROVIDER_CREDENTIAL_TARGETS)[number];
+
 /** Everything `addProvider` writes into a fresh provider file. */
 export interface AddProviderInput {
   readonly displayName: string;
   readonly baseUrl: string;
-  readonly tokenEnv?: string;
-  readonly tokenCommand?: readonly [string, ...string[]];
-  readonly authScheme?: AuthScheme;
+  readonly sources: readonly CredentialSource[];
+  readonly target?: ProviderCredentialTarget;
   readonly env?: Readonly<Record<string, string>>;
 }
 
@@ -133,9 +233,7 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
   const parsed = ProviderSchema.safeParse({
     displayName: input.displayName,
     baseUrl: input.baseUrl,
-    ...(input.tokenEnv === undefined ? {} : { tokenEnv: input.tokenEnv }),
-    ...(input.tokenCommand === undefined ? {} : { tokenCommand: input.tokenCommand }),
-    ...(input.authScheme === undefined ? {} : { authScheme: input.authScheme }),
+    credential: { sources: input.sources, ...(input.target === undefined ? {} : { target: input.target }) },
     ...(input.env === undefined || Object.keys(input.env).length === 0 ? {} : { env: input.env }),
   });
   if (!parsed.success) {
@@ -146,20 +244,19 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
 }
 
 /**
- * The fields `updateProvider` changes. `false` removes `tokenEnv` or `tokenCommand`; naming a new `tokenEnv` replaces any `tokenCommand` and vice versa, since a provider has exactly one token source and switching between those two is what setting one means. `env` entries merge over the existing ones and `unsetEnv` keys are then deleted.
+ * The fields `updateProvider` changes. `sources` replaces the whole ordered source list (a list is set, not patched, since its order is its meaning); `target` changes where the token goes and keeps the sources. `env` entries merge over the existing ones and `unsetEnv` keys are then deleted.
  */
 interface UpdateProviderInput {
   readonly displayName?: string;
   readonly baseUrl?: string;
-  readonly tokenEnv?: string | false;
-  readonly tokenCommand?: readonly [string, ...string[]] | false;
-  readonly authScheme?: AuthScheme;
+  readonly sources?: readonly CredentialSource[];
+  readonly target?: ProviderCredentialTarget;
   readonly env?: Readonly<Record<string, string>>;
   readonly unsetEnv?: readonly string[];
 }
 
 /**
- * Updates an existing provider definition in place. Throws `ProviderNotFoundError` when it does not exist, and `ConfigValidationError` when the updated definition fails `ProviderSchema` (e.g. removing the only token source, or leaving two), leaving the file untouched.
+ * Updates an existing provider definition in place. Throws `ProviderNotFoundError` when it does not exist, and `ConfigValidationError` when the updated definition fails `ProviderSchema`, leaving the file untouched.
  */
 function updateProvider(paths: LayoutPaths, name: string, input: UpdateProviderInput): Provider {
   const existing = readProvider(paths, name);
@@ -168,15 +265,15 @@ function updateProvider(paths: LayoutPaths, name: string, input: UpdateProviderI
   }
   const unset = new Set(input.unsetEnv);
   const env = Object.fromEntries(Object.entries({ ...existing.env, ...input.env }).filter(([key]) => !unset.has(key)));
+  const target = input.target ?? existing.credential.target;
   const parsed = ProviderSchema.safeParse({
     ...existing,
     ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
     ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }),
-    ...(input.tokenEnv === undefined ? {} : { tokenEnv: input.tokenEnv === false ? undefined : input.tokenEnv }),
-    ...(typeof input.tokenEnv === "string" && input.tokenCommand === undefined ? { tokenCommand: undefined } : {}),
-    ...(input.tokenCommand === undefined ? {} : { tokenCommand: input.tokenCommand === false ? undefined : input.tokenCommand }),
-    ...(input.tokenCommand !== undefined && input.tokenCommand !== false && input.tokenEnv === undefined ? { tokenEnv: undefined } : {}),
-    ...(input.authScheme === undefined ? {} : { authScheme: input.authScheme }),
+    credential: {
+      sources: input.sources ?? existing.credential.sources,
+      ...(target === undefined ? {} : { target }),
+    },
     env: Object.keys(env).length === 0 ? undefined : env,
   });
   if (!parsed.success) {
@@ -194,13 +291,26 @@ export function removeProvider(paths: LayoutPaths, name: string): void {
   fs.rmSync(providerJsonPath(paths, name));
 }
 
+/**
+ * The provider name the cascade selects through `launch.provider`, if any layer sets one. Last layer wins, the same rule `flattenLayers` applies to every other launch flag.
+ */
+export function cascadeProviderName(cascade: CascadeInput): string | undefined {
+  let name: string | undefined;
+  for (const layer of assembleCascade(cascade).layers) {
+    if (layer.launch?.provider !== undefined) {
+      name = layer.launch.provider;
+    }
+  }
+  return name;
+}
+
 /** Inputs to `resolveProvider`. */
 export interface ResolveProviderParams {
   readonly paths: LayoutPaths;
   readonly port: FsPort;
   readonly env: Readonly<Record<string, string | undefined>>;
-  /** Runs a provider's `tokenCommand`. Omitted by a caller that cannot run commands; a provider that needs one is then refused rather than launched without its credential. */
-  readonly run?: RunPort;
+  /** Resolves the provider's credential sources. Omitted by a caller that cannot read secret files or run commands; a selected provider is then refused rather than launched without its credential. */
+  readonly credentials?: CredentialPort;
   /** The `--provider <name>` flag's value, when one was given. It outranks any cascade layer, matching how the cliOverride layer composes last everywhere else. */
   readonly cliProvider?: string;
   /** The assembled-but-unflattened cascade for this launch, when one was loaded. Its layers are scanned for a `launch.provider` selection so a profile, directory rule, portable file, or the global config can pin a provider exactly the way they pin the other launch flags. */
@@ -208,75 +318,22 @@ export interface ResolveProviderParams {
 }
 
 /**
- * The outcome of resolving this launch's provider: either a fully-resolved provider (definition plus the token read out of the parent environment), or a refusal the launcher turns into a stderr line and a non-zero exit.
+ * The outcome of resolving this launch's provider: either a fully-resolved provider (definition plus its resolved credential), or a refusal the launcher turns into a stderr line and a non-zero exit.
  *
- * Exit status 64 (`EX_USAGE`) is reserved for the provider being selected but unusable as written: an unset token environment variable, or a token command that fails or prints nothing, means the invocation cannot authenticate. An unknown provider name exits 1, matching every other "named thing not found" refusal in the launcher.
+ * A provider whose credential block yields no token exits `CREDENTIAL_UNAVAILABLE_EXIT` (64), because the invocation cannot authenticate. An unknown provider name exits 1, matching every other "named thing not found" refusal in the launcher.
  */
-/** The exit status for a provider selected whose credential cannot be obtained (an unset or empty token environment variable, or a token command that fails or prints nothing): 64, the conventional `EX_USAGE`, because the invocation asked for a provider the environment cannot authenticate. */
-export const PROVIDER_MISSING_TOKEN_EXIT = 64;
-
 export type ProviderResolution =
-  | { readonly ok: true; readonly provider: ResolvedProvider }
+  | { readonly ok: true; readonly provider: ResolvedProvider; readonly warnings: readonly string[] }
   | { readonly ok: false; readonly status: number; readonly message: string };
-
-/** The outcome of obtaining a provider's token: the token, or the refusal `resolveProvider` reports. */
-type TokenOutcome =
-  | { readonly ok: true; readonly token: string }
-  | { readonly ok: false; readonly status: number; readonly message: string };
-
-/**
- * Obtains the token from the provider's single configured source (`ProviderSchema` guarantees exactly one): the `tokenEnv` variable in the parent environment, the trimmed stdout of `tokenCommand`, or the fixed `env.ANTHROPIC_AUTH_TOKEN` of a local proxy. Every failure is a status 64 refusal.
- *
- * A refusal message never contains the command's stdout, which is the credential; it carries the exit status and the command's stderr, which is where a well-behaved secret tool explains itself.
- */
-function obtainToken(name: string, definition: Provider, params: ResolveProviderParams): TokenOutcome {
-  const unusable = (message: string): TokenOutcome => ({ ok: false, status: PROVIDER_MISSING_TOKEN_EXIT, message });
-
-  if (definition.tokenCommand !== undefined) {
-    const [command, ...args] = definition.tokenCommand;
-    if (params.run === undefined) {
-      return { ok: false, status: 1, message: `claude-use: provider ${name} needs its token command run, but this launcher has no command runner wired` };
-    }
-    const result = params.run.run(command, args);
-    if (result.status !== 0) {
-      const stderr = result.stderr.trim();
-      const outcome = result.status === null ? "could not be run or was killed by a signal" : `exited with status ${String(result.status)}`;
-      return unusable(`claude-use: provider ${name}: token command ${command} ${outcome}${stderr === "" ? "" : `: ${stderr}`}`);
-    }
-    const token = result.stdout.trim();
-    return token === "" ? unusable(`claude-use: provider ${name}: token command ${command} printed no token`) : { ok: true, token };
-  }
-
-  const token = definition.tokenEnv !== undefined ? params.env[definition.tokenEnv] : definition.env?.ANTHROPIC_AUTH_TOKEN;
-  if (token === undefined || token === "") {
-    return unusable(
-      definition.tokenEnv !== undefined
-        ? `claude-use: provider ${name} needs ${definition.tokenEnv} set in your environment`
-        : `claude-use: provider ${name} has no usable credential: its env.ANTHROPIC_AUTH_TOKEN is empty`,
-    );
-  }
-  return { ok: true, token };
-}
 
 /**
  * Resolves which API provider this launch routes through, if any: the `--provider` flag first, then the cascade's `launch.provider` selection. Returns undefined when nothing selected a provider at all.
  *
- * Pure over its injected ports, so the launcher's tests exercise refusals without touching a real providers directory: this function decides, and the caller owns the log/exit side effects.
+ * Pure over its injected ports, so the launcher's tests exercise refusals without touching a real providers directory, secret store or terminal: this function decides, and the caller owns the log/exit side effects.
  */
 export function resolveProvider(params: ResolveProviderParams): ProviderResolution | undefined {
   const cliName = params.cliProvider !== undefined && params.cliProvider !== "" ? params.cliProvider : undefined;
-
-  let cascadeName: string | undefined;
-  if (cliName === undefined && params.cascade !== undefined) {
-    // Last layer wins per field, the same rule flattenLayers applies to every other launch flag.
-    for (const layer of assembleCascade(params.cascade).layers) {
-      if (layer.launch?.provider !== undefined) {
-        cascadeName = layer.launch.provider;
-      }
-    }
-  }
-
-  const name = cliName ?? cascadeName;
+  const name = cliName ?? (params.cascade === undefined ? undefined : cascadeProviderName(params.cascade));
   if (name === undefined) {
     return undefined;
   }
@@ -293,38 +350,42 @@ export function resolveProvider(params: ResolveProviderParams): ProviderResoluti
     };
   }
 
-  const credential = obtainToken(name, definition, params);
-  if (!credential.ok) {
-    return credential;
+  if (params.credentials === undefined) {
+    return { ok: false, status: 1, message: `claude-use: provider ${name} needs its credential resolved, but this launcher has no credential port wired` };
   }
-  const token = credential.token;
-
-  return { ok: true, provider: { name, definition, token } };
+  const resolution = resolveCredential({ credential: definition.credential, env: params.env, port: params.credentials, subject: `provider ${name}` });
+  if (!resolution.ok) {
+    return { ok: false, status: CREDENTIAL_UNAVAILABLE_EXIT, message: resolution.message };
+  }
+  return { ok: true, provider: { name, definition, credential: resolution.credential }, warnings: resolution.credential.warnings };
 }
 
-/** One provider as `provider show --json` and `provider list --json` print it: the file's own content (less its editor-only `$schema` pointer) plus its name. */
+/** One provider as `provider show --json` and `provider list --json` print it: its name, the file's own fields (less its editor-only `$schema` pointer), and its credential block summarised, so no `literal` source's value is printed. */
 function toProviderView(name: string, provider: Provider): Record<string, unknown> {
-  return { name, ...provider, $schema: undefined };
+  return {
+    name,
+    displayName: provider.displayName,
+    baseUrl: provider.baseUrl,
+    credential: summariseCredential(provider.credential),
+    ...(provider.env === undefined ? {} : { env: provider.env }),
+  };
 }
 
-/** Renders where a provider's credential comes from, for the human-readable output: the variable's name or the command's program, never a token value. */
-function describeCredential(provider: Provider): string {
-  if (provider.tokenEnv !== undefined) {
-    return `token from ${provider.tokenEnv}`;
-  }
-  if (provider.tokenCommand !== undefined) {
-    return `token from ${provider.tokenCommand[0]}`;
-  }
-  return "fixed env.ANTHROPIC_AUTH_TOKEN";
+/** Options `provider add` accepts. */
+interface ProviderAddOptions {
+  readonly displayName: string;
+  readonly baseUrl: string;
+  readonly credential: CredentialSource[];
+  readonly credentialTarget?: ProviderCredentialTarget;
+  readonly env?: Record<string, string>;
 }
 
-/** Options `provider set` accepts. `tokenEnv` and `tokenCommand` are `false` for their `--no-` forms. */
+/** Options `provider set` accepts. */
 interface ProviderSetOptions {
   readonly displayName?: string;
   readonly baseUrl?: string;
-  readonly tokenEnv?: string | false;
-  readonly tokenCommand?: [string, ...string[]] | false;
-  readonly authScheme?: AuthScheme;
+  readonly credential?: CredentialSource[];
+  readonly credentialTarget?: ProviderCredentialTarget;
   readonly env?: Record<string, string>;
   readonly unsetEnv?: readonly string[];
 }
@@ -334,7 +395,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
   const { paths } = deps;
   const provider = withExamples(
     program.command("provider").description("Manage API providers: Anthropic-compatible endpoints a launch can route through with --provider."),
-    ["claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --token-env Z_API_TOKEN", "claude-use provider list"],
+    ["claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --credential env:Z_API_TOKEN", "claude-use provider list"],
   );
 
   withExamples(
@@ -343,48 +404,32 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .description("Create a new API provider definition. Fails if one with this name already exists.")
       .requiredOption("--display-name <name>", "Human-readable name, exported to the child as CLAUDE_USE_PROVIDER.")
       .requiredOption("--base-url <url>", "Anthropic-compatible base URL the child's requests are sent to.")
-      .option(
-        "--token-env <var>",
-        "NAME of the environment variable holding the provider's token (never the token itself). Exactly one of --token-env, --token-command or --env ANTHROPIC_AUTH_TOKEN=<fixed dummy token for a local proxy> is required.",
-      )
-      .option(
-        "--token-command <argv...>",
-        "Command (program and arguments) run at launch whose trimmed stdout is the token, e.g. --token-command op read op://vault/item/field. Give it last on the command line, since it consumes every following word.",
+      .requiredOption(
+        "--credential <source>",
+        `Where the provider's token comes from (repeatable; tried in the order given until one yields a token): ${CREDENTIAL_SOURCE_SYNTAX}. Never the token itself.`,
+        collectCredentialSource,
       )
       .addOption(
-        new Option("--auth-scheme <scheme>", "How the token reaches Claude Code: bearer sets ANTHROPIC_AUTH_TOKEN (default), apiKey sets ANTHROPIC_API_KEY.").choices(
-          AUTH_SCHEMES,
+        new Option("--credential-target <target>", "Where the token goes: bearer sets ANTHROPIC_AUTH_TOKEN (default), apiKey sets ANTHROPIC_API_KEY.").choices(
+          PROVIDER_CREDENTIAL_TARGETS,
         ),
       )
       .option("--env <KEY=VALUE>", "Extra environment entry for the child (repeatable).", collectStringPair)
-      .action(
-        (
-          name: string,
-          options: Readonly<{
-            displayName: string;
-            baseUrl: string;
-            tokenEnv?: string;
-            tokenCommand?: [string, ...string[]];
-            authScheme?: AuthScheme;
-            env?: Record<string, string>;
-          }>,
-        ) => {
-          const created = addProvider(paths, name, {
-            displayName: options.displayName,
-            baseUrl: options.baseUrl,
-            ...(options.tokenEnv === undefined ? {} : { tokenEnv: options.tokenEnv }),
-            ...(options.tokenCommand === undefined ? {} : { tokenCommand: options.tokenCommand }),
-            ...(options.authScheme === undefined ? {} : { authScheme: options.authScheme }),
-            ...(options.env === undefined ? {} : { env: options.env }),
-          });
-          console.log(`Created provider "${name}" (${created.baseUrl}, ${describeCredential(created)}).`);
-        },
-      ),
+      .action((name: string, options: ProviderAddOptions) => {
+        const created = addProvider(paths, name, {
+          displayName: options.displayName,
+          baseUrl: options.baseUrl,
+          sources: options.credential,
+          ...(options.credentialTarget === undefined ? {} : { target: options.credentialTarget }),
+          ...(options.env === undefined ? {} : { env: options.env }),
+        });
+        console.log(`Created provider "${name}" (${created.baseUrl}, credential ${describeCredential(created.credential)}).`);
+      }),
     [
-      "claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --token-env Z_API_TOKEN",
-      "claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --token-command op read op://vault/z/credential",
-      "claude-use provider add anthropic-api --display-name Anthropic --base-url https://api.anthropic.com --auth-scheme apiKey --token-env ANTHROPIC_KEY",
-      "claude-use provider add local --display-name Local --base-url http://127.0.0.1:4000 --env ANTHROPIC_AUTH_TOKEN=dummy",
+      "claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --credential env:Z_API_TOKEN",
+      "claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --credential env:Z_API_TOKEN --credential op:op://vault/z/credential",
+      "claude-use provider add anthropic-api --display-name Anthropic --base-url https://api.anthropic.com --credential-target apiKey --credential keychain:anthropic-api-key",
+      "claude-use provider add local --display-name Local --base-url http://127.0.0.1:4000 --credential literal:dummy",
     ],
   );
 
@@ -394,33 +439,37 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .description("Update an existing API provider definition.")
       .option("--display-name <name>", "Replace the human-readable name.")
       .option("--base-url <url>", "Replace the base URL.")
-      .option("--token-env <var>", "Take the token from this environment variable, replacing any token command.")
-      .option("--no-token-env", "Remove tokenEnv (another token source must remain).")
       .option(
-        "--token-command <argv...>",
-        "Take the token from this command's trimmed stdout, replacing any token variable. Give it last on the command line, since it consumes every following word.",
+        "--credential <source>",
+        `Replace the credential's sources with these (repeatable, in the order tried): ${CREDENTIAL_SOURCE_SYNTAX}.`,
+        collectCredentialSource,
       )
-      .option("--no-token-command", "Remove tokenCommand (another token source must remain).")
       .addOption(
-        new Option("--auth-scheme <scheme>", "How the token reaches Claude Code: bearer sets ANTHROPIC_AUTH_TOKEN, apiKey sets ANTHROPIC_API_KEY.").choices(
-          AUTH_SCHEMES,
+        new Option("--credential-target <target>", "Where the token goes: bearer sets ANTHROPIC_AUTH_TOKEN, apiKey sets ANTHROPIC_API_KEY.").choices(
+          PROVIDER_CREDENTIAL_TARGETS,
         ),
       )
       .option("--env <KEY=VALUE>", "Add or replace an environment entry for the child (repeatable).", collectStringPair)
       .option("--unset-env <KEY>", "Remove an environment entry (repeatable).", collectRepeated)
       .action((name: string, options: ProviderSetOptions) => {
         if (Object.values(options).every((value) => value === undefined)) {
-          throw new UsageError(
-            "Nothing to change: pass --display-name, --base-url, --token-env, --token-command (or a --no- form), --auth-scheme, --env or --unset-env.",
-          );
+          throw new UsageError("Nothing to change: pass --display-name, --base-url, --credential, --credential-target, --env or --unset-env.");
         }
-        const updated = updateProvider(paths, name, options);
-        console.log(`Updated provider "${name}" (${updated.baseUrl}, ${describeCredential(updated)}).`);
+        const updated = updateProvider(paths, name, {
+          ...(options.displayName === undefined ? {} : { displayName: options.displayName }),
+          ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
+          ...(options.credential === undefined ? {} : { sources: options.credential }),
+          ...(options.credentialTarget === undefined ? {} : { target: options.credentialTarget }),
+          ...(options.env === undefined ? {} : { env: options.env }),
+          ...(options.unsetEnv === undefined ? {} : { unsetEnv: options.unsetEnv }),
+        });
+        console.log(`Updated provider "${name}" (${updated.baseUrl}, credential ${describeCredential(updated.credential)}).`);
       }),
     [
       "claude-use provider set z --base-url https://api.z.ai/api/anthropic",
       "claude-use provider set z --env API_TIMEOUT_MS=600000",
-      "claude-use provider set z --token-command op read op://vault/z/credential",
+      "claude-use provider set z --credential op:op://vault/z/credential",
+      "claude-use provider set anthropic-api --credential-target apiKey",
     ],
   );
 
@@ -449,7 +498,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
   withExamples(
     provider
       .command("show <name>")
-      .description("Show one provider's definition. Credentials are named, never printed: tokenEnv is a variable name, and env values are shown as written in the file.")
+      .description("Show one provider's definition. Credentials are described by source, never printed.")
       .option("--json", "Print the provider as JSON.")
       .action((name: string, options: Readonly<{ json?: boolean }>) => {
         const found = readProvider(paths, name);
@@ -463,10 +512,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         console.log(`Provider: ${name}`);
         console.log(`Display name: ${found.displayName}`);
         console.log(`Base URL: ${found.baseUrl}`);
-        console.log(
-          `Credential: ${found.tokenCommand === undefined ? describeCredential(found) : `token from command ${found.tokenCommand.join(" ")}`}`,
-        );
-        console.log(`Auth scheme: ${found.authScheme ?? "bearer"}`);
+        console.log(`Credential: ${describeCredential(found.credential)}`);
         const env = Object.entries(found.env ?? {});
         console.log(`Environment: ${env.length === 0 ? "(none)" : env.map(([key, value]) => `${key}=${value}`).join(", ")}`);
       }),

@@ -118,3 +118,25 @@ describe("evaluateAmbientCredentialGuard", () => {
     }
   });
 });
+
+describe("the launching identity's own injected credential", () => {
+  const injected = { variable: "CLAUDE_CODE_OAUTH_TOKEN", token: "oauth-work" } as const;
+
+  it("is not ambient when its variable holds exactly the token this launch injects", () => {
+    expect(detectAmbientCredential({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-work" }, injected)).toBeUndefined();
+    expect(
+      evaluateAmbientCredentialGuard({
+        env: { CLAUDE_CODE_OAUTH_TOKEN: "oauth-work" },
+        allowAmbientCredential: false,
+        allowAmbientCredentialOverride: false,
+        injectedCredential: injected,
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("is still ambient when the same variable holds a different token, or another variable is set", () => {
+    expect(detectAmbientCredential({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-other" }, injected)).toEqual({ variable: "CLAUDE_CODE_OAUTH_TOKEN" });
+    expect(detectAmbientCredential({ ANTHROPIC_AUTH_TOKEN: "oauth-work" }, injected)).toEqual({ variable: "ANTHROPIC_AUTH_TOKEN" });
+    expect(detectAmbientCredential({ CLAUDE_CODE_OAUTH_TOKEN: "oauth-work", ANTHROPIC_API_KEY: "sk" }, injected)).toEqual({ variable: "ANTHROPIC_API_KEY" });
+  });
+});

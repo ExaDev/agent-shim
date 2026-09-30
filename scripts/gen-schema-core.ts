@@ -8,6 +8,7 @@ import {
   CategoryClassificationSchema,
   CategoryMapSchema,
   ConfigProfileSchema,
+  CredentialSchema,
   DirectoryRuleSchema,
   DirectoryRulesSchema,
   EntryValueSchema,
@@ -37,6 +38,7 @@ const schemas: Record<string, z.ZodType> = {
   GlobalConfig: GlobalConfigSchema,
   Identity: IdentitySchema,
   Provider: ProviderSchema,
+  Credential: CredentialSchema,
   CategoryClassification: CategoryClassificationSchema,
 };
 

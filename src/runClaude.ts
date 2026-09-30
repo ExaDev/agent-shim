@@ -14,6 +14,7 @@ import { parseLauncherArgv } from "./launcher/argv";
 import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/identity";
 import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import {
+  realCredentialPort,
   realFarmFs,
   realFsPort,
   realHeadroomPort,
@@ -149,7 +150,7 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
     resolveClaudeBinary: realResolveClaudeBinary(resolveOwnInstallDirs(paths, realOwnExecutablePath())),
     farm: farm.runtime,
     headroom: realHeadroomPort(paths),
-    run: realRunPort,
+    credentials: realCredentialPort,
     ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
     ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
     ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),

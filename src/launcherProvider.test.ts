@@ -1,27 +1,33 @@
 import { describe, expect, it } from "vitest";
 
-import { PROVIDER_MISSING_TOKEN_EXIT } from "./providers";
+import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
+import type { RunLauncherParams } from "./launcher";
 import {
-  createFakeFarmFs, discovered, FAKE_HOME, fakeFarm, fakeFs, fakeLog, fakeProc, fakeRun, fakeSpawn, paths, runAndCaptureExit, spawnedEnv,
+  createFakeFarmFs, discovered, FAKE_HOME, fakeCredentials, fakeFarm, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv,
 } from "./test-helpers";
+
+/** `runAndCaptureExit` with a fake credential port wired unless the test supplies its own, since every provider launch resolves a credential block. */
+function launch(params: Omit<RunLauncherParams, "credentials"> & Partial<Pick<RunLauncherParams, "credentials">>): number {
+  return runAndCaptureExit({ credentials: fakeCredentials(), ...params });
+}
 
 describe("runLauncher provider selection", () => {
   const providerZ = {
     displayName: "GLM",
     baseUrl: "https://api.z.ai/api/anthropic",
-    tokenEnv: "Z_API_TOKEN",
+    credential: { sources: [{ env: "Z_API_TOKEN" }] },
     env: { ANTHROPIC_MODEL: "glm-4.6" },
   };
   const providerO = {
     displayName: "OpenRouter",
     baseUrl: "https://openrouter.ai/api/v1",
-    tokenEnv: "OPENROUTER_API_KEY",
+    credential: { sources: [{ env: "OPENROUTER_API_KEY" }] },
   };
 
   it("launches through a provider selected by the --provider flag", () => {
     const spawn = fakeSpawn();
 
-    runAndCaptureExit({
+    launch({
       paths,
       fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
       spawn,
@@ -36,7 +42,8 @@ describe("runLauncher provider selection", () => {
         Z_API_TOKEN: "tok-z",
         ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
         ANTHROPIC_AUTH_TOKEN: "tok-z",
-        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_API_KEY: undefined,
+        CLAUDE_CODE_OAUTH_TOKEN: undefined,
         ANTHROPIC_MODEL: "glm-4.6",
         CLAUDE_USE_PROVIDER: "GLM",
       },
@@ -47,7 +54,7 @@ describe("runLauncher provider selection", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
 
-    const code = runAndCaptureExit({
+    const code = launch({
       paths,
       fs: fakeFs({
         [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ,
@@ -65,11 +72,11 @@ describe("runLauncher provider selection", () => {
     expect(log.errors[0]).toContain("o, z");
   });
 
-  it("refuses with exit 64 when the provider's token environment variable is unset or empty", () => {
+  it("refuses with exit 64 when the provider's only source, an environment variable, is unset or empty", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
 
-    const code = runAndCaptureExit({
+    const code = launch({
       paths,
       fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
       spawn,
@@ -78,21 +85,21 @@ describe("runLauncher provider selection", () => {
       resolveClaudeBinary: () => discovered,
     });
 
-    expect(code).toBe(PROVIDER_MISSING_TOKEN_EXIT);
+    expect(code).toBe(CREDENTIAL_UNAVAILABLE_EXIT);
     expect(spawn.spawnSync).not.toHaveBeenCalled();
-    expect(log.errors).toEqual(["claude-use: provider z needs Z_API_TOKEN set in your environment"]);
+    expect(log.errors).toEqual(["claude-use: provider z has no usable credential: env Z_API_TOKEN is unset or empty"]);
   });
 
-  it("launches a fixed-credential provider without tokenEnv, passing the guard and setting the token from its env", () => {
+  it("launches a local-proxy provider with a literal placeholder credential and nothing in the environment", () => {
     const spawn = fakeSpawn();
 
-    runAndCaptureExit({
+    launch({
       paths,
       fs: fakeFs({
         [`${FAKE_HOME}/.claude-use/providers/codex.json`]: {
           displayName: "Codex",
           baseUrl: "http://127.0.0.1:18789",
-          env: { ANTHROPIC_AUTH_TOKEN: "codex-subscription-local", ANTHROPIC_API_KEY: "" },
+          credential: { sources: [{ literal: "codex-subscription-local" }] },
         },
       }),
       spawn,
@@ -111,7 +118,7 @@ describe("runLauncher provider selection", () => {
     const fs = createFakeFarmFs({});
     const spawn = fakeSpawn();
 
-    runAndCaptureExit({
+    launch({
       paths,
       fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO }),
       spawn,
@@ -131,7 +138,7 @@ describe("runLauncher provider selection", () => {
   it("launches --identity plus --provider: the identity's own farm directory, the provider's endpoint and token", () => {
     const spawn = fakeSpawn();
 
-    runAndCaptureExit({
+    launch({
       paths,
       fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
       spawn,
@@ -151,7 +158,7 @@ describe("runLauncher provider selection", () => {
     const fs = createFakeFarmFs({});
     const spawn = fakeSpawn();
 
-    runAndCaptureExit({
+    launch({
       paths,
       fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO }),
       spawn,
@@ -170,7 +177,7 @@ describe("runLauncher provider selection", () => {
     const fs = createFakeFarmFs({});
     const spawn = fakeSpawn();
 
-    runAndCaptureExit({
+    launch({
       paths,
       fs: fakeFs({
         [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ,
@@ -191,7 +198,7 @@ describe("runLauncher provider selection", () => {
   it("does not trip the ambient-credential guard when a provider supplies the child's token", () => {
     const spawn = fakeSpawn();
 
-    const code = runAndCaptureExit({
+    const code = launch({
       paths,
       fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
       spawn,
@@ -203,79 +210,107 @@ describe("runLauncher provider selection", () => {
     expect(code).toBe(0);
     const env = spawnedEnv(spawn);
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
-    expect(env.ANTHROPIC_API_KEY).toBe("");
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 
-  describe("tokenCommand and authScheme", () => {
+  describe("command sources and target apiKey", () => {
     const providerAnthropic = {
       displayName: "Anthropic API",
       baseUrl: "https://api.anthropic.com",
-      tokenCommand: ["op", "read", "op://vault/item/field"],
-      authScheme: "apiKey",
+      credential: { sources: [{ op: "op://vault/item/field" }], target: "apiKey" },
     };
 
     it("launches with the command's token as ANTHROPIC_API_KEY and only the child holding it, despite ambient credentials", () => {
       const spawn = fakeSpawn();
-      const run = fakeRun("sk-ant-REDACTED\n");
+      const credentials = fakeCredentials({ command: { stdout: "sk-ant-REDACTED\n" } });
+      const log = fakeLog();
 
-      const code = runAndCaptureExit({
+      const code = launch({
         paths,
         fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/anthropic-api.json`]: providerAnthropic }),
         spawn,
         proc: fakeProc({ ANTHROPIC_API_KEY: "sk-ambient-key", ANTHROPIC_AUTH_TOKEN: "sk-ambient-bearer" }, ["--provider", "anthropic-api", "--print"]),
-        log: fakeLog(),
+        log,
         resolveClaudeBinary: () => discovered,
-        run,
+        credentials,
       });
 
       expect(code).toBe(0);
-      expect(run.run).toHaveBeenCalledExactlyOnceWith("op", ["read", "op://vault/item/field"]);
+      expect(credentials.runCommand).toHaveBeenCalledOnce();
+      expect(credentials.runCommand.mock.calls[0]?.[0]).toEqual(["op", "read", "op://vault/item/field"]);
+      expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["--print"]);
       const env = spawnedEnv(spawn);
       expect(env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
       expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
-      expect(env.ANTHROPIC_AUTH_TOKEN).toBe("");
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect([...log.infos, ...log.warns, ...log.errors].join("\n")).not.toContain("sk-ant-REDACTED");
+      expect(log.infos.join("\n")).toContain("provider anthropic-api (credential apiKey from op op://vault/item/field)");
     });
 
-    it("keeps a bearer provider's token command output in ANTHROPIC_AUTH_TOKEN", () => {
+    it("keeps a bearer provider's command output in ANTHROPIC_AUTH_TOKEN", () => {
       const spawn = fakeSpawn();
 
-      runAndCaptureExit({
+      launch({
         paths,
         fs: fakeFs({
-          [`${FAKE_HOME}/.claude-use/providers/z.json`]: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenCommand: ["op", "read", "ref"] },
+          [`${FAKE_HOME}/.claude-use/providers/z.json`]: {
+            displayName: "GLM",
+            baseUrl: "https://api.z.ai/api/anthropic",
+            credential: { sources: [{ command: ["pass", "show", "z"] }] },
+          },
         }),
         spawn,
         proc: fakeProc({}, ["--provider", "z"]),
         log: fakeLog(),
         resolveClaudeBinary: () => discovered,
-        run: fakeRun("tok-z\n"),
+        credentials: fakeCredentials({ command: { stdout: "tok-z\n" } }),
       });
 
       const env = spawnedEnv(spawn);
       expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
-      expect(env.ANTHROPIC_API_KEY).toBe("");
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     });
 
-    it("refuses with exit 64 before spawning when the token command fails, without logging its output", () => {
+    it("refuses with exit 64 before spawning when the command fails, without logging its output", () => {
       const spawn = fakeSpawn();
       const log = fakeLog();
 
-      const code = runAndCaptureExit({
+      const code = launch({
         paths,
         fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/anthropic-api.json`]: providerAnthropic }),
         spawn,
         proc: fakeProc({}, ["--provider", "anthropic-api"]),
         log,
         resolveClaudeBinary: () => discovered,
-        run: fakeRun("sk-ant-REDACTED", 1),
+        credentials: fakeCredentials({ command: { status: 1, stdout: "sk-ant-REDACTED" } }),
       });
 
-      expect(code).toBe(PROVIDER_MISSING_TOKEN_EXIT);
+      expect(code).toBe(CREDENTIAL_UNAVAILABLE_EXIT);
       expect(spawn.spawnSync).not.toHaveBeenCalled();
-      expect(log.errors).toEqual(["claude-use: provider anthropic-api: token command op exited with status 1"]);
+      expect(log.errors).toEqual(["claude-use: provider anthropic-api has no usable credential: op op://vault/item/field exited with status 1"]);
     });
 
-    it("refuses with exit 64 when the token command prints nothing", () => {
+    it("refuses with exit 64, naming the source, when an interactive source is left and nobody is present to approve it", () => {
+      const spawn = fakeSpawn();
+      const log = fakeLog();
+      const credentials = fakeCredentials({ personPresent: false });
+
+      const code = launch({
+        paths,
+        fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/anthropic-api.json`]: providerAnthropic }),
+        spawn,
+        proc: fakeProc({}, ["--provider", "anthropic-api"]),
+        log,
+        resolveClaudeBinary: () => discovered,
+        credentials,
+      });
+
+      expect(code).toBe(CREDENTIAL_UNAVAILABLE_EXIT);
+      expect(credentials.runCommand).not.toHaveBeenCalled();
+      expect(log.errors[0]).toContain("op op://vault/item/field needs a person to approve it");
+    });
+
+    it("refuses with exit 1 rather than launching without a credential when no credential port is wired", () => {
       const spawn = fakeSpawn();
 
       const code = runAndCaptureExit({
@@ -285,10 +320,9 @@ describe("runLauncher provider selection", () => {
         proc: fakeProc({}, ["--provider", "anthropic-api"]),
         log: fakeLog(),
         resolveClaudeBinary: () => discovered,
-        run: fakeRun("\n"),
       });
 
-      expect(code).toBe(PROVIDER_MISSING_TOKEN_EXIT);
+      expect(code).toBe(1);
       expect(spawn.spawnSync).not.toHaveBeenCalled();
     });
 
@@ -296,7 +330,7 @@ describe("runLauncher provider selection", () => {
       const spawn = fakeSpawn();
       const log = fakeLog();
 
-      const code = runAndCaptureExit({
+      const code = launch({
         paths,
         fs: fakeFs({}),
         spawn,
@@ -314,7 +348,7 @@ describe("runLauncher provider selection", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
 
-    const code = runAndCaptureExit({
+    const code = launch({
       paths,
       fs: fakeFs({}),
       spawn,

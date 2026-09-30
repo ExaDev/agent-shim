@@ -1,7 +1,68 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
+import { realCredentialPort, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
+
+/** Owner read and write only: the mode a secret file is written with here. */
+const OWNER_ONLY_PERMISSIONS = 0o600;
+/** The permission bits of a file mode, without its type bits. */
+const PERMISSION_BITS = 0o777;
+
+describe("realCredentialPort", () => {
+  it("reads a secret file with its permission bits, and reports a missing one as not found", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "credential-port-"));
+    try {
+      const file = path.join(dir, "token");
+      fs.writeFileSync(file, "tok\n", { mode: OWNER_ONLY_PERMISSIONS });
+      const read = realCredentialPort.readSecretFile(file);
+      expect(read).toMatchObject({ found: true, content: "tok\n" });
+      if (process.platform !== "win32") {
+        expect(read.found && read.mode !== undefined && (read.mode & PERMISSION_BITS)).toBe(OWNER_ONLY_PERMISSIONS);
+      }
+      expect(realCredentialPort.readSecretFile(path.join(dir, "missing"))).toEqual({ found: false });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("captures a command's stdout, and its stderr and status when it fails", () => {
+    const options = { timeoutMs: 10_000, interactive: false };
+    expect(realCredentialPort.runCommand([process.execPath, "-e", "process.stdout.write('tok')"], options)).toEqual({
+      status: 0,
+      stdout: "tok",
+      stderr: "",
+      timedOut: false,
+    });
+    expect(realCredentialPort.runCommand([process.execPath, "-e", "process.stderr.write('nope'); process.exit(3)"], options)).toMatchObject({
+      status: 3,
+      stderr: "nope",
+      timedOut: false,
+    });
+  });
+
+  it("captures an interactive command's stdout while its stderr goes to the terminal", () => {
+    expect(realCredentialPort.runCommand([process.execPath, "-e", "process.stdout.write('tok')"], { timeoutMs: 10_000, interactive: true })).toEqual({
+      status: 0,
+      stdout: "tok",
+      stderr: "",
+      timedOut: false,
+    });
+  });
+
+  it("kills a command that outlives its timeout and reports it as timed out", () => {
+    const result = realCredentialPort.runCommand([process.execPath, "-e", "setTimeout(() => {}, 60_000)"], { timeoutMs: 200, interactive: false });
+    expect(result.timedOut).toBe(true);
+    expect(result.status).toBeNull();
+  });
+
+  it("explains a program that cannot be started", () => {
+    const result = realCredentialPort.runCommand(["claude-use-no-such-program"], { timeoutMs: 10_000, interactive: false });
+    expect(result).toMatchObject({ status: null, timedOut: false });
+    expect(result.stderr).toContain("ENOENT");
+  });
+});
 
 describe("resolveContentSourcePath", () => {
   it("uses execPath when running as a single executable application", () => {

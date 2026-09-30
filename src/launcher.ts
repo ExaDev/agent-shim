@@ -10,12 +10,13 @@ import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/id
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { IdentityLockBusyError } from "./launcher/lock";
-import type { FarmFs, FsPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, RunPort, SpawnPort } from "./launcher/ports";
+import type { FarmFs, FsPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
 import { spawnClaude } from "./launcher/spawn";
 import { resolveProvider } from "./providers";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
-import type { CategoryClassification, CategoryClassificationOverlay, LaunchFlags } from "./config/schema";
+import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags } from "./config/schema";
+import { CREDENTIAL_UNAVAILABLE_EXIT, describeSource, resolveCredential, type CredentialPort, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 
@@ -70,16 +71,35 @@ export interface RunLauncherParams {
   readonly farm?: FarmRuntime;
   /** Wires headroom routing. Omitted by a caller that cannot route through the daemon; a launch that resolves `headroom` on with no port wired is refused loudly rather than silently bypassing it. */
   readonly headroom?: HeadroomPort;
-  /** Runs a provider's `tokenCommand`. Omitted by a caller that cannot run commands; a launch that selects such a provider is then refused rather than started without its credential. */
-  readonly run?: RunPort;
+  /** Resolves credential blocks (a provider's, or the launching identity's own). Omitted by a caller that cannot read secret files or run commands; a launch that needs a credential is then refused rather than started without it. */
+  readonly credentials?: CredentialPort;
   /** True when the user was asked on a terminal whether to create the selected configuration profile and chose to launch without it. Without that explicit choice, a selected profile with no file is refused rather than silently skipped. */
   readonly allowMissingConfigProfile?: boolean;
+}
+
+/** The outcome of resolving the launching identity's own credential block: the credential, or a refusal with its exit status. */
+type IdentityCredentialResolution =
+  | { readonly ok: true; readonly credential: ResolvedCredential }
+  | { readonly ok: false; readonly status: number; readonly message: string };
+
+/** Resolves an identity's credential block, refusing with exit 1 when no credential port is wired and with `CREDENTIAL_UNAVAILABLE_EXIT` when no source yields a token. */
+function resolveIdentityCredential(
+  identity: string,
+  credential: Credential,
+  env: Readonly<Record<string, string | undefined>>,
+  port: CredentialPort | undefined,
+): IdentityCredentialResolution {
+  if (port === undefined) {
+    return { ok: false, status: 1, message: `claude-use: identity ${identity} needs its credential resolved, but this launcher has no credential port wired` };
+  }
+  const resolution = resolveCredential({ credential, env, port, subject: `identity ${identity}` });
+  return resolution.ok ? resolution : { ok: false, status: CREDENTIAL_UNAVAILABLE_EXIT, message: resolution.message };
 }
 
 /**
  * Orchestrates one `claude` launch, in order:
  *
- * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the ambient-credential guard, farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and finally spawn.
+ * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and finally spawn.
  *
  * A launch that resolves an identity with no `identity.json`, or a configuration profile with no file, is refused with exit 1 naming the missing name and how it was selected: silently proceeding would create a brand-new login for a mistyped `@name`, or launch with a whole cascade layer missing. On a terminal, `src/runClaude.ts` offers to create either before this runs.
  *
@@ -185,7 +205,7 @@ export function runLauncher(params: RunLauncherParams): void {
           paths,
           port: fs,
           env,
-          ...(params.run === undefined ? {} : { run: params.run }),
+          ...(params.credentials === undefined ? {} : { credentials: params.credentials }),
           ...(parsedArgv.provider === undefined ? {} : { cliProvider: parsedArgv.provider }),
           ...(farmContext === undefined ? {} : { cascade: farmContext.cascade }),
         });
@@ -194,6 +214,24 @@ export function runLauncher(params: RunLauncherParams): void {
     proc.exit(provider.status);
   }
   const resolvedProvider: ResolvedProvider | undefined = provider?.ok === true ? provider.provider : undefined;
+  for (const warning of provider?.ok === true ? provider.warnings : []) {
+    log.warn(warning);
+  }
+
+  // The identity's own credential applies only when no provider was selected (the provider's credential authenticates against its endpoint instead) and the identity owns this launch's configuration directory (under the CLAUDE_CONFIG_DIR escape hatch, the directory and whatever login it holds are the caller's).
+  const identityCredentialBlock = loadedIdentity?.config.credential;
+  const identityResolution =
+    resolvedProvider === undefined && farmIdentity !== undefined && identityCredentialBlock !== undefined
+      ? resolveIdentityCredential(farmIdentity, identityCredentialBlock, env, params.credentials)
+      : undefined;
+  if (identityResolution !== undefined && !identityResolution.ok) {
+    log.error(identityResolution.message);
+    proc.exit(identityResolution.status);
+  }
+  const identityCredential = identityResolution?.ok === true ? identityResolution.credential : undefined;
+  for (const warning of identityCredential?.warnings ?? []) {
+    log.warn(warning);
+  }
 
   const guardResult = evaluateAmbientCredentialGuard({
     env,
@@ -201,6 +239,9 @@ export function runLauncher(params: RunLauncherParams): void {
     allowAmbientCredentialOverride: parseEnvBool("CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL", env.CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL) === true,
     identityName: identityDecision.name,
     providerSelected: resolvedProvider !== undefined,
+    ...(identityCredential === undefined
+      ? {}
+      : { injectedCredential: { variable: CREDENTIAL_TARGET_VARS[identityCredential.target], token: identityCredential.token } }),
   });
   if (!guardResult.ok) {
     log.error(guardResult.message);
@@ -210,7 +251,12 @@ export function runLauncher(params: RunLauncherParams): void {
   log.info(
     `claude-use: identity ${identityDecision.name ?? "(none)"} (${identityDecision.source}), ` +
       `config profile ${configProfileDecision.name ?? "(none)"} (${configProfileDecision.source})` +
-      (resolvedProvider === undefined ? "" : `, provider ${resolvedProvider.name}`),
+      (resolvedProvider === undefined
+        ? ""
+        : `, provider ${resolvedProvider.name} (credential ${resolvedProvider.credential.target} from ${describeSource(resolvedProvider.credential.source)})`) +
+      (identityCredential === undefined
+        ? ""
+        : `, identity credential ${identityCredential.target} from ${describeSource(identityCredential.source)}`),
   );
 
   // The farm resync sits here, between the identity/profile decision above and flag resolution below, because it needs the first and produces an input to the second: the cascade it resolves carries this launch's `launch` flags, which is why `resolveLaunchFlags` is called with them rather than with the environment alone.
@@ -297,6 +343,7 @@ export function runLauncher(params: RunLauncherParams): void {
     resolvedIdentityName: identityDecision.name,
     identitiesDir: paths.identitiesDir,
     ...(resolvedProvider === undefined ? {} : { provider: resolvedProvider }),
+    ...(identityCredential === undefined ? {} : { identityCredential }),
     ...(headroom === undefined ? {} : { headroom }),
   });
 

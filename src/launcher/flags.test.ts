@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { InvalidEnvBoolError } from "../cli/parsers";
-import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags } from "./flags";
+import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider } from "./flags";
 
 describe("resolveLaunchFlags", () => {
   it("defaults both flags to off when nothing sets them — a deliberate change from the legacy always-on script", () => {
@@ -182,18 +182,27 @@ describe("buildEnv", () => {
     expect(env.CLAUDE_EXTRA_FLAGS).toBe("--continue continue");
   });
 
-  it("applies a resolved provider on top of the identity's CLAUDE_CONFIG_DIR", () => {
-    const env = buildEnv({
-      baseEnv,
-      configDirEscapeHatch: false,
-      resolvedIdentityName: "work",
-      identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: {
-        name: "z",
-        definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" },
-        token: "tok-from-z",
+  const identitiesDir = "/home/testuser/.claude-use/identities";
+
+  /** A resolved provider as the launcher hands it to buildEnv: its definition plus a credential resolved to `token` under `target`. */
+  function resolvedProvider(
+    overrides: Readonly<{ name?: string; displayName?: string; baseUrl?: string; env?: Record<string, string>; target?: "bearer" | "apiKey"; token?: string }> = {},
+  ): ResolvedProvider {
+    const target = overrides.target ?? "bearer";
+    return {
+      name: overrides.name ?? "z",
+      definition: {
+        displayName: overrides.displayName ?? "GLM",
+        baseUrl: overrides.baseUrl ?? "https://api.z.ai/api/anthropic",
+        credential: { sources: [{ env: "Z_API_TOKEN" }], target },
+        ...(overrides.env === undefined ? {} : { env: overrides.env }),
       },
-    });
+      credential: { target, token: overrides.token ?? "tok-from-z", source: { env: "Z_API_TOKEN" }, warnings: [] },
+    };
+  }
+
+  it("applies a resolved provider on top of the identity's CLAUDE_CONFIG_DIR", () => {
+    const env = buildEnv({ baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider() });
     expect(env.CLAUDE_CONFIG_DIR).toBe("/home/testuser/.claude-use/identities/work");
     expect(env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
@@ -201,120 +210,67 @@ describe("buildEnv", () => {
   });
 
   it("applies a resolved provider even when no identity was resolved, since it selects an endpoint, not a login", () => {
-    const env = buildEnv({
-      baseEnv,
-      configDirEscapeHatch: false,
-      identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: {
-        name: "z",
-        definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" },
-        token: "tok-from-z",
-      },
-    });
+    const env = buildEnv({ baseEnv, configDirEscapeHatch: false, identitiesDir, provider: resolvedProvider() });
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
   });
 
-  it("clears an ambient ANTHROPIC_API_KEY so the provider's token takes effect, unless the provider's own env names a value", () => {
-    const base = { ...baseEnv, ANTHROPIC_API_KEY: "sk-ambient" };
-    const cleared = buildEnv({
-      baseEnv: base,
+  it("removes every ambient credential variable other than the bearer target, so the provider's token takes effect", () => {
+    const env = buildEnv({
+      baseEnv: { ...baseEnv, ANTHROPIC_API_KEY: "sk-ambient", CLAUDE_CODE_OAUTH_TOKEN: "oauth-ambient" },
       configDirEscapeHatch: false,
-      identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: {
-        name: "z",
-        definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" },
-        token: "tok-from-z",
-      },
+      identitiesDir,
+      provider: resolvedProvider(),
     });
-    expect(cleared.ANTHROPIC_API_KEY).toBe("");
-    const named = buildEnv({
-      baseEnv: base,
-      configDirEscapeHatch: false,
-      identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: {
-        name: "o",
-        definition: {
-          displayName: "OpenRouter",
-          baseUrl: "https://openrouter.ai/api/v1",
-          tokenEnv: "OPENROUTER_API_KEY",
-          env: { ANTHROPIC_API_KEY: "" },
-        },
-        token: "tok-from-o",
-      },
-    });
-    expect(named.ANTHROPIC_API_KEY).toBe("");
-    expect(named.ANTHROPIC_BASE_URL).toBe("https://openrouter.ai/api/v1");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
-  it("exports the token as ANTHROPIC_API_KEY and clears an ambient ANTHROPIC_AUTH_TOKEN under authScheme apiKey", () => {
+  it("exports the token as ANTHROPIC_API_KEY and removes an ambient ANTHROPIC_AUTH_TOKEN under target apiKey", () => {
     const env = buildEnv({
       baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "sk-ambient-bearer", ANTHROPIC_API_KEY: "sk-ambient-key" },
       configDirEscapeHatch: false,
-      identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: {
-        name: "anthropic-api",
-        definition: { displayName: "Anthropic API", baseUrl: "https://api.anthropic.com", tokenCommand: ["op", "read", "ref"], authScheme: "apiKey" },
-        token: "sk-ant-REDACTED",
-      },
+      identitiesDir,
+      provider: resolvedProvider({ baseUrl: "https://api.anthropic.com", target: "apiKey", token: "sk-ant-REDACTED" }),
     });
     expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
   });
 
-  it("keeps a fixed env.ANTHROPIC_AUTH_TOKEN out of the child under authScheme apiKey", () => {
+  it("exports an identity's own credential as its target when no provider was selected", () => {
+    const env = buildEnv({
+      baseEnv: { ...baseEnv, ANTHROPIC_API_KEY: "sk-ambient" },
+      configDirEscapeHatch: false,
+      resolvedIdentityName: "work",
+      identitiesDir,
+      identityCredential: { target: "oauthToken", token: "oauth-work", source: { op: "op://v/work/token" }, warnings: [] },
+    });
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-work");
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+  });
+
+  it("never applies an identity's credential alongside a provider's, whose credential authenticates against its endpoint", () => {
     const env = buildEnv({
       baseEnv,
       configDirEscapeHatch: false,
-      identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: {
-        name: "proxy",
-        definition: {
-          displayName: "Proxy",
-          baseUrl: "http://127.0.0.1:18789",
-          authScheme: "apiKey",
-          env: { ANTHROPIC_AUTH_TOKEN: "dummy" },
-        },
-        token: "dummy",
-      },
+      resolvedIdentityName: "work",
+      identitiesDir,
+      provider: resolvedProvider(),
+      identityCredential: { target: "oauthToken", token: "oauth-work", source: { op: "op://v/work/token" }, warnings: [] },
     });
-    expect(env.ANTHROPIC_API_KEY).toBe("dummy");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("");
-  });
-
-  it("keeps the bearer pair when authScheme is bearer or absent", () => {
-    for (const authScheme of [undefined, "bearer" as const]) {
-      const env = buildEnv({
-        baseEnv: { ...baseEnv, ANTHROPIC_API_KEY: "sk-ambient-key" },
-        configDirEscapeHatch: false,
-        identitiesDir: "/home/testuser/.claude-use/identities",
-        provider: {
-          name: "z",
-          definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN", ...(authScheme === undefined ? {} : { authScheme }) },
-          token: "tok-from-z",
-        },
-      });
-      expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
-      expect(env.ANTHROPIC_API_KEY).toBe("");
-    }
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
   it("lands every entry of the provider's own env verbatim in the child environment", () => {
     const env = buildEnv({
       baseEnv,
       configDirEscapeHatch: false,
-      identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: {
-        name: "z",
-        definition: {
-          displayName: "GLM",
-          baseUrl: "https://api.z.ai/api/anthropic",
-          tokenEnv: "Z_API_TOKEN",
-          env: { ANTHROPIC_MODEL: "glm-4.6", API_TIMEOUT_MS: "600000" },
-        },
-        token: "tok-from-z",
-      },
+      identitiesDir,
+      provider: resolvedProvider({ env: { ANTHROPIC_MODEL: "glm-4.6", API_TIMEOUT_MS: "600000" } }),
     });
     expect(env.ANTHROPIC_MODEL).toBe("glm-4.6");
     expect(env.API_TIMEOUT_MS).toBe("600000");
@@ -325,11 +281,7 @@ describe("buildEnv", () => {
       baseEnv,
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: {
-        name: "z",
-        definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" },
-        token: "tok-from-z",
-      },
+      provider: resolvedProvider(),
       headroom: { port: 8123, mitmPort: 8124, caCertPath: "/home/testuser/.claude-use/headroom/ca/ca.pem", projectId: "/home/testuser/work/repo" },
     });
     expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
@@ -369,16 +321,7 @@ describe("buildEnv", () => {
       baseEnv: { ...baseEnv, ANTHROPIC_CUSTOM_HEADERS: "x-from-parent: yes" },
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: {
-        name: "o",
-        definition: {
-          displayName: "OpenRouter",
-          baseUrl: "https://openrouter.ai/api/v1",
-          tokenEnv: "OPENROUTER_API_KEY",
-          env: { ANTHROPIC_CUSTOM_HEADERS: "x-from-provider: indeed" },
-        },
-        token: "tok-from-o",
-      },
+      provider: resolvedProvider({ name: "o", displayName: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", env: { ANTHROPIC_CUSTOM_HEADERS: "x-from-provider: indeed" } }),
       headroom: { port: 8123, mitmPort: 8124, caCertPath: "/home/testuser/.claude-use/headroom/ca/ca.pem", projectId: "/repo" },
     });
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(

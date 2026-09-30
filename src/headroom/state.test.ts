@@ -26,11 +26,11 @@ function seededProviders(fs: HeadroomFs): void {
   fs.mkdirp(paths.providersDir);
   fs.writeFileUtf8(
     `${paths.providersDir}/z.json`,
-    JSON.stringify({ displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" }),
+    JSON.stringify({ displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z_API_TOKEN" }] } }),
   );
   fs.writeFileUtf8(
     `${paths.providersDir}/o.json`,
-    JSON.stringify({ displayName: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", tokenEnv: "OPENROUTER_API_KEY" }),
+    JSON.stringify({ displayName: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", credential: { sources: [{ env: "OPENROUTER_API_KEY" }] } }),
   );
 }
 

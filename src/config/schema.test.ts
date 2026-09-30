@@ -7,6 +7,8 @@ import {
   CategoryClassificationSchema,
   CategoryMapSchema,
   ConfigProfileSchema,
+  CredentialSchema,
+  CredentialSourceSchema,
   DirectoryRuleSchema,
   DirectoryRulesSchema,
   DURATION_RE,
@@ -228,92 +230,105 @@ describe("GlobalConfigSchema", () => {
 });
 
 describe("ProviderSchema", () => {
+  const base = { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic" };
+  const credential = { sources: [{ env: "Z_API_TOKEN" }] };
+
   it("accepts a full provider definition with static extra env", () => {
-    const provider = ProviderSchema.parse({
-      displayName: "GLM",
-      baseUrl: "https://api.z.ai/api/anthropic",
-      tokenEnv: "Z_API_TOKEN",
-      env: { ANTHROPIC_MODEL: "glm-4.6", ANTHROPIC_API_KEY: "" },
-    });
-    expect(provider.env).toEqual({ ANTHROPIC_MODEL: "glm-4.6", ANTHROPIC_API_KEY: "" });
+    const provider = ProviderSchema.parse({ ...base, credential, env: { ANTHROPIC_MODEL: "glm-4.6" } });
+    expect(provider.env).toEqual({ ANTHROPIC_MODEL: "glm-4.6" });
+    expect(provider.credential).toEqual(credential);
   });
 
-  it("accepts a provider with no tokenEnv when its env carries a non-empty ANTHROPIC_AUTH_TOKEN", () => {
-    const parsed = ProviderSchema.safeParse({
-      displayName: "Codex",
-      baseUrl: "http://127.0.0.1:18789",
-      env: { ANTHROPIC_AUTH_TOKEN: "codex-subscription-local", ANTHROPIC_API_KEY: "" },
-    });
-    expect(parsed.success).toBe(true);
+  it("requires a credential block with at least one source", () => {
+    expect(ProviderSchema.safeParse(base).success).toBe(false);
+    expect(ProviderSchema.safeParse({ ...base, credential: { sources: [] } }).success).toBe(false);
   });
 
-  it("rejects a provider with neither tokenEnv nor an env credential", () => {
-    expect(ProviderSchema.safeParse({ displayName: "Codex", baseUrl: "http://127.0.0.1:18789" }).success).toBe(false);
-    expect(
-      ProviderSchema.safeParse({ displayName: "Codex", baseUrl: "http://127.0.0.1:18789", env: { ANTHROPIC_API_KEY: "" } }).success,
-    ).toBe(false);
-    expect(
-      ProviderSchema.safeParse({ displayName: "Codex", baseUrl: "http://127.0.0.1:18789", env: { ANTHROPIC_AUTH_TOKEN: "" } }).success,
-    ).toBe(false);
+  it("rejects the fields the credential block replaced", () => {
+    expect(ProviderSchema.safeParse({ ...base, credential, tokenEnv: "Z_API_TOKEN" }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ ...base, credential, tokenCommand: ["op"] }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ ...base, credential, authScheme: "apiKey" }).success).toBe(false);
   });
 
-  it("accepts a provider whose token comes from a command, and keeps the argv as given", () => {
-    const provider = ProviderSchema.parse({
-      displayName: "Anthropic API",
-      baseUrl: "https://api.anthropic.com",
-      tokenCommand: ["op", "read", "op://vault/item/field"],
-    });
-    expect(provider.tokenCommand).toEqual(["op", "read", "op://vault/item/field"]);
+  it("rejects any credential variable in env, even an empty one, since claude-use sets and clears them itself", () => {
+    for (const key of ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) {
+      expect(ProviderSchema.safeParse({ ...base, credential, env: { [key]: "" } }).success).toBe(false);
+      expect(ProviderSchema.safeParse({ ...base, credential, env: { [key]: "value" } }).success).toBe(false);
+    }
   });
 
-  it("rejects an empty tokenCommand and one whose program name is empty", () => {
-    const base = { displayName: "x", baseUrl: "https://api.z.ai" };
-    expect(ProviderSchema.safeParse({ ...base, tokenCommand: [] }).success).toBe(false);
-    expect(ProviderSchema.safeParse({ ...base, tokenCommand: [""] }).success).toBe(false);
-    expect(ProviderSchema.safeParse({ ...base, tokenCommand: ["cmd", ""] }).success).toBe(true);
-  });
-
-  it("rejects a provider with more than one token source", () => {
-    const base = { displayName: "x", baseUrl: "https://api.z.ai" };
-    expect(ProviderSchema.safeParse({ ...base, tokenEnv: "T", tokenCommand: ["cmd"] }).success).toBe(false);
-    expect(ProviderSchema.safeParse({ ...base, tokenEnv: "T", env: { ANTHROPIC_AUTH_TOKEN: "fixed" } }).success).toBe(false);
-    expect(ProviderSchema.safeParse({ ...base, tokenCommand: ["cmd"], env: { ANTHROPIC_AUTH_TOKEN: "fixed" } }).success).toBe(false);
-    expect(ProviderSchema.safeParse({ ...base, tokenEnv: "T", env: { ANTHROPIC_AUTH_TOKEN: "" } }).success).toBe(true);
-  });
-
-  it("accepts authScheme bearer or apiKey and rejects anything else", () => {
-    const base = { displayName: "x", baseUrl: "https://api.anthropic.com", tokenEnv: "T" };
-    expect(ProviderSchema.parse({ ...base, authScheme: "apiKey" }).authScheme).toBe("apiKey");
-    expect(ProviderSchema.parse({ ...base, authScheme: "bearer" }).authScheme).toBe("bearer");
-    expect(ProviderSchema.parse(base).authScheme).toBeUndefined();
-    expect(ProviderSchema.safeParse({ ...base, authScheme: "basic" }).success).toBe(false);
-  });
-
-  it("rejects a non-empty env.ANTHROPIC_API_KEY under authScheme apiKey, which the token would overwrite", () => {
-    const base = { displayName: "x", baseUrl: "https://api.anthropic.com", tokenEnv: "T", authScheme: "apiKey" };
-    expect(ProviderSchema.safeParse({ ...base, env: { ANTHROPIC_API_KEY: "sk-fixed" } }).success).toBe(false);
-    expect(ProviderSchema.safeParse({ ...base, env: { ANTHROPIC_API_KEY: "" } }).success).toBe(true);
-    expect(ProviderSchema.safeParse({ ...base, authScheme: "bearer", env: { ANTHROPIC_API_KEY: "sk-fixed" } }).success).toBe(true);
+  it("accepts target bearer or apiKey and rejects oauthToken, which only an identity may use", () => {
+    expect(ProviderSchema.parse({ ...base, credential: { ...credential, target: "apiKey" } }).credential.target).toBe("apiKey");
+    expect(ProviderSchema.parse({ ...base, credential: { ...credential, target: "bearer" } }).credential.target).toBe("bearer");
+    expect(ProviderSchema.parse({ ...base, credential }).credential.target).toBeUndefined();
+    expect(ProviderSchema.safeParse({ ...base, credential: { ...credential, target: "oauthToken" } }).success).toBe(false);
   });
 
   it("makes env optional but every other field required", () => {
-    expect(ProviderSchema.safeParse({ displayName: "GLM", baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" }).success).toBe(true);
-    expect(ProviderSchema.safeParse({ displayName: "GLM", baseUrl: "https://api.z.ai" }).success).toBe(false);
-    expect(ProviderSchema.safeParse({ displayName: "GLM", tokenEnv: "Z_API_TOKEN" }).success).toBe(false);
-    expect(ProviderSchema.safeParse({ baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ ...base, credential }).success).toBe(true);
+    expect(ProviderSchema.safeParse({ displayName: "GLM", credential }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ baseUrl: "https://api.z.ai", credential }).success).toBe(false);
   });
 
-  it("rejects a baseUrl that is not a URL and a tokenEnv that is empty", () => {
-    expect(ProviderSchema.safeParse({ displayName: "x", baseUrl: "not-a-url", tokenEnv: "T" }).success).toBe(false);
-    expect(ProviderSchema.safeParse({ displayName: "x", baseUrl: "https://api.z.ai", tokenEnv: "" }).success).toBe(false);
+  it("rejects a baseUrl that is not a URL", () => {
+    expect(ProviderSchema.safeParse({ ...base, baseUrl: "not-a-url", credential }).success).toBe(false);
   });
 
   it("rejects an unknown top-level key, so a token pasted in as a value cannot hide in one", () => {
-    expect(ProviderSchema.safeParse({ displayName: "x", baseUrl: "https://api.z.ai", tokenEnv: "T", token: "sk-live" }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ ...base, credential, token: "sk-live" }).success).toBe(false);
+  });
+});
+
+describe("CredentialSchema", () => {
+  it("is the block identities use as is: any target, oauthToken included, and at least one source", () => {
+    expect(CredentialSchema.parse({ sources: [{ env: "T" }], target: "oauthToken" }).target).toBe("oauthToken");
+    expect(CredentialSchema.parse({ sources: [{ env: "T" }] }).target).toBeUndefined();
+    expect(CredentialSchema.safeParse({ sources: [] }).success).toBe(false);
+    expect(CredentialSchema.safeParse({ sources: [{ env: "T" }], target: "basic" }).success).toBe(false);
+  });
+});
+
+describe("CredentialSourceSchema", () => {
+  it("accepts every source kind", () => {
+    for (const source of [
+      { env: "Z_API_TOKEN" },
+      { file: "~/.config/z.token" },
+      { file: "/etc/claude-use/z.token" },
+      { command: ["pass", "show", "z"], interactive: true, timeoutMs: 5000 },
+      { op: "op://vault/item/field" },
+      { keychain: { service: "claude-work", account: "joe" }, interactive: false },
+      { keychain: { service: "claude-work" } },
+      { literal: "codex-local" },
+    ]) {
+      expect(CredentialSourceSchema.safeParse(source).success).toBe(true);
+    }
+  });
+
+  it("rejects an object naming two kinds, an empty argv or program, an unprefixed op reference and a relative file", () => {
+    for (const source of [
+      { env: "A", file: "/b" },
+      { command: [] },
+      { command: [""] },
+      { op: "vault/item/field" },
+      { file: "relative/z.token" },
+      { env: "" },
+      { literal: "" },
+      { env: "A", interactive: true },
+      { command: ["x"], timeoutMs: 0 },
+    ]) {
+      expect(CredentialSourceSchema.safeParse(source).success).toBe(false);
+    }
   });
 });
 
 describe("IdentitySchema", () => {
+  it("accepts a credential block with any target, oauthToken included", () => {
+    const identity = IdentitySchema.parse({ name: "work", credential: { sources: [{ op: "op://vault/claude-work/token" }], target: "oauthToken" } });
+    expect(identity.credential?.target).toBe("oauthToken");
+    expect(IdentitySchema.parse({ name: "work" }).credential).toBeUndefined();
+    expect(IdentitySchema.safeParse({ name: "work", credential: { sources: [] } }).success).toBe(false);
+  });
+
   it("defaults allowAmbientCredential to false, so a shared credential is always a deliberate choice", () => {
     expect(IdentitySchema.parse({ name: "work" }).allowAmbientCredential).toBe(false);
   });
