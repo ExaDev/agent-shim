@@ -18,7 +18,6 @@ const ALIVE_DAEMON_PID = 12;
 const REPLACEMENT_SUPERVISOR_PID = 21;
 const REPLACEMENT_DAEMON_PID = 22;
 const HEADROOM_PORT = 8123;
-const HEADROOM_MITM_PORT = 8124;
 
 function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorParams {
   return {
@@ -34,7 +33,7 @@ function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorParams {
     claudeShim: { state: undefined, targetExists: false },
     pathResolution: { ownExecutablePath: "/home/u/.local/bin/claude-use", claudeUse: { status: "ok" } },
     platform: "linux",
-    headroom: { state: { path: "/claude-use/headroom/state.json", raw: undefined }, isRunning: () => false, caCert: { path: "/claude-use/headroom/ca/ca.pem", exists: true } },
+    headroom: { state: { path: "/claude-use/headroom/state.json", raw: undefined }, isRunning: () => false },
     ...overrides,
   };
 }
@@ -72,7 +71,7 @@ describe("runDoctor: headroom", () => {
   });
 
   it("fails on a malformed state.json instead of guessing", () => {
-    const report = runDoctor(baseParams({ headroom: { state: { path: "/claude-use/headroom/state.json", raw: "{bad" }, isRunning: () => false, caCert: { path: "/claude-use/headroom/ca/ca.pem", exists: true } } }));
+    const report = runDoctor(baseParams({ headroom: { state: { path: "/claude-use/headroom/state.json", raw: "{bad" }, isRunning: () => false } }));
     expect(findingsFor(report, "headroom").some((finding) => finding.severity === "fail")).toBe(true);
   });
 
@@ -83,7 +82,6 @@ describe("runDoctor: headroom", () => {
         headroom: {
           state: { path: "/claude-use/headroom/state.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT, version: "headroom 0.39.1" }) },
           isRunning: (pid: number) => alive.has(pid),
-          caCert: { path: "/claude-use/headroom/ca/ca.pem", exists: true },
         },
       }),
     );
@@ -98,7 +96,6 @@ describe("runDoctor: headroom", () => {
         headroom: {
           state: { path: "/claude-use/headroom/state.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT }) },
           isRunning: () => false,
-          caCert: { path: "/claude-use/headroom/ca/ca.pem", exists: true },
         },
       }),
     );
@@ -117,7 +114,6 @@ describe("runDoctor: headroom", () => {
             raw: JSON.stringify({ supervisorPid: REPLACEMENT_SUPERVISOR_PID, headroomPid: REPLACEMENT_DAEMON_PID, port: HEADROOM_PORT, lastError: "previous crash" }),
           },
           isRunning: (pid: number) => alive.has(pid),
-          caCert: { path: "/claude-use/headroom/ca/ca.pem", exists: true },
         },
       }),
     );
@@ -141,44 +137,6 @@ describe("runDoctor: headroom", () => {
     expect(moving.some((finding) => finding.severity === "warn" && finding.message.includes("can move"))).toBe(true);
     const pinned = findingsFor(runDoctor(stateFor("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@eb02fa4126450c9905a49394fdec19ae2e7c9c30")), "headroom");
     expect(pinned.some((finding) => finding.message.includes("can move"))).toBe(false);
-  });
-
-  it("names the MITM port and CA path when the proxy is serving alongside the daemon", () => {
-    const alive = new Set([ALIVE_SUPERVISOR_PID, ALIVE_DAEMON_PID]);
-    const report = runDoctor(
-      baseParams({
-        headroom: {
-          state: {
-            path: "/claude-use/headroom/state.json",
-            raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT, mitmPort: HEADROOM_MITM_PORT }),
-          },
-          isRunning: (pid: number) => alive.has(pid),
-          caCert: { path: "/claude-use/headroom/ca/ca.pem", exists: true },
-        },
-      }),
-    );
-    const findings = findingsFor(report, "headroom");
-    expect(findings.every((finding) => finding.severity === "pass")).toBe(true);
-    expect(findings[0]?.message).toContain(`MITM proxy on 127.0.0.1:${String(HEADROOM_MITM_PORT)}`);
-    expect(findings[0]?.message).toContain("/claude-use/headroom/ca/ca.pem");
-  });
-
-  it("warns when the MITM proxy is serving but its CA certificate file is missing", () => {
-    const alive = new Set([ALIVE_SUPERVISOR_PID, ALIVE_DAEMON_PID]);
-    const report = runDoctor(
-      baseParams({
-        headroom: {
-          state: {
-            path: "/claude-use/headroom/state.json",
-            raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT, mitmPort: HEADROOM_MITM_PORT }),
-          },
-          isRunning: (pid: number) => alive.has(pid),
-          caCert: { path: "/claude-use/headroom/ca/ca.pem", exists: false },
-        },
-      }),
-    );
-    const findings = findingsFor(report, "headroom");
-    expect(findings.some((finding) => finding.severity === "warn" && finding.message.includes("CA certificate is missing"))).toBe(true);
   });
 });
 

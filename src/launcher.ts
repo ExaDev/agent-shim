@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { parseEnvBool } from "./cli/parsers";
@@ -16,7 +17,7 @@ import { resolveProvider } from "./providers";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
 import { providerBaseUrl } from "./frontdoor/route";
-import { CREDENTIAL_TARGET_VARS, isCodexProvider, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags } from "./config/schema";
+import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, describeSource, resolveCredential, type CredentialPort, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
@@ -72,7 +73,7 @@ export interface RunLauncherParams {
   readonly farm?: FarmRuntime;
   /** Wires headroom routing. Omitted by a caller that cannot route through the daemon; a launch that resolves `headroom` on with no port wired is refused loudly rather than silently bypassing it. */
   readonly headroom?: HeadroomPort;
-  /** Wires the front-door daemon. Omitted by a caller that cannot run it; a launch that selects a codex provider with no port wired is refused rather than started against an address nothing serves. */
+  /** Wires the front-door daemon. Omitted by a caller that cannot run it; a launch that routes anything (a provider, or headroom) with no port wired is refused rather than started against an address nothing serves. */
   readonly frontdoor?: FrontDoorPort;
   /** Resolves credential blocks (a provider's, or the launching identity's own). Omitted by a caller that cannot read secret files or run commands; a launch that needs a credential is then refused rather than started without it. */
   readonly credentials?: CredentialPort;
@@ -324,33 +325,32 @@ export function runLauncher(params: RunLauncherParams): void {
     },
   });
 
-  // The front door comes up before headroom: headroom's allowlist is fixed when its daemon starts and must already contain the front door's address, which is what a codex session routed through headroom is forwarded back to.
-  let routedProvider: RoutedProvider | undefined;
+  // The front door comes up first, before headroom: every routed session (a provider's, or headroom's) enters through it, and headroom's allowlist is fixed when its daemon starts and must already contain the door's origin, which is what a codex session routed through headroom is forwarded back to.
   const frontDoorPort = params.frontdoor;
-  if (resolvedProvider !== undefined && isCodexProvider(resolvedProvider.definition)) {
-    if (frontDoorPort === undefined) {
-      log.error(`claude-use: provider ${resolvedProvider.name} is a codex provider, but this launcher has no front-door daemon port wired; refusing to launch without it.`);
-      proc.exit(1);
-    } else {
-      const frontDoor = frontDoorPort.ensure();
-      routedProvider = { ...resolvedProvider, baseUrl: providerBaseUrl(frontDoor.port, resolvedProvider.name) };
-      log.info(`claude-use: provider ${resolvedProvider.name} served by the front door on 127.0.0.1:${String(frontDoor.port)}`);
-    }
-  } else if (resolvedProvider !== undefined && !isCodexProvider(resolvedProvider.definition)) {
-    routedProvider = { ...resolvedProvider, baseUrl: resolvedProvider.definition.baseUrl };
+  const frontDoorEngaged = resolvedProvider !== undefined || resolvedFlags.headroom;
+  if (frontDoorEngaged && frontDoorPort === undefined) {
+    log.error("claude-use: this launch routes through the front-door daemon, but this launcher has no front-door port wired; refusing to launch without it.");
+    proc.exit(1);
   }
-  const frontDoorRelease = routedProvider !== undefined && isCodexProvider(routedProvider.definition) ? frontDoorPort?.release : undefined;
+  const frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure() : undefined;
+  let routedProvider: RoutedProvider | undefined;
+  if (resolvedProvider !== undefined && frontDoor !== undefined) {
+    routedProvider = { ...resolvedProvider, baseUrl: providerBaseUrl(frontDoor.port, resolvedProvider.name) };
+  }
 
   let headroom: HeadroomUp | undefined;
   const headroomPort = params.headroom;
   if (resolvedFlags.headroom && headroomPort !== undefined) {
     headroom = headroomPort.ensure();
-    const mode = resolvedProvider === undefined ? `OAuth via MITM proxy on 127.0.0.1:${String(headroom.mitmPort)}` : "provider";
-    log.info(`claude-use: routing through headroom on 127.0.0.1:${String(headroom.port)} (${mode}, project ${headroom.projectId})`);
+    const via = resolvedProvider === undefined ? `OAuth via the door's CONNECT surface on 127.0.0.1:${String(frontDoor?.connectPort ?? 0)}` : `provider ${resolvedProvider.name}`;
+    log.info(`claude-use: routing through the front door on 127.0.0.1:${String(frontDoor?.port ?? 0)} with headroom on 127.0.0.1:${String(headroom.port)} (${via}, project ${headroom.projectId})`);
   } else if (resolvedFlags.headroom) {
     log.error("claude-use: headroom routing was requested but this launcher has no headroom port wired; refusing to launch without it.");
     proc.exit(1);
+  } else if (frontDoor !== undefined) {
+    log.info(`claude-use: routing through the front door on 127.0.0.1:${String(frontDoor.port)}${resolvedProvider === undefined ? "" : ` (provider ${resolvedProvider.name})`}`);
   }
+  const frontDoorRelease = frontDoor === undefined ? undefined : frontDoorPort?.release;
 
   const finalArgv = buildArgv({
     toolFlags: buildFlagArgs(resolvedFlags),
@@ -364,7 +364,9 @@ export function runLauncher(params: RunLauncherParams): void {
     identitiesDir: paths.identitiesDir,
     ...(routedProvider === undefined ? {} : { provider: routedProvider }),
     ...(identityCredential === undefined ? {} : { identityCredential }),
+    ...(frontDoor === undefined ? {} : { frontdoor: frontDoor }),
     ...(headroom === undefined ? {} : { headroom }),
+    sessionId: randomUUID(),
   });
 
   // Every daemon session registration this launch holds, released when the child exits.

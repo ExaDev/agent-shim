@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
-import { discovered, FAKE_HOME, fakeCredentials, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
+import { discovered, FAKE_HOME, fakeCredentials, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv , fakeFrontDoorPort } from "./test-helpers";
 
 const WORK_TOKEN = "oauth-work-token";
 
@@ -132,6 +132,7 @@ describe("runLauncher identity credential", () => {
       proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["@work", "--provider", "z"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
+      frontdoor: fakeFrontDoorPort(),
       credentials,
     });
 

@@ -340,8 +340,6 @@ export function realHeadroomPort(paths: LayoutPaths): HeadroomPort {
       });
       return {
         port: up.port,
-        mitmPort: up.mitmPort,
-        caCertPath: paths.headroomCaCertFile,
         projectId: resolveGitRoot(realRunPort, process.cwd()) ?? process.cwd(),
       };
     },

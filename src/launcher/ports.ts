@@ -101,14 +101,10 @@ export interface LogPort {
   readonly error: (message: string) => void;
 }
 
-/** The running headroom daemon one launch routed through, as `HeadroomPort.ensure` reports it. */
+/** The running headroom daemon one launch routed through, as `HeadroomPort.ensure` reports it. The front door owns the session's routing; this names the daemon the door's headroom hop forwards to, and the project identity headroom scopes memory to. */
 export interface HeadroomUp {
-  /** The loopback port the local headroom proxy listens on. */
+  /** The loopback port the headroom daemon listens on: what the door's headroom hop reads live and `HEADROOM_PROXY_URL` names for anything else that wants the daemon. */
   readonly port: number;
-  /** The loopback port the supervisor's MITM CONNECT proxy listens on: what an OAuth launch points HTTPS_PROXY at. */
-  readonly mitmPort: number;
-  /** Path to the MITM proxy's CA certificate, what an OAuth launch points NODE_EXTRA_CA_CERTS at so the child trusts the terminated TLS. */
-  readonly caCertPath: string;
   /** The project identity headroom scopes memory state to: the git repo root of the launch directory, or the directory itself outside a repository. */
   readonly projectId: string;
 }
@@ -124,9 +120,20 @@ export interface HeadroomPort {
 }
 
 /**
- * Everything the launcher needs from the front-door daemon, injected like `HeadroomPort`: `ensure` brings the door up (spawning its detached supervisor when nothing healthy is serving), registers this launch in its session registry and returns the listener's loopback port; `release` removes that registration when the spawned `claude` exits.
+ * Everything the launcher needs from the front-door daemon, injected like `HeadroomPort`: `ensure` brings the door up (spawning its detached supervisor when nothing healthy is serving), registers this launch in its session registry and returns both listeners' loopback ports; `release` removes that registration when the spawned `claude` exits.
  */
 export interface FrontDoorPort {
-  readonly ensure: () => { readonly port: number };
+  /** `ensure` reports the plain-HTTP listener's port (what a provider session's base URL points at) and the CONNECT surface's port (what an OAuth session points HTTPS_PROXY at), plus the CA certificate an OAuth session's child must trust. */
+  readonly ensure: () => FrontDoorUp;
   readonly release: () => void;
+}
+
+/** The running front door one launch routed through, as `FrontDoorPort.ensure` reports it. */
+export interface FrontDoorUp {
+  /** The loopback port the plain-HTTP front-door listener serves on: the base URL every provider session points at. */
+  readonly port: number;
+  /** The loopback port the CONNECT surface listens on: what an OAuth launch points HTTPS_PROXY at. */
+  readonly connectPort: number;
+  /** Path to the CONNECT surface's CA certificate, what an OAuth launch points NODE_EXTRA_CA_CERTS at so the child trusts the terminated TLS. */
+  readonly caCertPath: string;
 }

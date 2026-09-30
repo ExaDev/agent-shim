@@ -11,7 +11,6 @@ const SUPERVISOR_PID = 11;
 const HEADROOM_PID = 12;
 const SESSION_PID = 13;
 const PORT = 8123;
-const MITM_PORT = 8124;
 
 function aliveWorld() {
   const fs = createFakeFarmFs({});
@@ -24,7 +23,6 @@ function aliveWorld() {
     supervisorPid: SUPERVISOR_PID,
     headroomPid: HEADROOM_PID,
     port: PORT,
-    mitmPort: MITM_PORT,
     version: "headroom 0.39.1",
     allowlistHash: hashAllowlist(headroomAllowlist([{ baseUrl: "https://api.z.ai/api/anthropic" }])),
   });
@@ -40,8 +38,6 @@ describe("collectHeadroomStatus", () => {
     expect(status.supervisorAlive).toBe(true);
     expect(status.headroomAlive).toBe(true);
     expect(status.state.port).toBe(PORT);
-    expect(status.state.mitmPort).toBe(MITM_PORT);
-    expect(status.caCertPath).toBe(paths.headroomCaCertFile);
     expect(status.allowlist).toEqual(["https://api.anthropic.com", "https://api.z.ai/api/anthropic"]);
     expect(status.allowlistDrifted).toBe(false);
     expect(status.sessions).toEqual([{ pid: SESSION_PID, startedAt: 1000, alive: true }]);
@@ -76,9 +72,8 @@ describe("formatHeadroomStatus", () => {
     expect(lines[1]).toBe(
       `headroom: pid ${String(HEADROOM_PID)} (alive), listening on 127.0.0.1:${String(PORT)}, headroom 0.39.1`,
     );
-    expect(lines[2]).toBe(`mitm proxy: listening on 127.0.0.1:${String(MITM_PORT)}, CA ${paths.headroomCaCertFile}`);
-    expect(lines[3]).toBe("allowlist: https://api.anthropic.com, https://api.z.ai/api/anthropic");
-    expect(lines[4]).toBe(`sessions: 1 registered (${String(SESSION_PID)})`);
+    expect(lines[2]).toBe("allowlist: https://api.anthropic.com, https://api.z.ai/api/anthropic");
+    expect(lines[3]).toBe(`sessions: 1 registered (${String(SESSION_PID)})`);
     expect(lines.at(-1)).toBe(`daemon log: ${paths.headroomLogPath} (not created yet)`);
   });
 
@@ -86,9 +81,8 @@ describe("formatHeadroomStatus", () => {
     const lines = formatHeadroomStatus(collectHeadroomStatus(createFakeFarmFs({}), paths, () => true));
     expect(lines[0]).toBe("supervisor: not running (no state recorded)");
     expect(lines[1]).toBe("headroom: not running");
-    expect(lines[2]).toBe("mitm proxy: not running");
-    expect(lines[3]).toBe("allowlist: https://api.anthropic.com");
-    expect(lines[4]).toBe("sessions: none");
+    expect(lines[2]).toBe("allowlist: https://api.anthropic.com");
+    expect(lines[3]).toBe("sessions: none");
   });
 });
 

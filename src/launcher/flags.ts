@@ -4,7 +4,8 @@ import { parseEnvBool } from "../cli/parsers";
 import type { LaunchFlags, Provider } from "../config/schema";
 import { credentialVariables, type ResolvedCredential } from "../credential";
 import { mergeAnthropicCustomHeaders } from "../headroom/headers";
-import type { HeadroomUp } from "./ports";
+import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROJECT_ID_HEADER, SESSION_HEADER } from "../frontdoor/route";
+import type { FrontDoorUp, HeadroomUp } from "./ports";
 
 /** The fully resolved launch flags for one launch. */
 export interface ResolvedLaunchFlags {
@@ -92,7 +93,7 @@ export interface ResolvedProvider {
   readonly credential: ResolvedCredential;
 }
 
-/** A resolved provider with the base URL its sessions are sent to: an http provider's own `baseUrl`, or, for a codex provider, the codex daemon's address, which exists only once the daemon is up. */
+/** A resolved provider with the base URL its sessions are sent to: the front door's provider-scoped address, which exists only once the door is up and is the same shape for both kinds (the door is what decides where the request goes from there). */
 export interface RoutedProvider extends ResolvedProvider {
   readonly baseUrl: string;
 }
@@ -109,8 +110,12 @@ export interface BuildEnvParams {
   readonly provider?: RoutedProvider;
   /** The launching identity's own resolved credential, when it has a credential block and no provider was selected. A provider's credential authenticates against the provider's endpoint, so the identity's is never applied alongside one. */
   readonly identityCredential?: ResolvedCredential;
-  /** The headroom daemon this launch routes through, when headroom resolved on. How the child is routed depends on the mode: with a provider, the child talks to the daemon directly and the provider's own base URL moves into the per-request `x-headroom-base-url` header; without one (an OAuth launch), the child keeps talking to the real API through the supervisor's MITM proxy, because Claude Code enables Remote Control and connectors only against `api.anthropic.com`. */
+  /** The front door this launch routes through, when one is engaged (a provider is selected, or headroom resolved on). It is what the child talks to: its listener for a provider session, its CONNECT surface for an OAuth one. */
+  readonly frontdoor?: FrontDoorUp;
+  /** The headroom daemon this launch's requests must pass through (as the door's headroom hop), when headroom resolved on. The child never talks to it directly. */
   readonly headroom?: HeadroomUp;
+  /** The per-launch session id, stamped into the session header the door identifies this launch's requests by. */
+  readonly sessionId: string;
 }
 
 /**
@@ -118,9 +123,9 @@ export interface BuildEnvParams {
  *
  * When the `CLAUDE_CONFIG_DIR`-already-set escape hatch applied, or no identity was resolved at all (a bare launch with no active identity, matching the legacy script's own "no profile means plain `~/.claude`" behaviour), `CLAUDE_CONFIG_DIR` is left untouched. Otherwise `CLAUDE_CONFIG_DIR` is set to the resolved identity's own directory under `identitiesDir` — farm population into that directory is Phase 5's job, not this function's.
  *
- * A resolved provider is applied regardless of the identity outcome, because it selects which API endpoint the child talks to, not which login's data it sees: `ANTHROPIC_BASE_URL` points at the provider's routed base URL (the codex daemon's address for a codex provider), `CLAUDE_USE_PROVIDER` names the provider for the statusline, the provider's own `env` entries land verbatim, and its resolved credential is exported as its target's variable (`credentialVariables`), with the other credential variables removed so an ambient one inherited from the parent cannot outrank it. Without a provider, an identity's own resolved credential is exported the same way. The token only ever reaches this environment, never the child's argv or a log line.
+ * A resolved provider is applied regardless of the identity outcome, because it selects which API endpoint the child talks to, not which login's data it sees: `ANTHROPIC_BASE_URL` points at the provider's routed base URL (always the front door's provider-scoped address), `CLAUDE_USE_PROVIDER` names the provider for the statusline, the provider's own `env` entries land verbatim, and its resolved credential is exported as its target's variable (`credentialVariables`), with the other credential variables removed so an ambient one inherited from the parent cannot outrank it. Without a provider, an identity's own resolved credential is exported the same way. The token only ever reaches this environment, never the child's argv or a log line.
  *
- * A resolved headroom daemon is applied last, on top of the provider, and picks its routing mode from provider presence alone (no user-facing setting decides it): with a provider, the child's `ANTHROPIC_BASE_URL` becomes the local proxy (never the provider's own URL) and the provider's upstream moves into the `x-headroom-base-url` header, exactly as before. Without a provider (an OAuth launch), the base URL is left untouched and routing happens one layer down instead: `HTTPS_PROXY` points the child at the supervisor's MITM proxy and `NODE_EXTRA_CA_CERTS` trusts its CA, so the child still believes it is talking to the real `api.anthropic.com` (the belief Remote Control and connectors require) while the proxy's terminated TLS feeds headroom's paths to the daemon. `HEADROOM_PROXY_URL` names the daemon for anything else that wants it, and `ANTHROPIC_CUSTOM_HEADERS` gains `x-headroom-project-id` (memory scoping) in both modes, merged with any headers the provider's own `env` or the parent environment already set.
+ * A resolved front door is the whole of the child's routing, on top of the provider: `ANTHROPIC_CUSTOM_HEADERS` gains the launcher-injected session headers (identity, session id, and, when headroom resolved on, the headroom flag and the project identity headroom scopes memory to), merged with any headers the provider's own `env` or the parent environment already set. The door strips every one of them before anything leaves the machine. With a provider, that is all the routing there is: the child's base URL already names the door. Without one (an OAuth launch), the base URL is left exactly as the parent environment had it, because Claude Code enables Remote Control and connectors only against the real `api.anthropic.com`; routing happens one layer down instead, with `HTTPS_PROXY` pointing the child at the door's CONNECT surface and `NODE_EXTRA_CA_CERTS` trusting its CA, so the child still believes it is talking to the real `api.anthropic.com` while the surface's terminated TLS feeds the routed paths to the same pipeline. `HEADROOM_PROXY_URL` names the headroom daemon for anything else that wants it; the child never talks to that daemon directly, the door's hop does.
  *
  * `$CLAUDE_EXTRA_FLAGS` is never stripped from the child's environment: some wrappers set it two process-levels up and rely on inheritance through a `claude` invoked from inside a running session.
  */
@@ -154,25 +159,29 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
 
   if (params.headroom !== undefined) {
     env.HEADROOM_PROXY_URL = `http://127.0.0.1:${String(params.headroom.port)}`;
+  }
+
+  if (params.frontdoor !== undefined) {
     env.ANTHROPIC_CUSTOM_HEADERS = mergeAnthropicCustomHeaders(
       [
         ...(parentCustomHeaders === undefined ? [] : [parentCustomHeaders]),
         ...(providerCustomHeaders === undefined ? [] : [providerCustomHeaders]),
       ],
       [
-        { name: "x-headroom-project-id", value: params.headroom.projectId },
-        ...(params.provider === undefined
+        ...(params.resolvedIdentityName === undefined ? [] : [{ name: IDENTITY_HEADER, value: params.resolvedIdentityName }]),
+        { name: SESSION_HEADER, value: params.sessionId },
+        ...(params.headroom === undefined
           ? []
-          : [{ name: "x-headroom-base-url", value: params.provider.baseUrl }]),
+          : [
+              { name: HEADROOM_FLAG_HEADER, value: "1" },
+              { name: PROJECT_ID_HEADER, value: params.headroom.projectId },
+            ]),
       ],
     );
-    if (params.provider !== undefined) {
-      // Provider mode: the child talks only to the local proxy; the provider's real upstream moves into the per-request header above, which is what lets one daemon serve several providers at once.
-      env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${String(params.headroom.port)}`;
-    } else {
-      // OAuth mode: ANTHROPIC_BASE_URL is left exactly as the parent environment had it (unset for a normal OAuth launch), because Claude Code enables Remote Control and connectors only against the real api.anthropic.com. Compression still happens: the proxy terminates that host's TLS and hands headroom-served paths to the daemon.
-      env.HTTPS_PROXY = `http://127.0.0.1:${String(params.headroom.mitmPort)}`;
-      env.NODE_EXTRA_CA_CERTS = params.headroom.caCertPath;
+    if (params.provider === undefined) {
+      // OAuth routing: ANTHROPIC_BASE_URL is left exactly as the parent environment had it (unset for a normal OAuth launch), because Claude Code enables Remote Control and connectors only against the real api.anthropic.com. The door's CONNECT surface terminates that host's TLS instead and feeds the routed paths to the same pipeline the provider sessions use.
+      env.HTTPS_PROXY = `http://127.0.0.1:${String(params.frontdoor.connectPort)}`;
+      env.NODE_EXTRA_CA_CERTS = params.frontdoor.caCertPath;
     }
   }
 

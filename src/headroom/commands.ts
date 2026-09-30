@@ -8,16 +8,6 @@ import { readGlobalConfig } from "../configProfiles";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realIsPortFree, realIsProcessRunning, realSleepSync } from "../realPorts";
 import {
-  createLeafCache,
-  ensureCa,
-  generateCa,
-  HTTPS_PORT,
-  MITM_INTERCEPT_HOST,
-  realMitmCertStore,
-  realMitmEffects,
-  startMitmServer,
-} from "./mitm";
-import {
   hashAllowlist,
   listSessions,
   readHeadroomState,
@@ -42,8 +32,6 @@ export interface HeadroomStatus {
   readonly allowlist: readonly string[];
   /** True when that allowlist differs from the one the running daemon was started with, i.e. a drift restart is pending. */
   readonly allowlistDrifted: boolean;
-  /** Path to the MITM proxy's CA certificate, what OAuth launches point NODE_EXTRA_CA_CERTS at. */
-  readonly caCertPath: string;
   readonly logPath: string;
   readonly logExists: boolean;
 }
@@ -66,7 +54,6 @@ export function collectHeadroomStatus(
     })),
     allowlist,
     allowlistDrifted: state.allowlistHash !== undefined && state.allowlistHash !== hashAllowlist(allowlist),
-    caCertPath: paths.headroomCaCertFile,
     logPath: paths.headroomLogPath,
     logExists: fsPort.readFileUtf8(paths.headroomLogPath) !== undefined,
   };
@@ -90,11 +77,6 @@ export function formatHeadroomStatus(status: HeadroomStatus): string[] {
         `listening on 127.0.0.1:${String(status.state.port)}` +
         (status.state.version === undefined ? "" : `, ${status.state.version}`),
     );
-  }
-  if (status.state.mitmPort === undefined) {
-    lines.push("mitm proxy: not running");
-  } else {
-    lines.push(`mitm proxy: listening on 127.0.0.1:${String(status.state.mitmPort)}, CA ${status.caCertPath}`);
   }
   const drift = status.allowlistDrifted ? " (DRIFTED: current provider files differ from the running daemon's allowlist; a restart is pending)" : "";
   lines.push(`allowlist: ${status.allowlist.join(", ")}${drift}`);
@@ -242,21 +224,6 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
     headroomVersion: () => {
       const result = spawnSync("headroom", ["--version"], { encoding: "utf8" });
       return result.status === 0 ? result.stdout.trim() : undefined;
-    },
-    startMitm: async (preferredPort, headroomPort) => {
-      // The CA is generated once on this machine's first headroom start and reused after: regenerating it would strand every child still pointing NODE_EXTRA_CA_CERTS at the old certificate.
-      const ca = ensureCa(realMitmCertStore(paths), () => generateCa(new Date()));
-      const leafFor = createLeafCache(ca, () => new Date());
-      return await startMitmServer(
-        {
-          interceptHost: MITM_INTERCEPT_HOST,
-          headroomPort,
-          leafFor,
-          upstream: { host: MITM_INTERCEPT_HOST, port: HTTPS_PORT, tls: true },
-        },
-        realMitmEffects(),
-        preferredPort,
-      );
     },
     log: (line) => {
       fs.mkdirSync(paths.logsDir, { recursive: true });
