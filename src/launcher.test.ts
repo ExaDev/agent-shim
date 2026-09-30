@@ -6,7 +6,7 @@ import { identityLockPath } from "./launcher/lock";
 import type { FsPort, HeadroomPort } from "./launcher/ports";
 import { runLauncher } from "./launcher";
 import {
-  createFakeFarmFs, discovered, fakeFarm, fakeFs, fakeLog, fakeProc, fakeRun, fakeSpawn, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS,
+  createFakeFarmFs, discovered, fakeFarm, fakeFs, fakeLog, fakeProc, fakeCredentials, fakeSpawn, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS,
   paths, runAndCaptureExit, spawnedEnv,
 } from "./test-helpers";
 
@@ -387,7 +387,7 @@ describe("runLauncher headroom routing", () => {
         [`${FAKE_HOME}/.claude-use/providers/z.json`]: {
           displayName: "GLM",
           baseUrl: "https://api.z.ai/api/anthropic",
-          tokenEnv: "Z_API_TOKEN",
+          credential: { sources: [{ env: "Z_API_TOKEN" }] },
         },
       }),
       spawn,
@@ -395,6 +395,7 @@ describe("runLauncher headroom routing", () => {
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       headroom,
+      credentials: fakeCredentials(),
     });
 
     const env = spawnedEnv(spawn);
@@ -415,8 +416,7 @@ describe("runLauncher headroom routing", () => {
         [`${FAKE_HOME}/.claude-use/providers/anthropic-api.json`]: {
           displayName: "Anthropic API",
           baseUrl: "https://api.anthropic.com",
-          tokenCommand: ["op", "read", "ref"],
-          authScheme: "apiKey",
+          credential: { sources: [{ command: ["pass", "show", "anthropic"] }], target: "apiKey" },
         },
       }),
       spawn,
@@ -424,13 +424,13 @@ describe("runLauncher headroom routing", () => {
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       headroom,
-      run: fakeRun("sk-ant-REDACTED\n"),
+      credentials: fakeCredentials({ command: { stdout: "sk-ant-REDACTED\n" } }),
     });
 
     const env = spawnedEnv(spawn);
     expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
     expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(
       "x-headroom-project-id: /home/testuser/work/repo\nx-headroom-base-url: https://api.anthropic.com",

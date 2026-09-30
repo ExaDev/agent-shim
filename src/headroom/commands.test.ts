@@ -18,7 +18,7 @@ function aliveWorld() {
   fs.mkdirp(paths.providersDir);
   fs.writeFileUtf8(
     `${paths.providersDir}/z.json`,
-    JSON.stringify({ displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" }),
+    JSON.stringify({ displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z_API_TOKEN" }] } }),
   );
   writeHeadroomState(fs, paths.headroomStateFile, {
     supervisorPid: SUPERVISOR_PID,
@@ -51,7 +51,7 @@ describe("collectHeadroomStatus", () => {
     const { fs } = aliveWorld();
     fs.writeFileUtf8(
       `${paths.providersDir}/m.json`,
-      JSON.stringify({ displayName: "MiniMax", baseUrl: "https://api.minimax.io", tokenEnv: "T" }),
+      JSON.stringify({ displayName: "MiniMax", baseUrl: "https://api.minimax.io", credential: { sources: [{ env: "T" }] } }),
     );
     const status = collectHeadroomStatus(fs, paths, () => false);
     expect(status.supervisorAlive).toBe(false);

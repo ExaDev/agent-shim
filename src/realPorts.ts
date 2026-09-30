@@ -2,10 +2,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { isSea } from "node:sea";
 
 import { cosmiconfigReader } from "./config/load";
+import type { CredentialPort } from "./credential";
 import { discoverClaudeBinary, type DiscoveredClaudeBinary, type VersionsDirEntry } from "./versionDiscovery";
 import { ensureHeadroom } from "./headroom/ensure";
 import { removeSession } from "./headroom/state";
@@ -175,6 +177,65 @@ export const realRunPort: RunPort = {
     const result = spawnSync(command, [...args], { encoding: "utf8" });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   },
+};
+
+/** Expands a leading `~` in a credential file path to the home directory; any other path is returned as written (the schema only admits absolute and `~`-rooted ones). */
+function expandHome(filePath: string): string {
+  return filePath.startsWith("~/") ? path.join(os.homedir(), filePath.slice(1)) : filePath;
+}
+
+/** `launchctl managername` prints this for a process inside a logged-in macOS GUI session, where a secret store can show an approval dialog; a process reached over SSH or from a daemon reports a different manager. */
+const MACOS_GUI_SESSION_MANAGER = "Aqua";
+
+/**
+ * Whether this process runs inside a desktop session a secret store's approval dialog can appear in. macOS asks `launchctl` which session manager owns the process; other POSIX systems count an X11 or Wayland display. Windows is not detected, so there only a terminal counts as a person being present.
+ */
+function hasDesktopSession(): boolean {
+  if (process.platform === "darwin") {
+    const result = spawnSync("launchctl", ["managername"], { encoding: "utf8" });
+    return result.status === 0 && result.stdout.trim() === MACOS_GUI_SESSION_MANAGER;
+  }
+  if (process.platform === "win32") {
+    return false;
+  }
+  return (process.env.DISPLAY ?? "") !== "" || (process.env.WAYLAND_DISPLAY ?? "") !== "";
+}
+
+/**
+ * The real `CredentialPort`. A secret file's mode is reported only where POSIX permission bits exist (not on Windows, whose ACLs Node's `stat` does not expose). A command runs with no shell under its timeout; a non-interactive one gets no stdin and has its stderr captured for the error message, while an interactive one inherits the terminal's stdin and stderr so its prompt reaches a person. stdout is always captured, since it is the token.
+ */
+export const realCredentialPort: CredentialPort = {
+  readSecretFile(filePath) {
+    const resolved = expandHome(filePath);
+    let content: string;
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(resolved);
+      content = fs.readFileSync(resolved, "utf8");
+    } catch (error) {
+      if (isEnoent(error)) {
+        return { found: false };
+      }
+      throw error;
+    }
+    return { found: true, content, mode: process.platform === "win32" ? undefined : stat.mode };
+  },
+  runCommand(argv, options) {
+    const [command, ...args] = argv;
+    const result = spawnSync(command, args, {
+      encoding: "utf8",
+      timeout: options.timeoutMs,
+      stdio: options.interactive ? ["inherit", "pipe", "inherit"] : ["ignore", "pipe", "pipe"],
+    });
+    // A timeout and a spawn failure (the program is not installed) both surface as `error`, with no output worth reading: the node typings do not model that stdout and stderr are null for a spawn failure. A spawn failure has no stderr of its own, so its error message is the explanation.
+    if (result.error !== undefined) {
+      const timedOut = isErrorWithCode(result.error, "ETIMEDOUT");
+      return { status: result.status, stdout: "", stderr: timedOut ? "" : result.error.message, timedOut };
+    }
+    // An interactive run's stderr went to the terminal, so there is nothing captured (the typings again say string; it is null).
+    return { status: result.status, stdout: result.stdout, stderr: options.interactive ? "" : result.stderr, timedOut: false };
+  },
+  personPresent: () => process.stdin.isTTY || hasDesktopSession(),
 };
 
 /** Reads the git branch checked out at `cwd`, and whether the repository is in detached-HEAD state. Both undefined when `cwd` is not in a repository at all. */

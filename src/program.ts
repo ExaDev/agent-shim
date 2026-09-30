@@ -45,7 +45,8 @@ Environment:
   CLAUDE_USE_DEBUG (print stack traces), NO_COLOR. Booleans are true, false, 1 or 0.
 
 Exit status:
-  0 success, 1 failure, 2 usage error, 64 a selected provider has no usable credential.
+  0 success, 1 failure, 2 usage error, 64 a selected provider's or identity's credential
+  yields no token.
 
 Examples:
   $ claude-use identity add work

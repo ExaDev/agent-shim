@@ -126,6 +126,9 @@ describe("buildProgram", () => {
     [["profile", "set", "x", "--headroom"]],
     [["profile", "set", "x", "--skip-permissions"]],
     [["check", "--identity"]],
+    [["provider", "set", "z", "--token-env", "Z_API_TOKEN"]],
+    [["provider", "set", "z", "--token-command", "op", "read", "ref"]],
+    [["provider", "set", "z", "--auth-scheme", "apiKey"]],
   ])("rejects the removed spelling %j as a usage error", async (argv) => {
     const result = await cli(argv);
     expect(result.code).toBe(EXIT_USAGE);
@@ -214,6 +217,31 @@ describe("identity commands", () => {
   it("treats set with nothing to change as a usage error", async () => {
     addIdentity(paths, "work");
     expect((await cli(["identity", "set", "work"])).code).toBe(EXIT_USAGE);
+  });
+
+  it("sets, retargets and removes an identity's credential, reporting it by source kind and target only", async () => {
+    addIdentity(paths, "work");
+    expect((await cli(["identity", "set", "work", "--credential-target", "oauthToken"])).code).toBe(EXIT_USAGE);
+
+    const set = await cli(["identity", "set", "work", "--credential-target", "oauthToken", "--credential", "op:op://vault/claude-work/token", "--credential", "file:~/.config/claude-use/work.token"]);
+    expect(set.code).toBe(0);
+    expect(readIdentity(paths, "work")?.credential).toEqual({
+      target: "oauthToken",
+      sources: [{ op: "op://vault/claude-work/token" }, { file: "~/.config/claude-use/work.token" }],
+    });
+    expect((await cli(["identity", "show", "work"])).stdout).toContain(
+      "Credential: oauthToken from op op://vault/claude-work/token, then file ~/.config/claude-use/work.token",
+    );
+    expect(parseJson((await cli(["identity", "show", "work", "--json"])).stdout)).toMatchObject({
+      credential: { target: "oauthToken", sources: [{ kind: "op", reference: "op://vault/claude-work/token" }, { kind: "file", path: "~/.config/claude-use/work.token" }] },
+    });
+
+    expect((await cli(["identity", "set", "work", "--credential", "env:WORK_TOKEN"])).code).toBe(0);
+    expect(readIdentity(paths, "work")?.credential).toEqual({ target: "oauthToken", sources: [{ env: "WORK_TOKEN" }] });
+
+    expect((await cli(["identity", "set", "work", "--no-credential"])).code).toBe(0);
+    expect(readIdentity(paths, "work")?.credential).toBeUndefined();
+    expect((await cli(["identity", "show", "work"])).stdout).toContain("Credential: (none; uses its stored login)");
   });
 
   it("requires --yes to remove without a terminal, then deletes the directory and clears the active selection", async () => {
@@ -311,7 +339,7 @@ describe("profile commands", () => {
 });
 
 describe("provider commands", () => {
-  const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--token-env", "Z_API_TOKEN"];
+  const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--credential", "env:Z_API_TOKEN"];
 
   it("adds, updates and shows a provider, with human text by default and JSON on request", async () => {
     expect((await cli(addZ)).code).toBe(0);
@@ -322,40 +350,71 @@ describe("provider commands", () => {
     expect(readProvider(paths, "z")).toEqual({
       displayName: "Z",
       baseUrl: "https://api.z.ai/api/anthropic",
-      tokenEnv: "Z_API_TOKEN",
+      credential: { sources: [{ env: "Z_API_TOKEN" }] },
       env: { API_TIMEOUT_MS: "600000" },
     });
 
     const text = await cli(["provider", "show", "z"]);
-    expect(text.stdout).toContain("Credential: token from Z_API_TOKEN");
+    expect(text.stdout).toContain("Credential: bearer from env Z_API_TOKEN");
     expect(() => parseJson(text.stdout)).toThrow();
-    expect(parseJson((await cli(["provider", "show", "z", "--json"])).stdout)).toMatchObject({ name: "z", tokenEnv: "Z_API_TOKEN" });
+    expect(parseJson((await cli(["provider", "show", "z", "--json"])).stdout)).toMatchObject({
+      name: "z",
+      credential: { target: "bearer", sources: [{ kind: "env", variable: "Z_API_TOKEN" }] },
+    });
     expect(parseJson((await cli(["provider", "list", "--json"])).stdout)).toEqual([expect.objectContaining({ name: "z" })]);
   });
 
-  it("carries --token-command and --auth-scheme onto add, and switches token source through set", async () => {
-    const add = ["provider", "add", "a", "--display-name", "Anthropic", "--base-url", "https://api.anthropic.com", "--auth-scheme", "apiKey", "--token-command", "op", "read", "op://vault/a/key"];
-    expect((await cli(add)).code).toBe(0);
-    expect(readProvider(paths, "a")).toMatchObject({ tokenCommand: ["op", "read", "op://vault/a/key"], authScheme: "apiKey" });
-    const shown = (await cli(["provider", "show", "a"])).stdout;
-    expect(shown).toContain("Credential: token from command op read op://vault/a/key");
-    expect(shown).toContain("Auth scheme: apiKey");
-
-    expect((await cli(["provider", "set", "a", "--token-env", "ANTHROPIC_KEY"])).code).toBe(0);
-    expect(readProvider(paths, "a")?.tokenEnv).toBe("ANTHROPIC_KEY");
-    expect(readProvider(paths, "a")?.tokenCommand).toBeUndefined();
-
-    expect((await cli(["provider", "set", "a", "--auth-scheme", "bearer", "--token-command", "pass", "show", "a"])).code).toBe(0);
-    expect(readProvider(paths, "a")).toMatchObject({ tokenCommand: ["pass", "show", "a"], authScheme: "bearer" });
-    expect(readProvider(paths, "a")?.tokenEnv).toBeUndefined();
-
-    expect((await cli(["provider", "set", "a", "--auth-scheme", "nonsense"])).code).toBe(EXIT_USAGE);
+  it("requires --credential on add", async () => {
+    expect((await cli(["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic"])).code).toBe(EXIT_USAGE);
   });
 
-  it("refuses an update that would leave the provider without a credential, leaving the file untouched", async () => {
+  it("keeps repeated --credential sources in the order given, parses every short form and the JSON form, and sets the target", async () => {
+    const add = [
+      "provider", "add", "a", "--display-name", "Anthropic", "--base-url", "https://api.anthropic.com", "--credential-target", "apiKey",
+      "--credential", "env:ANTHROPIC_KEY",
+      "--credential", "file:~/.config/anthropic.key",
+      "--credential", "op:op://vault/a/key",
+      "--credential", "keychain:anthropic:joe",
+      "--credential", "command:pass show anthropic",
+      "--credential", '{"command":["my tool","--flag"],"interactive":true,"timeoutMs":5000}',
+    ];
+    expect((await cli(add)).code).toBe(0);
+    expect(readProvider(paths, "a")?.credential).toEqual({
+      target: "apiKey",
+      sources: [
+        { env: "ANTHROPIC_KEY" },
+        { file: "~/.config/anthropic.key" },
+        { op: "op://vault/a/key" },
+        { keychain: { service: "anthropic", account: "joe" } },
+        { command: ["pass", "show", "anthropic"] },
+        { command: ["my tool", "--flag"], interactive: true, timeoutMs: 5000 },
+      ],
+    });
+    expect((await cli(["provider", "show", "a"])).stdout).toContain(
+      "Credential: apiKey from env ANTHROPIC_KEY, then file ~/.config/anthropic.key, then op op://vault/a/key, then keychain anthropic (account joe), then command pass, then command my tool",
+    );
+
+    expect((await cli(["provider", "set", "a", "--credential", "env:OTHER"])).code).toBe(0);
+    expect(readProvider(paths, "a")?.credential).toEqual({ target: "apiKey", sources: [{ env: "OTHER" }] });
+    expect((await cli(["provider", "set", "a", "--credential-target", "bearer"])).code).toBe(0);
+    expect(readProvider(paths, "a")?.credential).toEqual({ target: "bearer", sources: [{ env: "OTHER" }] });
+  });
+
+  it("rejects a malformed --credential or an unsupported target as a usage error, leaving the file untouched", async () => {
     await cli(addZ);
-    expect((await cli(["provider", "set", "z", "--no-token-env"])).code).toBe(EXIT_FAILURE);
-    expect(readProvider(paths, "z")?.tokenEnv).toBe("Z_API_TOKEN");
+    for (const bad of ["Z_API_TOKEN", "vault:x", "op:vault/item", "file:relative/path", "command:", "{not json", '{"env":"A","file":"/b"}']) {
+      expect((await cli(["provider", "set", "z", "--credential", bad])).code).toBe(EXIT_USAGE);
+    }
+    expect((await cli(["provider", "set", "z", "--credential-target", "oauthToken"])).code).toBe(EXIT_USAGE);
+    expect(readProvider(paths, "z")?.credential).toEqual({ sources: [{ env: "Z_API_TOKEN" }] });
+  });
+
+  it("never prints a literal source's value in show or --json", async () => {
+    expect((await cli(["provider", "add", "local", "--display-name", "Local", "--base-url", "http://127.0.0.1:4000", "--credential", "literal:placeholder-value"])).code).toBe(0);
+    const text = (await cli(["provider", "show", "local"])).stdout;
+    const json = (await cli(["provider", "show", "local", "--json"])).stdout;
+    expect(text).toContain("literal (non-secret placeholder)");
+    expect(text + json).not.toContain("placeholder-value");
   });
 
   it("rejects set on a missing provider, set with nothing to change, and a malformed --env", async () => {

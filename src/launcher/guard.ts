@@ -1,3 +1,5 @@
+import type { CredentialTargetVar } from "../config/schema";
+
 /**
  * The environment variables that authenticate Claude Code directly from the process environment, ahead of any stored identity credential. If any of these is set, every identity would silently authenticate as the same key/token/backend while it's set — defeating the entire premise of separate identities. Order here is also lookup order: `detectAmbientCredential` reports the first one found.
  */
@@ -17,19 +19,32 @@ export interface AmbientCredentialDetection {
   readonly variable: AmbientCredentialVar;
 }
 
+/** A credential this launch itself exports to the child: the variable it lands in and its value. */
+export interface InjectedCredential {
+  readonly variable: CredentialTargetVar;
+  readonly token: string;
+}
+
 /**
  * Detects whether any of `AMBIENT_CREDENTIAL_VARS` is set to a non-empty value in `env`, returning the first one found in declared order, or undefined when none are set.
  *
  * An empty string counts as unset, not set — confirmed load-bearing: one of Joe's real wrapper scripts (`o`, running Claude Code against OpenRouter) does `export ANTHROPIC_API_KEY=""` specifically to *clear* it so `ANTHROPIC_AUTH_TOKEN` takes effect instead, and this must never trip the guard.
+ *
+ * `injected`, when given, is the credential this launch exports for its own identity. Its variable holding exactly that value is not ambient: it is what a claude-use launch of the same identity left in the environment of the session this one starts from (a `claude @work` run inside a `claude @work` session). The same variable holding any other value still counts.
  */
 export function detectAmbientCredential(
   env: Readonly<Record<string, string | undefined>>,
+  injected?: InjectedCredential,
 ): AmbientCredentialDetection | undefined {
   for (const variable of AMBIENT_CREDENTIAL_VARS) {
     const value = env[variable];
-    if (value !== undefined && value !== "") {
-      return { variable };
+    if (value === undefined || value === "") {
+      continue;
     }
+    if (injected?.variable === variable && value === injected.token) {
+      continue;
+    }
+    return { variable };
   }
   return undefined;
 }
@@ -64,6 +79,8 @@ export interface EvaluateAmbientCredentialGuardParams {
    * True when this launch routes through an API provider. The guard inspects the PARENT environment, before `buildEnv` runs; a provider launch has its `ANTHROPIC_AUTH_TOKEN` injected and its `ANTHROPIC_API_KEY` cleared by `buildEnv` itself, so an ambient credential in the parent environment never reaches the child and there is nothing left for this guard to protect against. Everything else about the guard (including `IdentitySchema.allowAmbientCredential`) is unchanged by this flag.
    */
   readonly providerSelected?: boolean;
+  /** The launching identity's own credential, when its credential block resolved: see `detectAmbientCredential`. */
+  readonly injectedCredential?: InjectedCredential;
 }
 
 /** The result of one guard evaluation: either launch may proceed, or it must be refused with an explanatory message. */
@@ -79,7 +96,7 @@ export type AmbientCredentialGuardResult =
 export function evaluateAmbientCredentialGuard(
   params: EvaluateAmbientCredentialGuardParams,
 ): AmbientCredentialGuardResult {
-  const detected = detectAmbientCredential(params.env);
+  const detected = detectAmbientCredential(params.env, params.injectedCredential);
   if (detected === undefined) {
     return { ok: true };
   }

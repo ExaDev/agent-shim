@@ -55,7 +55,7 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
   for (const provider of seededProviders) {
     fs.writeFileUtf8(
       `${paths.providersDir}/${provider.name}.json`,
-      JSON.stringify({ displayName: provider.name, baseUrl: provider.baseUrl, tokenEnv: "T" }),
+      JSON.stringify({ displayName: provider.name, baseUrl: provider.baseUrl, credential: { sources: [{ env: "T" }] } }),
     );
   }
 
@@ -530,7 +530,7 @@ describe("runSupervisor", () => {
         // A new provider appears: the allowlist drifts while a session is live.
         world.fs.writeFileUtf8(
           `${paths.providersDir}/m.json`,
-          JSON.stringify({ displayName: "MiniMax", baseUrl: "https://api.minimax.io", tokenEnv: "T" }),
+          JSON.stringify({ displayName: "MiniMax", baseUrl: "https://api.minimax.io", credential: { sources: [{ env: "T" }] } }),
         );
         phase = 2;
         return;

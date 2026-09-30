@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Command } from "commander";
+import { Option, type Command } from "commander";
 
 import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
+import { collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX } from "./cli/credentialOption";
 import { loadClassification } from "./config/classify";
 import { ConfigValidationError } from "./config/load";
 import { applyPatch, readJson, writeJsonAtomic, writeTextAtomic } from "./config/store";
-import { IdentitySchema, type Identity } from "./config/schema";
+import { CREDENTIAL_TARGETS, IdentitySchema, type CredentialSource, type CredentialTarget, type Identity } from "./config/schema";
+import { describeCredential, summariseCredential, type CredentialSummary } from "./credential";
 import { runProfileWizard, type PromptsPort } from "./configure";
 import { CliError, PromptCancelledError, UsageError } from "./cliError";
 import { resolveFarmConflicts, type FarmConflictChoice } from "./launcher/farmResolve";
@@ -281,6 +283,30 @@ export function setAllowAmbientCredential(paths: LayoutPaths, identityName: stri
   });
 }
 
+/** The change `setIdentityCredential` makes: new sources and/or a new target for the credential block, or `false` to remove the block and return the identity to its stored login. */
+type IdentityCredentialChange = { readonly sources?: readonly CredentialSource[]; readonly target?: CredentialTarget } | false;
+
+/**
+ * Sets, changes or removes `identityName`'s credential block. New `sources` replace the whole ordered list (the order is the meaning); a `target` alone keeps the existing sources, and so needs a credential block to exist already. Throws `IdentityNotFoundError` when the identity does not exist, and `UsageError` when only a target is given for an identity with no credential yet.
+ */
+function setIdentityCredential(paths: LayoutPaths, identityName: string, change: IdentityCredentialChange): Identity {
+  const existing = readIdentity(paths, identityName);
+  if (existing === undefined) {
+    throw new IdentityNotFoundError(identityName);
+  }
+  if (change === false) {
+    return applyPatch(identityJsonPath(paths, identityName), IdentitySchema, { credential: undefined });
+  }
+  const sources = change.sources ?? existing.credential?.sources;
+  if (sources === undefined) {
+    throw new UsageError(`Identity "${identityName}" has no credential yet: pass --credential to give it one before choosing its target.`);
+  }
+  const target = change.target ?? existing.credential?.target;
+  return applyPatch(identityJsonPath(paths, identityName), IdentitySchema, {
+    credential: { sources: [...sources], ...(target === undefined ? {} : { target }) },
+  });
+}
+
 /** Whether `entry` (a name directly under `identitiesDir`) is part of identity `name`'s on-disk state: its farm, the resync lock, or a scratch or superseded farm a resync left behind. */
 function belongsToIdentity(entry: string, name: string): boolean {
   return (
@@ -315,6 +341,8 @@ interface IdentityView {
   readonly directory: string;
   readonly defaultConfigProfile?: string;
   readonly allowAmbientCredential?: boolean;
+  /** How the identity authenticates when it has a credential block: its target and each source's kind, never a value. Absent when it uses its stored login. */
+  readonly credential?: CredentialSummary;
   readonly problem?: string;
 }
 
@@ -327,6 +355,7 @@ function toIdentityView(paths: LayoutPaths, entry: IdentityListing): IdentityVie
       ? {
           ...(entry.identity.defaultConfigProfile === undefined ? {} : { defaultConfigProfile: entry.identity.defaultConfigProfile }),
           allowAmbientCredential: entry.identity.allowAmbientCredential,
+          ...(entry.identity.credential === undefined ? {} : { credential: summariseCredential(entry.identity.credential) }),
         }
       : { problem: entry.problem }),
   };
@@ -341,13 +370,16 @@ function formatIdentityLine(entry: IdentityListing): string {
   const defaultProfile =
     entry.identity.defaultConfigProfile === undefined ? "" : ` (default profile: ${entry.identity.defaultConfigProfile})`;
   const ambient = entry.identity.allowAmbientCredential ? " [allows ambient credential]" : "";
-  return `${marker}${entry.name}${defaultProfile}${ambient}`;
+  const credential = entry.identity.credential === undefined ? "" : ` [credential ${describeCredential(entry.identity.credential)}]`;
+  return `${marker}${entry.name}${defaultProfile}${ambient}${credential}`;
 }
 
-/** Options `identity set` accepts. `defaultProfile` is `false` for `--no-default-profile`. */
+/** Options `identity set` accepts. `defaultProfile` is `false` for `--no-default-profile`, and `credential` is `false` for `--no-credential`. */
 interface IdentitySetOptions {
   readonly defaultProfile?: string | false;
   readonly allowAmbientCredential?: boolean;
+  readonly credential?: CredentialSource[] | false;
+  readonly credentialTarget?: CredentialTarget;
 }
 
 /** Registers the `claude-use identity` subcommand tree onto `program`. */
@@ -417,6 +449,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         }
         console.log(`Default configuration profile: ${view.defaultConfigProfile ?? "(none)"}`);
         console.log(`Allows ambient credential: ${view.allowAmbientCredential === true ? "yes" : "no"}`);
+        console.log(`Credential: ${entry.identity?.credential === undefined ? "(none; uses its stored login)" : describeCredential(entry.identity.credential)}`);
       }),
     ["claude-use identity show work", "claude-use identity show work --json"],
   );
@@ -429,10 +462,22 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
       .option("--no-default-profile", "Clear this identity's default configuration profile.")
       .option("--allow-ambient-credential", "Allow this identity to launch even with an ambient credential env var set.")
       .option("--no-allow-ambient-credential", "Disallow ambient credential env vars for this identity (the default).")
+      .option(
+        "--credential <source>",
+        `Authenticate this identity from a token instead of its stored login, replacing any existing sources (repeatable, in the order tried): ${CREDENTIAL_SOURCE_SYNTAX}.`,
+        collectCredentialSource,
+      )
+      .option("--no-credential", "Remove this identity's credential, returning it to its stored login.")
+      .addOption(
+        new Option(
+          "--credential-target <target>",
+          "Where the token goes: oauthToken sets CLAUDE_CODE_OAUTH_TOKEN (a `claude setup-token` token), bearer sets ANTHROPIC_AUTH_TOKEN (the default), apiKey sets ANTHROPIC_API_KEY.",
+        ).choices(CREDENTIAL_TARGETS),
+      )
       .action(async (name: string, options: IdentitySetOptions) => {
-        if (options.defaultProfile === undefined && options.allowAmbientCredential === undefined) {
+        if (Object.values(options).every((value) => value === undefined)) {
           throw new UsageError(
-            "Nothing to change: pass --default-profile, --no-default-profile, --allow-ambient-credential or --no-allow-ambient-credential.",
+            "Nothing to change: pass --default-profile, --no-default-profile, --allow-ambient-credential, --no-allow-ambient-credential, --credential, --no-credential or --credential-target.",
           );
         }
         if (!identityExists(paths, name)) {
@@ -456,8 +501,25 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
             `Identity "${name}" ${options.allowAmbientCredential ? "now allows" : "no longer allows"} an ambient credential.`,
           );
         }
+        if (options.credential === false) {
+          setIdentityCredential(paths, name, false);
+          console.log(`Identity "${name}" no longer has a credential and uses its stored login.`);
+        } else if (options.credential !== undefined || options.credentialTarget !== undefined) {
+          const updated = setIdentityCredential(paths, name, {
+            ...(options.credential === undefined ? {} : { sources: options.credential }),
+            ...(options.credentialTarget === undefined ? {} : { target: options.credentialTarget }),
+          });
+          if (updated.credential !== undefined) {
+            console.log(`Identity "${name}" now authenticates with credential ${describeCredential(updated.credential)}.`);
+          }
+        }
       }),
-    ["claude-use identity set work --default-profile client-acme", "claude-use identity set work --allow-ambient-credential"],
+    [
+      "claude-use identity set work --default-profile client-acme",
+      "claude-use identity set work --allow-ambient-credential",
+      "claude-use identity set work --credential-target oauthToken --credential op:op://vault/claude-work/token",
+      "claude-use identity set work --no-credential",
+    ],
   );
 
   withExamples(

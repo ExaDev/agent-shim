@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { z } from "zod";
 
 /**
@@ -91,50 +93,96 @@ const LaunchSchema = z.strictObject({
 });
 export type LaunchFlags = z.infer<typeof LaunchSchema>;
 
-/** How a provider's token reaches Claude Code: as a bearer `ANTHROPIC_AUTH_TOKEN`, or as an `x-api-key` `ANTHROPIC_API_KEY`. */
-export const AUTH_SCHEMES = ["bearer", "apiKey"] as const;
-export type AuthScheme = (typeof AUTH_SCHEMES)[number];
+/**
+ * Where a resolved credential lands in the child's environment. `bearer` exports it as `ANTHROPIC_AUTH_TOKEN` (what relays and aggregators expect, and the default), `apiKey` as `ANTHROPIC_API_KEY` (sent as `x-api-key`, what a regular Anthropic API key needs), and `oauthToken` as `CLAUDE_CODE_OAUTH_TOKEN` (a long-lived subscription token from `claude setup-token`). `oauthToken` authenticates a login, not an endpoint, so only an identity may use it; see `PROVIDER_CREDENTIAL_TARGETS`.
+ */
+export const CREDENTIAL_TARGETS = ["bearer", "apiKey", "oauthToken"] as const;
+export type CredentialTarget = (typeof CREDENTIAL_TARGETS)[number];
+
+/** The targets a provider's credential may use: every target except `oauthToken`, which only an identity can carry. */
+export const PROVIDER_CREDENTIAL_TARGETS = ["bearer", "apiKey"] as const;
+
+/** The environment variable each credential target exports the token as. These are also the variables no provider `env` block may set, since claude-use sets and clears them itself. */
+export const CREDENTIAL_TARGET_VARS = {
+  bearer: "ANTHROPIC_AUTH_TOKEN",
+  apiKey: "ANTHROPIC_API_KEY",
+  oauthToken: "CLAUDE_CODE_OAUTH_TOKEN",
+} as const satisfies Record<CredentialTarget, string>;
+export type CredentialTargetVar = (typeof CREDENTIAL_TARGET_VARS)[CredentialTarget];
+
+/** A command argv: a non-empty program name, then any arguments. Run directly, never through a shell. */
+const ArgvSchema = z.tuple([z.string().min(1)], z.string());
+
+/** The options every command-backed source (`command`, `op`, `keychain`) shares. */
+const CommandSourceOptions = {
+  /** True when running the command needs a person present (a desktop-unlocked secret store's approval prompt), so it is skipped when there is neither a terminal nor a desktop session. Defaults per source kind; see `isInteractiveSource`. */
+  interactive: z.boolean().optional(),
+  /** How long the command may run before it is killed and counted as failed. Defaults to `CREDENTIAL_COMMAND_TIMEOUT_MS`, or `CREDENTIAL_INTERACTIVE_TIMEOUT_MS` for an interactive source. */
+  timeoutMs: z.int().positive().optional(),
+};
+
+/**
+ * One place a credential can come from. Each kind is an object with exactly one kind-naming key, so the kinds are told apart by which key is present rather than by a separate tag, and `strictObject` rejects an object naming two.
+ *
+ * - `env`: the NAME of an environment variable in the launching shell, never its value.
+ * - `file`: an absolute or `~`-rooted path to a file holding the token, which must not be readable or writable by group or others (mode 600 or stricter).
+ * - `command`: an argv run at launch whose trimmed stdout is the token, so the credential exists only in the child.
+ * - `op`: a 1Password secret reference, run as `op read <ref>`. A 1Password service account needs nothing here: `OP_SERVICE_ACCOUNT_TOKEN` in the launching environment is inherited by the command.
+ * - `keychain`: a macOS Keychain generic password, run as `security find-generic-password -s <service> [-a <account>] -w`.
+ * - `literal`: a fixed value written in the file itself. It is NOT a place for a secret: it exists for local proxies that accept any placeholder token (a codex-translation proxy, say) and so have no real credential to keep out of committed config. Anything with a real credential must use one of the other kinds.
+ */
+export const CredentialSourceSchema = z.union([
+  z.strictObject({ env: z.string().min(1) }),
+  z.strictObject({
+    file: z
+      .string()
+      .min(1)
+      .refine((filePath) => filePath.startsWith("~/") || path.isAbsolute(filePath), {
+        message: "a credential file must be an absolute or ~-rooted path, since a launch can start in any directory",
+      }),
+  }),
+  z.strictObject({ command: ArgvSchema, ...CommandSourceOptions }),
+  z.strictObject({ op: z.string().startsWith("op://"), ...CommandSourceOptions }),
+  z.strictObject({
+    keychain: z.strictObject({ service: z.string().min(1), account: z.string().min(1).optional() }),
+    ...CommandSourceOptions,
+  }),
+  z.strictObject({ literal: z.string().min(1) }),
+]);
+export type CredentialSource = z.infer<typeof CredentialSourceSchema>;
+
+/**
+ * The credential block providers and identities share: an ordered list of sources, tried in turn until one yields a non-empty token, and the target that token is exported as. `target` defaults to `bearer`.
+ */
+export const CredentialSchema = z.strictObject({
+  sources: z.array(CredentialSourceSchema).min(1),
+  target: z.enum(CREDENTIAL_TARGETS).optional(),
+});
+export type Credential = z.infer<typeof CredentialSchema>;
+
+/** A provider's credential block: `CredentialSchema` with `target` narrowed to `PROVIDER_CREDENTIAL_TARGETS`. */
+const ProviderCredentialSchema = CredentialSchema.extend({ target: z.enum(PROVIDER_CREDENTIAL_TARGETS).optional() });
+
+/** The variables a provider's `env` block may not name, because the credential target sets one of them and claude-use removes the others from the child's environment. */
+const RESERVED_PROVIDER_ENV_KEYS: readonly string[] = Object.values(CREDENTIAL_TARGET_VARS);
 
 /**
  * A named API provider at `~/.claude-use/providers/<name>.json`: which base URL the child Claude Code talks to, where its token comes from, and any static extra environment entries the child needs to use that endpoint.
  *
- * Exactly one token source is allowed. `tokenEnv` is the NAME of an environment variable (e.g. `Z_API_TOKEN`), never a token value; `tokenCommand` is an argv run at launch whose trimmed stdout is the token (e.g. `["op", "read", "op://vault/item/field"]`), so the credential can live in a secret store and exist only in the child. A provider file is ordinary committed config, so neither holds a secret. The third source is a non-empty `env.ANTHROPIC_AUTH_TOKEN`: local proxies that take a fixed dummy token (a codex-translation proxy ignoring credentials entirely) have no real secret to keep out of the file, and requiring a token source would force a pointless env var; anything with a real credential must use `tokenEnv` or `tokenCommand`.
- *
- * `authScheme` defaults to `bearer` (the token is exported as `ANTHROPIC_AUTH_TOKEN`). `apiKey` exports it as `ANTHROPIC_API_KEY` instead, which is what a regular Anthropic API key against `api.anthropic.com` needs; a non-empty `env.ANTHROPIC_API_KEY` would then be overwritten by the token, so the schema rejects it.
+ * `credential` is required, since a provider launch has to authenticate against the provider's endpoint. A provider file is ordinary committed config, so none of its sources holds a secret (a `literal` source is by definition a non-secret placeholder). `env` may not name a credential variable (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`) at all: the credential target sets one and the launcher removes the other two, so a value there would either be overwritten or be a second credential hiding outside the block.
  */
-export const ProviderSchema = z
-  .strictObject({
-    $schema: z.string().optional(),
-    displayName: z.string().min(1),
-    baseUrl: z.url(),
-    tokenEnv: z.string().min(1).optional(),
-    tokenCommand: z.tuple([z.string().min(1)], z.string()).optional(),
-    authScheme: z.enum(AUTH_SCHEMES).optional(),
-    env: z.record(z.string().min(1), z.string()).optional(),
-  })
-  .superRefine((provider, ctx) => {
-    const sources = [
-      provider.tokenEnv !== undefined ? "tokenEnv" : undefined,
-      provider.tokenCommand !== undefined ? "tokenCommand" : undefined,
-      (provider.env?.ANTHROPIC_AUTH_TOKEN ?? "") !== "" ? "env.ANTHROPIC_AUTH_TOKEN" : undefined,
-    ].filter((source) => source !== undefined);
-    if (sources.length !== 1) {
-      ctx.addIssue({
-        code: "custom",
-        message:
-          sources.length === 0
-            ? "a provider needs exactly one token source: tokenEnv (the name of the environment variable holding its token), tokenCommand (an argv whose stdout is the token), or a non-empty env.ANTHROPIC_AUTH_TOKEN"
-            : `a provider takes exactly one token source, but this one has ${sources.join(", ")}`,
-      });
-    }
-    if (provider.authScheme === "apiKey" && (provider.env?.ANTHROPIC_API_KEY ?? "") !== "") {
-      ctx.addIssue({
-        code: "custom",
-        path: ["env", "ANTHROPIC_API_KEY"],
-        message: 'authScheme "apiKey" exports the token as ANTHROPIC_API_KEY, so env.ANTHROPIC_API_KEY must not be set to a value',
-      });
-    }
-  });
+export const ProviderSchema = z.strictObject({
+  $schema: z.string().optional(),
+  displayName: z.string().min(1),
+  baseUrl: z.url(),
+  credential: ProviderCredentialSchema,
+  env: z
+    .record(z.string().min(1), z.string())
+    .refine((env) => !Object.keys(env).some((key) => RESERVED_PROVIDER_ENV_KEYS.includes(key)), {
+      message: `env may not set ${RESERVED_PROVIDER_ENV_KEYS.join(", ")}: the credential block's target sets one and claude-use removes the others`,
+    })
+    .optional(),
+});
 export type Provider = z.infer<typeof ProviderSchema>;
 
 /**
@@ -210,7 +258,9 @@ export const GlobalConfigSchema = z.strictObject({
 });
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 
-/** An identity's own `identity.json`. */
+/**
+ * An identity's own `identity.json`. `credential`, when present, authenticates the identity from a token instead of (or ahead of) its stored login: the launcher resolves it and exports it as its target (typically `oauthToken`, a `claude setup-token` token) in the child's environment only. Without it the identity uses the login stored in its own directory.
+ */
 export const IdentitySchema = z.strictObject({
   $schema: z.string().optional(),
   name: z
@@ -220,6 +270,7 @@ export const IdentitySchema = z.strictObject({
     .regex(/^[A-Za-z0-9][A-Za-z0-9._@-]*$/),
   defaultConfigProfile: z.string().min(1).optional(),
   allowAmbientCredential: z.boolean().default(false),
+  credential: CredentialSchema.optional(),
 });
 export type Identity = z.infer<typeof IdentitySchema>;
 
