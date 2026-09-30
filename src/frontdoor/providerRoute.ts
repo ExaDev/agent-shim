@@ -28,6 +28,21 @@ export function createProviderRouteResolver(deps: {
   /** The pass-through every bare /v1/ request from the CONNECT surface rides: straight to Claude Code's own API, with no per-request upstream for a headroom hop (the daemon's default upstream is exactly that API, which is what an OAuth session wants). */
   const oauthRoute = createPassthroughRoute("anthropic", { baseUrl: `https://${CONNECT_INTERCEPT_HOST}:${String(HTTPS_PORT)}`, stripPrefix: undefined, headroomUpstream: undefined });
 
+  /**
+   * Pass-through routes by target, cached: a route owns a keep-alive connection pool, so building one per request would both churn connections (no reuse across a session's requests) and accumulate pools that only an idle timeout retires. A provider file edit that changes the base URL simply lands on a new cache entry.
+   */
+  const passthroughByTarget = new Map<string, ReturnType<typeof createPassthroughRoute>>();
+  const passthroughFor = (name: string, target: { readonly baseUrl: string; readonly stripPrefix: string | undefined; readonly headroomUpstream: string | undefined }): ReturnType<typeof createPassthroughRoute> => {
+    const key = `${name}\u0000${target.baseUrl}\u0000${target.stripPrefix ?? ""}\u0000${target.headroomUpstream ?? ""}`;
+    const existing = passthroughByTarget.get(key);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const route = createPassthroughRoute(name, target);
+    passthroughByTarget.set(key, route);
+    return route;
+  };
+
   /** The resolution itself is synchronous: reading one provider file needs no await, and keeping it sync is what lets the async wrapper stay honest about its one await. */
   const resolve = (request: RoutedRequest): RouteResolution => {
     const path = new URL(request.url, "http://127.0.0.1").pathname;
@@ -62,7 +77,7 @@ export function createProviderRouteResolver(deps: {
     const httpProvider: Provider = definition;
     return {
       ok: true,
-      route: createPassthroughRoute(`http:${provider}`, {
+      route: passthroughFor(`http:${provider}`, {
         baseUrl: httpProvider.baseUrl,
         stripPrefix: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`,
         headroomUpstream: directOrigin(deps.directPort()),
