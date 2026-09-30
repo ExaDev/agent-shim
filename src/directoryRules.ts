@@ -1,14 +1,15 @@
 import type { Command } from "commander";
 
+import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { readJson, writeJsonAtomic } from "./config/store";
 import { ConfigValidationError } from "./config/load";
 import { DirectoryRulesSchema, type DirectoryRule, type DirectoryRules } from "./config/schema";
-import { CliError } from "./cliError";
-import { realPromptsPort, runProfileWizard } from "./configure";
-import { readProfile } from "./configProfiles";
+import { CliError, UsageError } from "./cliError";
+import { ensureProfileExists } from "./configProfiles";
+import { IdentityNotFoundError, readIdentity } from "./identityManager";
 import type { LayoutPaths } from "./paths";
 
-/** Raised by `removeRule` when no rule matches the given path exactly. */
+/** Raised by `removeDirectoryRule`, `updateDirectoryRule` and `rule show` when no rule matches the given path exactly. */
 export class DirectoryRuleNotFoundError extends CliError {
   constructor(readonly rulePath: string) {
     super(`No directory rule found for path "${rulePath}".`);
@@ -16,11 +17,19 @@ export class DirectoryRuleNotFoundError extends CliError {
   }
 }
 
-/** Raised by `addDirectoryRule` when neither `--profile` nor `--identity` is given — a rule that pins neither would do nothing. */
+/** Raised by `addDirectoryRule` when neither `--config-profile` nor `--identity` is given, and by `updateDirectoryRule` when an update would leave a rule that sets nothing at all: a rule that pins and overrides nothing would do nothing. */
 export class DirectoryRuleMissingTargetError extends CliError {
   constructor() {
-    super("A directory rule must set at least one of --profile or --identity.");
+    super("A directory rule must set at least one of --config-profile or --identity.");
     this.name = "DirectoryRuleMissingTargetError";
+  }
+}
+
+/** Raised by `addDirectoryRule` when a rule for the exact path already exists: `rule add` creates, `rule set` updates. */
+export class DirectoryRuleAlreadyExistsError extends CliError {
+  constructor(readonly rulePath: string) {
+    super(`A directory rule for path "${rulePath}" already exists. Use \`claude-use rule set\` to change it.`);
+    this.name = "DirectoryRuleAlreadyExistsError";
   }
 }
 
@@ -50,35 +59,62 @@ export interface AddDirectoryRuleOptions {
 }
 
 /**
- * Adds a directory rule for `rulePath`, or updates the existing rule for that exact path if one is already present — a second `add` for the same path is an update, not a duplicate entry.
- *
- * At least one of `configProfile`/`identity` must be given; a rule that pins neither would do nothing.
+ * Adds a new directory rule for `rulePath`. Throws `DirectoryRuleAlreadyExistsError` when a rule for that exact path already exists (`updateDirectoryRule` changes one), and `DirectoryRuleMissingTargetError` when neither `configProfile` nor `identity` is given, since a rule that pins neither would do nothing.
  */
 export function addDirectoryRule(paths: LayoutPaths, rulePath: string, options: AddDirectoryRuleOptions): DirectoryRule {
   if (options.configProfile === undefined && options.identity === undefined) {
     throw new DirectoryRuleMissingTargetError();
   }
   const current = readDirectoryRules(paths);
-  const existingIndex = current.rules.findIndex((rule) => rule.path === rulePath);
-
-  let updated: DirectoryRule;
-  if (existingIndex === -1) {
-    updated = buildNewRule(rulePath, options);
-    writeDirectoryRules(paths, { ...current, rules: [...current.rules, updated] });
-  } else {
-    const existingRule = current.rules[existingIndex];
-    if (existingRule === undefined) {
-      throw new Error(`Directory rule at index ${String(existingIndex)} unexpectedly missing.`);
-    }
-    updated = {
-      ...existingRule,
-      ...(options.configProfile !== undefined ? { configProfile: options.configProfile } : {}),
-      ...(options.identity !== undefined ? { identity: options.identity } : {}),
-    };
-    const nextRules = [...current.rules];
-    nextRules[existingIndex] = updated;
-    writeDirectoryRules(paths, { ...current, rules: nextRules });
+  if (current.rules.some((rule) => rule.path === rulePath)) {
+    throw new DirectoryRuleAlreadyExistsError(rulePath);
   }
+  const created = buildNewRule(rulePath, options);
+  writeDirectoryRules(paths, { ...current, rules: [...current.rules, created] });
+  return created;
+}
+
+/** The fields `updateDirectoryRule` changes. A value of `false` removes that field from the rule. */
+export interface UpdateDirectoryRuleOptions {
+  readonly configProfile?: string | false;
+  readonly identity?: string | false;
+}
+
+/** Whether `rule` still does anything: pins a profile or identity, or carries its own categories, entries or launch settings (which `claude-use configure` writes). */
+function ruleHasEffect(rule: DirectoryRule): boolean {
+  return (
+    rule.configProfile !== undefined ||
+    rule.identity !== undefined ||
+    rule.categories !== undefined ||
+    rule.entries !== undefined ||
+    rule.launch !== undefined
+  );
+}
+
+/**
+ * Updates the existing directory rule for `rulePath` in place, keeping its position in the file and every field not named. Throws `DirectoryRuleNotFoundError` when no rule matches that exact path, and `DirectoryRuleMissingTargetError` when the update would leave a rule that does nothing (remove it with `removeDirectoryRule` instead).
+ */
+export function updateDirectoryRule(paths: LayoutPaths, rulePath: string, options: UpdateDirectoryRuleOptions): DirectoryRule {
+  const current = readDirectoryRules(paths);
+  const index = current.rules.findIndex((rule) => rule.path === rulePath);
+  const existing = index === -1 ? undefined : current.rules[index];
+  if (existing === undefined) {
+    throw new DirectoryRuleNotFoundError(rulePath);
+  }
+  const { configProfile, identity, ...rest } = existing;
+  const nextConfigProfile = options.configProfile === undefined ? configProfile : options.configProfile === false ? undefined : options.configProfile;
+  const nextIdentity = options.identity === undefined ? identity : options.identity === false ? undefined : options.identity;
+  const updated: DirectoryRule = {
+    ...rest,
+    ...(nextConfigProfile === undefined ? {} : { configProfile: nextConfigProfile }),
+    ...(nextIdentity === undefined ? {} : { identity: nextIdentity }),
+  };
+  if (!ruleHasEffect(updated)) {
+    throw new DirectoryRuleMissingTargetError();
+  }
+  const nextRules = [...current.rules];
+  nextRules[index] = updated;
+  writeDirectoryRules(paths, { ...current, rules: nextRules });
   return updated;
 }
 
@@ -100,58 +136,122 @@ export function removeDirectoryRule(paths: LayoutPaths, rulePath: string): void 
   writeDirectoryRules(paths, { ...current, rules: nextRules });
 }
 
-/** Registers the `claude-use rules` subcommand tree onto `program`. */
-export function registerRulesCommand(program: Command, paths: LayoutPaths): void {
-  const rules = program.command("rules").description("Manage directory-scoped identity/profile pins.");
+/** Renders a rule's own settings as `key=value` parts, for `rule list` and `rule show`. */
+function describeRule(rule: DirectoryRule): string {
+  const parts = Object.entries(rule)
+    .filter(([key]) => key !== "path")
+    .map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`);
+  return parts.length === 0 ? "(nothing)" : parts.join(", ");
+}
 
-  rules
-    .command("add <path>")
-    .description("Add or update a directory rule.")
-    .option("--profile <name>", "Configuration profile to select for this path.")
-    .option("--identity <name>", "Identity to pin for this path.")
-    .action(async (rulePath: string, options: Readonly<{ profile?: string; identity?: string }>) => {
-      let profileName = options.profile;
-      if (profileName !== undefined && readProfile(paths, profileName) === undefined) {
-        const result = await runProfileWizard(realPromptsPort, { paths, defaultNewName: profileName });
-        if (result === undefined) {
-          console.log(`No configuration profile named "${profileName}" was created; the rule pins identity only.`);
-          profileName = undefined;
-        } else {
-          if (result.name !== profileName) {
-            console.log(
-              `Created configuration profile "${result.name}" instead of "${profileName}". The rule selects that name.`,
-            );
-          }
-          profileName = result.name;
+/** Checks the targets a `rule add`/`rule set` names before the rule is written: a missing profile is offered for creation on a terminal (`ensureProfileExists`), and a missing identity is refused, since pinning a path to an identity that does not exist would fail every launch there. */
+async function checkRuleTargets(deps: CommandDeps, options: Readonly<{ configProfile?: string | false; identity?: string | false }>): Promise<void> {
+  if (typeof options.identity === "string" && readIdentity(deps.paths, options.identity) === undefined) {
+    throw new IdentityNotFoundError(options.identity);
+  }
+  if (typeof options.configProfile === "string") {
+    await ensureProfileExists(deps, options.configProfile);
+  }
+}
+
+/** Registers the `claude-use rule` subcommand tree onto `program`. */
+export function registerRuleCommand(program: Command, deps: CommandDeps): void {
+  const { paths } = deps;
+  const rule = withExamples(
+    program
+      .command("rule")
+      .description("Manage directory rules: pin an identity or configuration profile to every launch under a path."),
+    ["claude-use rule add ~/work/acme --config-profile client-acme", "claude-use rule list"],
+  );
+
+  withExamples(
+    rule
+      .command("add <path>")
+      .description("Add a directory rule for a path. Fails if a rule for that exact path already exists.")
+      .option("--config-profile <profile>", "Configuration profile to select under this path.")
+      .option("--identity <identity>", "Identity to pin under this path.")
+      .action(async (rulePath: string, options: Readonly<{ configProfile?: string; identity?: string }>) => {
+        await checkRuleTargets(deps, options);
+        addDirectoryRule(paths, rulePath, options);
+        console.log(`Added directory rule for "${rulePath}".`);
+      }),
+    ["claude-use rule add ~/work/acme --config-profile client-acme", "claude-use rule add ~/personal --identity personal"],
+  );
+
+  withExamples(
+    rule
+      .command("set <path>")
+      .description("Update the directory rule for a path.")
+      .option("--config-profile <profile>", "Configuration profile to select under this path.")
+      .option("--no-config-profile", "Stop selecting a configuration profile under this path.")
+      .option("--identity <identity>", "Identity to pin under this path.")
+      .option("--no-identity", "Stop pinning an identity under this path.")
+      .action(async (rulePath: string, options: Readonly<{ configProfile?: string | false; identity?: string | false }>) => {
+        if (options.configProfile === undefined && options.identity === undefined) {
+          throw new UsageError("Nothing to change: pass --config-profile, --no-config-profile, --identity or --no-identity.");
         }
-      }
-      addDirectoryRule(paths, rulePath, { configProfile: profileName, identity: options.identity });
-      console.log(`Directory rule for "${rulePath}" saved.`);
-    });
+        await checkRuleTargets(deps, options);
+        updateDirectoryRule(paths, rulePath, options);
+        console.log(`Updated directory rule for "${rulePath}".`);
+      }),
+    ["claude-use rule set ~/work/acme --identity work", "claude-use rule set ~/work/acme --no-config-profile"],
+  );
 
-  rules
-    .command("list")
-    .description("List every directory rule.")
-    .action(() => {
-      const entries = listDirectoryRules(paths);
-      if (entries.length === 0) {
-        console.log("No directory rules yet. Run `claude-use rules add <path>` to create one.");
-        return;
-      }
-      for (const rule of entries) {
-        const parts = [
-          rule.configProfile !== undefined ? `profile=${rule.configProfile}` : undefined,
-          rule.identity !== undefined ? `identity=${rule.identity}` : undefined,
-        ].filter((part): part is string => part !== undefined);
-        console.log(`  ${rule.path} (${parts.join(", ")})`);
-      }
-    });
+  withExamples(
+    rule
+      .command("list")
+      .description("List every directory rule, in file order.")
+      .option("--json", "Print the rules as JSON.")
+      .action((options: Readonly<{ json?: boolean }>) => {
+        const entries = listDirectoryRules(paths);
+        if (options.json === true) {
+          printJson(entries);
+          return;
+        }
+        if (entries.length === 0) {
+          console.log("No directory rules yet. Run `claude-use rule add <path>` to create one.");
+          return;
+        }
+        for (const entry of entries) {
+          console.log(`  ${entry.path} (${describeRule(entry)})`);
+        }
+      }),
+    ["claude-use rule list", "claude-use rule list --json"],
+  );
 
-  rules
-    .command("remove <path>")
-    .description("Remove the directory rule for a path.")
-    .action((rulePath: string) => {
-      removeDirectoryRule(paths, rulePath);
-      console.log(`Removed directory rule for "${rulePath}".`);
-    });
+  withExamples(
+    rule
+      .command("show <path>")
+      .description("Show the directory rule for a path, matched exactly as it was written.")
+      .option("--json", "Print the rule as JSON.")
+      .action((rulePath: string, options: Readonly<{ json?: boolean }>) => {
+        const found = listDirectoryRules(paths).find((entry) => entry.path === rulePath);
+        if (found === undefined) {
+          throw new DirectoryRuleNotFoundError(rulePath);
+        }
+        if (options.json === true) {
+          printJson(found);
+          return;
+        }
+        console.log(`Directory rule: ${found.path}`);
+        console.log(`Settings: ${describeRule(found)}`);
+      }),
+    ["claude-use rule show ~/work/acme"],
+  );
+
+  withExamples(
+    rule
+      .command("remove <path>")
+      .description("Remove the directory rule for a path.")
+      .option("--yes", "Remove without asking for confirmation (required when standard input is not a terminal).")
+      .action(async (rulePath: string, options: Readonly<{ yes?: boolean }>) => {
+        if (!listDirectoryRules(paths).some((entry) => entry.path === rulePath)) {
+          throw new DirectoryRuleNotFoundError(rulePath);
+        }
+        await confirmRemoval(deps, options.yes, `the directory rule for "${rulePath}"`);
+        removeDirectoryRule(paths, rulePath);
+        console.log(`Removed directory rule for "${rulePath}".`);
+      }),
+    ["claude-use rule remove ~/work/acme --yes"],
+  );
 }

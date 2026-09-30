@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Command } from "commander";
 import { z } from "zod";
 
+import { withExamples, type CommandDeps } from "./cli/commandDeps";
 import { readJson, writeJsonAtomic } from "./config/store";
 import { findExecutableInDir, realContentSourcePath, realOwnExecutablePath } from "./realPorts";
 import { CliError } from "./cliError";
@@ -253,17 +254,21 @@ export function findPathShadow(params: FindPathShadowParams): PathShadowStatus {
 /**
  * Registers `claude-use shim enable`/`claude-use shim disable` onto `program`.
  *
- * `shim` is a deliberate noun-group, matching `identity`/`profile`/`rules` — it names the actual mechanism (a PATH-level executable that dispatches by invoked name, the same concept Scoop itself calls a "shim"), so `enable`/`disable` read as toggling one clearly-scoped thing rather than "installing"/"uninstalling" software, which could be misread as installing Claude Code itself.
+ * `shim` is a deliberate noun-group, matching `identity`/`profile`/`rule`: it names the actual mechanism (a PATH-level executable that dispatches by invoked name, the same concept Scoop itself calls a "shim"), so `enable`/`disable` read as toggling one clearly-scoped thing rather than "installing"/"uninstalling" software, which could be misread as installing Claude Code itself.
  */
-export function registerShimCommand(program: Command, paths: LayoutPaths): void {
-  const shim = program
-    .command("shim")
-    .description(
-      "Manage the `claude` command shim — an optional, explicit way to also invoke this launcher as `claude` " +
-        "instead of `claude-use run`. Off by default; every installer ships only `claude-use`.",
-    );
+export function registerShimCommand(program: Command, deps: CommandDeps): void {
+  const { paths } = deps;
+  const shim = withExamples(
+    program
+      .command("shim")
+      .description(
+        "Manage the `claude` command shim: an optional, explicit way to also invoke this launcher as `claude` " +
+          "instead of `claude-use run`. Off by default; every installer ships only `claude-use`.",
+      ),
+    ["claude-use shim enable", "claude-use shim disable"],
+  );
 
-  shim
+  const enable = shim
     .command("enable")
     .description("Create a `claude`-named copy of this same executable, alongside claude-use by default.")
     .option("--dir <path>", "Enable into this directory instead of alongside the running claude-use executable.")
@@ -297,7 +302,9 @@ export function registerShimCommand(program: Command, paths: LayoutPaths): void 
       }
     });
 
-  shim
+  withExamples(enable, ["claude-use shim enable", "claude-use shim enable --dir ~/bin"]);
+
+  const disable = shim
     .command("disable")
     .description("Remove the `claude` command shim `shim enable` previously created. A no-op, not an error, if none is enabled.")
     .option("--dir <path>", "Look in this directory instead of trusting the recorded location.")
@@ -318,4 +325,5 @@ export function registerShimCommand(program: Command, paths: LayoutPaths): void 
           : `No \`claude\` command enabled at ${result.targetPath}; nothing to do.`,
       );
     });
+  withExamples(disable, ["claude-use shim disable"]);
 }

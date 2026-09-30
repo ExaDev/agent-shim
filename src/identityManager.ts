@@ -2,21 +2,23 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Command } from "commander";
 
+import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { loadClassification } from "./config/classify";
 import { ConfigValidationError } from "./config/load";
 import { applyPatch, readJson, writeJsonAtomic, writeTextAtomic } from "./config/store";
 import { IdentitySchema, type Identity } from "./config/schema";
-import { realPromptsPort, runProfileWizard, type PromptsPort } from "./configure";
-import { CliError } from "./cliError";
+import { runProfileWizard, type PromptsPort } from "./configure";
+import { CliError, PromptCancelledError, UsageError } from "./cliError";
 import { resolveFarmConflicts, type FarmConflictChoice } from "./launcher/farmResolve";
-import { readProfile } from "./configProfiles";
+import { ensureProfileExists } from "./configProfiles";
 import type { LayoutPaths } from "./paths";
+import { identityLockPath } from "./launcher/lock";
 import { realFarmFs } from "./realPorts";
 
 /** Raised by any operation that requires an identity to already exist, when it does not. */
 export class IdentityNotFoundError extends CliError {
   constructor(readonly name: string) {
-    super(`No identity named "${name}" — run \`claude-use identity add ${name}\` first.`);
+    super(`No identity named "${name}". Run \`claude-use identity add ${name}\` first.`);
     this.name = "IdentityNotFoundError";
   }
 }
@@ -82,15 +84,20 @@ export function useIdentity(paths: LayoutPaths, name: string): void {
 }
 
 /**
- * The interactive setup wizard for a new identity, offered by the `@<name>` shortcut and `identity use` when the identity doesn't exist yet and stdin is a real terminal.
+ * The interactive setup wizard for a new identity, offered by the `@<name>` shortcut, `identity use`, and a launch naming an identity that doesn't exist yet, whenever stdin is a real terminal.
  *
  * Validates `name` against `IdentitySchema`'s own naming rule before any prompt appears — offering "Create it now?" for a name that could never validate (one with a leading `@`, say, or any other character the schema rejects) just to fail on confirm is a broken interaction, so an invalid name throws `InvalidIdentityNameError` immediately instead.
  *
- * Confirms the user wants to create the identity, then optionally creates a default configuration profile (reusing `runProfileWizard`), links them, and sets the identity as active. A cancel at any step writes nothing beyond what was already committed — the identity is only created after the first confirm, and the profile wizard's own cancel handling means a profile-only cancellation still leaves the identity usable. Returns `true` when the identity was created and set active; `false` when the user declined at the initial confirm.
+ * Confirms the user wants to create the identity, then optionally creates a default configuration profile (reusing `runProfileWizard`), links them, and (unless `activate` is false) sets the identity as active. A cancel at any step writes nothing beyond what was already committed: the identity is only created after the first confirm, and the profile wizard's own cancel handling means a profile-only cancellation still leaves the identity usable. Returns `true` when the identity was created; `false` when the user declined at the initial confirm, leaving the caller to decide what a decline means (every current caller raises `PromptCancelledError`).
  *
  * Driven entirely by the injected `PromptsPort` so the whole flow is unit-testable with a scripted sequence of answers.
  */
-export async function runIdentityWizard(prompts: PromptsPort, paths: LayoutPaths, name: string): Promise<boolean> {
+export async function runIdentityWizard(
+  prompts: PromptsPort,
+  paths: LayoutPaths,
+  name: string,
+  options: Readonly<{ activate?: boolean }> = {},
+): Promise<boolean> {
   if (!IdentitySchema.safeParse({ name, allowAmbientCredential: false }).success) {
     throw new InvalidIdentityNameError(name);
   }
@@ -102,7 +109,6 @@ export async function runIdentityWizard(prompts: PromptsPort, paths: LayoutPaths
     ],
   });
   if (prompts.isCancel(choice) || choice === "cancel") {
-    prompts.cancel("Cancelled.");
     return false;
   }
 
@@ -124,21 +130,39 @@ export async function runIdentityWizard(prompts: PromptsPort, paths: LayoutPaths
     }
   }
 
+  if (options.activate === false) {
+    prompts.outro(`Identity "${name}" is set up.`);
+    return true;
+  }
   useIdentity(paths, name);
   prompts.outro(`Identity "${name}" is set up and active.`);
   return true;
 }
 
 /**
- * Handles the `claude-use @<name>` shortcut for `claude-use identity use <name>` — terser, and matches the `@name` convention `run @name`/`claude @name` already use for selecting an identity, rather than introducing a new one.
- *
- * Deliberately requires the `@` prefix and requires `@<name>` to be the *only* argument, rather than also accepting a bare `claude-use <name>`: identity names are user-chosen and unconstrained against the registered subcommand vocabulary (`identity`, `profile`, `rules`, `check`, `configure`, `doctor`, `shim`, `run`), so a bare positional name could collide with a real subcommand — today by an unlikely coincidence, but the tool's own vocabulary only grows over time. `@` makes the token unambiguous on sight and guarantees no future subcommand name can ever collide with it.
- *
- * Returns `false` when `argv` doesn't match this exact one-argument `@name` shape at all, so the caller falls through to normal Commander subcommand dispatch (including its own "unknown command" error for anything else). Returns `true` once handled, whether that meant switching identity or letting `useIdentity`'s own `IdentityNotFoundError` propagate for an unknown name — both are this shortcut's own outcome, not a fallthrough case.
- *
- * When the identity doesn't exist and stdin is a real interactive terminal, the function offers to run `runIdentityWizard` instead of throwing immediately. A non-interactive context (a script, CI) keeps the old behaviour: `IdentityNotFoundError` propagates and prints its one-line message.
+ * Makes `name` the active identity, the one behaviour `identity use <name>` and the `@<name>` shortcut share. An existing identity is selected directly. A missing one is offered to `runIdentityWizard` when standard input is a terminal (declining raises `PromptCancelledError`); with no terminal it raises `IdentityNotFoundError`, since there is nothing to prompt on.
  */
-export async function tryRunAtIdentityShortcut(paths: LayoutPaths, argv: readonly string[]): Promise<boolean> {
+async function selectIdentity(deps: CommandDeps, name: string): Promise<void> {
+  if (identityExists(deps.paths, name)) {
+    useIdentity(deps.paths, name);
+  } else if (deps.isInteractive()) {
+    if (!(await runIdentityWizard(deps.prompts, deps.paths, name))) {
+      throw new PromptCancelledError();
+    }
+  } else {
+    throw new IdentityNotFoundError(name);
+  }
+  console.log(`Active identity is now "${name}".`);
+}
+
+/**
+ * Handles the `claude-use @<name>` shortcut for `claude-use identity use <name>`: terser, and matches the `@name` convention `run @name`/`claude @name` already use for selecting an identity, rather than introducing a new one.
+ *
+ * Deliberately requires the `@` prefix and requires `@<name>` to be the *only* argument, rather than also accepting a bare `claude-use <name>`: identity names are user-chosen and unconstrained against the registered subcommand vocabulary, so a bare positional name could collide with a real subcommand, today by an unlikely coincidence, but the tool's own vocabulary only grows over time. `@` makes the token unambiguous on sight and guarantees no future subcommand name can ever collide with it.
+ *
+ * Returns `false` when `argv` doesn't match this exact one-argument `@name` shape at all, so the caller falls through to normal Commander subcommand dispatch (including its own "unknown command" error for anything else). Returns `true` once handled; the selection itself is `selectIdentity`, so a missing identity behaves exactly as it does under `identity use`.
+ */
+export async function tryRunAtIdentityShortcut(deps: CommandDeps, argv: readonly string[]): Promise<boolean> {
   if (argv.length !== 1) {
     return false;
   }
@@ -146,20 +170,7 @@ export async function tryRunAtIdentityShortcut(paths: LayoutPaths, argv: readonl
   if (token === undefined || !token.startsWith("@") || token.length === 1) {
     return false;
   }
-  const name = token.slice(1);
-  if (!identityExists(paths, name)) {
-    if (process.stdin.isTTY) {
-      const created = await runIdentityWizard(realPromptsPort, paths, name);
-      if (!created) {
-        return true;
-      }
-    } else {
-      useIdentity(paths, name);
-    }
-  } else {
-    useIdentity(paths, name);
-  }
-  console.log(`Active identity is now "${name}".`);
+  await selectIdentity(deps, token.slice(1));
   return true;
 }
 
@@ -175,7 +186,7 @@ export function readActiveIdentity(paths: LayoutPaths): string | undefined {
 /**
  * Whether a directory name directly under `identitiesDir` names an actual identity, rather than one of claude-use's own farm directories.
  *
- * `IdentitySchema` requires an identity name to start with a letter or digit, so a leading `.` can only be a resync's own bookkeeping — a `.<identity>.scratch.<suffix>` tree still being built, or a `.<identity>.previous.<suffix>` superseded farm retained for `claude-use identity resolve`. Neither is an identity, and neither should be reported as a broken one for lacking an `identity.json` a resync never put there.
+ * `IdentitySchema` requires an identity name to start with a letter or digit, so a leading `.` can only be a resync's own bookkeeping: a `.<identity>.scratch.<suffix>` tree still being built, or a `.<identity>.previous.<suffix>` superseded farm retained for `claude-use identity resolve-conflicts`. Neither is an identity, and neither should be reported as a broken one for lacking an `identity.json` a resync never put there.
  */
 export function isIdentityDirectoryName(name: string): boolean {
   return !name.startsWith(".");
@@ -247,9 +258,9 @@ export function listIdentities(paths: LayoutPaths): readonly IdentityListing[] {
 }
 
 /**
- * Sets `identity`'s `defaultConfigProfile` field. Throws `IdentityNotFoundError` when the identity does not exist.
+ * Sets `identity`'s `defaultConfigProfile` field, or clears it when `profileName` is undefined. Throws `IdentityNotFoundError` when the identity does not exist. Whether the profile exists is the caller's concern: `identity set --default-profile` checks it first.
  */
-export function setDefaultConfigProfile(paths: LayoutPaths, identityName: string, profileName: string): Identity {
+export function setDefaultConfigProfile(paths: LayoutPaths, identityName: string, profileName: string | undefined): Identity {
   if (!identityExists(paths, identityName)) {
     throw new IdentityNotFoundError(identityName);
   }
@@ -270,144 +281,258 @@ export function setAllowAmbientCredential(paths: LayoutPaths, identityName: stri
   });
 }
 
+/** Whether `entry` (a name directly under `identitiesDir`) is part of identity `name`'s on-disk state: its farm, the resync lock, or a scratch or superseded farm a resync left behind. */
+function belongsToIdentity(entry: string, name: string): boolean {
+  return (
+    entry === name ||
+    entry === path.basename(identityLockPath("", name)) ||
+    entry.startsWith(`.${name}.scratch.`) ||
+    entry.startsWith(`.${name}.previous.`)
+  );
+}
+
+/**
+ * Deletes identity `name` entirely: its directory under `identitiesDir` (the farm, its `identity.json`, and whatever that farm holds unshared, credentials included), its resync lock, any scratch or superseded farm a resync left behind, and the active-identity selection when it names this identity. Data shared into `~/.claude` stays there, since the farm only ever symlinks to it. Throws `IdentityNotFoundError` when the identity does not exist.
+ */
+function removeIdentity(paths: LayoutPaths, name: string): void {
+  if (!identityExists(paths, name)) {
+    throw new IdentityNotFoundError(name);
+  }
+  for (const entry of fs.readdirSync(paths.identitiesDir)) {
+    if (belongsToIdentity(entry, name)) {
+      fs.rmSync(path.join(paths.identitiesDir, entry), { recursive: true, force: true });
+    }
+  }
+  if (readActiveIdentity(paths) === name) {
+    fs.rmSync(paths.activeIdentityFile);
+  }
+}
+
+/** One identity as `identity show --json` and `identity list --json` print it. */
+interface IdentityView {
+  readonly name: string;
+  readonly active: boolean;
+  readonly directory: string;
+  readonly defaultConfigProfile?: string;
+  readonly allowAmbientCredential?: boolean;
+  readonly problem?: string;
+}
+
+function toIdentityView(paths: LayoutPaths, entry: IdentityListing): IdentityView {
+  return {
+    name: entry.name,
+    active: entry.isActive,
+    directory: path.join(paths.identitiesDir, entry.name),
+    ...(entry.problem === undefined
+      ? {
+          ...(entry.identity.defaultConfigProfile === undefined ? {} : { defaultConfigProfile: entry.identity.defaultConfigProfile }),
+          allowAmbientCredential: entry.identity.allowAmbientCredential,
+        }
+      : { problem: entry.problem }),
+  };
+}
+
+/** Renders one identity as the single line `identity list` prints for it. */
+function formatIdentityLine(entry: IdentityListing): string {
+  const marker = entry.isActive ? "* " : "  ";
+  if (entry.problem !== undefined) {
+    return `${marker}${entry.name} [unreadable: ${entry.problem}]`;
+  }
+  const defaultProfile =
+    entry.identity.defaultConfigProfile === undefined ? "" : ` (default profile: ${entry.identity.defaultConfigProfile})`;
+  const ambient = entry.identity.allowAmbientCredential ? " [allows ambient credential]" : "";
+  return `${marker}${entry.name}${defaultProfile}${ambient}`;
+}
+
+/** Options `identity set` accepts. `defaultProfile` is `false` for `--no-default-profile`. */
+interface IdentitySetOptions {
+  readonly defaultProfile?: string | false;
+  readonly allowAmbientCredential?: boolean;
+}
+
 /** Registers the `claude-use identity` subcommand tree onto `program`. */
-export function registerIdentityCommand(program: Command, paths: LayoutPaths): void {
-  const identity = program.command("identity").description("Manage claude-use identities (logins).");
+export function registerIdentityCommand(program: Command, deps: CommandDeps): void {
+  const { paths } = deps;
+  const identity = withExamples(
+    program.command("identity").description("Manage identities: each one is a separate Claude Code login with its own credentials."),
+    ["claude-use identity add work", "claude-use identity list"],
+  );
 
-  identity
-    .command("add <name>")
-    .description("Create a new identity.")
-    .action((name: string) => {
-      addIdentity(paths, name);
-      console.log(`Created identity "${name}".`);
-    });
+  withExamples(
+    identity
+      .command("add <name>")
+      .description("Create a new identity. Fails if one with this name already exists.")
+      .action((name: string) => {
+        addIdentity(paths, name);
+        console.log(`Created identity "${name}".`);
+      }),
+    ["claude-use identity add work"],
+  );
 
-  identity
-    .command("use <name>")
-    .description("Persistently select the active identity.")
-    .action(async (name: string) => {
-      if (!identityExists(paths, name) && process.stdin.isTTY) {
-        const created = await runIdentityWizard(realPromptsPort, paths, name);
-        if (!created) {
+  withExamples(
+    identity
+      .command("list")
+      .description("List every identity, marking the active one with *.")
+      .option("--json", "Print the identities as JSON.")
+      .action((options: Readonly<{ json?: boolean }>) => {
+        const entries = listIdentities(paths);
+        if (options.json === true) {
+          printJson(entries.map((entry) => toIdentityView(paths, entry)));
           return;
         }
-      } else {
-        useIdentity(paths, name);
-      }
-      console.log(`Active identity is now "${name}".`);
-    });
-
-  identity
-    .command("resolve <name>")
-    .description("Interactively resolve a superseded farm's colliding data left behind by a prior launch.")
-    .action(async (name: string) => {
-      const result = await resolveFarmConflicts({
-        fs: realFarmFs,
-        identitiesDir: paths.identitiesDir,
-        identity: name,
-        classification: loadClassification(paths),
-        decide: async (conflict) => {
-          const choice = await realPromptsPort.select<FarmConflictChoice>({
-            message:
-              `"${conflict.name}" exists both in the superseded farm (${conflict.previousRoot}) and the ` +
-              `current one (${conflict.farmRoot}). Which should be kept?`,
-            options: [
-              { value: "keep-new", label: "Keep the current farm's copy", hint: "discards the superseded one" },
-              { value: "keep-old", label: "Keep the superseded farm's copy", hint: "replaces the current one" },
-              { value: "skip", label: "Skip for now", hint: "leaves both copies, asks again next time" },
-            ],
-          });
-          return realPromptsPort.isCancel(choice) ? "skip" : choice;
-        },
-      });
-
-      if (result.autoResolved.length > 0) {
-        console.log(
-          `Auto-resolved ${String(result.autoResolved.length)} disposable runtime entr${result.autoResolved.length === 1 ? "y" : "ies"} ` +
-            `with no prompt (${result.autoResolved.join(", ")}) — per-process/per-machine state, never worth asking about.`,
-        );
-      }
-      if (result.resolved.length === 0) {
-        if (result.autoResolved.length === 0) {
-          console.log(`No superseded farm data to resolve for identity "${name}".`);
-        }
-        return;
-      }
-      for (const conflict of result.resolved) {
-        console.log(`  ${conflict.name}: ${conflict.choice}`);
-      }
-      console.log(
-        `Resolved ${String(result.resolved.length)} conflict(s) — ${String(result.removed.length)} superseded director(ies) fully ` +
-          `cleared, ${String(result.retained.length)} still retained pending a skipped conflict.`,
-      );
-    });
-
-  identity
-    .command("list")
-    .description("List every identity, marking the active one.")
-    .action(() => {
-      const entries = listIdentities(paths);
-      if (entries.length === 0) {
-        console.log("No identities yet. Run `claude-use identity add <name>` to create one.");
-        return;
-      }
-      for (const entry of entries) {
-        const marker = entry.isActive ? "* " : "  ";
-        if (entry.problem !== undefined) {
-          console.log(`${marker}${entry.name} [unreadable: ${entry.problem}]`);
-          continue;
-        }
-        const defaultProfile =
-          entry.identity.defaultConfigProfile !== undefined
-            ? ` (default profile: ${entry.identity.defaultConfigProfile})`
-            : "";
-        const ambient = entry.identity.allowAmbientCredential ? " [allows ambient credential]" : "";
-        console.log(`${marker}${entry.name}${defaultProfile}${ambient}`);
-      }
-      if (entries.some((entry) => entry.problem !== undefined)) {
-        console.log("\nRun `claude-use doctor` for the full detail on every unreadable entry.");
-      }
-    });
-
-  identity
-    .command("set-default-profile <identity> <profile>")
-    .description("Set an identity's default configuration profile.")
-    .action(async (identityName: string, profileName: string) => {
-      if (readProfile(paths, profileName) === undefined) {
-        const result = await runProfileWizard(realPromptsPort, {
-          paths,
-          defaultNewName: profileName,
-        });
-        if (result === undefined) {
-          console.log(`No configuration profile named "${profileName}" was created; nothing changed.`);
+        if (entries.length === 0) {
+          console.log("No identities yet. Run `claude-use identity add <name>` to create one.");
           return;
         }
-        if (result.name !== profileName) {
-          console.log(
-            `Created configuration profile "${result.name}" instead of "${profileName}". Set the identity's default to that name explicitly if that wasn't intended.`,
+        for (const entry of entries) {
+          console.log(formatIdentityLine(entry));
+        }
+        if (entries.some((entry) => entry.problem !== undefined)) {
+          console.log("\nRun `claude-use doctor` for the full detail on every unreadable entry.");
+        }
+      }),
+    ["claude-use identity list", "claude-use identity list --json"],
+  );
+
+  withExamples(
+    identity
+      .command("show <name>")
+      .description("Show one identity's settings and directory.")
+      .option("--json", "Print the identity as JSON.")
+      .action((name: string, options: Readonly<{ json?: boolean }>) => {
+        const entry = listIdentities(paths).find((candidate) => candidate.name === name);
+        if (entry === undefined) {
+          throw new IdentityNotFoundError(name);
+        }
+        const view = toIdentityView(paths, entry);
+        if (options.json === true) {
+          printJson(view);
+          return;
+        }
+        console.log(`Identity: ${view.name}${view.active ? " (active)" : ""}`);
+        console.log(`Directory: ${view.directory}`);
+        if (view.problem !== undefined) {
+          console.log(`Unreadable: ${view.problem}`);
+          return;
+        }
+        console.log(`Default configuration profile: ${view.defaultConfigProfile ?? "(none)"}`);
+        console.log(`Allows ambient credential: ${view.allowAmbientCredential === true ? "yes" : "no"}`);
+      }),
+    ["claude-use identity show work", "claude-use identity show work --json"],
+  );
+
+  withExamples(
+    identity
+      .command("set <name>")
+      .description("Update an identity's settings.")
+      .option("--default-profile <profile>", "Configuration profile this identity uses when nothing more specific selects one.")
+      .option("--no-default-profile", "Clear this identity's default configuration profile.")
+      .option("--allow-ambient-credential", "Allow this identity to launch even with an ambient credential env var set.")
+      .option("--no-allow-ambient-credential", "Disallow ambient credential env vars for this identity (the default).")
+      .action(async (name: string, options: IdentitySetOptions) => {
+        if (options.defaultProfile === undefined && options.allowAmbientCredential === undefined) {
+          throw new UsageError(
+            "Nothing to change: pass --default-profile, --no-default-profile, --allow-ambient-credential or --no-allow-ambient-credential.",
           );
         }
-        setDefaultConfigProfile(paths, identityName, result.name);
-        console.log(`Identity "${identityName}" now defaults to configuration profile "${result.name}".`);
-        return;
-      }
-      setDefaultConfigProfile(paths, identityName, profileName);
-      console.log(`Identity "${identityName}" now defaults to configuration profile "${profileName}".`);
-    });
+        if (!identityExists(paths, name)) {
+          throw new IdentityNotFoundError(name);
+        }
+        if (options.defaultProfile !== undefined) {
+          const profileName = options.defaultProfile === false ? undefined : options.defaultProfile;
+          if (profileName !== undefined) {
+            await ensureProfileExists(deps, profileName);
+          }
+          setDefaultConfigProfile(paths, name, profileName);
+          console.log(
+            profileName === undefined
+              ? `Identity "${name}" no longer has a default configuration profile.`
+              : `Identity "${name}" now defaults to configuration profile "${profileName}".`,
+          );
+        }
+        if (options.allowAmbientCredential !== undefined) {
+          setAllowAmbientCredential(paths, name, options.allowAmbientCredential);
+          console.log(
+            `Identity "${name}" ${options.allowAmbientCredential ? "now allows" : "no longer allows"} an ambient credential.`,
+          );
+        }
+      }),
+    ["claude-use identity set work --default-profile client-acme", "claude-use identity set work --allow-ambient-credential"],
+  );
 
-  identity
-    .command("set <name>")
-    .description("Update an identity's own settings.")
-    .option("--allow-ambient-credential", "Allow this identity to launch even with an ambient credential env var set.")
-    .option("--no-allow-ambient-credential", "Disallow ambient credential env vars for this identity (the default).")
-    .action((name: string, options: Readonly<{ allowAmbientCredential?: boolean }>) => {
-      if (options.allowAmbientCredential === undefined) {
-        console.log("Nothing to change: pass --allow-ambient-credential or --no-allow-ambient-credential.");
-        return;
-      }
-      setAllowAmbientCredential(paths, name, options.allowAmbientCredential);
-      console.log(
-        `Identity "${name}" ${options.allowAmbientCredential ? "now allows" : "no longer allows"} an ambient credential.`,
-      );
-    });
+  withExamples(
+    identity
+      .command("remove <name>")
+      .description(
+        "Delete an identity and its directory, including its credentials and anything it does not share with ~/.claude. Shared data in ~/.claude is kept.",
+      )
+      .option("--yes", "Remove without asking for confirmation (required when standard input is not a terminal).")
+      .action(async (name: string, options: Readonly<{ yes?: boolean }>) => {
+        if (!identityExists(paths, name)) {
+          throw new IdentityNotFoundError(name);
+        }
+        await confirmRemoval(deps, options.yes, `identity "${name}" and its directory ${path.join(paths.identitiesDir, name)}`);
+        removeIdentity(paths, name);
+        console.log(`Removed identity "${name}".`);
+      }),
+    ["claude-use identity remove old-client --yes"],
+  );
+
+  withExamples(
+    identity
+      .command("use <name>")
+      .description("Select the active identity, used by every launch that names none. Offers to create it on a terminal if it does not exist.")
+      .action(async (name: string) => {
+        await selectIdentity(deps, name);
+      }),
+    ["claude-use identity use work", "claude-use @work"],
+  );
+
+  withExamples(
+    identity
+      .command("resolve-conflicts <name>")
+      .description("Interactively resolve data a superseded farm left behind when it collides with the current farm's copy.")
+      .action(async (name: string) => {
+        const result = await resolveFarmConflicts({
+          fs: realFarmFs,
+          identitiesDir: paths.identitiesDir,
+          identity: name,
+          classification: loadClassification(paths),
+          decide: async (conflict) => {
+            const choice = await deps.prompts.select<FarmConflictChoice>({
+              message:
+                `"${conflict.name}" exists both in the superseded farm (${conflict.previousRoot}) and the ` +
+                `current one (${conflict.farmRoot}). Which should be kept?`,
+              options: [
+                { value: "keep-new", label: "Keep the current farm's copy", hint: "discards the superseded one" },
+                { value: "keep-old", label: "Keep the superseded farm's copy", hint: "replaces the current one" },
+                { value: "skip", label: "Skip for now", hint: "leaves both copies, asks again next time" },
+              ],
+            });
+            return deps.prompts.isCancel(choice) ? "skip" : choice;
+          },
+        });
+
+        if (result.autoResolved.length > 0) {
+          console.log(
+            `Auto-resolved ${String(result.autoResolved.length)} disposable runtime entr${result.autoResolved.length === 1 ? "y" : "ies"} ` +
+              `with no prompt (${result.autoResolved.join(", ")}): per-process/per-machine state, never worth asking about.`,
+          );
+        }
+        if (result.resolved.length === 0) {
+          if (result.autoResolved.length === 0) {
+            console.log(`No superseded farm data to resolve for identity "${name}".`);
+          }
+          return;
+        }
+        for (const conflict of result.resolved) {
+          console.log(`  ${conflict.name}: ${conflict.choice}`);
+        }
+        console.log(
+          `Resolved ${String(result.resolved.length)} conflict(s): ${String(result.removed.length)} superseded director(ies) fully ` +
+            `cleared, ${String(result.retained.length)} still retained pending a skipped conflict.`,
+        );
+      }),
+    ["claude-use identity resolve-conflicts work"],
+  );
 }

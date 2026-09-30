@@ -1,10 +1,18 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Help, type Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EXIT_FAILURE, EXIT_USAGE, reportFatalError } from "./cliError";
+import { addIdentity, readActiveIdentity, readIdentity, useIdentity } from "./identityManager";
+import { createProfile, readGlobalConfig, readProfile } from "./configProfiles";
+import { readProvider } from "./providers";
+import { listDirectoryRules } from "./directoryRules";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
+import { fakeCommandDeps } from "./test-helpers";
 
 let root: string;
 let paths: LayoutPaths;
@@ -12,30 +20,424 @@ let paths: LayoutPaths;
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "claude-use-program-"));
   paths = buildLayoutPaths(root);
+  process.exitCode = undefined;
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  process.exitCode = undefined;
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+interface CliResult {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+type RunClaude = (args: readonly string[]) => Promise<void>;
+
+function program(runClaude: RunClaude = vi.fn<RunClaude>(), options: Parameters<typeof fakeCommandDeps>[1] = {}): Command {
+  return buildProgram({ ...fakeCommandDeps(paths, options), runClaude });
+}
+
+/** Runs one `claude-use` invocation against the throwaway layout the way `src/cli.ts` does, capturing both streams and the exit status `reportFatalError` or the command itself decided. */
+async function cli(argv: readonly string[], options: Parameters<typeof fakeCommandDeps>[1] = {}): Promise<CliResult> {
+  const out: string[] = [];
+  const err: string[] = [];
+  vi.spyOn(console, "log").mockImplementation((...args: readonly unknown[]) => {
+    out.push(`${args.map(String).join(" ")}\n`);
+  });
+  vi.spyOn(console, "error").mockImplementation((...args: readonly unknown[]) => {
+    err.push(`${args.map(String).join(" ")}\n`);
+  });
+  vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+    out.push(String(chunk));
+    return true;
+  });
+  vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+    err.push(String(chunk));
+    return true;
+  });
+  let code: number;
+  try {
+    await program(vi.fn<RunClaude>(), options).parseAsync([...argv], { from: "user" });
+    code = typeof process.exitCode === "number" ? process.exitCode : 0;
+  } catch (error) {
+    code = reportFatalError(error, {
+      writeErr: (line) => {
+        err.push(`${line}\n`);
+      },
+      env: {},
+    });
+  } finally {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  }
+  return { code, stdout: out.join(""), stderr: err.join("") };
+}
+
+function parseJson(text: string): unknown {
+  return JSON.parse(text);
+}
+
+function subcommandNames(command: Command, name: string): string[] {
+  const noun = command.commands.find((candidate) => candidate.name() === name);
+  if (noun === undefined) {
+    throw new Error(`no ${name} command`);
+  }
+  return noun.commands.map((sub) => sub.name()).sort();
+}
+
 describe("buildProgram", () => {
   it("registers every top-level command without parsing or launching anything", () => {
-    const runClaude = vi.fn<(args: readonly string[]) => Promise<void>>();
-    const program = buildProgram({ paths, runClaude });
+    const runClaude = vi.fn<RunClaude>();
+    const built = program(runClaude);
 
-    expect(program.commands.map((command) => command.name()).sort()).toEqual(
-      ["__headroom-supervisor", "check", "configure", "doctor", "headroom", "identity", "profile", "provider", "rules", "run", "shim"].sort(),
+    expect(built.commands.map((command) => command.name()).sort()).toEqual(
+      ["__headroom-supervisor", "check", "completion", "configure", "doctor", "headroom", "identity", "profile", "provider", "rule", "run", "shim"].sort(),
     );
     expect(runClaude).not.toHaveBeenCalled();
     expect(fs.readdirSync(root)).toEqual([]);
   });
 
+  it("gives every noun the same verb vocabulary", () => {
+    const built = program();
+    expect(subcommandNames(built, "identity")).toEqual(["add", "list", "remove", "resolve-conflicts", "set", "show", "use"]);
+    expect(subcommandNames(built, "profile")).toEqual(["add", "list", "remove", "set", "show", "use"]);
+    expect(subcommandNames(built, "provider")).toEqual(["add", "list", "remove", "set", "show"]);
+    expect(subcommandNames(built, "rule")).toEqual(["add", "list", "remove", "set", "show"]);
+  });
+
   it("forwards run's arguments verbatim to the injected launcher", async () => {
-    const runClaude = vi.fn<(args: readonly string[]) => Promise<void>>().mockResolvedValue(undefined);
-    const program = buildProgram({ paths, runClaude }).exitOverride();
-
-    await program.parseAsync(["run", "@work", "-p", "hi", "--", "--version"], { from: "user" });
-
+    const runClaude = vi.fn<RunClaude>().mockResolvedValue(undefined);
+    await program(runClaude).parseAsync(["run", "@work", "-p", "hi", "--", "--version"], { from: "user" });
     expect(runClaude).toHaveBeenCalledWith(["@work", "-p", "hi", "--", "--version"]);
+  });
+
+  it.each([
+    [["rules", "list"]],
+    [["profile", "create", "x"]],
+    [["profile", "wizard"]],
+    [["profile", "set-default", "x"]],
+    [["identity", "set-default-profile", "a", "b"]],
+    [["identity", "resolve", "a"]],
+    [["rule", "add", "/p", "--profile", "x"]],
+    [["profile", "set", "x", "--headroom"]],
+    [["profile", "set", "x", "--skip-permissions"]],
+    [["check", "--identity"]],
+  ])("rejects the removed spelling %j as a usage error", async (argv) => {
+    const result = await cli(argv);
+    expect(result.code).toBe(EXIT_USAGE);
+    expect(result.stderr).toMatch(/error:/);
+  });
+
+  it("shows help with a runnable example for every visible command", async () => {
+    const help = new Help();
+    const commandPaths: string[][] = [];
+    const walk = (command: Command, prefix: readonly string[]): void => {
+      for (const sub of help.visibleCommands(command)) {
+        if (sub.name() === "help" || sub.name() === "run") {
+          continue;
+        }
+        commandPaths.push([...prefix, sub.name()]);
+        walk(sub, [...prefix, sub.name()]);
+      }
+    };
+    walk(program(), []);
+    expect(commandPaths.length).toBeGreaterThan(0);
+    for (const commandPath of commandPaths) {
+      const result = await cli([...commandPath, "--help"]);
+      expect({ commandPath, code: result.code }).toEqual({ commandPath, code: 0 });
+      expect(result.stdout).toContain("Examples:");
+      expect(result.stdout).toContain("$ ");
+    }
+  });
+
+  it("documents run, the launch flags, the exit statuses and the double-dash terminator in the root help", async () => {
+    const result = await cli(["--help"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("claude-use run [@<identity>]");
+    expect(result.stdout).toContain("--identity <name>");
+    expect(result.stdout).toContain("--no-provider");
+    expect(result.stdout).toContain("2 usage error");
+    expect(result.stdout).toContain("64");
+    expect(result.stdout).toContain("`--` terminator");
+  });
+});
+
+describe("identity commands", () => {
+  it("adds, shows and lists an identity, as text and as JSON", async () => {
+    expect((await cli(["identity", "add", "work"])).code).toBe(0);
+    expect((await cli(["identity", "add", "work"])).code).toBe(EXIT_FAILURE);
+    useIdentity(paths, "work");
+
+    const shown = await cli(["identity", "show", "work", "--json"]);
+    expect(parseJson(shown.stdout)).toEqual({
+      name: "work",
+      active: true,
+      directory: path.join(paths.identitiesDir, "work"),
+      allowAmbientCredential: false,
+    });
+    expect((await cli(["identity", "show", "work"])).stdout).toContain("Identity: work (active)");
+
+    const listed = await cli(["identity", "list", "--json"]);
+    expect(parseJson(listed.stdout)).toEqual([expect.objectContaining({ name: "work", active: true })]);
+    expect((await cli(["identity", "list"])).stdout).toContain("* work");
+  });
+
+  it("sets and clears the default profile through set, refusing a missing profile without a terminal", async () => {
+    addIdentity(paths, "work");
+    const missing = await cli(["identity", "set", "work", "--default-profile", "ghost"]);
+    expect(missing.code).toBe(EXIT_FAILURE);
+    expect(missing.stderr).toContain('claude-use: No configuration profile named "ghost"');
+
+    createProfile(paths, "acme");
+    expect((await cli(["identity", "set", "work", "--default-profile", "acme"])).code).toBe(0);
+    expect(readIdentity(paths, "work")?.defaultConfigProfile).toBe("acme");
+
+    expect((await cli(["identity", "set", "work", "--no-default-profile"])).code).toBe(0);
+    expect(readIdentity(paths, "work")?.defaultConfigProfile).toBeUndefined();
+  });
+
+  it("offers to create a missing default profile on a terminal", async () => {
+    addIdentity(paths, "work");
+    const result = await cli(["identity", "set", "work", "--default-profile", "fresh"], {
+      interactive: true,
+      answers: ["create", ["knowledge"]],
+    });
+    expect(result.code).toBe(0);
+    expect(readProfile(paths, "fresh")).toBeDefined();
+    expect(readIdentity(paths, "work")?.defaultConfigProfile).toBe("fresh");
+  });
+
+  it("treats set with nothing to change as a usage error", async () => {
+    addIdentity(paths, "work");
+    expect((await cli(["identity", "set", "work"])).code).toBe(EXIT_USAGE);
+  });
+
+  it("requires --yes to remove without a terminal, then deletes the directory and clears the active selection", async () => {
+    addIdentity(paths, "work");
+    useIdentity(paths, "work");
+
+    const refused = await cli(["identity", "remove", "work"]);
+    expect(refused.code).toBe(EXIT_USAGE);
+    expect(refused.stderr).toContain("pass --yes");
+    expect(readIdentity(paths, "work")).toBeDefined();
+
+    expect((await cli(["identity", "remove", "work", "--yes"])).code).toBe(0);
+    expect(fs.existsSync(path.join(paths.identitiesDir, "work"))).toBe(false);
+    expect(readActiveIdentity(paths)).toBeUndefined();
+  });
+
+  it("asks before removing on a terminal and keeps the identity when declined", async () => {
+    addIdentity(paths, "work");
+    expect((await cli(["identity", "remove", "work"], { interactive: true, answers: ["keep"] })).code).toBe(EXIT_FAILURE);
+    expect(readIdentity(paths, "work")).toBeDefined();
+    expect((await cli(["identity", "remove", "work"], { interactive: true, answers: ["remove"] })).code).toBe(0);
+    expect(readIdentity(paths, "work")).toBeUndefined();
+  });
+
+  it("fails use for a missing identity without a terminal, and offers the wizard on one", async () => {
+    const refused = await cli(["identity", "use", "ghost"]);
+    expect(refused.code).toBe(EXIT_FAILURE);
+    expect(refused.stderr).toContain('claude-use: No identity named "ghost"');
+
+    const created = await cli(["identity", "use", "fresh"], { interactive: true, answers: ["create", "skip"] });
+    expect(created.code).toBe(0);
+    expect(readActiveIdentity(paths)).toBe("fresh");
+  });
+});
+
+describe("profile commands", () => {
+  it("adds a profile with a repeated --extends, and refuses a duplicate", async () => {
+    expect((await cli(["profile", "add", "acme", "--extends", "base", "--extends", "strict", "--description", "Acme"])).code).toBe(0);
+    expect(readProfile(paths, "acme")).toEqual({ description: "Acme", extends: ["base", "strict"] });
+    expect((await cli(["profile", "add", "acme", "--extends", "base"])).code).toBe(EXIT_FAILURE);
+  });
+
+  it("creates an empty profile without a terminal, needs a name there, and runs the wizard on one", async () => {
+    expect((await cli(["profile", "add", "plain"])).code).toBe(0);
+    expect(readProfile(paths, "plain")).toEqual({});
+    expect((await cli(["profile", "add"])).code).toBe(EXIT_USAGE);
+
+    expect((await cli(["profile", "add", "guided"], { interactive: true, answers: [["knowledge", "settings"]] })).code).toBe(0);
+    expect(readProfile(paths, "guided")?.categories).toEqual({ history: false });
+  });
+
+  it("sets categories and entries one pair per repeated flag, rejecting a comma list", async () => {
+    createProfile(paths, "acme");
+    const result = await cli(["profile", "set", "acme", "--category", "history=false", "--category", "knowledge=0", "--entry", "knowledge/skills/commit=true"]);
+    expect(result.code).toBe(0);
+    expect(readProfile(paths, "acme")).toMatchObject({
+      categories: { history: false, knowledge: false },
+      entries: { "knowledge/skills/commit": true },
+    });
+
+    expect((await cli(["profile", "set", "acme", "--category", "history=true,knowledge=false"])).code).toBe(EXIT_USAGE);
+  });
+
+  it("sets and clears launch settings under their own --launch-* names", async () => {
+    createProfile(paths, "acme");
+    await cli(["profile", "set", "acme", "--launch-headroom", "--no-launch-skip-permissions", "--launch-provider", "z"]);
+    expect(readProfile(paths, "acme")?.launch).toEqual({ headroom: true, skipPermissions: false, provider: "z" });
+
+    await cli(["profile", "set", "acme", "--no-launch-provider"]);
+    expect(readProfile(paths, "acme")?.launch).toEqual({ headroom: true, skipPermissions: false });
+  });
+
+  it("needs something to change without a terminal", async () => {
+    createProfile(paths, "acme");
+    expect((await cli(["profile", "set", "acme"])).code).toBe(EXIT_USAGE);
+  });
+
+  it("shows and lists profiles as JSON, marking the global default set by use", async () => {
+    createProfile(paths, "acme", ["base"]);
+    expect((await cli(["profile", "use", "ghost"])).code).toBe(EXIT_FAILURE);
+    expect((await cli(["profile", "use", "acme"])).code).toBe(0);
+    expect(readGlobalConfig(paths)?.defaultConfigProfile).toBe("acme");
+
+    expect(parseJson((await cli(["profile", "show", "acme", "--json"])).stdout)).toEqual({ name: "acme", globalDefault: true, extends: ["base"] });
+    expect(parseJson((await cli(["profile", "list", "--json"])).stdout)).toEqual([{ name: "acme", globalDefault: true, extends: ["base"] }]);
+    expect((await cli(["profile", "show", "ghost"])).code).toBe(EXIT_FAILURE);
+  });
+
+  it("removes a profile only with --yes when there is no terminal", async () => {
+    createProfile(paths, "acme");
+    expect((await cli(["profile", "remove", "acme"])).code).toBe(EXIT_USAGE);
+    expect((await cli(["profile", "remove", "acme", "--yes"])).code).toBe(0);
+    expect(readProfile(paths, "acme")).toBeUndefined();
+  });
+});
+
+describe("provider commands", () => {
+  const addZ = ["provider", "add", "z", "--display-name", "z.ai", "--base-url", "https://api.z.ai/api/anthropic", "--token-env", "Z_API_TOKEN"];
+
+  it("adds, updates and shows a provider, with human text by default and JSON on request", async () => {
+    expect((await cli(addZ)).code).toBe(0);
+    expect((await cli([...addZ, "--env", "A=1"])).code).toBe(EXIT_FAILURE);
+
+    expect((await cli(["provider", "set", "z", "--env", "API_TIMEOUT_MS=600000", "--env", "EXTRA=x"])).code).toBe(0);
+    expect((await cli(["provider", "set", "z", "--unset-env", "EXTRA", "--display-name", "Z"])).code).toBe(0);
+    expect(readProvider(paths, "z")).toEqual({
+      displayName: "Z",
+      baseUrl: "https://api.z.ai/api/anthropic",
+      tokenEnv: "Z_API_TOKEN",
+      env: { API_TIMEOUT_MS: "600000" },
+    });
+
+    const text = await cli(["provider", "show", "z"]);
+    expect(text.stdout).toContain("Credential: token from Z_API_TOKEN");
+    expect(() => parseJson(text.stdout)).toThrow();
+    expect(parseJson((await cli(["provider", "show", "z", "--json"])).stdout)).toMatchObject({ name: "z", tokenEnv: "Z_API_TOKEN" });
+    expect(parseJson((await cli(["provider", "list", "--json"])).stdout)).toEqual([expect.objectContaining({ name: "z" })]);
+  });
+
+  it("carries --token-command and --auth-scheme onto add, and switches token source through set", async () => {
+    const add = ["provider", "add", "a", "--display-name", "Anthropic", "--base-url", "https://api.anthropic.com", "--auth-scheme", "apiKey", "--token-command", "op", "read", "op://vault/a/key"];
+    expect((await cli(add)).code).toBe(0);
+    expect(readProvider(paths, "a")).toMatchObject({ tokenCommand: ["op", "read", "op://vault/a/key"], authScheme: "apiKey" });
+    const shown = (await cli(["provider", "show", "a"])).stdout;
+    expect(shown).toContain("Credential: token from command op read op://vault/a/key");
+    expect(shown).toContain("Auth scheme: apiKey");
+
+    expect((await cli(["provider", "set", "a", "--token-env", "ANTHROPIC_KEY"])).code).toBe(0);
+    expect(readProvider(paths, "a")?.tokenEnv).toBe("ANTHROPIC_KEY");
+    expect(readProvider(paths, "a")?.tokenCommand).toBeUndefined();
+
+    expect((await cli(["provider", "set", "a", "--auth-scheme", "bearer", "--token-command", "pass", "show", "a"])).code).toBe(0);
+    expect(readProvider(paths, "a")).toMatchObject({ tokenCommand: ["pass", "show", "a"], authScheme: "bearer" });
+    expect(readProvider(paths, "a")?.tokenEnv).toBeUndefined();
+
+    expect((await cli(["provider", "set", "a", "--auth-scheme", "nonsense"])).code).toBe(EXIT_USAGE);
+  });
+
+  it("refuses an update that would leave the provider without a credential, leaving the file untouched", async () => {
+    await cli(addZ);
+    expect((await cli(["provider", "set", "z", "--no-token-env"])).code).toBe(EXIT_FAILURE);
+    expect(readProvider(paths, "z")?.tokenEnv).toBe("Z_API_TOKEN");
+  });
+
+  it("rejects set on a missing provider, set with nothing to change, and a malformed --env", async () => {
+    expect((await cli(["provider", "set", "ghost", "--base-url", "https://example.com"])).code).toBe(EXIT_FAILURE);
+    await cli(addZ);
+    expect((await cli(["provider", "set", "z"])).code).toBe(EXIT_USAGE);
+    expect((await cli(["provider", "set", "z", "--env", "NOEQUALS"])).code).toBe(EXIT_USAGE);
+  });
+
+  it("removes a provider only with --yes when there is no terminal", async () => {
+    await cli(addZ);
+    expect((await cli(["provider", "remove", "z"])).code).toBe(EXIT_USAGE);
+    expect((await cli(["provider", "remove", "z", "--yes"])).code).toBe(0);
+    expect(readProvider(paths, "z")).toBeUndefined();
+  });
+});
+
+describe("rule commands", () => {
+  it("adds a rule once, then updates it through set", async () => {
+    addIdentity(paths, "work");
+    createProfile(paths, "acme");
+    expect((await cli(["rule", "add", "~/work/acme", "--config-profile", "acme"])).code).toBe(0);
+    expect((await cli(["rule", "add", "~/work/acme", "--identity", "work"])).code).toBe(EXIT_FAILURE);
+
+    expect((await cli(["rule", "set", "~/work/acme", "--identity", "work"])).code).toBe(0);
+    expect(listDirectoryRules(paths)).toEqual([{ path: "~/work/acme", configProfile: "acme", identity: "work" }]);
+
+    expect((await cli(["rule", "set", "~/work/acme", "--no-config-profile"])).code).toBe(0);
+    expect(listDirectoryRules(paths)).toEqual([{ path: "~/work/acme", identity: "work" }]);
+
+    expect((await cli(["rule", "set", "~/work/acme", "--no-identity"])).code).toBe(EXIT_FAILURE);
+  });
+
+  it("refuses a rule that names a missing identity or, without a terminal, a missing profile", async () => {
+    expect((await cli(["rule", "add", "/p", "--identity", "ghost"])).code).toBe(EXIT_FAILURE);
+    expect((await cli(["rule", "add", "/p", "--config-profile", "ghost"])).code).toBe(EXIT_FAILURE);
+    expect((await cli(["rule", "add", "/p"])).code).toBe(EXIT_FAILURE);
+    expect(listDirectoryRules(paths)).toEqual([]);
+  });
+
+  it("shows and lists rules as JSON, and removes one only with --yes when there is no terminal", async () => {
+    createProfile(paths, "acme");
+    await cli(["rule", "add", "/p", "--config-profile", "acme"]);
+    expect(parseJson((await cli(["rule", "show", "/p", "--json"])).stdout)).toEqual({ path: "/p", configProfile: "acme" });
+    expect(parseJson((await cli(["rule", "list", "--json"])).stdout)).toEqual([{ path: "/p", configProfile: "acme" }]);
+    expect((await cli(["rule", "show", "/other"])).code).toBe(EXIT_FAILURE);
+
+    expect((await cli(["rule", "remove", "/p"])).code).toBe(EXIT_USAGE);
+    expect((await cli(["rule", "remove", "/p", "--yes"])).code).toBe(0);
+    expect(listDirectoryRules(paths)).toEqual([]);
+  });
+});
+
+describe("configure", () => {
+  it("refuses to run without a terminal, since every step is a prompt", async () => {
+    addIdentity(paths, "work");
+    const result = await cli(["configure", "--identity", "work"]);
+    expect(result.code).toBe(EXIT_USAGE);
+    expect(result.stderr).toContain("needs a terminal");
+  });
+});
+
+describe("completion", () => {
+  it.each(["bash", "zsh", "fish"])("generates a %s script covering nouns, verbs and flags", async (shell) => {
+    const result = await cli(["completion", shell]);
+    expect(result.code).toBe(0);
+    for (const word of ["identity", "resolve-conflicts"]) {
+      expect(result.stdout).toContain(word);
+    }
+    for (const flag of ["json", "config-profile", "no-provider"]) {
+      expect(result.stdout).toContain(shell === "fish" ? `-l '${flag}'` : `--${flag}`);
+    }
+    expect(result.stdout).not.toContain("__headroom-supervisor");
+  });
+
+  it("rejects an unknown shell as a usage error", async () => {
+    expect((await cli(["completion", "tcsh"])).code).toBe(EXIT_USAGE);
+  });
+
+  it("produces a bash script bash itself parses", async () => {
+    const file = path.join(root, "completion.bash");
+    fs.writeFileSync(file, (await cli(["completion", "bash"])).stdout);
+    expect(() => execFileSync("bash", ["-n", file], { stdio: "pipe" })).not.toThrow();
   });
 });

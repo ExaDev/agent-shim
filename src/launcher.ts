@@ -1,3 +1,6 @@
+import path from "node:path";
+
+import { parseEnvBool } from "./cli/parsers";
 import type { LayoutPaths } from "./paths";
 import { parseLauncherArgv } from "./launcher/argv";
 import { buildCliOverride, type CliOverride } from "./launcher/cliOverride";
@@ -69,12 +72,16 @@ export interface RunLauncherParams {
   readonly headroom?: HeadroomPort;
   /** Runs a provider's `tokenCommand`. Omitted by a caller that cannot run commands; a launch that selects such a provider is then refused rather than started without its credential. */
   readonly run?: RunPort;
+  /** True when the user was asked on a terminal whether to create the selected configuration profile and chose to launch without it. Without that explicit choice, a selected profile with no file is refused rather than silently skipped. */
+  readonly allowMissingConfigProfile?: boolean;
 }
 
 /**
  * Orchestrates one `claude` launch, in order:
  *
  * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the ambient-credential guard, farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and finally spawn.
+ *
+ * A launch that resolves an identity with no `identity.json`, or a configuration profile with no file, is refused with exit 1 naming the missing name and how it was selected: silently proceeding would create a brand-new login for a mistyped `@name`, or launch with a whole cascade layer missing. On a terminal, `src/runClaude.ts` offers to create either before this runs.
  *
  * The farm resync is skipped when `CLAUDE_CONFIG_DIR` was already set (the escape hatch means the user has named a configuration directory explicitly, and claude-use manages neither its contents nor its lifetime) and when no identity resolved at all (a bare launch against plain `~/.claude`, matching the legacy tool's own behaviour). In both cases there is no claude-use-managed farm for a resync to act on.
  */
@@ -137,11 +144,11 @@ export function runLauncher(params: RunLauncherParams): void {
   if (identityDecision.name !== undefined) {
     loadedIdentity = loadIdentity(paths.identitiesDir, identityDecision.name, fs);
     if (loadedIdentity === undefined) {
-      log.warn(
-        `claude-use: identity '${identityDecision.name}' (resolved via ${identityDecision.source}) has no ` +
-          `identity.json yet under ${paths.identitiesDir} — proceeding without its settings. Run ` +
-          "`claude-use identity add` to create it.",
+      log.error(
+        `claude-use: no identity named "${identityDecision.name}" (selected via ${identityDecision.source}). ` +
+          `Run \`claude-use identity add ${identityDecision.name}\` first.`,
       );
+      proc.exit(1);
     }
   }
 
@@ -152,6 +159,17 @@ export function runLauncher(params: RunLauncherParams): void {
     identityDefaultConfigProfile: loadedIdentity?.config.defaultConfigProfile,
     globalDefaultConfigProfile: params.globalDefaultConfigProfile,
   });
+  if (
+    configProfileDecision.name !== undefined &&
+    params.allowMissingConfigProfile !== true &&
+    fs.readConfigFile(path.join(paths.configProfilesDir, `${configProfileDecision.name}.json`)) === undefined
+  ) {
+    log.error(
+      `claude-use: no configuration profile named "${configProfileDecision.name}" (selected via ${configProfileDecision.source}). ` +
+        `Run \`claude-use profile add ${configProfileDecision.name}\` first.`,
+    );
+    proc.exit(1);
+  }
 
   // The cascade is loaded once here, ahead of both the provider decision below and the farm resync further down. A provider name can be pinned by any cascade layer exactly like a launch flag, so it has to be knowable before the ambient-credential guard runs: a provider launch injects its own credential into the child after the guard, which is exactly what the guard would otherwise refuse over. Loading once and passing the same value into the resync also avoids reading the config files twice.
   const farmContext =
@@ -159,14 +177,18 @@ export function runLauncher(params: RunLauncherParams): void {
       ? { farm, identity: farmIdentity, cascade: farm.loadCascade(configProfileDecision.name, cliOverride) }
       : undefined;
 
-  const provider = resolveProvider({
-    paths,
-    port: fs,
-    env,
-    ...(params.run === undefined ? {} : { run: params.run }),
-    ...(parsedArgv.provider === undefined ? {} : { cliProvider: parsedArgv.provider }),
-    ...(farmContext === undefined ? {} : { cascade: farmContext.cascade }),
-  });
+  // `--no-provider` opts this one launch out of whatever provider the cascade would otherwise select, so resolution is skipped outright rather than asked to ignore its own cascade input.
+  const provider =
+    parsedArgv.provider === false
+      ? undefined
+      : resolveProvider({
+          paths,
+          port: fs,
+          env,
+          ...(params.run === undefined ? {} : { run: params.run }),
+          ...(parsedArgv.provider === undefined ? {} : { cliProvider: parsedArgv.provider }),
+          ...(farmContext === undefined ? {} : { cascade: farmContext.cascade }),
+        });
   if (provider !== undefined && !provider.ok) {
     log.error(provider.message);
     proc.exit(provider.status);
@@ -176,7 +198,7 @@ export function runLauncher(params: RunLauncherParams): void {
   const guardResult = evaluateAmbientCredentialGuard({
     env,
     allowAmbientCredential: loadedIdentity?.config.allowAmbientCredential ?? false,
-    allowAmbientCredentialOverride: env.CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL === "1",
+    allowAmbientCredentialOverride: parseEnvBool("CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL", env.CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL) === true,
     identityName: identityDecision.name,
     providerSelected: resolvedProvider !== undefined,
   });
@@ -246,7 +268,11 @@ export function runLauncher(params: RunLauncherParams): void {
   const resolvedFlags = resolveLaunchFlags({
     env,
     ...(cascadeLaunch === undefined ? {} : { cascade: cascadeLaunch }),
-    ...(parsedArgv.headroom === undefined ? {} : { headroomFlag: parsedArgv.headroom }),
+    flags: {
+      ...(parsedArgv.skipPermissions === undefined ? {} : { skipPermissions: parsedArgv.skipPermissions }),
+      ...(parsedArgv.remoteControl === undefined ? {} : { remoteControl: parsedArgv.remoteControl }),
+      ...(parsedArgv.headroom === undefined ? {} : { headroom: parsedArgv.headroom }),
+    },
   });
 
   let headroom: HeadroomUp | undefined;

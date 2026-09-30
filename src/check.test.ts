@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { Decision } from "./resolve/types";
 import { shippedClassification, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, createFakeFarmFs } from "./test-helpers";
 import {
+  checkReportHasWarnings,
+  checkReportToJson,
   flagAmbiguousEncodings,
   formatCheckReport,
   formatDecision,
@@ -315,5 +317,55 @@ describe("formatDecision", () => {
       ],
     };
     expect(formatDecision(decision)).toContain("1 more specific rule(s) eliminated");
+  });
+});
+
+describe("checkReportToJson", () => {
+  it("renders every decision, the layers and the diagnostics as plain JSON-safe data", () => {
+    const farmFs = createFakeFarmFs({
+      [`${FAKE_CLAUDE_HOME}/skills/commit/SKILL.md`]: "content",
+      [`${FAKE_CLAUDE_HOME}/.credentials.json`]: "secret",
+    });
+    const report = runCheck(baseParams({ farmFs, identityName: "work", identitySource: "argv" }));
+
+    const json: unknown = JSON.parse(JSON.stringify(checkReportToJson(report)));
+    expect(json).toMatchObject({
+      identity: { name: "work", source: "argv" },
+      configProfile: { name: null, source: "none" },
+      ambientCredential: { ok: true },
+    });
+    const entries = typeof json === "object" && json !== null && "entries" in json ? json.entries : undefined;
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: ".credentials.json", shared: false, via: "secret-floor", category: "secret" }),
+        expect.objectContaining({ path: "skills", shared: true }),
+      ]),
+    );
+  });
+
+  it("names a refusing ambient credential's variable, never its value", () => {
+    const report = runCheck(baseParams({ env: { ANTHROPIC_API_KEY: "sk-real-secret-value" } }));
+    const text = JSON.stringify(checkReportToJson(report));
+    expect(text).toContain("ANTHROPIC_API_KEY");
+    expect(text).not.toContain("sk-real-secret-value");
+  });
+});
+
+describe("checkReportHasWarnings", () => {
+  it("is false for a clean report", () => {
+    expect(checkReportHasWarnings(runCheck(baseParams()))).toBe(false);
+  });
+
+  it("is true for an ambient credential a launch would refuse", () => {
+    expect(checkReportHasWarnings(runCheck(baseParams({ env: { ANTHROPIC_API_KEY: "sk-x" } })))).toBe(true);
+  });
+
+  it("is true for an ambiguous history/projects/ encoding", () => {
+    const cascade = emptyCascade({
+      baseConfigProfile: "base",
+      loadProfile: (name) =>
+        name === "base" ? { name: "base", profile: { entries: { "history/projects/~/work/clients.acme": true } } } : undefined,
+    });
+    expect(checkReportHasWarnings(runCheck(baseParams({ cascade })))).toBe(true);
   });
 });

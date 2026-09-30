@@ -3,6 +3,8 @@ import path from "node:path";
 import type { Command } from "commander";
 import { z } from "zod";
 
+import { printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
+import { parseEnvBool } from "./cli/parsers";
 import { loadClassification } from "./config/classify";
 import { cosmiconfigReader } from "./config/load";
 import {
@@ -16,7 +18,7 @@ import { buildEntryFacts } from "./launcher/farm";
 import { AMBIENT_CREDENTIAL_VARS, evaluateAmbientCredentialGuard, type AmbientCredentialGuardResult } from "./launcher/guard";
 import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDecisionSource, type IdentityDecisionSource } from "./launcher/identity";
 import type { FarmFs, RunPort } from "./launcher/ports";
-import { resolveClaudeHome, type LayoutPaths } from "./paths";
+import { resolveClaudeHome } from "./paths";
 import {
   realFarmFs,
   realFsPort,
@@ -299,7 +301,8 @@ export function runCheck(params: RunCheckParams): CheckReport {
   const ambientCredential = evaluateAmbientCredentialGuard({
     env: params.env,
     allowAmbientCredential: params.identity?.allowAmbientCredential ?? false,
-    allowAmbientCredentialOverride: params.env.CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL === "1",
+    allowAmbientCredentialOverride:
+      parseEnvBool("CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL", params.env.CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL) === true,
     ...(params.identityName === undefined ? {} : { identityName: params.identityName }),
   });
 
@@ -388,16 +391,61 @@ export function formatCheckReport(report: CheckReport): string[] {
 }
 
 /**
- * Registers `claude-use check [path] [--identity <name>]` onto `program`.
+ * The `check --json` form of a report: every field the text form prints, as plain data (no `Map`s, no compiled matchers), so a script can read the same verdicts a person would.
+ */
+export function checkReportToJson(report: CheckReport): Record<string, unknown> {
+  const decisions = [...report.resolved.decisions.values()].sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
+  return {
+    identity: { name: report.identityName ?? null, source: report.identitySource },
+    configProfile: { name: report.configProfileName ?? null, source: report.configProfileSource },
+    layers: report.resolved.assembled.layers.map((layer) => ({ id: layer.id, kind: layer.kind, source: layer.source })),
+    entries: decisions.map((decision) => ({
+      path: decision.relPath,
+      shared: decision.shared,
+      via: decision.via,
+      category: decision.category,
+      ...(decision.rule === undefined ? {} : { rule: { key: decision.rule.rawKey, layer: decision.rule.layer } }),
+      ...(decision.eliminated === undefined || decision.eliminated.length === 0
+        ? {}
+        : { eliminated: decision.eliminated.map((eliminated) => ({ key: eliminated.rule.rawKey, failed: eliminated.failed })) }),
+    })),
+    projectEncodingAmbiguities: report.projectEncodingAmbiguities,
+    diagnostics: report.resolved.diagnostics,
+    ambientCredential: report.ambientCredential.ok
+      ? { ok: true }
+      : { ok: false, variable: report.ambientCredential.variable, message: report.ambientCredential.message },
+    ...(report.keychain === undefined ? {} : { keychain: report.keychain }),
+    settingsExposure: report.settingsExposure,
+  };
+}
+
+/**
+ * Whether a report carries anything `check --strict` fails on: a resolver diagnostic of warning or error severity, an ambiguous `history/projects/` encoding, or an ambient credential a launch would refuse. Informational diagnostics and the settings-exposure advisory (names and counts only, for a person to review) never fail it.
+ */
+export function checkReportHasWarnings(report: CheckReport): boolean {
+  return (
+    report.resolved.diagnostics.some((diagnostic) => diagnostic.severity !== "info") ||
+    report.projectEncodingAmbiguities.length > 0 ||
+    !report.ambientCredential.ok
+  );
+}
+
+/**
+ * Registers `claude-use check [path] [--identity <name>] [--json] [--strict]` onto `program`.
  *
  * This is the one place in `src/check.ts` that performs real I/O: it wires the real filesystem, clock, git, and `security` ports, resolves the identity/config-profile/cascade for the given path exactly as a real launch would, and hands everything already-loaded to `runCheck`. `runCheck` itself never reads a file, spawns a process, or touches the farm — this wiring function is what makes that possible, mirroring the same split `src/launcher.ts`/`src/cli.ts` already use between pure orchestration and real ports.
  */
-export function registerCheckCommand(program: Command, paths: LayoutPaths): void {
-  program
+export function registerCheckCommand(program: Command, deps: CommandDeps): void {
+  const { paths } = deps;
+  const command = program
     .command("check [path]")
-    .description("Show the resolved cascade for a directory/identity, plus always-on diagnostics. Never touches the farm or spawns claude.")
-    .option("--identity <name>", "Identity to check (defaults to the identity a real launch would resolve).")
-    .action((pathArg: string | undefined, options: Readonly<{ identity?: string }>) => {
+    .description(
+      "Show what a launch in a directory would share or hide and why, plus credential and settings diagnostics. Never touches the farm or spawns claude.",
+    )
+    .option("--identity <name>", "Identity to check (defaults to the identity a launch there would resolve).")
+    .option("--json", "Print the report as JSON.")
+    .option("--strict", "Exit 1 when the report carries any warning, not only on errors.")
+    .action((pathArg: string | undefined, options: Readonly<{ identity?: string; json?: boolean; strict?: boolean }>) => {
       const cwd = pathArg === undefined ? process.cwd() : path.resolve(pathArg);
       const home = os.homedir();
       const claudeHome = resolveClaudeHome();
@@ -469,8 +517,16 @@ export function registerCheckCommand(program: Command, paths: LayoutPaths): void
         platform: process.platform,
       });
 
-      for (const line of formatCheckReport(report)) {
-        console.log(line);
+      if (options.json === true) {
+        printJson(checkReportToJson(report));
+      } else {
+        for (const line of formatCheckReport(report)) {
+          console.log(line);
+        }
+      }
+      if (options.strict === true && checkReportHasWarnings(report)) {
+        process.exitCode = 1;
       }
     });
+  withExamples(command, ["claude-use check", "claude-use check ~/work/acme --identity work --json", "claude-use check --strict"]);
 }

@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { parseEnvBool } from "../cli/parsers";
 import type { LaunchFlags, Provider } from "../config/schema";
 import { mergeAnthropicCustomHeaders } from "../headroom/headers";
 import type { HeadroomUp } from "./ports";
@@ -11,32 +12,43 @@ export interface ResolvedLaunchFlags {
   readonly headroom: boolean;
 }
 
-function isEnvFlagSet(value: string | undefined): boolean {
-  return value === "1";
+/** The one-off command-line forms of the three boolean launch flags, each undefined when neither its positive nor its `--no-` form was given. */
+interface LaunchFlagOverrides {
+  readonly skipPermissions?: boolean;
+  readonly remoteControl?: boolean;
+  readonly headroom?: boolean;
 }
 
 /** Inputs to `resolveLaunchFlags`. */
 export interface ResolveLaunchFlagsParams {
-  /**
-   * The already-resolved cascade value for launch flags, when one exists. Undefined for this phase, since the cascade/farm resync that would produce it lands in Phase 5 — `resolveLaunchFlags` treats an absent cascade exactly like one that set nothing, so this function needs no change once Phase 5 starts supplying a real value here.
-   */
+  /** The cascade's resolved `launch` block, when a cascade was loaded for this launch. */
   readonly cascade?: LaunchFlags;
-  /** The launch's --headroom/--no-headroom flag, when either was given. Beats both the CLAUDE_USE_HEADROOM escape hatch and the cascade. */
-  readonly headroomFlag?: boolean;
+  /** The launch's own `--[no-]skip-permissions`, `--[no-]remote-control` and `--[no-]headroom` flags. */
+  readonly flags?: LaunchFlagOverrides;
   readonly env: Readonly<Record<string, string | undefined>>;
 }
 
 /**
- * Resolves `skipPermissions`/`remoteControl`/`headroom` for one launch: the cascade's own value (once Phase 5 wires it) OR-ed with the one-off environment variable escape hatch, defaulting to OFF for all three when neither says otherwise.
+ * Resolves `skipPermissions`/`remoteControl`/`headroom` for one launch. Each setting has the same three forms, decided in the same order: an explicit command-line flag outright, then its environment variable (`CLAUDE_USE_SKIP_PERMISSIONS`, `CLAUDE_USE_REMOTE_CONTROL`, `CLAUDE_USE_HEADROOM`), then the cascade, and OFF when none of them says otherwise. The flag outranks the environment variable because it is the more deliberate of the two one-off forms (typed on this very command line, not inherited from a shell profile), and both outrank the cascade because they are one-off overrides of it.
+ *
+ * Environment variables read with the shared boolean vocabulary (`true`/`1`, `false`/`0`), so `CLAUDE_USE_SKIP_PERMISSIONS=0` switches off a cascade's `skipPermissions: true` for one launch; any other value throws `InvalidEnvBoolError`.
  *
  * This default-off posture is a deliberate change from the legacy bash tool, which passed `--dangerously-skip-permissions` unconditionally on every launch.
  */
 export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLaunchFlags {
   return {
-    skipPermissions: params.cascade?.skipPermissions === true || isEnvFlagSet(params.env.CLAUDE_USE_SKIP_PERMISSIONS),
-    remoteControl: params.cascade?.remoteControl === true || isEnvFlagSet(params.env.CLAUDE_USE_REMOTE_CONTROL),
-    // Precedence: an explicit --headroom/--no-headroom flag decides outright, then the CLAUDE_USE_HEADROOM escape hatch, then the cascade. The flag outranks the environment variable because it is the more deliberate of the two one-off forms (typed on this very command line, not inherited from a shell profile).
-    headroom: params.headroomFlag ?? (isEnvFlagSet(params.env.CLAUDE_USE_HEADROOM) || params.cascade?.headroom === true),
+    skipPermissions:
+      params.flags?.skipPermissions ??
+      parseEnvBool("CLAUDE_USE_SKIP_PERMISSIONS", params.env.CLAUDE_USE_SKIP_PERMISSIONS) ??
+      params.cascade?.skipPermissions ??
+      false,
+    remoteControl:
+      params.flags?.remoteControl ??
+      parseEnvBool("CLAUDE_USE_REMOTE_CONTROL", params.env.CLAUDE_USE_REMOTE_CONTROL) ??
+      params.cascade?.remoteControl ??
+      false,
+    headroom:
+      params.flags?.headroom ?? parseEnvBool("CLAUDE_USE_HEADROOM", params.env.CLAUDE_USE_HEADROOM) ?? params.cascade?.headroom ?? false,
   };
 }
 

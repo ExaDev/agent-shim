@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { UsageError } from "../cliError";
 import { buildCliOverride, InvalidCliCategoryError, InvalidCliEntryKeyError } from "./cliOverride";
 
 const noFlags = { categoryFlags: [], shareFlags: [], hideFlags: [] };
@@ -20,10 +21,18 @@ describe("buildCliOverride", () => {
     expect(buildCliOverride({ env: {}, ...noFlags, providerFlag: "" })).toBeUndefined();
   });
 
-  it("builds a categories map from a single --category flag", () => {
-    const result = buildCliOverride({ env: {}, ...noFlags, categoryFlags: ["history=true,knowledge=false"] });
+  it("builds a categories map from repeated --category flags, one pair each", () => {
+    const result = buildCliOverride({ env: {}, ...noFlags, categoryFlags: ["history=true", "knowledge=0"] });
     expect(result?.categories).toEqual({ history: true, knowledge: false });
     expect(result?.entries).toBeUndefined();
+  });
+
+  it("rejects a comma list in one --category flag as a usage error", () => {
+    expect(() => buildCliOverride({ env: {}, ...noFlags, categoryFlags: ["history=true,knowledge=false"] })).toThrow(UsageError);
+  });
+
+  it("names the variable when CLAUDE_USE_CATEGORY_OVERRIDE is malformed", () => {
+    expect(() => buildCliOverride({ env: { CLAUDE_USE_CATEGORY_OVERRIDE: "history" }, ...noFlags })).toThrow(/CLAUDE_USE_CATEGORY_OVERRIDE/);
   });
 
   it("merges CLAUDE_USE_CATEGORY_OVERRIDE as a base with --category flags winning on key collision", () => {
@@ -49,7 +58,7 @@ describe("buildCliOverride", () => {
   });
 
   it("lets an explicit --category value narrow what all=true opened", () => {
-    const result = buildCliOverride({ env: {}, ...noFlags, categoryFlags: ["all=true,runtime=false"] });
+    const result = buildCliOverride({ env: {}, ...noFlags, categoryFlags: ["all=true", "runtime=false"] });
     expect(result?.categories).toEqual({ runtime: false, history: true, knowledge: true, settings: true });
   });
 
@@ -69,8 +78,8 @@ describe("buildCliOverride", () => {
     expect(result?.categories).toBeUndefined();
   });
 
-  it("splits a comma-separated --share value into multiple entries", () => {
-    const result = buildCliOverride({ env: {}, ...noFlags, shareFlags: ["knowledge/skills/a,knowledge/skills/b"] });
+  it("takes one path per repeated --share flag", () => {
+    const result = buildCliOverride({ env: {}, ...noFlags, shareFlags: ["knowledge/skills/a", "knowledge/skills/b"] });
     expect(result?.entries).toEqual({ "knowledge/skills/a": true, "knowledge/skills/b": true });
   });
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { InvalidEnvBoolError } from "../cli/parsers";
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags } from "./flags";
 
 describe("resolveLaunchFlags", () => {
@@ -23,9 +24,9 @@ describe("resolveLaunchFlags", () => {
     });
   });
 
-  it("does not treat any value other than the literal string '1' as set", () => {
+  it("treats an empty env value as unset", () => {
     expect(
-      resolveLaunchFlags({ env: { CLAUDE_USE_SKIP_PERMISSIONS: "true", CLAUDE_USE_REMOTE_CONTROL: "0" } }),
+      resolveLaunchFlags({ env: { CLAUDE_USE_SKIP_PERMISSIONS: "", CLAUDE_USE_REMOTE_CONTROL: "0" } }),
     ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false });
   });
 
@@ -37,17 +38,36 @@ describe("resolveLaunchFlags", () => {
     });
   });
 
-  it("ORs the cascade value with the env escape hatch rather than one overriding the other", () => {
+  it("combines settings from different sources independently, each setting decided on its own", () => {
     expect(
       resolveLaunchFlags({ env: { CLAUDE_USE_REMOTE_CONTROL: "1" }, cascade: { skipPermissions: true } }),
     ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false });
   });
 
-  it("lets a --headroom/--no-headroom flag outrank both the env escape hatch and the cascade", () => {
-    expect(resolveLaunchFlags({ env: { CLAUDE_USE_HEADROOM: "1" }, headroomFlag: false }).headroom).toBe(false);
-    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true }, headroomFlag: false }).headroom).toBe(false);
-    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: false }, headroomFlag: true }).headroom).toBe(true);
-    expect(resolveLaunchFlags({ env: {}, headroomFlag: true }).headroom).toBe(true);
+  it.each(["skipPermissions", "remoteControl", "headroom"] as const)(
+    "lets the %s flag outrank both its env variable and the cascade",
+    (key) => {
+      const variable = { skipPermissions: "CLAUDE_USE_SKIP_PERMISSIONS", remoteControl: "CLAUDE_USE_REMOTE_CONTROL", headroom: "CLAUDE_USE_HEADROOM" }[key];
+      expect(resolveLaunchFlags({ env: { [variable]: "1" }, flags: { [key]: false } })[key]).toBe(false);
+      expect(resolveLaunchFlags({ env: {}, cascade: { [key]: true }, flags: { [key]: false } })[key]).toBe(false);
+      expect(resolveLaunchFlags({ env: {}, cascade: { [key]: false }, flags: { [key]: true } })[key]).toBe(true);
+      expect(resolveLaunchFlags({ env: { [variable]: "0" }, flags: { [key]: true } })[key]).toBe(true);
+    },
+  );
+
+  it.each(["skipPermissions", "remoteControl", "headroom"] as const)(
+    "lets the %s env variable outrank the cascade in both directions",
+    (key) => {
+      const variable = { skipPermissions: "CLAUDE_USE_SKIP_PERMISSIONS", remoteControl: "CLAUDE_USE_REMOTE_CONTROL", headroom: "CLAUDE_USE_HEADROOM" }[key];
+      expect(resolveLaunchFlags({ env: { [variable]: "0" }, cascade: { [key]: true } })[key]).toBe(false);
+      expect(resolveLaunchFlags({ env: { [variable]: "false" }, cascade: { [key]: true } })[key]).toBe(false);
+      expect(resolveLaunchFlags({ env: { [variable]: "true" }, cascade: { [key]: false } })[key]).toBe(true);
+    },
+  );
+
+  it("parses env booleans like CLI booleans and refuses anything else", () => {
+    expect(resolveLaunchFlags({ env: { CLAUDE_USE_SKIP_PERMISSIONS: "true" } }).skipPermissions).toBe(true);
+    expect(() => resolveLaunchFlags({ env: { CLAUDE_USE_SKIP_PERMISSIONS: "yes" } })).toThrow(InvalidEnvBoolError);
   });
 
   it("keeps the env escape hatch over the cascade for headroom when no flag was given", () => {

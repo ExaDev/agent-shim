@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import type { z } from "zod";
 
 import { lookupKeychainService } from "./check";
+import { printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
 import {
   ClaudeShimStateSchema,
   commandFilename,
@@ -25,7 +26,6 @@ import { HeadroomStateSchema } from "./headroom/state";
 import { isIdentityDirectoryName } from "./identityManager";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
 import type { RunPort } from "./launcher/ports";
-import type { LayoutPaths } from "./paths";
 import { findExecutableInDir, realFsPort, realIsProcessRunning, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
 import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./resolve/extends";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
@@ -524,17 +524,19 @@ function realpathOrSelf(target: string): string {
 /**
  * Registers `claude-use doctor` onto `program`.
  *
- * This is the one place in `src/doctor.ts` that performs real I/O: it enumerates every identity and configuration profile on disk, reads every top-level config file as raw text (never pre-parsing — see `runDoctor`'s own doc comment for why), resolves the real Claude Code binary the same way `runClaude` does, and hands everything already-loaded to `runDoctor`. Unlike every other command in this project, a report containing failures is not a thrown error: `doctor` succeeds at producing a full report even when it finds problems, so it sets `process.exitCode` rather than throwing or calling `process.exit()` (which would truncate the report already printed).
+ * This is the one place in `src/doctor.ts` that performs real I/O: it enumerates every identity and configuration profile on disk, reads every top-level config file as raw text (never pre-parsing; see `runDoctor`'s own doc comment for why), resolves the real Claude Code binary the same way `runClaude` does, and hands everything already-loaded to `runDoctor`. A report containing failures is not a thrown error: `doctor` succeeds at producing a full report (text, or JSON under `--json`) even when it finds problems, so it sets `process.exitCode` to 1 rather than throwing or calling `process.exit()` (which would truncate the report already printed).
  */
-export function registerDoctorCommand(program: Command, paths: LayoutPaths): void {
-  program
+export function registerDoctorCommand(program: Command, deps: CommandDeps): void {
+  const { paths } = deps;
+  const command = program
     .command("doctor")
     .description(
-      "Audit the whole ~/.claude-use config graph -- every identity, every configuration profile's extends " +
+      "Audit the whole ~/.claude-use config graph: every identity, every configuration profile's extends " +
         "chain, directory-rules.json, config.json, categories.local.json, active-identity, and real Claude " +
-        "Code binary discoverability. Identity/directory-agnostic, unlike `check`.",
+        "Code binary discoverability. Identity/directory-agnostic, unlike `check`. Exits 1 when any check fails.",
     )
-    .action(() => {
+    .option("--json", "Print the report as JSON.")
+    .action((options: Readonly<{ json?: boolean }>) => {
       const identityNames = fs.existsSync(paths.identitiesDir)
         ? fs
             .readdirSync(paths.identitiesDir, { withFileTypes: true })
@@ -620,11 +622,16 @@ export function registerDoctorCommand(program: Command, paths: LayoutPaths): voi
         },
       });
 
-      for (const line of formatDoctorReport(report)) {
-        console.log(line);
+      if (options.json === true) {
+        printJson(report);
+      } else {
+        for (const line of formatDoctorReport(report)) {
+          console.log(line);
+        }
       }
       if (!report.ok) {
         process.exitCode = 1;
       }
     });
+  withExamples(command, ["claude-use doctor", "claude-use doctor --json"]);
 }

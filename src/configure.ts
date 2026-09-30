@@ -16,12 +16,14 @@ import {
   type OverridableCategory,
 } from "./config/schema";
 import { applyPatch, readJson } from "./config/store";
-import { IdentityNotFoundError, readIdentity } from "./identityManager";
+import { withExamples, type CommandDeps } from "./cli/commandDeps";
+import { CliError, UsageError } from "./cliError";
+import { IdentityNotFoundError, readActiveIdentity, readIdentity } from "./identityManager";
 import { readGlobalConfig, listProfiles, readProfile, setProfileCategories, setProfileEntries, createProfile } from "./configProfiles";
 import { readDirectoryRules, writeDirectoryRules } from "./directoryRules";
 import { loadCascadeInput, readDirectorySelections, PORTABLE_CONFIG_FILENAME, PORTABLE_LOCAL_CONFIG_FILENAME } from "./launcher/cascade";
 import { buildEntryFacts } from "./launcher/farm";
-import { decideConfigProfile } from "./launcher/identity";
+import { decideConfigProfile, decideIdentity } from "./launcher/identity";
 import type { LogPort } from "./launcher/ports";
 import { expandTilde, isAncestorOrSelf, normaliseRulePath } from "./pathNorm";
 import { resolveClaudeHome, type LayoutPaths } from "./paths";
@@ -29,6 +31,34 @@ import { realFarmFs, realRunPort, resolveGitBranch } from "./realPorts";
 import { resolveDecisions } from "./resolve/pipeline";
 import { walkDirectoryAncestors } from "./resolve/walk";
 import type { Decision } from "./resolve/types";
+
+/** Raised by `configure` when no configuration profile resolves for the identity at the working directory, so there is no tier-three file for a toggle to land in. */
+export class NoConfigProfileResolvedError extends CliError {
+  constructor(readonly identityName: string, readonly cwd: string) {
+    super(
+      `No configuration profile resolves for identity "${identityName}" at "${cwd}". Create one with ` +
+        `\`claude-use profile add <name>\` and make it this identity's default with ` +
+        `\`claude-use identity set ${identityName} --default-profile <name>\` before running \`configure\`.`,
+    );
+    this.name = "NoConfigProfileResolvedError";
+  }
+}
+
+/** Raised by `configure` when standard input is not a terminal: every step of it is a prompt, so there is no non-interactive form to fall back to. */
+export class ConfigureNeedsTerminalError extends UsageError {
+  constructor() {
+    super("`claude-use configure` is interactive and needs a terminal. From a script, use `claude-use profile set` or edit the files it writes.");
+    this.name = "ConfigureNeedsTerminalError";
+  }
+}
+
+/** Raised by `configure` when no `--identity` was given and nothing else (the environment, a directory pin, the active identity) resolves one. */
+export class NoIdentityResolvedError extends UsageError {
+  constructor(readonly cwd: string) {
+    super(`No identity resolves in "${cwd}": pass --identity <name>, or select one with \`claude-use identity use <name>\`.`);
+    this.name = "NoIdentityResolvedError";
+  }
+}
 
 /* -------------------------------------------------------------------------------------------------- */
 /* PromptsPort: the injectable abstraction around @clack/prompts.                                     */
@@ -379,11 +409,7 @@ function buildConfigureContext(deps: RunConfigureDeps, params: RunConfigureParam
   });
 
   if (configProfileDecision.name === undefined) {
-    throw new Error(
-      `No configuration profile resolves for identity "${params.identityName}" at "${params.cwd}". Create one with ` +
-        "`claude-use profile create <name>` and set it as this identity's default with " +
-        "`claude-use identity set-default-profile <identity> <name>` before running `configure`.",
-    );
+    throw new NoConfigProfileResolvedError(params.identityName, params.cwd);
   }
   const activeConfigProfile = configProfileDecision.name;
 
@@ -496,7 +522,7 @@ export interface ProfileWizardResult {
 }
 
 /**
- * The unified create-or-edit flow for a configuration profile — one guided prompt sequence covering both cases the README previously split across `profile create` (empty, no categories) and `configure`'s "edit a profile directly" branch (categories only, profile must already exist).
+ * The unified create-or-edit flow for a configuration profile: one guided prompt sequence covering both cases that would otherwise split across a bare `profile add` (empty, no categories) and `configure`'s "edit a profile directly" branch (categories only, profile must already exist).
  *
  * Given an `existingName`: edits that profile's categories in place via a multiselect, seeded from its current values. Given a `createName`: creates the empty file with that exact name, no name prompt, then runs the category multiselect. Given neither: prompts for a name first (validated against the allowed shape and against every existing profile name), creates the empty file, then runs the same multiselect. Either way, a cancel at any prompt writes nothing and returns `undefined` — the caller decides what to do (e.g. the launch path proceeds without the profile, the manual command just stops).
  *
@@ -566,7 +592,7 @@ async function runProfileDirectMode(context: ConfigureContext): Promise<void> {
   const { deps } = context;
   const profiles = listProfiles(deps.paths);
   if (profiles.length === 0) {
-    deps.log.info("No configuration profiles exist yet. Run `claude-use profile create <name>` first.");
+    deps.log.info("No configuration profiles exist yet. Run `claude-use profile add <name>` first.");
     return;
   }
 
@@ -705,7 +731,7 @@ async function runEntriesMode(context: ConfigureContext, entriesPath: string): P
 }
 
 /**
- * Runs `claude-use configure <identity> [path]`'s interactive flow.
+ * Runs `claude-use configure [path] --identity <name>`'s interactive flow.
  *
  * Two modes, exactly per the README's "claude-use configure: which file it writes to" section:
  *
@@ -723,23 +749,44 @@ export async function runConfigure(deps: RunConfigureDeps, params: RunConfigureP
   }
 }
 
-/** Registers `claude-use configure <identity> [path]` onto `program`. */
-export function registerConfigureCommand(program: Command, paths: LayoutPaths): void {
-  program
-    .command("configure <identity> [path]")
+/** Registers `claude-use configure [path] [--identity <name>]` onto `program`. */
+export function registerConfigureCommand(program: Command, deps: CommandDeps): void {
+  const { paths } = deps;
+  const command = program
+    .command("configure [path]")
     .description(
-      "Interactively toggle an identity's shared categories, or a specific path's entries overrides, writing to whichever file the 3-tier precedence selects.",
+      "Interactively toggle an identity's shared categories, or the entries under one ~/.claude-relative path, writing to whichever file the 3-tier precedence selects.",
     )
-    .action(async (identityName: string, pathArg: string | undefined) => {
+    .option("--identity <name>", "Identity to configure (defaults to the identity a launch here would resolve).")
+    .action(async (pathArg: string | undefined, options: Readonly<{ identity?: string }>) => {
+      const cwd = process.cwd();
+      if (!deps.isInteractive()) {
+        throw new ConfigureNeedsTerminalError();
+      }
+      const identityName = options.identity ?? resolveLaunchIdentity(paths, cwd);
+      if (identityName === undefined) {
+        throw new NoIdentityResolvedError(cwd);
+      }
       await runConfigure(
-        { paths, prompts: realPromptsPort, log: { info: (message: string) => { console.log(message); } } },
+        { paths, prompts: deps.prompts, log: { info: (message: string) => { console.log(message); } } },
         {
           identityName,
           ...(pathArg === undefined ? {} : { path: pathArg }),
-          cwd: process.cwd(),
+          cwd,
           home: os.homedir(),
           claudeHome: resolveClaudeHome(),
         },
       );
     });
+  withExamples(command, ["claude-use configure", "claude-use configure --identity work", "claude-use configure projects --identity work"]);
+}
+
+/** The identity a launch in `cwd` would resolve with no `@name` or `--identity`: `CLAUDE_USE_IDENTITY`, then a directory pin, then the active identity. Undefined when none applies, or when `CLAUDE_CONFIG_DIR` bypasses identity resolution. */
+function resolveLaunchIdentity(paths: LayoutPaths, cwd: string): string | undefined {
+  const loaded = loadCascadeInput({ paths, home: os.homedir(), cwd, read: cosmiconfigReader() });
+  return decideIdentity({
+    env: process.env,
+    directoryPinnedIdentity: readDirectorySelections(loaded).identity,
+    readActiveIdentityFile: () => readActiveIdentity(paths),
+  }).name;
 }

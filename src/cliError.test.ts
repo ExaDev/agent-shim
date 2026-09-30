@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { CommanderError } from "commander";
 
-import { CliError, reportFatalError } from "./cliError";
+import { CliError, EXIT_FAILURE, EXIT_USAGE, MissingInputError, PromptCancelledError, reportFatalError, UsageError } from "./cliError";
 import { IdentityAlreadyExistsError, IdentityNotFoundError, InvalidIdentityNameError } from "./identityManager";
 import { InvalidCategoryNameError, ProfileAlreadyExistsError, ProfileNotFoundError } from "./configProfiles";
-import { DirectoryRuleMissingTargetError, DirectoryRuleNotFoundError } from "./directoryRules";
+import { DirectoryRuleAlreadyExistsError, DirectoryRuleMissingTargetError, DirectoryRuleNotFoundError } from "./directoryRules";
+import { InvalidEnvBoolError } from "./cli/parsers";
+import { ConflictingIdentityError } from "./launcher/argv";
+import { ConfigureNeedsTerminalError, NoConfigProfileResolvedError, NoIdentityResolvedError } from "./configure";
+import { UnsupportedShellError } from "./completion";
+import { InvalidProviderNameError, ProviderAlreadyExistsError, ProviderNotFoundError } from "./providers";
 import { ForeignClaudeEntryError, UnsupportedShimSourceError } from "./claudeShim";
 import { ConfigValidationError } from "./config/load";
 import { InvalidCliCategoryError, InvalidCliEntryKeyError } from "./launcher/cliOverride";
@@ -35,6 +41,19 @@ describe("every CLI-facing error class extends CliError", () => {
     ["IdentityLockBusyError", () => new IdentityLockBusyError("work", "/some/lock", FAKE_LOCK_HOLDER_PID)],
     ["UnrootedProjectPathError", () => new UnrootedProjectPathError("relative/path")],
     ["EntryKeyError", () => new EntryKeyError("bad-key", "bad", "malformed")],
+    ["DirectoryRuleAlreadyExistsError", () => new DirectoryRuleAlreadyExistsError("/some/path")],
+    ["InvalidEnvBoolError", () => new InvalidEnvBoolError("CLAUDE_USE_HEADROOM", "yes")],
+    ["ConflictingIdentityError", () => new ConflictingIdentityError("work", "personal")],
+    ["ConfigureNeedsTerminalError", () => new ConfigureNeedsTerminalError()],
+    ["NoConfigProfileResolvedError", () => new NoConfigProfileResolvedError("work", "/some/dir")],
+    ["NoIdentityResolvedError", () => new NoIdentityResolvedError("/some/dir")],
+    ["UnsupportedShellError", () => new UnsupportedShellError("tcsh")],
+    ["ProviderNotFoundError", () => new ProviderNotFoundError("z")],
+    ["ProviderAlreadyExistsError", () => new ProviderAlreadyExistsError("z")],
+    ["InvalidProviderNameError", () => new InvalidProviderNameError(".z")],
+    ["UsageError", () => new UsageError("bad")],
+    ["MissingInputError", () => new MissingInputError("--yes", "Confirmation")],
+    ["PromptCancelledError", () => new PromptCancelledError()],
   ])("%s extends CliError", (_name, construct) => {
     expect(construct()).toBeInstanceOf(CliError);
   });
@@ -42,25 +61,49 @@ describe("every CLI-facing error class extends CliError", () => {
 
 class ExampleCliError extends CliError {}
 
+function capture(error: unknown, env: Readonly<Record<string, string | undefined>> = {}): { code: number; lines: string[] } {
+  const lines: string[] = [];
+  const code = reportFatalError(error, {
+    writeErr: (line) => {
+      lines.push(line);
+    },
+    env,
+  });
+  return { code, lines };
+}
+
 describe("reportFatalError", () => {
-  it("prints an expected failure as its message alone and exits 1", () => {
-    const lines: string[] = [];
-    const code = reportFatalError(new ExampleCliError("No identity named \"work\"."), (line) => { lines.push(line); });
-    expect(lines).toEqual(['No identity named "work".']);
-    expect(code).toBe(1);
+  it("prints an expected failure as claude-use: <message> and exits 1", () => {
+    expect(capture(new ExampleCliError('No identity named "work".'))).toEqual({ code: EXIT_FAILURE, lines: ['claude-use: No identity named "work".'] });
   });
 
-  it("prints an unexpected error with its stack trace and exits 1", () => {
-    const lines: string[] = [];
+  it("exits 2 for a usage error, including missing input with no terminal", () => {
+    expect(capture(new UsageError("bad flag")).code).toBe(EXIT_USAGE);
+    const missing = capture(new MissingInputError("--yes", "Confirmation"));
+    expect(missing.code).toBe(EXIT_USAGE);
+    expect(missing.lines[0]).toContain("pass --yes");
+  });
+
+  it("prints an unexpected error by message alone, with no stack, by default", () => {
     const error = new Error("boom");
-    const code = reportFatalError(error, (line) => { lines.push(line); });
-    expect(lines).toEqual([error.stack]);
-    expect(code).toBe(1);
+    expect(capture(error)).toEqual({ code: EXIT_FAILURE, lines: ["claude-use: boom"] });
+  });
+
+  it.each(["1", "true"])("adds the stack trace when CLAUDE_USE_DEBUG=%s", (value) => {
+    const error = new Error("boom");
+    expect(capture(error, { CLAUDE_USE_DEBUG: value }).lines).toEqual(["claude-use: boom", error.stack]);
+  });
+
+  it.each(["0", "false", "", "nonsense"])("keeps the stack hidden when CLAUDE_USE_DEBUG=%j", (value) => {
+    expect(capture(new Error("boom"), { CLAUDE_USE_DEBUG: value }).lines).toEqual(["claude-use: boom"]);
   });
 
   it("prints a thrown non-Error value as text", () => {
-    const lines: string[] = [];
-    expect(reportFatalError("plain", (line) => { lines.push(line); })).toBe(1);
-    expect(lines).toEqual(["plain"]);
+    expect(capture("plain")).toEqual({ code: EXIT_FAILURE, lines: ["claude-use: plain"] });
+  });
+
+  it("maps a Commander error to its own zero for help and version, and to the usage status otherwise, printing nothing itself", () => {
+    expect(capture(new CommanderError(0, "commander.helpDisplayed", "(outputHelp)"))).toEqual({ code: 0, lines: [] });
+    expect(capture(new CommanderError(1, "commander.unknownCommand", "error: unknown command 'rules'"))).toEqual({ code: EXIT_USAGE, lines: [] });
   });
 });

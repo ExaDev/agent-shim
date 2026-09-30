@@ -2,7 +2,10 @@ import path from "node:path";
 
 import categoriesDefaultJson from "./config/categories.default.json";
 import { CategoryClassificationSchema, type CategoryClassification } from "./config/schema";
+import type { CommandDeps } from "./cli/commandDeps";
+import type { MultiselectParams, PromptsPort, SelectParams } from "./configure";
 import type { FarmFs, FarmStat } from "./launcher/ports";
+import type { LayoutPaths } from "./paths";
 import type { EntryFact, EntryFacts } from "./resolve/types";
 import { vi, type Mock } from "vitest";
 
@@ -354,7 +357,14 @@ export function fakeProc(env: Readonly<Record<string, string | undefined>>, argv
   };
 }
 
-export function fakeFs(files: Record<string, unknown>): FsPort {
+/** The identities every launcher test can select by name: each has an `identity.json`, since a launch naming an identity without one is refused. */
+const EXISTING_IDENTITIES: Readonly<Record<string, unknown>> = Object.fromEntries(
+  ["work", "personal"].map((name) => [`${paths.identitiesDir}/${name}/identity.json`, { name, allowAmbientCredential: false }]),
+);
+
+/** A fake `FsPort` over `ownFiles`, layered over `EXISTING_IDENTITIES` so a test only spells out the files it is actually about. */
+export function fakeFs(ownFiles: Record<string, unknown>): FsPort {
+  const files: Record<string, unknown> = { ...EXISTING_IDENTITIES, ...ownFiles };
   return {
     readFileUtf8: (filePath) => {
       const value = files[filePath];
@@ -435,5 +445,68 @@ export function fakeFarm(fs: FakeFarmFs, cliOverride?: CascadeInput["cliOverride
     now: () => FAKE_NOW_MS,
     uniqueSuffix: "launcher-test",
     lock: { pid: 42, isRunning: () => true, sleep: fakeSleep().sleep, maxAttempts: 2 },
+  };
+}
+
+/** A scripted `PromptsPort`: each prompt call consumes the next answer in order. A symbol answer is a cancellation; a select or multiselect answer must name one of the prompt's own options. */
+export function scriptedPrompts(answers: readonly unknown[]): PromptsPort {
+  let index = 0;
+  const next = (): unknown => {
+    const value = answers[index];
+    index += 1;
+    return value;
+  };
+  return {
+    select: async <Value extends string>(params: SelectParams<Value>): Promise<Value | symbol> => {
+      const answer = next();
+      if (typeof answer === "symbol") return Promise.resolve(answer);
+      const option = params.options.find((o) => o.value === answer);
+      if (option === undefined) throw new Error(`scripted select answer not in options: ${String(answer)}`);
+      return Promise.resolve(option.value);
+    },
+    multiselect: async <Value extends string>(params: MultiselectParams<Value>): Promise<readonly Value[] | symbol> => {
+      const answer = next();
+      if (typeof answer === "symbol") return Promise.resolve(answer);
+      if (!Array.isArray(answer)) throw new Error(`scripted multiselect answer is not an array: ${String(answer)}`);
+      const selected: Value[] = [];
+      for (const item of answer) {
+        const option = params.options.find((o) => o.value === item);
+        if (option === undefined) throw new Error(`scripted multiselect answer not in options: ${String(item)}`);
+        selected.push(option.value);
+      }
+      return Promise.resolve(selected);
+    },
+    text: async (): Promise<string | symbol> => {
+      const answer = next();
+      if (typeof answer === "symbol") return Promise.resolve(answer);
+      if (typeof answer !== "string") throw new Error(`scripted text answer is not a string: ${String(answer)}`);
+      return Promise.resolve(answer);
+    },
+    isCancel: (value: unknown): value is symbol => typeof value === "symbol",
+    cancel: () => undefined,
+    intro: () => undefined,
+    outro: () => undefined,
+  };
+}
+
+/** Raised by `fakeCommandDeps`' `exit`, so a test sees the status a command asked to exit with instead of the process ending. */
+class FakeExit extends Error {
+  constructor(readonly code: number) {
+    super(`process would exit with code ${String(code)}`);
+  }
+}
+
+/** A `CommandDeps` for command tests: a non-interactive terminal with no scripted answers unless `options` says otherwise, and an `exit` that throws `FakeExit`. */
+export function fakeCommandDeps(
+  layout: LayoutPaths,
+  options: Readonly<{ interactive?: boolean; answers?: readonly unknown[] }> = {},
+): CommandDeps {
+  return {
+    paths: layout,
+    prompts: scriptedPrompts(options.answers ?? []),
+    isInteractive: () => options.interactive ?? false,
+    exit: (code: number): never => {
+      throw new FakeExit(code);
+    },
   };
 }

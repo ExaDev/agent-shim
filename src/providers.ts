@@ -2,11 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { Option, type Command } from "commander";
 
-import { parsePair } from "./cli/parsers";
+import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
+import { collectRepeated, collectStringPair } from "./cli/parsers";
 import { ConfigValidationError, loadConfigFile } from "./config/load";
 import { readJson, writeJsonAtomic } from "./config/store";
 import { AUTH_SCHEMES, ProviderSchema, type AuthScheme, type Provider } from "./config/schema";
-import { CliError } from "./cliError";
+import { CliError, UsageError } from "./cliError";
 import type { ResolvedProvider } from "./launcher/flags";
 import type { FsPort, RunPort } from "./launcher/ports";
 import { assembleCascade, type CascadeInput } from "./resolve/walk";
@@ -38,14 +39,6 @@ export class InvalidProviderNameError extends CliError {
         `and may then contain letters, numbers, dots, hyphens, underscores, and at signs.`,
     );
     this.name = "InvalidProviderNameError";
-  }
-}
-
-/** Raised when a `--env KEY=VALUE` flag's value has no `=` at all, or an empty key before it. */
-class InvalidProviderEnvPairError extends CliError {
-  constructor(readonly raw: string) {
-    super(`"${raw}" is not a valid --env value. It must be KEY=VALUE, with the first "=" separating key from value.`);
-    this.name = "InvalidProviderEnvPairError";
   }
 }
 
@@ -144,6 +137,47 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
     ...(input.tokenCommand === undefined ? {} : { tokenCommand: input.tokenCommand }),
     ...(input.authScheme === undefined ? {} : { authScheme: input.authScheme }),
     ...(input.env === undefined || Object.keys(input.env).length === 0 ? {} : { env: input.env }),
+  });
+  if (!parsed.success) {
+    throw new ConfigValidationError(providerJsonPath(paths, name), parsed.error.issues);
+  }
+  writeJsonAtomic(providerJsonPath(paths, name), parsed.data);
+  return parsed.data;
+}
+
+/**
+ * The fields `updateProvider` changes. `false` removes `tokenEnv` or `tokenCommand`; naming a new `tokenEnv` replaces any `tokenCommand` and vice versa, since a provider has exactly one token source and switching between those two is what setting one means. `env` entries merge over the existing ones and `unsetEnv` keys are then deleted.
+ */
+interface UpdateProviderInput {
+  readonly displayName?: string;
+  readonly baseUrl?: string;
+  readonly tokenEnv?: string | false;
+  readonly tokenCommand?: readonly [string, ...string[]] | false;
+  readonly authScheme?: AuthScheme;
+  readonly env?: Readonly<Record<string, string>>;
+  readonly unsetEnv?: readonly string[];
+}
+
+/**
+ * Updates an existing provider definition in place. Throws `ProviderNotFoundError` when it does not exist, and `ConfigValidationError` when the updated definition fails `ProviderSchema` (e.g. removing the only token source, or leaving two), leaving the file untouched.
+ */
+function updateProvider(paths: LayoutPaths, name: string, input: UpdateProviderInput): Provider {
+  const existing = readProvider(paths, name);
+  if (existing === undefined) {
+    throw new ProviderNotFoundError(name);
+  }
+  const unset = new Set(input.unsetEnv);
+  const env = Object.fromEntries(Object.entries({ ...existing.env, ...input.env }).filter(([key]) => !unset.has(key)));
+  const parsed = ProviderSchema.safeParse({
+    ...existing,
+    ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+    ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }),
+    ...(input.tokenEnv === undefined ? {} : { tokenEnv: input.tokenEnv === false ? undefined : input.tokenEnv }),
+    ...(typeof input.tokenEnv === "string" && input.tokenCommand === undefined ? { tokenCommand: undefined } : {}),
+    ...(input.tokenCommand === undefined ? {} : { tokenCommand: input.tokenCommand === false ? undefined : input.tokenCommand }),
+    ...(input.tokenCommand !== undefined && input.tokenCommand !== false && input.tokenEnv === undefined ? { tokenEnv: undefined } : {}),
+    ...(input.authScheme === undefined ? {} : { authScheme: input.authScheme }),
+    env: Object.keys(env).length === 0 ? undefined : env,
   });
   if (!parsed.success) {
     throw new ConfigValidationError(providerJsonPath(paths, name), parsed.error.issues);
@@ -268,81 +302,190 @@ export function resolveProvider(params: ResolveProviderParams): ProviderResoluti
   return { ok: true, provider: { name, definition, token } };
 }
 
-/** Commander collector for the repeatable `--env KEY=VALUE` flag. */
-function collectEnvPairs(value: string, previous: Readonly<Record<string, string>> = {}): Record<string, string> {
-  let pair;
-  try {
-    pair = parsePair(value);
-  } catch (error) {
-    if (error instanceof Error) {
-      throw new InvalidProviderEnvPairError(value);
-    }
-    throw error;
+/** One provider as `provider show --json` and `provider list --json` print it: the file's own content (less its editor-only `$schema` pointer) plus its name. */
+function toProviderView(name: string, provider: Provider): Record<string, unknown> {
+  return { name, ...provider, $schema: undefined };
+}
+
+/** Renders where a provider's credential comes from, for the human-readable output: the variable's name or the command's program, never a token value. */
+function describeCredential(provider: Provider): string {
+  if (provider.tokenEnv !== undefined) {
+    return `token from ${provider.tokenEnv}`;
   }
-  return { ...previous, [pair.key]: pair.value };
+  if (provider.tokenCommand !== undefined) {
+    return `token from ${provider.tokenCommand[0]}`;
+  }
+  return "fixed env.ANTHROPIC_AUTH_TOKEN";
+}
+
+/** Options `provider set` accepts. `tokenEnv` and `tokenCommand` are `false` for their `--no-` forms. */
+interface ProviderSetOptions {
+  readonly displayName?: string;
+  readonly baseUrl?: string;
+  readonly tokenEnv?: string | false;
+  readonly tokenCommand?: [string, ...string[]] | false;
+  readonly authScheme?: AuthScheme;
+  readonly env?: Record<string, string>;
+  readonly unsetEnv?: readonly string[];
 }
 
 /** Registers the `claude-use provider` subcommand tree onto `program`. */
-export function registerProviderCommand(program: Command, paths: LayoutPaths): void {
-  const provider = program.command("provider").description("Manage API providers the launcher can route a session through.");
+export function registerProviderCommand(program: Command, deps: CommandDeps): void {
+  const { paths } = deps;
+  const provider = withExamples(
+    program.command("provider").description("Manage API providers: Anthropic-compatible endpoints a launch can route through with --provider."),
+    ["claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --token-env Z_API_TOKEN", "claude-use provider list"],
+  );
 
-  provider
-    .command("add <name>")
-    .description("Create a new API provider definition.")
-    .requiredOption("--display-name <name>", "Human-readable name, exported to the child as CLAUDE_USE_PROVIDER.")
-    .requiredOption("--base-url <url>", "Anthropic-compatible base URL the child's requests are sent to.")
-    .option("--token-env <var>", "NAME of the environment variable holding the provider's token (never the token itself). Exactly one of --token-env, --token-command or --env ANTHROPIC_AUTH_TOKEN=<fixed dummy token for a local proxy> is required.")
-    .option("--token-command <argv...>", "Command (program and arguments) run at launch whose trimmed stdout is the token, e.g. --token-command op read op://vault/item/field. Give it last on the command line, since it consumes every following word.")
-    .addOption(new Option("--auth-scheme <scheme>", "How the token reaches Claude Code: bearer sets ANTHROPIC_AUTH_TOKEN (default), apiKey sets ANTHROPIC_API_KEY.").choices(AUTH_SCHEMES))
-    .option("--env <pair>", "Extra KEY=VALUE environment entry for the child (repeatable).", collectEnvPairs)
-    .action((name: string, options: Readonly<{ displayName: string; baseUrl: string; tokenEnv?: string; tokenCommand?: [string, ...string[]]; authScheme?: AuthScheme; env?: Record<string, string> }>) => {
-      addProvider(paths, name, {
-        displayName: options.displayName,
-        baseUrl: options.baseUrl,
-        ...(options.tokenEnv === undefined ? {} : { tokenEnv: options.tokenEnv }),
-        ...(options.tokenCommand === undefined ? {} : { tokenCommand: options.tokenCommand }),
-        ...(options.authScheme === undefined ? {} : { authScheme: options.authScheme }),
-        ...(options.env === undefined ? {} : { env: options.env }),
-      });
-      const source =
-        options.tokenEnv !== undefined
-          ? `token from ${options.tokenEnv}`
-          : options.tokenCommand !== undefined
-            ? `token from ${options.tokenCommand[0]}`
-            : "fixed env credential";
-      console.log(`Created provider "${name}" (${options.baseUrl}, ${source}).`);
-    });
+  withExamples(
+    provider
+      .command("add <name>")
+      .description("Create a new API provider definition. Fails if one with this name already exists.")
+      .requiredOption("--display-name <name>", "Human-readable name, exported to the child as CLAUDE_USE_PROVIDER.")
+      .requiredOption("--base-url <url>", "Anthropic-compatible base URL the child's requests are sent to.")
+      .option(
+        "--token-env <var>",
+        "NAME of the environment variable holding the provider's token (never the token itself). Exactly one of --token-env, --token-command or --env ANTHROPIC_AUTH_TOKEN=<fixed dummy token for a local proxy> is required.",
+      )
+      .option(
+        "--token-command <argv...>",
+        "Command (program and arguments) run at launch whose trimmed stdout is the token, e.g. --token-command op read op://vault/item/field. Give it last on the command line, since it consumes every following word.",
+      )
+      .addOption(
+        new Option("--auth-scheme <scheme>", "How the token reaches Claude Code: bearer sets ANTHROPIC_AUTH_TOKEN (default), apiKey sets ANTHROPIC_API_KEY.").choices(
+          AUTH_SCHEMES,
+        ),
+      )
+      .option("--env <KEY=VALUE>", "Extra environment entry for the child (repeatable).", collectStringPair)
+      .action(
+        (
+          name: string,
+          options: Readonly<{
+            displayName: string;
+            baseUrl: string;
+            tokenEnv?: string;
+            tokenCommand?: [string, ...string[]];
+            authScheme?: AuthScheme;
+            env?: Record<string, string>;
+          }>,
+        ) => {
+          const created = addProvider(paths, name, {
+            displayName: options.displayName,
+            baseUrl: options.baseUrl,
+            ...(options.tokenEnv === undefined ? {} : { tokenEnv: options.tokenEnv }),
+            ...(options.tokenCommand === undefined ? {} : { tokenCommand: options.tokenCommand }),
+            ...(options.authScheme === undefined ? {} : { authScheme: options.authScheme }),
+            ...(options.env === undefined ? {} : { env: options.env }),
+          });
+          console.log(`Created provider "${name}" (${created.baseUrl}, ${describeCredential(created)}).`);
+        },
+      ),
+    [
+      "claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --token-env Z_API_TOKEN",
+      "claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --token-command op read op://vault/z/credential",
+      "claude-use provider add anthropic-api --display-name Anthropic --base-url https://api.anthropic.com --auth-scheme apiKey --token-env ANTHROPIC_KEY",
+      "claude-use provider add local --display-name Local --base-url http://127.0.0.1:4000 --env ANTHROPIC_AUTH_TOKEN=dummy",
+    ],
+  );
 
-  provider
-    .command("list")
-    .description("List every API provider.")
-    .action(() => {
-      const entries = listProviders(paths);
-      if (entries.length === 0) {
-        console.log("No providers yet. Run `claude-use provider add <name>` to create one.");
-        return;
-      }
-      for (const entry of entries) {
-        console.log(`  ${entry.name} (${entry.provider.displayName}, ${entry.provider.baseUrl})`);
-      }
-    });
+  withExamples(
+    provider
+      .command("set <name>")
+      .description("Update an existing API provider definition.")
+      .option("--display-name <name>", "Replace the human-readable name.")
+      .option("--base-url <url>", "Replace the base URL.")
+      .option("--token-env <var>", "Take the token from this environment variable, replacing any token command.")
+      .option("--no-token-env", "Remove tokenEnv (another token source must remain).")
+      .option(
+        "--token-command <argv...>",
+        "Take the token from this command's trimmed stdout, replacing any token variable. Give it last on the command line, since it consumes every following word.",
+      )
+      .option("--no-token-command", "Remove tokenCommand (another token source must remain).")
+      .addOption(
+        new Option("--auth-scheme <scheme>", "How the token reaches Claude Code: bearer sets ANTHROPIC_AUTH_TOKEN, apiKey sets ANTHROPIC_API_KEY.").choices(
+          AUTH_SCHEMES,
+        ),
+      )
+      .option("--env <KEY=VALUE>", "Add or replace an environment entry for the child (repeatable).", collectStringPair)
+      .option("--unset-env <KEY>", "Remove an environment entry (repeatable).", collectRepeated)
+      .action((name: string, options: ProviderSetOptions) => {
+        if (Object.values(options).every((value) => value === undefined)) {
+          throw new UsageError(
+            "Nothing to change: pass --display-name, --base-url, --token-env, --token-command (or a --no- form), --auth-scheme, --env or --unset-env.",
+          );
+        }
+        const updated = updateProvider(paths, name, options);
+        console.log(`Updated provider "${name}" (${updated.baseUrl}, ${describeCredential(updated)}).`);
+      }),
+    [
+      "claude-use provider set z --base-url https://api.z.ai/api/anthropic",
+      "claude-use provider set z --env API_TIMEOUT_MS=600000",
+      "claude-use provider set z --token-command op read op://vault/z/credential",
+    ],
+  );
 
-  provider
-    .command("show <name>")
-    .description("Print one provider's definition.")
-    .action((name: string) => {
-      const found = readProvider(paths, name);
-      if (found === undefined) {
-        throw new ProviderNotFoundError(name);
-      }
-      console.log(JSON.stringify(found, null, 2));
-    });
+  withExamples(
+    provider
+      .command("list")
+      .description("List every API provider.")
+      .option("--json", "Print the providers as JSON.")
+      .action((options: Readonly<{ json?: boolean }>) => {
+        const entries = listProviders(paths);
+        if (options.json === true) {
+          printJson(entries.map((entry) => toProviderView(entry.name, entry.provider)));
+          return;
+        }
+        if (entries.length === 0) {
+          console.log("No providers yet. Run `claude-use provider add <name>` to create one.");
+          return;
+        }
+        for (const entry of entries) {
+          console.log(`  ${entry.name} (${entry.provider.displayName}, ${entry.provider.baseUrl})`);
+        }
+      }),
+    ["claude-use provider list", "claude-use provider list --json"],
+  );
 
-  provider
-    .command("remove <name>")
-    .description("Delete a provider definition.")
-    .action((name: string) => {
-      removeProvider(paths, name);
-      console.log(`Removed provider "${name}".`);
-    });
+  withExamples(
+    provider
+      .command("show <name>")
+      .description("Show one provider's definition. Credentials are named, never printed: tokenEnv is a variable name, and env values are shown as written in the file.")
+      .option("--json", "Print the provider as JSON.")
+      .action((name: string, options: Readonly<{ json?: boolean }>) => {
+        const found = readProvider(paths, name);
+        if (found === undefined) {
+          throw new ProviderNotFoundError(name);
+        }
+        if (options.json === true) {
+          printJson(toProviderView(name, found));
+          return;
+        }
+        console.log(`Provider: ${name}`);
+        console.log(`Display name: ${found.displayName}`);
+        console.log(`Base URL: ${found.baseUrl}`);
+        console.log(
+          `Credential: ${found.tokenCommand === undefined ? describeCredential(found) : `token from command ${found.tokenCommand.join(" ")}`}`,
+        );
+        console.log(`Auth scheme: ${found.authScheme ?? "bearer"}`);
+        const env = Object.entries(found.env ?? {});
+        console.log(`Environment: ${env.length === 0 ? "(none)" : env.map(([key, value]) => `${key}=${value}`).join(", ")}`);
+      }),
+    ["claude-use provider show z", "claude-use provider show z --json"],
+  );
+
+  withExamples(
+    provider
+      .command("remove <name>")
+      .description("Delete a provider definition.")
+      .option("--yes", "Remove without asking for confirmation (required when standard input is not a terminal).")
+      .action(async (name: string, options: Readonly<{ yes?: boolean }>) => {
+        if (!providerExists(paths, name)) {
+          throw new ProviderNotFoundError(name);
+        }
+        await confirmRemoval(deps, options.yes, `provider "${name}"`);
+        removeProvider(paths, name);
+        console.log(`Removed provider "${name}".`);
+      }),
+    ["claude-use provider remove z --yes"],
+  );
 }

@@ -1,25 +1,57 @@
-/** The result of parsing the launcher's own argv: a leading `@name` identity token, any one-off `claude-use` flags, and everything left to forward. */
+import { UsageError } from "../cliError";
+
+/** The result of parsing the launcher's own argv: the identity selection, any one-off `claude-use` flags, and everything left to forward. */
 export interface ParsedLauncherArgv {
-  /** The identity name from a leading `@name` positional, when one was present at argv[0]. */
+  /** The identity named by a leading `@name` positional at argv[0] or by `--identity <name>`, when either was present. */
   readonly identity?: string;
   /** An explicit `--config-profile <name>` flag, when one was present. */
   readonly configProfile?: string;
-  /** An explicit `--provider <name>` flag, when one was present. */
-  readonly provider?: string;
-  /** The last `--headroom`/`--no-headroom` occurrence, when either was given. Like the valued flags, both forms are consumed here and never forwarded. */
+  /** The last `--provider <name>` or `--no-provider` occurrence: a provider name, or `false` when `--no-provider` opted this launch out of any provider the cascade selects. Undefined when neither was given. */
+  readonly provider?: string | false;
+  /** The last `--headroom`/`--no-headroom` occurrence, when either was given. */
   readonly headroom?: boolean;
-  /** Every `--category <cat>=<bool>[,...]` flag's raw value, in the order given — later values win on key collision when merged. */
+  /** The last `--skip-permissions`/`--no-skip-permissions` occurrence, when either was given. */
+  readonly skipPermissions?: boolean;
+  /** The last `--remote-control`/`--no-remote-control` occurrence, when either was given. */
+  readonly remoteControl?: boolean;
+  /** Every `--category <cat>=<bool>` flag's raw value, in the order given: later values win on key collision when merged. */
   readonly categoryFlags: readonly string[];
-  /** Every `--share <path>[,...]` flag's raw value, in the order given. */
+  /** Every `--share <path>` flag's value, in the order given. */
   readonly shareFlags: readonly string[];
-  /** Every `--hide <path>[,...]` flag's raw value, in the order given. */
+  /** Every `--hide <path>` flag's value, in the order given. */
   readonly hideFlags: readonly string[];
-  /** Everything else, unchanged and in order — including any `@`-prefixed token that appears anywhere other than argv[0], which is never treated specially. */
+  /** Everything else, unchanged and in order: every token from a `--` terminator onwards (the `--` included), and any `@`-prefixed token that appears anywhere other than argv[0]. */
   readonly rest: readonly string[];
 }
 
-const VALUED_FLAGS = ["--config-profile", "--provider", "--category", "--share", "--hide"] as const;
+/** Raised when a launch names its identity twice, through both a leading `@name` and `--identity`, with different names. */
+export class ConflictingIdentityError extends UsageError {
+  constructor(readonly positional: string, readonly flag: string) {
+    super(`The launch names two identities: "@${positional}" and "--identity ${flag}". Pass only one.`);
+    this.name = "ConflictingIdentityError";
+  }
+}
+
+const VALUED_FLAGS = ["--identity", "--config-profile", "--provider", "--category", "--share", "--hide"] as const;
 type ValuedFlag = (typeof VALUED_FLAGS)[number];
+
+/** The boolean launch flags, each with a `--no-` form; the key names the field of `ParsedLauncherArgv` it sets. */
+const BOOLEAN_FLAGS = [
+  { flag: "--headroom", key: "headroom" },
+  { flag: "--skip-permissions", key: "skipPermissions" },
+  { flag: "--remote-control", key: "remoteControl" },
+] as const;
+type BooleanFlagKey = (typeof BOOLEAN_FLAGS)[number]["key"];
+
+/** Every flag `parseLauncherArgv` consumes, both forms of each boolean included: what `claude-use completion` offers after `run`. */
+export const LAUNCHER_FLAG_NAMES: readonly string[] = [
+  ...VALUED_FLAGS,
+  "--no-provider",
+  ...BOOLEAN_FLAGS.flatMap(({ flag }) => [flag, `--no-${flag.slice(2)}`]),
+];
+
+/** The token that ends claude-use's own flag recognition: everything from it onwards belongs to claude, or to a command claude runs. */
+const TERMINATOR = "--";
 
 function matchValuedFlag(token: string): { flag: ValuedFlag; inlineValue?: string } | undefined {
   for (const flag of VALUED_FLAGS) {
@@ -33,19 +65,32 @@ function matchValuedFlag(token: string): { flag: ValuedFlag; inlineValue?: strin
   return undefined;
 }
 
+function matchBooleanFlag(token: string): { key: BooleanFlagKey; value: boolean } | undefined {
+  for (const { flag, key } of BOOLEAN_FLAGS) {
+    if (token === flag) {
+      return { key, value: true };
+    }
+    if (token === `--no-${flag.slice(2)}`) {
+      return { key, value: false };
+    }
+  }
+  return undefined;
+}
+
 /**
- * Parses the launcher's own argv for a leading `@name` identity selector and the one-off `claude-use` flags documented in the README's CLI reference table (`--config-profile`, `--provider`, `--category`, `--share`, `--hide`) — none of which are real Claude Code flags, so all are consumed here and never forwarded.
+ * Parses the launcher's own argv for its identity selection and the one-off `claude-use` launch flags (`--identity`, `--config-profile`, `--provider`/`--no-provider`, `--category`, `--share`, `--hide`, and the `--[no-]headroom`, `--[no-]skip-permissions`, `--[no-]remote-control` booleans). None of these are real Claude Code flags, so all are consumed here and never forwarded.
  *
- * The `@name` form is consumed ONLY at argv[0] — never mid-argument-list. The four flags above are recognised anywhere in argv (accepting both `--flag value` and `--flag=value`), consuming their value token too, and are repeatable: each occurrence's raw value is collected in order so the caller can merge them (later occurrence wins on key collision, matching `claude-use profile set`'s own repeatable-flag convention). A flag given with no value at all (the last token in argv) is left in place, untouched and unconsumed, since there is nothing to pair it with.
+ * The `@name` form is consumed ONLY at argv[0], never mid-argument-list; `--identity <name>` is its explicit form, and naming two different identities through both throws `ConflictingIdentityError`. The flags are recognised only before a `--` terminator: from `--` onwards every token is forwarded verbatim, so `claude mcp add n -- cmd --provider x` keeps `--provider x` for `cmd`. Valued flags accept both `--flag value` and `--flag=value` and take exactly one value per occurrence; `--category`, `--share` and `--hide` repeat to supply several, and every other flag's later occurrence wins. A valued flag with no value after it (the last token, or directly before `--`) is left in place, untouched, since there is nothing to pair it with.
  */
 export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
   const first = argv[0];
-  const hasIdentity = first !== undefined && first.startsWith("@") && first.length > 1;
-  const remaining = hasIdentity ? argv.slice(1) : argv;
+  const positionalIdentity = first !== undefined && first.startsWith("@") && first.length > 1 ? first.slice(1) : undefined;
+  const remaining = positionalIdentity === undefined ? argv : argv.slice(1);
 
+  let flagIdentity: string | undefined;
   let configProfile: string | undefined;
-  let provider: string | undefined;
-  let headroom: boolean | undefined;
+  let provider: string | false | undefined;
+  const booleans: Partial<Record<BooleanFlagKey, boolean>> = {};
   const categoryFlags: string[] = [];
   const shareFlags: string[] = [];
   const hideFlags: string[] = [];
@@ -56,9 +101,17 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
     if (token === undefined) {
       continue;
     }
-    if (token === "--headroom" || token === "--no-headroom") {
-      // Later occurrence wins, matching the repeatable valued flags' own convention.
-      headroom = token === "--headroom";
+    if (token === TERMINATOR) {
+      rest.push(...remaining.slice(index));
+      break;
+    }
+    if (token === "--no-provider") {
+      provider = false;
+      continue;
+    }
+    const booleanFlag = matchBooleanFlag(token);
+    if (booleanFlag !== undefined) {
+      booleans[booleanFlag.key] = booleanFlag.value;
       continue;
     }
 
@@ -73,8 +126,8 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
       value = matched.inlineValue;
     } else {
       const next = remaining[index + 1];
-      if (next === undefined) {
-        // No value to pair with — leave the flag untouched rather than silently swallowing it.
+      if (next === undefined || next === TERMINATOR) {
+        // No value to pair with: leave the flag untouched rather than silently swallowing it (or the terminator).
         rest.push(token);
         continue;
       }
@@ -82,24 +135,40 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
       index += 1;
     }
 
-    if (matched.flag === "--config-profile") {
-      configProfile = value;
-    } else if (matched.flag === "--provider") {
-      provider = value;
-    } else if (matched.flag === "--category") {
-      categoryFlags.push(value);
-    } else if (matched.flag === "--share") {
-      shareFlags.push(value);
-    } else {
-      hideFlags.push(value);
+    switch (matched.flag) {
+      case "--identity":
+        flagIdentity = value;
+        break;
+      case "--config-profile":
+        configProfile = value;
+        break;
+      case "--provider":
+        provider = value;
+        break;
+      case "--category":
+        categoryFlags.push(value);
+        break;
+      case "--share":
+        shareFlags.push(value);
+        break;
+      case "--hide":
+        hideFlags.push(value);
+        break;
+      default:
+        matched.flag satisfies never;
     }
   }
 
+  if (positionalIdentity !== undefined && flagIdentity !== undefined && positionalIdentity !== flagIdentity) {
+    throw new ConflictingIdentityError(positionalIdentity, flagIdentity);
+  }
+  const identity = flagIdentity ?? positionalIdentity;
+
   return {
-    ...(hasIdentity ? { identity: first.slice(1) } : {}),
+    ...(identity === undefined ? {} : { identity }),
     ...(configProfile === undefined ? {} : { configProfile }),
     ...(provider === undefined ? {} : { provider }),
-    ...(headroom === undefined ? {} : { headroom }),
+    ...booleans,
     categoryFlags,
     shareFlags,
     hideFlags,
