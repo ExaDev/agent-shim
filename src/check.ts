@@ -6,19 +6,22 @@ import { z } from "zod";
 import { printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { parseEnvBool } from "./cli/parsers";
 import { loadClassification } from "./config/classify";
-import { cosmiconfigReader } from "./config/load";
+import { ConfigValidationError, cosmiconfigReader } from "./config/load";
 import {
   SHIPPED_CATEGORY_DEFAULTS,
   type CategoryClassification,
   type CategoryClassificationOverlay,
   type Identity,
+  type Provider,
 } from "./config/schema";
+import { formatCredentialSummary, summariseCredential, type CredentialSummary } from "./credential";
 import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import { buildEntryFacts } from "./launcher/farm";
 import { AMBIENT_CREDENTIAL_VARS, evaluateAmbientCredentialGuard, type AmbientCredentialGuardResult } from "./launcher/guard";
 import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDecisionSource, type IdentityDecisionSource } from "./launcher/identity";
 import type { FarmFs, RunPort } from "./launcher/ports";
-import { resolveClaudeHome } from "./paths";
+import { resolveClaudeHome, type LayoutPaths } from "./paths";
+import { cascadeProviderName, LegacyProviderFileError, readProvider } from "./providers";
 import {
   realFarmFs,
   realFsPort,
@@ -229,6 +232,36 @@ export function inspectSettingsExposure(params: InspectSettingsExposureParams): 
   return reports;
 }
 
+/** The provider the cascade selects for this directory, as the wiring layer loaded it: its definition, or why it could not be used (no such provider, an invalid or old-format file). */
+type CheckProviderInput =
+  | { readonly name: string; readonly definition: Provider; readonly problem?: never }
+  | { readonly name: string; readonly definition?: never; readonly problem: string };
+
+/**
+ * Which credential a launch here would use, by source kind and target only: a selected provider's credential block always wins; otherwise the identity's own credential block; otherwise the login stored in the identity's directory.
+ */
+interface CredentialReport {
+  readonly applies: "provider" | "identity" | "stored-login";
+  readonly provider?: { readonly name: string; readonly credential?: CredentialSummary; readonly problem?: string };
+  readonly identity?: CredentialSummary;
+}
+
+function buildCredentialReport(provider: CheckProviderInput | undefined, identity: Identity | undefined): CredentialReport {
+  const identityCredential = identity?.credential === undefined ? undefined : summariseCredential(identity.credential);
+  return {
+    applies: provider !== undefined ? "provider" : identityCredential !== undefined ? "identity" : "stored-login",
+    ...(provider === undefined
+      ? {}
+      : {
+          provider:
+            provider.problem === undefined
+              ? { name: provider.name, credential: summariseCredential(provider.definition.credential) }
+              : { name: provider.name, problem: provider.problem },
+        }),
+    ...(identityCredential === undefined ? {} : { identity: identityCredential }),
+  };
+}
+
 /** Inputs to `runCheck` — everything already loaded/injected, exactly like the resolver core and the launcher: nothing in this function touches a real filesystem, git repository, clock, or environment itself. */
 export interface RunCheckParams {
   readonly cwd: string;
@@ -256,6 +289,8 @@ export interface RunCheckParams {
   readonly farmRoot?: string;
   /** `process.platform` in real use; the Keychain diagnostic only ever runs when this is `"darwin"`. */
   readonly platform: string;
+  /** The provider a launch here would route through (`launch.provider` in the cascade), when one is selected. */
+  readonly provider?: CheckProviderInput;
 }
 
 /** Everything `claude-use check` reports about one directory/identity, without touching the farm or spawning anything. */
@@ -270,6 +305,7 @@ export interface CheckReport {
   readonly ambientCredential: AmbientCredentialGuardResult;
   readonly keychain?: KeychainLookupResult;
   readonly settingsExposure: readonly SettingsExposureReport[];
+  readonly credential: CredentialReport;
 }
 
 /**
@@ -325,6 +361,7 @@ export function runCheck(params: RunCheckParams): CheckReport {
     ambientCredential,
     ...(keychain === undefined ? {} : { keychain }),
     settingsExposure,
+    credential: buildCredentialReport(params.provider, params.identity),
   };
 }
 
@@ -359,6 +396,22 @@ export function formatCheckReport(report: CheckReport): string[] {
     for (const diagnostic of report.resolved.diagnostics) {
       lines.push(`  [${diagnostic.severity}] ${diagnostic.code}: ${diagnostic.message}`);
     }
+  }
+
+  lines.push("", "Credential (source kinds and targets only, never values):");
+  const { credential } = report;
+  if (credential.provider !== undefined) {
+    lines.push(
+      `  Provider ${credential.provider.name}: ${credential.provider.credential === undefined ? `unusable: ${credential.provider.problem ?? ""}` : formatCredentialSummary(credential.provider.credential)}`,
+    );
+  }
+  if (credential.identity !== undefined) {
+    lines.push(
+      `  Identity ${report.identityName ?? "(none)"}: ${formatCredentialSummary(credential.identity)}${credential.applies === "provider" ? " (not used: the provider's credential applies)" : ""}`,
+    );
+  }
+  if (credential.applies === "stored-login") {
+    lines.push("  The identity's stored login (no credential block applies).");
   }
 
   lines.push("", "Ambient-credential exposure:");
@@ -416,18 +469,34 @@ export function checkReportToJson(report: CheckReport): Record<string, unknown> 
       : { ok: false, variable: report.ambientCredential.variable, message: report.ambientCredential.message },
     ...(report.keychain === undefined ? {} : { keychain: report.keychain }),
     settingsExposure: report.settingsExposure,
+    credential: report.credential,
   };
 }
 
 /**
- * Whether a report carries anything `check --strict` fails on: a resolver diagnostic of warning or error severity, an ambiguous `history/projects/` encoding, or an ambient credential a launch would refuse. Informational diagnostics and the settings-exposure advisory (names and counts only, for a person to review) never fail it.
+ * Whether a report carries anything `check --strict` fails on: a resolver diagnostic of warning or error severity, an ambiguous `history/projects/` encoding, an ambient credential a launch would refuse, or a selected provider a launch could not use. Informational diagnostics and the settings-exposure advisory (names and counts only, for a person to review) never fail it.
  */
 export function checkReportHasWarnings(report: CheckReport): boolean {
   return (
     report.resolved.diagnostics.some((diagnostic) => diagnostic.severity !== "info") ||
     report.projectEncodingAmbiguities.length > 0 ||
-    !report.ambientCredential.ok
+    !report.ambientCredential.ok ||
+    report.credential.provider?.problem !== undefined
   );
+}
+
+/** Loads the cascade's selected provider for `check`, turning a missing, invalid or old-format file into a reported problem rather than an aborted report. */
+function loadCheckProvider(paths: LayoutPaths, name: string): CheckProviderInput {
+  let definition: Provider | undefined;
+  try {
+    definition = readProvider(paths, name);
+  } catch (error) {
+    if (error instanceof ConfigValidationError || error instanceof LegacyProviderFileError) {
+      return { name, problem: error.message };
+    }
+    throw error;
+  }
+  return definition === undefined ? { name, problem: `no provider named "${name}"` } : { name, definition };
 }
 
 /**
@@ -489,6 +558,9 @@ export function registerCheckCommand(program: Command, deps: CommandDeps): void 
         ...(configProfileDecision.name === undefined ? {} : { baseConfigProfile: configProfileDecision.name }),
       }).input;
 
+      const providerName = cascadeProviderName(cascade);
+      const provider = providerName === undefined ? undefined : loadCheckProvider(paths, providerName);
+
       const farmRoot = identityDecision.name === undefined ? undefined : path.join(paths.identitiesDir, identityDecision.name);
       const settingsFiles = {
         "settings.json": realFsPort.readFileUtf8(path.join(claudeHome, "settings.json")),
@@ -515,6 +587,7 @@ export function registerCheckCommand(program: Command, deps: CommandDeps): void 
         run: realRunPort,
         ...(farmRoot === undefined ? {} : { farmRoot }),
         platform: process.platform,
+        ...(provider === undefined ? {} : { provider }),
       });
 
       if (options.json === true) {

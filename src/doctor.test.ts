@@ -6,6 +6,7 @@ import {
   runDoctor,
   type DoctorConfigProfileInput,
   type DoctorIdentityInput,
+  type DoctorProviderInput,
   type RunDoctorParams,
 } from "./doctor";
 import type { RunPort } from "./launcher/ports";
@@ -24,6 +25,7 @@ function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorParams {
     env: {},
     identities: [],
     configProfiles: [],
+    providers: [],
     directoryRules: { path: "/claude-use/directory-rules.json", raw: undefined },
     globalConfig: { path: "/claude-use/config.json", raw: undefined },
     categoriesLocal: { path: "/claude-use/categories.local.json", raw: undefined },
@@ -346,7 +348,78 @@ describe("runDoctor: identity", () => {
       }),
     );
     const identityFindings = findingsFor(report, "identity");
-    expect(identityFindings).toEqual([{ section: "identity", subject: "work", severity: "pass", message: "work is valid." }]);
+    expect(identityFindings).toEqual([
+      { section: "identity", subject: "work", severity: "pass", message: "work is valid and authenticates with its stored login." },
+    ]);
+  });
+
+  it("names an identity's credential by source kind and target when it has one", () => {
+    const report = runDoctor(
+      baseParams({
+        identities: [
+          identity("work", {
+            raw: JSON.stringify({ name: "work", credential: { sources: [{ op: "op://vault/claude-work/token" }], target: "oauthToken" } }),
+          }),
+        ],
+      }),
+    );
+    expect(findingsFor(report, "identity")[0]?.message).toBe(
+      "work is valid and authenticates with credential oauthToken from op op://vault/claude-work/token.",
+    );
+  });
+});
+
+function provider(name: string, body: unknown): DoctorProviderInput {
+  return { name, path: `/claude-use/providers/${name}.json`, raw: JSON.stringify(body) };
+}
+
+describe("runDoctor: provider", () => {
+  it("passes a current-format provider, describing its credential without any value", () => {
+    const report = runDoctor(
+      baseParams({ providers: [provider("codex", { displayName: "Codex", baseUrl: "http://127.0.0.1:18789", credential: { sources: [{ literal: "placeholder-value" }] } })] }),
+    );
+    const findings = findingsFor(report, "provider");
+    expect(findings).toEqual([
+      { section: "provider", subject: "codex", severity: "pass", message: "codex is valid (http://127.0.0.1:18789, credential bearer from literal (non-secret placeholder))." },
+    ]);
+    expect(report.ok).toBe(true);
+  });
+
+  it("fails an old-format provider with the old fields named and the whole replacement, never the fixed token's value", () => {
+    const report = runDoctor(
+      baseParams({
+        providers: [
+          provider("codex", {
+            displayName: "Codex",
+            baseUrl: "http://127.0.0.1:18789",
+            env: { ANTHROPIC_AUTH_TOKEN: "fixed-proxy-value", ANTHROPIC_API_KEY: "", API_TIMEOUT_MS: "600000" },
+          }),
+          provider("z", { displayName: "z.ai", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN" }),
+        ],
+      }),
+    );
+    const [codex, z] = findingsFor(report, "provider");
+    expect(report.ok).toBe(false);
+    expect(codex?.severity).toBe("fail");
+    expect(codex?.message).toContain("uses env.ANTHROPIC_AUTH_TOKEN, env.ANTHROPIC_API_KEY, which a credential block replaced");
+    expect(codex?.message).toContain('"literal": "<the value of env.ANTHROPIC_AUTH_TOKEN>"');
+    expect(codex?.message).toContain('"API_TIMEOUT_MS": "600000"');
+    expect(codex?.message).not.toContain("fixed-proxy-value");
+    expect(z?.severity).toBe("fail");
+    const replacement: unknown = JSON.parse(z?.message.slice(z.message.indexOf("{")) ?? "");
+    expect(replacement).toEqual({ displayName: "z.ai", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z_API_TOKEN" }] } });
+  });
+
+  it("fails an invalid provider with its validation errors, and invalid JSON", () => {
+    const report = runDoctor(
+      baseParams({
+        providers: [provider("x", { displayName: "x", baseUrl: "https://a.example" }), { name: "y", path: "/claude-use/providers/y.json", raw: "{bad" }],
+      }),
+    );
+    const findings = findingsFor(report, "provider");
+    expect(findings.map((finding) => finding.severity)).toEqual(["fail", "fail"]);
+    expect(findings[0]?.message).toContain("credential");
+    expect(findings[1]?.message).toContain("not valid JSON");
   });
 });
 

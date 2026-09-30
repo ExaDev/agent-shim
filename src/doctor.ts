@@ -21,9 +21,12 @@ import {
   DirectoryRulesSchema,
   GlobalConfigSchema,
   IdentitySchema,
+  ProviderSchema,
 } from "./config/schema";
+import { describeCredential } from "./credential";
 import { HeadroomStateSchema } from "./headroom/state";
 import { isIdentityDirectoryName } from "./identityManager";
+import { legacyProviderConversion, LegacyProviderFileError } from "./providers";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
 import type { RunPort } from "./launcher/ports";
 import { findExecutableInDir, realFsPort, realIsProcessRunning, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
@@ -39,6 +42,7 @@ type DoctorSection =
   | "path-resolution"
   | "config-profile"
   | "identity"
+  | "provider"
   | "keychain"
   | "directory-rules"
   | "global-config"
@@ -71,6 +75,13 @@ export interface DoctorIdentityInput {
 
 /** One configuration profile's raw `<name>.json`, unparsed. */
 export interface DoctorConfigProfileInput {
+  readonly name: string;
+  readonly path: string;
+  readonly raw: string | undefined;
+}
+
+/** One provider's raw `<name>.json`, unparsed. */
+export interface DoctorProviderInput {
   readonly name: string;
   readonly path: string;
   readonly raw: string | undefined;
@@ -119,6 +130,7 @@ export interface RunDoctorParams {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly identities: readonly DoctorIdentityInput[];
   readonly configProfiles: readonly DoctorConfigProfileInput[];
+  readonly providers: readonly DoctorProviderInput[];
   readonly directoryRules: DoctorFileInput;
   readonly globalConfig: DoctorFileInput;
   readonly categoriesLocal: DoctorFileInput;
@@ -222,7 +234,35 @@ function pushPathResolution(
 }
 
 /**
- * Audits the whole `~/.claude-use` config graph for internal consistency: every identity, every configuration profile's own `extends` chain, `directory-rules.json`, `config.json`, `categories.local.json`, `active-identity`, plus real Claude Code binary discoverability and ambient-credential exposure.
+ * Reports one provider file: an old-format file (before the credential block) fails with the old fields named and the whole file rewritten in the current format, since that is the one change converting it needs; any other invalid file fails with its validation errors; a valid one passes with its credential described by source kind and target.
+ */
+function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, entry: DoctorProviderInput): void {
+  if (entry.raw === undefined) {
+    push("provider", "fail", `${entry.path} is missing.`, entry.name);
+    return;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(entry.raw);
+  } catch (error) {
+    push("provider", "fail", `${entry.path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`, entry.name);
+    return;
+  }
+  const conversion = legacyProviderConversion(parsed);
+  if (conversion !== undefined) {
+    push("provider", "fail", new LegacyProviderFileError(entry.path, conversion).message, entry.name);
+    return;
+  }
+  const validated = ProviderSchema.safeParse(parsed);
+  if (!validated.success) {
+    push("provider", "fail", new ConfigValidationError(entry.path, validated.error.issues).message, entry.name);
+    return;
+  }
+  push("provider", "pass", `${entry.name} is valid (${validated.data.baseUrl}, credential ${describeCredential(validated.data.credential)}).`, entry.name);
+}
+
+/**
+ * Audits the whole `~/.claude-use` config graph for internal consistency: every identity, every configuration profile's own `extends` chain, every provider, `directory-rules.json`, `config.json`, `categories.local.json`, `active-identity`, plus real Claude Code binary discoverability and ambient-credential exposure.
  *
  * Deliberately identity/directory-agnostic, unlike `runCheck` — there is no single cascade to resolve `doctor` against, so it never touches settings-exposure (which only means anything relative to one resolved cascade).
  *
@@ -308,8 +348,18 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
         entry.name,
       );
     } else {
-      push("identity", "pass", `${entry.name} is valid.`, entry.name);
+      const credential = validated.data.credential;
+      push(
+        "identity",
+        "pass",
+        `${entry.name} is valid and authenticates with ${credential === undefined ? "its stored login" : `credential ${describeCredential(credential)}`}.`,
+        entry.name,
+      );
     }
+  }
+
+  for (const entry of params.providers) {
+    pushProvider(push, entry);
   }
 
   if (params.platform !== "darwin" || params.run === undefined) {
@@ -457,6 +507,7 @@ const SECTION_TITLES: Readonly<Record<DoctorSection, string>> = {
   "path-resolution": "PATH resolution",
   "config-profile": "Configuration profiles",
   identity: "Identities",
+  provider: "Providers",
   keychain: "macOS Keychain",
   "directory-rules": "Directory rules",
   "global-config": "Global config",
@@ -472,6 +523,7 @@ const SECTION_ORDER: readonly DoctorSection[] = [
   "path-resolution",
   "config-profile",
   "identity",
+  "provider",
   "keychain",
   "directory-rules",
   "global-config",
@@ -532,7 +584,7 @@ export function registerDoctorCommand(program: Command, deps: CommandDeps): void
     .command("doctor")
     .description(
       "Audit the whole ~/.claude-use config graph: every identity, every configuration profile's extends " +
-        "chain, directory-rules.json, config.json, categories.local.json, active-identity, and real Claude " +
+        "chain, every provider, directory-rules.json, config.json, categories.local.json, active-identity, and real Claude " +
         "Code binary discoverability. Identity/directory-agnostic, unlike `check`. Exits 1 when any check fails.",
     )
     .option("--json", "Print the report as JSON.")
@@ -560,6 +612,18 @@ export function registerDoctorCommand(program: Command, deps: CommandDeps): void
       const configProfiles: DoctorConfigProfileInput[] = profileNames.map((name) => {
         const profilePath = path.join(paths.configProfilesDir, `${name}.json`);
         return { name, path: profilePath, raw: realFsPort.readFileUtf8(profilePath) };
+      });
+
+      const providerNames = fs.existsSync(paths.providersDir)
+        ? fs
+            .readdirSync(paths.providersDir, { withFileTypes: true })
+            .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+            .map((entry) => entry.name.slice(0, -".json".length))
+            .sort()
+        : [];
+      const providers: DoctorProviderInput[] = providerNames.map((name) => {
+        const providerPath = path.join(paths.providersDir, `${name}.json`);
+        return { name, path: providerPath, raw: realFsPort.readFileUtf8(providerPath) };
       });
 
       const ownExecutablePath = realOwnExecutablePath();
@@ -593,6 +657,7 @@ export function registerDoctorCommand(program: Command, deps: CommandDeps): void
         env: process.env,
         identities,
         configProfiles,
+        providers,
         directoryRules: { path: paths.directoryRulesFile, raw: realFsPort.readFileUtf8(paths.directoryRulesFile) },
         globalConfig: { path: paths.globalConfigFile, raw: realFsPort.readFileUtf8(paths.globalConfigFile) },
         categoriesLocal: { path: paths.categoriesLocalFile, raw: realFsPort.readFileUtf8(paths.categoriesLocalFile) },
