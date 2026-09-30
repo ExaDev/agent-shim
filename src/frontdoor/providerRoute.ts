@@ -1,18 +1,17 @@
 import { ConfigValidationError } from "../config/load";
-import { isCodexProvider, type CodexProvider } from "../config/schema";
+import { isCodexProvider, type CodexProvider, type Provider } from "../config/schema";
 import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { resolveCodexConfig } from "../codex/translate";
 import { LegacyProviderFileError, loadProvider } from "../providers";
 import type { FsPort } from "../launcher/ports";
 import { createCodexRouteMount } from "./codexMount";
+import { createPassthroughRoute } from "./passthrough";
 import type { RouteResolution } from "./pipeline";
-import { parseProviderPath, providerBaseUrl, type RoutedRequest } from "./route";
+import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type RoutedRequest } from "./route";
 
 /**
- * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects. Any other target is unrouted.
- *
- * In this stage only a `codex` provider resolves to a served route, mounted as the in-process translator; an `http` provider is refused with a named error until the pass-through route lands, so a misdirected session fails loudly rather than silently tunnelling.
+ * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one. Any other target is unrouted.
  */
 export function createProviderRouteResolver(deps: {
   /** Reads provider files, the same filesystem port the launcher uses. */
@@ -20,8 +19,10 @@ export function createProviderRouteResolver(deps: {
   readonly providersDir: string;
   /** The ports the codex translation route needs, already wired to the real auth store and upstream fetch. */
   readonly codexPorts: Omit<CodexRoutePorts, "loadProvider">;
-  /** The front door's own loopback port, so a headroom hop in front of a codex route can be told to forward back to this very listener. */
-  readonly ownPort: () => number;
+  /**
+   * The direct listener's loopback port. A headroom hop in front of any route is told to forward back to the DIRECT listener's bare origin (headroom appends the client's own path, provider prefix and all, and the direct listener re-resolves it), never this door's main one, or the request would hop through headroom twice.
+   */
+  readonly directPort: () => number;
 }): (request: RoutedRequest) => Promise<RouteResolution> {
   /** The resolution itself is synchronous: reading one provider file needs no await, and keeping it sync is what lets the async wrapper stay honest about its one await. */
   const resolve = (request: RoutedRequest): RouteResolution => {
@@ -43,17 +44,25 @@ export function createProviderRouteResolver(deps: {
     if (definition === undefined) {
       return { ok: false, status: HTTP_STATUS.notFound, message: `no provider named "${provider}"` };
     }
-    if (!isCodexProvider(definition)) {
-      return { ok: false, status: HTTP_STATUS.notFound, message: `provider ${provider} is an http provider, which the front door does not route directly yet` };
+    if (isCodexProvider(definition)) {
+      const codexProvider: CodexProvider = definition;
+      return {
+        ok: true,
+        route: createCodexRouteMount(
+          { ...deps.codexPorts, loadProvider: () => ({ ok: true, config: resolveCodexConfig(codexProvider.codex) }) },
+          directOrigin(deps.directPort()),
+          provider,
+        ),
+      };
     }
-    const codexProvider: CodexProvider = definition;
+    const httpProvider: Provider = definition;
     return {
       ok: true,
-      route: createCodexRouteMount(
-        { ...deps.codexPorts, loadProvider: () => ({ ok: true, config: resolveCodexConfig(codexProvider.codex) }) },
-        providerBaseUrl(deps.ownPort(), provider),
-        provider,
-      ),
+      route: createPassthroughRoute(`http:${provider}`, {
+        baseUrl: httpProvider.baseUrl,
+        stripPrefix: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`,
+        headroomUpstream: directOrigin(deps.directPort()),
+      }),
     };
   };
   return async (request) => await Promise.resolve(resolve(request));

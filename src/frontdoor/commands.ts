@@ -2,29 +2,73 @@ import fs from "node:fs";
 import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
+import { HTTP_STATUS } from "../codex/http";
 import { readGlobalConfig } from "../configProfiles";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
 import { createCodexRoutePorts } from "../codex/commands";
-import { listSessions, removeSession, type HeadroomFs, type HeadroomSession } from "../headroom/state";
+import { readHeadroomState, listSessions, removeSession, type HeadroomFs, type HeadroomSession } from "../headroom/state";
 import type { FrontDoorPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realFsPort, realIsProcessRunning, realSleepSync, spawnDetachedSupervisor } from "../realPorts";
+import {
+  CONNECT_INTERCEPT_HOST,
+  HTTPS_PORT,
+  createLeafCache,
+  ensureCa,
+  generateCa,
+  realConnectCertStore,
+  realConnectEffects,
+  startConnectServer,
+} from "./connect";
 import { ensureFrontDoor } from "./ensure";
 import { serveRouted, type PipelineDeps } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { readFrontDoorState, type FrontDoorState } from "./state";
-import { runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
+import { runFrontDoorSupervisor, type FrontDoorListenerHandle, type FrontDoorSupervisorPorts } from "./supervisor";
 
 function appendLog(paths: LayoutPaths, line: string): void {
   fs.mkdirSync(paths.logsDir, { recursive: true });
   fs.appendFileSync(paths.frontdoorLogPath, `${new Date().toISOString()} ${line}\n`);
 }
 
+/** The headroom daemon's loopback port, read live from its state on every routed request that needs the hop: the daemon can crash and restart on a different port while this door keeps listening, and the hop must follow it (and answer 502 while it is between restarts). */
+function liveHeadroomPort(paths: LayoutPaths): number | undefined {
+  return readHeadroomState(realFarmFs, paths.headroomStateFile)?.port;
+}
+
+/** Binds a front-door server on the preferred port (falling back to any free one) and hands back its close handle. */
+async function bind(server: ReturnType<typeof createFrontDoorServer>, preferredPort: number | undefined): Promise<FrontDoorListenerHandle> {
+  const handle = await listenFrontDoor(server, preferredPort, () => undefined);
+  return { port: handle.port, close: handle.close };
+}
+
 /**
- * The real supervisor ports. `startListener` is where the whole routing pipeline is assembled: the codex translation's real ports, the provider route resolver over them, the ordered pipeline, and the plain-HTTP listener that feeds it, all in this process.
+ * The real supervisor ports. The three listener starts are where the whole routing assembly is built: the codex translation's real ports, the provider route resolver over them, the ordered pipeline (with and without the headroom hop), the two long-lived listeners that feed it, and the CA the CONNECT surface terminates TLS with.
  */
 function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPorts {
+  const log = (line: string): void => {
+    appendLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
+  };
+  // The direct listener's port is only known once it has bound, but the route resolver needs it to name the address a headroom hop forwards an in-process route back to. No request can arrive before the binds complete, so a closure over the late-filled value is exact, not a race.
+  let directPort = 0;
+  // Built once for the process, not per request: the codex translation's upstream agent and auth store hold pooled connections and refresh state that must survive across requests.
+  const codexPorts = createCodexRoutePorts(log);
+  const resolveRoute = createProviderRouteResolver({ fs: realFsPort, providersDir: paths.providersDir, codexPorts, directPort: () => directPort });
+
+  const buildPipeline = (withHeadroomHop: boolean): PipelineDeps => ({
+    resolveRoute,
+    // The response middleware hook point: the usage-tracking work registers its observers here. The direct listener registers none, because its responses are consumed by headroom, not by the client; the entry the client sees is where observation belongs.
+    responseObservers: [],
+    ...(withHeadroomHop ? { headroom: { headroomPort: () => liveHeadroomPort(paths), log } } : {}),
+    log,
+  });
+
+  const onListenerError = (name: string) => (error: Error): void => {
+    appendLog(paths, `frontdoor ${String(process.pid)}: ${name} listener failed: ${error.message}; exiting`);
+    process.exit(1);
+  };
+
   return {
     fs: realFarmFs,
     paths,
@@ -36,31 +80,57 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       });
     },
     isRunning: realIsProcessRunning,
-    startListener: async (preferredPort) => {
-      const log = (line: string): void => {
-        appendLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
-      };
-      // The listener's own port is only known once it has bound, but the route resolver needs it to name the address a headroom hop would forward back to. No request can arrive before the bind completes, so a closure over the late-filled value is exact, not a race.
-      let ownPort = 0;
-      // Built once for the process, not per request: the codex translation's upstream agent and auth store hold pooled connections and refresh state that must survive across requests.
-      const codexPorts = createCodexRoutePorts(log);
-      const resolveRoute = createProviderRouteResolver({ fs: realFsPort, providersDir: paths.providersDir, codexPorts, ownPort: () => ownPort });
-      const deps: PipelineDeps = {
-        resolveRoute,
-        responseObservers: [],
-        log,
-      };
+    startHttpListener: async (preferredPort) => {
       const server = createFrontDoorServer(async (request) => {
-        await serveRouted(request, deps);
+        await serveRouted(request, buildPipeline(true));
       }, log);
-      // A listener error after a successful bind (nothing else fails it) is fatal for the whole door: log it and let the process die so the next launch's ensure starts a replacement on the sticky port.
-      server.on("error", (error: Error) => {
-        appendLog(paths, `frontdoor ${String(process.pid)}: listener failed: ${error.message}; exiting`);
-        process.exit(1);
+      server.on("error", onListenerError("front door"));
+      return await bind(server, preferredPort);
+    },
+    startConnectListener: async (preferredPort) => {
+      // The CA is generated once on this machine's first front-door start and reused after: regenerating it would strand every child still pointing NODE_EXTRA_CA_CERTS at the old certificate.
+      const ca = ensureCa(realConnectCertStore(paths), () => generateCa(new Date()));
+      const leafFor = createLeafCache(ca, () => new Date());
+      const server = await startConnectServer(
+        {
+          interceptHost: CONNECT_INTERCEPT_HOST,
+          serveRouted: (request, response) => {
+            // The connect surface hands the pipeline the same request shape the plain listener builds: identified, middleware-run, routed, with the abort wired to the client going away.
+            const abort = new AbortController();
+            response.on("close", () => {
+              if (!response.writableFinished) {
+                abort.abort();
+              }
+            });
+            void serveRouted({ method: request.method ?? "GET", url: request.url ?? "/", headers: request.headers, body: request, signal: abort.signal, response }, buildPipeline(true)).catch(
+              (error: unknown) => {
+                log(`connect request ${request.method ?? "?"} ${request.url ?? "?"} failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+                if (!response.headersSent) {
+                  response.writeHead(HTTP_STATUS.badGateway, { "Content-Type": "application/json" });
+                  response.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "internal error in the claude-use front door" } }));
+                  return;
+                }
+                response.destroy();
+              },
+            );
+          },
+          leafFor,
+          upstream: { host: CONNECT_INTERCEPT_HOST, port: HTTPS_PORT, tls: true },
+        },
+        realConnectEffects(),
+        preferredPort,
+      );
+      return { port: server.port, close: server.close };
+    },
+    startDirectListener: async (preferredPort) => {
+      const server = createFrontDoorServer(async (request) => {
+        await serveRouted(request, buildPipeline(false));
+      }, log);
+      server.on("error", onListenerError("direct"));
+      const handle = await listenFrontDoor(server, preferredPort, (port) => {
+        directPort = port;
       });
-      return await listenFrontDoor(server, preferredPort, (port) => {
-        ownPort = port;
-      });
+      return { port: handle.port, close: handle.close };
     },
     log: (line) => {
       appendLog(paths, line);
@@ -71,8 +141,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
 /** The real `FrontDoorPort` for one launch: `ensure` runs the lock-and-poll coordination and registers this launcher; `release` removes its registration. */
 export function realFrontDoorPort(paths: LayoutPaths): FrontDoorPort {
   return {
-    ensure: () =>
-      ensureFrontDoor({
+    ensure: () => {
+      const up = ensureFrontDoor({
         paths,
         launcherPid: process.pid,
         ports: {
@@ -82,7 +152,9 @@ export function realFrontDoorPort(paths: LayoutPaths): FrontDoorPort {
           sleep: realSleepSync,
           spawnSupervisor: (layout) => spawnDetachedSupervisor(layout, "__frontdoor-supervisor", layout.frontdoorLogPath),
         },
-      }),
+      });
+      return { port: up.port, connectPort: up.connectPort, caCertPath: paths.frontdoorCaCertFile };
+    },
     release: () => {
       removeSession(realFarmFs, paths.frontdoorSessionsDir, process.pid);
     },
@@ -99,6 +171,8 @@ export interface FrontDoorStatus {
   readonly state: FrontDoorState;
   readonly supervisorAlive: boolean;
   readonly sessions: readonly FrontDoorSessionStatus[];
+  /** The headroom daemon's port as the door's hop reads it live, when the daemon is serving. */
+  readonly headroomPort: number | undefined;
   readonly logPath: string;
   readonly logExists: boolean;
 }
@@ -110,13 +184,14 @@ export function collectFrontDoorStatus(fsPort: HeadroomFs, paths: LayoutPaths, i
     state,
     supervisorAlive: state.supervisorPid !== undefined && isRunning(state.supervisorPid),
     sessions: listSessions(fsPort, paths.frontdoorSessionsDir).map((session) => ({ ...session, alive: isRunning(session.pid) })),
+    headroomPort: readHeadroomState(fsPort, paths.headroomStateFile)?.port,
     logPath: paths.frontdoorLogPath,
     logExists: fsPort.readFileUtf8(paths.frontdoorLogPath) !== undefined,
   };
 }
 
 /** Formats `claude-use frontdoor status`, one line per entry. */
-export function formatFrontDoorStatus(status: FrontDoorStatus): string[] {
+export function formatFrontDoorStatus(status: FrontDoorStatus, caCertPath: string): string[] {
   const lines: string[] = [];
   if (status.state.supervisorPid === undefined) {
     lines.push("supervisor: not running");
@@ -128,6 +203,16 @@ export function formatFrontDoorStatus(status: FrontDoorStatus): string[] {
   } else {
     lines.push(`front door: listening on 127.0.0.1:${String(status.state.port)}, routing /providers/<name> requests`);
   }
+  if (status.state.connectPort === undefined) {
+    lines.push(`connect surface: not listening${status.state.lastConnectPort === undefined ? "" : ` (next start on 127.0.0.1:${String(status.state.lastConnectPort)})`}`);
+  } else {
+    lines.push(`connect surface: listening on 127.0.0.1:${String(status.state.connectPort)}, CA ${caCertPath}`);
+  }
+  lines.push(
+    status.headroomPort === undefined
+      ? "headroom hop: the daemon is not serving (sessions asking for headroom fail until it is up)"
+      : `headroom hop: daemon on 127.0.0.1:${String(status.headroomPort)}`,
+  );
   if (status.sessions.length === 0) {
     lines.push("sessions: none");
   } else {
@@ -151,7 +236,7 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
   withExamples(
     frontdoor
       .command("status")
-      .description("Report the front door's supervisor, listener, sessions, and last error. Read-only.")
+      .description("Report the front door's supervisor, listeners, sessions, and last error. Read-only.")
       .option("--json", "Print the status as JSON.")
       .action((options: Readonly<{ json?: boolean }>) => {
         const status = collectFrontDoorStatus(realFarmFs, paths, realIsProcessRunning);
@@ -159,7 +244,7 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
           printJson(status);
           return;
         }
-        for (const line of formatFrontDoorStatus(status)) {
+        for (const line of formatFrontDoorStatus(status, paths.frontdoorCaCertFile)) {
           console.log(line);
         }
       }),
@@ -168,11 +253,11 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
 
   program
     .command("__frontdoor-supervisor", { hidden: true })
-    .description("Internal: serve the front-door routing listener. Started by the launcher; never run by hand.")
+    .description("Internal: serve the front-door routing listeners. Started by the launcher; never run by hand.")
     .allowUnknownOption()
     .action(async () => {
       const idleShutdownMinutes = readGlobalConfig(paths)?.frontdoor?.idleShutdownMinutes ?? FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES;
-      // The listener is a server inside this process, so an orderly exit takes it with it: there is no child left behind to stop.
+      // The listeners are servers inside this process, so an orderly exit takes them with it: there is no child left behind to stop.
       process.on("SIGTERM", () => {
         deps.exit(0);
       });

@@ -19,15 +19,7 @@ export const HeadroomStateSchema = z.strictObject({
   /** The loopback port the proxy listens on. Absent until the proxy has passed its readiness check, so "port is set" is itself the ready signal a launcher polls for. */
   port: z.number().int().positive().optional(),
   /**
-   * The loopback port the supervisor's in-process MITM CONNECT proxy listens on. Absent whenever no supervisor is serving it, so "mitmPort is set" is the ready signal an OAuth launch polls for alongside `port`.
-   */
-  mitmPort: z.number().int().positive().optional(),
-  /**
-   * The sticky MITM port preference, the exact analogue of `lastPort` for the second server: it survives every shutdown, because every OAuth session's environment was frozen at launch with HTTPS_PROXY pointing at this address and a restart that moves strands them.
-   */
-  lastMitmPort: z.number().int().positive().optional(),
-  /**
-   * The sticky port preference: the address the daemon last served on, kept across crashes, restarts, and idle shutdowns so the next start reuses it. Distinct from `port` on purpose: `port` is the ready signal (absent whenever nothing is serving), while `lastPort` survives every shutdown, because every live session's environment was frozen at launch pointing at this address and a restart that moves strands them.
+   * The sticky port preference: the address the daemon last served on, kept across crashes, restarts, and idle shutdowns so the next start reuses it. Distinct from `port` on purpose: `port` is the ready signal (absent whenever nothing is serving), while `lastPort` survives every shutdown, because the front door (which routes sessions through this daemon) reads it live and follows a restart to whichever address it lands on.
    */
   lastPort: z.number().int().positive().optional(),
   /** The `headroom --version` output of the running install. */
@@ -90,19 +82,11 @@ export function headroomAllowlist(providers: readonly { readonly baseUrl: string
 }
 
 /**
- * The upstreams a set of providers routes to through headroom: every `http` provider's base URL, plus the front door's origin when there is a codex provider and the front door has ever served. A codex session routed through headroom is forwarded back to the front door's own listener (the codex translation is one of its routes), so headroom must admit that address like any provider's; the front door's port is sticky, so its origin stays stable across restarts. Before the front door has ever served there is no address to admit, and the first codex launch starts it before bringing headroom up, so a freshly started headroom daemon already sees it.
+ * The upstreams a set of providers routes to through headroom: every `http` provider's base URL, plus the front door's direct origin once the door has ever served. A provider session routed through headroom is forwarded by the door's hop back through its own direct listener (whatever route serves there, the in-process translator or the pass-through), so headroom must admit that address like any provider's; the direct port is sticky, so its origin stays stable across restarts. Before the front door has ever served there is no address to admit, and the first routed launch starts it before bringing headroom up, so a freshly started headroom daemon already sees it.
  */
 export function headroomUpstreams(providers: readonly Provider[], frontDoorOrigin: string | undefined): readonly { readonly baseUrl: string }[] {
-  const upstreams: { baseUrl: string }[] = [];
-  let hasCodex = false;
-  for (const provider of providers) {
-    if (isCodexProvider(provider)) {
-      hasCodex = true;
-    } else {
-      upstreams.push({ baseUrl: provider.baseUrl });
-    }
-  }
-  if (hasCodex && frontDoorOrigin !== undefined) {
+  const upstreams: { baseUrl: string }[] = providers.filter((provider) => !isCodexProvider(provider)).map((provider) => ({ baseUrl: provider.baseUrl }));
+  if (providers.length > 0 && frontDoorOrigin !== undefined) {
     upstreams.push({ baseUrl: frontDoorOrigin });
   }
   return upstreams;

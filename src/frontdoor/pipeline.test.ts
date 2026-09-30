@@ -91,7 +91,7 @@ function deps(resolution: RouteResolution, observers: readonly ResponseObserver[
 describe("createRoutedResponse", () => {
   it("applies backpressure: a write that the socket refuses waits for its drain", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", headroom: false }, route: "test" });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", headroom: false, projectId: undefined }, route: "test" });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -107,7 +107,7 @@ describe("createRoutedResponse", () => {
 
   it("settles a backpressured write when the client goes away, so a route is never left waiting on a dead socket", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", headroom: false }, route: "test" });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", headroom: false, projectId: undefined }, route: "test" });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
