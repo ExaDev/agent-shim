@@ -11,7 +11,8 @@ src/
   cli.ts                 # entrypoint and the only module with import-time side effects; dispatches on invoked name -> launcher vs the claude-use command tree
   program.ts              # buildProgram: constructs the whole claude-use Commander tree with no side effects, so the command surface is unit-testable
   runClaude.ts            # the launch pipeline wired to real ports, shared by the `claude` binary name and `claude-use run`
-  cliError.ts             # CliError, the base class every user-facing error extends, and reportFatalError, the one place a failure becomes output and an exit status
+  cliError.ts             # CliError (and UsageError, MissingInputError, PromptCancelledError), the documented exit statuses, and reportFatalError, the one place a failure becomes output and an exit status
+  completion.ts           # `claude-use completion <shell>`: bash, zsh and fish scripts generated from the built command tree
   paths.ts               # CLAUDE_USE_HOME-aware layout paths — every other module resolves ~/.claude-use/... paths through this, never inline
   pathNorm.ts            # rule-path normalisation/ancestor helpers shared across the resolver and directory rules
   versionDiscovery.ts     # portable "find the real claude binary" logic
@@ -19,7 +20,7 @@ src/
   launcher.ts             # runLauncher: thin orchestration over launcher/* below
   launcher/
     ports.ts              # FsPort, SpawnPort, RunPort, ClockPort, ProcPort, LogPort, FarmFs — injected, fakeable
-    argv.ts               # parseLauncherArgv — @name consumed only at argv[0]
+    argv.ts               # parseLauncherArgv: @name only at argv[0], --identity, the launch flags, nothing after a `--` terminator
     guard.ts              # the ambient-credential guard — six guarded vars, empty string counts as unset
     identity.ts           # decideIdentity, decideConfigProfile, loadIdentity
     flags.ts              # resolveLaunchFlags, buildFlagArgs, buildArgv, buildEnv
@@ -28,9 +29,9 @@ src/
     lock.ts               # per-identity resync lock
     farm.ts               # farm resync: plan -> build scratch -> reconcile/carry-over -> atomic swap -> crash recovery
     spawn.ts              # spawnClaude — spawns the real binary, propagates its exit code
-  identityManager.ts      # `claude-use identity` subcommands
-  configProfiles.ts       # `claude-use profile` subcommands (scriptable set/set-default alongside `create`/`list`)
-  providers.ts            # `claude-use provider` subcommands + the launch-time provider resolution the launcher calls
+  identityManager.ts      # the `identity` noun: add/list/show/set/remove/use/resolve-conflicts
+  configProfiles.ts       # the `profile` noun: add/set/list/show/remove/use
+  providers.ts            # the `provider` noun (add/set/list/show/remove) + the launch-time provider resolution the launcher calls
   headroom/                # the headroom routing daemon: coordination state, the launcher-side ensure step, the supervisor loop, and the `headroom status` / hidden `__headroom-supervisor` commands
     state.ts               # state.json, the session registry, the start lock, allowlist computation — pure over an injected HeadroomFs
     ensure.ts               # the launcher's lock-and-poll bring-up: start at most one supervisor, wait for ready state (daemon port AND MITM port), register the session
@@ -38,13 +39,15 @@ src/
     mitm.ts                 # the MITM CONNECT proxy OAuth launches route through: node-forge CA/leaf minting, the routing decisions, and the real effects over node's net/tls/http
     headers.ts              # ANTHROPIC_CUSTOM_HEADERS merge (Name: Value lines, later block wins per name)
     commands.ts             # real ports for the supervisor, `headroom status`, command registration
-  directoryRules.ts       # `claude-use rules` subcommands
+  directoryRules.ts       # the `rule` noun: add/set/list/show/remove
   configure.ts            # `claude-use configure` interactive picker (@clack/prompts)
   check.ts                # `claude-use check` dry-run inspector — cascade resolution, ambient-credential/Keychain/settings-secrets diagnostics — no farm writes, no spawn
   doctor.ts                # `claude-use doctor` whole-tree audit — every identity/profile/extends-chain/directory-rules/config.json/categories.local.json/active-identity, plus which `claude-use` PATH actually resolves to, aggregating rather than throwing on a broken file
   claudeShim.ts            # `claude-use shim enable`/`disable` — the one explicit action that creates/removes a `claude`-named hardlink of the running executable; records claude-shim.json
   cli/
-    parsers.ts            # shared CLI-flag parsing helpers (splitTopLevelCommas, parsePair, repeatable-flag collectors)
+    bool.ts               # the one boolean vocabulary (true/1, false/0) flags and environment variables share
+    parsers.ts            # parsePair, parseBool, parseEnvBool, and the one-value-per-occurrence repeatable-flag collectors
+    commandDeps.ts        # CommandDeps (paths, prompts, terminal check, exit) every command registers with, plus --json, examples and the shared remove confirmation
   resolve/
     pipeline.ts            # resolveDecisions: runs the whole pipeline for one launch, topLevelNames
     types.ts              # every resolver type
@@ -82,7 +85,9 @@ install.sh                 # downloads the latest release's binary for the runni
 
 ### Error reporting: `CliError` vs. everything else
 
-Every custom error this project throws to represent an expected, user-facing failure (a missing identity/profile/rule, a malformed config file, an invalid `--category`/`--share`/`--hide` flag) extends `CliError` (`src/cliError.ts`), an otherwise-empty abstract subclass of `Error`. `main()` in `src/cli.ts` hands whatever it rejects with to `reportFatalError`, the single error path for every command, the `@name` shortcut and the `claude`-named launcher alike: a `CliError` prints as `error.message` alone, with no stack trace, and anything else (a genuine, unanticipated bug) prints its full stack trace, which is more useful for diagnosing it than swallowing it would be. `main()` calls `buildProgram(...).parseAsync(process.argv)`, not `.parse()`, so an `async` action's rejection (any command that awaits an interactive prompt) reaches the same path rather than surfacing as an unhandled promise rejection Commander's synchronous `.parse()` never awaits.
+Every custom error this project throws to represent an expected, user-facing failure (a missing identity/profile/rule, a malformed config file, an invalid `--category`/`--share`/`--hide` flag) extends `CliError` (`src/cliError.ts`), which carries the exit status it maps to: 1 by default, 2 for a `UsageError` (a malformed flag or environment value, or a `MissingInputError` when a command needs input and standard input is not a terminal). `main()` in `src/cli.ts` hands whatever it rejects with to `reportFatalError`, the single error path for every command, the `@name` shortcut and the `claude`-named launcher alike: a `CliError` prints as `claude-use: <message>` with no stack trace; a `CommanderError` (the program is built with `exitOverride`, so an unknown command or option throws after Commander has printed its own message) maps to its own 0 for `--help`/`--version` and to 2 otherwise; anything else is an unanticipated bug, printed as `claude-use: <message>` with its stack trace added only when `CLAUDE_USE_DEBUG` is true. Nothing calls `process.exit` directly: commands that report findings (`doctor`, `check --strict`) set `process.exitCode`, and the long-running hidden `__headroom-supervisor` ends the process through the injected `CommandDeps.exit`. `main()` calls `buildProgram(...).parseAsync(process.argv)`, not `.parse()`, so an `async` action's rejection (any command that awaits an interactive prompt) reaches the same path rather than surfacing as an unhandled promise rejection Commander's synchronous `.parse()` never awaits.
+
+Commands never read `process.stdin.isTTY` or call `@clack/prompts` themselves: `buildProgram` hands every registration a `CommandDeps` with the prompt port and an `isInteractive` check, so each command's terminal and non-terminal behaviour (prompt, or fail naming the option that supplies the input) is unit-tested end to end through the built program with scripted answers.
 
 `cliError.test.ts` asserts every one of these error classes actually extends `CliError` — the one regression `tsc`/`eslint` can never catch on their own, since a class silently reverting to `extends Error`, or a new one added without extending `CliError` at all, is still perfectly valid TypeScript.
 

@@ -62,42 +62,56 @@ The full mechanics, including the merge algorithm, conditional sharing rules (ag
 ## CLI reference
 
 ```
+claude-use <noun> <verb> [name] [options]      # nouns: identity, profile, provider, rule
+
 claude-use identity add <name>
+claude-use identity list [--json]
+claude-use identity show <name> [--json]
+claude-use identity set <name> [--default-profile <profile> | --no-default-profile] [--[no-]allow-ambient-credential]
+claude-use identity remove <name> [--yes]
 claude-use identity use <name>
 claude-use @<name>                          # shorthand for `identity use <name>`
-claude-use identity list
-claude-use identity set-default-profile <identity> <profile>
-claude-use identity set <name> [--allow-ambient-credential | --no-allow-ambient-credential]
-claude-use identity resolve <name>          # interactively resolve a retained superseded farm's conflicts
+claude-use identity resolve-conflicts <name>  # interactively resolve a retained superseded farm's conflicts
 
-claude-use profile create <name> [--extends <name>,<name>,...]
-claude-use profile list
-claude-use profile set-default <name>
-claude-use profile set <name> --category <cat>=<bool>[,<cat>=<bool>,...]
-claude-use profile set <name> --entry "<path>"=<bool>[,"<path>"=<bool>,...]
-claude-use profile set <name> [--skip-permissions] [--remote-control] [--headroom]
+claude-use profile add [name] [--extends <profile>]... [--description <text>]   # interactive with no options on a terminal
+claude-use profile set <name> [--category <category>=<bool>]... [--entry <category>/<path>=<bool>]...
+claude-use profile set <name> [--extends <profile>]... [--no-extends] [--description <text> | --no-description]
+claude-use profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom]
+claude-use profile set <name> [--launch-provider <provider> | --no-launch-provider]
+claude-use profile list [--json]
+claude-use profile show <name> [--json]
+claude-use profile remove <name> [--yes]
+claude-use profile use <name>               # the global default configuration profile
 
-claude-use provider add <name> --display-name <name> --base-url <url> (--token-env <VAR> | --token-command <argv...>) [--auth-scheme <bearer|apiKey>] [--env KEY=VALUE]
-claude-use provider list
-claude-use provider show <name>
-claude-use provider remove <name>
+claude-use provider add <name> --display-name <name> --base-url <url> (--token-env <VAR> | --token-command <argv...>) [--auth-scheme <bearer|apiKey>] [--env KEY=VALUE]...
+claude-use provider set <name> [--display-name <name>] [--base-url <url>] [--token-env <VAR> | --no-token-env] [--token-command <argv...> | --no-token-command] [--auth-scheme <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]...
+claude-use provider list [--json]
+claude-use provider show <name> [--json]
+claude-use provider remove <name> [--yes]
 
-claude-use headroom status
+claude-use rule add <path> [--config-profile <profile>] [--identity <identity>]
+claude-use rule set <path> [--config-profile <profile> | --no-config-profile] [--identity <identity> | --no-identity]
+claude-use rule list [--json]
+claude-use rule show <path> [--json]
+claude-use rule remove <path> [--yes]
 
-claude @<identity> --headroom            # one launch routed through headroom
-claude --no-headroom                       # one launch routed direct, overriding every layer
-
-claude-use rules add <path> [--profile <name>] [--identity <name>]
-claude-use rules list
-claude-use rules remove <path>
-
-claude-use configure <identity> [path]
-claude-use check [path] [--identity <name>]
-claude-use doctor
-claude-use run [args...]
+claude-use configure [path] [--identity <identity>]
+claude-use check [path] [--identity <identity>] [--json] [--strict]
+claude-use doctor [--json]
+claude-use headroom status [--json]
+claude-use completion <bash|zsh|fish>
 claude-use shim enable [--dir <path>] [--force]
 claude-use shim disable [--dir <path>] [--force]
+
+claude-use run [@<identity>] [launch flags] [claude arguments]
+  # launch flags, recognised only before a `--` terminator:
+  #   --identity <name>  --config-profile <name>  --provider <name> | --no-provider
+  #   --category <category>=<bool>  --share <category>/<path>  --hide <category>/<path>   (each repeatable)
+  #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom
+claude @<identity> ...                      # the same, once `claude-use shim enable` has run
 ```
+
+Every `list`, `show`, `check`, `doctor` and `headroom status` prints text by default and JSON with `--json`. Prompts appear only when standard input is a terminal; without one, a command that needs input fails with the option that supplies it (a `remove` needs `--yes`). Failures print as `claude-use: <message>` and exit 1, usage errors exit 2, a selected provider with no usable credential exits 64, and `CLAUDE_USE_DEBUG=1` adds stack traces to unexpected errors. `claude-use completion <bash|zsh|fish>` prints a shell completion script.
 
 `claude-use check [path]` resolves the full cascade for a directory without touching the farm, and is the primary way to answer "why is X shared or hidden here". `claude-use doctor` audits the whole `~/.claude-use` config graph at once: every identity, profile, `extends` chain, and directory rule, plus whether the right `claude-use` is the one actually on `PATH`.
 
@@ -112,7 +126,8 @@ src/
   cli.ts                 # entrypoint: dispatches on invoked name to launcher vs identity/profile-manager subcommands
   launcher.ts             # runLauncher: thin orchestration over launcher/*
   launcher/               # argv parsing, the ambient-credential guard, identity/profile resolution, farm resync
-  identityManager.ts, configProfiles.ts, directoryRules.ts   # `claude-use identity`/`profile`/`rules` subcommands
+  identityManager.ts, configProfiles.ts, providers.ts, directoryRules.ts   # the `identity`/`profile`/`provider`/`rule` nouns
+  program.ts, completion.ts # buildProgram (the whole command tree, side-effect free) and generated shell completion
   configure.ts, check.ts, doctor.ts, claudeShim.ts           # interactive picker, dry-run inspector, whole-tree audit, `claude` shim
   resolve/                # the pure cascade resolver: flatten, decide, extends, walk, plan, reconcile
   config/                 # Zod schemas, cosmiconfig loading, category classification, atomic JSON store
