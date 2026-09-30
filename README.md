@@ -57,7 +57,9 @@ Sharing composes through a cascade (shipped defaults, then a user-global overrid
 
 `claude` refuses to launch while `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` or a `CLAUDE_CODE_USE_BEDROCK`/`VERTEX`/`FOUNDRY` variable is set in the environment, because those outrank every identity's stored credential and would make all identities authenticate as the same account. Opt in deliberately with `CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1` for one launch or `claude-use identity set <name> --allow-ambient-credential`.
 
-The full mechanics, including the merge algorithm, conditional sharing rules (age, size, git branch, environment), the ambient-credential launch guard, and how `~/.claude/projects/` history is pattern-matched, are in [docs/configuration-model.md](docs/configuration-model.md). Worked examples are in [docs/examples.md](docs/examples.md).
+Providers and identities take their token from one `credential` block: an ordered list of sources (`env`, `file`, `command`, and the `op` and `keychain` presets, plus a `literal` placeholder for a local proxy), tried in turn, and a target (`bearer`, `apiKey`, or `oauthToken` for an identity). The token reaches the child's environment only; `check`, `doctor` and `--json` report the source kind and target, never the value.
+
+The full mechanics, including the credential block, the merge algorithm, conditional sharing rules (age, size, git branch, environment), the ambient-credential launch guard, and how `~/.claude/projects/` history is pattern-matched, are in [docs/configuration-model.md](docs/configuration-model.md). Worked examples are in [docs/examples.md](docs/examples.md).
 
 ## CLI reference
 
@@ -68,6 +70,7 @@ claude-use identity add <name>
 claude-use identity list [--json]
 claude-use identity show <name> [--json]
 claude-use identity set <name> [--default-profile <profile> | --no-default-profile] [--[no-]allow-ambient-credential]
+claude-use identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential]
 claude-use identity remove <name> [--yes]
 claude-use identity use <name>
 claude-use @<name>                          # shorthand for `identity use <name>`
@@ -83,8 +86,8 @@ claude-use profile show <name> [--json]
 claude-use profile remove <name> [--yes]
 claude-use profile use <name>               # the global default configuration profile
 
-claude-use provider add <name> --display-name <name> --base-url <url> (--token-env <VAR> | --token-command <argv...>) [--auth-scheme <bearer|apiKey>] [--env KEY=VALUE]...
-claude-use provider set <name> [--display-name <name>] [--base-url <url>] [--token-env <VAR> | --no-token-env] [--token-command <argv...> | --no-token-command] [--auth-scheme <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]...
+claude-use provider add <name> --display-name <name> --base-url <url> (--credential <source>)... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]...
+claude-use provider set <name> [--display-name <name>] [--base-url <url>] [--credential <source>]... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]...
 claude-use provider list [--json]
 claude-use provider show <name> [--json]
 claude-use provider remove <name> [--yes]
@@ -111,9 +114,9 @@ claude-use run [@<identity>] [launch flags] [claude arguments]
 claude @<identity> ...                      # the same, once `claude-use shim enable` has run
 ```
 
-Every `list`, `show`, `check`, `doctor` and `headroom status` prints text by default and JSON with `--json`. Prompts appear only when standard input is a terminal; without one, a command that needs input fails with the option that supplies it (a `remove` needs `--yes`). Failures print as `claude-use: <message>` and exit 1, usage errors exit 2, a selected provider with no usable credential exits 64, and `CLAUDE_USE_DEBUG=1` adds stack traces to unexpected errors. `claude-use completion <bash|zsh|fish>` prints a shell completion script.
+Every `list`, `show`, `check`, `doctor` and `headroom status` prints text by default and JSON with `--json`. Prompts appear only when standard input is a terminal; without one, a command that needs input fails with the option that supplies it (a `remove` needs `--yes`). Failures print as `claude-use: <message>` and exit 1, usage errors exit 2, a selected provider or identity whose credential block yields no token exits 64, and `CLAUDE_USE_DEBUG=1` adds stack traces to unexpected errors. `claude-use completion <bash|zsh|fish>` prints a shell completion script.
 
-`claude-use check [path]` resolves the full cascade for a directory without touching the farm, and is the primary way to answer "why is X shared or hidden here". `claude-use doctor` audits the whole `~/.claude-use` config graph at once: every identity, profile, `extends` chain, and directory rule, plus whether the right `claude-use` is the one actually on `PATH`.
+`claude-use check [path]` resolves the full cascade for a directory without touching the farm, and is the primary way to answer "why is X shared or hidden here". `claude-use doctor` audits the whole `~/.claude-use` config graph at once: every identity, profile, `extends` chain, provider (naming the exact replacement for a file still in the format before the credential block) and directory rule, plus whether the right `claude-use` is the one actually on `PATH`.
 
 The full per-setting flag and environment-variable table (global, one-off, and directory-scoped forms of every setting), and the file-precedence rules `configure` uses when writing a toggle, are in [docs/cli-reference.md](docs/cli-reference.md).
 
