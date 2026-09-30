@@ -27,7 +27,7 @@ A launch that selects an identity with no `identity.json`, or a configuration pr
 
 ### Output, errors and prompts
 
-Every `list`, `show`, `check`, `doctor` and `headroom status` prints human-readable text by default and JSON with `--json`. `provider show`, `identity show`, `check` and `doctor` describe a credential by its source kinds and target (a variable name, a path, a program, a 1Password reference, a Keychain service) and never read or print a value; a `literal` source's placeholder is not printed either. `--credential <source>` takes `env:<VAR>`, `file:<path>`, `command:<program and arguments>`, `op:<op://reference>`, `keychain:<service>[:<account>]`, `literal:<placeholder>` or a JSON source object, repeats for an ordered list, and replaces the whole list on `set` (see [Credentials](configuration-model.md#credentials)).
+Every `list`, `show`, `check`, `doctor` and `status` command prints human-readable text by default and JSON with `--json`. `provider show`, `identity show`, `check` and `doctor` describe a credential by its source kinds and target (a variable name, a path, a program, a 1Password reference, a Keychain service) and never read or print a value; a `literal` source's placeholder is not printed either. `--credential <source>` takes `env:<VAR>`, `file:<path>`, `command:<program and arguments>`, `op:<op://reference>`, `keychain:<service>[:<account>]`, `literal:<placeholder>` or a JSON source object, repeats for an ordered list, and replaces the whole list on `set` (see [Credentials](configuration-model.md#credentials)).
 
 Prompts appear only when standard input is a terminal and input the command needs is missing. Without a terminal, the command fails with the option that supplies that input instead of silently skipping it: `identity use` and the `@<name>` shortcut refuse a missing identity rather than offering the setup wizard, `identity set --default-profile`, `rule add --config-profile` and `profile use` refuse a missing profile rather than offering to create it, `profile add` with no options creates an empty profile rather than walking through its categories, and every `remove` needs `--yes` rather than asking for confirmation. `configure` is interactive by nature and refuses to run without a terminal. `NO_COLOR` is honoured by the prompts, the only coloured output claude-use produces.
 
@@ -93,6 +93,7 @@ claude-use check [path] [--identity <identity>] [--json] [--strict]
 claude-use doctor [--json]
 claude-use headroom status [--json]
 claude-use codex status [--json]
+claude-use frontdoor status [--json]
 claude-use completion <bash|zsh|fish>
 claude-use shim enable [--dir <path>] [--force]
 claude-use shim disable [--dir <path>] [--force]
