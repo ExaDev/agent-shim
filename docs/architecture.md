@@ -8,12 +8,14 @@ One compiled binary backs both `claude` and `claude-use` — the entrypoint disp
 
 ```
 src/
-  cli.ts                 # entrypoint; dispatches on invoked name -> launcher vs identity/profile-manager subcommands
-  cliError.ts             # CliError — the base class every user-facing error extends, so main()'s top-level catch can print a clean message instead of a stack trace
+  cli.ts                 # entrypoint and the only module with import-time side effects; dispatches on invoked name -> launcher vs the claude-use command tree
+  program.ts              # buildProgram: constructs the whole claude-use Commander tree with no side effects, so the command surface is unit-testable
+  runClaude.ts            # the launch pipeline wired to real ports, shared by the `claude` binary name and `claude-use run`
+  cliError.ts             # CliError, the base class every user-facing error extends, and reportFatalError, the one place a failure becomes output and an exit status
   paths.ts               # CLAUDE_USE_HOME-aware layout paths — every other module resolves ~/.claude-use/... paths through this, never inline
   pathNorm.ts            # rule-path normalisation/ancestor helpers shared across the resolver and directory rules
   versionDiscovery.ts     # portable "find the real claude binary" logic
-  realPorts.ts            # the real filesystem/spawn/proc/clock/git ports wired into runLauncher by cli.ts (tests wire fakes instead)
+  realPorts.ts            # the real filesystem/spawn/proc/clock/git ports wired into runLauncher by runClaude.ts (tests wire fakes instead)
   launcher.ts             # runLauncher: thin orchestration over launcher/* below
   launcher/
     ports.ts              # FsPort, SpawnPort, RunPort, ClockPort, ProcPort, LogPort, FarmFs — injected, fakeable
@@ -80,7 +82,7 @@ install.sh                 # downloads the latest release's binary for the runni
 
 ### Error reporting: `CliError` vs. everything else
 
-Every custom error this project throws to represent an expected, user-facing failure — a missing identity/profile/rule, a malformed config file, an invalid `--category`/`--share`/`--hide` flag — extends `CliError` (`src/cliError.ts`), an otherwise-empty abstract subclass of `Error`. `main()` in `src/cli.ts` wraps its whole body in one top-level `try`/`catch`: a `CliError` prints as `error.message` alone, with no stack trace, and exits `1`; anything else — a genuine, unanticipated bug — is rethrown and crashes with its full stack trace, which is more useful for diagnosing it than swallowing it would be. Before this existed, an error like `IdentityNotFoundError` thrown from the `@name` shortcut or from inside a Commander action (`identity use`, `profile create`, etc.) crashed with a raw Node.js stack trace instead of the one-line message its own constructor already built — the class carried the right text, nothing at the top ever caught it. `main()` calls `buildClaudeUseProgram().parseAsync(process.argv)`, not `.parse()`, specifically so an `async` action's rejection (e.g. `identity resolve <name>`, which awaits an interactive prompt) reaches this same catch too, rather than surfacing as an unhandled promise rejection Commander's synchronous `.parse()` never awaits.
+Every custom error this project throws to represent an expected, user-facing failure (a missing identity/profile/rule, a malformed config file, an invalid `--category`/`--share`/`--hide` flag) extends `CliError` (`src/cliError.ts`), an otherwise-empty abstract subclass of `Error`. `main()` in `src/cli.ts` hands whatever it rejects with to `reportFatalError`, the single error path for every command, the `@name` shortcut and the `claude`-named launcher alike: a `CliError` prints as `error.message` alone, with no stack trace, and anything else (a genuine, unanticipated bug) prints its full stack trace, which is more useful for diagnosing it than swallowing it would be. `main()` calls `buildProgram(...).parseAsync(process.argv)`, not `.parse()`, so an `async` action's rejection (any command that awaits an interactive prompt) reaches the same path rather than surfacing as an unhandled promise rejection Commander's synchronous `.parse()` never awaits.
 
 `cliError.test.ts` asserts every one of these error classes actually extends `CliError` — the one regression `tsc`/`eslint` can never catch on their own, since a class silently reverting to `extends Error`, or a new one added without extending `CliError` at all, is still perfectly valid TypeScript.
 

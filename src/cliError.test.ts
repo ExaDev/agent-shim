@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CliError } from "./cliError";
+import { CliError, reportFatalError } from "./cliError";
 import { IdentityAlreadyExistsError, IdentityNotFoundError, InvalidIdentityNameError } from "./identityManager";
 import { InvalidCategoryNameError, ProfileAlreadyExistsError, ProfileNotFoundError } from "./configProfiles";
 import { DirectoryRuleMissingTargetError, DirectoryRuleNotFoundError } from "./directoryRules";
@@ -37,5 +37,30 @@ describe("every CLI-facing error class extends CliError", () => {
     ["EntryKeyError", () => new EntryKeyError("bad-key", "bad", "malformed")],
   ])("%s extends CliError", (_name, construct) => {
     expect(construct()).toBeInstanceOf(CliError);
+  });
+});
+
+class ExampleCliError extends CliError {}
+
+describe("reportFatalError", () => {
+  it("prints an expected failure as its message alone and exits 1", () => {
+    const lines: string[] = [];
+    const code = reportFatalError(new ExampleCliError("No identity named \"work\"."), (line) => { lines.push(line); });
+    expect(lines).toEqual(['No identity named "work".']);
+    expect(code).toBe(1);
+  });
+
+  it("prints an unexpected error with its stack trace and exits 1", () => {
+    const lines: string[] = [];
+    const error = new Error("boom");
+    const code = reportFatalError(error, (line) => { lines.push(line); });
+    expect(lines).toEqual([error.stack]);
+    expect(code).toBe(1);
+  });
+
+  it("prints a thrown non-Error value as text", () => {
+    const lines: string[] = [];
+    expect(reportFatalError("plain", (line) => { lines.push(line); })).toBe(1);
+    expect(lines).toEqual(["plain"]);
   });
 });
