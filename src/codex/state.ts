@@ -6,7 +6,7 @@ import type { HeadroomFs } from "../headroom/state";
 /**
  * The codex supervisor's state.json under `<home>/codex/`. Every field is optional because the file exists in stages, exactly like headroom's: a fresh supervisor writes its own pid before the worker is up, and a shut-down daemon leaves only the sticky `lastPort` and any `lastError` worth surfacing.
  */
-export const CodexStateSchema = z.strictObject({
+const CodexStateSchema = z.strictObject({
   /** The supervisor process keeping the translation worker alive. */
   supervisorPid: z.number().int().positive().optional(),
   /** The worker process serving the translation listener. Absent while the supervisor is between restarts. */

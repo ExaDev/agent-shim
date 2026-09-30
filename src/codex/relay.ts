@@ -1,7 +1,7 @@
 import type { CodexEvent, ResponsesUsage } from "./events";
 
 /** Anthropic's usage block. `input_tokens` counts only the uncached part of the prompt; cache reads and writes are separate fields, and Claude Code totals all three. */
-export interface AnthropicUsage {
+interface AnthropicUsage {
   readonly input_tokens: number;
   readonly cache_creation_input_tokens: number;
   readonly cache_read_input_tokens: number;
@@ -11,7 +11,7 @@ export interface AnthropicUsage {
 /**
  * Converts Responses API usage to Anthropic's. The Responses API counts `input_tokens` as the whole prompt with the cached portion broken out in `input_tokens_details`; Anthropic counts `input_tokens` as only the uncached part. Subtracting keeps the split and stops Claude Code double-counting the total.
  */
-export function anthropicUsage(usage: ResponsesUsage | null | undefined): AnthropicUsage {
+function anthropicUsage(usage: ResponsesUsage | null | undefined): AnthropicUsage {
   const cached = usage?.input_tokens_details?.cached_tokens ?? 0;
   const written = usage?.input_tokens_details?.cache_write_tokens ?? 0;
   return {
@@ -62,7 +62,7 @@ export interface RelayStep {
 }
 
 /** Parses a tool call's accumulated arguments. Truncated or malformed arguments become an empty object so the agent loop keeps going instead of failing the turn. */
-export function parseToolArguments(json: string): unknown {
+function parseToolArguments(json: string): unknown {
   if (json === "") {
     return {};
   }

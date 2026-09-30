@@ -39,7 +39,7 @@ const ToolResultBlockSchema = z.looseObject({
  */
 const OtherBlockSchema = z.looseObject({ type: z.string() });
 
-export const ContentBlockSchema = z.union([TextBlockSchema, ImageBlockSchema, ToolUseBlockSchema, ToolResultBlockSchema, OtherBlockSchema]);
+const ContentBlockSchema = z.union([TextBlockSchema, ImageBlockSchema, ToolUseBlockSchema, ToolResultBlockSchema, OtherBlockSchema]);
 export type ContentBlock = z.infer<typeof ContentBlockSchema>;
 
 /** One conversation turn. `system` is not an Anthropic API role, but Claude Code sends mid-conversation system turns (agent listings, token counts), so it is accepted here and folded into a user turn in translation. */

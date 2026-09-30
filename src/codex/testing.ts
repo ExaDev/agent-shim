@@ -7,7 +7,7 @@ import type { UpstreamFetch, UpstreamRequestInit, UpstreamResponse } from "./ups
  */
 
 /** Encodes events in the SSE wire format the backend uses, one chunk per event. */
-export function sseChunks(events: readonly unknown[]): Uint8Array[] {
+function sseChunks(events: readonly unknown[]): Uint8Array[] {
   const encoder = new TextEncoder();
   return events.map((event) => encoder.encode(`event: message\ndata: ${JSON.stringify(event)}\n\n`));
 }

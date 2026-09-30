@@ -5,7 +5,7 @@ import { z } from "zod";
  */
 
 /** Token usage as the Responses API reports it: `input_tokens` is the whole prompt, with the cached part broken out in `input_tokens_details`. */
-export const ResponsesUsageSchema = z.looseObject({
+const ResponsesUsageSchema = z.looseObject({
   input_tokens: z.number().optional(),
   output_tokens: z.number().optional(),
   input_tokens_details: z
@@ -61,7 +61,7 @@ const ResponseFailedSchema = z.looseObject({
 
 const StreamErrorSchema = z.looseObject({ type: z.literal("error"), message: z.string().optional() });
 
-export const CodexEventSchema = z.union([
+const CodexEventSchema = z.union([
   ResponseCreatedSchema,
   OutputItemAddedSchema,
   OutputTextDeltaSchema,
