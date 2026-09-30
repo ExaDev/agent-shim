@@ -223,7 +223,7 @@ type ProviderCredentialTarget = (typeof PROVIDER_CREDENTIAL_TARGETS)[number];
 /** The kinds of provider. */
 type ProviderKind = (typeof PROVIDER_KINDS)[number];
 
-/** Where a provider sends its sessions, for display: an `http` provider's base URL, or the codex daemon for a codex provider (whose address exists only at launch). */
+/** Where a provider sends its sessions, for display: an `http` provider's base URL, or the front door for a codex provider (whose address exists only at launch). */
 export function describeProviderEndpoint(provider: Provider): string {
   return isCodexProvider(provider) ? "codex translation daemon" : provider.baseUrl;
 }
@@ -264,7 +264,7 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
   }
   const kind = input.kind ?? "http";
   if (kind === "codex" && input.baseUrl !== undefined) {
-    throw new ProviderKindMismatchError("A codex provider has no base URL: the launcher points its sessions at the codex daemon. Drop --base-url.");
+    throw new ProviderKindMismatchError("A codex provider has no base URL: the launcher points its sessions at the front-door daemon. Drop --base-url.");
   }
   if (kind === "http" && input.baseUrl === undefined) {
     throw new ProviderKindMismatchError("An http provider needs --base-url.");
@@ -496,7 +496,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
     provider
       .command("add <name>")
       .description("Create a new API provider definition. Fails if one with this name already exists.")
-      .addOption(new Option("--kind <kind>", "http (default): an Anthropic-compatible endpoint at --base-url; codex: ChatGPT's Codex backend through claude-use's codex daemon.").choices(PROVIDER_KINDS))
+      .addOption(new Option("--kind <kind>", "http (default): an Anthropic-compatible endpoint at --base-url; codex: ChatGPT's Codex backend through the front-door daemon.").choices(PROVIDER_KINDS))
       .requiredOption("--display-name <name>", "Human-readable name, exported to the child as CLAUDE_USE_PROVIDER.")
       .option("--base-url <url>", "Anthropic-compatible base URL the child's requests are sent to (http providers only, and required for them).")
       .requiredOption(
