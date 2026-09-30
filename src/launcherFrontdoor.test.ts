@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { FrontDoorPort, HeadroomPort } from "./launcher/ports";
-import { discovered, FAKE_HOME, fakeCredentials, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
+import type { HeadroomPort } from "./launcher/ports";
+import { discovered, FAKE_HOME, fakeCredentials, fakeFs, fakeFrontDoorPort, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
 const FRONTDOOR_PORT = 4100;
 const HEADROOM_PORT = 8123;
@@ -12,26 +12,11 @@ const codexProvider = {
   credential: { sources: [{ literal: "codex-placeholder" }] },
 };
 
-/** A fake front-door port that reports each bring-up to `record`, so a test can see the order daemons came up in. */
-function fakeFrontDoorPort(record: (daemon: string) => void): FrontDoorPort & { readonly releases: () => number } {
-  let releases = 0;
-  return {
-    ensure: () => {
-      record("frontdoor");
-      return { port: FRONTDOOR_PORT };
-    },
-    release: () => {
-      releases += 1;
-    },
-    releases: () => releases,
-  };
-}
-
 function fakeHeadroomPort(record: (daemon: string) => void): HeadroomPort {
   return {
     ensure: () => {
       record("headroom");
-      return { port: HEADROOM_PORT, mitmPort: HEADROOM_PORT + 1, caCertPath: "/ca.pem", projectId: "/repo" };
+      return { port: HEADROOM_PORT, projectId: "/repo" };
     },
     release: () => undefined,
   };
@@ -43,11 +28,11 @@ function recordInto(order: Readonly<{ push: (daemon: string) => number }>): (dae
   };
 }
 
-describe("runLauncher with a codex provider", () => {
+describe("runLauncher with a provider", () => {
   it("brings the front door up and points the child at its provider-scoped address", () => {
     const spawn = fakeSpawn();
     const order: string[] = [];
-    const frontdoor = fakeFrontDoorPort(recordInto(order));
+    const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
     runAndCaptureExit({
       paths,
       fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/codex.json`]: codexProvider }),
@@ -59,16 +44,36 @@ describe("runLauncher with a codex provider", () => {
       credentials: fakeCredentials(),
     });
     const env = spawnedEnv(spawn);
-    expect(order).toEqual(["frontdoor"]);
+    expect(order).toEqual([]);
     expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("codex-placeholder");
     expect(env.CLAUDE_USE_PROVIDER).toBe("Codex");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-claude-use-session: [0-9a-f-]{36}$/);
     expect(frontdoor.releases()).toBeGreaterThan(0);
   });
 
-  it("starts the front door before headroom and hands headroom the front door's address as the upstream", () => {
+  it("brings an http provider's launch through the door too, on the same provider-scoped address", () => {
+    const spawn = fakeSpawn();
+    const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } } }),
+      spawn,
+      proc: fakeProc({ Z: "tok" }, ["--provider", "z"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      frontdoor,
+      credentials: fakeCredentials(),
+    });
+    expect(frontdoor.ensures()).toBe(1);
+    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/z`);
+  });
+
+  it("starts the front door before headroom, whose allowlist must already admit the door's address", () => {
     const spawn = fakeSpawn();
     const order: string[] = [];
+    const plainDoor = fakeFrontDoorPort(FRONTDOOR_PORT);
+    const recordingDoor = { ensure: () => { order.push("frontdoor"); return plainDoor.ensure(); }, release: () => { plainDoor.release(); } };
     runAndCaptureExit({
       paths,
       fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/codex.json`]: codexProvider }),
@@ -76,17 +81,20 @@ describe("runLauncher with a codex provider", () => {
       proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--provider", "codex"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
-      frontdoor: fakeFrontDoorPort(recordInto(order)),
+      frontdoor: recordingDoor,
       headroom: fakeHeadroomPort(recordInto(order)),
       credentials: fakeCredentials(),
     });
     const env = spawnedEnv(spawn);
     expect(order).toEqual(["frontdoor", "headroom"]);
-    expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${String(HEADROOM_PORT)}`);
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(`x-headroom-project-id: /repo\nx-headroom-base-url: http://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
+    expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
+    expect(env.HEADROOM_PROXY_URL).toBe(`http://127.0.0.1:${String(HEADROOM_PORT)}`);
+    // The child names no upstream for headroom: the door's hop decides where headroom forwards, so no x-headroom-base-url exists any more.
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).not.toContain("x-headroom-base-url");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain("x-claude-use-headroom: 1");
   });
 
-  it("refuses a codex provider when no front-door port is wired", () => {
+  it("refuses a provider launch when no front-door port is wired", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
     const code = runAndCaptureExit({
@@ -103,20 +111,19 @@ describe("runLauncher with a codex provider", () => {
     expect(log.errors[0]).toContain("front-door");
   });
 
-  it("never touches the front door for an http provider", () => {
+  it("never touches the front door when neither a provider nor headroom resolved on", () => {
     const spawn = fakeSpawn();
-    const order: string[] = [];
+    const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
     runAndCaptureExit({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } } }),
+      fs: fakeFs({}),
       spawn,
-      proc: fakeProc({ Z: "tok" }, ["--provider", "z"]),
+      proc: fakeProc({}, ["--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
-      frontdoor: fakeFrontDoorPort(recordInto(order)),
-      credentials: fakeCredentials(),
+      frontdoor,
     });
-    expect(order).toEqual([]);
-    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
+    expect(frontdoor.ensures()).toBe(0);
+    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBeUndefined();
   });
 });

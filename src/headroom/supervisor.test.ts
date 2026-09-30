@@ -27,7 +27,6 @@ const ZOMBIE_SESSION_PID = 322;
 const ORPHAN_DAEMON_PID = 888;
 const ORPHAN_DAEMON_PORT = 4321;
 const STICKY_PORT = 4100;
-const STICKY_MITM_PORT = 4101;
 const OWN_PID = 4242;
 const TICKS_INSTALL_TEST = 3;
 const TICKS_SHORT = 2;
@@ -62,19 +61,15 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
   let clock = 0;
   let nextPid = 1000;
   let nextPort = 2000;
-  let nextMitmPort = 3000;
   const readyPorts = new Set<number>();
   let autoReady = true;
   let version: string | undefined = "headroom 0.39.1";
   let installOk = true;
-  let mitmStartError: Error | undefined;
   const alive = new Set<number>([process.pid]);
   const zombies = new Set<number>();
   const occupied = new Set<number>();
   let freePortCalls = 0;
   const spawns: { pid: number; port: number; allowlist: readonly string[] }[] = [];
-  const mitmBinds: { port: number; preferred: number | undefined }[] = [];
-  const mitmCloses: number[] = [];
   const stops: number[] = [];
   const installs: string[] = [];
   const logLines: string[] = [];
@@ -103,8 +98,6 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
     zombies,
     occupied,
     spawns,
-    mitmBinds,
-    mitmCloses,
     stops,
     installs,
     logLines,
@@ -117,9 +110,6 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
       autoReady = value;
     },
     /** When set, the MITM proxy cannot bind, the way a poisoned port or a missing certificate would fail a real bind. */
-    set mitmStartError(error: Error | undefined) {
-      mitmStartError = error;
-    },
     set version(value: string | undefined) {
       version = value;
     },
@@ -187,22 +177,6 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
         return { ok: false, error: "uv is not installed or not on PATH (spawn ENOENT)" };
       },
       headroomVersion: () => version,
-      startMitm: async (preferredPort: number | undefined) => {
-        if (mitmStartError !== undefined) {
-          throw mitmStartError;
-        }
-        const port = preferredPort !== undefined && !occupied.has(preferredPort) ? preferredPort : (nextMitmPort += 1);
-        occupied.add(port);
-        mitmBinds.push({ port, preferred: preferredPort });
-        return await settled({
-          port,
-          close: async () => {
-            await settled(undefined);
-            occupied.delete(port);
-            mitmCloses.push(port);
-          },
-        });
-      },
       log: (line: string) => {
         logLines.push(line);
       },
@@ -431,73 +405,6 @@ describe("runSupervisor", () => {
     expect(nextCode).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     expect(world.spawns[0]?.port).toBe(STICKY_PORT);
     expect(world.freePortCallCount()).toBe(0);
-  });
-
-  it("binds the MITM proxy once per generation on its sticky port and keeps it serving across a daemon crash restart", async () => {
-    const world = makeWorld();
-    writeHeadroomState(world.fs, paths.headroomStateFile, { lastPort: STICKY_PORT, lastMitmPort: STICKY_MITM_PORT });
-    let crashed = false;
-    world.onSleep = () => {
-      if (!crashed && world.spawns.length === 1) {
-        const first = world.spawns[0];
-        if (first !== undefined) {
-          world.kill(first.pid);
-          crashed = true;
-        }
-      }
-    };
-    const code = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_CRASH_RESTART });
-    expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
-    // The daemon restarts; the proxy lives in this process, so it is bound exactly once and never moves.
-    expect(world.spawns).toHaveLength(2);
-    expect(world.spawns.map((spawn) => spawn.port)).toEqual([STICKY_PORT, STICKY_PORT]);
-    expect(world.mitmBinds).toEqual([{ port: STICKY_MITM_PORT, preferred: STICKY_MITM_PORT }]);
-    expect(world.mitmCloses).toEqual([]);
-    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
-    expect(state.mitmPort).toBe(STICKY_MITM_PORT);
-    expect(state.lastMitmPort).toBe(STICKY_MITM_PORT);
-  });
-
-  it("falls back to a fresh MITM port and records the move when the sticky MITM port is occupied", async () => {
-    const world = makeWorld();
-    writeHeadroomState(world.fs, paths.headroomStateFile, { lastMitmPort: STICKY_MITM_PORT });
-    world.occupied.add(STICKY_MITM_PORT);
-    await runSupervisor(config, world.ports, { tickLimit: TICKS_SHORT });
-    const bound = world.mitmBinds[0];
-    if (bound === undefined) {
-      throw new Error("expected a MITM bind");
-    }
-    expect(bound.port).not.toBe(STICKY_MITM_PORT);
-    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
-    expect(state.mitmPort).toBe(bound.port);
-    expect(state.lastMitmPort).toBe(bound.port);
-    expect(world.logLines.some((line) => line.includes(`sticky MITM port ${String(STICKY_MITM_PORT)} was occupied`))).toBe(true);
-  });
-
-  it("closes the MITM proxy on idle shutdown and seeds the next generation with both sticky ports", async () => {
-    const world = makeWorld();
-    writeHeadroomState(world.fs, paths.headroomStateFile, { lastPort: STICKY_PORT, lastMitmPort: STICKY_MITM_PORT });
-    const idleCode = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_ONE_MINUTE }, world.ports);
-    expect(idleCode).toBe(0);
-    expect(world.mitmCloses).toEqual([STICKY_MITM_PORT]);
-    const shutDown = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
-    expect(shutDown.mitmPort).toBeUndefined();
-    expect(shutDown.lastMitmPort).toBe(STICKY_MITM_PORT);
-    const nextCode = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_SHORT });
-    expect(nextCode).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
-    expect(world.spawns[0]?.port).toBe(STICKY_PORT);
-    expect(world.mitmBinds.at(-1)?.port).toBe(STICKY_MITM_PORT);
-  });
-
-  it("exits non-zero and records lastError when the MITM proxy cannot bind, without starting the daemon", async () => {
-    const world = makeWorld();
-    world.mitmStartError = new Error("EADDRINUSE everywhere");
-    const code = await runSupervisor(config, world.ports);
-    expect(code).toBe(1);
-    expect(world.spawns).toHaveLength(0);
-    expect(world.mitmBinds).toHaveLength(0);
-    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
-    expect(String(state.lastError)).toContain("could not start the MITM proxy");
   });
 
   it("gives up after the retry budget when the daemon never becomes ready, recording lastError", async () => {

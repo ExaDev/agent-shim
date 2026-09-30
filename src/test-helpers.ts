@@ -11,7 +11,7 @@ import { vi, type Mock } from "vitest";
 
 import { runLauncher, type FarmRuntime, type RunLauncherParams } from "./launcher";
 import type { CredentialCommandResult, CredentialPort } from "./credential";
-import type { FsPort, LogPort, ProcPort, SpawnPort, SpawnResult } from "./launcher/ports";
+import type { FsPort, FrontDoorPort, LogPort, ProcPort, SpawnPort, SpawnResult } from "./launcher/ports";
 import { buildLayoutPaths } from "./paths";
 import type { CascadeInput } from "./resolve/walk";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
@@ -380,6 +380,23 @@ export function fakeFs(ownFiles: Record<string, unknown>): FsPort {
         .filter((file) => file.startsWith(`${dir}/`))
         .map((file) => file.slice(dir.length + 1).split("/")[0] ?? "")
         .filter((name) => name !== ""),
+  };
+}
+
+/** A fake `FrontDoorPort` that counts its bring-ups and releases, so a test can assert both that the door came up and that the launcher released its session. */
+export function fakeFrontDoorPort(port = 4100, connectPort = 4200): FrontDoorPort & { readonly ensures: () => number; readonly releases: () => number } {
+  let ensures = 0;
+  let releases = 0;
+  return {
+    ensures: () => ensures,
+    releases: () => releases,
+    ensure: () => {
+      ensures += 1;
+      return { port, connectPort, caCertPath: "/home/testuser/.claude-use/frontdoor/ca/ca.pem" };
+    },
+    release: () => {
+      releases += 1;
+    },
   };
 }
 

@@ -142,7 +142,7 @@ describe("buildEnv", () => {
   const baseEnv = { PATH: "/usr/bin", HOME: "/home/testuser" };
 
   it("leaves the environment unchanged when the CLAUDE_CONFIG_DIR escape hatch applied", () => {
-    const env = buildEnv({
+    const env = buildEnv({ sessionId: "session-test",
       baseEnv: { ...baseEnv, CLAUDE_CONFIG_DIR: "/somewhere/else" },
       configDirEscapeHatch: true,
       resolvedIdentityName: "work",
@@ -152,7 +152,7 @@ describe("buildEnv", () => {
   });
 
   it("leaves the environment unchanged when no identity was resolved at all", () => {
-    const env = buildEnv({
+    const env = buildEnv({ sessionId: "session-test",
       baseEnv,
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.claude-use/identities",
@@ -162,7 +162,7 @@ describe("buildEnv", () => {
   });
 
   it("sets CLAUDE_CONFIG_DIR to the resolved identity's own directory otherwise", () => {
-    const env = buildEnv({
+    const env = buildEnv({ sessionId: "session-test",
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -173,7 +173,7 @@ describe("buildEnv", () => {
   });
 
   it("never strips CLAUDE_EXTRA_FLAGS from the child environment", () => {
-    const env = buildEnv({
+    const env = buildEnv({ sessionId: "session-test",
       baseEnv: { ...baseEnv, CLAUDE_EXTRA_FLAGS: "--continue continue" },
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -204,7 +204,7 @@ describe("buildEnv", () => {
   }
 
   it("applies a resolved provider on top of the identity's CLAUDE_CONFIG_DIR", () => {
-    const env = buildEnv({ baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider() });
+    const env = buildEnv({ sessionId: "session-test", baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider() });
     expect(env.CLAUDE_CONFIG_DIR).toBe("/home/testuser/.claude-use/identities/work");
     expect(env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
@@ -212,13 +212,13 @@ describe("buildEnv", () => {
   });
 
   it("applies a resolved provider even when no identity was resolved, since it selects an endpoint, not a login", () => {
-    const env = buildEnv({ baseEnv, configDirEscapeHatch: false, identitiesDir, provider: resolvedProvider() });
+    const env = buildEnv({ sessionId: "session-test", baseEnv, configDirEscapeHatch: false, identitiesDir, provider: resolvedProvider() });
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
   });
 
   it("removes every ambient credential variable other than the bearer target, so the provider's token takes effect", () => {
-    const env = buildEnv({
+    const env = buildEnv({ sessionId: "session-test",
       baseEnv: { ...baseEnv, ANTHROPIC_API_KEY: "sk-ambient", CLAUDE_CODE_OAUTH_TOKEN: "oauth-ambient" },
       configDirEscapeHatch: false,
       identitiesDir,
@@ -230,7 +230,7 @@ describe("buildEnv", () => {
   });
 
   it("exports the token as ANTHROPIC_API_KEY and removes an ambient ANTHROPIC_AUTH_TOKEN under target apiKey", () => {
-    const env = buildEnv({
+    const env = buildEnv({ sessionId: "session-test",
       baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "sk-ambient-bearer", ANTHROPIC_API_KEY: "sk-ambient-key" },
       configDirEscapeHatch: false,
       identitiesDir,
@@ -242,7 +242,7 @@ describe("buildEnv", () => {
   });
 
   it("exports an identity's own credential as its target when no provider was selected", () => {
-    const env = buildEnv({
+    const env = buildEnv({ sessionId: "session-test",
       baseEnv: { ...baseEnv, ANTHROPIC_API_KEY: "sk-ambient" },
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -255,7 +255,7 @@ describe("buildEnv", () => {
   });
 
   it("never applies an identity's credential alongside a provider's, whose credential authenticates against its endpoint", () => {
-    const env = buildEnv({
+    const env = buildEnv({ sessionId: "session-test",
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -268,7 +268,7 @@ describe("buildEnv", () => {
   });
 
   it("lands every entry of the provider's own env verbatim in the child environment", () => {
-    const env = buildEnv({
+    const env = buildEnv({ sessionId: "session-test",
       baseEnv,
       configDirEscapeHatch: false,
       identitiesDir,
@@ -278,56 +278,91 @@ describe("buildEnv", () => {
     expect(env.API_TIMEOUT_MS).toBe("600000");
   });
 
-  it("routes through headroom on top of a provider: the proxy becomes the base URL and the provider's upstream moves into a per-request header", () => {
+  it("routes a provider session through the front door: the child's base URL is the door's provider path and the session headers are injected", () => {
     const env = buildEnv({
+      sessionId: "session-test",
       baseEnv,
       configDirEscapeHatch: false,
+      resolvedIdentityName: "work",
       identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: resolvedProvider(),
-      headroom: { port: 8123, mitmPort: 8124, caCertPath: "/home/testuser/.claude-use/headroom/ca/ca.pem", projectId: "/home/testuser/work/repo" },
+      provider: resolvedProvider({ baseUrl: "http://127.0.0.1:4100/providers/z" }),
+      frontdoor: { port: 4100, connectPort: 4200, caCertPath: "/home/testuser/.claude-use/frontdoor/ca/ca.pem" },
+      headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
     });
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/z");
     expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
     expect(env.HTTPS_PROXY).toBeUndefined();
     expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-headroom-project-id: /home/testuser/work/repo\nx-headroom-base-url: https://api.z.ai/api/anthropic");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-claude-use-identity: work\nx-claude-use-session: session-test\nx-claude-use-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
   });
 
-  it("routes an OAuth launch (no provider) through the MITM proxy: HTTPS_PROXY and the CA are set, ANTHROPIC_BASE_URL stays unset so Remote Control keeps working", () => {
+  it("injects only the identity and session headers when the door is engaged without headroom", () => {
     const env = buildEnv({
+      sessionId: "session-test",
       baseEnv,
       configDirEscapeHatch: false,
-      identitiesDir: "/home/testuser/.claude-use/identities",
-      headroom: { port: 8123, mitmPort: 8124, caCertPath: "/home/testuser/.claude-use/headroom/ca/ca.pem", projectId: "/home/testuser/work/repo" },
+      resolvedIdentityName: "work",
+      identitiesDir,
+      provider: resolvedProvider({ baseUrl: "http://127.0.0.1:4100/providers/z" }),
+      frontdoor: { port: 4100, connectPort: 4200, caCertPath: "/ca.pem" },
     });
-    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:8124");
-    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/headroom/ca/ca.pem");
-    expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-headroom-project-id: /home/testuser/work/repo");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-claude-use-identity: work\nx-claude-use-session: session-test");
+    expect(env.HEADROOM_PROXY_URL).toBeUndefined();
   });
 
-  it("leaves a parent-set ANTHROPIC_BASE_URL untouched in the OAuth mode rather than clearing it", () => {
+  it("routes an OAuth launch (no provider) through the door's CONNECT surface: HTTPS_PROXY and the CA are set, ANTHROPIC_BASE_URL stays unset so Remote Control keeps working", () => {
     const env = buildEnv({
+      sessionId: "session-test",
+      baseEnv,
+      configDirEscapeHatch: false,
+      resolvedIdentityName: "work",
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      frontdoor: { port: 4100, connectPort: 4200, caCertPath: "/home/testuser/.claude-use/frontdoor/ca/ca.pem" },
+      headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
+    });
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:4200");
+    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/frontdoor/ca/ca.pem");
+    expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-claude-use-identity: work\nx-claude-use-session: session-test\nx-claude-use-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
+  });
+
+  it("leaves a parent-set ANTHROPIC_BASE_URL untouched in the OAuth shape rather than clearing it", () => {
+    const env = buildEnv({
+      sessionId: "session-test",
       baseEnv: { ...baseEnv, ANTHROPIC_BASE_URL: "https://custom-gateway.example" },
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.claude-use/identities",
-      headroom: { port: 8123, mitmPort: 8124, caCertPath: "/home/testuser/.claude-use/headroom/ca/ca.pem", projectId: "/repo" },
+      frontdoor: { port: 4100, connectPort: 4200, caCertPath: "/ca.pem" },
+      headroom: { port: 8123, projectId: "/repo" },
     });
     expect(env.ANTHROPIC_BASE_URL).toBe("https://custom-gateway.example");
   });
 
-  it("merges a provider's own ANTHROPIC_CUSTOM_HEADERS with headroom's entries", () => {
+  it("merges a parent's and a provider's own ANTHROPIC_CUSTOM_HEADERS with the session headers", () => {
     const env = buildEnv({
+      sessionId: "session-test",
       baseEnv: { ...baseEnv, ANTHROPIC_CUSTOM_HEADERS: "x-from-parent: yes" },
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: resolvedProvider({ name: "o", displayName: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", env: { ANTHROPIC_CUSTOM_HEADERS: "x-from-provider: indeed" } }),
-      headroom: { port: 8123, mitmPort: 8124, caCertPath: "/home/testuser/.claude-use/headroom/ca/ca.pem", projectId: "/repo" },
+      provider: resolvedProvider({ name: "o", displayName: "OpenRouter", baseUrl: "http://127.0.0.1:4100/providers/o", env: { ANTHROPIC_CUSTOM_HEADERS: "x-from-provider: indeed" } }),
+      frontdoor: { port: 4100, connectPort: 4200, caCertPath: "/ca.pem" },
     });
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(
-      "x-from-parent: yes\nx-from-provider: indeed\nx-headroom-project-id: /repo\nx-headroom-base-url: https://openrouter.ai/api/v1",
-    );
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-from-parent: yes\nx-from-provider: indeed\nx-claude-use-session: session-test");
+  });
+
+  it("sets no session headers and no proxy when no front door is engaged", () => {
+    const env = buildEnv({
+      sessionId: "session-test",
+      baseEnv,
+      configDirEscapeHatch: false,
+      resolvedIdentityName: "work",
+      identitiesDir,
+    });
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
+    expect(env.HEADROOM_PROXY_URL).toBeUndefined();
   });
 });

@@ -5,14 +5,10 @@ import { ConflictingIdentityError } from "./launcher/argv";
 import { identityLockPath } from "./launcher/lock";
 import type { FsPort, HeadroomPort } from "./launcher/ports";
 import { runLauncher } from "./launcher";
-import {
-  createFakeFarmFs, discovered, fakeFarm, fakeFs, fakeLog, fakeProc, fakeCredentials, fakeSpawn, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS,
-  paths, runAndCaptureExit, spawnedEnv,
-} from "./test-helpers";
+import { FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, createFakeFarmFs, discovered, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
 /** The loopback port the fake headroom daemon pretends to listen on. */
 const HEADROOM_PORT = 8123;
-const HEADROOM_MITM_PORT = 8124;
 /** A second port, so one test can prove the daemon in use is the one ensure() reported. */
 const OTHER_HEADROOM_PORT = 9999;
 
@@ -285,11 +281,7 @@ describe("runLauncher", () => {
 });
 
 describe("runLauncher headroom routing", () => {
-  function fakeHeadroomPort(
-    port = HEADROOM_PORT,
-    projectId = "/home/testuser/work/repo",
-    mitmPort = HEADROOM_MITM_PORT,
-  ): HeadroomPort & { readonly ensures: number; readonly releases: number } {
+  function fakeHeadroomPort(port = HEADROOM_PORT, projectId = "/home/testuser/work/repo"): HeadroomPort & { readonly ensures: number; readonly releases: number } {
     let ensures = 0;
     let releases = 0;
     return {
@@ -301,7 +293,7 @@ describe("runLauncher headroom routing", () => {
       },
       ensure: () => {
         ensures += 1;
-        return { port, mitmPort, caCertPath: "/home/testuser/.claude-use/headroom/ca/ca.pem", projectId };
+        return { port, projectId };
       },
       release: () => {
         releases += 1;
@@ -309,9 +301,17 @@ describe("runLauncher headroom routing", () => {
     };
   }
 
-  it("brings the daemon up via the injected port and wires an OAuth launch to the MITM proxy when CLAUDE_USE_HEADROOM=1", () => {
+  /** The session headers a headroom launch injects, with the random session id matched rather than known: identity-less here, so the session line leads. */
+  function injectedSessionHeaders(env: Readonly<Record<string, string | undefined>>): string[] {
+    const lines = env.ANTHROPIC_CUSTOM_HEADERS?.split("\n") ?? [];
+    expect(lines[0]).toMatch(/^x-claude-use-session: [0-9a-f-]{36}$/);
+    return lines.slice(1);
+  }
+
+  it("brings the door and the daemon up via their injected ports and wires an OAuth launch to the door's CONNECT surface when CLAUDE_USE_HEADROOM=1", () => {
     const spawn = fakeSpawn();
     const headroom = fakeHeadroomPort();
+    const frontdoor = fakeFrontDoorPort();
 
     runAndCaptureExit({
       paths,
@@ -320,18 +320,20 @@ describe("runLauncher headroom routing", () => {
       proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
+      frontdoor,
       headroom,
     });
 
     expect(headroom.ensures).toBe(1);
     const env = spawnedEnv(spawn);
-    // No provider resolved, so this is an OAuth launch: the base URL stays unset (Remote Control requires the real API) and routing happens at the HTTPS_PROXY layer.
+    // No provider resolved, so this is an OAuth launch: the base URL stays unset (Remote Control requires the real API) and routing happens at the HTTPS_PROXY layer, pointing at the door's CONNECT surface.
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:8124");
-    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/headroom/ca/ca.pem");
+    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:4200");
+    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/frontdoor/ca/ca.pem");
     expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-headroom-project-id: /home/testuser/work/repo");
+    expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
     expect(headroom.releases).toBeGreaterThan(0);
+    expect(frontdoor.releases()).toBeGreaterThan(0);
   });
 
   it("resolves headroom through the cascade like any other launch flag", () => {
@@ -347,6 +349,7 @@ describe("runLauncher headroom routing", () => {
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       farm: fakeFarm(fs, { launch: { headroom: true } }),
+      frontdoor: fakeFrontDoorPort(),
       headroom,
     });
 
@@ -367,17 +370,18 @@ describe("runLauncher headroom routing", () => {
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       farm: fakeFarm(fs, { launch: { headroom: true } }),
+      frontdoor: fakeFrontDoorPort(),
       headroom,
     });
 
     // No identity resolved under the escape hatch, so no farm resync happens; the launch flags still come from the cascade, the same way provider selection does. With no provider selected this is an OAuth launch, so routing shows up as HTTPS_PROXY rather than a base-URL override.
     expect(headroom.ensures).toBe(1);
     expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://127.0.0.1:8124");
+    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://127.0.0.1:4200");
     expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe("/somewhere/explicit");
   });
 
-  it("routes a provider through headroom: proxy base URL, provider upstream in the per-request header, token from the provider", () => {
+  it("routes a provider through the door with headroom: the door is the base URL, the session headers carry the project identity, and the token comes from the provider", () => {
     const spawn = fakeSpawn();
     const headroom = fakeHeadroomPort();
 
@@ -394,19 +398,19 @@ describe("runLauncher headroom routing", () => {
       proc: fakeProc({ Z_API_TOKEN: "tok-z", CLAUDE_USE_HEADROOM: "1" }, ["--provider", "z"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
+      frontdoor: fakeFrontDoorPort(),
       headroom,
       credentials: fakeCredentials(),
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/z");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(
-      "x-headroom-project-id: /home/testuser/work/repo\nx-headroom-base-url: https://api.z.ai/api/anthropic",
-    );
+    expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
   });
 
-  it("routes an apiKey provider on api.anthropic.com through headroom: the token becomes the API key, the daemon is the base URL and the real upstream rides in the header", () => {
+  it("routes an apiKey provider on api.anthropic.com through the door with headroom: the token becomes the API key and the door is the base URL", () => {
     const spawn = fakeSpawn();
     const headroom = fakeHeadroomPort();
 
@@ -423,21 +427,20 @@ describe("runLauncher headroom routing", () => {
       proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--provider", "anthropic-api"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
+      frontdoor: fakeFrontDoorPort(),
       headroom,
       credentials: fakeCredentials({ command: { stdout: "sk-ant-REDACTED\n" } }),
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/anthropic-api");
     expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(
-      "x-headroom-project-id: /home/testuser/work/repo\nx-headroom-base-url: https://api.anthropic.com",
-    );
+    expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
   });
 
-  it("refuses loudly when headroom resolved on but no headroom port was wired", () => {
+  it("refuses loudly when headroom resolved on but no front-door port was wired", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
 
@@ -448,6 +451,25 @@ describe("runLauncher headroom routing", () => {
       proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--print"]),
       log,
       resolveClaudeBinary: () => discovered,
+    });
+
+    expect(code).toBe(1);
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+    expect(log.errors[0]).toContain("no front-door port");
+  });
+
+  it("refuses loudly when headroom resolved on, the door is wired, but no headroom port was", () => {
+    const spawn = fakeSpawn();
+    const log = fakeLog();
+
+    const code = runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--print"]),
+      log,
+      resolveClaudeBinary: () => discovered,
+      frontdoor: fakeFrontDoorPort(),
     });
 
     expect(code).toBe(1);
@@ -503,11 +525,12 @@ describe("runLauncher headroom routing", () => {
       proc: fakeProc({}, ["--headroom", "--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
+      frontdoor: fakeFrontDoorPort(),
       headroom,
     });
 
     expect(headroom.ensures).toBe(1);
-    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://127.0.0.1:8124");
+    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://127.0.0.1:4200");
   });
 });
 

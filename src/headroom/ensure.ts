@@ -38,7 +38,7 @@ export interface EnsureHeadroomPorts {
 /**
  * Brings the headroom daemon up for this launch, or finds it already running, and registers this launcher pid in its session registry (the fact that keeps the daemon alive and defers drift restarts until this launch is done).
  *
- * The exclusive-create start lock decides which of several concurrent launches spawns the one supervisor: its holder spawns and keeps waiting like everyone else, everyone else waits on state.json, and a lock whose holder has died is removed and retried. Readiness is "state names a live supervisor, a live headroom pid, a port, and a MITM port", which the supervisor only writes after its own `/readyz` probe has passed and its proxy is bound, so polling state alone never mistakes a bound-but-not-ready port for a usable daemon.
+ * The exclusive-create start lock decides which of several concurrent launches spawns the one supervisor: its holder spawns and keeps waiting like everyone else, everyone else waits on state.json, and a lock whose holder has died is removed and retried. Readiness is "state names a live supervisor, a live headroom pid, and a port", which the supervisor only writes after its own `/readyz` probe has passed, so polling state alone never mistakes a bound-but-not-ready port for a usable daemon.
  *
  * Throws `HeadroomStartError` (naming the daemon log path and any recorded `lastError`) when the daemon is not up within `HEADROOM_START_TIMEOUT_MS`, or when a live supervisor has recorded a fatal error.
  */
@@ -46,7 +46,7 @@ export function ensureHeadroom(params: {
   readonly paths: LayoutPaths;
   readonly launcherPid: number;
   readonly ports: EnsureHeadroomPorts;
-}): { readonly port: number; readonly mitmPort: number } {
+}): { readonly port: number } {
   const { paths, ports } = params;
   const deadline = ports.now() + HEADROOM_START_TIMEOUT_MS;
   let spawnedSupervisor = false;
@@ -54,14 +54,10 @@ export function ensureHeadroom(params: {
   for (;;) {
     const state = readHeadroomState(ports.fs, paths.headroomStateFile);
     if (state?.supervisorPid !== undefined && ports.isRunning(state.supervisorPid)) {
-      const daemonUp =
-        state.port !== undefined &&
-        state.mitmPort !== undefined &&
-        state.headroomPid !== undefined &&
-        ports.isRunning(state.headroomPid);
-      if (daemonUp && state.port !== undefined && state.mitmPort !== undefined) {
+      const daemonUp = state.port !== undefined && state.headroomPid !== undefined && ports.isRunning(state.headroomPid);
+      if (daemonUp && state.port !== undefined) {
         writeSession(ports.fs, paths.headroomSessionsDir, { pid: params.launcherPid, startedAt: ports.now() });
-        return { port: state.port, mitmPort: state.mitmPort };
+        return { port: state.port };
       }
       if (state.lastError !== undefined) {
         throw new HeadroomStartError(

@@ -27,12 +27,6 @@ export interface LayoutPaths {
   readonly claudeShimFile: string;
   /** Directory holding the headroom daemon's coordination state: state.json, the start lock, and the session registry. */
   readonly headroomDir: string;
-  /** Directory holding the MITM proxy's certificate authority: ca.pem (public, handed to children as NODE_EXTRA_CA_CERTS) and ca.key (mode 0600). */
-  readonly headroomCaDir: string;
-  /** Path to the MITM proxy's CA certificate, generated once and stable across restarts so children keep trusting it. */
-  readonly headroomCaCertFile: string;
-  /** Path to the MITM proxy's CA private key, mode 0600. */
-  readonly headroomCaKeyFile: string;
   /** Path to the headroom supervisor's state.json: pids, port, version, allowlist hash, last error. */
   readonly headroomStateFile: string;
   /** Path to the exclusive-create marker guarding "who spawns the supervisor" so concurrent launches start at most one. */
@@ -45,6 +39,12 @@ export interface LayoutPaths {
   readonly headroomLogPath: string;
   /** Directory holding the front-door daemon's coordination state: state.json, the start lock, and the session registry. */
   readonly frontdoorDir: string;
+  /** Directory holding the front door's certificate authority for its CONNECT surface: ca.pem (public, handed to children as NODE_EXTRA_CA_CERTS) and ca.key (mode 0600). */
+  readonly frontdoorCaDir: string;
+  /** Path to the front door's CONNECT CA certificate, generated once and stable across restarts so children keep trusting it. */
+  readonly frontdoorCaCertFile: string;
+  /** Path to the front door's CONNECT CA private key, mode 0600. */
+  readonly frontdoorCaKeyFile: string;
   /** Path to the front door's state.json: its supervisor pid, its port, and the sticky port it last served on. */
   readonly frontdoorStateFile: string;
   /** Path to the exclusive-create marker guarding "who spawns the front-door supervisor" so concurrent launches start at most one. */
@@ -92,15 +92,15 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     categoriesLocalFile: path.join(root, "categories.local.json"),
     claudeShimFile: path.join(root, "claude-shim.json"),
     headroomDir: path.join(root, "headroom"),
-    headroomCaDir: path.join(root, "headroom", "ca"),
-    headroomCaCertFile: path.join(root, "headroom", "ca", "ca.pem"),
-    headroomCaKeyFile: path.join(root, "headroom", "ca", "ca.key"),
     headroomStateFile: path.join(root, "headroom", "state.json"),
     headroomLockFile: path.join(root, "headroom", "start.lock"),
     headroomSessionsDir: path.join(root, "headroom", "sessions"),
     logsDir: path.join(root, "logs"),
     headroomLogPath: path.join(root, "logs", "headroom.log"),
     frontdoorDir: path.join(root, "frontdoor"),
+    frontdoorCaDir: path.join(root, "frontdoor", "ca"),
+    frontdoorCaCertFile: path.join(root, "frontdoor", "ca", "ca.pem"),
+    frontdoorCaKeyFile: path.join(root, "frontdoor", "ca", "ca.key"),
     frontdoorStateFile: path.join(root, "frontdoor", "state.json"),
     frontdoorLockFile: path.join(root, "frontdoor", "start.lock"),
     frontdoorSessionsDir: path.join(root, "frontdoor", "sessions"),

@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
 import type { RunLauncherParams } from "./launcher";
 import {
-  createFakeFarmFs, discovered, FAKE_HOME, fakeCredentials, fakeFarm, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv,
+  createFakeFarmFs, discovered, FAKE_HOME, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv,
 } from "./test-helpers";
 
-/** `runAndCaptureExit` with a fake credential port wired unless the test supplies its own, since every provider launch resolves a credential block. */
-function launch(params: Omit<RunLauncherParams, "credentials"> & Partial<Pick<RunLauncherParams, "credentials">>): number {
-  return runAndCaptureExit({ credentials: fakeCredentials(), ...params });
+/** `runAndCaptureExit` with a fake credential port and a fake front door wired unless the test supplies its own, since every provider launch resolves a credential block and routes through the door. */
+function launch(params: Omit<RunLauncherParams, "credentials" | "frontdoor"> & Partial<Pick<RunLauncherParams, "credentials" | "frontdoor">>): number {
+  return runAndCaptureExit({ credentials: fakeCredentials(), frontdoor: fakeFrontDoorPort(), ...params });
 }
 
 describe("runLauncher provider selection", () => {
@@ -36,18 +36,22 @@ describe("runLauncher provider selection", () => {
       resolveClaudeBinary: () => discovered,
     });
 
-    expect(spawn.spawnSync).toHaveBeenCalledWith(discovered.path, ["--print"], {
-      stdio: "inherit",
-      env: {
-        Z_API_TOKEN: "tok-z",
-        ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
-        ANTHROPIC_AUTH_TOKEN: "tok-z",
-        ANTHROPIC_API_KEY: undefined,
-        CLAUDE_CODE_OAUTH_TOKEN: undefined,
-        ANTHROPIC_MODEL: "glm-4.6",
-        CLAUDE_USE_PROVIDER: "GLM",
-      },
+    expect(spawn.spawnSync).toHaveBeenCalledTimes(1);
+    const call = spawn.spawnSync.mock.calls[0];
+    expect(call?.[0]).toBe(discovered.path);
+    expect(call?.[1]).toEqual(["--print"]);
+    expect(call?.[2]?.stdio).toBe("inherit");
+    const env = call?.[2]?.env;
+    expect(env).toMatchObject({
+      Z_API_TOKEN: "tok-z",
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:4100/providers/z",
+      ANTHROPIC_AUTH_TOKEN: "tok-z",
+      ANTHROPIC_MODEL: "glm-4.6",
+      CLAUDE_USE_PROVIDER: "GLM",
     });
+    expect(env?.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(env?.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-claude-use-session: [0-9a-f-]{36}$/);
   });
 
   it("refuses with exit 1 and names the known providers when the provider is unknown", () => {
@@ -109,7 +113,7 @@ describe("runLauncher provider selection", () => {
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:18789");
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/codex");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("codex-subscription-local");
     expect(env.CLAUDE_USE_PROVIDER).toBe("Codex");
   });
@@ -130,7 +134,7 @@ describe("runLauncher provider selection", () => {
 
     const env = spawnedEnv(spawn);
     expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.claude-use/identities/work`);
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://openrouter.ai/api/v1");
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/o");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-o");
     expect(env.CLAUDE_USE_PROVIDER).toBe("OpenRouter");
   });
@@ -150,7 +154,7 @@ describe("runLauncher provider selection", () => {
     expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["-p", "say hi"]);
     const env = spawnedEnv(spawn);
     expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.claude-use/identities/work`);
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/z");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
   });
 
@@ -191,7 +195,7 @@ describe("runLauncher provider selection", () => {
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/z");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
   });
 
@@ -240,7 +244,7 @@ describe("runLauncher provider selection", () => {
       expect(credentials.runCommand.mock.calls[0]?.[0]).toEqual(["op", "read", "op://vault/item/field"]);
       expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["--print"]);
       const env = spawnedEnv(spawn);
-      expect(env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
+      expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/anthropic-api");
       expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
       expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
       expect([...log.infos, ...log.warns, ...log.errors].join("\n")).not.toContain("sk-ant-REDACTED");
