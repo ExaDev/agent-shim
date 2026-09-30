@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { Credential } from "./config/schema";
 import type { Decision } from "./resolve/types";
 import { shippedClassification, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, createFakeFarmFs } from "./test-helpers";
 import {
@@ -367,5 +368,47 @@ describe("checkReportHasWarnings", () => {
         name === "base" ? { name: "base", profile: { entries: { "history/projects/~/work/clients.acme": true } } } : undefined,
     });
     expect(checkReportHasWarnings(runCheck(baseParams({ cascade })))).toBe(true);
+  });
+});
+
+describe("runCheck credential report", () => {
+  const workCredential: Credential = { sources: [{ op: "op://vault/claude-work/token" }], target: "oauthToken" };
+
+  it("reports the stored login when neither a provider nor an identity credential applies", () => {
+    const report = runCheck(baseParams({ identityName: "work", identity: { name: "work", allowAmbientCredential: false } }));
+    expect(report.credential).toEqual({ applies: "stored-login" });
+    expect(formatCheckReport(report)).toContain("  The identity's stored login (no credential block applies).");
+  });
+
+  it("reports the identity's credential by source kind and target when no provider is selected", () => {
+    const report = runCheck(baseParams({ identityName: "work", identity: { name: "work", allowAmbientCredential: false, credential: workCredential } }));
+    expect(report.credential).toEqual({
+      applies: "identity",
+      identity: { target: "oauthToken", sources: [{ kind: "op", reference: "op://vault/claude-work/token" }] },
+    });
+    expect(formatCheckReport(report)).toContain("  Identity work: oauthToken from op op://vault/claude-work/token");
+  });
+
+  it("reports a selected provider's credential as the one that applies, and never a literal value", () => {
+    const report = runCheck(
+      baseParams({
+        identityName: "work",
+        identity: { name: "work", allowAmbientCredential: false, credential: workCredential },
+        provider: { name: "codex", definition: { displayName: "Codex", baseUrl: "http://127.0.0.1:18789", credential: { sources: [{ literal: "placeholder-value" }] } } },
+      }),
+    );
+    expect(report.credential.applies).toBe("provider");
+    const text = formatCheckReport(report).join("\n");
+    expect(text).toContain("  Provider codex: bearer from literal (non-secret placeholder)");
+    expect(text).toContain("(not used: the provider's credential applies)");
+    expect(text + JSON.stringify(checkReportToJson(report))).not.toContain("placeholder-value");
+    expect(checkReportHasWarnings(report)).toBe(false);
+  });
+
+  it("reports a selected provider that cannot be used, and counts it as a warning for --strict", () => {
+    const report = runCheck(baseParams({ provider: { name: "z", problem: 'no provider named "z"' } }));
+    expect(report.credential).toEqual({ applies: "provider", provider: { name: "z", problem: 'no provider named "z"' } });
+    expect(formatCheckReport(report)).toContain('  Provider z: unusable: no provider named "z"');
+    expect(checkReportHasWarnings(report)).toBe(true);
   });
 });
