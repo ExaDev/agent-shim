@@ -91,10 +91,16 @@ const LaunchSchema = z.strictObject({
 });
 export type LaunchFlags = z.infer<typeof LaunchSchema>;
 
+/** How a provider's token reaches Claude Code: as a bearer `ANTHROPIC_AUTH_TOKEN`, or as an `x-api-key` `ANTHROPIC_API_KEY`. */
+export const AUTH_SCHEMES = ["bearer", "apiKey"] as const;
+export type AuthScheme = (typeof AUTH_SCHEMES)[number];
+
 /**
- * A named API provider at `~/.claude-use/providers/<name>.json`: which base URL the child Claude Code talks to, which environment variable holds its token, and any static extra environment entries the child needs to use that endpoint.
+ * A named API provider at `~/.claude-use/providers/<name>.json`: which base URL the child Claude Code talks to, where its token comes from, and any static extra environment entries the child needs to use that endpoint.
  *
- * `tokenEnv` is deliberately the NAME of an environment variable (e.g. `Z_API_TOKEN`), never a token value: a provider file is ordinary committed config, and the credential itself must stay in the environment or a secret store where it belongs. It may be omitted only by a provider whose `env` itself carries an `ANTHROPIC_AUTH_TOKEN` entry: local proxies that take a fixed dummy token (a codex-translation proxy ignoring credentials entirely) have no real secret to keep out of the file, and requiring a tokenEnv would force a pointless env var; anything with a real credential must still name it.
+ * Exactly one token source is allowed. `tokenEnv` is the NAME of an environment variable (e.g. `Z_API_TOKEN`), never a token value; `tokenCommand` is an argv run at launch whose trimmed stdout is the token (e.g. `["op", "read", "op://vault/item/field"]`), so the credential can live in a secret store and exist only in the child. A provider file is ordinary committed config, so neither holds a secret. The third source is a non-empty `env.ANTHROPIC_AUTH_TOKEN`: local proxies that take a fixed dummy token (a codex-translation proxy ignoring credentials entirely) have no real secret to keep out of the file, and requiring a token source would force a pointless env var; anything with a real credential must use `tokenEnv` or `tokenCommand`.
+ *
+ * `authScheme` defaults to `bearer` (the token is exported as `ANTHROPIC_AUTH_TOKEN`). `apiKey` exports it as `ANTHROPIC_API_KEY` instead, which is what a regular Anthropic API key against `api.anthropic.com` needs; a non-empty `env.ANTHROPIC_API_KEY` would then be overwritten by the token, so the schema rejects it.
  */
 export const ProviderSchema = z
   .strictObject({
@@ -102,10 +108,32 @@ export const ProviderSchema = z
     displayName: z.string().min(1),
     baseUrl: z.url(),
     tokenEnv: z.string().min(1).optional(),
+    tokenCommand: z.tuple([z.string().min(1)], z.string()).optional(),
+    authScheme: z.enum(AUTH_SCHEMES).optional(),
     env: z.record(z.string().min(1), z.string()).optional(),
   })
-  .refine((provider) => provider.tokenEnv !== undefined || (provider.env?.ANTHROPIC_AUTH_TOKEN ?? "") !== "", {
-    message: "a provider needs either tokenEnv (the name of the environment variable holding its token) or a non-empty env.ANTHROPIC_AUTH_TOKEN",
+  .superRefine((provider, ctx) => {
+    const sources = [
+      provider.tokenEnv !== undefined ? "tokenEnv" : undefined,
+      provider.tokenCommand !== undefined ? "tokenCommand" : undefined,
+      (provider.env?.ANTHROPIC_AUTH_TOKEN ?? "") !== "" ? "env.ANTHROPIC_AUTH_TOKEN" : undefined,
+    ].filter((source) => source !== undefined);
+    if (sources.length !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          sources.length === 0
+            ? "a provider needs exactly one token source: tokenEnv (the name of the environment variable holding its token), tokenCommand (an argv whose stdout is the token), or a non-empty env.ANTHROPIC_AUTH_TOKEN"
+            : `a provider takes exactly one token source, but this one has ${sources.join(", ")}`,
+      });
+    }
+    if (provider.authScheme === "apiKey" && (provider.env?.ANTHROPIC_API_KEY ?? "") !== "") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["env", "ANTHROPIC_API_KEY"],
+        message: 'authScheme "apiKey" exports the token as ANTHROPIC_API_KEY, so env.ANTHROPIC_API_KEY must not be set to a value',
+      });
+    }
   });
 export type Provider = z.infer<typeof ProviderSchema>;
 

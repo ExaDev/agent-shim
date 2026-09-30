@@ -4,6 +4,13 @@ import categoriesDefaultJson from "./config/categories.default.json";
 import { CategoryClassificationSchema, type CategoryClassification } from "./config/schema";
 import type { FarmFs, FarmStat } from "./launcher/ports";
 import type { EntryFact, EntryFacts } from "./resolve/types";
+import { vi, type Mock } from "vitest";
+
+import { runLauncher, type FarmRuntime, type RunLauncherParams } from "./launcher";
+import type { FsPort, LogPort, ProcPort, RunPort, SpawnPort, SpawnResult } from "./launcher/ports";
+import { buildLayoutPaths } from "./paths";
+import type { CascadeInput } from "./resolve/walk";
+import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 
 /** The shipped classification map, parsed once, for use as the default in tests. */
 export const shippedClassification: CategoryClassification = CategoryClassificationSchema.parse(categoriesDefaultJson);
@@ -327,4 +334,106 @@ export function createFakeFarmFs(initial: Readonly<Record<string, FakeFsSeed>> =
   };
 
   return fs;
+}
+
+class ExitCalled extends Error {
+  constructor(readonly code: number) {
+    super(`process would exit with code ${String(code)}`);
+  }
+}
+
+export const paths = buildLayoutPaths("/home/testuser/.claude-use");
+
+export function fakeProc(env: Readonly<Record<string, string | undefined>>, argv: readonly string[]): ProcPort {
+  return {
+    env,
+    argv,
+    exit: (code: number): never => {
+      throw new ExitCalled(code);
+    },
+  };
+}
+
+export function fakeFs(files: Record<string, unknown>): FsPort {
+  return {
+    readFileUtf8: (filePath) => {
+      const value = files[filePath];
+      return typeof value === "string" ? value : undefined;
+    },
+    readConfigFile: (filePath) => {
+      const value = files[filePath];
+      return value === undefined || typeof value === "string" ? undefined : value;
+    },
+    readdir: (dir) =>
+      Object.keys(files)
+        .filter((file) => file.startsWith(`${dir}/`))
+        .map((file) => file.slice(dir.length + 1).split("/")[0] ?? "")
+        .filter((name) => name !== ""),
+  };
+}
+
+export function fakeLog(): LogPort & { infos: string[]; warns: string[]; errors: string[] } {
+  const infos: string[] = [];
+  const warns: string[] = [];
+  const errors: string[] = [];
+  return {
+    infos,
+    warns,
+    errors,
+    info: (message) => { infos.push(message); },
+    warn: (message) => { warns.push(message); },
+    error: (message) => { errors.push(message); },
+  };
+}
+
+export function fakeSpawn(result: SpawnResult = { status: 0, signal: null }): SpawnPort & { spawnSync: Mock<SpawnPort["spawnSync"]> } {
+  return { spawnSync: vi.fn<SpawnPort["spawnSync"]>().mockReturnValue(result) };
+}
+
+/** The env the child was spawned with, from the first spawn call: for tests that assert a few specific keys of an otherwise large environment. */
+export function spawnedEnv(spawn: ReturnType<typeof fakeSpawn>): Record<string, string | undefined> {
+  const call = spawn.spawnSync.mock.calls[0];
+  if (call === undefined) {
+    throw new Error("expected spawnSync to have been called");
+  }
+  const options = call[2];
+  return options.env;
+}
+
+/** A `RunPort` answering every command with one scripted result, recording each call. */
+export function fakeRun(stdout: string, status = 0): RunPort & { run: Mock<RunPort["run"]> } {
+  return { run: vi.fn<RunPort["run"]>().mockReturnValue({ status, stdout, stderr: "" }) };
+}
+
+export const discovered: DiscoveredClaudeBinary = { path: "/home/testuser/.local/share/claude/versions/2.1.0", source: "versions-dir", version: "2.1.0" };
+
+export function runAndCaptureExit(params: RunLauncherParams): number {
+  try {
+    runLauncher(params);
+  } catch (error) {
+    if (error instanceof ExitCalled) {
+      return error.code;
+    }
+    throw error;
+  }
+  throw new Error("expected runLauncher to reach spawnClaude's proc.exit");
+}
+
+export function fakeFarm(fs: FakeFarmFs, cliOverride?: CascadeInput["cliOverride"]): FarmRuntime {
+  return {
+    fs,
+    claudeHome: FAKE_CLAUDE_HOME,
+    home: FAKE_HOME,
+    cwd: `${FAKE_HOME}/work`,
+    classification: { defaults: shippedClassification },
+    loadCascade: () => ({
+      home: FAKE_HOME,
+      loadProfile: () => undefined,
+      levels: [],
+      ...(cliOverride === undefined ? {} : { cliOverride }),
+    }),
+    now: () => FAKE_NOW_MS,
+    uniqueSuffix: "launcher-test",
+    lock: { pid: 42, isRunning: () => true, sleep: fakeSleep().sleep, maxAttempts: 2 },
+  };
 }

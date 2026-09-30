@@ -18,6 +18,26 @@
       "type": "string",
       "minLength": 1
     },
+    "tokenCommand": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ],
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "authScheme": {
+      "type": "string",
+      "enum": [
+        "bearer",
+        "apiKey"
+      ]
+    },
     "env": {
       "type": "object",
       "propertyNames": {

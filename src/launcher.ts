@@ -7,7 +7,7 @@ import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/id
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { IdentityLockBusyError } from "./launcher/lock";
-import type { FarmFs, FsPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
+import type { FarmFs, FsPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, RunPort, SpawnPort } from "./launcher/ports";
 import { spawnClaude } from "./launcher/spawn";
 import { resolveProvider } from "./providers";
 import { flattenLayers } from "./resolve/flatten";
@@ -67,6 +67,8 @@ export interface RunLauncherParams {
   readonly farm?: FarmRuntime;
   /** Wires headroom routing. Omitted by a caller that cannot route through the daemon; a launch that resolves `headroom` on with no port wired is refused loudly rather than silently bypassing it. */
   readonly headroom?: HeadroomPort;
+  /** Runs a provider's `tokenCommand`. Omitted by a caller that cannot run commands; a launch that selects such a provider is then refused rather than started without its credential. */
+  readonly run?: RunPort;
 }
 
 /**
@@ -161,6 +163,7 @@ export function runLauncher(params: RunLauncherParams): void {
     paths,
     port: fs,
     env,
+    ...(params.run === undefined ? {} : { run: params.run }),
     ...(parsedArgv.provider === undefined ? {} : { cliProvider: parsedArgv.provider }),
     ...(farmContext === undefined ? {} : { cascade: farmContext.cascade }),
   });

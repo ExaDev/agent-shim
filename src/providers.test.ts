@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ConfigValidationError } from "./config/load";
-import type { FsPort } from "./launcher/ports";
+import type { FsPort, RunPort } from "./launcher/ports";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import {
   addProvider,
@@ -44,6 +44,11 @@ function tempFsPort(): FsPort {
       }
     },
   };
+}
+
+/** A `RunPort` that answers every command with one scripted result and records the calls. */
+function fakeRun(result: Readonly<{ status: number | null; stdout?: string; stderr?: string }>): RunPort & { run: ReturnType<typeof vi.fn<RunPort["run"]>> } {
+  return { run: vi.fn<RunPort["run"]>().mockReturnValue({ status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }) };
 }
 
 describe("providers", () => {
@@ -204,6 +209,84 @@ describe("providers", () => {
       });
       const empty = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "" }, cliProvider: "z" });
       expect(empty).toEqual(unset);
+    });
+
+    describe("tokenCommand", () => {
+      const commandInput = {
+        displayName: "Anthropic API",
+        baseUrl: "https://api.anthropic.com",
+        tokenCommand: ["op", "read", "op://vault/item/field"] as [string, ...string[]],
+        authScheme: "apiKey" as const,
+      };
+
+      it("uses the command's trimmed stdout as the token, running it as an argv without a shell", () => {
+        addProvider(paths, "anthropic-api", commandInput);
+        const run = fakeRun({ status: 0, stdout: "sk-ant-secret\n" });
+        const result = resolveProvider({ paths, port: tempFsPort(), env: {}, run, cliProvider: "anthropic-api" });
+        expect(result).toMatchObject({ ok: true, provider: { name: "anthropic-api", token: "sk-ant-secret" } });
+        expect(run.run).toHaveBeenCalledExactlyOnceWith("op", ["read", "op://vault/item/field"]);
+      });
+
+      it("does not run the command for a provider that uses tokenEnv", () => {
+        addProvider(paths, "z", zInput);
+        const run = fakeRun({ status: 0, stdout: "from-command" });
+        const result = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, run, cliProvider: "z" });
+        expect(result).toMatchObject({ ok: true, provider: { token: "tok-z" } });
+        expect(run.run).not.toHaveBeenCalled();
+      });
+
+      it("refuses with status 64 when the command exits non-zero, naming the status and stderr but never stdout", () => {
+        addProvider(paths, "anthropic-api", commandInput);
+        const run = fakeRun({ status: 1, stdout: "sk-ant-REDACTED", stderr: "item not found\n" });
+        const result = resolveProvider({ paths, port: tempFsPort(), env: {}, run, cliProvider: "anthropic-api" });
+        expect(result).toEqual({
+          ok: false,
+          status: 64,
+          message: "claude-use: provider anthropic-api: token command op exited with status 1: item not found",
+        });
+      });
+
+      it("refuses with status 64 when the command cannot be run or is killed", () => {
+        addProvider(paths, "anthropic-api", commandInput);
+        const result = resolveProvider({ paths, port: tempFsPort(), env: {}, run: fakeRun({ status: null }), cliProvider: "anthropic-api" });
+        expect(result).toEqual({
+          ok: false,
+          status: 64,
+          message: "claude-use: provider anthropic-api: token command op could not be run or was killed by a signal",
+        });
+      });
+
+      it("refuses with status 64 when the command succeeds but prints only whitespace", () => {
+        addProvider(paths, "anthropic-api", commandInput);
+        const result = resolveProvider({ paths, port: tempFsPort(), env: {}, run: fakeRun({ status: 0, stdout: " \n" }), cliProvider: "anthropic-api" });
+        expect(result).toEqual({
+          ok: false,
+          status: 64,
+          message: "claude-use: provider anthropic-api: token command op printed no token",
+        });
+      });
+
+      it("refuses rather than launching without a credential when no command runner is wired", () => {
+        addProvider(paths, "anthropic-api", commandInput);
+        const result = resolveProvider({ paths, port: tempFsPort(), env: {}, cliProvider: "anthropic-api" });
+        expect(result).toMatchObject({ ok: false, status: 1 });
+      });
+    });
+  });
+
+  describe("addProvider with tokenCommand and authScheme", () => {
+    it("persists both fields and rejects a second token source", () => {
+      const provider = addProvider(paths, "anthropic-api", {
+        displayName: "Anthropic API",
+        baseUrl: "https://api.anthropic.com",
+        tokenCommand: ["op", "read", "ref"],
+        authScheme: "apiKey",
+      });
+      expect(readProvider(paths, "anthropic-api")).toEqual(provider);
+      expect(provider).toMatchObject({ tokenCommand: ["op", "read", "ref"], authScheme: "apiKey" });
+      expect(() =>
+        addProvider(paths, "both", { displayName: "x", baseUrl: "https://api.z.ai", tokenEnv: "T", tokenCommand: ["cmd"] }),
+      ).toThrow(ConfigValidationError);
     });
   });
 });
