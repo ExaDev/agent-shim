@@ -18,10 +18,12 @@ export interface HeadroomHopDeps {
   readonly log: (line: string) => void;
 }
 
-/** Joins an upstream response's headers into the single-value shape a routed response's head takes; a repeated header becomes one comma-joined value, which is lossless for the JSON and SSE APIs routed here. */
-function singleValueHeaders(headers: Readonly<IncomingHttpHeaders>): Record<string, string> {
+/**
+ * Joins an upstream response's headers into the single-value shape a routed response's head takes, minus the hop-by-hop set: this process re-frames both messages, so framing headers (`transfer-encoding`, `connection` and kin) belong to whichever connection carried them and must be regenerated, never copied. A repeated header becomes one comma-joined value, which is lossless for the JSON and SSE APIs routed here.
+ */
+function responseHeaders(headers: Readonly<IncomingHttpHeaders>): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const [name, value] of Object.entries(headers)) {
+  for (const [name, value] of Object.entries(forwardableHeaders(headers))) {
     if (value === undefined) {
       continue;
     }
@@ -53,7 +55,7 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
   }
   await new Promise<void>((resolve) => {
     const onUpstreamResponse = (upstreamResponse: IncomingMessage): void => {
-      response.start(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, singleValueHeaders(upstreamResponse.headers));
+      response.start(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, responseHeaders(upstreamResponse.headers));
       // Headers go out before the first body byte: a streaming (SSE) response must reach the client as its chunks arrive, not when it completes.
       response.flush();
       const stream = async (): Promise<void> => {
