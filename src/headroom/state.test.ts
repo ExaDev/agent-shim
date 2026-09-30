@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { ProviderSchema } from "../config/schema";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import {
   hashAllowlist,
   headroomAllowlist,
+  headroomUpstreams,
   HEADROOM_ANTHROPIC_UPSTREAM,
   listSessions,
   pruneDeadSessions,
@@ -43,6 +45,16 @@ describe("headroomAllowlist", () => {
     ]);
     expect(allowlist).toEqual(["https://api.anthropic.com", "https://api.z.ai/api/anthropic", "https://openrouter.ai/api/v1"]);
     expect(allowlist).toContain(HEADROOM_ANTHROPIC_UPSTREAM);
+  });
+
+  it("admits the codex daemon's origin in place of a codex provider's missing base URL, once the daemon has an address", () => {
+    const providers = [
+      ProviderSchema.parse({ displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } }),
+      ProviderSchema.parse({ kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "x" }] } }),
+    ];
+    expect(headroomAllowlist(headroomUpstreams(providers, "http://127.0.0.1:4100"))).toEqual(["http://127.0.0.1:4100", HEADROOM_ANTHROPIC_UPSTREAM, "https://api.z.ai/api/anthropic"]);
+    expect(headroomAllowlist(headroomUpstreams(providers, undefined))).toEqual([HEADROOM_ANTHROPIC_UPSTREAM, "https://api.z.ai/api/anthropic"]);
+    expect(headroomAllowlist(headroomUpstreams(providers.slice(0, 1), "http://127.0.0.1:4100"))).toEqual([HEADROOM_ANTHROPIC_UPSTREAM, "https://api.z.ai/api/anthropic"]);
   });
 
   it("is only Claude Code's own API when no providers exist", () => {

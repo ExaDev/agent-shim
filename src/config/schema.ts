@@ -249,7 +249,7 @@ export const CodexProviderSchema = z.strictObject({
 export type CodexProvider = z.infer<typeof CodexProviderSchema>;
 
 /** Either kind of provider; see `HttpProviderSchema` for the shared fields. */
-export const ProviderSchema = z.union([HttpProviderSchema, CodexProviderSchema]);
+export const ProviderSchema = z.discriminatedUnion("kind", [HttpProviderSchema, CodexProviderSchema]);
 export type Provider = z.infer<typeof ProviderSchema>;
 
 /** True when `provider` is a codex provider. `kind` is the tag, since a codex provider's own distinguishing block is optional. */

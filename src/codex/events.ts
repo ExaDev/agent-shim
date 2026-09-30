@@ -84,7 +84,7 @@ export const CodexErrorEnvelopeSchema = z.looseObject({
 export type CodexErrorDetail = z.infer<typeof CodexErrorEnvelopeSchema>["error"];
 
 /**
- * Parses a server-sent-events body into the JSON value of each event's `data`, tolerating multi-line data, CRLF line endings and chunk boundaries anywhere. An event whose data is not JSON (never fully formed, or a truncated tail) is skipped.
+ * Parses a server-sent-events body into the JSON value of each event's `data`, tolerating multi-line data, CRLF line endings, chunk boundaries anywhere (even inside a multi-byte character) and a body that ends without its final blank line. An event whose data is not JSON (never fully formed, or a truncated tail) is skipped.
  */
 export async function* parseSse(body: Readonly<AsyncIterable<Uint8Array>>): AsyncGenerator {
   const decoder = new TextDecoder();
@@ -113,6 +113,11 @@ export async function* parseSse(body: Readonly<AsyncIterable<Uint8Array>>): Asyn
       }
       newline = buffer.indexOf("\n");
     }
+  }
+  // A body that ends without a final newline still carries its last line.
+  const tail = (buffer + decoder.decode()).replace(/\r$/, "");
+  if (tail.startsWith("data:")) {
+    data += tail.slice("data:".length).trimStart();
   }
   if (data !== "") {
     yield* parsed(data);

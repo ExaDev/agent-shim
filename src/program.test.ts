@@ -95,7 +95,7 @@ describe("buildProgram", () => {
     const built = program(runClaude);
 
     expect(built.commands.map((command) => command.name()).sort()).toEqual(
-      ["__headroom-supervisor", "check", "completion", "configure", "doctor", "headroom", "identity", "profile", "provider", "rule", "run", "shim"].sort(),
+      ["__codex-supervisor", "__codex-worker", "__headroom-supervisor", "check", "codex", "completion", "configure", "doctor", "headroom", "identity", "profile", "provider", "rule", "run", "shim"].sort(),
     );
     expect(runClaude).not.toHaveBeenCalled();
     expect(fs.readdirSync(root)).toEqual([]);
@@ -362,6 +362,31 @@ describe("provider commands", () => {
       credential: { target: "bearer", sources: [{ kind: "env", variable: "Z_API_TOKEN" }] },
     });
     expect(parseJson((await cli(["provider", "list", "--json"])).stdout)).toEqual([expect.objectContaining({ name: "z" })]);
+  });
+
+  it("adds a codex provider with translation settings, merges tier updates, and refuses options that do not fit a kind", async () => {
+    const addCodex = ["provider", "add", "codex", "--kind", "codex", "--display-name", "Codex", "--credential", "literal:codex", "--codex-model", "sonnet=gpt-a", "--codex-effort", "medium"];
+    expect((await cli(addCodex)).code).toBe(0);
+    expect((await cli(["provider", "set", "codex", "--codex-model", "haiku=gpt-b", "--codex-default-model", "gpt-c"])).code).toBe(0);
+    expect(readProvider(paths, "codex")).toEqual({
+      kind: "codex",
+      displayName: "Codex",
+      credential: { sources: [{ literal: "codex" }] },
+      codex: { models: { sonnet: "gpt-a", haiku: "gpt-b" }, effort: "medium", defaultModel: "gpt-c" },
+    });
+    const shown = (await cli(["provider", "show", "codex"])).stdout;
+    expect(shown).toContain("Kind: codex");
+    expect(shown).toContain("sonnet=gpt-a");
+    expect(shown).toContain("haiku=gpt-b");
+    expect(shown).toContain("otherwise gpt-c");
+    expect(parseJson((await cli(["provider", "show", "codex", "--json"])).stdout)).toMatchObject({ kind: "codex", codex: { effort: "medium" } });
+
+    expect((await cli(["provider", "set", "codex", "--base-url", "https://x.example"])).code).toBe(EXIT_USAGE);
+    expect((await cli(["provider", "set", "codex", "--codex-model", "gpt=nope"])).code).toBe(EXIT_USAGE);
+    expect((await cli(["provider", "add", "c2", "--kind", "codex", "--display-name", "C", "--base-url", "https://x.example", "--credential", "literal:x"])).code).toBe(EXIT_USAGE);
+    expect((await cli(["provider", "add", "h", "--display-name", "H", "--credential", "env:X"])).code).toBe(EXIT_USAGE);
+    expect((await cli(addZ)).code).toBe(0);
+    expect((await cli(["provider", "set", "z", "--codex-effort", "high"])).code).toBe(EXIT_USAGE);
   });
 
   it("requires --credential on add", async () => {
