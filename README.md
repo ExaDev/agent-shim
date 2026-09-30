@@ -105,6 +105,7 @@ claude-use check [path] [--identity <identity>] [--json] [--strict]
 claude-use doctor [--json]
 claude-use headroom status [--json]
 claude-use codex status [--json]
+claude-use frontdoor status [--json]
 claude-use completion <bash|zsh|fish>
 claude-use shim enable [--dir <path>] [--force]
 claude-use shim disable [--dir <path>] [--force]

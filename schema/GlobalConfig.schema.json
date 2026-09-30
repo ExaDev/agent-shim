@@ -129,7 +129,7 @@
       },
       "additionalProperties": false
     },
-    "codex": {
+    "frontdoor": {
       "type": "object",
       "properties": {
         "idleShutdownMinutes": {

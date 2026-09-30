@@ -40,14 +40,21 @@ src/
     mitm.ts                 # the MITM CONNECT proxy OAuth launches route through: node-forge CA/leaf minting, the routing decisions, and the real effects over node's net/tls/http
     headers.ts              # ANTHROPIC_CUSTOM_HEADERS merge (Name: Value lines, later block wins per name)
     commands.ts             # real ports for the supervisor, `headroom status`, command registration
-  codex/                    # the codex translation daemon serving `kind: codex` providers (the port of the old codex-claude-proxy.mjs)
+  frontdoor/                # the front-door daemon: one claude-use listener routing every session claude-use launches for a provider
+    route.ts                # the URL space (/providers/<name>) and the identity step: the launcher-injected session headers, and their strip, plus the route interface a destination implements
+    pipeline.ts             # the ordered pipeline (identify, response middleware at each response head, route) and the typed hook point where the usage-tracking middleware registers
+    providerRoute.ts        # resolves /providers/<name> requests to a route by reading the provider file fresh per request
+    codexMount.ts           # the codex translation mounted as one route (an adapter over createCodexRoute, not a second implementation)
+    server.ts               # the plain-HTTP listener transport: aborts each route when its client goes away, drains unread bodies, answers /healthz
+    supervisor.ts, ensure.ts, state.ts   # the listener-host lifecycle (sticky port, session registry, idle shutdown), the launcher's lock-and-poll bring-up, and the coordination state
+    commands.ts             # real ports wiring the whole pipeline in the supervisor process, `frontdoor status`, and the hidden supervisor subcommand
+  codex/                    # the codex translation the front door serves in process for `kind: codex` providers (the port of the old codex-claude-proxy.mjs)
     anthropic.ts, translate.ts, events.ts   # the pure core: Zod-validated Anthropic Messages and Codex Responses shapes, the translation between them, and the Codex SSE events translated back to Anthropic SSE
-    relay.ts, route.ts        # the request/response relay, mounted behind a transport-neutral route so a future front-door proxy can serve it as one route among several
+    relay.ts, route.ts        # the request/response relay, transport-neutral so the front door serves it as one route among several
     auth.ts, agent.ts         # the ~/.codex/auth.json store (one refresh in flight, re-read before refresh, atomic write, rotated token persisted before use) and the undici agent with the 10s keep-alive ceiling
     upstream.ts, upstreamPort.ts   # the upstream client (per-session `session_id` derived from `metadata.user_id`) and its injected port
     http.ts, quota.ts         # named HTTP statuses, and upstream quota/limit responses forwarded as Anthropic-shaped errors
-    server.ts, supervisor.ts, ensure.ts, state.ts   # the listener, the supervisor-plus-worker lifecycle (sticky port, session registry, idle shutdown), the launcher's lock-and-poll bring-up, and the coordination state
-    commands.ts               # `codex status` and the hidden supervisor/worker subcommands
+    commands.ts               # the real translation ports (auth store, upstream fetch, usage snapshot) the front door mounts, and `codex status` reporting through it
   directoryRules.ts       # the `rule` noun: add/set/list/show/remove
   configure.ts            # `claude-use configure` interactive picker (@clack/prompts)
   check.ts                # `claude-use check` dry-run inspector — cascade resolution, credential/ambient-credential/Keychain/settings-secrets diagnostics — no farm writes, no spawn
