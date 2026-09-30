@@ -10,12 +10,12 @@ import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/id
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider, type RoutedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { IdentityLockBusyError } from "./launcher/lock";
-import type { CodexPort, FarmFs, FsPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
+import type { FarmFs, FsPort, FrontDoorPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
 import { spawnClaude } from "./launcher/spawn";
 import { resolveProvider } from "./providers";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
-import { codexProviderBaseUrl } from "./codex/route";
+import { providerBaseUrl } from "./frontdoor/route";
 import { CREDENTIAL_TARGET_VARS, isCodexProvider, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, describeSource, resolveCredential, type CredentialPort, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
@@ -72,8 +72,8 @@ export interface RunLauncherParams {
   readonly farm?: FarmRuntime;
   /** Wires headroom routing. Omitted by a caller that cannot route through the daemon; a launch that resolves `headroom` on with no port wired is refused loudly rather than silently bypassing it. */
   readonly headroom?: HeadroomPort;
-  /** Wires the codex translation daemon. Omitted by a caller that cannot run it; a launch that selects a codex provider with no port wired is refused rather than started against an address nothing serves. */
-  readonly codex?: CodexPort;
+  /** Wires the front-door daemon. Omitted by a caller that cannot run it; a launch that selects a codex provider with no port wired is refused rather than started against an address nothing serves. */
+  readonly frontdoor?: FrontDoorPort;
   /** Resolves credential blocks (a provider's, or the launching identity's own). Omitted by a caller that cannot read secret files or run commands; a launch that needs a credential is then refused rather than started without it. */
   readonly credentials?: CredentialPort;
   /** True when the user was asked on a terminal whether to create the selected configuration profile and chose to launch without it. Without that explicit choice, a selected profile with no file is refused rather than silently skipped. */
@@ -324,22 +324,22 @@ export function runLauncher(params: RunLauncherParams): void {
     },
   });
 
-  // The codex daemon comes up before headroom: headroom's allowlist is fixed when its daemon starts and must already contain the codex daemon's address, which exists once that daemon has served.
+  // The front door comes up before headroom: headroom's allowlist is fixed when its daemon starts and must already contain the front door's address, which is what a codex session routed through headroom is forwarded back to.
   let routedProvider: RoutedProvider | undefined;
-  const codexPort = params.codex;
+  const frontDoorPort = params.frontdoor;
   if (resolvedProvider !== undefined && isCodexProvider(resolvedProvider.definition)) {
-    if (codexPort === undefined) {
-      log.error(`claude-use: provider ${resolvedProvider.name} is a codex provider, but this launcher has no codex daemon port wired; refusing to launch without it.`);
+    if (frontDoorPort === undefined) {
+      log.error(`claude-use: provider ${resolvedProvider.name} is a codex provider, but this launcher has no front-door daemon port wired; refusing to launch without it.`);
       proc.exit(1);
     } else {
-      const codex = codexPort.ensure();
-      routedProvider = { ...resolvedProvider, baseUrl: codexProviderBaseUrl(codex.port, resolvedProvider.name) };
-      log.info(`claude-use: provider ${resolvedProvider.name} served by the codex daemon on 127.0.0.1:${String(codex.port)}`);
+      const frontDoor = frontDoorPort.ensure();
+      routedProvider = { ...resolvedProvider, baseUrl: providerBaseUrl(frontDoor.port, resolvedProvider.name) };
+      log.info(`claude-use: provider ${resolvedProvider.name} served by the front door on 127.0.0.1:${String(frontDoor.port)}`);
     }
   } else if (resolvedProvider !== undefined && !isCodexProvider(resolvedProvider.definition)) {
     routedProvider = { ...resolvedProvider, baseUrl: resolvedProvider.definition.baseUrl };
   }
-  const codexRelease = routedProvider !== undefined && isCodexProvider(routedProvider.definition) ? codexPort?.release : undefined;
+  const frontDoorRelease = routedProvider !== undefined && isCodexProvider(routedProvider.definition) ? frontDoorPort?.release : undefined;
 
   let headroom: HeadroomUp | undefined;
   const headroomPort = params.headroom;
@@ -368,7 +368,7 @@ export function runLauncher(params: RunLauncherParams): void {
   });
 
   // Every daemon session registration this launch holds, released when the child exits.
-  const releases = [...(headroom === undefined || headroomPort === undefined ? [] : [headroomPort.release]), ...(codexRelease === undefined ? [] : [codexRelease])];
+  const releases = [...(headroom === undefined || headroomPort === undefined ? [] : [headroomPort.release]), ...(frontDoorRelease === undefined ? [] : [frontDoorRelease])];
   if (releases.length === 0) {
     spawnClaude({ bin: discovered.path, args: finalArgv, env: finalEnv, spawn, proc });
   }

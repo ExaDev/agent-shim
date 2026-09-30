@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type { CodexPort, HeadroomPort } from "./launcher/ports";
+import type { FrontDoorPort, HeadroomPort } from "./launcher/ports";
 import { discovered, FAKE_HOME, fakeCredentials, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
-const CODEX_PORT = 4100;
+const FRONTDOOR_PORT = 4100;
 const HEADROOM_PORT = 8123;
 
 const codexProvider = {
@@ -12,13 +12,13 @@ const codexProvider = {
   credential: { sources: [{ literal: "codex-placeholder" }] },
 };
 
-/** A fake codex daemon port that reports each bring-up to `record`, so a test can see the order daemons came up in. */
-function fakeCodexPort(record: (daemon: string) => void): CodexPort & { readonly releases: () => number } {
+/** A fake front-door port that reports each bring-up to `record`, so a test can see the order daemons came up in. */
+function fakeFrontDoorPort(record: (daemon: string) => void): FrontDoorPort & { readonly releases: () => number } {
   let releases = 0;
   return {
     ensure: () => {
-      record("codex");
-      return { port: CODEX_PORT };
+      record("frontdoor");
+      return { port: FRONTDOOR_PORT };
     },
     release: () => {
       releases += 1;
@@ -44,10 +44,10 @@ function recordInto(order: Readonly<{ push: (daemon: string) => number }>): (dae
 }
 
 describe("runLauncher with a codex provider", () => {
-  it("brings the codex daemon up and points the child at its provider-scoped address", () => {
+  it("brings the front door up and points the child at its provider-scoped address", () => {
     const spawn = fakeSpawn();
     const order: string[] = [];
-    const codex = fakeCodexPort(recordInto(order));
+    const frontdoor = fakeFrontDoorPort(recordInto(order));
     runAndCaptureExit({
       paths,
       fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/codex.json`]: codexProvider }),
@@ -55,18 +55,18 @@ describe("runLauncher with a codex provider", () => {
       proc: fakeProc({}, ["--provider", "codex", "--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
-      codex,
+      frontdoor,
       credentials: fakeCredentials(),
     });
     const env = spawnedEnv(spawn);
-    expect(order).toEqual(["codex"]);
-    expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${String(CODEX_PORT)}/providers/codex`);
+    expect(order).toEqual(["frontdoor"]);
+    expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("codex-placeholder");
     expect(env.CLAUDE_USE_PROVIDER).toBe("Codex");
-    expect(codex.releases()).toBeGreaterThan(0);
+    expect(frontdoor.releases()).toBeGreaterThan(0);
   });
 
-  it("starts the codex daemon before headroom and hands headroom the daemon's address as the upstream", () => {
+  it("starts the front door before headroom and hands headroom the front door's address as the upstream", () => {
     const spawn = fakeSpawn();
     const order: string[] = [];
     runAndCaptureExit({
@@ -76,17 +76,17 @@ describe("runLauncher with a codex provider", () => {
       proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--provider", "codex"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
-      codex: fakeCodexPort(recordInto(order)),
+      frontdoor: fakeFrontDoorPort(recordInto(order)),
       headroom: fakeHeadroomPort(recordInto(order)),
       credentials: fakeCredentials(),
     });
     const env = spawnedEnv(spawn);
-    expect(order).toEqual(["codex", "headroom"]);
+    expect(order).toEqual(["frontdoor", "headroom"]);
     expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${String(HEADROOM_PORT)}`);
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(`x-headroom-project-id: /repo\nx-headroom-base-url: http://127.0.0.1:${String(CODEX_PORT)}/providers/codex`);
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(`x-headroom-project-id: /repo\nx-headroom-base-url: http://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
   });
 
-  it("refuses a codex provider when no codex port is wired", () => {
+  it("refuses a codex provider when no front-door port is wired", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
     const code = runAndCaptureExit({
@@ -100,10 +100,10 @@ describe("runLauncher with a codex provider", () => {
     });
     expect(code).toBe(1);
     expect(spawn.spawnSync).not.toHaveBeenCalled();
-    expect(log.errors[0]).toContain("codex daemon");
+    expect(log.errors[0]).toContain("front-door");
   });
 
-  it("never touches the codex daemon for an http provider", () => {
+  it("never touches the front door for an http provider", () => {
     const spawn = fakeSpawn();
     const order: string[] = [];
     runAndCaptureExit({
@@ -113,7 +113,7 @@ describe("runLauncher with a codex provider", () => {
       proc: fakeProc({ Z: "tok" }, ["--provider", "z"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
-      codex: fakeCodexPort(recordInto(order)),
+      frontdoor: fakeFrontDoorPort(recordInto(order)),
       credentials: fakeCredentials(),
     });
     expect(order).toEqual([]);

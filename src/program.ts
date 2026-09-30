@@ -3,6 +3,7 @@ import { Command } from "commander";
 import packageJson from "../package.json";
 import { registerCheckCommand } from "./check";
 import { registerCodexCommand } from "./codex/commands";
+import { registerFrontDoorCommand } from "./frontdoor/commands";
 import type { CommandDeps } from "./cli/commandDeps";
 import { registerCompletionCommand } from "./completion";
 import { registerConfigureCommand } from "./configure";
@@ -55,7 +56,7 @@ Examples:
   $ claude-use run --identity work --provider z -p "hello"`;
 
 /**
- * Builds the complete `claude-use` Commander tree: the `identity`, `profile`, `provider` and `rule` nouns (each with the same `add`/`set`/`list`/`show`/`remove`/`use` verbs where they apply), `check`, `configure`, `doctor`, `shim`, `headroom`, `codex`, `run`, and `completion`, each registered by its own module as a thin adapter over `src/config/store.ts` and the Zod schemas in `src/config/schema.ts`.
+ * Builds the complete `claude-use` Commander tree: the `identity`, `profile`, `provider` and `rule` nouns (each with the same `add`/`set`/`list`/`show`/`remove`/`use` verbs where they apply), `check`, `configure`, `doctor`, `shim`, `headroom`, `codex`, `frontdoor`, `run`, and `completion`, each registered by its own module as a thin adapter over `src/config/store.ts` and the Zod schemas in `src/config/schema.ts`.
  *
  * Construction has no side effects: nothing is parsed, read or launched until the caller invokes `parseAsync` on the result. That is what lets the whole command surface be unit-tested against a throwaway `LayoutPaths`, scripted prompts and a fake `runClaude`, while `src/cli.ts` stays the one module that runs on import.
  *
@@ -82,6 +83,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   registerShimCommand(program, deps);
   registerHeadroomCommand(program, deps);
   registerCodexCommand(program, deps);
+  registerFrontDoorCommand(program, deps);
   registerRunCommand(program, deps.runClaude);
   registerCompletionCommand(program);
 

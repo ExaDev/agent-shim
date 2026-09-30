@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "./http";
 import type { UsageSnapshot } from "./quota";
-import { codexProviderBaseUrl, createCodexRoute, type CodexProviderLookup, type RouteRequest } from "./route";
+import { createCodexRoute, type CodexProviderLookup, type RouteRequest } from "./route";
 import { CODEX_TOOL_NAME_LIMIT, resolveCodexConfig } from "./translate";
 import { sessionIdFor } from "./upstream";
 import type { UpstreamResponse } from "./upstreamPort";
@@ -21,7 +21,6 @@ import {
 const MESSAGES_PATH = "/providers/codex/v1/messages";
 const COUNT_PATH = "/providers/codex/v1/messages/count_tokens";
 const NOW = 1_800_000_000_000;
-const DAEMON_PORT = 4100;
 const MS_PER_SECOND = 1000;
 const COUNTED_CHARS = 400;
 
@@ -255,7 +254,6 @@ describe("codex route: upstream request", () => {
     await route(post("/providers/work%20codex/v1/messages", { model: "claude-sonnet-4-5", messages: [] }));
     expect(lookups).toEqual(["work codex"]);
     expect(upstreamBody(fetch.calls[0])).toMatchObject({ model: "gpt-custom", reasoning: { effort: "high" } });
-    expect(codexProviderBaseUrl(DAEMON_PORT, "work codex")).toBe(`http://127.0.0.1:${String(DAEMON_PORT)}/providers/work%20codex`);
   });
 });
 

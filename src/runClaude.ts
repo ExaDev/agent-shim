@@ -6,7 +6,7 @@ import { cosmiconfigReader } from "./config/load";
 import { realPromptsPort, runProfileWizard } from "./configure";
 import { PromptCancelledError } from "./cliError";
 import { resolveOwnInstallDirs } from "./claudeShim";
-import { realCodexPort } from "./codex/commands";
+import { realFrontDoorPort } from "./frontdoor/commands";
 import { profileExists } from "./configProfiles";
 import { runIdentityWizard } from "./identityManager";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
@@ -151,7 +151,7 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
     resolveClaudeBinary: realResolveClaudeBinary(resolveOwnInstallDirs(paths, realOwnExecutablePath())),
     farm: farm.runtime,
     headroom: realHeadroomPort(paths),
-    codex: realCodexPort(paths),
+    frontdoor: realFrontDoorPort(paths),
     credentials: realCredentialPort,
     ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
     ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
