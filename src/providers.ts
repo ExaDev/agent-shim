@@ -7,10 +7,18 @@ import { collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX } from "./cli/credent
 import { collectRepeated, collectStringPair } from "./cli/parsers";
 import { ConfigValidationError } from "./config/load";
 import { writeJsonAtomic } from "./config/store";
+import { resolveCodexConfig } from "./codex/translate";
 import {
+  CODEX_EFFORTS,
+  CODEX_TIERS,
+  CodexProviderConfigSchema,
   CREDENTIAL_TARGET_VARS,
+  isCodexProvider,
   PROVIDER_CREDENTIAL_TARGETS,
+  PROVIDER_KINDS,
   ProviderSchema,
+  type CodexEffort,
+  type CodexProviderConfig,
   type CredentialSource,
   type Provider,
 } from "./config/schema";
@@ -211,13 +219,36 @@ function listProviderNames(readdir: (dir: string) => readonly string[], provider
 /** The credential targets a provider may use. */
 type ProviderCredentialTarget = (typeof PROVIDER_CREDENTIAL_TARGETS)[number];
 
-/** Everything `addProvider` writes into a fresh provider file. */
+/** The kinds of provider. */
+type ProviderKind = (typeof PROVIDER_KINDS)[number];
+
+/** Where a provider sends its sessions, for display: an `http` provider's base URL, or the codex daemon for a codex provider (whose address exists only at launch). */
+export function describeProviderEndpoint(provider: Provider): string {
+  return isCodexProvider(provider) ? "codex translation daemon" : provider.baseUrl;
+}
+
+/** Everything `addProvider` writes into a fresh provider file. `baseUrl` is required for an `http` provider and refused for a codex one; `codex` applies only to a codex provider. */
 export interface AddProviderInput {
+  readonly kind?: ProviderKind;
   readonly displayName: string;
-  readonly baseUrl: string;
+  readonly baseUrl?: string;
   readonly sources: readonly CredentialSource[];
   readonly target?: ProviderCredentialTarget;
   readonly env?: Readonly<Record<string, string>>;
+  readonly codex?: CodexProviderConfig;
+}
+
+/** Raised when a provider option does not fit the provider's kind: a base URL for a codex provider, a missing one for an http provider, or codex settings for an http provider. */
+export class ProviderKindMismatchError extends UsageError {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProviderKindMismatchError";
+  }
+}
+
+/** True when a codex settings block says nothing at all, so writing it would only add noise to the file. */
+function isEmptyCodexConfig(config: CodexProviderConfig | undefined): boolean {
+  return config === undefined || (config.defaultModel === undefined && config.effort === undefined && (config.models === undefined || Object.keys(config.models).length === 0));
 }
 
 /**
@@ -230,12 +261,26 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
   if (!PROVIDER_NAME_RE.test(name)) {
     throw new InvalidProviderNameError(name);
   }
-  const parsed = ProviderSchema.safeParse({
+  const kind = input.kind ?? "http";
+  if (kind === "codex" && input.baseUrl !== undefined) {
+    throw new ProviderKindMismatchError("A codex provider has no base URL: the launcher points its sessions at the codex daemon. Drop --base-url.");
+  }
+  if (kind === "http" && input.baseUrl === undefined) {
+    throw new ProviderKindMismatchError("An http provider needs --base-url.");
+  }
+  if (kind === "http" && !isEmptyCodexConfig(input.codex)) {
+    throw new ProviderKindMismatchError("Codex settings apply only to a codex provider (--kind codex).");
+  }
+  const shared = {
     displayName: input.displayName,
-    baseUrl: input.baseUrl,
     credential: { sources: input.sources, ...(input.target === undefined ? {} : { target: input.target }) },
     ...(input.env === undefined || Object.keys(input.env).length === 0 ? {} : { env: input.env }),
-  });
+  };
+  const parsed = ProviderSchema.safeParse(
+    kind === "codex"
+      ? { kind, ...shared, ...(isEmptyCodexConfig(input.codex) ? {} : { codex: input.codex }) }
+      : { ...shared, baseUrl: input.baseUrl },
+  );
   if (!parsed.success) {
     throw new ConfigValidationError(providerJsonPath(paths, name), parsed.error.issues);
   }
@@ -253,6 +298,8 @@ interface UpdateProviderInput {
   readonly target?: ProviderCredentialTarget;
   readonly env?: Readonly<Record<string, string>>;
   readonly unsetEnv?: readonly string[];
+  /** Merged over a codex provider's existing settings: a field given here replaces that field, and `models` entries merge per tier. */
+  readonly codex?: CodexProviderConfig;
 }
 
 /**
@@ -266,16 +313,32 @@ function updateProvider(paths: LayoutPaths, name: string, input: UpdateProviderI
   const unset = new Set(input.unsetEnv);
   const env = Object.fromEntries(Object.entries({ ...existing.env, ...input.env }).filter(([key]) => !unset.has(key)));
   const target = input.target ?? existing.credential.target;
-  const parsed = ProviderSchema.safeParse({
-    ...existing,
+  if (isCodexProvider(existing) && input.baseUrl !== undefined) {
+    throw new ProviderKindMismatchError(`Provider "${name}" is a codex provider, which has no base URL.`);
+  }
+  if (!isCodexProvider(existing) && !isEmptyCodexConfig(input.codex)) {
+    throw new ProviderKindMismatchError(`Provider "${name}" is an http provider; codex settings apply only to a codex provider.`);
+  }
+  const shared = {
     ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
-    ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }),
     credential: {
       sources: input.sources ?? existing.credential.sources,
       ...(target === undefined ? {} : { target }),
     },
     env: Object.keys(env).length === 0 ? undefined : env,
-  });
+  };
+  let candidate: unknown;
+  if (isCodexProvider(existing)) {
+    const codex: CodexProviderConfig = {
+      ...existing.codex,
+      ...input.codex,
+      ...(existing.codex?.models === undefined && input.codex?.models === undefined ? {} : { models: { ...existing.codex?.models, ...input.codex?.models } }),
+    };
+    candidate = { ...existing, ...shared, codex: isEmptyCodexConfig(codex) ? undefined : codex };
+  } else {
+    candidate = { ...existing, ...shared, ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }) };
+  }
+  const parsed = ProviderSchema.safeParse(candidate);
   if (!parsed.success) {
     throw new ConfigValidationError(providerJsonPath(paths, name), parsed.error.issues);
   }
@@ -364,24 +427,50 @@ export function resolveProvider(params: ResolveProviderParams): ProviderResoluti
 function toProviderView(name: string, provider: Provider): Record<string, unknown> {
   return {
     name,
+    kind: provider.kind ?? "http",
     displayName: provider.displayName,
-    baseUrl: provider.baseUrl,
+    ...(isCodexProvider(provider) ? (provider.codex === undefined ? {} : { codex: provider.codex }) : { baseUrl: provider.baseUrl }),
     credential: summariseCredential(provider.credential),
     ...(provider.env === undefined ? {} : { env: provider.env }),
   };
 }
 
 /** Options `provider add` accepts. */
-interface ProviderAddOptions {
+interface ProviderAddOptions extends CodexOptions {
+  readonly kind?: ProviderKind;
   readonly displayName: string;
-  readonly baseUrl: string;
+  readonly baseUrl?: string;
   readonly credential: CredentialSource[];
   readonly credentialTarget?: ProviderCredentialTarget;
   readonly env?: Record<string, string>;
 }
 
+/** The codex settings options `provider add` and `provider set` share. */
+interface CodexOptions {
+  readonly codexDefaultModel?: string;
+  readonly codexModel?: Record<string, string>;
+  readonly codexEffort?: CodexEffort;
+}
+
+/** The codex settings block the codex options describe, or undefined when none was given. Tier names are validated by the schema, which names any unknown one. */
+function codexConfigFromOptions(options: CodexOptions): CodexProviderConfig | undefined {
+  if (options.codexDefaultModel === undefined && options.codexModel === undefined && options.codexEffort === undefined) {
+    return undefined;
+  }
+  const candidate = {
+    ...(options.codexDefaultModel === undefined ? {} : { defaultModel: options.codexDefaultModel }),
+    ...(options.codexModel === undefined ? {} : { models: options.codexModel }),
+    ...(options.codexEffort === undefined ? {} : { effort: options.codexEffort }),
+  };
+  const parsed = CodexProviderConfigSchema.safeParse(candidate);
+  if (!parsed.success) {
+    throw new UsageError(`Invalid codex settings: ${parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
+  }
+  return parsed.data;
+}
+
 /** Options `provider set` accepts. */
-interface ProviderSetOptions {
+interface ProviderSetOptions extends CodexOptions {
   readonly displayName?: string;
   readonly baseUrl?: string;
   readonly credential?: CredentialSource[];
@@ -402,8 +491,9 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
     provider
       .command("add <name>")
       .description("Create a new API provider definition. Fails if one with this name already exists.")
+      .addOption(new Option("--kind <kind>", "http (default): an Anthropic-compatible endpoint at --base-url; codex: ChatGPT's Codex backend through claude-use's codex daemon.").choices(PROVIDER_KINDS))
       .requiredOption("--display-name <name>", "Human-readable name, exported to the child as CLAUDE_USE_PROVIDER.")
-      .requiredOption("--base-url <url>", "Anthropic-compatible base URL the child's requests are sent to.")
+      .option("--base-url <url>", "Anthropic-compatible base URL the child's requests are sent to (http providers only, and required for them).")
       .requiredOption(
         "--credential <source>",
         `Where the provider's token comes from (repeatable; tried in the order given until one yields a token): ${CREDENTIAL_SOURCE_SYNTAX}. Never the token itself.`,
@@ -415,21 +505,29 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         ),
       )
       .option("--env <KEY=VALUE>", "Extra environment entry for the child (repeatable).", collectStringPair)
+      .option("--codex-default-model <model>", "Codex providers: the codex model a request maps to when no tier matches.")
+      .option("--codex-model <tier=model>", "Codex providers: the codex model one tier (fable, opus, sonnet or haiku) maps to (repeatable).", collectStringPair)
+      .addOption(new Option("--codex-effort <effort>", "Codex providers: the reasoning effort when a request asks for none the backend accepts.").choices(CODEX_EFFORTS))
       .action((name: string, options: ProviderAddOptions) => {
+        const codex = codexConfigFromOptions(options);
         const created = addProvider(paths, name, {
+          ...(options.kind === undefined ? {} : { kind: options.kind }),
           displayName: options.displayName,
-          baseUrl: options.baseUrl,
+          ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
           sources: options.credential,
           ...(options.credentialTarget === undefined ? {} : { target: options.credentialTarget }),
           ...(options.env === undefined ? {} : { env: options.env }),
+          ...(codex === undefined ? {} : { codex }),
         });
-        console.log(`Created provider "${name}" (${created.baseUrl}, credential ${describeCredential(created.credential)}).`);
+        console.log(`Created provider "${name}" (${describeProviderEndpoint(created)}, credential ${describeCredential(created.credential)}).`);
       }),
     [
       "claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --credential env:Z_API_TOKEN",
       "claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --credential env:Z_API_TOKEN --credential op:op://vault/z/credential",
       "claude-use provider add anthropic-api --display-name Anthropic --base-url https://api.anthropic.com --credential-target apiKey --credential keychain:anthropic-api-key",
       "claude-use provider add local --display-name Local --base-url http://127.0.0.1:4000 --credential literal:dummy",
+      "claude-use provider add codex --kind codex --display-name Codex --credential literal:codex",
+      "claude-use provider add codex --kind codex --display-name Codex --credential literal:codex --codex-model sonnet=gpt-5.6-sol --codex-effort medium",
     ],
   );
 
@@ -438,7 +536,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .command("set <name>")
       .description("Update an existing API provider definition.")
       .option("--display-name <name>", "Replace the human-readable name.")
-      .option("--base-url <url>", "Replace the base URL.")
+      .option("--base-url <url>", "Replace the base URL (http providers only).")
       .option(
         "--credential <source>",
         `Replace the credential's sources with these (repeatable, in the order tried): ${CREDENTIAL_SOURCE_SYNTAX}.`,
@@ -451,11 +549,18 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       )
       .option("--env <KEY=VALUE>", "Add or replace an environment entry for the child (repeatable).", collectStringPair)
       .option("--unset-env <KEY>", "Remove an environment entry (repeatable).", collectRepeated)
+      .option("--codex-default-model <model>", "Codex providers: replace the model a request maps to when no tier matches.")
+      .option("--codex-model <tier=model>", "Codex providers: set the codex model one tier maps to (repeatable; other tiers are kept).", collectStringPair)
+      .addOption(new Option("--codex-effort <effort>", "Codex providers: replace the default reasoning effort.").choices(CODEX_EFFORTS))
       .action((name: string, options: ProviderSetOptions) => {
         if (Object.values(options).every((value) => value === undefined)) {
-          throw new UsageError("Nothing to change: pass --display-name, --base-url, --credential, --credential-target, --env or --unset-env.");
+          throw new UsageError(
+            "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, --env, --unset-env, --codex-default-model, --codex-model or --codex-effort.",
+          );
         }
+        const codex = codexConfigFromOptions(options);
         const updated = updateProvider(paths, name, {
+          ...(codex === undefined ? {} : { codex }),
           ...(options.displayName === undefined ? {} : { displayName: options.displayName }),
           ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
           ...(options.credential === undefined ? {} : { sources: options.credential }),
@@ -463,13 +568,14 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(options.env === undefined ? {} : { env: options.env }),
           ...(options.unsetEnv === undefined ? {} : { unsetEnv: options.unsetEnv }),
         });
-        console.log(`Updated provider "${name}" (${updated.baseUrl}, credential ${describeCredential(updated.credential)}).`);
+        console.log(`Updated provider "${name}" (${describeProviderEndpoint(updated)}, credential ${describeCredential(updated.credential)}).`);
       }),
     [
       "claude-use provider set z --base-url https://api.z.ai/api/anthropic",
       "claude-use provider set z --env API_TIMEOUT_MS=600000",
       "claude-use provider set z --credential op:op://vault/z/credential",
       "claude-use provider set anthropic-api --credential-target apiKey",
+      "claude-use provider set codex --codex-model haiku=gpt-5.6-terra",
     ],
   );
 
@@ -489,7 +595,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           return;
         }
         for (const entry of entries) {
-          console.log(`  ${entry.name} (${entry.provider.displayName}, ${entry.provider.baseUrl})`);
+          console.log(`  ${entry.name} (${entry.provider.displayName}, ${describeProviderEndpoint(entry.provider)})`);
         }
       }),
     ["claude-use provider list", "claude-use provider list --json"],
@@ -511,7 +617,14 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         }
         console.log(`Provider: ${name}`);
         console.log(`Display name: ${found.displayName}`);
-        console.log(`Base URL: ${found.baseUrl}`);
+        console.log(`Kind: ${found.kind ?? "http"}`);
+        if (isCodexProvider(found)) {
+          const config = resolveCodexConfig(found.codex);
+          console.log(`Codex models: ${CODEX_TIERS.map((tier) => `${tier}=${config.models[tier]}`).join(", ")}, otherwise ${config.defaultModel}`);
+          console.log(`Codex effort: ${config.effort}`);
+        } else {
+          console.log(`Base URL: ${found.baseUrl}`);
+        }
         console.log(`Credential: ${describeCredential(found.credential)}`);
         const env = Object.entries(found.env ?? {});
         console.log(`Environment: ${env.length === 0 ? "(none)" : env.map(([key, value]) => `${key}=${value}`).join(", ")}`);

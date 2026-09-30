@@ -166,24 +166,96 @@ const ProviderCredentialSchema = CredentialSchema.extend({ target: z.enum(PROVID
 /** The variables a provider's `env` block may not name, because the credential target sets one of them and claude-use removes the others from the child's environment. */
 const RESERVED_PROVIDER_ENV_KEYS: readonly string[] = Object.values(CREDENTIAL_TARGET_VARS);
 
+/** A provider's extra environment entries: any variable except the credential variables, which the credential block owns. */
+const ProviderEnvSchema = z
+  .record(z.string().min(1), z.string())
+  .refine((env) => !Object.keys(env).some((key) => RESERVED_PROVIDER_ENV_KEYS.includes(key)), {
+    message: `env may not set ${RESERVED_PROVIDER_ENV_KEYS.join(", ")}: the credential block's target sets one and claude-use removes the others`,
+  });
+
+/** The kinds of provider: `http` is an Anthropic Messages endpoint at a fixed `baseUrl` (the default when `kind` is absent), and `codex` is ChatGPT's Codex backend reached through claude-use's own supervised translation daemon. */
+export const PROVIDER_KINDS = ["http", "codex"] as const;
+
 /**
- * A named API provider at `~/.claude-use/providers/<name>.json`: which base URL the child Claude Code talks to, where its token comes from, and any static extra environment entries the child needs to use that endpoint.
- *
- * `credential` is required, since a provider launch has to authenticate against the provider's endpoint. A provider file is ordinary committed config, so none of its sources holds a secret (a `literal` source is by definition a non-secret placeholder). `env` may not name a credential variable (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`) at all: the credential target sets one and the launcher removes the other two, so a value there would either be overwritten or be a second credential hiding outside the block.
+ * The Claude model tiers the codex translator maps, in the order they are matched: the first tier whose name is a substring of the requested model (case-insensitive) decides the codex model. `fable` comes before `opus` because a fable model name is the most specific.
  */
-export const ProviderSchema = z.strictObject({
+export const CODEX_TIERS = ["fable", "opus", "sonnet", "haiku"] as const;
+export type CodexTier = (typeof CODEX_TIERS)[number];
+
+/** The reasoning efforts the codex backend accepts, plus `none`, which omits the reasoning block from the upstream request entirely. */
+export const CODEX_EFFORTS = ["none", "low", "medium", "high"] as const;
+export type CodexEffort = (typeof CODEX_EFFORTS)[number];
+
+/** The codex model every tier maps to when neither its own tier entry nor `defaultModel` says otherwise. */
+export const CODEX_DEFAULT_MODEL = "gpt-5.6-sol";
+
+/** The shipped tier mapping: the flagship model for fable and opus, the mid-size one for sonnet, the small one for haiku. */
+export const CODEX_DEFAULT_TIER_MODELS: Readonly<Record<CodexTier, string>> = Object.freeze({
+  fable: "gpt-5.6-sol",
+  opus: "gpt-5.6-sol",
+  sonnet: "gpt-5.6-terra",
+  haiku: "gpt-5.6-luna",
+});
+
+/** The shipped reasoning effort for a request that does not ask for one the backend accepts. */
+export const CODEX_DEFAULT_EFFORT: CodexEffort = "low";
+
+/**
+ * How a codex provider translates Claude Code's requests. Every field is optional and defaults to the shipped mapping (`CODEX_DEFAULT_MODEL`, `CODEX_DEFAULT_TIER_MODELS`, `CODEX_DEFAULT_EFFORT`), so an absent block means the stock behaviour. A requested model that already names a codex model (`gpt-...`) passes through untouched whatever this says.
+ */
+export const CodexProviderConfigSchema = z.strictObject({
+  /** The codex model a request maps to when no tier matches its model name. */
+  defaultModel: z.string().min(1).optional(),
+  /** Per-tier overrides of the shipped mapping, matched by substring of the requested model name in `CODEX_TIERS` order. */
+  models: z
+    .strictObject({
+      fable: z.string().min(1).optional(),
+      opus: z.string().min(1).optional(),
+      sonnet: z.string().min(1).optional(),
+      haiku: z.string().min(1).optional(),
+    } satisfies Record<CodexTier, z.ZodType>)
+    .optional(),
+  /** The reasoning effort used when the request's own `output_config.effort` is not one the backend accepts. */
+  effort: z.enum(CODEX_EFFORTS).optional(),
+});
+export type CodexProviderConfig = z.infer<typeof CodexProviderConfigSchema>;
+
+/**
+ * A named API provider at `~/.claude-use/providers/<name>.json`: which endpoint the child Claude Code talks to, where its token comes from, and any static extra environment entries the child needs to use that endpoint.
+ *
+ * Two kinds, told apart by `kind`. An `http` provider (the default, so `kind` may be omitted) names a fixed Anthropic-compatible `baseUrl`. A `codex` provider has no `baseUrl` at all: the launcher starts claude-use's supervised codex translation daemon and points the child at the daemon's address, which only exists at launch time, and the provider's optional `codex` block configures the translation.
+ *
+ * `credential` is required for both kinds, since a provider launch has to give Claude Code a token to send. A provider file is ordinary committed config, so none of its sources holds a secret (a `literal` source is by definition a non-secret placeholder, which is exactly what a codex provider needs: the daemon authenticates upstream with the Codex CLI's own login and ignores the token Claude Code sends it). `env` may not name a credential variable (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`) at all: the credential target sets one and the launcher removes the other two, so a value there would either be overwritten or be a second credential hiding outside the block.
+ */
+export const HttpProviderSchema = z.strictObject({
   $schema: z.string().optional(),
+  kind: z.literal("http").optional(),
   displayName: z.string().min(1),
   baseUrl: z.url(),
   credential: ProviderCredentialSchema,
-  env: z
-    .record(z.string().min(1), z.string())
-    .refine((env) => !Object.keys(env).some((key) => RESERVED_PROVIDER_ENV_KEYS.includes(key)), {
-      message: `env may not set ${RESERVED_PROVIDER_ENV_KEYS.join(", ")}: the credential block's target sets one and claude-use removes the others`,
-    })
-    .optional(),
+  env: ProviderEnvSchema.optional(),
 });
+export type HttpProvider = z.infer<typeof HttpProviderSchema>;
+
+/** A `codex` provider: see `ProviderSchema`. */
+export const CodexProviderSchema = z.strictObject({
+  $schema: z.string().optional(),
+  kind: z.literal("codex"),
+  displayName: z.string().min(1),
+  credential: ProviderCredentialSchema,
+  env: ProviderEnvSchema.optional(),
+  codex: CodexProviderConfigSchema.optional(),
+});
+export type CodexProvider = z.infer<typeof CodexProviderSchema>;
+
+/** Either kind of provider; see `HttpProviderSchema` for the shared fields. */
+export const ProviderSchema = z.union([HttpProviderSchema, CodexProviderSchema]);
 export type Provider = z.infer<typeof ProviderSchema>;
+
+/** True when `provider` is a codex provider. `kind` is the tag, since a codex provider's own distinguishing block is optional. */
+export function isCodexProvider(provider: Provider): provider is CodexProvider {
+  return provider.kind === "codex";
+}
 
 /**
  * A named, reusable configuration profile at `~/.claude-use/config-profiles/<name>.json`.
@@ -246,6 +318,17 @@ export const HEADROOM_DEFAULT_SOURCE = "headroom-ai[proxy] @ git+https://github.
  */
 export const HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES = 15;
 
+/**
+ * The default `codex.idleShutdownMinutes`, the same trade-off as headroom's: warm through a break, gone the same working day once abandoned.
+ */
+export const CODEX_DEFAULT_IDLE_SHUTDOWN_MINUTES = 15;
+
+/** The user-global codex daemon block. Global-only for the same reason as headroom's: there is one codex daemon per CLAUDE_USE_HOME, serving every codex provider. */
+const CodexGlobalConfigSchema = z.strictObject({
+  /** How long the daemon may sit with no registered sessions before it exits. Defaults to CODEX_DEFAULT_IDLE_SHUTDOWN_MINUTES. */
+  idleShutdownMinutes: z.number().int().positive().optional(),
+});
+
 /** The user-global `~/.claude-use/config.json`. */
 export const GlobalConfigSchema = z.strictObject({
   $schema: z.string().optional(),
@@ -255,6 +338,7 @@ export const GlobalConfigSchema = z.strictObject({
   entries: EntriesSchema.optional(),
   launch: LaunchSchema.optional(),
   headroom: HeadroomGlobalConfigSchema.optional(),
+  codex: CodexGlobalConfigSchema.optional(),
 });
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 

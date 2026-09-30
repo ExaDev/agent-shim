@@ -26,7 +26,7 @@ import {
 import { describeCredential } from "./credential";
 import { HeadroomStateSchema } from "./headroom/state";
 import { isIdentityDirectoryName } from "./identityManager";
-import { legacyProviderConversion, LegacyProviderFileError } from "./providers";
+import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providers";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
 import type { RunPort } from "./launcher/ports";
 import { findExecutableInDir, realFsPort, realIsProcessRunning, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
@@ -258,7 +258,7 @@ function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, m
     push("provider", "fail", new ConfigValidationError(entry.path, validated.error.issues).message, entry.name);
     return;
   }
-  push("provider", "pass", `${entry.name} is valid (${validated.data.baseUrl}, credential ${describeCredential(validated.data.credential)}).`, entry.name);
+  push("provider", "pass", `${entry.name} is valid (${describeProviderEndpoint(validated.data)}, credential ${describeCredential(validated.data.credential)}).`, entry.name);
 }
 
 /**

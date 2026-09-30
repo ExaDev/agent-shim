@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { InvalidEnvBoolError } from "../cli/parsers";
-import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider } from "./flags";
+import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type RoutedProvider } from "./flags";
 
 describe("resolveLaunchFlags", () => {
   it("defaults both flags to off when nothing sets them — a deliberate change from the legacy always-on script", () => {
@@ -184,16 +184,18 @@ describe("buildEnv", () => {
 
   const identitiesDir = "/home/testuser/.claude-use/identities";
 
-  /** A resolved provider as the launcher hands it to buildEnv: its definition plus a credential resolved to `token` under `target`. */
+  /** A resolved provider as the launcher hands it to buildEnv: its definition, the base URL it routes to, and a credential resolved to `token` under `target`. */
   function resolvedProvider(
     overrides: Readonly<{ name?: string; displayName?: string; baseUrl?: string; env?: Record<string, string>; target?: "bearer" | "apiKey"; token?: string }> = {},
-  ): ResolvedProvider {
+  ): RoutedProvider {
     const target = overrides.target ?? "bearer";
+    const baseUrl = overrides.baseUrl ?? "https://api.z.ai/api/anthropic";
     return {
       name: overrides.name ?? "z",
+      baseUrl,
       definition: {
         displayName: overrides.displayName ?? "GLM",
-        baseUrl: overrides.baseUrl ?? "https://api.z.ai/api/anthropic",
+        baseUrl,
         credential: { sources: [{ env: "Z_API_TOKEN" }], target },
         ...(overrides.env === undefined ? {} : { env: overrides.env }),
       },
