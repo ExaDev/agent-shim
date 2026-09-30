@@ -56,10 +56,20 @@ describe("createProviderRouteResolver", () => {
     }
   });
 
-  it("refuses an unknown provider and any path that names no provider", async () => {
+  it("rides a bare /v1/ target (an OAuth session on the CONNECT surface) on a pass-through to Claude Code's own API with no per-request upstream", async () => {
+    const resolution = await resolver({})(request("/v1/messages"));
+    expect(resolution.ok).toBe(true);
+    if (resolution.ok) {
+      expect(resolution.route.name).toBe("anthropic");
+      expect(resolution.route.headroomEligible).toBe(true);
+      expect(resolution.route.headroomUpstream).toBeUndefined();
+    }
+  });
+
+  it("refuses an unknown provider and any path that names no provider and is not a bare /v1/ path", async () => {
     const resolve = resolver({ [`${PROVIDERS_DIR}/codex.json`]: codexProvider });
     expect(await resolve(request("/providers/missing/v1/messages"))).toEqual({ ok: false, status: HTTP_STATUS.notFound, message: 'no provider named "missing"' });
-    expect(await resolve(request("/v1/messages"))).toMatchObject({ ok: false, status: HTTP_STATUS.notFound });
+    expect(await resolve(request("/api/oauth/token"))).toMatchObject({ ok: false, status: HTTP_STATUS.notFound });
   });
 
   it("refuses a provider file that fails validation, naming what is wrong", async () => {

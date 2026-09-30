@@ -3,7 +3,7 @@ import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 /**
  * The claude-use-internal headers the launcher injects through `ANTHROPIC_CUSTOM_HEADERS` so the front door can identify and route a request's session. None of them may ever leave the machine: the identity step strips every one before a route sees the request, so no upstream, and not even the headroom hop, learns what they say.
  */
-export const INTERNAL_HEADER_NAMES = ["x-claude-use-identity", "x-claude-use-session", "x-claude-use-headroom", "x-headroom-project-id"] as const;
+export const INTERNAL_HEADER_NAMES = ["x-claude-use-identity", "x-claude-use-session", "x-claude-use-headroom", "x-headroom-project-id", "x-headroom-base-url"] as const;
 
 /** Carries the launching identity's name (the `@name` the launch resolved), set by the launcher and stripped at the door. */
 export const IDENTITY_HEADER = "x-claude-use-identity";
@@ -18,6 +18,11 @@ export const HEADROOM_FLAG_HEADER = "x-claude-use-headroom";
  * Carries the project identity headroom scopes its memory state to (the git repository root of the launch directory). Also injected by the launcher and stripped at the door: the headroom hop re-sets it on its own request, so it reaches headroom and nowhere else.
  */
 export const PROJECT_ID_HEADER = "x-headroom-project-id";
+
+/**
+ * Headroom's per-request upstream selector, which the child used to carry and the door now owns: the door strips any inbound copy (a leftover from an older launcher's environment would otherwise redirect the daemon behind the door's back) and its hop sets it fresh when a route names an upstream.
+ */
+export const HEADROOM_BASE_URL_HEADER = "x-headroom-base-url";
 
 /** What the identity step learned about one request from the launcher-injected headers. */
 export interface SessionIdentity {

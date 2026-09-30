@@ -6,12 +6,13 @@ import { resolveCodexConfig } from "../codex/translate";
 import { LegacyProviderFileError, loadProvider } from "../providers";
 import type { FsPort } from "../launcher/ports";
 import { createCodexRouteMount } from "./codexMount";
+import { CONNECT_INTERCEPT_HOST, HTTPS_PORT } from "./connect";
 import { createPassthroughRoute } from "./passthrough";
 import type { RouteResolution } from "./pipeline";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type RoutedRequest } from "./route";
 
 /**
- * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one. Any other target is unrouted.
+ * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one. A bare `/v1/...` target (what the CONNECT surface hands the pipeline from a terminated OAuth session) rides a pass-through to Claude Code's own API. Anything else is unrouted.
  */
 export function createProviderRouteResolver(deps: {
   /** Reads provider files, the same filesystem port the launcher uses. */
@@ -24,12 +25,15 @@ export function createProviderRouteResolver(deps: {
    */
   readonly directPort: () => number;
 }): (request: RoutedRequest) => Promise<RouteResolution> {
+  /** The pass-through every bare /v1/ request from the CONNECT surface rides: straight to Claude Code's own API, with no per-request upstream for a headroom hop (the daemon's default upstream is exactly that API, which is what an OAuth session wants). */
+  const oauthRoute = createPassthroughRoute("anthropic", { baseUrl: `https://${CONNECT_INTERCEPT_HOST}:${String(HTTPS_PORT)}`, stripPrefix: undefined, headroomUpstream: undefined });
+
   /** The resolution itself is synchronous: reading one provider file needs no await, and keeping it sync is what lets the async wrapper stay honest about its one await. */
   const resolve = (request: RoutedRequest): RouteResolution => {
     const path = new URL(request.url, "http://127.0.0.1").pathname;
     const scoped = parseProviderPath(path);
     if (scoped === undefined) {
-      return { ok: false, status: HTTP_STATUS.notFound, message: `no such endpoint: ${path}` };
+      return path.startsWith("/v1/") ? { ok: true, route: oauthRoute } : { ok: false, status: HTTP_STATUS.notFound, message: `no such endpoint: ${path}` };
     }
     const { provider } = scoped;
     let definition;
