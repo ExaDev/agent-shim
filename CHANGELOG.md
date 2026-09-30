@@ -1,3 +1,24 @@
+## [3.0.0](https://github.com/ExaDev/claude-use/compare/v2.9.0...v3.0.0) (2026-09-30)
+
+### ⚠ BREAKING CHANGES
+
+* rules is now rule, and rule add no longer updates an
+  existing rule (use rule set). profile create, wizard and set-default
+  are profile add, set and use. identity set-default-profile is identity
+  set --default-profile, and identity resolve is identity
+  resolve-conflicts. configure takes --identity instead of a positional
+  identity. rules add --profile is rule add --config-profile.
+  profile set --skip-permissions, --remote-control and --headroom are
+  --launch-skip-permissions, --launch-remote-control and
+  --launch-headroom. CLAUDE_ACCOUNT is CLAUDE_USE_IDENTITY. --category,
+  --entry, --share, --hide and --extends take one value per occurrence
+  instead of a comma list. A launch naming a missing identity or
+  configuration profile now exits 1.
+
+### Features
+
+* one command grammar, flag spelling and error path for claude-use ([ecbc90a](https://github.com/ExaDev/claude-use/commit/ecbc90a94d41cc9c3813bf80a6f1aeb794ba9cf4))
+
 ## [2.9.0](https://github.com/ExaDev/claude-use/compare/v2.8.0...v2.9.0) (2026-09-30)
 
 ### Features
