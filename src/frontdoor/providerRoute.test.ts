@@ -1,0 +1,69 @@
+import { Readable } from "node:stream";
+import { describe, expect, it } from "vitest";
+
+import type { CodexRoutePorts } from "../codex/route";
+import { HTTP_STATUS } from "../codex/http";
+import { fakeAuth, recordingFetch } from "../codex/testing";
+import { FAKE_HOME, fakeFs } from "../test-helpers";
+import { createProviderRouteResolver } from "./providerRoute";
+import type { RoutedRequest } from "./route";
+
+const PROVIDERS_DIR = `${FAKE_HOME}/.claude-use/providers`;
+const OWN_PORT = 4100;
+
+const codexProvider = { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } };
+const httpProvider = { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } };
+
+/** The codex ports the resolver mounts, faked to the shape the real front-door process wires: a recording fetch and the fixed-token auth store. */
+function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
+  const fetch = recordingFetch(() => {
+    throw new Error("these tests never answer an upstream call");
+  });
+  return {
+    upstream: { fetch: fetch.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" },
+    writeUsageSnapshot: () => undefined,
+    now: () => 0,
+    log: () => undefined,
+  };
+}
+
+function resolver(files: Record<string, unknown>, ownPort = OWN_PORT): ReturnType<typeof createProviderRouteResolver> {
+  return createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), ownPort: () => ownPort });
+}
+
+function request(url: string): RoutedRequest {
+  return { method: "POST", url, headers: {}, body: Readable.from(["{}"]) as unknown as RoutedRequest["body"], signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, headroom: false } };
+}
+
+describe("createProviderRouteResolver", () => {
+  it("mounts the in-process codex translator for a codex provider, named for it and headroom-eligible with the front door's own address as the hop's upstream", async () => {
+    const resolution = await resolver({ [`${PROVIDERS_DIR}/codex.json`]: codexProvider })(request("/providers/codex/v1/messages"));
+    expect(resolution.ok).toBe(true);
+    if (resolution.ok) {
+      expect(resolution.route.name).toBe("codex:codex");
+      expect(resolution.route.headroomEligible).toBe(true);
+      expect(resolution.route.headroomUpstream).toBe(`http://127.0.0.1:${String(OWN_PORT)}/providers/codex`);
+    }
+  });
+
+  it("refuses an http provider by name until the pass-through route exists", async () => {
+    const resolution = await resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider })(request("/providers/z/v1/messages"));
+    expect(resolution).toEqual({ ok: false, status: HTTP_STATUS.notFound, message: "provider z is an http provider, which the front door does not route directly yet" });
+  });
+
+  it("refuses an unknown provider and any path that names no provider", async () => {
+    const resolve = resolver({ [`${PROVIDERS_DIR}/codex.json`]: codexProvider });
+    expect(await resolve(request("/providers/missing/v1/messages"))).toEqual({ ok: false, status: HTTP_STATUS.notFound, message: 'no provider named "missing"' });
+    expect(await resolve(request("/v1/messages"))).toMatchObject({ ok: false, status: HTTP_STATUS.notFound });
+  });
+
+  it("refuses a provider file that fails validation, naming what is wrong", async () => {
+    const resolve = resolver({ [`${PROVIDERS_DIR}/broken.json`]: { displayName: "Broken" } });
+    const resolution = await resolve(request("/providers/broken/v1/messages"));
+    expect(resolution.ok).toBe(false);
+    if (!resolution.ok) {
+      expect(resolution.status).toBe(HTTP_STATUS.internalServerError);
+      expect(resolution.message).toContain("provider broken is invalid");
+    }
+  });
+});

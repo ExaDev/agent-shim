@@ -43,16 +43,16 @@ export interface LayoutPaths {
   readonly logsDir: string;
   /** Path to the headroom daemon's combined log, appended to by both the supervisor and the proxy it owns. */
   readonly headroomLogPath: string;
-  /** Directory holding the codex translation daemon's coordination state: state.json, the start lock, and the session registry. */
-  readonly codexDir: string;
-  /** Path to the codex daemon's state.json: its pid, its port, and the sticky port it last served on. */
-  readonly codexStateFile: string;
-  /** Path to the exclusive-create marker guarding "who spawns the codex daemon" so concurrent launches start at most one. */
-  readonly codexLockFile: string;
-  /** Directory holding one `<launcher-pid>.json` session-registry entry per live launch using a codex provider. */
-  readonly codexSessionsDir: string;
-  /** Path to the codex daemon's log: one line per request and every lifecycle event, never a token. */
-  readonly codexLogPath: string;
+  /** Directory holding the front-door daemon's coordination state: state.json, the start lock, and the session registry. */
+  readonly frontdoorDir: string;
+  /** Path to the front door's state.json: its supervisor pid, its port, and the sticky port it last served on. */
+  readonly frontdoorStateFile: string;
+  /** Path to the exclusive-create marker guarding "who spawns the front-door supervisor" so concurrent launches start at most one. */
+  readonly frontdoorLockFile: string;
+  /** Directory holding one `<launcher-pid>.json` session-registry entry per live launch routed through the front door. */
+  readonly frontdoorSessionsDir: string;
+  /** Path to the front door's log: one line per lifecycle event and routed failure, never a token. */
+  readonly frontdoorLogPath: string;
 }
 
 /**
@@ -100,11 +100,11 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     headroomSessionsDir: path.join(root, "headroom", "sessions"),
     logsDir: path.join(root, "logs"),
     headroomLogPath: path.join(root, "logs", "headroom.log"),
-    codexDir: path.join(root, "codex"),
-    codexStateFile: path.join(root, "codex", "state.json"),
-    codexLockFile: path.join(root, "codex", "start.lock"),
-    codexSessionsDir: path.join(root, "codex", "sessions"),
-    codexLogPath: path.join(root, "logs", "codex.log"),
+    frontdoorDir: path.join(root, "frontdoor"),
+    frontdoorStateFile: path.join(root, "frontdoor", "state.json"),
+    frontdoorLockFile: path.join(root, "frontdoor", "start.lock"),
+    frontdoorSessionsDir: path.join(root, "frontdoor", "sessions"),
+    frontdoorLogPath: path.join(root, "logs", "frontdoor.log"),
   };
 }
 
