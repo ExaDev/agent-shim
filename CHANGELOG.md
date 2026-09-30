@@ -1,3 +1,9 @@
+## [4.1.0](https://github.com/ExaDev/claude-use/compare/v4.0.0...v4.1.0) (2026-09-30)
+
+### Features
+
+* add a codex provider kind served by a supervised translation daemon ([9d07d40](https://github.com/ExaDev/claude-use/commit/9d07d402046bbe52fa5a6b55f93b3ffd5ffb1a61))
+
 ## [4.0.0](https://github.com/ExaDev/claude-use/compare/v3.0.0...v4.0.0) (2026-09-30)
 
 ### ⚠ BREAKING CHANGES
