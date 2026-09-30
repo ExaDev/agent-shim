@@ -1,3 +1,10 @@
+## [4.2.0](https://github.com/ExaDev/claude-use/compare/v4.1.0...v4.2.0) (2026-09-30)
+
+### Features
+
+* **frontdoor:** add the front-door daemon with its ordered routing pipeline ([db7ca79](https://github.com/ExaDev/claude-use/commit/db7ca79d610b8f10ec442884b0e9f56020c73483))
+* **frontdoor:** mount the codex translation in process and retire the codex daemon ([3489832](https://github.com/ExaDev/claude-use/commit/348983294534c840e1b30a6d92abf1bafea61c8d))
+
 ## [4.1.0](https://github.com/ExaDev/claude-use/compare/v4.0.0...v4.1.0) (2026-09-30)
 
 ### Features
