@@ -1,4 +1,5 @@
 import http from "node:http";
+import type { IncomingMessage } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
 import type { PipelineRequest } from "./pipeline";
@@ -117,5 +118,20 @@ export async function listenFrontDoor(
     await new Promise<void>((resolve) => {
       setTimeout(resolve, HEALTH_RETRY_MS);
     });
+  }
+}
+
+/**
+ * Iterates a forwarded response's body as typed chunks. Node types the async iteration of an `IncomingMessage` as `any`, so every consumer narrows here once rather than each carrying its own assertion.
+ */
+export async function* upstreamChunks(stream: IncomingMessage): AsyncGenerator<Uint8Array> {
+  for await (const chunk of stream) {
+    if (typeof chunk === "string") {
+      yield Buffer.from(chunk, "utf8");
+      continue;
+    }
+    if (chunk instanceof Uint8Array) {
+      yield chunk;
+    }
   }
 }

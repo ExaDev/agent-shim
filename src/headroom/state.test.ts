@@ -47,14 +47,16 @@ describe("headroomAllowlist", () => {
     expect(allowlist).toContain(HEADROOM_ANTHROPIC_UPSTREAM);
   });
 
-  it("admits the codex daemon's origin in place of a codex provider's missing base URL, once the daemon has an address", () => {
+  it("admits the front door's direct origin in place of a provider's own address, once the door has one, for either kind of provider", () => {
     const providers = [
       ProviderSchema.parse({ displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } }),
       ProviderSchema.parse({ kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "x" }] } }),
     ];
-    expect(headroomAllowlist(headroomUpstreams(providers, "http://127.0.0.1:4100"))).toEqual(["http://127.0.0.1:4100", HEADROOM_ANTHROPIC_UPSTREAM, "https://api.z.ai/api/anthropic"]);
+    expect(headroomAllowlist(headroomUpstreams(providers, "http://127.0.0.1:4400"))).toEqual(["http://127.0.0.1:4400", HEADROOM_ANTHROPIC_UPSTREAM, "https://api.z.ai/api/anthropic"]);
     expect(headroomAllowlist(headroomUpstreams(providers, undefined))).toEqual([HEADROOM_ANTHROPIC_UPSTREAM, "https://api.z.ai/api/anthropic"]);
-    expect(headroomAllowlist(headroomUpstreams(providers.slice(0, 1), "http://127.0.0.1:4100"))).toEqual([HEADROOM_ANTHROPIC_UPSTREAM, "https://api.z.ai/api/anthropic"]);
+    // An http provider alone still needs the door's origin admitted: its headroom hop bounces through the direct listener too.
+    expect(headroomAllowlist(headroomUpstreams(providers.slice(0, 1), "http://127.0.0.1:4400"))).toEqual(["http://127.0.0.1:4400", HEADROOM_ANTHROPIC_UPSTREAM, "https://api.z.ai/api/anthropic"]);
+    expect(headroomAllowlist(headroomUpstreams([], "http://127.0.0.1:4400"))).toEqual([HEADROOM_ANTHROPIC_UPSTREAM]);
   });
 
   it("is only Claude Code's own API when no providers exist", () => {
@@ -84,10 +86,10 @@ describe("headroom state files", () => {
 
   it("round-trips the MITM proxy's ready-signal and sticky ports the same way", () => {
     const fs = createFakeFarmFs({});
-    writeHeadroomState(fs, paths.headroomStateFile, { port: 8123, mitmPort: 8124, lastPort: 8123, lastMitmPort: 8124 });
-    expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ port: 8123, mitmPort: 8124, lastPort: 8123, lastMitmPort: 8124 });
-    writeHeadroomState(fs, paths.headroomStateFile, { lastPort: 8123, lastMitmPort: 8124 });
-    expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ lastPort: 8123, lastMitmPort: 8124 });
+    writeHeadroomState(fs, paths.headroomStateFile, { port: 8123, lastPort: 8123 });
+    expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ port: 8123, lastPort: 8123 });
+    writeHeadroomState(fs, paths.headroomStateFile, { lastPort: 8123 });
+    expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ lastPort: 8123 });
   });
 
   it("treats a missing or malformed state file as absent rather than throwing", () => {

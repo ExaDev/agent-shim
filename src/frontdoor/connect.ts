@@ -7,16 +7,16 @@ import * as tls from "node:tls";
 import forge from "node-forge";
 
 /**
- * A CONNECT proxy the headroom supervisor runs as a second server in its own process, so an OAuth session can have headroom's compression AND Claude Code's Remote Control at once: Remote Control refuses any `ANTHROPIC_BASE_URL` other than the real API, but happily honours `HTTPS_PROXY`, so OAuth launches route at the proxy layer instead.
+ * The front door's CONNECT surface, so an OAuth session can have claude-use's routing AND Claude Code's Remote Control at once: Remote Control refuses any `ANTHROPIC_BASE_URL` other than the real API, but happily honours `HTTPS_PROXY`, so OAuth launches route at the proxy layer instead.
  *
- * Every CONNECT target is blind-tunnelled byte for byte EXCEPT the intercept host (Claude Code's own API), whose TLS this proxy terminates with a leaf certificate signed by a locally generated CA. On the terminated session, paths headroom serves are forwarded to headroom's existing loopback port over plain HTTP (compression, per-session stats, and upstream auth unchanged; the client's Authorization header passes through untouched), and every other path is piped by this proxy to the real upstream over TLS, so Remote Control's streaming, OAuth refreshes, and unknown endpoints bypass headroom entirely.
+ * Every CONNECT target is blind-tunnelled byte for byte EXCEPT the intercept host (Claude Code's own API), whose TLS this surface terminates with a leaf certificate signed by a locally generated CA. On the terminated session, the paths the front door routes (`/v1/`) are handed to the same ordered pipeline the plain-HTTP listener serves (the client's Authorization header passes through untouched), and every other path is piped by this surface to the real upstream over TLS, so Remote Control's streaming, OAuth refreshes, and unknown endpoints bypass the pipeline entirely.
  */
 
-/** The one CONNECT host whose TLS gets terminated: Claude Code's own API, the upstream headroom compresses. */
-export const MITM_INTERCEPT_HOST = "api.anthropic.com";
+/** The one CONNECT host whose TLS gets terminated: Claude Code's own API, the upstream every OAuth session is really talking to. */
+export const CONNECT_INTERCEPT_HOST = "api.anthropic.com";
 
-/** Paths under this prefix are what headroom serves; everything else on the terminated session goes to the real upstream. */
-export const HEADROOM_SERVED_PATH_PREFIX = "/v1/";
+/** Paths under this prefix are what the routed pipeline serves; everything else on the terminated session goes to the real upstream. */
+export const ROUTED_PATH_PREFIX = "/v1/";
 
 /** The port HTTPS is served on, both the default when a CONNECT authority names none and the port non-headroom paths are piped to on the real upstream. */
 export const HTTPS_PORT = 443;
@@ -27,7 +27,7 @@ const MAX_PORT = 65535;
 /** Bytes of randomness in a certificate serial number: 128 bits, more than any collision a single machine's CA will ever mint. */
 const SERIAL_NUMBER_BYTES = 16;
 
-/** What the proxy answers with when it cannot serve a request from where it should: the daemon being down, or the upstream being unreachable. */
+/** What the forwarding effect answers with when the upstream is unreachable. */
 const HTTP_BAD_GATEWAY = 502;
 
 /** The file mode of the CA private key: readable and writable by its owner, invisible to everyone else. */
@@ -51,7 +51,7 @@ const CA_VALIDITY_DAYS = 3650;
 const LEAF_VALIDITY_DAYS = 397;
 
 /** The CA's fixed subject: stable across regenerations so anything that pinned the old subject fails loudly rather than trusting a silently renamed authority. */
-const CA_SUBJECT_COMMON_NAME = "claude-use headroom CA";
+const CA_SUBJECT_COMMON_NAME = "claude-use front door CA";
 
 /** Milliseconds per day, so the validity windows above read as the days they are. */
 const MS_PER_DAY = 86_400_000;
@@ -82,9 +82,9 @@ export function isInterceptedHost(host: string, interceptHost: string): boolean 
   return host === interceptHost;
 }
 
-/** Whether a request path on the terminated session is one headroom serves. The query string stays part of the path: `/v1/messages?beta=true` is still headroom's. */
-export function servedByHeadroom(path: string | undefined): boolean {
-  return path?.startsWith(HEADROOM_SERVED_PATH_PREFIX) === true;
+/** Whether a request path on the terminated session is one the routed pipeline serves. The query string stays part of the path: `/v1/messages?beta=true` is still the pipeline's. */
+export function servedByPipeline(path: string | undefined): boolean {
+  return path?.startsWith(ROUTED_PATH_PREFIX) === true;
 }
 
 /** The end-to-end transport re-frames both messages, so every header named here is regenerated rather than forwarded. */
@@ -197,7 +197,7 @@ export function createLeafCache(ca: CaMaterial, now: () => Date): (host: string)
 /**
  * Persistence for the CA: generated once on the machine's first headroom start and reused forever after, because regenerating it would invalidate every child's `NODE_EXTRA_CA_CERTS` pointing at the old file. The real implementation writes the key with mode 0600; injected fakes keep it in memory.
  */
-export interface MitmCertStore {
+export interface ConnectCertStore {
   /** The persisted CA, or undefined when none exists yet (or only half of it does: a cert without its key can sign nothing, so it counts as absent). */
   readonly loadCa: () => CaMaterial | undefined;
   /** Persists both halves of the CA, the key unreadable to other users. */
@@ -207,7 +207,7 @@ export interface MitmCertStore {
 /**
  * Loads the persisted CA, generating and persisting one when no usable CA exists. A stored pair that node-forge cannot parse is treated as absent and replaced: a truncated write is the one failure mode a regeneration can actually repair, and every child that trusted the old file needs a new `NODE_EXTRA_CA_CERTS` anyway once its CA stops parsing.
  */
-export function ensureCa(store: MitmCertStore, generate: () => CaMaterial): CaMaterial {
+export function ensureCa(store: ConnectCertStore, generate: () => CaMaterial): CaMaterial {
   const existing = store.loadCa();
   if (existing !== undefined && caParses(existing)) {
     return existing;
@@ -228,8 +228,8 @@ function caParses(ca: CaMaterial): boolean {
   }
 }
 
-/** Where one forwarded request goes, and how. Headroom's loopback port is plain HTTP; the real upstream is TLS. */
-interface MitmForwardTarget {
+/** Where one forwarded request goes, and how: the connect surface's own forwards go to the real upstream over TLS, while a local hop over plain HTTP is what tests redirect to. */
+interface ConnectForwardTarget {
   readonly host: string;
   readonly port: number;
   readonly tls: boolean;
@@ -242,10 +242,10 @@ interface MitmForwardTarget {
 }
 
 /** Handles one parsed HTTP request on a terminated TLS session. */
-type MitmRequestHandler = (request: IncomingMessage, response: ServerResponse) => void;
+type ConnectRequestHandler = (request: IncomingMessage, response: ServerResponse) => void;
 
 /** A bound loopback listener and how to stop it. */
-interface MitmListenerHandle {
+interface ConnectListenerHandle {
   readonly port: number;
   /** Stops accepting, ends every live connection, and resolves once the port is released. */
   readonly close: () => Promise<void>;
@@ -266,59 +266,51 @@ interface HttpParserSession {
 }
 
 /**
- * Every effect the MITM proxy performs, injected so the routing decisions and lifecycle run against fakes in unit tests (the SupervisorPorts pattern): TCP listening, TLS termination, HTTP parsing, plain TCP tunnels, and request forwarding. The real implementation is `realMitmEffects`; the TLS round-trip test uses it with redirected targets.
+ * Every effect the MITM proxy performs, injected so the routing decisions and lifecycle run against fakes in unit tests (the SupervisorPorts pattern): TCP listening, TLS termination, HTTP parsing, plain TCP tunnels, and request forwarding. The real implementation is `realConnectEffects`; the TLS round-trip test uses it with redirected targets.
  */
-export interface MitmEffects {
+export interface ConnectEffects {
   /** Binds a loopback TCP listener; `preferredPort` is tried first and any free port used when it is taken (bind, do not probe: check-then-bind races). Resolves with the bound port and a close handle. */
-  readonly listenLoopback: (preferredPort: number | undefined, onSocket: (socket: net.Socket) => void) => Promise<MitmListenerHandle>;
+  readonly listenLoopback: (preferredPort: number | undefined, onSocket: (socket: net.Socket) => void) => Promise<ConnectListenerHandle>;
   /** Builds the TLS terminator for one leaf, handing each successfully handshaked session to `onSecure`. */
   readonly createTlsAcceptor: (leaf: LeafCert, onSecure: (secure: net.Socket) => void) => TlsAcceptor;
   /** Builds the HTTP parser bound to one request handler. */
-  readonly createHttpSession: (handler: MitmRequestHandler) => HttpParserSession;
+  readonly createHttpSession: (handler: ConnectRequestHandler) => HttpParserSession;
   /** Opens a raw TCP connection for a blind tunnel. */
   readonly connectTcp: (host: string, port: number) => Promise<net.Socket>;
   /** Streams one request to `target` and the response back, never buffering a body. */
-  readonly forwardHttp: (target: MitmForwardTarget, request: IncomingMessage, response: ServerResponse) => void;
+  readonly forwardHttp: (target: ConnectForwardTarget, request: IncomingMessage, response: ServerResponse) => void;
 }
 
-/** Everything the proxy needs to route, resolved before it starts. */
-export interface MitmServerConfig {
+/** Everything the connect surface needs to route, resolved before it starts. */
+export interface ConnectServerConfig {
   /** The CONNECT host whose TLS gets terminated. */
   readonly interceptHost: string;
   /**
-   * Headroom's loopback port, read per request rather than captured at start-up: the daemon can crash and restart on a different port while this proxy keeps listening, and headroom-served paths must follow it. While it reads undefined (the restart window), headroom-served paths fail fast with 502 rather than silently bypassing headroom to the real upstream.
+   * Serves one routed path (`/v1/...`) from the terminated session: the same ordered pipeline the plain-HTTP listener hands requests to, so an OAuth session and a provider session run identical identification, middleware and routing.
    */
-  readonly headroomPort: () => number | undefined;
+  readonly serveRouted: ConnectRequestHandler;
   /** The leaf to terminate `interceptHost` with, minted and cached per host. */
   readonly leafFor: (host: string) => LeafCert;
-  /** Where non-headroom paths on the terminated session are piped: the real upstream over TLS. */
-  readonly upstream: MitmForwardTarget;
+  /** Where non-routed paths on the terminated session are piped: the real upstream over TLS. */
+  readonly upstream: ConnectForwardTarget;
 }
 
-/** A running MITM proxy. */
-export interface MitmServerHandle {
+/** A running connect surface. */
+export interface ConnectServerHandle {
   readonly port: number;
   /** Stops the listener, drops every live tunnel and terminated session, and resolves once the port is released. */
   readonly close: () => Promise<void>;
 }
 
 /**
- * Starts the MITM proxy: binds the listener, mints the intercept host's leaf, and wires the per-connection routing. Resolves once the listener is bound.
+ * Starts the connect surface: binds the listener, mints the intercept host's leaf, and wires the per-connection routing. Resolves once the listener is bound.
  *
  * The connection flow: read the CONNECT head (never more of the stream than that, so an early ClientHello glued to the head is pushed back with `unshift` and still seen by whatever consumes the socket next), then either blind-tunnel the target or terminate its TLS and parse HTTP on the session. Every effect flows through `effects`; nothing here touches the network or filesystem itself.
  */
-export async function startMitmServer(config: MitmServerConfig, effects: MitmEffects, preferredPort: number | undefined): Promise<MitmServerHandle> {
-  const handler: MitmRequestHandler = (request, response) => {
-    if (servedByHeadroom(request.url)) {
-      const daemonPort = config.headroomPort();
-      if (daemonPort === undefined) {
-        // The asked-for path is headroom's to serve and headroom is down: fail the request now (the client retries; the supervisor is restarting the daemon) rather than forwarding it to the real upstream, which would silently drop compression for exactly the requests that asked for it.
-        const body = "claude-use headroom: the daemon is restarting";
-        response.writeHead(HTTP_BAD_GATEWAY, { "content-type": "text/plain", "content-length": String(body.length) });
-        response.end(body);
-        return;
-      }
-      effects.forwardHttp({ host: "127.0.0.1", port: daemonPort, tls: false }, request, response);
+export async function startConnectServer(config: ConnectServerConfig, effects: ConnectEffects, preferredPort: number | undefined): Promise<ConnectServerHandle> {
+  const handler: ConnectRequestHandler = (request, response) => {
+    if (servedByPipeline(request.url)) {
+      config.serveRouted(request, response);
       return;
     }
     effects.forwardHttp(config.upstream, request, response);
@@ -345,7 +337,7 @@ export async function startMitmServer(config: MitmServerConfig, effects: MitmEff
 }
 
 /** Reads one CONNECT head off the socket and routes the connection: blind tunnel, or TLS termination into the acceptor. */
-function handleConnect(socket: net.Socket, config: MitmServerConfig, effects: MitmEffects, tlsAcceptor: TlsAcceptor): void {
+function handleConnect(socket: net.Socket, config: ConnectServerConfig, effects: ConnectEffects, tlsAcceptor: TlsAcceptor): void {
   let buffer = Buffer.alloc(0);
   const onData = (chunk: Buffer): void => {
     buffer = Buffer.concat([buffer, chunk]);
@@ -373,7 +365,7 @@ function handleConnect(socket: net.Socket, config: MitmServerConfig, effects: Mi
 }
 
 /** Applies the routing decision for one parsed CONNECT head. */
-function routeConnect(socket: net.Socket, head: string, config: MitmServerConfig, effects: MitmEffects, tlsAcceptor: TlsAcceptor): void {
+function routeConnect(socket: net.Socket, head: string, config: ConnectServerConfig, effects: ConnectEffects, tlsAcceptor: TlsAcceptor): void {
   const requestLine = head.split("\r\n", 1)[0] ?? "";
   const parts = requestLine.split(" ");
   const authority = parts.length === CONNECT_LINE_TOKENS && parts[0]?.toUpperCase() === "CONNECT" ? (parts[1] ?? "") : undefined;
@@ -392,7 +384,7 @@ function routeConnect(socket: net.Socket, head: string, config: MitmServerConfig
 }
 
 /** Pipes a CONNECTed socket byte for byte to its target: this proxy never looks inside another host's TLS. */
-async function blindTunnel(socket: net.Socket, target: ConnectTarget, effects: MitmEffects): Promise<void> {
+async function blindTunnel(socket: net.Socket, target: ConnectTarget, effects: ConnectEffects): Promise<void> {
   let upstream: net.Socket;
   try {
     upstream = await effects.connectTcp(target.host, target.port);
@@ -417,13 +409,13 @@ async function blindTunnel(socket: net.Socket, target: ConnectTarget, effects: M
   });
 }
 
-/** The real `MitmEffects` over node's own net, tls, and http. `connectTcp` opens real connections to the CONNECTed host, so tests that want a blind tunnel redirect it. */
-export function realMitmEffects(): MitmEffects {
+/** The real `ConnectEffects` over node's own net, tls, and http. `connectTcp` opens real connections to the CONNECTed host, so tests that want a blind tunnel redirect it. */
+export function realConnectEffects(): ConnectEffects {
   // Keep-alive on both agents so a client reusing its TLS session gets its forwarded requests served over reused upstream connections too, the way a direct connection would.
   const plainAgent = new http.Agent({ keepAlive: true });
   const tlsAgent = new https.Agent({ keepAlive: true });
 
-  const listenOnce = async (port: number, onSocket: (socket: net.Socket) => void): Promise<MitmListenerHandle> =>
+  const listenOnce = async (port: number, onSocket: (socket: net.Socket) => void): Promise<ConnectListenerHandle> =>
     await new Promise((resolve, reject) => {
       const accepted = new Set<net.Socket>();
       const server = net.createServer((socket) => {
@@ -566,8 +558,8 @@ function isEnoent(error: unknown): boolean {
   );
 }
 
-/** The real `MitmCertStore` on the filesystem: `ca.pem` world-readable (it is public material), `ca.key` mode 0600 exactly, chmod'ed after the write because a create's mode bits pass through the process umask. */
-export function realMitmCertStore(paths: { readonly headroomCaDir: string; readonly headroomCaCertFile: string; readonly headroomCaKeyFile: string }): MitmCertStore {
+/** The real `ConnectCertStore` on the filesystem: `ca.pem` world-readable (it is public material), `ca.key` mode 0600 exactly, chmod'ed after the write because a create's mode bits pass through the process umask. */
+export function realConnectCertStore(paths: { readonly frontdoorCaDir: string; readonly frontdoorCaCertFile: string; readonly frontdoorCaKeyFile: string }): ConnectCertStore {
   const read = (file: string): string | undefined => {
     try {
       return fs.readFileSync(file, "utf8");
@@ -580,15 +572,15 @@ export function realMitmCertStore(paths: { readonly headroomCaDir: string; reado
   };
   return {
     loadCa: () => {
-      const certPem = read(paths.headroomCaCertFile);
-      const keyPem = read(paths.headroomCaKeyFile);
+      const certPem = read(paths.frontdoorCaCertFile);
+      const keyPem = read(paths.frontdoorCaKeyFile);
       return certPem === undefined || keyPem === undefined ? undefined : { certPem, keyPem };
     },
     writeCa: (ca) => {
-      fs.mkdirSync(paths.headroomCaDir, { recursive: true });
-      fs.writeFileSync(paths.headroomCaCertFile, ca.certPem, "utf8");
-      fs.writeFileSync(paths.headroomCaKeyFile, ca.keyPem, { encoding: "utf8", mode: CA_KEY_FILE_MODE });
-      fs.chmodSync(paths.headroomCaKeyFile, CA_KEY_FILE_MODE);
+      fs.mkdirSync(paths.frontdoorCaDir, { recursive: true });
+      fs.writeFileSync(paths.frontdoorCaCertFile, ca.certPem, "utf8");
+      fs.writeFileSync(paths.frontdoorCaKeyFile, ca.keyPem, { encoding: "utf8", mode: CA_KEY_FILE_MODE });
+      fs.chmodSync(paths.frontdoorCaKeyFile, CA_KEY_FILE_MODE);
     },
   };
 }

@@ -1,6 +1,7 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
+import { applyHeadroomHop, type HeadroomHopDeps } from "./headroomHop";
 import { identifyRequest, type FrontDoorRoute, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 
 /** What one routed response looked like as it started back to the client: the typed event response middleware observes. */
@@ -30,6 +31,10 @@ export interface PipelineDeps {
   readonly resolveRoute: (request: RoutedRequest) => Promise<RouteResolution>;
   /** The response middleware chain, run in order at each response head. This is where usage capture registers. */
   readonly responseObservers: readonly ResponseObserver[];
+  /**
+   * The headroom hop, applied BEFORE a route whose declaration admits it whenever the session's launch resolved headroom on: headroom needs the Anthropic-shaped request, so it always sits in front of a translator, never behind one. Omitted by a listener that serves routes directly (the direct listener headroom forwards an in-process route back to), or when no headroom is wired.
+   */
+  readonly headroom?: HeadroomHopDeps;
   readonly log: (line: string) => void;
 }
 
@@ -102,6 +107,9 @@ export function createRoutedResponse(response: ServerResponse, context: { readon
       response.writeHead(status, headers);
       headersSent = true;
     },
+    flush: () => {
+      response.flushHeaders();
+    },
     write: async (chunk) => {
       if (response.destroyed || response.writableEnded) {
         return;
@@ -142,7 +150,12 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
   }
   const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name });
   try {
-    await resolution.route.serve(routed, response);
+    if (identified.session.headroom && resolution.route.headroomEligible && deps.headroom !== undefined) {
+      // The ordering the whole design turns on: headroom first, on the Anthropic-shaped request, then the route (a translator receives what headroom compressed). A route that opts out, or a listener that serves routes directly, falls through to serving.
+      await applyHeadroomHop(routed, response, resolution.route.headroomUpstream, deps.headroom);
+    } else {
+      await resolution.route.serve(routed, response);
+    }
   } catch (error) {
     if (request.signal.aborted) {
       return;

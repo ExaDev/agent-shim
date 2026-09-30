@@ -66,7 +66,7 @@ async function startProviderDoor(files: Record<string, unknown>, preferredPort?:
     log: () => undefined,
   };
   let ownPort = 0;
-  const resolveRoute = createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: ports, ownPort: () => ownPort });
+  const resolveRoute = createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: ports, directPort: () => ownPort });
   const door = await startDoor(resolveRoute, preferredPort);
   ownPort = door.port;
   return { ...door, calls: upstream.calls };
@@ -142,7 +142,7 @@ describe("createFrontDoorServer", () => {
       expect(echoed).not.toContain(IDENTITY_HEADER);
       expect(echoed).not.toContain(SESSION_HEADER);
       expect(echoed).not.toContain(HEADROOM_FLAG_HEADER);
-      expect(seen?.session).toEqual({ identity: "work", sessionId: "session-1", headroom: true });
+      expect(seen?.session).toEqual({ identity: "work", sessionId: "session-1", headroom: true, projectId: undefined });
     } finally {
       await door.close();
     }

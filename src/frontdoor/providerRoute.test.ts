@@ -27,28 +27,33 @@ function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
   };
 }
 
-function resolver(files: Record<string, unknown>, ownPort = OWN_PORT): ReturnType<typeof createProviderRouteResolver> {
-  return createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), ownPort: () => ownPort });
+function resolver(files: Record<string, unknown>, directPort = OWN_PORT): ReturnType<typeof createProviderRouteResolver> {
+  return createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => directPort });
 }
 
 function request(url: string): RoutedRequest {
-  return { method: "POST", url, headers: {}, body: Readable.from(["{}"]) as unknown as RoutedRequest["body"], signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, headroom: false } };
+  return { method: "POST", url, headers: {}, body: Readable.from(["{}"]) as unknown as RoutedRequest["body"], signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, headroom: false, projectId: undefined } };
 }
 
 describe("createProviderRouteResolver", () => {
-  it("mounts the in-process codex translator for a codex provider, named for it and headroom-eligible with the front door's own address as the hop's upstream", async () => {
+  it("mounts the in-process codex translator for a codex provider, named for it and headroom-eligible with the direct listener's bare origin as the hop's upstream", async () => {
     const resolution = await resolver({ [`${PROVIDERS_DIR}/codex.json`]: codexProvider })(request("/providers/codex/v1/messages"));
     expect(resolution.ok).toBe(true);
     if (resolution.ok) {
       expect(resolution.route.name).toBe("codex:codex");
       expect(resolution.route.headroomEligible).toBe(true);
-      expect(resolution.route.headroomUpstream).toBe(`http://127.0.0.1:${String(OWN_PORT)}/providers/codex`);
+      expect(resolution.route.headroomUpstream).toBe(`http://127.0.0.1:${String(OWN_PORT)}`);
     }
   });
 
-  it("refuses an http provider by name until the pass-through route exists", async () => {
+  it("mounts the pass-through route for an http provider, also reached through the direct listener when headroom sits in front", async () => {
     const resolution = await resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider })(request("/providers/z/v1/messages"));
-    expect(resolution).toEqual({ ok: false, status: HTTP_STATUS.notFound, message: "provider z is an http provider, which the front door does not route directly yet" });
+    expect(resolution.ok).toBe(true);
+    if (resolution.ok) {
+      expect(resolution.route.name).toBe("http:z");
+      expect(resolution.route.headroomEligible).toBe(true);
+      expect(resolution.route.headroomUpstream).toBe(`http://127.0.0.1:${String(OWN_PORT)}`);
+    }
   });
 
   it("refuses an unknown provider and any path that names no provider", async () => {

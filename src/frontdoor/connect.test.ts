@@ -10,25 +10,25 @@ import {
   ensureCa,
   forwardableHeaders,
   generateCa,
-  HEADROOM_SERVED_PATH_PREFIX,
+  ROUTED_PATH_PREFIX,
   HTTPS_PORT,
   isInterceptedHost,
-  MITM_INTERCEPT_HOST,
+  CONNECT_INTERCEPT_HOST,
   mintLeaf,
   parseConnectTarget,
-  realMitmEffects,
-  servedByHeadroom,
-  startMitmServer,
+  realConnectEffects,
+  servedByPipeline,
+  startConnectServer,
   type CaMaterial,
-  type MitmCertStore,
-  type MitmEffects,
-} from "./mitm";
+  type ConnectCertStore,
+  type ConnectEffects,
+} from "./connect";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates in `beforeAll`. */
 const KEYGEN_TIMEOUT_MS = 120_000;
 
 /**
- * How long the fake headroom holds back the second half of its streamed response. A proxy that buffered the body would deliver both halves in one arrival, so any measured gap at least this large proves the bytes flowed through as they were written.
+ * How long the fake routed backend holds back the second half of its streamed response. A proxy that buffered the body would deliver both halves in one arrival, so any measured gap at least this large proves the bytes flowed through as they were written.
  */
 const STREAM_HOLD_BACK_MS = 300;
 /** The gap the client must observe between its first and last body arrivals, comfortably under the hold-back so scheduling noise cannot flip the verdict. */
@@ -37,7 +37,6 @@ const MIN_STREAM_GAP_MS = 150;
 /** The statuses this file asserts on, named so a status literal never reads as a magic number: the healthy answer, the unauthenticated fake upstream's answer, and the proxy's own cannot-serve answer. */
 const HTTP_OK = 200;
 const HTTP_UNAUTHORIZED = 401;
-const HTTP_BAD_GATEWAY = 502;
 
 /** The byte length of an HTTP head terminator, the framing this file's hand-rolled client parses. */
 const HEAD_TERMINATOR = "\r\n\r\n";
@@ -58,19 +57,19 @@ describe("CONNECT routing decisions", () => {
   });
 
   it("intercepts exactly the configured host, nothing more", () => {
-    expect(isInterceptedHost("api.anthropic.com", MITM_INTERCEPT_HOST)).toBe(true);
-    expect(isInterceptedHost("statsig.anthropic.com", MITM_INTERCEPT_HOST)).toBe(false);
-    expect(isInterceptedHost("api.anthropic.com.evil.example", MITM_INTERCEPT_HOST)).toBe(false);
+    expect(isInterceptedHost("api.anthropic.com", CONNECT_INTERCEPT_HOST)).toBe(true);
+    expect(isInterceptedHost("statsig.anthropic.com", CONNECT_INTERCEPT_HOST)).toBe(false);
+    expect(isInterceptedHost("api.anthropic.com.evil.example", CONNECT_INTERCEPT_HOST)).toBe(false);
   });
 
-  it("routes exactly the paths under /v1/ to headroom, query strings included", () => {
-    expect(servedByHeadroom("/v1/messages")).toBe(true);
-    expect(servedByHeadroom("/v1/messages?beta=true")).toBe(true);
-    expect(servedByHeadroom("/v1/messages/count_tokens")).toBe(true);
-    expect(servedByHeadroom("/v1")).toBe(false);
-    expect(servedByHeadroom("/api/oauth/token")).toBe(false);
-    expect(servedByHeadroom(undefined)).toBe(false);
-    expect(HEADROOM_SERVED_PATH_PREFIX).toBe("/v1/");
+  it("routes exactly the paths under /v1/ to the routed handler, query strings included", () => {
+    expect(servedByPipeline("/v1/messages")).toBe(true);
+    expect(servedByPipeline("/v1/messages?beta=true")).toBe(true);
+    expect(servedByPipeline("/v1/messages/count_tokens")).toBe(true);
+    expect(servedByPipeline("/v1")).toBe(false);
+    expect(servedByPipeline("/api/oauth/token")).toBe(false);
+    expect(servedByPipeline(undefined)).toBe(false);
+    expect(ROUTED_PATH_PREFIX).toBe("/v1/");
   });
 
   it("strips hop-by-hop headers and any header the Connection header names, without mutating the input", () => {
@@ -100,13 +99,13 @@ describe("certificate authority", () => {
       return typeof field?.value === "string" ? field.value : undefined;
     };
     const caCert = forge.pki.certificateFromPem(ca.certPem);
-    expect(commonNameOf(caCert.subject.attributes)).toBe("claude-use headroom CA");
-    expect(commonNameOf(forge.pki.certificateFromPem(again.certPem).subject.attributes)).toBe("claude-use headroom CA");
+    expect(commonNameOf(caCert.subject.attributes)).toBe("claude-use front door CA");
+    expect(commonNameOf(forge.pki.certificateFromPem(again.certPem).subject.attributes)).toBe("claude-use front door CA");
 
-    const leaf = mintLeaf(ca, MITM_INTERCEPT_HOST, now);
+    const leaf = mintLeaf(ca, CONNECT_INTERCEPT_HOST, now);
     const cert = forge.pki.certificateFromPem(leaf.certPem);
-    expect(commonNameOf(cert.issuer.attributes)).toBe("claude-use headroom CA");
-    expect(JSON.stringify(cert.getExtension("subjectAltName"))).toContain(MITM_INTERCEPT_HOST);
+    expect(commonNameOf(cert.issuer.attributes)).toBe("claude-use front door CA");
+    expect(JSON.stringify(cert.getExtension("subjectAltName"))).toContain(CONNECT_INTERCEPT_HOST);
   });
 
   it("mints each host's leaf once and reuses it", () => {
@@ -120,7 +119,7 @@ describe("certificate authority", () => {
     const good = generateCa(now);
     const writes: CaMaterial[] = [];
     let stored: CaMaterial | undefined;
-    const store: MitmCertStore = {
+    const store: ConnectCertStore = {
       loadCa: () => stored,
       writeCa: (ca) => {
         writes.push(ca);
@@ -225,18 +224,18 @@ async function requestTimingOn(secure: tls.TLSSocket, request: string): Promise<
 }
 
 /**
- * The real-socket world the round-trip tests run against: a node-forge CA, a fake headroom on plain HTTP, a fake upstream presenting TLS signed by its own CA, and the real MITM proxy with only its tunnel target redirected. `headroomPort` starts as the fake's port; tests can point it elsewhere.
+ * The real-socket world the round-trip tests run against: a node-forge CA, a fake routed backend on plain HTTP (standing in for whatever the pipeline would serve), a fake upstream presenting TLS signed by its own CA, and the real connect surface with only its tunnel target redirected.
  */
 function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial) {
-  const headroomRequests: { method: string; url: string; headers: http.IncomingHttpHeaders }[] = [];
+  const routedRequests: { method: string; url: string; headers: http.IncomingHttpHeaders }[] = [];
   const upstreamRequests: { method: string; url: string; headers: http.IncomingHttpHeaders }[] = [];
-  let headroomPort: number | undefined;
+  let routedPort = 0;
 
-  const fakeHeadroom = http.createServer((req, res) => {
-    headroomRequests.push({ method: req.method ?? "", url: req.url ?? "", headers: { ...req.headers } });
-    void handleFakeHeadroom(req, res);
+  const fakeRouted = http.createServer((req, res) => {
+    routedRequests.push({ method: req.method ?? "", url: req.url ?? "", headers: { ...req.headers } });
+    void handleFakeRouted(req, res);
   });
-  async function handleFakeHeadroom(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  async function handleFakeRouted(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const body = await readBody(req);
     // A streamed response: the first byte goes out immediately, the rest only after the hold-back, so a buffering proxy cannot deliver the first byte early.
     const total = `streamed:${body}`;
@@ -248,7 +247,7 @@ function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial) {
     res.end(total.slice(1));
   }
 
-  const upstreamLeaf = mintLeaf(upstreamCa, MITM_INTERCEPT_HOST, new Date());
+  const upstreamLeaf = mintLeaf(upstreamCa, CONNECT_INTERCEPT_HOST, new Date());
   const fakeUpstream = https.createServer({ key: upstreamLeaf.keyPem, cert: upstreamLeaf.certPem }, (req, res) => {
     upstreamRequests.push({ method: req.method ?? "", url: req.url ?? "", headers: { ...req.headers } });
     const body = "upstream-says-no";
@@ -261,8 +260,8 @@ function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial) {
   });
 
   let echoPort = 0;
-  const effects: MitmEffects = {
-    ...realMitmEffects(),
+  const effects: ConnectEffects = {
+    ...realConnectEffects(),
     connectTcp: async () =>
       await new Promise((resolve, reject) => {
         // The real implementation connects to whatever host the CONNECT authority named; a test always tunnels to the local echo server standing in for it.
@@ -275,27 +274,26 @@ function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial) {
   };
 
   return {
-    headroomRequests,
+    routedRequests,
     upstreamRequests,
-    set headroomPort(port: number | undefined) {
-      headroomPort = port;
-    },
-    async start(): Promise<{ readonly mitmPort: number; readonly close: () => Promise<void> }> {
-      await listen(fakeHeadroom);
+    async start(): Promise<{ readonly connectPort: number; readonly close: () => Promise<void> }> {
+      await listen(fakeRouted);
       await listen(fakeUpstream);
       await listen(echoServer);
       echoPort = portOf(echoServer);
-      headroomPort = portOf(fakeHeadroom);
-      const server = await startMitmServer(
+      routedPort = portOf(fakeRouted);
+      const server = await startConnectServer(
         {
-          interceptHost: MITM_INTERCEPT_HOST,
-          headroomPort: () => headroomPort,
+          interceptHost: CONNECT_INTERCEPT_HOST,
+          serveRouted: (request, response) => {
+            realConnectEffects().forwardHttp({ host: "127.0.0.1", port: routedPort, tls: false }, request, response);
+          },
           leafFor: createLeafCache(ca, () => new Date()),
           upstream: {
             host: "127.0.0.1",
             port: portOf(fakeUpstream),
             tls: true,
-            servername: MITM_INTERCEPT_HOST,
+            servername: CONNECT_INTERCEPT_HOST,
             ca: [upstreamCa.certPem],
             rejectUnauthorized: true,
           },
@@ -303,10 +301,10 @@ function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial) {
         effects,
         undefined,
       );
-      return { mitmPort: server.port, close: async () => { await server.close(); } };
+      return { connectPort: server.port, close: async () => { await server.close(); } };
     },
     async stop(): Promise<void> {
-      await closeServer(fakeHeadroom);
+      await closeServer(fakeRouted);
       await closeServer(fakeUpstream);
       await closeServer(echoServer);
     },
@@ -361,23 +359,23 @@ describe("MITM proxy over real sockets", () => {
   }, KEYGEN_TIMEOUT_MS);
 
   it(
-    "terminates api.anthropic.com TLS with the CA's leaf and serves /v1/ from headroom, streaming the body and passing Authorization through untouched",
+    "terminates api.anthropic.com TLS with the CA's leaf and serves /v1/ through the routed handler, streaming the body and passing Authorization through untouched",
     async () => {
       const world = makeTlsWorld(ca, upstreamCa);
-      const { mitmPort, close } = await world.start();
+      const { connectPort, close } = await world.start();
       try {
-        const secure = await connectThroughProxy(mitmPort, MITM_INTERCEPT_HOST, ca.certPem);
+        const secure = await connectThroughProxy(connectPort, CONNECT_INTERCEPT_HOST, ca.certPem);
         const request =
-          `POST /v1/messages HTTP/1.1\r\nHost: ${MITM_INTERCEPT_HOST}\r\nAuthorization: Bearer oauth-token\r\ncontent-type: application/json\r\ncontent-length: 2\r\n\r\n{}`;
+          `POST /v1/messages HTTP/1.1\r\nHost: ${CONNECT_INTERCEPT_HOST}\r\nAuthorization: Bearer oauth-token\r\ncontent-type: application/json\r\ncontent-length: 2\r\n\r\n{}`;
         // Two requests on the one TLS session: the client's connection reuse must work.
         const first = await requestTimingOn(secure, request);
         const second = await requestOn(secure, request.replace("POST /v1/messages", "POST /v1/messages/count_tokens"));
         expect(first.response.statusLine).toContain(String(HTTP_OK));
         expect(first.response.body).toBe("streamed:{}");
         expect(second.body).toBe("streamed:{}");
-        expect(world.headroomRequests.map((seen) => seen.url)).toEqual(["/v1/messages", "/v1/messages/count_tokens"]);
-        expect(world.headroomRequests[0]?.headers.authorization).toBe("Bearer oauth-token");
-        expect(world.headroomRequests[0]?.headers.host).toBe(MITM_INTERCEPT_HOST);
+        expect(world.routedRequests.map((seen) => seen.url)).toEqual(["/v1/messages", "/v1/messages/count_tokens"]);
+        expect(world.routedRequests[0]?.headers.authorization).toBe("Bearer oauth-token");
+        expect(world.routedRequests[0]?.headers.host).toBe(CONNECT_INTERCEPT_HOST);
         expect(world.upstreamRequests).toEqual([]);
         // The response's two halves arrived in separate deliveries with the hold-back between them: the body streamed through the proxy rather than arriving assembled.
         expect(first.arrivals.length).toBeGreaterThanOrEqual(2);
@@ -392,18 +390,18 @@ describe("MITM proxy over real sockets", () => {
   );
 
   it(
-    "pipes non-headroom paths on the same terminated session to the real upstream over TLS, never to headroom",
+    "pipes non-routed paths on the same terminated session to the real upstream over TLS, never to the routed handler",
     async () => {
       const world = makeTlsWorld(ca, upstreamCa);
-      const { mitmPort, close } = await world.start();
+      const { connectPort, close } = await world.start();
       try {
-        const secure = await connectThroughProxy(mitmPort, MITM_INTERCEPT_HOST, ca.certPem);
-        const headroomSide = await requestOn(secure, "POST /v1/messages HTTP/1.1\r\nHost: api.anthropic.com\r\ncontent-length: 2\r\n\r\n{}");
+        const secure = await connectThroughProxy(connectPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+        const routedSide = await requestOn(secure, "POST /v1/messages HTTP/1.1\r\nHost: api.anthropic.com\r\ncontent-length: 2\r\n\r\n{}");
         const upstreamSide = await requestOn(secure, "GET /api/oauth/token HTTP/1.1\r\nHost: api.anthropic.com\r\n\r\n");
-        expect(headroomSide.statusLine).toContain(String(HTTP_OK));
+        expect(routedSide.statusLine).toContain(String(HTTP_OK));
         expect(upstreamSide.statusLine).toContain(String(HTTP_UNAUTHORIZED));
         expect(upstreamSide.body).toBe("upstream-says-no");
-        expect(world.headroomRequests.map((seen) => seen.url)).toEqual(["/v1/messages"]);
+        expect(world.routedRequests.map((seen) => seen.url)).toEqual(["/v1/messages"]);
         expect(world.upstreamRequests.map((seen) => seen.url)).toEqual(["/api/oauth/token"]);
         secure.destroy();
       } finally {
@@ -418,9 +416,9 @@ describe("MITM proxy over real sockets", () => {
     "blind-tunnels every other CONNECT host byte for byte, without terminating its TLS",
     async () => {
       const world = makeTlsWorld(ca, upstreamCa);
-      const { mitmPort, close } = await world.start();
+      const { connectPort, close } = await world.start();
       try {
-        const raw = net.connect(mitmPort, "127.0.0.1");
+        const raw = net.connect(connectPort, "127.0.0.1");
         raw.write("CONNECT mcp-proxy.anthropic.com:443 HTTP/1.1\r\nHost: mcp-proxy.anthropic.com:443\r\n\r\n");
         const echoed = await new Promise<string>((resolve, reject) => {
           let buffer = "";
@@ -447,30 +445,8 @@ describe("MITM proxy over real sockets", () => {
           raw.write("tunnel-payload");
         });
         expect(echoed).toBe("tunnel-payload");
-        expect(world.headroomRequests).toEqual([]);
+        expect(world.routedRequests).toEqual([]);
         raw.destroy();
-      } finally {
-        await close();
-        await world.stop();
-      }
-    },
-    KEYGEN_TIMEOUT_MS,
-  );
-
-  it(
-    "answers 502 on headroom-served paths while the daemon is between restarts, instead of silently bypassing headroom",
-    async () => {
-      const world = makeTlsWorld(ca, upstreamCa);
-      const { mitmPort, close } = await world.start();
-      world.headroomPort = undefined;
-      try {
-        const secure = await connectThroughProxy(mitmPort, MITM_INTERCEPT_HOST, ca.certPem);
-        const response = await requestOn(secure, "POST /v1/messages HTTP/1.1\r\nHost: api.anthropic.com\r\ncontent-length: 2\r\n\r\n{}");
-        expect(response.statusLine).toContain(String(HTTP_BAD_GATEWAY));
-        expect(response.body).toContain("daemon is restarting");
-        expect(world.headroomRequests).toEqual([]);
-        expect(world.upstreamRequests).toEqual([]);
-        secure.destroy();
       } finally {
         await close();
         await world.stop();
@@ -483,7 +459,7 @@ describe("MITM proxy over real sockets", () => {
     "releases its port on close, so a replacement generation can bind the same address",
     async () => {
       const world = makeTlsWorld(ca, upstreamCa);
-      const { mitmPort, close } = await world.start();
+      const { connectPort, close } = await world.start();
       await close();
       await world.stop();
       const rebound = await new Promise<boolean>((resolve) => {
@@ -491,7 +467,7 @@ describe("MITM proxy over real sockets", () => {
         probe.once("error", () => {
           resolve(false);
         });
-        probe.listen(mitmPort, "127.0.0.1", () => {
+        probe.listen(connectPort, "127.0.0.1", () => {
           probe.close(() => {
             resolve(true);
           });

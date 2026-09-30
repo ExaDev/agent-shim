@@ -1,9 +1,9 @@
 import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 
 /**
- * The claude-use-internal headers the launcher injects through `ANTHROPIC_CUSTOM_HEADERS` so the front door can identify a request's session. None of them may ever leave the machine: the identity step strips every one before a route sees the request, so no upstream, and not even the headroom hop, learns what they say.
+ * The claude-use-internal headers the launcher injects through `ANTHROPIC_CUSTOM_HEADERS` so the front door can identify and route a request's session. None of them may ever leave the machine: the identity step strips every one before a route sees the request, so no upstream, and not even the headroom hop, learns what they say.
  */
-export const INTERNAL_HEADER_NAMES = ["x-claude-use-identity", "x-claude-use-session", "x-claude-use-headroom"] as const;
+export const INTERNAL_HEADER_NAMES = ["x-claude-use-identity", "x-claude-use-session", "x-claude-use-headroom", "x-headroom-project-id"] as const;
 
 /** Carries the launching identity's name (the `@name` the launch resolved), set by the launcher and stripped at the door. */
 export const IDENTITY_HEADER = "x-claude-use-identity";
@@ -14,6 +14,11 @@ export const SESSION_HEADER = "x-claude-use-session";
 /** Set to `1` when the launch resolved headroom on, so the front door knows this session's requests must take the headroom hop; stripped at the door. */
 export const HEADROOM_FLAG_HEADER = "x-claude-use-headroom";
 
+/**
+ * Carries the project identity headroom scopes its memory state to (the git repository root of the launch directory). Also injected by the launcher and stripped at the door: the headroom hop re-sets it on its own request, so it reaches headroom and nowhere else.
+ */
+export const PROJECT_ID_HEADER = "x-headroom-project-id";
+
 /** What the identity step learned about one request from the launcher-injected headers. */
 export interface SessionIdentity {
   /** The identity name the launch resolved, when it resolved one. */
@@ -22,6 +27,8 @@ export interface SessionIdentity {
   readonly sessionId: string | undefined;
   /** Whether this launch resolved headroom on, so its requests must pass through the headroom hop before their route. */
   readonly headroom: boolean;
+  /** The project identity headroom scopes memory to, re-set on the headroom hop and sent nowhere else. */
+  readonly projectId: string | undefined;
 }
 
 /** The outcome of the pipeline's first step: what the session is, and the headers that may actually leave the machine. */
@@ -70,17 +77,23 @@ export function identifyRequest(headers: Readonly<IncomingHttpHeaders>): Identif
       identity: internalHeaderValue(headers, IDENTITY_HEADER),
       sessionId: internalHeaderValue(headers, SESSION_HEADER),
       headroom: internalHeaderValue(headers, HEADROOM_FLAG_HEADER) === "1",
+      projectId: internalHeaderValue(headers, PROJECT_ID_HEADER),
     },
     forwardableHeaders: forwardable,
   };
 }
 
 /** The path prefix every provider-scoped request sits under: a routed session's base URL is the front door's address plus `/providers/<name>`, so one listener serves any number of providers, each with its own credential and translation settings. */
-const PROVIDER_PATH_PREFIX = "/providers/";
+export const PROVIDER_PATH_PREFIX = "/providers/";
 
 /** The base URL a provider's sessions are pointed at. */
 export function providerBaseUrl(port: number, provider: string): string {
   return `http://127.0.0.1:${String(port)}${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`;
+}
+
+/** The bare origin of a loopback listener, which is what a headroom hop is told to forward to: headroom appends the client's own request path to it. */
+export function directOrigin(port: number): string {
+  return `http://127.0.0.1:${String(port)}`;
 }
 
 /** Splits `/providers/<name>/<rest>` into the provider name and the rest, or undefined for any other path. */
@@ -116,10 +129,12 @@ export interface RoutedResponse {
   readonly headersSent: boolean;
   /** Writes the response head, running every response observer first. Must be called exactly once, before any write. */
   readonly start: (status: number, headers: Readonly<Record<string, string>>) => void;
+  /** Sends the head on its way before any body chunk exists: a streaming response's client should see its headers the moment they are known. */
+  readonly flush: () => void;
   /**
    * Writes one body chunk, waiting for the socket to take it when the client is slow (backpressure: a slow client slows the route, and its upstream, instead of growing a buffer without bound). Resolves early, without writing, once the client is gone.
    */
-  readonly write: (chunk: string) => Promise<void>;
+  readonly write: (chunk: string | Uint8Array) => Promise<void>;
   /** Ends the response. */
   readonly end: () => void;
   /** Drops the connection: an upstream failure after the head went out, where no status can be sent any more. */
