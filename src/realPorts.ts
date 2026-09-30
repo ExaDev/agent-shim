@@ -264,28 +264,40 @@ function resolveGitRoot(run: RunPort, cwd: string): string | undefined {
   return root === "" ? undefined : root;
 }
 
+/** The argv that re-runs this very executable with `args`: a SEA binary re-execs itself directly, while the npm-published bundle needs its script path for Node to run. */
+export function selfInvocation(args: readonly string[]): { readonly command: string; readonly args: readonly string[] } {
+  return { command: process.execPath, args: isSea() ? [...args] : [realContentSourcePath(), ...args] };
+}
+
 /**
- * Spawns the detached headroom supervisor: a background copy of this very executable running the hidden `__headroom-supervisor` subcommand, its output appended to the daemon log, unref'd so the launcher never waits on it. `CLAUDE_USE_HOME` is passed explicitly so the supervisor lands on the same root as its spawner even when the launcher was started with the variable set only for itself.
+ * The spawn options every background daemon claude-use starts shares. `detached: true` puts the child in a new session with no controlling terminal, so closing the terminal a launch started from (SIGHUP to that terminal's session) never reaches it: a second session still using the daemon keeps working after the first one's terminal is gone. Standard input is closed and both output streams go to the daemon's log file.
  */
-function spawnHeadroomSupervisor(paths: LayoutPaths): number {
-  fs.mkdirSync(paths.logsDir, { recursive: true });
-  const logFd = fs.openSync(paths.headroomLogPath, "a");
+export function detachedDaemonSpawnOptions(logFd: number, env: NodeJS.ProcessEnv): { readonly detached: true; readonly stdio: ["ignore", number, number]; readonly env: NodeJS.ProcessEnv } {
+  return { detached: true, stdio: ["ignore", logFd, logFd], env };
+}
+
+/**
+ * Spawns a detached supervisor: a background copy of this very executable running a hidden internal subcommand, its output appended to `logPath`, unref'd so the launcher never waits on it. `CLAUDE_USE_HOME` is passed explicitly so the supervisor lands on the same root as its spawner even when the launcher was started with the variable set only for itself.
+ */
+export function spawnDetachedSupervisor(paths: LayoutPaths, subcommand: string, logPath: string): number {
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  const logFd = fs.openSync(logPath, "a");
   try {
-    // A SEA binary re-execs itself directly; the npm-published bundle needs the script path for Node to run.
-    const args = isSea() ? ["__headroom-supervisor"] : [realContentSourcePath(), "__headroom-supervisor"];
-    const child = spawn(process.execPath, args, {
-      detached: true,
-      stdio: ["ignore", logFd, logFd],
-      env: { ...process.env, CLAUDE_USE_HOME: paths.root },
-    });
+    const invocation = selfInvocation([subcommand]);
+    const child = spawn(invocation.command, invocation.args, detachedDaemonSpawnOptions(logFd, { ...process.env, CLAUDE_USE_HOME: paths.root }));
     child.unref();
     if (child.pid === undefined) {
-      throw new Error("spawning the headroom supervisor returned no pid");
+      throw new Error(`spawning ${subcommand} returned no pid`);
     }
     return child.pid;
   } finally {
     fs.closeSync(logFd);
   }
+}
+
+/** Spawns the detached headroom supervisor (the hidden `__headroom-supervisor` subcommand), logging to the headroom daemon log. */
+function spawnHeadroomSupervisor(paths: LayoutPaths): number {
+  return spawnDetachedSupervisor(paths, "__headroom-supervisor", paths.headroomLogPath);
 }
 
 /**

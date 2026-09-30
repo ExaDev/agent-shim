@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 
-import { ProviderSchema, type Provider } from "../config/schema";
+import { isCodexProvider, ProviderSchema, type Provider } from "../config/schema";
 import type { FarmFs } from "../launcher/ports";
 
 /** The upstream headroom serves when no provider's base URL claims the request: Claude Code's own API. */
@@ -87,6 +87,25 @@ export function headroomAllowlist(providers: readonly { readonly baseUrl: string
     urls.add(provider.baseUrl);
   }
   return [...urls].sort();
+}
+
+/**
+ * The upstreams a set of providers routes to through headroom: every `http` provider's base URL, plus the codex daemon's origin when there is a codex provider and the daemon has ever served. A codex session routed through headroom carries the daemon's address in `x-headroom-base-url`, so headroom must admit it like any provider's; the daemon's port is sticky, so its origin stays stable across restarts. Before the daemon has ever served there is no address to admit, and the first codex launch starts it before bringing headroom up, so a freshly started headroom daemon already sees it.
+ */
+export function headroomUpstreams(providers: readonly Provider[], codexOrigin: string | undefined): readonly { readonly baseUrl: string }[] {
+  const upstreams: { baseUrl: string }[] = [];
+  let hasCodex = false;
+  for (const provider of providers) {
+    if (isCodexProvider(provider)) {
+      hasCodex = true;
+    } else {
+      upstreams.push({ baseUrl: provider.baseUrl });
+    }
+  }
+  if (hasCodex && codexOrigin !== undefined) {
+    upstreams.push({ baseUrl: codexOrigin });
+  }
+  return upstreams;
 }
 
 /** A stable hash of an allowlist, so drift detection compares one short string instead of recomputing set equality against a running process it cannot interrogate. */

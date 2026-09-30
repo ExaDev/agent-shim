@@ -19,15 +19,13 @@ import {
 } from "./mitm";
 import {
   hashAllowlist,
-  headroomAllowlist,
   listSessions,
-  readAllProviders,
   readHeadroomState,
   type HeadroomFs,
   type HeadroomSession,
   type HeadroomState,
 } from "./state";
-import { resolveSupervisorConfig, runSupervisor, stopSupervisedProcess, type SupervisorPorts } from "./supervisor";
+import { currentHeadroomAllowlist, resolveSupervisorConfig, runSupervisor, stopSupervisedProcess, type SupervisorPorts } from "./supervisor";
 
 /** One session-registry entry plus whether its launcher pid is still running. */
 interface HeadroomSessionStatus extends HeadroomSession {
@@ -57,7 +55,7 @@ export function collectHeadroomStatus(
   isRunning: (pid: number) => boolean,
 ): HeadroomStatus {
   const state = readHeadroomState(fsPort, paths.headroomStateFile) ?? {};
-  const allowlist = headroomAllowlist(readAllProviders(fsPort, paths.providersDir).map((entry) => entry.provider));
+  const allowlist = currentHeadroomAllowlist(fsPort, paths);
   return {
     state,
     supervisorAlive: state.supervisorPid !== undefined && isRunning(state.supervisorPid),

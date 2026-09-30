@@ -13,7 +13,7 @@ export interface CommandDeps {
   readonly paths: LayoutPaths;
   readonly prompts: PromptsPort;
   readonly isInteractive: () => boolean;
-  /** Ends the process with `code` immediately. Only the long-running `__headroom-supervisor` needs it (a signal must terminate it, and its servers would otherwise keep the event loop alive); every other command sets `process.exitCode` or throws, so its output is never truncated. */
+  /** Ends the process with `code` immediately. Only the long-running `__headroom-supervisor` and `__codex-supervisor` need it (a signal must terminate it, and its servers would otherwise keep the event loop alive); every other command sets `process.exitCode` or throws, so its output is never truncated. */
   readonly exit: (code: number) => never;
 }
 
