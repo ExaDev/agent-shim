@@ -6,57 +6,96 @@ The full flag/command reference table, the complete command list, `configure`'s 
 
 | What you're setting | Global (persistent) | Temporary (this run only) | Directory-scoped (persistent) |
 |---|---|---|---|
-| **Identity** | `claude-use identity use <name>` / `claude-use @<name>` (writes `~/.claude-use/active-identity`) | `claude-use run @<name>` / `claude @<name>` (needs `claude-use shim enable`) / `CLAUDE_ACCOUNT=<name> claude` (same) | `claude-use rules add <path> --identity <name>`; or `.claude-use.json`'s `"identity"` |
-| **Configuration profile** | `claude-use profile set-default <name>`; or `claude-use identity set-default-profile <identity> <profile>` | `claude --config-profile <name>` / `CLAUDE_USE_CONFIG_PROFILE=<name> claude` | `claude-use rules add <path> --profile <name>`; or `.claude-use.json`'s `"configProfile"` |
-| **A category** | `claude-use profile set <name> --category history=true`; or `claude-use configure <identity>` | `claude --category history=true[,knowledge=false,...]` / `CLAUDE_USE_CATEGORY_OVERRIDE="history=true,knowledge=false"` | `claude-use configure <identity>` run from inside the ruled directory; or `.claude-use.json`'s `"categories"` |
-| **An individual entry** | `claude-use profile set <name> --entry "path"=true`; or `claude-use configure <identity> <path>` | `claude --share <path>[,<path>,...]` / `claude --hide <path>[,<path>,...]` / `CLAUDE_USE_ENTRY_OVERRIDE="path=true,otherpath=false"` | `claude-use configure <identity> <path>` run from inside the ruled directory; or `.claude-use.json`'s `"entries"` |
-| **Launch flags** | `claude-use profile set <name> [--skip-permissions] [--remote-control]` | `CLAUDE_USE_SKIP_PERMISSIONS=1 claude` / `CLAUDE_USE_REMOTE_CONTROL=1 claude` | rule's inline `"launch"` field; or `.claude-use.json`'s `"launch"` |
-| **Provider** | `claude-use provider add <name> ...` defines one (under `~/.claude-use/providers/`); a profile pins it with `launch.provider` in `claude-use profile set <name>`'s file | `claude --provider <name>` | rule's inline `"launch": { "provider": ... }` field; or `.claude-use.json`'s `"launch"` |
-| **Headroom routing** | `claude-use profile set <name> --headroom` (or `--no-headroom`); a `launch.headroom` key in `~/.claude-use/config.json` or any cascade layer; the daemon's own `source`/`idleShutdownMinutes` live in that file's global-only `headroom` block | `claude --headroom` / `claude --no-headroom` (an explicit flag outranks both `CLAUDE_USE_HEADROOM=1` and every cascade layer), or `CLAUDE_USE_HEADROOM=1 claude` | rule's inline `"launch": { "headroom": true }` field; or `.claude-use.json`'s `"launch"` |
-| **Ambient-credential guard** | `claude-use identity set <name> --allow-ambient-credential` (per identity, in its `identity.json`) | `CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1 claude` | not applicable — this guard is about the active identity's own credential, not a directory context |
+| **Identity** | `claude-use identity use <name>` / `claude-use @<name>` (writes `~/.claude-use/active-identity`) | `claude-use run @<name>` or `claude-use run --identity <name>` / `claude @<name>` (needs `claude-use shim enable`) / `CLAUDE_USE_IDENTITY=<name> claude` (same) | `claude-use rule add <path> --identity <name>`; or `.claude-use.json`'s `"identity"` |
+| **Configuration profile** | `claude-use profile use <name>`; or `claude-use identity set <identity> --default-profile <profile>` | `claude --config-profile <name>` / `CLAUDE_USE_CONFIG_PROFILE=<name> claude` | `claude-use rule add <path> --config-profile <name>`; or `.claude-use.json`'s `"configProfile"` |
+| **A category** | `claude-use profile set <name> --category history=true`; or `claude-use configure` | `claude --category history=true [--category knowledge=false ...]` / `CLAUDE_USE_CATEGORY_OVERRIDE="history=true,knowledge=false"` | `claude-use configure` run from inside the ruled directory; or `.claude-use.json`'s `"categories"` |
+| **An individual entry** | `claude-use profile set <name> --entry "<category>/<path>=true"`; or `claude-use configure <path>` | `claude --share <path> [--share <path> ...]` / `claude --hide <path>` / `CLAUDE_USE_ENTRY_OVERRIDE="path=true,otherpath=false"` | `claude-use configure <path>` run from inside the ruled directory; or `.claude-use.json`'s `"entries"` |
+| **Skip permissions** | `claude-use profile set <name> --launch-skip-permissions` (or `--no-launch-skip-permissions`); `launch.skipPermissions` in any cascade layer | `claude --skip-permissions` / `claude --no-skip-permissions` / `CLAUDE_USE_SKIP_PERMISSIONS=true claude` | rule's inline `"launch"` field; or `.claude-use.json`'s `"launch"` |
+| **Remote Control** | `claude-use profile set <name> --launch-remote-control` (or `--no-launch-remote-control`); `launch.remoteControl` in any cascade layer | `claude --remote-control` / `claude --no-remote-control` / `CLAUDE_USE_REMOTE_CONTROL=true claude` | rule's inline `"launch"` field; or `.claude-use.json`'s `"launch"` |
+| **Provider** | `claude-use provider add <name> ...` defines one (under `~/.claude-use/providers/`); `claude-use profile set <name> --launch-provider <provider>` pins it | `claude --provider <name>` / `claude --no-provider` (opts one launch out of whatever the cascade selects) | rule's inline `"launch": { "provider": ... }` field; or `.claude-use.json`'s `"launch"` |
+| **Headroom routing** | `claude-use profile set <name> --launch-headroom` (or `--no-launch-headroom`); a `launch.headroom` key in `~/.claude-use/config.json` or any cascade layer; the daemon's own `source`/`idleShutdownMinutes` live in that file's global-only `headroom` block | `claude --headroom` / `claude --no-headroom` / `CLAUDE_USE_HEADROOM=true claude` | rule's inline `"launch": { "headroom": true }` field; or `.claude-use.json`'s `"launch"` |
+| **Ambient-credential guard** | `claude-use identity set <name> --allow-ambient-credential` (per identity, in its `identity.json`) | `CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=true claude` | not applicable: this guard is about the active identity's own credential, not a directory context. Deliberately identity-only, with no cascade key, because it is a security setting |
 
-The scriptable `claude-use profile set ...` commands exist alongside the interactive picker specifically so this is automatable — CI, setup scripts, or a `.claude-use.json` generator don't need to drive an interactive prompt. `claude-use profile set`'s `--category` and `--entry` options, and `claude`'s own `--category`/`--share`/`--hide` flags, are each repeatable in one invocation (`claude --share <path> --share <path>`, `claude-use profile set work --category history=true --category knowledge=false`) and each also accepts a comma-separated list of values in a single flag — `<key>=<bool>` pairs for `--category`/`--entry`, plain paths for `--share`/`--hide` — the same convention `claude-use profile create --extends <names>` uses for a comma-separated list of profile names, so setting several categories or entries in one launch or on one profile doesn't need one invocation per key. A `--share`/`--hide` path (and the `CLAUDE_USE_ENTRY_OVERRIDE` env var's keys) still needs its `<category>/` prefix like every other entries key (e.g. `claude --share knowledge/skills/commit`) — see [Category-based sharing](configuration-model.md#category-based-sharing). `CLAUDE_EXTRA_FLAGS` (below) is a different thing entirely, a passthrough to the real Claude Code binary, not a `claude-use` override: it's a single opaque string, split on whitespace before being appended to the real binary's argv — a flag value that itself needs an embedded space isn't expressible through it.
+Every boolean launch setting is decided the same way: its command-line flag outright, then its environment variable, then the cascade, then off. Every boolean environment variable (`CLAUDE_USE_SKIP_PERMISSIONS`, `CLAUDE_USE_REMOTE_CONTROL`, `CLAUDE_USE_HEADROOM`, `CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL`, `CLAUDE_USE_DEBUG`) reads `true`/`1` or `false`/`0`, the same vocabulary a `--category history=true` value uses; the empty string counts as unset, and anything else is refused as a usage error rather than read as false. So `CLAUDE_USE_SKIP_PERMISSIONS=0` switches off a profile's `skipPermissions: true` for one launch.
+
+The scriptable `claude-use profile set ...` commands exist alongside the interactive picker specifically so this is automatable: CI, setup scripts, or a `.claude-use.json` generator never need to drive a prompt. Every list-valued flag takes one value per occurrence and repeats for more (`claude --share <path> --share <path>`, `claude-use profile set work --category history=true --category knowledge=false`, `claude-use profile add acme --extends base --extends work`); no flag splits its value on commas. The two list-valued environment variables, which cannot repeat, are the exception: `CLAUDE_USE_CATEGORY_OVERRIDE` and `CLAUDE_USE_ENTRY_OVERRIDE` each hold a comma-separated list of `<key>=<bool>` pairs. A `--share`/`--hide` path (and the `CLAUDE_USE_ENTRY_OVERRIDE` env var's keys) still needs its `<category>/` prefix like every other entries key (e.g. `claude --share knowledge/skills/commit`); see [Category-based sharing](configuration-model.md#category-based-sharing). The same spelling never means two things: the launch flag is `--headroom`, the profile setting that stores it is `--launch-headroom`.
+
+The launcher recognises its own flags only before a `--` terminator. Everything from `--` onwards is forwarded to Claude Code verbatim, so `claude mcp add n -- cmd --provider x` keeps `--provider x` for `cmd`. `@<name>` is recognised only as the very first argument; `--identity <name>` is its explicit form, and naming two different identities through both is a usage error. `CLAUDE_EXTRA_FLAGS` (below) is a different thing entirely, a passthrough to the real Claude Code binary, not a `claude-use` override: it's a single opaque string, split on whitespace before being appended to the real binary's argv, so a flag value that itself needs an embedded space isn't expressible through it.
+
+A launch that selects an identity with no `identity.json`, or a configuration profile with no file, is refused with exit 1 naming the missing name and how it was selected, rather than silently creating a brand-new login for a mistyped `@name` or launching with a cascade layer missing. On a terminal, the launcher first offers to create it.
+
+### Output, errors and prompts
+
+Every `list`, `show`, `check`, `doctor` and `headroom status` prints human-readable text by default and JSON with `--json`. `provider show` names a credential's variable (`tokenEnv`) and never reads its value.
+
+Prompts appear only when standard input is a terminal and input the command needs is missing. Without a terminal, the command fails with the option that supplies that input instead of silently skipping it: `identity use` and the `@<name>` shortcut refuse a missing identity rather than offering the setup wizard, `identity set --default-profile`, `rule add --config-profile` and `profile use` refuse a missing profile rather than offering to create it, `profile add` with no options creates an empty profile rather than walking through its categories, and every `remove` needs `--yes` rather than asking for confirmation. `configure` is interactive by nature and refuses to run without a terminal. `NO_COLOR` is honoured by the prompts, the only coloured output claude-use produces.
+
+| Exit status | Meaning |
+|---|---|
+| 0 | Success, including `--help` and `--version` |
+| 1 | A failure: a missing identity, profile, provider or rule, an invalid config file, a refused launch, a `doctor` finding that failed, or a `check --strict` warning |
+| 2 | A usage error: an unknown command or option, a malformed flag or environment value, or required input missing with no terminal to prompt on |
+| 64 | A selected provider has no usable credential (`EX_USAGE`) |
+
+Every failure prints as `claude-use: <message>` on standard error. An unexpected error (a bug, not a known failure) prints its message the same way; set `CLAUDE_USE_DEBUG=1` to add its stack trace.
+
+`claude-use completion <bash|zsh|fish>` prints a completion script generated from the command tree itself, so it covers exactly the commands and options that exist: `source <(claude-use completion bash)` in `~/.bashrc`, `source <(claude-use completion zsh)` in `~/.zshrc` after `compinit`, or `claude-use completion fish | source` in fish's config. It completes subcommands and long options at every level, and the launch flags after `run`.
 
 ### Full command list
 
 ```
+claude-use <noun> <verb> [name] [options]      # nouns: identity, profile, provider, rule
+
 claude-use identity add <name>
+claude-use identity list [--json]
+claude-use identity show <name> [--json]
+claude-use identity set <name> [--default-profile <profile> | --no-default-profile] [--[no-]allow-ambient-credential]
+claude-use identity remove <name> [--yes]
 claude-use identity use <name>
 claude-use @<name>                          # shorthand for `identity use <name>`
-claude-use identity list
-claude-use identity set-default-profile <identity> <profile>
-claude-use identity set <name> [--allow-ambient-credential | --no-allow-ambient-credential]
-claude-use identity resolve <name>          # interactively resolve a retained superseded farm's conflicts
+claude-use identity resolve-conflicts <name>  # interactively resolve a retained superseded farm's conflicts
 
-claude-use profile create <name> [--extends <name>,<name>,...]
-claude-use profile list
-claude-use profile set-default <name>
-claude-use profile set <name> --category <cat>=<bool>[,<cat>=<bool>,...]
-claude-use profile set <name> --entry "<path>"=<bool>[,"<path>"=<bool>,...]
-claude-use profile set <name> [--skip-permissions] [--remote-control] [--headroom]
+claude-use profile add [name] [--extends <profile>]... [--description <text>]   # interactive with no options on a terminal
+claude-use profile set <name> [--category <category>=<bool>]... [--entry <category>/<path>=<bool>]...
+claude-use profile set <name> [--extends <profile>]... [--no-extends] [--description <text> | --no-description]
+claude-use profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom]
+claude-use profile set <name> [--launch-provider <provider> | --no-launch-provider]
+claude-use profile list [--json]
+claude-use profile show <name> [--json]
+claude-use profile remove <name> [--yes]
+claude-use profile use <name>               # the global default configuration profile
 
-claude-use provider add <name> --display-name <name> --base-url <url> (--token-env <VAR> | --token-command <argv...>) [--auth-scheme <bearer|apiKey>] [--env KEY=VALUE]
-claude-use provider list
-claude-use provider show <name>
-claude-use provider remove <name>
+claude-use provider add <name> --display-name <name> --base-url <url> (--token-env <VAR> | --token-command <argv...>) [--auth-scheme <bearer|apiKey>] [--env KEY=VALUE]...
+claude-use provider set <name> [--display-name <name>] [--base-url <url>] [--token-env <VAR> | --no-token-env] [--token-command <argv...> | --no-token-command] [--auth-scheme <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]...
+claude-use provider list [--json]
+claude-use provider show <name> [--json]
+claude-use provider remove <name> [--yes]
 
-claude-use headroom status
+claude-use rule add <path> [--config-profile <profile>] [--identity <identity>]
+claude-use rule set <path> [--config-profile <profile> | --no-config-profile] [--identity <identity> | --no-identity]
+claude-use rule list [--json]
+claude-use rule show <path> [--json]
+claude-use rule remove <path> [--yes]
 
-claude-use rules add <path> [--profile <name>] [--identity <name>]
-claude-use rules list
-claude-use rules remove <path>
-
-claude-use configure <identity> [path]
-claude-use check [path] [--identity <name>]
-claude-use doctor
-claude-use run [args...]
+claude-use configure [path] [--identity <identity>]
+claude-use check [path] [--identity <identity>] [--json] [--strict]
+claude-use doctor [--json]
+claude-use headroom status [--json]
+claude-use completion <bash|zsh|fish>
 claude-use shim enable [--dir <path>] [--force]
 claude-use shim disable [--dir <path>] [--force]
+
+claude-use run [@<identity>] [launch flags] [claude arguments]
+  # launch flags, recognised only before a `--` terminator:
+  #   --identity <name>  --config-profile <name>  --provider <name> | --no-provider
+  #   --category <category>=<bool>  --share <category>/<path>  --hide <category>/<path>   (each repeatable)
+  #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom
+claude @<identity> ...                      # the same, once `claude-use shim enable` has run
 ```
 
 ### `claude-use configure`: which file it writes to
 
-`claude-use configure <identity> [path]` always takes an identity as its required first argument, never a profile or a rule directly — a plain `claude-use configure <identity>` with no arguments beyond that is an error, not a default. Two modes:
+`claude-use configure [path] [--identity <name>]` configures one identity: the one `--identity` names, or otherwise the identity a launch in the working directory would resolve (`CLAUDE_USE_IDENTITY`, a directory rule's pin, then the active identity). With none of those it is a usage error, not a guess. It never targets a profile or a rule directly. Two modes:
 
 - **No `path`**: lists that identity's resolved top-level state — the five categories, plus a "edit a specific configuration profile" option — and lets you toggle categories directly or drill into a named profile's own file. This is the only mode that touches `categories`.
 - **Given a `path`**: lists that path's children with their resolved state and multi-select toggles, for fine-grained `entries` overrides. This mode never shows or edits categories, only entries under the given path.
@@ -79,7 +118,7 @@ The two softer verdicts are warnings rather than failures. The running executabl
 
 ### Debugging: `claude-use check`
 
-`claude-use check [path] [--identity <name>]` resolves the full cascade for the given path (default `$PWD`) and identity (default the active one), and prints the result — every entry's resolved state, which layer decided it, and which condition (if any) was evaluated and how — without touching the farm or spawning `claude` at all. This is the primary way to answer "why is X shared/hidden here" without launching a session to find out. For any `history/projects/` glob override in scope, it also flags whenever the pattern's encoded form could plausibly match more than one real path (see [Pattern matching](configuration-model.md#pattern-matching-against-claudeprojects)), rather than resolving that ambiguity silently.
+`claude-use check [path] [--identity <name>] [--json] [--strict]` resolves the full cascade for the given path (default `$PWD`) and identity (default the active one), and prints the result (every entry's resolved state, which layer decided it, and which condition, if any, was evaluated and how) without touching the farm or spawning `claude` at all. This is the primary way to answer "why is X shared/hidden here" without launching a session to find out. `--json` prints the same report as data, and `--strict` makes it exit 1 when the report carries any warning: a resolver diagnostic, an ambiguous `history/projects/` encoding, or an ambient credential a launch would refuse. For any `history/projects/` glob override in scope, it also flags whenever the pattern's encoded form could plausibly match more than one real path (see [Pattern matching](configuration-model.md#pattern-matching-against-claudeprojects)), rather than resolving that ambiguity silently.
 
 It also runs three checks that don't depend on `path` at all, every time, so a review of an identity's isolation doesn't require reasoning through the cascade by hand:
 
