@@ -1,3 +1,13 @@
+## [2.9.0](https://github.com/ExaDev/claude-use/compare/v2.8.0...v2.9.0) (2026-09-30)
+
+### Features
+
+* **providers:** token commands and API key auth scheme ([ce730bb](https://github.com/ExaDev/claude-use/commit/ce730bb8343c804a50cb571d799eca51e915bfb7))
+
+### Bug Fixes
+
+* default the supervised headroom proxy to HTTP/1.1 upstream ([ad9f837](https://github.com/ExaDev/claude-use/commit/ad9f8379cf6d13b9740e02664207f3d80d1cde17))
+
 ## [2.8.0](https://github.com/ExaDev/claude-use/compare/v2.7.0...v2.8.0) (2026-09-27)
 
 ### Features
