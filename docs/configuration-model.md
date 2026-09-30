@@ -217,11 +217,30 @@ Each provider lives in its own file at `~/.claude-use/providers/<name>.json`:
 }
 ```
 
-`tokenEnv` is the NAME of an environment variable holding the token, never the token itself: a provider file is ordinary committed config, and the credential stays in the environment or a secret store where it belongs. It may be omitted only by a provider whose `env` itself carries a non-empty `ANTHROPIC_AUTH_TOKEN`: a local proxy that takes a fixed dummy token (and validates nothing) has no real secret to keep out of the file, and anything with a real credential must still name its variable. `env` carries any further static environment entries the child needs to use that endpoint (model maps like `ANTHROPIC_MODEL`/`ANTHROPIC_DEFAULT_*_MODEL`, `API_TIMEOUT_MS`, an explicit `ANTHROPIC_API_KEY: ""` for endpoints where the auth token must take over, and so on).
+A provider has exactly one token source, and none of them holds a secret, because a provider file is ordinary committed config:
 
-Selection works exactly like the launch flags below: `launch.provider` in any cascade layer (global config, a configuration profile, a directory rule, a committed `.claude-use.json`), with a one-off `claude --provider <name>` flag outranking every layer. When a provider is resolved, the child's environment gains `ANTHROPIC_BASE_URL` (the provider's base URL), `ANTHROPIC_AUTH_TOKEN` (the token read from `tokenEnv`), every entry of the provider's `env`, and `CLAUDE_USE_PROVIDER` (the display name, for statusline use). `ANTHROPIC_API_KEY` is explicitly cleared to the empty string unless the provider's own `env` names a value, so an ambient key inherited from the parent environment cannot outrank the token that was just set.
+- `tokenEnv` is the NAME of an environment variable holding the token, never the token itself.
+- `tokenCommand` is an argv (program first, no shell) run at launch through the launcher's `RunPort`; its trimmed stdout is the token, for example `"tokenCommand": ["op", "read", "op://vault/item/field"]`. The credential then lives in a secret store and exists only in the child's environment, not in any parent shell. A command that cannot be run, exits non-zero or prints nothing is a refusal (exit 64). The refusal names the command's program, its exit status and its stderr, and never its stdout, which is the token.
+- A non-empty `env.ANTHROPIC_AUTH_TOKEN` is the third source, for a local proxy that takes a fixed dummy token (and validates nothing) and so has no real secret to keep out of the file. Anything with a real credential uses one of the first two.
 
-Two refusals, both before anything is spawned: an unknown provider name exits 1 with the known provider names listed, and a provider whose `tokenEnv` is unset or empty in the parent environment exits 64 with `claude-use: provider <name> needs <VAR> set in your environment` (a fixed-credential provider instead refuses only if its `env.ANTHROPIC_AUTH_TOKEN` is empty, which `ProviderSchema` already rejects at load).
+`ProviderSchema` rejects a provider with none of the three or with more than one. `env` carries any further static environment entries the child needs to use that endpoint (model maps like `ANTHROPIC_MODEL`/`ANTHROPIC_DEFAULT_*_MODEL`, `API_TIMEOUT_MS`, an explicit `ANTHROPIC_API_KEY: ""` for endpoints where the auth token must take over, and so on).
+
+`authScheme` is `"bearer"` (the default) or `"apiKey"`. Bearer exports the token as `ANTHROPIC_AUTH_TOKEN`, which is what relays and aggregators expect. `apiKey` exports it as `ANTHROPIC_API_KEY` and sets `ANTHROPIC_AUTH_TOKEN` to the empty string, which is what a regular Anthropic API key against `https://api.anthropic.com` needs:
+
+```json
+{
+  "displayName": "Anthropic API",
+  "baseUrl": "https://api.anthropic.com",
+  "tokenCommand": ["op", "read", "op://vault/anthropic/api-key"],
+  "authScheme": "apiKey"
+}
+```
+
+Under `apiKey` the token overwrites `ANTHROPIC_API_KEY`, so the schema rejects a provider whose `env` sets that variable to a non-empty value.
+
+Selection works exactly like the launch flags below: `launch.provider` in any cascade layer (global config, a configuration profile, a directory rule, a committed `.claude-use.json`), with a one-off `claude --provider <name>` flag outranking every layer. When a provider is resolved, the child's environment gains `ANTHROPIC_BASE_URL` (the provider's base URL), `ANTHROPIC_AUTH_TOKEN` (the resolved token, or `ANTHROPIC_API_KEY` under `authScheme: "apiKey"`), every entry of the provider's `env`, and `CLAUDE_USE_PROVIDER` (the display name, for statusline use). `ANTHROPIC_API_KEY` is explicitly cleared to the empty string unless the provider's own `env` names a value, so an ambient key inherited from the parent environment cannot outrank the token that was just set.
+
+Two refusals, both before anything is spawned: an unknown provider name exits 1 with the known provider names listed, and a provider whose `tokenEnv` is unset or empty in the parent environment exits 64 with `claude-use: provider <name> needs <VAR> set in your environment` (a `tokenCommand` provider that fails, exits non-zero or prints nothing exits 64 the same way, and a fixed-credential provider instead refuses only if its `env.ANTHROPIC_AUTH_TOKEN` is empty, which `ProviderSchema` already rejects at load).
 
 The ambient-credential guard (below) checks the parent environment and is unaffected by a provider launch: the guard runs before the child environment is built, and the provider's own token is injected into the child after it, so claude-use itself supplies the credential. An ambient `ANTHROPIC_AUTH_TOKEN` left over in a parent shell is therefore not refused when a provider is selected, because the child never sees it; with no provider selected, the guard refuses it as always.
 
