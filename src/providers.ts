@@ -1,14 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Command } from "commander";
+import { Option, type Command } from "commander";
 
 import { parsePair } from "./cli/parsers";
 import { ConfigValidationError, loadConfigFile } from "./config/load";
 import { readJson, writeJsonAtomic } from "./config/store";
-import { ProviderSchema, type Provider } from "./config/schema";
+import { AUTH_SCHEMES, ProviderSchema, type AuthScheme, type Provider } from "./config/schema";
 import { CliError } from "./cliError";
 import type { ResolvedProvider } from "./launcher/flags";
-import type { FsPort } from "./launcher/ports";
+import type { FsPort, RunPort } from "./launcher/ports";
 import { assembleCascade, type CascadeInput } from "./resolve/walk";
 import type { LayoutPaths } from "./paths";
 
@@ -122,6 +122,8 @@ export interface AddProviderInput {
   readonly displayName: string;
   readonly baseUrl: string;
   readonly tokenEnv?: string;
+  readonly tokenCommand?: readonly [string, ...string[]];
+  readonly authScheme?: AuthScheme;
   readonly env?: Readonly<Record<string, string>>;
 }
 
@@ -139,6 +141,8 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
     displayName: input.displayName,
     baseUrl: input.baseUrl,
     ...(input.tokenEnv === undefined ? {} : { tokenEnv: input.tokenEnv }),
+    ...(input.tokenCommand === undefined ? {} : { tokenCommand: input.tokenCommand }),
+    ...(input.authScheme === undefined ? {} : { authScheme: input.authScheme }),
     ...(input.env === undefined || Object.keys(input.env).length === 0 ? {} : { env: input.env }),
   });
   if (!parsed.success) {
@@ -161,6 +165,8 @@ export interface ResolveProviderParams {
   readonly paths: LayoutPaths;
   readonly port: FsPort;
   readonly env: Readonly<Record<string, string | undefined>>;
+  /** Runs a provider's `tokenCommand`. Omitted by a caller that cannot run commands; a provider that needs one is then refused rather than launched without its credential. */
+  readonly run?: RunPort;
   /** The `--provider <name>` flag's value, when one was given. It outranks any cascade layer, matching how the cliOverride layer composes last everywhere else. */
   readonly cliProvider?: string;
   /** The assembled-but-unflattened cascade for this launch, when one was loaded. Its layers are scanned for a `launch.provider` selection so a profile, directory rule, portable file, or the global config can pin a provider exactly the way they pin the other launch flags. */
@@ -170,14 +176,53 @@ export interface ResolveProviderParams {
 /**
  * The outcome of resolving this launch's provider: either a fully-resolved provider (definition plus the token read out of the parent environment), or a refusal the launcher turns into a stderr line and a non-zero exit.
  *
- * Exit status 64 (`EX_USAGE`) is reserved for the provider being selected but unusable as written: an unset token environment variable means the command line itself is incomplete. An unknown provider name exits 1, matching every other "named thing not found" refusal in the launcher.
+ * Exit status 64 (`EX_USAGE`) is reserved for the provider being selected but unusable as written: an unset token environment variable, or a token command that fails or prints nothing, means the invocation cannot authenticate. An unknown provider name exits 1, matching every other "named thing not found" refusal in the launcher.
  */
-/** The exit status for a provider selected whose token environment variable is unset or empty: 64, the conventional `EX_USAGE`, because the invocation asked for a provider the environment cannot authenticate. */
+/** The exit status for a provider selected whose credential cannot be obtained (an unset or empty token environment variable, or a token command that fails or prints nothing): 64, the conventional `EX_USAGE`, because the invocation asked for a provider the environment cannot authenticate. */
 export const PROVIDER_MISSING_TOKEN_EXIT = 64;
 
 export type ProviderResolution =
   | { readonly ok: true; readonly provider: ResolvedProvider }
   | { readonly ok: false; readonly status: number; readonly message: string };
+
+/** The outcome of obtaining a provider's token: the token, or the refusal `resolveProvider` reports. */
+type TokenOutcome =
+  | { readonly ok: true; readonly token: string }
+  | { readonly ok: false; readonly status: number; readonly message: string };
+
+/**
+ * Obtains the token from the provider's single configured source (`ProviderSchema` guarantees exactly one): the `tokenEnv` variable in the parent environment, the trimmed stdout of `tokenCommand`, or the fixed `env.ANTHROPIC_AUTH_TOKEN` of a local proxy. Every failure is a status 64 refusal.
+ *
+ * A refusal message never contains the command's stdout, which is the credential; it carries the exit status and the command's stderr, which is where a well-behaved secret tool explains itself.
+ */
+function obtainToken(name: string, definition: Provider, params: ResolveProviderParams): TokenOutcome {
+  const unusable = (message: string): TokenOutcome => ({ ok: false, status: PROVIDER_MISSING_TOKEN_EXIT, message });
+
+  if (definition.tokenCommand !== undefined) {
+    const [command, ...args] = definition.tokenCommand;
+    if (params.run === undefined) {
+      return { ok: false, status: 1, message: `claude-use: provider ${name} needs its token command run, but this launcher has no command runner wired` };
+    }
+    const result = params.run.run(command, args);
+    if (result.status !== 0) {
+      const stderr = result.stderr.trim();
+      const outcome = result.status === null ? "could not be run or was killed by a signal" : `exited with status ${String(result.status)}`;
+      return unusable(`claude-use: provider ${name}: token command ${command} ${outcome}${stderr === "" ? "" : `: ${stderr}`}`);
+    }
+    const token = result.stdout.trim();
+    return token === "" ? unusable(`claude-use: provider ${name}: token command ${command} printed no token`) : { ok: true, token };
+  }
+
+  const token = definition.tokenEnv !== undefined ? params.env[definition.tokenEnv] : definition.env?.ANTHROPIC_AUTH_TOKEN;
+  if (token === undefined || token === "") {
+    return unusable(
+      definition.tokenEnv !== undefined
+        ? `claude-use: provider ${name} needs ${definition.tokenEnv} set in your environment`
+        : `claude-use: provider ${name} has no usable credential: its env.ANTHROPIC_AUTH_TOKEN is empty`,
+    );
+  }
+  return { ok: true, token };
+}
 
 /**
  * Resolves which API provider this launch routes through, if any: the `--provider` flag first, then the cascade's `launch.provider` selection. Returns undefined when nothing selected a provider at all.
@@ -214,20 +259,11 @@ export function resolveProvider(params: ResolveProviderParams): ProviderResoluti
     };
   }
 
-  // tokenEnv names the variable holding the credential; a provider without one carries a
-  // fixed ANTHROPIC_AUTH_TOKEN in its own env (a local proxy's dummy token), which
-  // ProviderSchema guarantees is present and non-empty.
-  const token = definition.tokenEnv !== undefined ? params.env[definition.tokenEnv] : definition.env?.ANTHROPIC_AUTH_TOKEN;
-  if (token === undefined || token === "") {
-    return {
-      ok: false,
-      status: PROVIDER_MISSING_TOKEN_EXIT,
-      message:
-        definition.tokenEnv !== undefined
-          ? `claude-use: provider ${name} needs ${definition.tokenEnv} set in your environment`
-          : `claude-use: provider ${name} has no usable credential: its env.ANTHROPIC_AUTH_TOKEN is empty`,
-    };
+  const credential = obtainToken(name, definition, params);
+  if (!credential.ok) {
+    return credential;
   }
+  const token = credential.token;
 
   return { ok: true, provider: { name, definition, token } };
 }
@@ -255,20 +291,26 @@ export function registerProviderCommand(program: Command, paths: LayoutPaths): v
     .description("Create a new API provider definition.")
     .requiredOption("--display-name <name>", "Human-readable name, exported to the child as CLAUDE_USE_PROVIDER.")
     .requiredOption("--base-url <url>", "Anthropic-compatible base URL the child's requests are sent to.")
-    .option("--token-env <var>", "NAME of the environment variable holding the provider's token (never the token itself). Optional only when --env carries ANTHROPIC_AUTH_TOKEN (a local proxy's fixed dummy token).")
+    .option("--token-env <var>", "NAME of the environment variable holding the provider's token (never the token itself). Exactly one of --token-env, --token-command or --env ANTHROPIC_AUTH_TOKEN=<fixed dummy token for a local proxy> is required.")
+    .option("--token-command <argv...>", "Command (program and arguments) run at launch whose trimmed stdout is the token, e.g. --token-command op read op://vault/item/field. Give it last on the command line, since it consumes every following word.")
+    .addOption(new Option("--auth-scheme <scheme>", "How the token reaches Claude Code: bearer sets ANTHROPIC_AUTH_TOKEN (default), apiKey sets ANTHROPIC_API_KEY.").choices(AUTH_SCHEMES))
     .option("--env <pair>", "Extra KEY=VALUE environment entry for the child (repeatable).", collectEnvPairs)
-    .action((name: string, options: Readonly<{ displayName: string; baseUrl: string; tokenEnv?: string; env?: Record<string, string> }>) => {
+    .action((name: string, options: Readonly<{ displayName: string; baseUrl: string; tokenEnv?: string; tokenCommand?: [string, ...string[]]; authScheme?: AuthScheme; env?: Record<string, string> }>) => {
       addProvider(paths, name, {
         displayName: options.displayName,
         baseUrl: options.baseUrl,
         ...(options.tokenEnv === undefined ? {} : { tokenEnv: options.tokenEnv }),
+        ...(options.tokenCommand === undefined ? {} : { tokenCommand: options.tokenCommand }),
+        ...(options.authScheme === undefined ? {} : { authScheme: options.authScheme }),
         ...(options.env === undefined ? {} : { env: options.env }),
       });
-      console.log(
-        options.tokenEnv === undefined
-          ? `Created provider "${name}" (${options.baseUrl}, fixed env credential).`
-          : `Created provider "${name}" (${options.baseUrl}, token from ${options.tokenEnv}).`,
-      );
+      const source =
+        options.tokenEnv !== undefined
+          ? `token from ${options.tokenEnv}`
+          : options.tokenCommand !== undefined
+            ? `token from ${options.tokenCommand[0]}`
+            : "fixed env credential";
+      console.log(`Created provider "${name}" (${options.baseUrl}, ${source}).`);
     });
 
   provider

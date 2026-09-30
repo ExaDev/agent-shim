@@ -1,97 +1,18 @@
-import { describe, expect, it, vi, type Mock } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { runLauncher, type FarmRuntime, type RunLauncherParams } from "./launcher";
+import type { FarmRuntime } from "./launcher";
 import { identityLockPath } from "./launcher/lock";
-import { PROVIDER_MISSING_TOKEN_EXIT } from "./providers";
-import type { FsPort, HeadroomPort, LogPort, ProcPort, SpawnPort, SpawnResult } from "./launcher/ports";
-import { buildLayoutPaths } from "./paths";
-import type { CascadeInput } from "./resolve/walk";
-import { createFakeFarmFs, fakeSleep, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, shippedClassification, type FakeFarmFs } from "./test-helpers";
-import type { DiscoveredClaudeBinary } from "./versionDiscovery";
-
-class ExitCalled extends Error {
-  constructor(readonly code: number) {
-    super(`process would exit with code ${String(code)}`);
-  }
-}
-
-const paths = buildLayoutPaths("/home/testuser/.claude-use");
-
-function fakeProc(env: Readonly<Record<string, string | undefined>>, argv: readonly string[]): ProcPort {
-  return {
-    env,
-    argv,
-    exit: (code: number): never => {
-      throw new ExitCalled(code);
-    },
-  };
-}
-
-function fakeFs(files: Record<string, unknown>): FsPort {
-  return {
-    readFileUtf8: (filePath) => {
-      const value = files[filePath];
-      return typeof value === "string" ? value : undefined;
-    },
-    readConfigFile: (filePath) => {
-      const value = files[filePath];
-      return value === undefined || typeof value === "string" ? undefined : value;
-    },
-    readdir: (dir) =>
-      Object.keys(files)
-        .filter((file) => file.startsWith(`${dir}/`))
-        .map((file) => file.slice(dir.length + 1).split("/")[0] ?? "")
-        .filter((name) => name !== ""),
-  };
-}
-
-function fakeLog(): LogPort & { infos: string[]; warns: string[]; errors: string[] } {
-  const infos: string[] = [];
-  const warns: string[] = [];
-  const errors: string[] = [];
-  return {
-    infos,
-    warns,
-    errors,
-    info: (message) => { infos.push(message); },
-    warn: (message) => { warns.push(message); },
-    error: (message) => { errors.push(message); },
-  };
-}
-
-function fakeSpawn(result: SpawnResult = { status: 0, signal: null }): SpawnPort & { spawnSync: Mock<SpawnPort["spawnSync"]> } {
-  return { spawnSync: vi.fn<SpawnPort["spawnSync"]>().mockReturnValue(result) };
-}
-
-/** The env the child was spawned with, from the first spawn call: for tests that assert a few specific keys of an otherwise large environment. */
-function spawnedEnv(spawn: ReturnType<typeof fakeSpawn>): Record<string, string | undefined> {
-  const call = spawn.spawnSync.mock.calls[0];
-  if (call === undefined) {
-    throw new Error("expected spawnSync to have been called");
-  }
-  const options = call[2];
-  return options.env;
-}
-
-const discovered: DiscoveredClaudeBinary = { path: "/home/testuser/.local/share/claude/versions/2.1.0", source: "versions-dir", version: "2.1.0" };
+import type { FsPort, HeadroomPort } from "./launcher/ports";
+import {
+  createFakeFarmFs, discovered, fakeFarm, fakeFs, fakeLog, fakeProc, fakeRun, fakeSpawn, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS,
+  paths, runAndCaptureExit, spawnedEnv,
+} from "./test-helpers";
 
 /** The loopback port the fake headroom daemon pretends to listen on. */
 const HEADROOM_PORT = 8123;
 const HEADROOM_MITM_PORT = 8124;
 /** A second port, so one test can prove the daemon in use is the one ensure() reported. */
 const OTHER_HEADROOM_PORT = 9999;
-
-function runAndCaptureExit(params: RunLauncherParams): number {
-  try {
-    runLauncher(params);
-  } catch (error) {
-    if (error instanceof ExitCalled) {
-      return error.code;
-    }
-    throw error;
-  }
-  throw new Error("expected runLauncher to reach spawnClaude's proc.exit");
-}
 
 describe("runLauncher", () => {
   it("refuses to launch and never spawns when the ambient-credential guard fails", () => {
@@ -307,25 +228,6 @@ describe("runLauncher", () => {
   });
 });
 
-function fakeFarm(fs: FakeFarmFs, cliOverride?: CascadeInput["cliOverride"]): FarmRuntime {
-  return {
-    fs,
-    claudeHome: FAKE_CLAUDE_HOME,
-    home: FAKE_HOME,
-    cwd: `${FAKE_HOME}/work`,
-    classification: { defaults: shippedClassification },
-    loadCascade: () => ({
-      home: FAKE_HOME,
-      loadProfile: () => undefined,
-      levels: [],
-      ...(cliOverride === undefined ? {} : { cliOverride }),
-    }),
-    now: () => FAKE_NOW_MS,
-    uniqueSuffix: "launcher-test",
-    lock: { pid: 42, isRunning: () => true, sleep: fakeSleep().sleep, maxAttempts: 2 },
-  };
-}
-
 describe("runLauncher headroom routing", () => {
   function fakeHeadroomPort(
     port = HEADROOM_PORT,
@@ -447,6 +349,38 @@ describe("runLauncher headroom routing", () => {
     );
   });
 
+  it("routes an apiKey provider on api.anthropic.com through headroom: the token becomes the API key, the daemon is the base URL and the real upstream rides in the header", () => {
+    const spawn = fakeSpawn();
+    const headroom = fakeHeadroomPort();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({
+        [`${FAKE_HOME}/.claude-use/providers/anthropic-api.json`]: {
+          displayName: "Anthropic API",
+          baseUrl: "https://api.anthropic.com",
+          tokenCommand: ["op", "read", "ref"],
+          authScheme: "apiKey",
+        },
+      }),
+      spawn,
+      proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--provider", "anthropic-api"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      headroom,
+      run: fakeRun("sk-ant-REDACTED\n"),
+    });
+
+    const env = spawnedEnv(spawn);
+    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8123");
+    expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("");
+    expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe(
+      "x-headroom-project-id: /home/testuser/work/repo\nx-headroom-base-url: https://api.anthropic.com",
+    );
+  });
+
   it("refuses loudly when headroom resolved on but no headroom port was wired", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
@@ -518,188 +452,6 @@ describe("runLauncher headroom routing", () => {
 
     expect(headroom.ensures).toBe(1);
     expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://127.0.0.1:8124");
-  });
-});
-
-describe("runLauncher provider selection", () => {
-  const providerZ = {
-    displayName: "GLM",
-    baseUrl: "https://api.z.ai/api/anthropic",
-    tokenEnv: "Z_API_TOKEN",
-    env: { ANTHROPIC_MODEL: "glm-4.6" },
-  };
-  const providerO = {
-    displayName: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    tokenEnv: "OPENROUTER_API_KEY",
-  };
-
-  it("launches through a provider selected by the --provider flag", () => {
-    const spawn = fakeSpawn();
-
-    runAndCaptureExit({
-      paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
-      spawn,
-      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z", "--print"]),
-      log: fakeLog(),
-      resolveClaudeBinary: () => discovered,
-    });
-
-    expect(spawn.spawnSync).toHaveBeenCalledWith(discovered.path, ["--print"], {
-      stdio: "inherit",
-      env: {
-        Z_API_TOKEN: "tok-z",
-        ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
-        ANTHROPIC_AUTH_TOKEN: "tok-z",
-        ANTHROPIC_API_KEY: "",
-        ANTHROPIC_MODEL: "glm-4.6",
-        CLAUDE_USE_PROVIDER: "GLM",
-      },
-    });
-  });
-
-  it("refuses with exit 1 and names the known providers when the provider is unknown", () => {
-    const spawn = fakeSpawn();
-    const log = fakeLog();
-
-    const code = runAndCaptureExit({
-      paths,
-      fs: fakeFs({
-        [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ,
-        [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO,
-      }),
-      spawn,
-      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "missing", "--print"]),
-      log,
-      resolveClaudeBinary: () => discovered,
-    });
-
-    expect(code).toBe(1);
-    expect(spawn.spawnSync).not.toHaveBeenCalled();
-    expect(log.errors[0]).toContain('no provider named "missing"');
-    expect(log.errors[0]).toContain("o, z");
-  });
-
-  it("refuses with exit 64 when the provider's token environment variable is unset or empty", () => {
-    const spawn = fakeSpawn();
-    const log = fakeLog();
-
-    const code = runAndCaptureExit({
-      paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
-      spawn,
-      proc: fakeProc({ Z_API_TOKEN: "" }, ["--provider", "z"]),
-      log,
-      resolveClaudeBinary: () => discovered,
-    });
-
-    expect(code).toBe(PROVIDER_MISSING_TOKEN_EXIT);
-    expect(spawn.spawnSync).not.toHaveBeenCalled();
-    expect(log.errors).toEqual(["claude-use: provider z needs Z_API_TOKEN set in your environment"]);
-  });
-
-  it("launches a fixed-credential provider without tokenEnv, passing the guard and setting the token from its env", () => {
-    const spawn = fakeSpawn();
-
-    runAndCaptureExit({
-      paths,
-      fs: fakeFs({
-        [`${FAKE_HOME}/.claude-use/providers/codex.json`]: {
-          displayName: "Codex",
-          baseUrl: "http://127.0.0.1:18789",
-          env: { ANTHROPIC_AUTH_TOKEN: "codex-subscription-local", ANTHROPIC_API_KEY: "" },
-        },
-      }),
-      spawn,
-      proc: fakeProc({}, ["--provider", "codex", "--print"]),
-      log: fakeLog(),
-      resolveClaudeBinary: () => discovered,
-    });
-
-    const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:18789");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("codex-subscription-local");
-    expect(env.CLAUDE_USE_PROVIDER).toBe("Codex");
-  });
-
-  it("resolves a provider pinned by a cascade layer when no flag was given", () => {
-    const fs = createFakeFarmFs({});
-    const spawn = fakeSpawn();
-
-    runAndCaptureExit({
-      paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO }),
-      spawn,
-      proc: fakeProc({ OPENROUTER_API_KEY: "tok-o" }, ["@work"]),
-      log: fakeLog(),
-      resolveClaudeBinary: () => discovered,
-      farm: fakeFarm(fs, { launch: { provider: "o" } }),
-    });
-
-    const env = spawnedEnv(spawn);
-    expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.claude-use/identities/work`);
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://openrouter.ai/api/v1");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-o");
-    expect(env.CLAUDE_USE_PROVIDER).toBe("OpenRouter");
-  });
-
-  it("lets a --provider flag beat the cascade's own provider selection", () => {
-    const fs = createFakeFarmFs({});
-    const spawn = fakeSpawn();
-
-    runAndCaptureExit({
-      paths,
-      fs: fakeFs({
-        [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ,
-        [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO,
-      }),
-      spawn,
-      proc: fakeProc({ Z_API_TOKEN: "tok-z", OPENROUTER_API_KEY: "tok-o" }, ["@work", "--provider", "z"]),
-      log: fakeLog(),
-      resolveClaudeBinary: () => discovered,
-      farm: fakeFarm(fs, { launch: { provider: "o" } }),
-    });
-
-    const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
-  });
-
-  it("does not trip the ambient-credential guard when a provider supplies the child's token", () => {
-    const spawn = fakeSpawn();
-
-    const code = runAndCaptureExit({
-      paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
-      spawn,
-      proc: fakeProc({ Z_API_TOKEN: "tok-z", ANTHROPIC_AUTH_TOKEN: "sk-leftover-from-old-wrapper" }, ["--provider", "z"]),
-      log: fakeLog(),
-      resolveClaudeBinary: () => discovered,
-    });
-
-    expect(code).toBe(0);
-    const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
-    expect(env.ANTHROPIC_API_KEY).toBe("");
-  });
-
-  it("still refuses an ambient ANTHROPIC_AUTH_TOKEN when no provider is selected", () => {
-    const spawn = fakeSpawn();
-    const log = fakeLog();
-
-    const code = runAndCaptureExit({
-      paths,
-      fs: fakeFs({}),
-      spawn,
-      proc: fakeProc({ ANTHROPIC_AUTH_TOKEN: "sk-ambient" }, ["--print"]),
-      log,
-      resolveClaudeBinary: () => discovered,
-    });
-
-    expect(code).toBe(1);
-    expect(spawn.spawnSync).not.toHaveBeenCalled();
-    expect(log.errors[0]).toContain("ANTHROPIC_AUTH_TOKEN");
   });
 });
 

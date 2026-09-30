@@ -257,6 +257,45 @@ describe("ProviderSchema", () => {
     ).toBe(false);
   });
 
+  it("accepts a provider whose token comes from a command, and keeps the argv as given", () => {
+    const provider = ProviderSchema.parse({
+      displayName: "Anthropic API",
+      baseUrl: "https://api.anthropic.com",
+      tokenCommand: ["op", "read", "op://vault/item/field"],
+    });
+    expect(provider.tokenCommand).toEqual(["op", "read", "op://vault/item/field"]);
+  });
+
+  it("rejects an empty tokenCommand and one whose program name is empty", () => {
+    const base = { displayName: "x", baseUrl: "https://api.z.ai" };
+    expect(ProviderSchema.safeParse({ ...base, tokenCommand: [] }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ ...base, tokenCommand: [""] }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ ...base, tokenCommand: ["cmd", ""] }).success).toBe(true);
+  });
+
+  it("rejects a provider with more than one token source", () => {
+    const base = { displayName: "x", baseUrl: "https://api.z.ai" };
+    expect(ProviderSchema.safeParse({ ...base, tokenEnv: "T", tokenCommand: ["cmd"] }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ ...base, tokenEnv: "T", env: { ANTHROPIC_AUTH_TOKEN: "fixed" } }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ ...base, tokenCommand: ["cmd"], env: { ANTHROPIC_AUTH_TOKEN: "fixed" } }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ ...base, tokenEnv: "T", env: { ANTHROPIC_AUTH_TOKEN: "" } }).success).toBe(true);
+  });
+
+  it("accepts authScheme bearer or apiKey and rejects anything else", () => {
+    const base = { displayName: "x", baseUrl: "https://api.anthropic.com", tokenEnv: "T" };
+    expect(ProviderSchema.parse({ ...base, authScheme: "apiKey" }).authScheme).toBe("apiKey");
+    expect(ProviderSchema.parse({ ...base, authScheme: "bearer" }).authScheme).toBe("bearer");
+    expect(ProviderSchema.parse(base).authScheme).toBeUndefined();
+    expect(ProviderSchema.safeParse({ ...base, authScheme: "basic" }).success).toBe(false);
+  });
+
+  it("rejects a non-empty env.ANTHROPIC_API_KEY under authScheme apiKey, which the token would overwrite", () => {
+    const base = { displayName: "x", baseUrl: "https://api.anthropic.com", tokenEnv: "T", authScheme: "apiKey" };
+    expect(ProviderSchema.safeParse({ ...base, env: { ANTHROPIC_API_KEY: "sk-fixed" } }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ ...base, env: { ANTHROPIC_API_KEY: "" } }).success).toBe(true);
+    expect(ProviderSchema.safeParse({ ...base, authScheme: "bearer", env: { ANTHROPIC_API_KEY: "sk-fixed" } }).success).toBe(true);
+  });
+
   it("makes env optional but every other field required", () => {
     expect(ProviderSchema.safeParse({ displayName: "GLM", baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" }).success).toBe(true);
     expect(ProviderSchema.safeParse({ displayName: "GLM", baseUrl: "https://api.z.ai" }).success).toBe(false);

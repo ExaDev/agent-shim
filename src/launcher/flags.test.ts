@@ -227,6 +227,59 @@ describe("buildEnv", () => {
     expect(named.ANTHROPIC_BASE_URL).toBe("https://openrouter.ai/api/v1");
   });
 
+  it("exports the token as ANTHROPIC_API_KEY and clears an ambient ANTHROPIC_AUTH_TOKEN under authScheme apiKey", () => {
+    const env = buildEnv({
+      baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "sk-ambient-bearer", ANTHROPIC_API_KEY: "sk-ambient-key" },
+      configDirEscapeHatch: false,
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      provider: {
+        name: "anthropic-api",
+        definition: { displayName: "Anthropic API", baseUrl: "https://api.anthropic.com", tokenCommand: ["op", "read", "ref"], authScheme: "apiKey" },
+        token: "sk-ant-REDACTED",
+      },
+    });
+    expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("");
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
+  });
+
+  it("keeps a fixed env.ANTHROPIC_AUTH_TOKEN out of the child under authScheme apiKey", () => {
+    const env = buildEnv({
+      baseEnv,
+      configDirEscapeHatch: false,
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      provider: {
+        name: "proxy",
+        definition: {
+          displayName: "Proxy",
+          baseUrl: "http://127.0.0.1:18789",
+          authScheme: "apiKey",
+          env: { ANTHROPIC_AUTH_TOKEN: "dummy" },
+        },
+        token: "dummy",
+      },
+    });
+    expect(env.ANTHROPIC_API_KEY).toBe("dummy");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("");
+  });
+
+  it("keeps the bearer pair when authScheme is bearer or absent", () => {
+    for (const authScheme of [undefined, "bearer" as const]) {
+      const env = buildEnv({
+        baseEnv: { ...baseEnv, ANTHROPIC_API_KEY: "sk-ambient-key" },
+        configDirEscapeHatch: false,
+        identitiesDir: "/home/testuser/.claude-use/identities",
+        provider: {
+          name: "z",
+          definition: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", tokenEnv: "Z_API_TOKEN", ...(authScheme === undefined ? {} : { authScheme }) },
+          token: "tok-from-z",
+        },
+      });
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
+      expect(env.ANTHROPIC_API_KEY).toBe("");
+    }
+  });
+
   it("lands every entry of the provider's own env verbatim in the child environment", () => {
     const env = buildEnv({
       baseEnv,
