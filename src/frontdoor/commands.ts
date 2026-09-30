@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import type { IncomingHttpHeaders } from "node:http";
 import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
@@ -22,9 +24,10 @@ import {
 } from "./connect";
 import { ensureFrontDoor } from "./ensure";
 import { serveRouted, type PipelineDeps } from "./pipeline";
+import { AUTH_HEADER, HOP_SECRET_HEADER } from "./route";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { readFrontDoorState, type FrontDoorState } from "./state";
+import { liveSessionTokens, readFrontDoorState, type FrontDoorState } from "./state";
 import { runFrontDoorSupervisor, type FrontDoorListenerHandle, type FrontDoorSupervisorPorts } from "./supervisor";
 
 function appendLog(paths: LayoutPaths, line: string): void {
@@ -56,11 +59,25 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   const codexPorts = createCodexRoutePorts(log);
   const resolveRoute = createProviderRouteResolver({ fs: realFsPort, providersDir: paths.providersDir, codexPorts, directPort: () => directPort });
 
-  const buildPipeline = (withHeadroomHop: boolean): PipelineDeps => ({
+  // The per-generation capability the direct listener demands: held only in this process's memory, so a loopback process that discovers the direct port still cannot use it.
+  const hopSecret = randomUUID();
+
+  /** What a client-facing listener accepts: the per-launch token of any live registered session. Read fresh, since sessions come and go with launches. */
+  const authorizeClient = (headers: Readonly<IncomingHttpHeaders>): boolean => {
+    const presented = headers[AUTH_HEADER];
+    const token = Array.isArray(presented) ? presented[0] : presented;
+    return token !== undefined && liveSessionTokens(realFarmFs, paths.frontdoorSessionsDir).has(token);
+  };
+
+  /** What the direct listener accepts: only what this process's own hop forwarded back through headroom. */
+  const authorizeHop = (headers: Readonly<IncomingHttpHeaders>): boolean => headers[HOP_SECRET_HEADER] === hopSecret;
+
+  const buildPipeline = (clientFacing: boolean): PipelineDeps => ({
     resolveRoute,
     // The response middleware hook point: the usage-tracking work registers its observers here. The direct listener registers none, because its responses are consumed by headroom, not by the client; the entry the client sees is where observation belongs.
     responseObservers: [],
-    ...(withHeadroomHop ? { headroom: { headroomPort: () => liveHeadroomPort(paths), log } } : {}),
+    ...(clientFacing ? { authorize: authorizeClient } : { authorize: authorizeHop }),
+    ...(clientFacing ? { headroom: { headroomPort: () => liveHeadroomPort(paths), hopSecret, log } } : {}),
     log,
   });
 
@@ -153,7 +170,7 @@ export function realFrontDoorPort(paths: LayoutPaths): FrontDoorPort {
           spawnSupervisor: (layout) => spawnDetachedSupervisor(layout, "__frontdoor-supervisor", layout.frontdoorLogPath),
         },
       });
-      return { port: up.port, connectPort: up.connectPort, caCertPath: paths.frontdoorCaCertFile };
+      return { port: up.port, connectPort: up.connectPort, caCertPath: paths.frontdoorCaCertFile, sessionToken: up.token };
     },
     release: () => {
       removeSession(realFarmFs, paths.frontdoorSessionsDir, process.pid);

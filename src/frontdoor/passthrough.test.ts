@@ -6,7 +6,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { createPassthroughRoute } from "./passthrough";
 import { serveRouted } from "./pipeline";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER } from "./route";
+import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER } from "./route";
 
 const servers: http.Server[] = [];
 
@@ -70,6 +70,7 @@ async function startDoor(target: { readonly baseUrl: string; readonly stripPrefi
       await serveRouted(request, {
         resolveRoute: async () => await Promise.resolve({ ok: true, route }),
         responseObservers: [],
+        authorize: (headers) => headers[AUTH_HEADER] === "launch-token-for-tests",
         log: () => undefined,
       });
     },
@@ -86,7 +87,7 @@ describe("the pass-through route", () => {
     try {
       const response = await fetch(`${door.url}/providers/z/v1/messages?beta=true`, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: "Bearer tok", [IDENTITY_HEADER]: "work" },
+        headers: { "content-type": "application/json", authorization: "Bearer tok", [IDENTITY_HEADER]: "work", [AUTH_HEADER]: "launch-token-for-tests" },
         body: '{"model":"claude-sonnet-4-5"}',
       });
       expect(response.status).toBe(HTTP_STATUS.ok);
@@ -119,7 +120,7 @@ describe("the pass-through route", () => {
     servers.splice(servers.indexOf(probe), 1);
     const door = await startDoor({ baseUrl: `http://127.0.0.1:${String(deadPort)}`, stripPrefix: "/providers/z", headroomUpstream: undefined });
     try {
-      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", body: "{}" });
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
       expect(response.status).toBe(HTTP_STATUS.badGateway);
       expect(await response.json()).toMatchObject({ type: "error", error: { type: "api_error" } });
     } finally {

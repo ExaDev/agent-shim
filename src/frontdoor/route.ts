@@ -3,7 +3,7 @@ import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 /**
  * The claude-use-internal headers the launcher injects through `ANTHROPIC_CUSTOM_HEADERS` so the front door can identify and route a request's session. None of them may ever leave the machine: the identity step strips every one before a route sees the request, so no upstream, and not even the headroom hop, learns what they say.
  */
-export const INTERNAL_HEADER_NAMES = ["x-claude-use-identity", "x-claude-use-session", "x-claude-use-headroom", "x-headroom-project-id", "x-headroom-base-url"] as const;
+export const INTERNAL_HEADER_NAMES = ["x-claude-use-identity", "x-claude-use-session", "x-claude-use-headroom", "x-claude-use-auth", "x-claude-use-hop", "x-headroom-project-id", "x-headroom-base-url"] as const;
 
 /** Carries the launching identity's name (the `@name` the launch resolved), set by the launcher and stripped at the door. */
 export const IDENTITY_HEADER = "x-claude-use-identity";
@@ -23,6 +23,16 @@ export const PROJECT_ID_HEADER = "x-headroom-project-id";
  * Headroom's per-request upstream selector, which the child used to carry and the door now owns: the door strips any inbound copy (a leftover from an older launcher's environment would otherwise redirect the daemon behind the door's back) and its hop sets it fresh when a route names an upstream.
  */
 export const HEADROOM_BASE_URL_HEADER = "x-headroom-base-url";
+
+/**
+ * The per-launch capability a client-facing listener requires before it routes anything: a random token the launcher generates, hands the child through `ANTHROPIC_CUSTOM_HEADERS`, and records in the door's session registry, so a loopback process that never launched through claude-use cannot spend the session's credentials or quota. Stripped at the door like every internal header.
+ */
+export const AUTH_HEADER = "x-claude-use-auth";
+
+/**
+ * The capability the direct listener requires: a per-generation random secret held only in the door process's memory, set by the headroom hop on the requests it forwards back. A loopback process that finds the direct port still cannot use it, and nothing on disk ever holds the secret.
+ */
+export const HOP_SECRET_HEADER = "x-claude-use-hop";
 
 /** What the identity step learned about one request from the launcher-injected headers. */
 export interface SessionIdentity {

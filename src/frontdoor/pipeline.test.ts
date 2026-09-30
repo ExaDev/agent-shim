@@ -147,6 +147,23 @@ describe("serveRouted", () => {
     expect(response.writtenHead?.status).toBe(HTTP_STATUS.ok);
   });
 
+  it("refuses an unauthorized request before any route or resolution, as an Anthropic-shaped 401 the observers still see", async () => {
+    const statuses: number[] = [];
+    const { request, response } = pipelineRequest();
+    await serveRouted(
+      request,
+      {
+        resolveRoute: async () => await Promise.resolve({ ok: true, route: recordingRoute() }),
+        responseObservers: [(event) => { statuses.push(event.status); }],
+        authorize: () => false,
+        log: () => undefined,
+      },
+    );
+    expect(response.writtenHead?.status).toBe(HTTP_STATUS.unauthorized);
+    expect(response.chunks[0]).toContain("authentication_error");
+    expect(statuses).toEqual([HTTP_STATUS.unauthorized]);
+  });
+
   it("answers an unrouted target as an Anthropic-shaped error the observers still see", async () => {
     const statuses: number[] = [];
     const { request, response } = pipelineRequest();

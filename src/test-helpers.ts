@@ -392,7 +392,7 @@ export function fakeFrontDoorPort(port = 4100, connectPort = 4200): FrontDoorPor
     releases: () => releases,
     ensure: () => {
       ensures += 1;
-      return { port, connectPort, caCertPath: "/home/testuser/.claude-use/frontdoor/ca/ca.pem" };
+      return { port, connectPort, caCertPath: "/home/testuser/.claude-use/frontdoor/ca/ca.pem", sessionToken: "launch-token-for-tests" };
     },
     release: () => {
       releases += 1;

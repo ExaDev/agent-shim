@@ -331,7 +331,7 @@ describe("runLauncher headroom routing", () => {
     expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:4200");
     expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/frontdoor/ca/ca.pem");
     expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
-    expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
+    expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-auth: launch-token-for-tests", "x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
     expect(headroom.releases).toBeGreaterThan(0);
     expect(frontdoor.releases()).toBeGreaterThan(0);
   });
@@ -407,7 +407,7 @@ describe("runLauncher headroom routing", () => {
     expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/z");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
     expect(env.HTTPS_PROXY).toBeUndefined();
-    expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
+    expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-auth: launch-token-for-tests", "x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
   });
 
   it("routes an apiKey provider on api.anthropic.com through the door with headroom: the token becomes the API key and the door is the base URL", () => {
@@ -437,7 +437,7 @@ describe("runLauncher headroom routing", () => {
     expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
-    expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
+    expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-auth: launch-token-for-tests", "x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
   });
 
   it("refuses loudly when headroom resolved on but no front-door port was wired", () => {

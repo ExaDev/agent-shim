@@ -3,6 +3,10 @@ import { z } from "zod";
 
 import type { HeadroomFs } from "../headroom/state";
 
+/** The record held in one front-door session-registry file: the launcher's pid plus the per-launch capability token its child presents on every request. */
+const FrontDoorSessionSchema = z.strictObject({ pid: z.number().int().positive(), startedAt: z.number(), token: z.string().min(1) });
+export type FrontDoorSession = z.infer<typeof FrontDoorSessionSchema>;
+
 /**
  * The front-door supervisor's state.json under `<home>/frontdoor/`. Every field is optional because the file exists in stages, exactly like headroom's and the old codex daemon's: a fresh supervisor writes its own pid before the listener is up, and a shut-down front door leaves only the sticky `lastPort` and any `lastError` worth surfacing.
  */
@@ -65,4 +69,31 @@ export function writeFrontDoorState(fs: HeadroomFs, stateFile: string, state: Re
 export function frontDoorOrigin(state: FrontDoorState | undefined): string | undefined {
   const port = state?.directPort ?? state?.lastDirectPort;
   return port === undefined ? undefined : `http://127.0.0.1:${String(port)}`;
+}
+
+/** Writes one launch's session record: the registry entry that both keeps the door from idling out and holds the token that launch's requests must present. */
+export function writeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, session: Readonly<FrontDoorSession>): void {
+  fs.mkdirp(sessionsDir);
+  fs.writeFileUtf8(path.join(sessionsDir, `${String(session.pid)}.json`), `${JSON.stringify(session, null, 2)}\n`);
+}
+
+/**
+ * Every live session's token, read fresh: what a client-facing listener checks a request's capability against. Malformed files are skipped for the same reason `readFrontDoorState` tolerates them.
+ */
+export function liveSessionTokens(fs: HeadroomFs, sessionsDir: string): ReadonlySet<string> {
+  const tokens = new Set<string>();
+  for (const name of fs.readdir(sessionsDir)) {
+    if (!name.endsWith(".json")) {
+      continue;
+    }
+    try {
+      const parsed = FrontDoorSessionSchema.safeParse(JSON.parse(fs.readFileUtf8(path.join(sessionsDir, name)) ?? ""));
+      if (parsed.success) {
+        tokens.add(parsed.data.token);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return tokens;
 }

@@ -48,7 +48,7 @@ describe("runLauncher with a provider", () => {
     expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("codex-placeholder");
     expect(env.CLAUDE_USE_PROVIDER).toBe("Codex");
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-claude-use-session: [0-9a-f-]{36}$/);
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-claude-use-session: [0-9a-f-]{36}\nx-claude-use-auth: launch-token-for-tests$/);
     expect(frontdoor.releases()).toBeGreaterThan(0);
   });
 

@@ -6,7 +6,7 @@ import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, fakeResponse, recordingFetch } from "../codex/testing";
 import { FAKE_HOME, fakeFs } from "../test-helpers";
-import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER } from "./route";
+import { AUTH_HEADER, HEADROOM_FLAG_HEADER, HOP_SECRET_HEADER, IDENTITY_HEADER, SESSION_HEADER } from "./route";
 import { serveRouted, type PipelineDeps } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -14,6 +14,8 @@ import { createFrontDoorServer, listenFrontDoor } from "./server";
 const PROVIDERS_DIR = `${FAKE_HOME}/.claude-use/providers`;
 const SETTLE_MS = 50;
 const MESSAGES_BODY = JSON.stringify({ model: "claude-sonnet-4-5", stream: false, messages: [{ role: "user", content: "hi" }], metadata: { user_id: "user-a" } });
+/** The per-launch capability token the door's client-facing listeners accept in these tests. */
+const LAUNCH_TOKEN = "launch-token-for-tests";
 const TEXT_TURN = [
   { type: "response.created", response: { id: "resp_1" } },
   { type: "response.output_item.added", output_index: 0, item: { type: "message", id: "msg_1" } },
@@ -128,10 +130,12 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
   const log = (line: string): void => {
     logs.push(line);
   };
-  const buildPipeline = (withHop: boolean): PipelineDeps => ({
+  const hopSecret = "hop-secret-for-tests";
+  const buildPipeline = (clientFacing: boolean): PipelineDeps => ({
     resolveRoute,
     responseObservers: [],
-    ...(withHop ? { headroom: { headroomPort: options.headroomPort, log } } : {}),
+    authorize: clientFacing ? (headers) => headers[AUTH_HEADER] === LAUNCH_TOKEN : (headers) => headers[HOP_SECRET_HEADER] === hopSecret,
+    ...(clientFacing ? { headroom: { headroomPort: options.headroomPort, hopSecret, log } } : {}),
     log,
   });
   const direct = createFrontDoorServer(async (request) => {
@@ -153,6 +157,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
   };
 }
 
+
 const codexProvider = { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } };
 
 /** Lets the event loop turn once, so an unwanted background request would have landed in the recorder. */
@@ -169,7 +174,7 @@ describe("the headroom hop", () => {
     try {
       const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
         method: "POST",
-        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1" },
+        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN },
         body: MESSAGES_BODY,
       });
       if (response.status !== HTTP_STATUS.ok) {
@@ -195,7 +200,7 @@ describe("the headroom hop", () => {
     try {
       await fetch(`${door.url}/providers/codex/v1/messages`, {
         method: "POST",
-        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", "x-headroom-project-id": "/repo" },
+        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN, "x-headroom-project-id": "/repo" },
         body: MESSAGES_BODY,
       });
       const seen = headroom.seen()[0];
@@ -211,7 +216,7 @@ describe("the headroom hop", () => {
   it("answers 502 rather than bypassing headroom while the daemon is between restarts", async () => {
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: () => undefined });
     try {
-      const response = await fetch(`${door.url}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1" }, body: MESSAGES_BODY });
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
       expect(response.status).toBe(HTTP_STATUS.badGateway);
       expect(await response.json()).toMatchObject({ type: "error", error: { type: "api_error" } });
     } finally {
@@ -227,7 +232,7 @@ describe("the headroom hop", () => {
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: () => holdingPort });
     try {
       const abort = new AbortController();
-      const pending = fetch(`${door.url}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: MESSAGES_BODY, signal: abort.signal });
+      const pending = fetch(`${door.url}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY, signal: abort.signal });
       await new Promise((resolve) => {
         setTimeout(resolve, SETTLE_MS);
       });
@@ -247,7 +252,7 @@ describe("the headroom hop", () => {
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: headroom.port });
     try {
       // No headroom flag header: the session never asked for the hop, so the door serves the route itself.
-      const response = await fetch(`${door.url}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: MESSAGES_BODY });
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
       expect(response.status).toBe(HTTP_STATUS.ok);
       await settle();
       expect(headroom.seen()).toHaveLength(0);
