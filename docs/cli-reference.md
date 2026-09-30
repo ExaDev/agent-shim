@@ -35,7 +35,7 @@ claude-use profile set <name> --category <cat>=<bool>[,<cat>=<bool>,...]
 claude-use profile set <name> --entry "<path>"=<bool>[,"<path>"=<bool>,...]
 claude-use profile set <name> [--skip-permissions] [--remote-control] [--headroom]
 
-claude-use provider add <name> --display-name <name> --base-url <url> --token-env <VAR> [--env KEY=VALUE]
+claude-use provider add <name> --display-name <name> --base-url <url> (--token-env <VAR> | --token-command <argv...>) [--auth-scheme <bearer|apiKey>] [--env KEY=VALUE]
 claude-use provider list
 claude-use provider show <name>
 claude-use provider remove <name>
