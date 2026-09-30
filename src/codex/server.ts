@@ -4,7 +4,7 @@ import { HTTP_STATUS } from "./http";
 import type { RouteRequest, RouteResponse } from "./route";
 
 /** The largest request body the listener accepts. Claude Code's requests carry whole transcripts and inline images, so the bound is generous; it exists so one runaway request cannot exhaust the daemon's memory. 64 MiB. */
-export const CODEX_MAX_BODY_BYTES = 67_108_864;
+const CODEX_MAX_BODY_BYTES = 67_108_864;
 
 class BodyTooLargeError extends Error {
   constructor() {

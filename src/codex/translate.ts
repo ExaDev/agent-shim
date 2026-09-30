@@ -50,7 +50,7 @@ type InputContentPart =
   | { readonly type: "input_image"; readonly image_url: string };
 
 /** One Responses API input item. */
-export type InputItem =
+type InputItem =
   | { readonly type: "message"; readonly role: "user" | "assistant"; readonly content: readonly InputContentPart[] }
   | { readonly type: "function_call"; readonly call_id: string; readonly name: string; readonly arguments: string }
   | { readonly type: "function_call_output"; readonly call_id: string; readonly output: string };
@@ -117,7 +117,7 @@ export function mapEffort(request: MessagesRequest, config: ResolvedCodexConfig)
 const BILLING_HEADER_LINE = /^x-anthropic-billing-header:[^\n]*\n/;
 
 /** The top-level system prompt as the Responses API's `instructions`: every text block joined by newlines, minus Claude Code's billing line. */
-export function systemToInstructions(system: MessagesRequest["system"]): string {
+function systemToInstructions(system: MessagesRequest["system"]): string {
   if (system === undefined) {
     return "";
   }
@@ -174,7 +174,7 @@ function turnBlocks(message: AnthropicMessage): readonly ContentBlock[] {
 /**
  * Anthropic messages as Responses API input items. Consecutive text and image parts of the same role batch into one message item; `tool_use` and `tool_result` become `function_call` and `function_call_output` items linked by call id. Mid-conversation system turns fold into user turns, because the backend accepts only user and assistant input. Every other block type is dropped, and so is whitespace-only text.
  */
-export function messagesToInput(messages: readonly AnthropicMessage[], names: Map<string, string>): InputItem[] {
+function messagesToInput(messages: readonly AnthropicMessage[], names: Map<string, string>): InputItem[] {
   const input: InputItem[] = [];
   let pending: { role: "user" | "assistant"; parts: InputContentPart[] } | undefined;
   const flush = (): void => {

@@ -11,12 +11,12 @@ export const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/respon
 /**
  * The ceiling on one whole upstream call, response body included. A call with no deadline wedges when it is handed a keep-alive socket the server already dropped: the write succeeds into a dead connection and no response ever arrives. Bounded, the wedge becomes a 502 and the pool discards the socket. Observed turns finish well inside this.
  */
-export const CODEX_UPSTREAM_TIMEOUT_MS = 300_000;
+const CODEX_UPSTREAM_TIMEOUT_MS = 300_000;
 
 /**
  * The deadline for the response headers alone, after which the call is retried once on a fresh connection. Aborting makes the pool discard the suspect socket, so the retry reconnects; a stall before headers then costs one short hiccup instead of a failed turn. A retry can re-deliver a request that did reach the backend, doubling that turn's quota spend, which is preferable to losing the turn.
  */
-export const CODEX_HEADERS_TIMEOUT_MS = 15_000;
+const CODEX_HEADERS_TIMEOUT_MS = 15_000;
 
 /** The timers the upstream call needs, injected so the headers deadline is testable without waiting for it. */
 export interface UpstreamTimers {

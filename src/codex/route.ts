@@ -42,7 +42,7 @@ export interface CodexRoutePorts {
 }
 
 /** The path prefix every provider-scoped endpoint sits under: a codex provider's base URL is the daemon's address plus `/providers/<name>`, so one daemon serves any number of codex providers, each with its own translation settings. */
-export const CODEX_PROVIDER_PATH_PREFIX = "/providers/";
+const CODEX_PROVIDER_PATH_PREFIX = "/providers/";
 
 /** The base URL a codex provider's sessions are pointed at. */
 export function codexProviderBaseUrl(port: number, provider: string): string {
@@ -50,7 +50,7 @@ export function codexProviderBaseUrl(port: number, provider: string): string {
 }
 
 /** The Anthropic error type for an HTTP status, so Claude Code classifies the failure the way it would one from the real API. */
-export function errorTypeFor(status: number): string {
+function errorTypeFor(status: number): string {
   switch (status) {
     case HTTP_STATUS.badRequest:
       return "invalid_request_error";

@@ -8,7 +8,7 @@ export interface HeaderReader {
 /**
  * The subscription quota headers the backend sends on every response (both windows' used percentage, window length and reset times). Forwarded verbatim so they reach Claude Code and anything diagnosing it, and read to derive the Anthropic rate-limit headers below.
  */
-export const QUOTA_FORWARD_HEADERS = [
+const QUOTA_FORWARD_HEADERS = [
   "x-codex-active-limit",
   "x-codex-plan-type",
   "x-codex-primary-used-percent",

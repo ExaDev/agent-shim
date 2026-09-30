@@ -227,7 +227,7 @@ export type CodexProviderConfig = z.infer<typeof CodexProviderConfigSchema>;
  *
  * `credential` is required for both kinds, since a provider launch has to give Claude Code a token to send. A provider file is ordinary committed config, so none of its sources holds a secret (a `literal` source is by definition a non-secret placeholder, which is exactly what a codex provider needs: the daemon authenticates upstream with the Codex CLI's own login and ignores the token Claude Code sends it). `env` may not name a credential variable (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`) at all: the credential target sets one and the launcher removes the other two, so a value there would either be overwritten or be a second credential hiding outside the block.
  */
-export const HttpProviderSchema = z.strictObject({
+const HttpProviderSchema = z.strictObject({
   $schema: z.string().optional(),
   kind: z.literal("http").optional(),
   displayName: z.string().min(1),
@@ -235,10 +235,9 @@ export const HttpProviderSchema = z.strictObject({
   credential: ProviderCredentialSchema,
   env: ProviderEnvSchema.optional(),
 });
-export type HttpProvider = z.infer<typeof HttpProviderSchema>;
 
 /** A `codex` provider: see `ProviderSchema`. */
-export const CodexProviderSchema = z.strictObject({
+const CodexProviderSchema = z.strictObject({
   $schema: z.string().optional(),
   kind: z.literal("codex"),
   displayName: z.string().min(1),

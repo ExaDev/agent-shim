@@ -67,7 +67,7 @@ export const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
 /** The Codex CLI's public OAuth client id: public by design, the same value every Codex CLI install sends. */
 export const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 /** A hung refresh would hold the single in-flight refresh, and every request queued behind it, forever. */
-export const CODEX_REFRESH_TIMEOUT_MS = 30_000;
+const CODEX_REFRESH_TIMEOUT_MS = 30_000;
 
 /** How much of the token endpoint's error body is kept in the error message: enough for its error code and description, which carry no token. */
 const REFRESH_ERROR_BODY_CHARS = 300;
