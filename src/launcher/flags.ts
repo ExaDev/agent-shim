@@ -4,7 +4,7 @@ import { parseEnvBool } from "../cli/parsers";
 import type { LaunchFlags, Provider } from "../config/schema";
 import { credentialVariables, type ResolvedCredential } from "../credential";
 import { mergeAnthropicCustomHeaders } from "../headroom/headers";
-import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROJECT_ID_HEADER, SESSION_HEADER } from "../frontdoor/route";
+import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROJECT_ID_HEADER, SESSION_HEADER } from "../frontdoor/route";
 import type { FrontDoorUp, HeadroomUp } from "./ports";
 
 /** The fully resolved launch flags for one launch. */
@@ -125,7 +125,7 @@ export interface BuildEnvParams {
  *
  * A resolved provider is applied regardless of the identity outcome, because it selects which API endpoint the child talks to, not which login's data it sees: `ANTHROPIC_BASE_URL` points at the provider's routed base URL (always the front door's provider-scoped address), `CLAUDE_USE_PROVIDER` names the provider for the statusline, the provider's own `env` entries land verbatim, and its resolved credential is exported as its target's variable (`credentialVariables`), with the other credential variables removed so an ambient one inherited from the parent cannot outrank it. Without a provider, an identity's own resolved credential is exported the same way. The token only ever reaches this environment, never the child's argv or a log line.
  *
- * A resolved front door is the whole of the child's routing, on top of the provider: `ANTHROPIC_CUSTOM_HEADERS` gains the launcher-injected session headers (identity, session id, and, when headroom resolved on, the headroom flag and the project identity headroom scopes memory to), merged with any headers the provider's own `env` or the parent environment already set. The door strips every one of them before anything leaves the machine. With a provider, that is all the routing there is: the child's base URL already names the door. Without one (an OAuth launch), the base URL is left exactly as the parent environment had it, because Claude Code enables Remote Control and connectors only against the real `api.anthropic.com`; routing happens one layer down instead, with `HTTPS_PROXY` pointing the child at the door's CONNECT surface and `NODE_EXTRA_CA_CERTS` trusting its CA, so the child still believes it is talking to the real `api.anthropic.com` while the surface's terminated TLS feeds the routed paths to the same pipeline. `HEADROOM_PROXY_URL` names the headroom daemon for anything else that wants it; the child never talks to that daemon directly, the door's hop does.
+ * A resolved front door is the whole of the child's routing, on top of the provider: `ANTHROPIC_CUSTOM_HEADERS` gains the launcher-injected session headers (identity, session id, the launch's capability token, and, when headroom resolved on, the headroom flag and the project identity headroom scopes memory to), merged with any headers the provider's own `env` or the parent environment already set. The door strips every one of them before anything leaves the machine; the token is what authorises the session's requests at the door in the first place. With a provider, that is all the routing there is: the child's base URL already names the door. Without one (an OAuth launch), the base URL is left exactly as the parent environment had it, because Claude Code enables Remote Control and connectors only against the real `api.anthropic.com`; routing happens one layer down instead, with `HTTPS_PROXY` pointing the child at the door's CONNECT surface and `NODE_EXTRA_CA_CERTS` trusting its CA, so the child still believes it is talking to the real `api.anthropic.com` while the surface's terminated TLS feeds the routed paths to the same pipeline. `HEADROOM_PROXY_URL` names the headroom daemon for anything else that wants it; the child never talks to that daemon directly, the door's hop does.
  *
  * `$CLAUDE_EXTRA_FLAGS` is never stripped from the child's environment: some wrappers set it two process-levels up and rely on inheritance through a `claude` invoked from inside a running session.
  */
@@ -170,6 +170,7 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
       [
         ...(params.resolvedIdentityName === undefined ? [] : [{ name: IDENTITY_HEADER, value: params.resolvedIdentityName }]),
         { name: SESSION_HEADER, value: params.sessionId },
+        { name: AUTH_HEADER, value: params.frontdoor.sessionToken },
         ...(params.headroom === undefined
           ? []
           : [

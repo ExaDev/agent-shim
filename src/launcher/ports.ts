@@ -136,4 +136,6 @@ export interface FrontDoorUp {
   readonly connectPort: number;
   /** Path to the CONNECT surface's CA certificate, what an OAuth launch points NODE_EXTRA_CA_CERTS at so the child trusts the terminated TLS. */
   readonly caCertPath: string;
+  /** This launch's capability token, injected alongside the session headers and required by the door before it routes anything. */
+  readonly sessionToken: string;
 }

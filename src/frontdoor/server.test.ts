@@ -5,7 +5,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, fakeResponse, parseAnthropicSse, recordingFetch, type RecordedCall } from "../codex/testing";
 import { FAKE_HOME, fakeFs } from "../test-helpers";
 import type { SessionIdentity } from "./route";
-import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute } from "./route";
+import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute } from "./route";
 import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, frontDoorHealthy, listenFrontDoor } from "./server";
@@ -16,6 +16,8 @@ const SETTLE_MS = 30;
 const STREAM_GAP_MS = 30;
 const TICK_MS = 10;
 const ABORT_TIMEOUT_MS = 2_000;
+/** The per-launch capability token the door accepts in these tests. */
+const LAUNCH_TOKEN = "launch-token-for-tests";
 
 /** A successful text turn as the codex backend streams it. */
 const TEXT_TURN = [
@@ -46,7 +48,7 @@ async function startDoor(resolveRoute: PipelineDeps["resolveRoute"], preferredPo
   const logs: string[] = [];
   const server = createFrontDoorServer(
     async (request) => {
-      await serveRouted(request, { resolveRoute, responseObservers: [], log: (line) => { logs.push(line); } });
+      await serveRouted(request, { resolveRoute, responseObservers: [], authorize: (headers) => headers[AUTH_HEADER] === LAUNCH_TOKEN, log: (line) => { logs.push(line); } });
     },
     (line) => {
       logs.push(line);
@@ -71,6 +73,7 @@ async function startProviderDoor(files: Record<string, unknown>, preferredPort?:
   ownPort = door.port;
   return { ...door, calls: upstream.calls };
 }
+
 
 async function waitFor(condition: () => boolean, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -101,7 +104,7 @@ describe("createFrontDoorServer", () => {
     try {
       const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
         method: "POST",
-        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1" },
+        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [AUTH_HEADER]: LAUNCH_TOKEN },
         body: MESSAGES_BODY,
       });
       expect(response.status).toBe(HTTP_STATUS.ok);
@@ -131,7 +134,7 @@ describe("createFrontDoorServer", () => {
     try {
       const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
         method: "POST",
-        headers: { [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", authorization: "Bearer tok" },
+        headers: { [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", authorization: "Bearer tok", [AUTH_HEADER]: LAUNCH_TOKEN },
         body: "{}",
       });
       const echoed: unknown = await response.json();
@@ -167,7 +170,7 @@ describe("createFrontDoorServer", () => {
     };
     const door = await startDoor(resolves(streamer));
     try {
-      const response = await fetch(`${door.url}/providers/x/v1/messages`, { method: "POST", body: "{}" });
+      const response = await fetch(`${door.url}/providers/x/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: LAUNCH_TOKEN }, body: "{}" });
       const reader = response.body?.getReader();
       if (reader === undefined) {
         throw new Error("no response body to read");
@@ -215,7 +218,7 @@ describe("createFrontDoorServer", () => {
     const door = await startDoor(resolves(endless));
     try {
       const abort = new AbortController();
-      const response = await fetch(`${door.url}/providers/x/v1/messages`, { method: "POST", body: "{}", signal: abort.signal });
+      const response = await fetch(`${door.url}/providers/x/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: LAUNCH_TOKEN }, body: "{}", signal: abort.signal });
       const reader = response.body?.getReader();
       await reader?.read();
       expect(seen?.aborted).toBe(false);
@@ -242,7 +245,7 @@ describe("createFrontDoorServer", () => {
     };
     const door = await startDoor(resolves(once));
     try {
-      const response = await fetch(`${door.url}/providers/x/v1/messages`, { method: "POST", body: "{}" });
+      const response = await fetch(`${door.url}/providers/x/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: LAUNCH_TOKEN }, body: "{}" });
       expect(await response.text()).toBe('{"ok":true}');
       await new Promise((resolve) => {
         setTimeout(resolve, SETTLE_MS);
@@ -256,9 +259,35 @@ describe("createFrontDoorServer", () => {
   it("answers an unrouted target as an Anthropic-shaped error", async () => {
     const door = await startDoor(refuses(HTTP_STATUS.notFound, "no such endpoint"));
     try {
-      const response = await fetch(`${door.url}/v1/messages`, { method: "POST", body: "{}" });
+      const response = await fetch(`${door.url}/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: LAUNCH_TOKEN }, body: "{}" });
       expect(response.status).toBe(HTTP_STATUS.notFound);
       expect(await response.json()).toMatchObject({ type: "error", error: { type: "not_found_error" } });
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("refuses a request carrying no launch capability, without any route being asked", async () => {
+    let routeReached = false;
+    const marker: FrontDoorRoute = {
+      name: "marker",
+      headroomEligible: false,
+      headroomUpstream: undefined,
+      serve: async (_request, response) => {
+        routeReached = true;
+        response.start(HTTP_STATUS.ok, { "Content-Type": "text/plain" });
+        await response.write("reached");
+        response.end();
+      },
+    };
+    const door = await startDoor(resolves(marker));
+    try {
+      const without = await fetch(`${door.url}/providers/x/v1/messages`, { method: "POST", body: "{}" });
+      expect(without.status).toBe(HTTP_STATUS.unauthorized);
+      const wrong = await fetch(`${door.url}/providers/x/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "not-a-live-launch" }, body: "{}" });
+      expect(wrong.status).toBe(HTTP_STATUS.unauthorized);
+      expect(await without.json()).toMatchObject({ type: "error", error: { type: "authentication_error" } });
+      expect(routeReached).toBe(false);
     } finally {
       await door.close();
     }
@@ -267,7 +296,7 @@ describe("createFrontDoorServer", () => {
   it("restores service on the same port after the door dies, which is what a frozen base URL needs", async () => {
     const door = await startProviderDoor({ [`${PROVIDERS_DIR}/codex.json`]: codexProvider });
     const port = door.port;
-    const first = await fetch(`http://127.0.0.1:${String(port)}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: MESSAGES_BODY });
+    const first = await fetch(`http://127.0.0.1:${String(port)}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
     expect(first.status).toBe(HTTP_STATUS.ok);
     await first.text();
     // The supervisor process dying closes the listener; the next generation is what binds the sticky port again.
@@ -276,7 +305,7 @@ describe("createFrontDoorServer", () => {
     try {
       expect(replacement.port).toBe(port);
       expect(await frontDoorHealthy(port)).toBe(true);
-      const second = await fetch(`http://127.0.0.1:${String(port)}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: MESSAGES_BODY });
+      const second = await fetch(`http://127.0.0.1:${String(port)}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
       expect(second.status).toBe(HTTP_STATUS.ok);
       await second.text();
     } finally {

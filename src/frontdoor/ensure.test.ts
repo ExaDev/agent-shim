@@ -43,6 +43,15 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean } = {}) {
     writeReadyState(port = PORT): void {
       writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: SUPERVISOR_PID, port, lastPort: port, connectPort: CONNECT_PORT, lastConnectPort: CONNECT_PORT });
     },
+    /** What the recorded session file for a launcher holds, so a test can read the launch's token back. */
+    sessionToken(pid: number): string | undefined {
+      const raw = fs.readFileUtf8(`${paths.frontdoorSessionsDir}/${String(pid)}.json`);
+      if (raw === undefined) {
+        return undefined;
+      }
+      const parsed: unknown = JSON.parse(raw);
+      return typeof parsed === "object" && parsed !== null && "token" in parsed ? String((parsed as { readonly token: unknown }).token) : undefined;
+    },
     ports: {
       fs,
       isRunning: (pid: number) => alive.has(pid),
@@ -68,8 +77,10 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean } = {}) {
 describe("ensureFrontDoor", () => {
   it("spawns the supervisor when nothing is serving and waits for its ready state, then registers the session", () => {
     const world = makeWorld();
-    const result = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
-    expect(result).toEqual({ port: PORT, connectPort: CONNECT_PORT });
+    const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(ensured.port).toBe(PORT);
+    expect(ensured.connectPort).toBe(CONNECT_PORT);
+    expect(ensured.token).toMatch(/^[0-9a-f-]{36}$/);
     expect(world.spawns).toHaveLength(1);
     expect(world.fs.readFileUtf8(`${paths.frontdoorSessionsDir}/${String(LAUNCHER_PID)}.json`)).toBeDefined();
   });
@@ -83,21 +94,33 @@ describe("ensureFrontDoor", () => {
         world.writeReadyState();
       }
     };
-    expect(ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toEqual({ port: PORT, connectPort: CONNECT_PORT });
+    const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(ensured.port).toBe(PORT);
+    expect(ensured.connectPort).toBe(CONNECT_PORT);
+    expect(ensured.token).toMatch(/^[0-9a-f-]{36}$/);
+    expect(world.sessionToken(LAUNCHER_PID)).toBe(ensured.token);
     expect(sleeps).toBeGreaterThanOrEqual(SLEEPS_BEFORE_READY);
   });
 
   it("joins an already-serving front door without spawning anything", () => {
     const world = makeWorld();
     world.writeReadyState();
-    expect(ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toEqual({ port: PORT, connectPort: CONNECT_PORT });
+    const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(ensured.port).toBe(PORT);
+    expect(ensured.connectPort).toBe(CONNECT_PORT);
+    expect(ensured.token).toMatch(/^[0-9a-f-]{36}$/);
+    expect(world.sessionToken(LAUNCHER_PID)).toBe(ensured.token);
     expect(world.spawns).toHaveLength(0);
   });
 
   it("spawns a replacement supervisor when the recorded one is dead, the crash-recovery path every frozen base URL depends on", () => {
     const world = makeWorld();
     writeFrontDoorState(world.fs, paths.frontdoorStateFile, { supervisorPid: DEAD_SUPERVISOR_PID, port: PORT, lastPort: PORT, connectPort: CONNECT_PORT, lastConnectPort: CONNECT_PORT });
-    expect(ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toEqual({ port: PORT, connectPort: CONNECT_PORT });
+    const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(ensured.port).toBe(PORT);
+    expect(ensured.connectPort).toBe(CONNECT_PORT);
+    expect(ensured.token).toMatch(/^[0-9a-f-]{36}$/);
+    expect(world.sessionToken(LAUNCHER_PID)).toBe(ensured.token);
     expect(world.spawns).toHaveLength(1);
   });
 
@@ -114,7 +137,11 @@ describe("ensureFrontDoor", () => {
         world.writeReadyState();
       }
     };
-    expect(ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toEqual({ port: PORT, connectPort: CONNECT_PORT });
+    const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(ensured.port).toBe(PORT);
+    expect(ensured.connectPort).toBe(CONNECT_PORT);
+    expect(ensured.token).toMatch(/^[0-9a-f-]{36}$/);
+    expect(world.sessionToken(LAUNCHER_PID)).toBe(ensured.token);
     expect(world.spawns).toHaveLength(0);
 
     // A dead holder's lock is litter, not a wait: the next ensure clears it and spawns.
@@ -125,7 +152,7 @@ describe("ensureFrontDoor", () => {
     litterWorld.onSleep = () => {
       litterWorld.writeReadyState();
     };
-    expect(ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: litterWorld.ports })).toEqual({ port: PORT, connectPort: CONNECT_PORT });
+    expect(ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: litterWorld.ports }).port).toBe(PORT);
     expect(litterWorld.spawns).toHaveLength(1);
   });
 

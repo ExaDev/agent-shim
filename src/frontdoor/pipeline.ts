@@ -36,6 +36,10 @@ export interface PipelineDeps {
    */
   readonly headroom?: HeadroomHopDeps;
   readonly log: (line: string) => void;
+  /**
+   * The listener's authorisation check, run after identification and before anything is routed. A client-facing listener checks the request's per-launch capability token against the live session registry; the direct listener checks the hop secret only this process knows. Omitted by no listener in production; omitted in tests that exercise the pipeline's own stages. An unauthorized request is answered 401 without ever reaching a route, so a loopback process that never launched through claude-use cannot spend a session's credentials or quota.
+   */
+  readonly authorize?: (headers: Readonly<IncomingHttpHeaders>) => boolean;
 }
 
 /** One request as a transport hands it to the pipeline, before anything has been identified or routed. */
@@ -132,6 +136,13 @@ export function createRoutedResponse(response: ServerResponse, context: { readon
  */
 export async function serveRouted(request: PipelineRequest, deps: PipelineDeps): Promise<void> {
   const identified = identifyRequest(request.headers);
+  if (deps.authorize !== undefined && !deps.authorize(request.headers)) {
+    const response = createRoutedResponse(request.response, { deps, session: identified.session, route: "(unauthorized)" });
+    response.start(HTTP_STATUS.unauthorized, { "Content-Type": "application/json" });
+    await response.write(errorBody(HTTP_STATUS.unauthorized, "claude-use front door: this request carries no capability from a live claude-use launch"));
+    response.end();
+    return;
+  }
   const routed: RoutedRequest = {
     method: request.method,
     url: request.url,

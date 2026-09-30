@@ -51,7 +51,7 @@ describe("runLauncher provider selection", () => {
     });
     expect(env?.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(env?.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-claude-use-session: [0-9a-f-]{36}$/);
+    expect(env?.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-claude-use-session: [0-9a-f-]{36}\nx-claude-use-auth: launch-token-for-tests$/);
   });
 
   it("refuses with exit 1 and names the known providers when the provider is unknown", () => {

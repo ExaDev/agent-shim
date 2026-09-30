@@ -3,7 +3,7 @@ import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
 import { forwardableHeaders } from "./connect";
-import { HEADROOM_BASE_URL_HEADER, PROJECT_ID_HEADER, type RoutedRequest, type RoutedResponse } from "./route";
+import { HEADROOM_BASE_URL_HEADER, HOP_SECRET_HEADER, PROJECT_ID_HEADER, type RoutedRequest, type RoutedResponse } from "./route";
 import { upstreamChunks } from "./server";
 
 /** What one hop answers when it cannot serve: the daemon is between restarts, or unreachable. Answering with 502 (rather than bypassing headroom) is what keeps a launch that asked for compression from silently losing it. */
@@ -15,6 +15,10 @@ export interface HeadroomHopDeps {
    * The headroom daemon's loopback port, read per request rather than captured at start-up: the daemon can crash and restart on a different port while this door keeps listening, and the hop must follow it. Undefined while the daemon is down (the restart window).
    */
   readonly headroomPort: () => number | undefined;
+  /**
+   * The per-generation secret the direct listener requires on what the hop forwards back. Headroom passes non-x-headroom headers through untouched, so the secret survives the round trip and arrives where this process can check it, while no loopback process outside this door ever holds it.
+   */
+  readonly hopSecret: string;
   readonly log: (line: string) => void;
 }
 
@@ -53,6 +57,7 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
   if (request.session.projectId !== undefined) {
     headers[PROJECT_ID_HEADER] = request.session.projectId;
   }
+  headers[HOP_SECRET_HEADER] = deps.hopSecret;
   await new Promise<void>((resolve) => {
     const onUpstreamResponse = (upstreamResponse: IncomingMessage): void => {
       response.start(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, responseHeaders(upstreamResponse.headers));
