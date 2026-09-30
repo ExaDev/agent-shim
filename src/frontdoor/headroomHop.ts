@@ -3,7 +3,7 @@ import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
 import { forwardableHeaders } from "./connect";
-import { PROJECT_ID_HEADER, type RoutedRequest, type RoutedResponse } from "./route";
+import { HEADROOM_BASE_URL_HEADER, PROJECT_ID_HEADER, type RoutedRequest, type RoutedResponse } from "./route";
 import { upstreamChunks } from "./server";
 
 /** What one hop answers when it cannot serve: the daemon is between restarts, or unreachable. Answering with 502 (rather than bypassing headroom) is what keeps a launch that asked for compression from silently losing it. */
@@ -44,8 +44,9 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
     return;
   }
   const headers: Record<string, string | string[] | undefined> = forwardableHeaders(request.headers);
+  // Set only by the door, never inherited: which upstream headroom forwards to is this route's own declaration, and any inbound copy of the header was already stripped at the identity step, so nothing a client sends can redirect the daemon behind the door's back.
   if (upstream !== undefined) {
-    headers["x-headroom-base-url"] = upstream;
+    headers[HEADROOM_BASE_URL_HEADER] = upstream;
   }
   if (request.session.projectId !== undefined) {
     headers[PROJECT_ID_HEADER] = request.session.projectId;
