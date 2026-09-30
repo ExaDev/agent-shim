@@ -53,7 +53,8 @@ async function fakeUpstream(): Promise<{ readonly port: number; readonly seen: (
     });
     request.on("end", () => {
       requests.push({ method: request.method ?? "", url: request.url ?? "", headers: { ...request.headers }, body });
-      response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
+      // A hop-by-hop header named by Connection: the door must regenerate framing on the client's connection, never copy it (Node also emits its own keep-alive hints, so a Connection-named token is the precise probe).
+      response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json", connection: "x-hop-probe", "x-hop-probe": "must-not-cross" });
       response.end(JSON.stringify({ ok: true }));
     });
   });
@@ -98,6 +99,8 @@ describe("the pass-through route", () => {
       expect(seen?.headers.host).toBe(`127.0.0.1:${String(upstream.port)}`);
       expect(seen?.headers[IDENTITY_HEADER]).toBeUndefined();
       expect(seen?.headers[HEADROOM_FLAG_HEADER]).toBeUndefined();
+      // And the client must not receive the upstream's connection-scoped header, which describes a connection it is not on.
+      expect(response.headers.get("x-hop-probe")).toBeNull();
     } finally {
       await door.close();
     }
