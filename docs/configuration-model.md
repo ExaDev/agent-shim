@@ -206,6 +206,40 @@ shares exactly the project-history subdirectories for every real path under `~/w
 
 This whole mechanism assumes POSIX-style absolute paths (forward-slash separators). That's a non-issue today since the initial [build target](release-process.md#build-node-sea) is macOS only; if another platform is ever added, this section — and Claude Code's own encoding behaviour on that platform — needs independent re-verification, not an assumption that the same rule carries over.
 
+## Credentials
+
+Providers and identities describe where a token comes from with the same `credential` block: an ordered list of `sources`, tried in turn until one yields a non-empty token, and a `target` saying which variable the token is exported as in the child's environment.
+
+```json
+{
+  "credential": {
+    "sources": [{ "env": "Z_API_TOKEN" }, { "op": "op://vault/z/credential" }],
+    "target": "bearer"
+  }
+}
+```
+
+Each source is an object with exactly one key naming its kind:
+
+| Source | Token | Needs a person by default |
+|---|---|---|
+| `{ "env": "Z_API_TOKEN" }` | the named variable in the launching environment (its NAME, never its value) | no |
+| `{ "file": "~/.config/claude-use/z.token" }` | the trimmed contents of an absolute or `~`-rooted file, refused if group or others can read or write it (mode 600 or stricter) | no |
+| `{ "command": ["pass", "show", "z"] }` | the trimmed stdout of an argv run at launch with no shell | no |
+| `{ "op": "op://vault/item/field" }` | `op read <ref>` | yes, unless `OP_SERVICE_ACCOUNT_TOKEN` is set |
+| `{ "keychain": { "service": "claude-work", "account": "joe" } }` | `security find-generic-password -s <service> [-a <account>] -w` | no |
+| `{ "literal": "dummy" }` | the value as written (a non-secret placeholder; see below) | no |
+
+`command`, `op` and `keychain` also take `interactive` (override whether the source needs a person) and `timeoutMs` (how long the command may run; 10 seconds by default, 120 seconds for an interactive source, which leaves time to approve a prompt). A 1Password service account needs no special source: `OP_SERVICE_ACCOUNT_TOKEN` in the launching environment is inherited by `op`, which then authenticates without asking anyone, so the `op` source stops counting as interactive. A Keychain read defaults to non-interactive because an item whose access list trusts `security` reads silently and one that does not fails at once over SSH ("User interaction is not allowed") rather than hanging; mark it `interactive: true` if yours shows a dialog.
+
+A source that needs a person is skipped when there is neither a terminal on standard input nor a desktop session (on macOS, a process in the logged-in GUI session; elsewhere, an X11 or Wayland display). When no source is left that yields a token the launch fails before anything is spawned, exit 64, with a message naming every source and why it yielded nothing, for example `claude-use: provider z has no usable credential: env Z_API_TOKEN is unset or empty; op op://vault/z/credential needs a person to approve it, but there is no terminal or desktop session`. A failed command's refusal carries its exit status and stderr, never its stdout, which would be the token. A secret file with loose permissions is skipped with a warning naming the `chmod` that fixes it, even when a later source succeeds.
+
+`target` is `bearer` (the default, exported as `ANTHROPIC_AUTH_TOKEN`, what relays and aggregators expect), `apiKey` (`ANTHROPIC_API_KEY`, sent as `x-api-key`, what a regular Anthropic API key against `api.anthropic.com` needs) or, on an identity only, `oauthToken` (`CLAUDE_CODE_OAUTH_TOKEN`, a long-lived token from `claude setup-token`). The launcher sets the target's variable and removes the other two from the child's environment, so an ambient credential inherited from the parent shell can neither outrank the chosen one nor sit alongside it. The token reaches the child's environment and nothing else: never its argv, never a log line. `check`, `doctor` and every `--json` output describe a credential by source kind, identifying detail (a variable name, a path, a program, a reference, a Keychain service) and target, never by value.
+
+**Why `literal` exists.** A local proxy that ignores credentials entirely (a codex-translation proxy, say) still needs some non-empty token for Claude Code to send, and there is no secret to protect. Requiring an environment variable or a secret store for a placeholder would be ceremony, so `literal` holds it in the file, where it is plainly visible as config. It is the one source whose value is written down, and it is documented and reported as a non-secret placeholder: anything with a real credential uses one of the other kinds, since provider and identity files are ordinary config that is often committed or stowed from a dotfiles repository.
+
+On the command line, `--credential <source>` (repeatable, tried in the order given) takes `env:<VAR>`, `file:<path>`, `command:<program and arguments>` (split on whitespace), `op:<op://reference>`, `keychain:<service>[:<account>]` or `literal:<placeholder>`, or a JSON source object exactly as the file holds it for anything the short form cannot say (an argument containing spaces, `interactive`, `timeoutMs`). `--credential-target <target>` sets the target.
+
 ## Providers
 
 A provider is a named API endpoint a session can be routed through instead of `api.anthropic.com`: an Anthropic-compatible relay, an OpenRouter-style aggregator, or any other base URL that speaks the Messages API. Providers replace the hand-written shell wrappers (`z` for GLM, `m` for MiniMax, `o` for OpenRouter, `s` for Synthetic) with first-class config, so the same identity, farm, and cascade machinery applies to them unchanged.
@@ -216,37 +250,56 @@ Each provider lives in its own file at `~/.claude-use/providers/<name>.json`:
 {
   "displayName": "GLM",
   "baseUrl": "https://api.z.ai/api/anthropic",
-  "tokenEnv": "Z_API_TOKEN",
+  "credential": { "sources": [{ "env": "Z_API_TOKEN" }] },
   "env": { "ANTHROPIC_MODEL": "glm-4.6" }
 }
 ```
 
-A provider has exactly one token source, and none of them holds a secret, because a provider file is ordinary committed config:
-
-- `tokenEnv` is the NAME of an environment variable holding the token, never the token itself.
-- `tokenCommand` is an argv (program first, no shell) run at launch through the launcher's `RunPort`; its trimmed stdout is the token, for example `"tokenCommand": ["op", "read", "op://vault/item/field"]`. The credential then lives in a secret store and exists only in the child's environment, not in any parent shell. A command that cannot be run, exits non-zero or prints nothing is a refusal (exit 64). The refusal names the command's program, its exit status and its stderr, and never its stdout, which is the token.
-- A non-empty `env.ANTHROPIC_AUTH_TOKEN` is the third source, for a local proxy that takes a fixed dummy token (and validates nothing) and so has no real secret to keep out of the file. Anything with a real credential uses one of the first two.
-
-`ProviderSchema` rejects a provider with none of the three or with more than one. `claude-use provider set <name> --token-env <VAR>` or `--token-command <argv...>` switches between the first two, replacing whichever was there; `--no-token-env` and `--no-token-command` remove one outright, and the update is refused if that would leave no source. `env` carries any further static environment entries the child needs to use that endpoint (model maps like `ANTHROPIC_MODEL`/`ANTHROPIC_DEFAULT_*_MODEL`, `API_TIMEOUT_MS`, an explicit `ANTHROPIC_API_KEY: ""` for endpoints where the auth token must take over, and so on).
-
-`authScheme` is `"bearer"` (the default) or `"apiKey"`. Bearer exports the token as `ANTHROPIC_AUTH_TOKEN`, which is what relays and aggregators expect. `apiKey` exports it as `ANTHROPIC_API_KEY` and sets `ANTHROPIC_AUTH_TOKEN` to the empty string, which is what a regular Anthropic API key against `https://api.anthropic.com` needs:
+A provider's `credential` block (see [Credentials](#credentials)) is required and its target is `bearer` or `apiKey`. A regular Anthropic API key, kept in 1Password:
 
 ```json
 {
   "displayName": "Anthropic API",
   "baseUrl": "https://api.anthropic.com",
-  "tokenCommand": ["op", "read", "op://vault/anthropic/api-key"],
-  "authScheme": "apiKey"
+  "credential": { "sources": [{ "op": "op://vault/anthropic/api-key" }], "target": "apiKey" }
 }
 ```
 
-Under `apiKey` the token overwrites `ANTHROPIC_API_KEY`, so the schema rejects a provider whose `env` sets that variable to a non-empty value.
+A local proxy that accepts any token:
 
-Selection works exactly like the launch flags below: `launch.provider` in any cascade layer (global config, a configuration profile, a directory rule, a committed `.claude-use.json`), with a one-off `claude --provider <name>` flag outranking every layer, and `claude --no-provider` opting one launch out of whatever provider the cascade selects. When a provider is resolved, the child's environment gains `ANTHROPIC_BASE_URL` (the provider's base URL), `ANTHROPIC_AUTH_TOKEN` (the resolved token, or `ANTHROPIC_API_KEY` under `authScheme: "apiKey"`), every entry of the provider's `env`, and `CLAUDE_USE_PROVIDER` (the display name, for statusline use). `ANTHROPIC_API_KEY` is explicitly cleared to the empty string unless the provider's own `env` names a value, so an ambient key inherited from the parent environment cannot outrank the token that was just set.
+```json
+{
+  "displayName": "Codex",
+  "baseUrl": "http://127.0.0.1:18789",
+  "credential": { "sources": [{ "literal": "codex-local" }] }
+}
+```
 
-Two refusals, both before anything is spawned: an unknown provider name exits 1 with the known provider names listed, and a provider whose `tokenEnv` is unset or empty in the parent environment exits 64 with `claude-use: provider <name> needs <VAR> set in your environment` (a `tokenCommand` provider that fails, exits non-zero or prints nothing exits 64 the same way, and a fixed-credential provider instead refuses only if its `env.ANTHROPIC_AUTH_TOKEN` is empty, which `ProviderSchema` already rejects at load).
+`env` carries any further static environment entries the child needs to use that endpoint (model maps like `ANTHROPIC_MODEL`/`ANTHROPIC_DEFAULT_*_MODEL`, `API_TIMEOUT_MS`, and so on). It may not name `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, even with an empty value: the credential target sets one and the launcher removes the others, so an entry there would either be overwritten or be a second credential hiding outside the block.
+
+`claude-use provider add <name> ... --credential <source>...` creates one, and `provider set <name> --credential <source>...` replaces its source list (a list is replaced, not patched, because its order is its meaning); `--credential-target` changes the target alone.
+
+Selection works exactly like the launch flags below: `launch.provider` in any cascade layer (global config, a configuration profile, a directory rule, a committed `.claude-use.json`), with a one-off `claude --provider <name>` flag outranking every layer, and `claude --no-provider` opting one launch out of whatever provider the cascade selects. When a provider is resolved, the child's environment gains `ANTHROPIC_BASE_URL` (the provider's base URL), every entry of the provider's `env`, `CLAUDE_USE_PROVIDER` (the display name, for statusline use), and the resolved token under its target's variable, with the other credential variables removed.
+
+Two refusals, both before anything is spawned: an unknown provider name exits 1 with the known provider names listed, and a provider whose credential block yields no token exits 64 with the message described under [Credentials](#credentials).
 
 The ambient-credential guard (below) checks the parent environment and is unaffected by a provider launch: the guard runs before the child environment is built, and the provider's own token is injected into the child after it, so claude-use itself supplies the credential. An ambient `ANTHROPIC_AUTH_TOKEN` left over in a parent shell is therefore not refused when a provider is selected, because the child never sees it; with no provider selected, the guard refuses it as always.
+
+**Provider files from before the credential block.** The separate `tokenEnv`, `tokenCommand` and `authScheme` fields, and a fixed `env.ANTHROPIC_AUTH_TOKEN`, were replaced by the `credential` block with no compatibility period. A file still using them is refused wherever it is read, and `claude-use doctor` fails it with the old fields named and the whole file rewritten in the current format: `tokenEnv` becomes an `env` source, `tokenCommand` a `command` source, a fixed `env.ANTHROPIC_AUTH_TOKEN` a `literal` source (shown as a placeholder for you to copy the value into, never printed), `authScheme: "apiKey"` the `target`, and any credential variable leaves `env`.
+
+## Identity credentials
+
+An identity authenticates with the login stored in its own directory unless its `identity.json` carries a `credential` block (see [Credentials](#credentials)), typically a `claude setup-token` token exported as `oauthToken`:
+
+```json
+{
+  "name": "work",
+  "allowAmbientCredential": false,
+  "credential": { "sources": [{ "op": "op://vault/claude-work/token" }], "target": "oauthToken" }
+}
+```
+
+`claude-use identity set work --credential-target oauthToken --credential op:op://vault/claude-work/token` writes that, `--credential` again replaces the sources, and `--no-credential` returns the identity to its stored login. The block applies only when no provider is selected (a provider's credential authenticates against the provider's endpoint instead, and the identity's is then not even resolved) and not under the `CLAUDE_CONFIG_DIR` escape hatch, where the configuration directory and whatever login it holds are the caller's.
 
 ## Headroom routing
 
@@ -291,4 +344,6 @@ Before any of the above, the launcher checks the environment for `ANTHROPIC_API_
 CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1 claude   # this run only
 claude-use identity set <name> --allow-ambient-credential   # persistently, for this identity
 ```
+
+An identity's own credential block does not trip the guard on the token it injects: a `claude @work` started inside a `claude @work` session finds `CLAUDE_CODE_OAUTH_TOKEN` already holding exactly the token this launch resolves, and that variable holding that value is not ambient. The same variable holding any other value, or any other guarded variable, still trips it.
 

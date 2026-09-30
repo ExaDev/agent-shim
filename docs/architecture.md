@@ -16,12 +16,12 @@ src/
   paths.ts               # CLAUDE_USE_HOME-aware layout paths — every other module resolves ~/.claude-use/... paths through this, never inline
   pathNorm.ts            # rule-path normalisation/ancestor helpers shared across the resolver and directory rules
   versionDiscovery.ts     # portable "find the real claude binary" logic
-  realPorts.ts            # the real filesystem/spawn/proc/clock/git ports wired into runLauncher by runClaude.ts (tests wire fakes instead)
+  realPorts.ts            # the real filesystem/spawn/proc/clock/git/credential ports wired into runLauncher by runClaude.ts (tests wire fakes instead)
   launcher.ts             # runLauncher: thin orchestration over launcher/* below
   launcher/
     ports.ts              # FsPort, SpawnPort, RunPort, ClockPort, ProcPort, LogPort, FarmFs — injected, fakeable
     argv.ts               # parseLauncherArgv: @name only at argv[0], --identity, the launch flags, nothing after a `--` terminator
-    guard.ts              # the ambient-credential guard — six guarded vars, empty string counts as unset
+    guard.ts              # the ambient-credential guard — six guarded vars, empty string counts as unset, the launching identity's own injected token exempt
     identity.ts           # decideIdentity, decideConfigProfile, loadIdentity
     flags.ts              # resolveLaunchFlags, buildFlagArgs, buildArgv, buildEnv
     extraFlags.ts         # splitExtraFlags for $CLAUDE_EXTRA_FLAGS
@@ -31,7 +31,8 @@ src/
     spawn.ts              # spawnClaude — spawns the real binary, propagates its exit code
   identityManager.ts      # the `identity` noun: add/list/show/set/remove/use/resolve-conflicts
   configProfiles.ts       # the `profile` noun: add/set/list/show/remove/use
-  providers.ts            # the `provider` noun (add/set/list/show/remove) + the launch-time provider resolution the launcher calls
+  providers.ts            # the `provider` noun (add/set/list/show/remove) + the launch-time provider resolution the launcher calls, and the old-format provider file conversion `doctor` reports
+  credential.ts           # the shared credential block's resolver: sources tried in order behind an injected CredentialPort, presets compiled to argv, target variables, summaries that never carry a value
   headroom/                # the headroom routing daemon: coordination state, the launcher-side ensure step, the supervisor loop, and the `headroom status` / hidden `__headroom-supervisor` commands
     state.ts               # state.json, the session registry, the start lock, allowlist computation — pure over an injected HeadroomFs
     ensure.ts               # the launcher's lock-and-poll bring-up: start at most one supervisor, wait for ready state (daemon port AND MITM port), register the session
@@ -41,12 +42,13 @@ src/
     commands.ts             # real ports for the supervisor, `headroom status`, command registration
   directoryRules.ts       # the `rule` noun: add/set/list/show/remove
   configure.ts            # `claude-use configure` interactive picker (@clack/prompts)
-  check.ts                # `claude-use check` dry-run inspector — cascade resolution, ambient-credential/Keychain/settings-secrets diagnostics — no farm writes, no spawn
-  doctor.ts                # `claude-use doctor` whole-tree audit — every identity/profile/extends-chain/directory-rules/config.json/categories.local.json/active-identity, plus which `claude-use` PATH actually resolves to, aggregating rather than throwing on a broken file
+  check.ts                # `claude-use check` dry-run inspector — cascade resolution, credential/ambient-credential/Keychain/settings-secrets diagnostics — no farm writes, no spawn
+  doctor.ts                # `claude-use doctor` whole-tree audit — every identity/profile/extends-chain/provider/directory-rules/config.json/categories.local.json/active-identity, plus which `claude-use` PATH actually resolves to, aggregating rather than throwing on a broken file
   claudeShim.ts            # `claude-use shim enable`/`disable` — the one explicit action that creates/removes a `claude`-named hardlink of the running executable; records claude-shim.json
   cli/
     bool.ts               # the one boolean vocabulary (true/1, false/0) flags and environment variables share
     parsers.ts            # parsePair, parseBool, parseEnvBool, and the one-value-per-occurrence repeatable-flag collectors
+    credentialOption.ts   # the `--credential <source>` short forms and JSON form, validated against CredentialSourceSchema
     commandDeps.ts        # CommandDeps (paths, prompts, terminal check, exit) every command registers with, plus --json, examples and the shared remove confirmation
   resolve/
     pipeline.ts            # resolveDecisions: runs the whole pipeline for one launch, topLevelNames
