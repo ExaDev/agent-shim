@@ -1,3 +1,17 @@
+## [4.0.0](https://github.com/ExaDev/claude-use/compare/v3.0.0...v4.0.0) (2026-09-30)
+
+### ⚠ BREAKING CHANGES
+
+* provider files no longer accept tokenEnv, tokenCommand,
+  authScheme or a credential variable in env; use a credential block instead.
+  A file still in the old format is refused with its exact replacement, and the
+  --token-env, --token-command and --auth-scheme options are gone.
+
+### Features
+
+* report credentials in check and old-format providers in doctor ([eada1de](https://github.com/ExaDev/claude-use/commit/eada1de93601210551eee58b6f4a8e4f1cd3b152))
+* resolve provider and identity tokens from a shared credential block ([affe491](https://github.com/ExaDev/claude-use/commit/affe4913c3ae36a2c4d0adea7be41c961498d3eb))
+
 ## [3.0.0](https://github.com/ExaDev/claude-use/compare/v2.9.0...v3.0.0) (2026-09-30)
 
 ### ⚠ BREAKING CHANGES
