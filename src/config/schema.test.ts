@@ -19,6 +19,7 @@ import {
   IdentitySchema,
   OVERRIDABLE_CATEGORIES,
   PortableConfigSchema,
+  isCodexProvider,
   ProviderSchema,
   SHIPPED_CATEGORY_DEFAULTS,
   WhenSchema,
@@ -276,6 +277,29 @@ describe("ProviderSchema", () => {
 
   it("rejects an unknown top-level key, so a token pasted in as a value cannot hide in one", () => {
     expect(ProviderSchema.safeParse({ ...base, credential, token: "sk-live" }).success).toBe(false);
+  });
+
+  it("accepts an explicit http kind with the same fields as an untagged provider", () => {
+    expect(ProviderSchema.parse({ kind: "http", ...base, credential }).kind).toBe("http");
+  });
+
+  it("accepts a codex provider with no base URL and optional translation settings", () => {
+    const codex = ProviderSchema.parse({ kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "x" }] }, codex: { models: { haiku: "gpt-small" }, effort: "none" } });
+    expect(isCodexProvider(codex)).toBe(true);
+    expect(ProviderSchema.safeParse({ kind: "codex", displayName: "Codex", credential }).success).toBe(true);
+  });
+
+  it("rejects a codex provider with a base URL, an unknown tier or effort, and codex settings on an http provider", () => {
+    expect(ProviderSchema.safeParse({ kind: "codex", ...base, credential }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ kind: "codex", displayName: "Codex", credential, codex: { models: { gpt: "x" } } }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ kind: "codex", displayName: "Codex", credential, codex: { effort: "max" } }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ ...base, credential, codex: {} }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ kind: "other", ...base, credential }).success).toBe(false);
+  });
+
+  it("reports which field an invalid http provider is missing", () => {
+    const result = ProviderSchema.safeParse(base);
+    expect(result.success ? [] : result.error.issues.map((issue) => issue.path.join("."))).toEqual(["credential"]);
   });
 });
 

@@ -16,6 +16,7 @@ import {
   loadProvider,
   ProviderAlreadyExistsError,
   providerExists,
+  ProviderKindMismatchError,
   ProviderNotFoundError,
   readProvider,
   removeProvider,
@@ -97,6 +98,21 @@ describe("providers", () => {
     it("throws InvalidProviderNameError for a name that could escape the providers directory", () => {
       expect(() => addProvider(paths, "-bad-start", zInput)).toThrow(InvalidProviderNameError);
       expect(() => addProvider(paths, "../escape", zInput)).toThrow(InvalidProviderNameError);
+    });
+
+    it("writes a codex provider with no base URL, and its codex settings only when given", () => {
+      const plain = addProvider(paths, "codex", { kind: "codex", displayName: "Codex", sources: [{ literal: "codex" }] });
+      expect(plain).toEqual({ kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "codex" }] } });
+      const tuned = addProvider(paths, "codex-tuned", { kind: "codex", displayName: "Codex", sources: [{ literal: "codex" }], codex: { models: { sonnet: "gpt-x" }, effort: "high" } });
+      expect(readProvider(paths, "codex-tuned")).toEqual(tuned);
+      expect(tuned).toMatchObject({ codex: { models: { sonnet: "gpt-x" }, effort: "high" } });
+    });
+
+    it("refuses a base URL on a codex provider, a missing one on an http provider, and codex settings on an http provider", () => {
+      expect(() => addProvider(paths, "c", { kind: "codex", displayName: "Codex", baseUrl: "https://x.example", sources: [{ literal: "x" }] })).toThrow(ProviderKindMismatchError);
+      expect(() => addProvider(paths, "h", { displayName: "H", sources: [{ env: "X" }] })).toThrow(ProviderKindMismatchError);
+      expect(() => addProvider(paths, "h", { ...zInput, codex: { effort: "high" } })).toThrow(ProviderKindMismatchError);
+      expect(providerExists(paths, "c") || providerExists(paths, "h")).toBe(false);
     });
 
     it("throws ConfigValidationError, not a raw ZodError, for a baseUrl that is not a URL or an empty source list", () => {
