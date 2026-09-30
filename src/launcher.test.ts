@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { FarmRuntime } from "./launcher";
+import { ConflictingIdentityError } from "./launcher/argv";
 import { identityLockPath } from "./launcher/lock";
 import type { FsPort, HeadroomPort } from "./launcher/ports";
+import { runLauncher } from "./launcher";
 import {
   createFakeFarmFs, discovered, fakeFarm, fakeFs, fakeLog, fakeProc, fakeRun, fakeSpawn, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS,
   paths, runAndCaptureExit, spawnedEnv,
@@ -142,24 +144,78 @@ describe("runLauncher", () => {
     expect(spawn.spawnSync).toHaveBeenCalled();
   });
 
-  it("warns but proceeds when the resolved identity has no identity.json on disk yet", () => {
-    const proc = fakeProc({}, ["@ghost", "--print"]);
+  it.each([
+    ["a leading @name", {}, ["@ghost", "--print"]],
+    ["--identity", {}, ["--identity", "ghost", "--print"]],
+    ["CLAUDE_USE_IDENTITY", { CLAUDE_USE_IDENTITY: "ghost" }, ["--print"]],
+  ])("refuses, naming it, an identity selected by %s that has no identity.json, rather than creating a new login", (_how, env, argv) => {
     const log = fakeLog();
     const spawn = fakeSpawn();
 
-    const code = runAndCaptureExit({
+    const code = runAndCaptureExit({ paths, fs: fakeFs({}), spawn, proc: fakeProc(env, argv), log, resolveClaudeBinary: () => discovered });
+
+    expect(code).toBe(1);
+    expect(log.errors).toHaveLength(1);
+    expect(log.errors[0]).toContain('no identity named "ghost"');
+    expect(log.errors[0]).toContain("claude-use identity add ghost");
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it("refuses a selected configuration profile that has no file, unless the terminal user chose to launch without it", () => {
+    const run = (allowMissingConfigProfile: boolean): { code: number; log: ReturnType<typeof fakeLog> } => {
+      const log = fakeLog();
+      const code = runAndCaptureExit({
+        paths,
+        fs: fakeFs({}),
+        spawn: fakeSpawn(),
+        proc: fakeProc({}, ["--config-profile", "missing", "--print"]),
+        log,
+        resolveClaudeBinary: () => discovered,
+        allowMissingConfigProfile,
+      });
+      return { code, log };
+    };
+
+    const refused = run(false);
+    expect(refused.code).toBe(1);
+    expect(refused.log.errors[0]).toContain('no configuration profile named "missing" (selected via cli-flag)');
+    expect(run(true).code).toBe(0);
+  });
+
+  it("takes --identity as the explicit form of @name, and refuses two different names", () => {
+    const spawn = fakeSpawn();
+    runAndCaptureExit({ paths, fs: fakeFs({}), spawn, proc: fakeProc({}, ["--identity", "work", "--print"]), log: fakeLog(), resolveClaudeBinary: () => discovered });
+    expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe("/home/testuser/.claude-use/identities/work");
+
+    expect(() => {
+      runLauncher({ paths, fs: fakeFs({}), spawn: fakeSpawn(), proc: fakeProc({}, ["@work", "--identity", "personal"]), log: fakeLog(), resolveClaudeBinary: () => discovered });
+    }).toThrow(ConflictingIdentityError);
+  });
+
+  it("forwards launch flags after a double-dash terminator to claude untouched", () => {
+    const spawn = fakeSpawn();
+    runAndCaptureExit({
       paths,
       fs: fakeFs({}),
       spawn,
-      proc,
-      log,
+      proc: fakeProc({}, ["mcp", "add", "n", "--", "cmd", "--provider", "x", "--identity", "y"]),
+      log: fakeLog(),
       resolveClaudeBinary: () => discovered,
     });
+    expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["mcp", "add", "n", "--", "cmd", "--provider", "x", "--identity", "y"]);
+  });
 
-    expect(code).toBe(0);
-    expect(log.warns).toHaveLength(1);
-    expect(log.warns[0]).toContain("ghost");
-    expect(spawn.spawnSync).toHaveBeenCalled();
+  it("applies --skip-permissions and --remote-control flags, which outrank their env variables", () => {
+    const spawn = fakeSpawn();
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc({ CLAUDE_USE_SKIP_PERMISSIONS: "0" }, ["--skip-permissions", "--remote-control", "--print"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+    });
+    expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["--dangerously-skip-permissions", "--remote-control=", "--print"]);
   });
 
   it("falls back to the persisted active-identity file when no argv/env/directory-pin identity applies", () => {
@@ -493,11 +549,23 @@ describe("runLauncher farm resync", () => {
 
     runAndCaptureExit({
       paths,
-      fs: fakeFs({}),
+      fs: fakeFs({ [`${paths.configProfilesDir}/strict.json`]: {} }),
       spawn: fakeSpawn(),
       proc: fakeProc(
         {},
-        ["@work", "--config-profile", "strict", "--category", "history=true,knowledge=false", "--share", "knowledge/skills/commit", "--hide", "history/projects/x"],
+        [
+          "@work",
+          "--config-profile",
+          "strict",
+          "--category",
+          "history=true",
+          "--category",
+          "knowledge=false",
+          "--share",
+          "knowledge/skills/commit",
+          "--hide",
+          "history/projects/x",
+        ],
       ),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,

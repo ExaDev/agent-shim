@@ -4,7 +4,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import type { MultiselectParams, PromptsPort, SelectParams } from "./configure";
+import type { PromptsPort, SelectParams } from "./configure";
+import { fakeCommandDeps, scriptedPrompts as scriptedIdentityPrompts } from "./test-helpers";
 import {
   IdentityAlreadyExistsError,
   IdentityNotFoundError,
@@ -20,47 +21,6 @@ import {
   tryRunAtIdentityShortcut,
   useIdentity,
 } from "./identityManager";
-
-/** A scripted `PromptsPort` for identity wizard tests: each call consumes the next answer in order. */
-function scriptedIdentityPrompts(answers: readonly unknown[]): PromptsPort {
-  let index = 0;
-  const next = (): unknown => {
-    const value = answers[index];
-    index += 1;
-    return value;
-  };
-  return {
-    select: async <Value extends string>(params: SelectParams<Value>): Promise<Value | symbol> => {
-      const answer = next();
-      if (typeof answer === "symbol") return Promise.resolve(answer);
-      const option = params.options.find((o) => o.value === answer);
-      if (option === undefined) throw new Error(`scripted select answer not in options: ${String(answer)}`);
-      return Promise.resolve(option.value);
-    },
-    multiselect: async <Value extends string>(params: MultiselectParams<Value>): Promise<readonly Value[] | symbol> => {
-      const answer = next();
-      if (typeof answer === "symbol") return Promise.resolve(answer);
-      if (!Array.isArray(answer)) throw new Error(`scripted multiselect answer is not an array: ${String(answer)}`);
-      const selected: Value[] = [];
-      for (const item of answer) {
-        const option = params.options.find((o) => o.value === item);
-        if (option === undefined) throw new Error(`scripted multiselect answer not in options: ${String(item)}`);
-        selected.push(option.value);
-      }
-      return Promise.resolve(selected);
-    },
-    text: async (): Promise<string | symbol> => {
-      const answer = next();
-      if (typeof answer === "symbol") return Promise.resolve(answer);
-      if (typeof answer !== "string") throw new Error(`scripted text answer is not a string: ${String(answer)}`);
-      return Promise.resolve(answer);
-    },
-    isCancel: (value: unknown): value is symbol => typeof value === "symbol",
-    cancel: () => undefined,
-    intro: () => undefined,
-    outro: () => undefined,
-  };
-}
 
 describe("identityManager", () => {
   let root: string;
@@ -136,42 +96,42 @@ describe("identityManager", () => {
   describe("tryRunAtIdentityShortcut", () => {
     it("switches the active identity for a bare @<name> argument", async () => {
       addIdentity(paths, "exadev");
-      expect(await tryRunAtIdentityShortcut(paths, ["@exadev"])).toBe(true);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@exadev"])).toBe(true);
       expect(readActiveIdentity(paths)).toBe("exadev");
     });
 
     it("splits an @<name> token at the first `@` only, so an email-shaped identity name survives intact", async () => {
       addIdentity(paths, "joseph.mearman@exadev.io");
-      expect(await tryRunAtIdentityShortcut(paths, ["@joseph.mearman@exadev.io"])).toBe(true);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@joseph.mearman@exadev.io"])).toBe(true);
       expect(readActiveIdentity(paths)).toBe("joseph.mearman@exadev.io");
     });
 
     it("propagates IdentityNotFoundError for an unknown @<name> in a non-interactive context", async () => {
-      await expect(tryRunAtIdentityShortcut(paths, ["@ghost"])).rejects.toThrow(IdentityNotFoundError);
+      await expect(tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@ghost"])).rejects.toThrow(IdentityNotFoundError);
     });
 
     it("returns false and touches nothing for a bare name with no @ prefix", async () => {
       addIdentity(paths, "exadev");
-      expect(await tryRunAtIdentityShortcut(paths, ["exadev"])).toBe(false);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["exadev"])).toBe(false);
       expect(readActiveIdentity(paths)).toBeUndefined();
     });
 
     it("returns false for a lone @ with no name", async () => {
-      expect(await tryRunAtIdentityShortcut(paths, ["@"])).toBe(false);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@"])).toBe(false);
     });
 
     it("returns false when there is more than one argument, even if the first is @<name>", async () => {
       addIdentity(paths, "exadev");
-      expect(await tryRunAtIdentityShortcut(paths, ["@exadev", "extra"])).toBe(false);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["@exadev", "extra"])).toBe(false);
       expect(readActiveIdentity(paths)).toBeUndefined();
     });
 
     it("returns false for no arguments at all", async () => {
-      expect(await tryRunAtIdentityShortcut(paths, [])).toBe(false);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), [])).toBe(false);
     });
 
     it("returns false for a real subcommand name, leaving it to Commander's own dispatch", async () => {
-      expect(await tryRunAtIdentityShortcut(paths, ["identity"])).toBe(false);
+      expect(await tryRunAtIdentityShortcut(fakeCommandDeps(paths), ["identity"])).toBe(false);
     });
   });
 

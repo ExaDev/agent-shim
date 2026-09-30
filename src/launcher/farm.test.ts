@@ -322,7 +322,7 @@ describe("recoveryDiagnostics", () => {
       "work",
     );
     expect(diagnostic?.message).toContain("discarded 1 superseded runtime entry (mcp-needs-auth-cache.json)");
-    expect(diagnostic?.message).not.toContain("identity resolve");
+    expect(diagnostic?.message).not.toContain("identity resolve-conflicts");
   });
 
   it("pluralises the count correctly for more than one auto-resolved entry", () => {
@@ -333,7 +333,7 @@ describe("recoveryDiagnostics", () => {
     expect(diagnostic?.message).toContain("discarded 2 superseded runtime entries");
   });
 
-  it("still points at identity resolve for a genuinely retained collision, alongside a separate auto-resolved one", () => {
+  it("still points at identity resolve-conflicts for a genuinely retained collision, alongside a separate auto-resolved one", () => {
     const [diagnostic] = recoveryDiagnostics(
       {
         ...base,
@@ -344,6 +344,6 @@ describe("recoveryDiagnostics", () => {
       "work",
     );
     expect(diagnostic?.message).toContain("discarded 1 superseded runtime entry");
-    expect(diagnostic?.message).toContain("claude-use identity resolve work");
+    expect(diagnostic?.message).toContain("claude-use identity resolve-conflicts work");
   });
 });

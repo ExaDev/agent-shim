@@ -4,8 +4,10 @@ import { randomUUID } from "node:crypto";
 import { loadClassification } from "./config/classify";
 import { cosmiconfigReader } from "./config/load";
 import { realPromptsPort, runProfileWizard } from "./configure";
+import { PromptCancelledError } from "./cliError";
 import { resolveOwnInstallDirs } from "./claudeShim";
 import { profileExists } from "./configProfiles";
+import { runIdentityWizard } from "./identityManager";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
 import { runLauncher, type FarmRuntime } from "./launcher";
 import { parseLauncherArgv } from "./launcher/argv";
@@ -77,7 +79,8 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
   const paths = resolveLayoutPaths();
   const farm = buildFarmRuntime(paths);
 
-  // When stdin is a real interactive terminal and a configuration profile was resolved for this launch but doesn't exist on disk yet, offer to create it via the wizard before launching — so the first reference to a new profile name doesn't silently run with no profile applied. A non-interactive context (a script, CI) keeps today's behaviour: the missing profile is a silent no-op for that cascade layer, and the launch proceeds without blocking.
+  // On a real terminal, a launch that selects an identity or configuration profile that doesn't exist yet is offered the matching wizard before launching, so the first reference to a new name sets it up instead of failing. With no terminal (a script, CI) there is nothing to prompt on, and runLauncher refuses the missing name itself.
+  let allowMissingConfigProfile = false;
   if (process.stdin.isTTY) {
     const procForDecision = argvOverride === undefined ? realProcPort : { ...realProcPort, argv: argvOverride };
     const parsedArgv = parseLauncherArgv(procForDecision.argv);
@@ -94,6 +97,13 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
         return trimmed === "" ? undefined : trimmed;
       },
     });
+    if (
+      identityDecision.name !== undefined &&
+      loadIdentity(paths.identitiesDir, identityDecision.name, realFsPort) === undefined &&
+      !(await runIdentityWizard(realPromptsPort, paths, identityDecision.name, { activate: false }))
+    ) {
+      throw new PromptCancelledError();
+    }
     const loadedIdentity =
       identityDecision.name !== undefined
         ? loadIdentity(paths.identitiesDir, identityDecision.name, realFsPort)
@@ -107,11 +117,7 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
         : { identityDefaultConfigProfile: loadedIdentity.config.defaultConfigProfile }),
       ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),
     });
-    if (
-      configProfileDecision.name !== undefined &&
-      !profileExists(paths, configProfileDecision.name) &&
-      !identityDecision.configDirEscapeHatch
-    ) {
+    if (configProfileDecision.name !== undefined && !profileExists(paths, configProfileDecision.name)) {
       const choice = await realPromptsPort.select({
         message:
           `Configuration profile "${configProfileDecision.name}" was selected for this launch (via ${configProfileDecision.source}) ` +
@@ -121,8 +127,15 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
           { value: "skip", label: "Launch without it" },
         ],
       });
-      if (!realPromptsPort.isCancel(choice) && choice === "create") {
-        await runProfileWizard(realPromptsPort, { paths, createName: configProfileDecision.name });
+      if (realPromptsPort.isCancel(choice)) {
+        throw new PromptCancelledError();
+      }
+      if (choice === "create") {
+        if ((await runProfileWizard(realPromptsPort, { paths, createName: configProfileDecision.name })) === undefined) {
+          throw new PromptCancelledError();
+        }
+      } else {
+        allowMissingConfigProfile = true;
       }
     }
   }
@@ -140,5 +153,6 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
     ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
     ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
     ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),
+    allowMissingConfigProfile,
   });
 }

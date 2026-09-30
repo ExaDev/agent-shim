@@ -1,6 +1,6 @@
-import { collectBoolPairs, parseBoolPairList, splitTopLevelCommas } from "../cli/parsers";
+import { parseBool, parseBoolPairList, parsePair } from "../cli/parsers";
 import { ENTRY_KEY_RE, expandAllCategoryKey, isOverridableCategory, type CategoryMap, type Entries } from "../config/schema";
-import { CliError } from "../cliError";
+import { CliError, UsageError } from "../cliError";
 
 /** Raised when a `--category`/`CLAUDE_USE_CATEGORY_OVERRIDE` key names something other than one of the four overridable categories. */
 export class InvalidCliCategoryError extends CliError {
@@ -39,7 +39,7 @@ function toEntries(pairs: Readonly<Record<string, boolean>>): Entries {
   return pairs;
 }
 
-/** Inputs to `buildCliOverride`: the raw, still-unparsed flag values `parseLauncherArgv` collected, plus the environment for their `CLAUDE_USE_*_OVERRIDE` alternatives. */
+/** Inputs to `buildCliOverride`: the raw, still-unparsed flag values `parseLauncherArgv` collected (one value per flag occurrence), plus the environment for their `CLAUDE_USE_*_OVERRIDE` alternatives. */
 export interface BuildCliOverrideParams {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly providerFlag?: string;
@@ -48,42 +48,56 @@ export interface BuildCliOverrideParams {
   readonly hideFlags: readonly string[];
 }
 
-/** What a launch's one-off command-line/environment overrides resolve to — the `cliOverride` layer `src/resolve/walk.ts`'s `assembleCascade` composes last, so it beats every other layer. */
+/** What a launch's one-off command-line/environment overrides resolve to: the `cliOverride` layer `src/resolve/walk.ts`'s `assembleCascade` composes last, so it beats every other layer. */
 export interface CliOverride {
   readonly categories?: CategoryMap;
   readonly entries?: Entries;
   readonly launch?: { readonly provider?: string };
 }
 
+/** Runs `parse` over one flag's or environment variable's raw value, re-raising a malformed value as a `UsageError` that names where it came from. */
+function parseOverride<T>(source: string, raw: string, parse: (raw: string) => T): T {
+  try {
+    return parse(raw);
+  } catch (error) {
+    if (error instanceof Error && !(error instanceof CliError)) {
+      throw new UsageError(`Invalid ${source} value "${raw}": ${error.message}.`);
+    }
+    throw error;
+  }
+}
+
 /**
  * Builds this launch's one-off category/entry overrides from `--category`/`--share`/`--hide` flags and their `CLAUDE_USE_CATEGORY_OVERRIDE`/`CLAUDE_USE_ENTRY_OVERRIDE` environment-variable alternatives.
  *
- * The environment variable provides a base and the flag(s) merge on top, later-flag-wins on key collision — the same "later occurrence wins" convention `claude-use profile set --category`/`--entry` already use for their own repeatable flags, applied here because the flag and the environment variable are documented as equally-weighted alternatives for the same one-off override, not two different precedence tiers.
+ * Each flag occurrence carries exactly one value (`--category history=true`, `--share knowledge/skills/commit`); the flags repeat rather than taking comma lists. The environment variables cannot repeat, so each holds a comma-separated list of `<key>=<bool>` pairs instead.
  *
- * Returns `undefined` when nothing at all was supplied, so a launch with no overrides adds no `cliOverride` layer rather than an empty no-op one.
+ * The environment variable provides a base and the flags merge on top, later flag winning on key collision: the same "later occurrence wins" convention `claude-use profile set --category`/`--entry` use, applied here because the flag and the environment variable are documented as equally-weighted alternatives for the same one-off override, not two different precedence tiers.
+ *
+ * Returns `undefined` when nothing at all was supplied, so a launch with no overrides adds no `cliOverride` layer rather than an empty no-op one. A malformed flag or environment value throws `UsageError`.
  */
 export function buildCliOverride(params: BuildCliOverrideParams): CliOverride | undefined {
   let categoryPairs: Record<string, boolean> = {};
   if (params.env.CLAUDE_USE_CATEGORY_OVERRIDE !== undefined && params.env.CLAUDE_USE_CATEGORY_OVERRIDE !== "") {
-    categoryPairs = { ...categoryPairs, ...parseBoolPairList(params.env.CLAUDE_USE_CATEGORY_OVERRIDE) };
+    categoryPairs = parseOverride("CLAUDE_USE_CATEGORY_OVERRIDE", params.env.CLAUDE_USE_CATEGORY_OVERRIDE, parseBoolPairList);
   }
   for (const flagValue of params.categoryFlags) {
-    categoryPairs = collectBoolPairs(flagValue, categoryPairs);
+    const pair = parseOverride("--category", flagValue, (raw) => {
+      const { key, value } = parsePair(raw);
+      return { key, value: parseBool(value) };
+    });
+    categoryPairs[pair.key] = pair.value;
   }
 
   let entryPairs: Record<string, boolean> = {};
   if (params.env.CLAUDE_USE_ENTRY_OVERRIDE !== undefined && params.env.CLAUDE_USE_ENTRY_OVERRIDE !== "") {
-    entryPairs = { ...entryPairs, ...parseBoolPairList(params.env.CLAUDE_USE_ENTRY_OVERRIDE) };
+    entryPairs = parseOverride("CLAUDE_USE_ENTRY_OVERRIDE", params.env.CLAUDE_USE_ENTRY_OVERRIDE, parseBoolPairList);
   }
-  for (const flagValue of params.shareFlags) {
-    for (const path of splitTopLevelCommas(flagValue)) {
-      entryPairs[path] = true;
-    }
+  for (const entryPath of params.shareFlags) {
+    entryPairs[entryPath] = true;
   }
-  for (const flagValue of params.hideFlags) {
-    for (const path of splitTopLevelCommas(flagValue)) {
-      entryPairs[path] = false;
-    }
+  for (const entryPath of params.hideFlags) {
+    entryPairs[entryPath] = false;
   }
 
   const hasCategories = Object.keys(categoryPairs).length > 0;

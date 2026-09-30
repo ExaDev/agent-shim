@@ -223,7 +223,7 @@ export interface CarryOverResult {
  *
  * One category is not ambiguous, though: `runtime`'s own definition (see `config/categories.default.json`'s category table in the README) is specifically "live per-process or per-machine artifacts" — daemon locks, an MCP auth-needed cache, an update-check result — that make no sense being preserved across a swap at all, let alone fought over. When `classification` is given, a colliding name whose category resolves to `runtime` is discarded from the superseded copy and left exactly as the new farm already has it, with no data ever moved: `keep-new` is not a judgement call for this category, it is what the category already means. This needs only the name's *static* classification, never the resolved shared/not-shared decision for the current directory — a `runtime` entry is disposable whether or not this identity currently chooses to share it, so no cascade resolution is needed to make the call.
  *
- * Exported so `launcher/farmResolve.ts` can reuse this exact collision detection (and the same `runtime` auto-resolution) for `claude-use identity resolve`'s interactive pass, rather than a second implementation that could drift from this one.
+ * Exported so `launcher/farmResolve.ts` can reuse this exact collision detection (and the same `runtime` auto-resolution) for `claude-use identity resolve-conflicts`'s interactive pass, rather than a second implementation that could drift from this one.
  */
 export function carryOver(params: CarryOverParams): CarryOverResult {
   const manifest = readFarmManifest(params.fs, params.previousRoot);
@@ -763,7 +763,7 @@ export function resyncFarm(params: ResyncFarmParams): ResyncFarmResult {
         message:
           `The superseded farm was left at ${swap.retainedPrevious} because it still holds ` +
           `${swap.collided.join(", ")}, which the new farm has its own entry for. Nothing was overwritten in either ` +
-          `direction; run \`claude-use identity resolve ${params.identity}\` to resolve it interactively.`,
+          `direction; run \`claude-use identity resolve-conflicts ${params.identity}\` to resolve it interactively.`,
         subject: swap.retainedPrevious,
       });
     }
@@ -804,7 +804,7 @@ export function recoveryDiagnostics(recovery: RecoveryResult, identity: string):
   if (recovery.retained.length > 0) {
     parts.push(
       `kept ${recovery.retained.join(", ")}, which still holds data the current farm also has an entry for — ` +
-        `run \`claude-use identity resolve ${identity}\` to resolve it interactively`,
+        `run \`claude-use identity resolve-conflicts ${identity}\` to resolve it interactively`,
     );
   }
   return [

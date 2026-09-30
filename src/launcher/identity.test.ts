@@ -35,9 +35,9 @@ describe("decideIdentity", () => {
     expect(result).toEqual({ name: "work", source: "argv", configDirEscapeHatch: false });
   });
 
-  it("prefers a leading @name argv positional over CLAUDE_ACCOUNT, a directory pin, and the active-identity file", () => {
+  it("prefers a leading @name argv positional over CLAUDE_USE_IDENTITY, a directory pin, and the active-identity file", () => {
     const result = decideIdentity({
-      env: { CLAUDE_ACCOUNT: "env-identity" },
+      env: { CLAUDE_USE_IDENTITY: "env-identity" },
       argv0Identity: "argv-identity",
       directoryPinnedIdentity: "pinned-identity",
       readActiveIdentityFile: () => "persisted-identity",
@@ -45,16 +45,16 @@ describe("decideIdentity", () => {
     expect(result).toEqual({ name: "argv-identity", source: "argv", configDirEscapeHatch: false });
   });
 
-  it("prefers CLAUDE_ACCOUNT over a directory pin and the active-identity file when no argv identity is present", () => {
+  it("prefers CLAUDE_USE_IDENTITY over a directory pin and the active-identity file when no argv identity is present", () => {
     const result = decideIdentity({
-      env: { CLAUDE_ACCOUNT: "env-identity" },
+      env: { CLAUDE_USE_IDENTITY: "env-identity" },
       directoryPinnedIdentity: "pinned-identity",
       readActiveIdentityFile: () => "persisted-identity",
     });
     expect(result).toEqual({ name: "env-identity", source: "env", configDirEscapeHatch: false });
   });
 
-  it("prefers a directory pin over the active-identity file when neither argv nor CLAUDE_ACCOUNT apply", () => {
+  it("prefers a directory pin over the active-identity file when neither argv nor CLAUDE_USE_IDENTITY apply", () => {
     const result = decideIdentity({
       ...baseParams,
       directoryPinnedIdentity: "pinned-identity",
@@ -73,8 +73,8 @@ describe("decideIdentity", () => {
     expect(result).toEqual({ source: "none", configDirEscapeHatch: false });
   });
 
-  it("treats an empty CLAUDE_ACCOUNT as unset", () => {
-    const result = decideIdentity({ ...baseParams, env: { CLAUDE_ACCOUNT: "" }, readActiveIdentityFile: () => "persisted" });
+  it("treats an empty CLAUDE_USE_IDENTITY as unset", () => {
+    const result = decideIdentity({ ...baseParams, env: { CLAUDE_USE_IDENTITY: "" }, readActiveIdentityFile: () => "persisted" });
     expect(result).toEqual({ name: "persisted", source: "active-identity-file", configDirEscapeHatch: false });
   });
 });

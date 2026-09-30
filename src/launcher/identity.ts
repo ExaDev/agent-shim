@@ -8,9 +8,9 @@ import type { FsPort } from "./ports";
 export type IdentityDecisionSource =
   /** `CLAUDE_CONFIG_DIR` was already set: identity resolution is skipped entirely and the real binary uses whatever it already points to. */
   | "config-dir-escape-hatch"
-  /** A leading `@name` argv[0] positional. */
+  /** A leading `@name` argv[0] positional, or its explicit form `--identity <name>`. */
   | "argv"
-  /** The `CLAUDE_ACCOUNT` environment variable. */
+  /** The `CLAUDE_USE_IDENTITY` environment variable. */
   | "env"
   /** A directory rule pinning an identity to the current path. */
   | "directory-pin"
@@ -31,7 +31,7 @@ export interface IdentityDecision {
 /** Inputs to `decideIdentity`, in the exact precedence order the README's CLI reference table documents. */
 export interface DecideIdentityParams {
   readonly env: Readonly<Record<string, string | undefined>>;
-  /** The `@name` token from `parseLauncherArgv`, if argv[0] carried one. */
+  /** The identity `parseLauncherArgv` found in a leading `@name` or an `--identity <name>` flag, if either was given. */
   readonly argv0Identity?: string;
   /** An identity pinned to `$PWD` by a directory rule. Accepted as an already-resolved value here — the rules-loading code that produces it lands in Phase 4/5. */
   readonly directoryPinnedIdentity?: string;
@@ -46,13 +46,13 @@ function isNonEmpty(value: string | undefined): value is string {
 /**
  * Decides which identity applies to this launch, in precedence order:
  *
- * 1. If `CLAUDE_CONFIG_DIR` is already set, skip identity/cascade resolution entirely — this is a deliberate carry-forward of the legacy script's own "don't override an explicit launcher" escape hatch.
- * 2. A leading `@name` argv[0] positional.
- * 3. The `CLAUDE_ACCOUNT` environment variable.
+ * 1. If `CLAUDE_CONFIG_DIR` is already set, skip identity/cascade resolution entirely: a deliberate carry-forward of the legacy script's own "don't override an explicit launcher" escape hatch.
+ * 2. A leading `@name` argv[0] positional, or `--identity <name>`.
+ * 3. The `CLAUDE_USE_IDENTITY` environment variable.
  * 4. A directory-pinned identity from a directory rule.
  * 5. The persisted `~/.claude-use/active-identity` file.
  *
- * An empty string counts as unset for `CLAUDE_CONFIG_DIR` and `CLAUDE_ACCOUNT`, consistent with how this project treats empty-string environment variables everywhere else (see `src/paths.ts` and the ambient-credential guard).
+ * An empty string counts as unset for `CLAUDE_CONFIG_DIR` and `CLAUDE_USE_IDENTITY`, consistent with how this project treats empty-string environment variables everywhere else (see `src/paths.ts` and the ambient-credential guard).
  */
 export function decideIdentity(params: DecideIdentityParams): IdentityDecision {
   if (isNonEmpty(params.env.CLAUDE_CONFIG_DIR)) {
@@ -61,8 +61,8 @@ export function decideIdentity(params: DecideIdentityParams): IdentityDecision {
   if (isNonEmpty(params.argv0Identity)) {
     return { name: params.argv0Identity, source: "argv", configDirEscapeHatch: false };
   }
-  if (isNonEmpty(params.env.CLAUDE_ACCOUNT)) {
-    return { name: params.env.CLAUDE_ACCOUNT, source: "env", configDirEscapeHatch: false };
+  if (isNonEmpty(params.env.CLAUDE_USE_IDENTITY)) {
+    return { name: params.env.CLAUDE_USE_IDENTITY, source: "env", configDirEscapeHatch: false };
   }
   if (isNonEmpty(params.directoryPinnedIdentity)) {
     return { name: params.directoryPinnedIdentity, source: "directory-pin", configDirEscapeHatch: false };

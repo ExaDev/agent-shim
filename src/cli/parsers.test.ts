@@ -1,38 +1,17 @@
+import { InvalidArgumentError } from "commander";
 import { describe, expect, it } from "vitest";
 
+import { EXIT_USAGE } from "../cliError";
 import {
-  collectBoolPairs,
+  collectBoolPair,
+  collectRepeated,
+  collectStringPair,
+  InvalidEnvBoolError,
+  parseBool,
   parseBoolPairList,
-  parseBoolStrict,
+  parseEnvBool,
   parsePair,
-  splitTopLevelCommas,
 } from "./parsers";
-
-describe("splitTopLevelCommas", () => {
-  it("splits a plain comma-separated list", () => {
-    expect(splitTopLevelCommas("a,b,c")).toEqual(["a", "b", "c"]);
-  });
-
-  it("returns an empty array for an empty string, not [\"\"]", () => {
-    expect(splitTopLevelCommas("")).toEqual([]);
-  });
-
-  it("returns a single-element array for input with no comma", () => {
-    expect(splitTopLevelCommas("solo")).toEqual(["solo"]);
-  });
-
-  it("preserves empty pieces from a trailing comma", () => {
-    expect(splitTopLevelCommas("a,b,")).toEqual(["a", "b", ""]);
-  });
-
-  it("preserves empty pieces from a leading comma", () => {
-    expect(splitTopLevelCommas(",a,b")).toEqual(["", "a", "b"]);
-  });
-
-  it("preserves empty pieces from consecutive commas", () => {
-    expect(splitTopLevelCommas("a,,b")).toEqual(["a", "", "b"]);
-  });
-});
 
 describe("parsePair", () => {
   it("splits a simple key=value", () => {
@@ -63,21 +42,47 @@ describe("parsePair", () => {
   });
 });
 
-describe("parseBoolStrict", () => {
-  it("parses true", () => {
-    expect(parseBoolStrict("true")).toBe(true);
+describe("parseBool", () => {
+  it.each([
+    ["true", true],
+    ["1", true],
+    ["false", false],
+    ["0", false],
+  ])("parses %j as %j", (input, expected) => {
+    expect(parseBool(input)).toBe(expected);
   });
 
-  it("parses false", () => {
-    expect(parseBoolStrict("false")).toBe(false);
-  });
-
-  it.each(["True", "FALSE", "1", "0", "yes", "no", "", " true", "true "])(
-    "rejects %j — no case-insensitivity, coercion, or whitespace tolerance",
+  it.each(["True", "FALSE", "yes", "no", "", " true", "true ", "2"])(
+    "rejects %j: no case-insensitivity, coercion, or whitespace tolerance",
     (input) => {
-      expect(() => parseBoolStrict(input)).toThrow(/Expected "true" or "false"/);
+      expect(() => parseBool(input)).toThrow(/Expected "true", "false", "1" or "0"/);
     },
   );
+});
+
+describe("parseEnvBool", () => {
+  it("reads unset and empty as not given", () => {
+    expect(parseEnvBool("CLAUDE_USE_HEADROOM", undefined)).toBeUndefined();
+    expect(parseEnvBool("CLAUDE_USE_HEADROOM", "")).toBeUndefined();
+  });
+
+  it("uses the same vocabulary as a flag value", () => {
+    expect(parseEnvBool("CLAUDE_USE_HEADROOM", "true")).toBe(true);
+    expect(parseEnvBool("CLAUDE_USE_HEADROOM", "1")).toBe(true);
+    expect(parseEnvBool("CLAUDE_USE_HEADROOM", "false")).toBe(false);
+    expect(parseEnvBool("CLAUDE_USE_HEADROOM", "0")).toBe(false);
+  });
+
+  it("raises a usage error naming the variable for anything else, rather than reading it as false", () => {
+    expect(() => parseEnvBool("CLAUDE_USE_HEADROOM", "yes")).toThrow(InvalidEnvBoolError);
+    expect(() => parseEnvBool("CLAUDE_USE_HEADROOM", "yes")).toThrow(/CLAUDE_USE_HEADROOM/);
+    try {
+      parseEnvBool("CLAUDE_USE_HEADROOM", "on");
+    } catch (error) {
+      expect(error).toBeInstanceOf(InvalidEnvBoolError);
+      expect(error instanceof InvalidEnvBoolError ? error.exitCode : undefined).toBe(EXIT_USAGE);
+    }
+  });
 });
 
 describe("parseBoolPairList", () => {
@@ -104,8 +109,8 @@ describe("parseBoolPairList", () => {
     expect(() => parseBoolPairList("history=true,knowledge")).toThrow(/no "=" found/);
   });
 
-  it("throws when any single pair's value is not a strict boolean", () => {
-    expect(() => parseBoolPairList("history=yes")).toThrow(/Expected "true" or "false"/);
+  it("throws when any single pair's value is not a boolean", () => {
+    expect(() => parseBoolPairList("history=yes")).toThrow(/Expected "true", "false", "1" or "0"/);
   });
 
   it("parses a path-shaped entry key", () => {
@@ -115,35 +120,48 @@ describe("parseBoolPairList", () => {
   });
 });
 
-describe("collectBoolPairs", () => {
+describe("collectBoolPair", () => {
   it("starts from an empty object when no previous value is given", () => {
-    expect(collectBoolPairs("history=true")).toEqual({ history: true });
+    expect(collectBoolPair("history=true")).toEqual({ history: true });
   });
 
-  it("merges a new invocation's pairs over a previous accumulated object", () => {
-    const first = collectBoolPairs("history=true");
-    const second = collectBoolPairs("knowledge=false", first);
-    expect(second).toEqual({ history: true, knowledge: false });
+  it("merges a new occurrence's pair over a previous accumulated object", () => {
+    expect(collectBoolPair("knowledge=false", collectBoolPair("history=true"))).toEqual({ history: true, knowledge: false });
   });
 
-  it("lets a later invocation's key win over an earlier one", () => {
-    const first = collectBoolPairs("history=true");
-    const second = collectBoolPairs("history=false", first);
-    expect(second).toEqual({ history: false });
+  it("lets a later occurrence's key win over an earlier one", () => {
+    expect(collectBoolPair("history=false", collectBoolPair("history=true"))).toEqual({ history: false });
   });
 
   it("never mutates the previous object it was given", () => {
-    const first = collectBoolPairs("history=true");
+    const first = collectBoolPair("history=true");
     const frozenCopy = { ...first };
-    collectBoolPairs("knowledge=false", first);
+    collectBoolPair("knowledge=false", first);
     expect(first).toEqual(frozenCopy);
   });
 
-  it("accumulates across three invocations, matching three separate --category flags", () => {
-    let acc: Record<string, boolean> = {};
-    acc = collectBoolPairs("history=true", acc);
-    acc = collectBoolPairs("knowledge=false", acc);
-    acc = collectBoolPairs("settings=true", acc);
-    expect(acc).toEqual({ history: true, knowledge: false, settings: true });
+  it("takes one pair per occurrence: a comma is part of the value, not a list separator", () => {
+    expect(() => collectBoolPair("history=true,knowledge=false")).toThrow(InvalidArgumentError);
+  });
+
+  it("raises Commander's InvalidArgumentError for a malformed pair, so Commander reports it as a usage error", () => {
+    expect(() => collectBoolPair("history")).toThrow(InvalidArgumentError);
+    expect(() => collectBoolPair("history=yes")).toThrow(InvalidArgumentError);
+  });
+});
+
+describe("collectStringPair", () => {
+  it("accumulates KEY=VALUE pairs, keeping further = signs in the value", () => {
+    expect(collectStringPair("B=x=y", collectStringPair("A=1"))).toEqual({ A: "1", B: "x=y" });
+  });
+
+  it("raises InvalidArgumentError for a value with no =", () => {
+    expect(() => collectStringPair("NOEQUALS")).toThrow(InvalidArgumentError);
+  });
+});
+
+describe("collectRepeated", () => {
+  it("keeps every occurrence in order", () => {
+    expect(collectRepeated("b", collectRepeated("a"))).toEqual(["a", "b"]);
   });
 });

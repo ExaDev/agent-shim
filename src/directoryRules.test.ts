@@ -6,12 +6,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { ConfigValidationError } from "./config/load";
 import {
+  DirectoryRuleAlreadyExistsError,
   DirectoryRuleMissingTargetError,
   DirectoryRuleNotFoundError,
   addDirectoryRule,
   listDirectoryRules,
   readDirectoryRules,
   removeDirectoryRule,
+  updateDirectoryRule,
   writeDirectoryRules,
 } from "./directoryRules";
 
@@ -58,7 +60,7 @@ describe("directoryRules", () => {
       });
     });
 
-    it("throws DirectoryRuleMissingTargetError when neither --profile nor --identity is given", () => {
+    it("throws DirectoryRuleMissingTargetError when neither --config-profile nor --identity is given", () => {
       expect(() => addDirectoryRule(paths, "~/work", {})).toThrow(DirectoryRuleMissingTargetError);
     });
 
@@ -75,22 +77,38 @@ describe("directoryRules", () => {
       ]);
     });
 
-    it("updates the existing rule in place when adding for the same path again, rather than duplicating it", () => {
+    it("refuses a second rule for the same path rather than updating or duplicating it", () => {
       addDirectoryRule(paths, "~/work/clients/acme", { configProfile: "client-acme" });
-      const updated = addDirectoryRule(paths, "~/work/clients/acme", { configProfile: "client-acme-v2" });
-      const all = listDirectoryRules(paths);
-      expect(all).toHaveLength(1);
-      expect(updated.configProfile).toBe("client-acme-v2");
+      expect(() => addDirectoryRule(paths, "~/work/clients/acme", { configProfile: "client-acme-v2" })).toThrow(
+        DirectoryRuleAlreadyExistsError,
+      );
+      expect(listDirectoryRules(paths)).toEqual([{ path: "~/work/clients/acme", configProfile: "client-acme" }]);
+    });
+  });
+
+  describe("updateDirectoryRule", () => {
+    it("merges an identity pin onto an existing profile-only rule, keeping its position", () => {
+      addDirectoryRule(paths, "~/a", { configProfile: "a" });
+      addDirectoryRule(paths, "~/work/clients/acme", { configProfile: "client-acme" });
+      addDirectoryRule(paths, "~/z", { configProfile: "z" });
+      const updated = updateDirectoryRule(paths, "~/work/clients/acme", { identity: "work" });
+      expect(updated).toEqual({ path: "~/work/clients/acme", configProfile: "client-acme", identity: "work" });
+      expect(listDirectoryRules(paths).map((rule) => rule.path)).toEqual(["~/a", "~/work/clients/acme", "~/z"]);
     });
 
-    it("merges an identity pin onto an existing profile-only rule for the same path", () => {
-      addDirectoryRule(paths, "~/work/clients/acme", { configProfile: "client-acme" });
-      const updated = addDirectoryRule(paths, "~/work/clients/acme", { identity: "work" });
-      expect(updated).toEqual({
-        path: "~/work/clients/acme",
-        configProfile: "client-acme",
-        identity: "work",
-      });
+    it("removes a field given false, keeping every field it was not told about", () => {
+      writeDirectoryRules(paths, { rules: [{ path: "~/w", configProfile: "p", identity: "i", categories: { history: false } }] });
+      expect(updateDirectoryRule(paths, "~/w", { configProfile: false })).toEqual({ path: "~/w", identity: "i", categories: { history: false } });
+    });
+
+    it("refuses an update that would leave a rule doing nothing", () => {
+      addDirectoryRule(paths, "~/w", { identity: "i" });
+      expect(() => updateDirectoryRule(paths, "~/w", { identity: false })).toThrow(DirectoryRuleMissingTargetError);
+      expect(listDirectoryRules(paths)).toEqual([{ path: "~/w", identity: "i" }]);
+    });
+
+    it("throws DirectoryRuleNotFoundError for a path with no rule", () => {
+      expect(() => updateDirectoryRule(paths, "~/nowhere", { identity: "i" })).toThrow(DirectoryRuleNotFoundError);
     });
   });
 

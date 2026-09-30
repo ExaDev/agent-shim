@@ -113,7 +113,7 @@ export interface LoadedClassification {
 /**
  * Loads the classification input `classifyEntries` needs — the shipped `categories.default.json`, plus `categories.local.json` when the user has answered at least one "unclassified entry" prompt.
  *
- * Real-wired convenience over reading and validating the two files. Every command that classifies anything (`cli.ts`'s farm runtime, `check`, `configure`, `identity resolve`) was independently repeating this exact pair of `readJson`/`.parse()` calls before this existed; centralising it here means the four command files stay thin call sites rather than each holding its own copy of a validation step that never varies between them.
+ * Real-wired convenience over reading and validating the two files. Every command that classifies anything (`cli.ts`'s farm runtime, `check`, `configure`, `identity resolve-conflicts`) was independently repeating this exact pair of `readJson`/`.parse()` calls before this existed; centralising it here means the four command files stay thin call sites rather than each holding its own copy of a validation step that never varies between them.
  */
 export function loadClassification(paths: LayoutPaths): LoadedClassification {
   const overlay = readJson(paths.categoriesLocalFile, CategoryClassificationOverlaySchema);

@@ -128,6 +128,44 @@ describe("runLauncher provider selection", () => {
     expect(env.CLAUDE_USE_PROVIDER).toBe("OpenRouter");
   });
 
+  it("launches --identity plus --provider: the identity's own farm directory, the provider's endpoint and token", () => {
+    const spawn = fakeSpawn();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
+      spawn,
+      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--identity", "work", "--provider", "z", "-p", "say hi"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+    });
+
+    expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["-p", "say hi"]);
+    const env = spawnedEnv(spawn);
+    expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.claude-use/identities/work`);
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
+  });
+
+  it("lets --no-provider opt one launch out of the cascade's provider selection", () => {
+    const fs = createFakeFarmFs({});
+    const spawn = fakeSpawn();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO }),
+      spawn,
+      proc: fakeProc({}, ["@work", "--no-provider"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      farm: fakeFarm(fs, { launch: { provider: "o" } }),
+    });
+
+    const env = spawnedEnv(spawn);
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.CLAUDE_USE_PROVIDER).toBeUndefined();
+  });
+
   it("lets a --provider flag beat the cascade's own provider selection", () => {
     const fs = createFakeFarmFs({});
     const spawn = fakeSpawn();

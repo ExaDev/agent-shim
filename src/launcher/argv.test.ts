@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseLauncherArgv } from "./argv";
+import { ConflictingIdentityError, parseLauncherArgv } from "./argv";
 
 describe("parseLauncherArgv", () => {
   it("consumes a leading @name and strips it from rest", () => {
@@ -95,9 +95,9 @@ describe("parseLauncherArgv", () => {
     expect(result.rest).toEqual(["--print"]);
   });
 
-  it("accumulates repeated --share and --hide flags, each keeping comma-separated values as one raw entry", () => {
-    const result = parseLauncherArgv(["--share", "knowledge/skills/a,knowledge/skills/b", "--hide", "history/projects/x"]);
-    expect(result.shareFlags).toEqual(["knowledge/skills/a,knowledge/skills/b"]);
+  it("accumulates repeated --share and --hide flags, one raw value per occurrence", () => {
+    const result = parseLauncherArgv(["--share", "knowledge/skills/a", "--share", "knowledge/skills/b", "--hide", "history/projects/x"]);
+    expect(result.shareFlags).toEqual(["knowledge/skills/a", "knowledge/skills/b"]);
     expect(result.hideFlags).toEqual(["history/projects/x"]);
     expect(result.rest).toEqual([]);
   });
@@ -113,5 +113,45 @@ describe("parseLauncherArgv", () => {
     expect(result.identity).toBe("work");
     expect(result.categoryFlags).toEqual(["history=true"]);
     expect(result.rest).toEqual(["--print"]);
+  });
+
+  it("takes --identity <name> and --identity=<name> as the explicit form of @name", () => {
+    expect(parseLauncherArgv(["--identity", "work", "--print"])).toMatchObject({ identity: "work", rest: ["--print"] });
+    expect(parseLauncherArgv(["--print", "--identity=work"])).toMatchObject({ identity: "work", rest: ["--print"] });
+  });
+
+  it("accepts @name and --identity together when they agree, and refuses them when they differ", () => {
+    expect(parseLauncherArgv(["@work", "--identity", "work"]).identity).toBe("work");
+    expect(() => parseLauncherArgv(["@work", "--identity", "personal"])).toThrow(ConflictingIdentityError);
+  });
+
+  it("parses --no-provider as an explicit opt-out, the later of it and --provider winning", () => {
+    expect(parseLauncherArgv(["--no-provider"]).provider).toBe(false);
+    expect(parseLauncherArgv(["--provider", "z", "--no-provider"]).provider).toBe(false);
+    expect(parseLauncherArgv(["--no-provider", "--provider", "z"]).provider).toBe("z");
+    expect(parseLauncherArgv(["--print"]).provider).toBeUndefined();
+  });
+
+  it.each([
+    ["--skip-permissions", "skipPermissions"],
+    ["--remote-control", "remoteControl"],
+  ] as const)("parses %s and its --no- form as consumed booleans, later occurrence winning", (flag, key) => {
+    const negated = `--no-${flag.slice(2)}`;
+    expect(parseLauncherArgv([flag, "--print"])).toMatchObject({ [key]: true, rest: ["--print"] });
+    expect(parseLauncherArgv([flag, negated])[key]).toBe(false);
+    expect(parseLauncherArgv(["--print"])[key]).toBeUndefined();
+  });
+
+  it("stops recognising its own flags at a double-dash terminator, forwarding everything from it verbatim", () => {
+    const result = parseLauncherArgv(["@work", "mcp", "add", "n", "--provider", "z", "--", "cmd", "--provider", "x", "--identity", "y", "--no-headroom"]);
+    expect(result.identity).toBe("work");
+    expect(result.provider).toBe("z");
+    expect(result.headroom).toBeUndefined();
+    expect(result.rest).toEqual(["mcp", "add", "n", "--", "cmd", "--provider", "x", "--identity", "y", "--no-headroom"]);
+  });
+
+  it("leaves a valued flag directly before the double-dash terminator unconsumed rather than taking it as its value", () => {
+    expect(parseLauncherArgv(["--provider", "--", "x"])).toMatchObject({ rest: ["--provider", "--", "x"] });
+    expect(parseLauncherArgv(["--provider", "--", "x"]).provider).toBeUndefined();
   });
 });

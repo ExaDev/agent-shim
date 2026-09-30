@@ -3,6 +3,7 @@ import net from "node:net";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type { Command } from "commander";
 
+import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { readGlobalConfig } from "../configProfiles";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realIsPortFree, realIsProcessRunning, realSleepSync } from "../realPorts";
@@ -267,17 +268,29 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
 }
 
 /** Registers the `claude-use headroom` command tree and the hidden `__headroom-supervisor` internal subcommand. */
-export function registerHeadroomCommand(program: Command, paths: LayoutPaths): void {
-  const headroom = program.command("headroom").description("Inspect the headroom routing daemon.");
+export function registerHeadroomCommand(program: Command, deps: CommandDeps): void {
+  const { paths } = deps;
+  const headroom = withExamples(program.command("headroom").description("Inspect the headroom routing daemon."), [
+    "claude-use headroom status",
+  ]);
 
-  headroom
-    .command("status")
-    .description("Report the headroom daemon's supervisor, process, port, sessions, and last error. Read-only.")
-    .action(() => {
-      for (const line of formatHeadroomStatus(collectHeadroomStatus(realFarmFs, paths, realIsProcessRunning))) {
-        console.log(line);
-      }
-    });
+  withExamples(
+    headroom
+      .command("status")
+      .description("Report the headroom daemon's supervisor, process, port, sessions, and last error. Read-only.")
+      .option("--json", "Print the status as JSON.")
+      .action((options: Readonly<{ json?: boolean }>) => {
+        const status = collectHeadroomStatus(realFarmFs, paths, realIsProcessRunning);
+        if (options.json === true) {
+          printJson(status);
+          return;
+        }
+        for (const line of formatHeadroomStatus(status)) {
+          console.log(line);
+        }
+      }),
+    ["claude-use headroom status", "claude-use headroom status --json"],
+  );
 
   program
     .command("__headroom-supervisor", { hidden: true })
@@ -298,12 +311,12 @@ export function registerHeadroomCommand(program: Command, paths: LayoutPaths): v
       });
       // Signal death skips `exit` handlers entirely unless the signal itself is handled, so an unhandled SIGTERM would leave the daemon orphaned. Routing both signals through an orderly exit is what makes the hook above run for them.
       process.on("SIGTERM", () => {
-        process.exit(0);
+        deps.exit(0);
       });
       process.on("SIGINT", () => {
-        process.exit(0);
+        deps.exit(0);
       });
       const code = await runSupervisor(config, realSupervisorPorts(paths));
-      process.exit(code);
+      deps.exit(code);
     });
 }

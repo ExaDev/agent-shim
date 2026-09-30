@@ -1,7 +1,9 @@
 import path from "node:path";
 
 import { reportFatalError } from "./cliError";
+import type { CommandDeps } from "./cli/commandDeps";
 import { isInvokedAsClaude } from "./claudeShim";
+import { realPromptsPort } from "./configure";
 import { tryRunAtIdentityShortcut } from "./identityManager";
 import { resolveLayoutPaths } from "./paths";
 import { buildProgram } from "./program";
@@ -22,15 +24,23 @@ async function main(): Promise<void> {
     await runClaude();
     return;
   }
-  const paths = resolveLayoutPaths();
-  if (await tryRunAtIdentityShortcut(paths, process.argv.slice(2))) {
+  const deps: CommandDeps = {
+    paths: resolveLayoutPaths(),
+    prompts: realPromptsPort,
+    isInteractive: () => process.stdin.isTTY,
+    exit: (code) => process.exit(code),
+  };
+  if (await tryRunAtIdentityShortcut(deps, process.argv.slice(2))) {
     return;
   }
-  await buildProgram({ paths, runClaude }).parseAsync(process.argv);
+  await buildProgram({ ...deps, runClaude }).parseAsync(process.argv);
 }
 
 main().catch((error: unknown) => {
-  process.exitCode = reportFatalError(error, (line) => {
-    console.error(line);
+  process.exitCode = reportFatalError(error, {
+    writeErr: (line) => {
+      console.error(line);
+    },
+    env: process.env,
   });
 });
