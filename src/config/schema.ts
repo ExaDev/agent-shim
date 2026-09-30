@@ -318,13 +318,13 @@ export const HEADROOM_DEFAULT_SOURCE = "headroom-ai[proxy] @ git+https://github.
 export const HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES = 15;
 
 /**
- * The default `codex.idleShutdownMinutes`, the same trade-off as headroom's: warm through a break, gone the same working day once abandoned.
+ * The default `frontdoor.idleShutdownMinutes`, the same trade-off as headroom's: warm through a break, gone the same working day once abandoned.
  */
-export const CODEX_DEFAULT_IDLE_SHUTDOWN_MINUTES = 15;
+export const FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES = 15;
 
-/** The user-global codex daemon block. Global-only for the same reason as headroom's: there is one codex daemon per CLAUDE_USE_HOME, serving every codex provider. */
-const CodexGlobalConfigSchema = z.strictObject({
-  /** How long the daemon may sit with no registered sessions before it exits. Defaults to CODEX_DEFAULT_IDLE_SHUTDOWN_MINUTES. */
+/** The user-global front-door daemon block. Global-only for the same reason as headroom's: there is one front door per CLAUDE_USE_HOME, serving every routed session. */
+const FrontDoorGlobalConfigSchema = z.strictObject({
+  /** How long the front door may sit with no registered sessions before it closes and exits. Defaults to FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES. */
   idleShutdownMinutes: z.number().int().positive().optional(),
 });
 
@@ -337,7 +337,7 @@ export const GlobalConfigSchema = z.strictObject({
   entries: EntriesSchema.optional(),
   launch: LaunchSchema.optional(),
   headroom: HeadroomGlobalConfigSchema.optional(),
-  codex: CodexGlobalConfigSchema.optional(),
+  frontdoor: FrontDoorGlobalConfigSchema.optional(),
 });
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 

@@ -124,9 +124,9 @@ export interface HeadroomPort {
 }
 
 /**
- * Everything the launcher needs from the codex translation daemon, injected like `HeadroomPort`: `ensure` brings the daemon up (spawning its detached supervisor when nothing healthy is running), registers this launch in its session registry and returns the daemon's loopback port; `release` removes that registration when the spawned `claude` exits.
+ * Everything the launcher needs from the front-door daemon, injected like `HeadroomPort`: `ensure` brings the door up (spawning its detached supervisor when nothing healthy is serving), registers this launch in its session registry and returns the listener's loopback port; `release` removes that registration when the spawned `claude` exits.
  */
-export interface CodexPort {
+export interface FrontDoorPort {
   readonly ensure: () => { readonly port: number };
   readonly release: () => void;
 }

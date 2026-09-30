@@ -90,9 +90,9 @@ export function headroomAllowlist(providers: readonly { readonly baseUrl: string
 }
 
 /**
- * The upstreams a set of providers routes to through headroom: every `http` provider's base URL, plus the codex daemon's origin when there is a codex provider and the daemon has ever served. A codex session routed through headroom carries the daemon's address in `x-headroom-base-url`, so headroom must admit it like any provider's; the daemon's port is sticky, so its origin stays stable across restarts. Before the daemon has ever served there is no address to admit, and the first codex launch starts it before bringing headroom up, so a freshly started headroom daemon already sees it.
+ * The upstreams a set of providers routes to through headroom: every `http` provider's base URL, plus the front door's origin when there is a codex provider and the front door has ever served. A codex session routed through headroom is forwarded back to the front door's own listener (the codex translation is one of its routes), so headroom must admit that address like any provider's; the front door's port is sticky, so its origin stays stable across restarts. Before the front door has ever served there is no address to admit, and the first codex launch starts it before bringing headroom up, so a freshly started headroom daemon already sees it.
  */
-export function headroomUpstreams(providers: readonly Provider[], codexOrigin: string | undefined): readonly { readonly baseUrl: string }[] {
+export function headroomUpstreams(providers: readonly Provider[], frontDoorOrigin: string | undefined): readonly { readonly baseUrl: string }[] {
   const upstreams: { baseUrl: string }[] = [];
   let hasCodex = false;
   for (const provider of providers) {
@@ -102,8 +102,8 @@ export function headroomUpstreams(providers: readonly Provider[], codexOrigin: s
       upstreams.push({ baseUrl: provider.baseUrl });
     }
   }
-  if (hasCodex && codexOrigin !== undefined) {
-    upstreams.push({ baseUrl: codexOrigin });
+  if (hasCodex && frontDoorOrigin !== undefined) {
+    upstreams.push({ baseUrl: frontDoorOrigin });
   }
   return upstreams;
 }

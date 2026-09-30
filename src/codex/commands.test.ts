@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import { writeFrontDoorState } from "../frontdoor/state";
 import { writeSession } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { codexHome, collectCodexStatus, formatCodexStatus } from "./commands";
-import { writeCodexState } from "./state";
+import { codexHome, codexUsageSnapshotPath, collectCodexStatus, formatCodexStatus } from "./commands";
 
 const paths = buildLayoutPaths("/home/testuser/.claude-use");
 const SUPERVISOR = 10;
-const WORKER = 11;
 const LIVE_SESSION = 20;
 const DEAD_SESSION = 21;
 const PORT = 4100;
@@ -22,30 +21,38 @@ describe("codexHome", () => {
 });
 
 describe("codex status", () => {
-  it("reports a running daemon, its sessions and the log", () => {
-    const fs = createFakeFarmFs({});
-    writeCodexState(fs, paths.codexStateFile, { supervisorPid: SUPERVISOR, workerPid: WORKER, port: PORT, lastPort: PORT });
-    writeSession(fs, paths.codexSessionsDir, { pid: LIVE_SESSION, startedAt: 0 });
-    writeSession(fs, paths.codexSessionsDir, { pid: DEAD_SESSION, startedAt: 0 });
-    const alive = new Set([SUPERVISOR, WORKER, LIVE_SESSION]);
+  it("reports the serving front door, its codex providers, sessions and the snapshot", () => {
+    const fs = createFakeFarmFs({
+      [`${paths.providersDir}/codex.json`]: JSON.stringify({ kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } }),
+      [`${paths.providersDir}/z.json`]: JSON.stringify({ displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } }),
+    });
+    writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: SUPERVISOR, port: PORT, lastPort: PORT });
+    writeSession(fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0 });
+    writeSession(fs, paths.frontdoorSessionsDir, { pid: DEAD_SESSION, startedAt: 0 });
+    const alive = new Set([SUPERVISOR, LIVE_SESSION]);
     const status = collectCodexStatus(fs, paths, (pid) => alive.has(pid));
+    expect(status.codexProviders).toEqual(["codex"]);
     expect(formatCodexStatus(status)).toEqual([
-      "supervisor: pid 10 (alive)",
-      "worker: pid 11 (alive), listening on 127.0.0.1:4100",
+      "front door: supervisor pid 10 (alive)",
+      "listener: front door on 127.0.0.1:4100, serving codex providers under /providers/<name>",
+      "codex providers: codex",
       "sessions: 2 registered (20, 21 (dead))",
-      `daemon log: ${paths.codexLogPath} (not created yet)`,
+      `usage snapshot: ${codexUsageSnapshotPath()} (not created yet)`,
+      `daemon log: ${paths.frontdoorLogPath} (not created yet)`,
     ]);
   });
 
-  it("reports a stopped daemon with its sticky port and last error", () => {
+  it("reports a stopped front door with its sticky port and last error", () => {
     const fs = createFakeFarmFs({});
-    writeCodexState(fs, paths.codexStateFile, { lastPort: PORT, lastError: "gave up" });
+    writeFrontDoorState(fs, paths.frontdoorStateFile, { lastPort: PORT, lastError: "gave up" });
     expect(formatCodexStatus(collectCodexStatus(fs, paths, () => false))).toEqual([
-      "supervisor: not running (no state recorded)",
-      "worker: not running (next start on 127.0.0.1:4100)",
+      "front door: not running",
+      "listener: not running (next start on 127.0.0.1:4100)",
+      "codex providers: none defined",
       "sessions: none",
       "last error: gave up",
-      `daemon log: ${paths.codexLogPath} (not created yet)`,
+      `usage snapshot: ${codexUsageSnapshotPath()} (not created yet)`,
+      `daemon log: ${paths.frontdoorLogPath} (not created yet)`,
     ]);
   });
 });

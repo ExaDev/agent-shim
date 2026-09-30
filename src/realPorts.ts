@@ -265,7 +265,7 @@ function resolveGitRoot(run: RunPort, cwd: string): string | undefined {
 }
 
 /** The argv that re-runs this very executable with `args`: a SEA binary re-execs itself directly, while the npm-published bundle needs its script path for Node to run. */
-export function selfInvocation(args: readonly string[]): { readonly command: string; readonly args: readonly string[] } {
+function selfInvocation(args: readonly string[]): { readonly command: string; readonly args: readonly string[] } {
   return { command: process.execPath, args: isSea() ? [...args] : [realContentSourcePath(), ...args] };
 }
 

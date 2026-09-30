@@ -1,3 +1,4 @@
+import { parseProviderPath } from "../frontdoor/route";
 import { HTTP_STATUS } from "./http";
 import type { ResolvedCodexConfig } from "./translate";
 import { CountTokensRequestSchema, MessagesRequestSchema } from "./anthropic";
@@ -41,14 +42,6 @@ export interface CodexRoutePorts {
   readonly log: (line: string) => void;
 }
 
-/** The path prefix every provider-scoped endpoint sits under: a codex provider's base URL is the daemon's address plus `/providers/<name>`, so one daemon serves any number of codex providers, each with its own translation settings. */
-const CODEX_PROVIDER_PATH_PREFIX = "/providers/";
-
-/** The base URL a codex provider's sessions are pointed at. */
-export function codexProviderBaseUrl(port: number, provider: string): string {
-  return `http://127.0.0.1:${String(port)}${CODEX_PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`;
-}
-
 /** The Anthropic error type for an HTTP status, so Claude Code classifies the failure the way it would one from the real API. */
 function errorTypeFor(status: number): string {
   switch (status) {
@@ -83,21 +76,9 @@ function errorFrame(status: number, message: string): string {
 const UPSTREAM_DETAIL_CHARS = 2000;
 const UPSTREAM_LOG_DETAIL_CHARS = 300;
 
+/** Characters per token in the count estimate: the backend has no counting endpoint, and a rough estimate is all Claude Code's compaction heuristics needs from this call. */
 /** Characters per token in the count estimate: the backend has no counting endpoint, and a rough estimate is all Claude Code's compaction heuristics need from this call. */
 const CHARS_PER_TOKEN = 4;
-
-/** Splits `/providers/<name>/<rest>` into the provider name and the rest, or undefined for any other path. */
-function providerPath(path: string): { readonly provider: string; readonly rest: string } | undefined {
-  if (!path.startsWith(CODEX_PROVIDER_PATH_PREFIX)) {
-    return undefined;
-  }
-  const tail = path.slice(CODEX_PROVIDER_PATH_PREFIX.length);
-  const slash = tail.indexOf("/");
-  if (slash <= 0) {
-    return undefined;
-  }
-  return { provider: decodeURIComponent(tail.slice(0, slash)), rest: tail.slice(slash) };
-}
 
 function parseJson(body: string): { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly message: string } {
   try {
@@ -251,7 +232,7 @@ export function createCodexRoute(ports: CodexRoutePorts): (request: RouteRequest
     if (request.method !== "POST") {
       return errorResponse(HTTP_STATUS.methodNotAllowed, `unsupported ${request.method} ${request.path}`);
     }
-    const scoped = providerPath(request.path);
+    const scoped = parseProviderPath(request.path);
     if (scoped === undefined || (scoped.rest !== "/v1/messages" && scoped.rest !== "/v1/messages/count_tokens")) {
       return errorResponse(HTTP_STATUS.notFound, `no such endpoint: ${request.path}`);
     }

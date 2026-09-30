@@ -1,6 +1,6 @@
 import { HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES, HEADROOM_DEFAULT_SOURCE } from "../config/schema";
 import type { LayoutPaths } from "../paths";
-import { codexDaemonOrigin, readCodexState } from "../codex/state";
+import { frontDoorOrigin, readFrontDoorState } from "../frontdoor/state";
 import type { MitmServerHandle } from "./mitm";
 import {
   hashAllowlist,
@@ -422,10 +422,10 @@ export async function runSupervisor(
   }
 }
 
-/** The allowlist as it stands right now: every provider's upstream (the codex daemon's origin for a codex provider) plus Claude Code's own API. */
+/** The allowlist as it stands right now: every provider's upstream (the front door's origin for a codex provider, which headroom forwards codex traffic back to) plus Claude Code's own API. */
 export function currentHeadroomAllowlist(fs: HeadroomFs, paths: LayoutPaths): readonly string[] {
   const providers = readAllProviders(fs, paths.providersDir).map((entry) => entry.provider);
-  return headroomAllowlist(headroomUpstreams(providers, codexDaemonOrigin(readCodexState(fs, paths.codexStateFile))));
+  return headroomAllowlist(headroomUpstreams(providers, frontDoorOrigin(readFrontDoorState(fs, paths.frontdoorStateFile))));
 }
 
 function allowlistOf(ports: SupervisorPorts): readonly string[] {
