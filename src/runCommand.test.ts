@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { registerRunCommand } from "./runCommand";
 
-/** Mirrors how `buildClaudeUseProgram` sets up its parent program before registering `run` -- `passThroughOptions` on the `run` subcommand requires `enablePositionalOptions` on the parent chain, so a test program needs the same setup to exercise the real behaviour rather than commander's unrelated "broken pass-through" guard error. */
+/** Mirrors how `buildProgram` sets up its parent program before registering `run`: `passThroughOptions` on the `run` subcommand requires `enablePositionalOptions` on the parent chain, so a test program needs the same setup to exercise the real behaviour rather than commander's unrelated "broken pass-through" guard error. */
 function buildTestProgram(): Command {
   return new Command().exitOverride().enablePositionalOptions();
 }
