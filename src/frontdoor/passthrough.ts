@@ -15,14 +15,16 @@ export interface PassthroughTarget {
    * The path prefix the front door added that the upstream must not see: `/providers/<name>` for a provider-scoped request, absent for a bare `/v1/` request from the connect surface. The upstream receives the request exactly as it would have arrived had the child pointed at it directly.
    */
   readonly stripPrefix: string | undefined;
-  /** What a headroom hop in front of this route is told to forward to: the upstream's own base URL, since headroom can reach it directly and a second bounce through this door would add a hop for nothing. */
+  /** What a headroom hop in front of this route is told to forward to: the door's direct listener, whose re-resolution of the path is what strips the provider prefix the upstream must not see. */
   readonly headroomUpstream: string | undefined;
 }
 
-/** Joins an upstream response's headers into the single-value shape a routed response's head takes; a repeated header becomes one comma-joined value, which is lossless for the JSON and SSE APIs routed here. */
-function singleValueHeaders(headers: Readonly<http.IncomingHttpHeaders>): Record<string, string> {
+/**
+ * Joins an upstream response's headers into the single-value shape a routed response's head takes, minus the hop-by-hop set: this process re-frames both messages, so framing headers (`transfer-encoding`, `connection` and kin) belong to whichever connection carried them and must be regenerated, never copied. A repeated header becomes one comma-joined value, which is lossless for the JSON and SSE APIs routed here.
+ */
+function responseHeaders(headers: Readonly<http.IncomingHttpHeaders>): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const [name, value] of Object.entries(headers)) {
+  for (const [name, value] of Object.entries(forwardableHeaders(headers))) {
     if (value === undefined) {
       continue;
     }
@@ -59,7 +61,7 @@ export function createPassthroughRoute(name: string, target: PassthroughTarget):
           agent,
         };
         const onUpstreamResponse = (upstreamResponse: IncomingMessage): void => {
-          response.start(upstreamResponse.statusCode ?? HTTP_STATUS.badGateway, singleValueHeaders(upstreamResponse.headers));
+          response.start(upstreamResponse.statusCode ?? HTTP_STATUS.badGateway, responseHeaders(upstreamResponse.headers));
           // Headers go out before the first body byte: a streaming (SSE) response must reach the client as its chunks arrive, not when it completes.
           response.flush();
           const stream = async (): Promise<void> => {
