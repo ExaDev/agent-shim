@@ -6,10 +6,15 @@ import * as net from "node:net";
 import * as tls from "node:tls";
 import forge from "node-forge";
 
+import { CONNECT_PROXY_REALM, capabilityFromProxyAuthorization } from "./capability";
+import { FRONTDOOR_POLL_MS } from "./supervisor";
+
 /**
  * The front door's CONNECT surface, so an OAuth session can have claude-use's routing AND Claude Code's Remote Control at once: Remote Control refuses any `ANTHROPIC_BASE_URL` other than the real API, but happily honours `HTTPS_PROXY`, so OAuth launches route at the proxy layer instead.
  *
- * Every CONNECT target is blind-tunnelled byte for byte EXCEPT the intercept host (Claude Code's own API), whose TLS this surface terminates with a leaf certificate signed by a locally generated CA. On the terminated session, the paths the front door routes (`/v1/`) are handed to the same ordered pipeline the provider listener serves (the client's Authorization header passes through untouched), and every other path is piped by this surface to the real upstream over TLS, so Remote Control's streaming, OAuth refreshes, and unknown endpoints bypass the pipeline entirely.
+ * Nothing is tunnelled or intercepted for a client that has not authenticated: every CONNECT request must present a live launch's capability as its proxy credential (`Proxy-Authorization: Basic`, which clients derive from the credential in the `HTTPS_PROXY` URL the launcher sets), or it is answered 407 before any target is dialled, so the port is no open proxy for other local processes. Pending and authenticated connections are bounded by `ConnectLimits`.
+ *
+ * Every authenticated CONNECT target is blind-tunnelled byte for byte EXCEPT the intercept host (Claude Code's own API), whose TLS this surface terminates with a leaf certificate signed by a locally generated CA. On the terminated session, the paths the front door routes (`/v1/`) are handed to the same ordered pipeline the provider listener serves (the client's Authorization header passes through untouched), and every other path is piped by this surface to the real upstream over TLS, so Remote Control's streaming, OAuth refreshes, and unknown endpoints bypass the pipeline entirely.
  */
 
 /** The one CONNECT host whose TLS gets terminated: Claude Code's own API, the upstream every OAuth session is really talking to. */
@@ -39,11 +44,56 @@ const CONNECT_LINE_TOKENS = 3;
 /** The terminator of an HTTP request head, the framing the CONNECT parser splits on. */
 const HEAD_TERMINATOR = "\r\n\r\n";
 
-/** Largest CONNECT request head accepted before the connection is refused: a real head is one short line, so anything this size is a confused or hostile client. */
-const MAX_CONNECT_HEAD_BYTES = 8192;
+/** Largest CONNECT request head accepted before the connection is refused: a real head is a request line and a few short headers (Host, the proxy credential, a User-Agent), so anything this size is a confused or hostile client. 8 KiB is also the per-header-line limit common HTTP servers apply by default (nginx's `large_client_header_buffers` buffer, Apache's `LimitRequestFieldSize` of 8190 bytes), so no client is built to need a longer line, and a CONNECT head is a few such lines at most. */
+export const MAX_CONNECT_HEAD_BYTES = 8192;
 
 /** The response line every CONNECT proxy sends before the tunnel starts; the body is empty by definition. */
 const CONNECT_ESTABLISHED = "HTTP/1.1 200 Connection Established\r\n\r\n";
+
+/** The status lines the surface refuses a connection with, each closing it once written. */
+const REFUSAL = {
+  badRequest: "400 Bad Request",
+  proxyAuthenticationRequired: "407 Proxy Authentication Required",
+  requestTimeout: "408 Request Timeout",
+  headTooLarge: "431 Request Header Fields Too Large",
+  serviceUnavailable: "503 Service Unavailable",
+} as const;
+
+/**
+ * The surface's connection deadlines and caps. Production passes `CONNECT_LIMITS`; tests pass small values so a deadline or a cap is reached in milliseconds.
+ *
+ * A connection is pending from accept until its CONNECT head has arrived, and authenticated once that head presented a live launch's capability. Pending connections are bounded twice, by `headDeadlineMs` and by `maxPendingHeads` (reaching the cap evicts the oldest pending connection rather than refusing the newest, so a squatter holding open half-sent heads cannot lock live launches out: a real client's head arrives in its first segment and is authenticated long before that many newer connections could push it out). Authenticated connections are bounded by `maxTunnels` and revoked when their launch ends; they have no idle timeout (see `CONNECT_LIMITS`).
+ */
+export interface ConnectLimits {
+  /** How long a connection may take to deliver its whole CONNECT head before it is answered 408 and closed. */
+  readonly headDeadlineMs: number;
+  /** How many connections may be waiting for their head at once; one more evicts the oldest. */
+  readonly maxPendingHeads: number;
+  /** How many authenticated connections (blind tunnels and terminated sessions together) may be open at once; one more is answered 503 and closed. */
+  readonly maxTunnels: number;
+  /** How often every authenticated connection's capability is re-checked, closing the connections of any launch that has since ended. */
+  readonly revalidateMs: number;
+}
+
+/**
+ * The production limits, each derived from what the surface's real clients do.
+ *
+ * `headDeadlineMs`: every client checked (Claude Code, curl, Node's own proxy support, Python's urllib) sends its whole CONNECT head, credential included, the moment the TCP connection opens, without waiting for anything from the proxy, so on loopback the head arrives within milliseconds. The deadline only has to outlast a door process stalled by a loaded machine, and ten seconds is three orders of magnitude above any such stall while still ending a slowloris connection quickly.
+ *
+ * `maxPendingHeads`: since a real head arrives in the first segment, the pending set at any instant holds only connections opened in the same instant. The largest real burst is a package manager or similar running inside a session, which opens its parallel downloads through HTTPS_PROXY at once; 64 covers the defaults of npm (`maxsockets` 15) and pnpm (`network-concurrency` 16) several times over, and eviction means even a larger burst only costs a retry, never a lockout.
+ *
+ * `maxTunnels`: each authenticated connection holds two descriptors (the client's and the upstream's). Node raises its soft descriptor limit to the hard limit at start, and 4096 is the smallest hard limit common Linux distributions ship (macOS's is far higher), so 1024 tunnels keep the surface to half of it, leaving the provider and direct listeners room to serve rather than all three failing with EMFILE. It is still many times what concurrent sessions hold: each keeps a handful of tunnels plus whatever bursts its tools make.
+ *
+ * `revalidateMs`: the supervisor prunes dead launches from the registry once per `FRONTDOOR_POLL_MS`, so re-checking more often than that could never find anything newly dead.
+ *
+ * There is deliberately no idle timeout on an authenticated connection: Remote Control and other long-lived streams can sit silent for as long as the far end chooses between events, at an interval the surface cannot know, so any idle timeout would cut legitimate sessions. Authenticated connections are bounded instead by who can open them (only a live launch's process tree holds the capability), by `maxTunnels`, and by revocation: a launch that ends loses every connection it opened at the next revalidation.
+ */
+export const CONNECT_LIMITS: ConnectLimits = {
+  headDeadlineMs: 10_000,
+  maxPendingHeads: 64,
+  maxTunnels: 1024,
+  revalidateMs: FRONTDOOR_POLL_MS,
+};
 
 /** CA validity: ten years, because the CA lives on one machine and a shorter life buys nothing but a first-start keygen every time it lapses. */
 const CA_VALIDITY_DAYS = 3650;
@@ -306,6 +356,10 @@ export interface ConnectServerConfig {
   readonly leafFor: (host: string) => LeafCert;
   /** Where non-routed paths on the terminated session are piped: the real upstream over TLS. */
   readonly upstream: ConnectForwardTarget;
+  /** Whether a capability presented as a CONNECT request's proxy credential belongs to a live launch: the same constant-time check against the same registry the routed pipeline's admission makes, read fresh on every call because launches come and go. */
+  readonly isLiveCapability: (token: string) => boolean;
+  /** The connection deadlines and caps; production passes `CONNECT_LIMITS`. */
+  readonly limits: ConnectLimits;
 }
 
 /** A running connect surface. */
@@ -318,7 +372,7 @@ export interface ConnectServerHandle {
 /**
  * Starts the connect surface: binds the listener, mints the intercept host's leaf, and wires the per-connection routing. Resolves once the listener is bound.
  *
- * The connection flow: read the CONNECT head (never more of the stream than that, so an early ClientHello glued to the head is pushed back with `unshift` and still seen by whatever consumes the socket next), then either blind-tunnel the target or terminate its TLS and parse HTTP on the session. Every effect flows through `effects`; nothing here touches the network or filesystem itself.
+ * The connection flow: read the CONNECT head within the deadline (never more of the stream than that, so an early ClientHello glued to the head is pushed back with `unshift` and still seen by whatever consumes the socket next), authenticate it, then either blind-tunnel the target or terminate its TLS and parse HTTP on the session. Every network effect flows through `effects`; nothing here touches the network or filesystem itself.
  */
 export async function startConnectServer(config: ConnectServerConfig, effects: ConnectEffects, preferredPort: number | undefined): Promise<ConnectServerHandle> {
   const handler: ConnectRequestHandler = (request, response) => {
@@ -333,15 +387,17 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   const tlsAcceptor = effects.createTlsAcceptor(config.leafFor(config.interceptHost), (secure) => {
     httpSession.serve(secure);
   });
+  const ledger = createConnectionLedger(config.limits, config.isLiveCapability);
 
   // The listener owns teardown of everything it accepted: destroying the raw CONNECT socket ends both the blind tunnels and the TLS sessions layered on top of them.
   const listener = await effects.listenLoopback(preferredPort, (socket) => {
-    handleConnect(socket, config, effects, tlsAcceptor);
+    handleConnect(socket, { config, effects, tlsAcceptor, ledger });
   });
 
   return {
     port: listener.port,
     close: async () => {
+      ledger.close();
       await listener.close();
       tlsAcceptor.close();
       httpSession.close();
@@ -349,43 +405,179 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   };
 }
 
-/** Reads one CONNECT head off the socket and routes the connection: blind tunnel, or TLS termination into the acceptor. */
-function handleConnect(socket: net.Socket, config: ConnectServerConfig, effects: ConnectEffects, tlsAcceptor: TlsAcceptor): void {
+/** Everything one connection's handling needs from the running surface. */
+interface ConnectionContext {
+  readonly config: ConnectServerConfig;
+  readonly effects: ConnectEffects;
+  readonly tlsAcceptor: TlsAcceptor;
+  readonly ledger: ConnectionLedger;
+}
+
+/** The surface's accounting of its connections, enforcing `ConnectLimits`. */
+interface ConnectionLedger {
+  /** Records a freshly accepted connection as pending and arms its head deadline, evicting the oldest pending connection first when the pending cap is reached. */
+  readonly accept: (socket: net.Socket) => void;
+  /** Marks a connection's head as received: it leaves the pending set and its deadline is disarmed. */
+  readonly headReceived: (socket: net.Socket) => void;
+  /** Records an authenticated connection under the capability it presented. False, with nothing recorded, when the tunnel cap is already reached. */
+  readonly establish: (socket: net.Socket, capability: string) => boolean;
+  /** Stops the revalidation timer and disarms every deadline; the listener's own close destroys the sockets. */
+  readonly close: () => void;
+}
+
+function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token: string) => boolean): ConnectionLedger {
+  /** Connections still waiting for their head, oldest first (a Map iterates in insertion order), each with its deadline timer. */
+  const pending = new Map<net.Socket, NodeJS.Timeout>();
+  /** Authenticated connections grouped by the capability they presented, so a revalidation checks each launch once however many connections it holds. */
+  const authenticated = new Map<string, Set<net.Socket>>();
+  let tunnels = 0;
+
+  const leavePending = (socket: net.Socket): void => {
+    const deadline = pending.get(socket);
+    if (deadline !== undefined) {
+      clearTimeout(deadline);
+      pending.delete(socket);
+    }
+  };
+
+  const revalidation = setInterval(() => {
+    for (const [capability, sockets] of authenticated) {
+      if (!isLiveCapability(capability)) {
+        // The launch that held this capability has ended: everything it opened goes with it. Each socket's close handler removes it from the ledger.
+        for (const socket of sockets) {
+          socket.destroy();
+        }
+      }
+    }
+  }, limits.revalidateMs);
+  // The timer only matters while the listener serves, and the listener alone decides that: it must never be what keeps the door's process alive.
+  revalidation.unref();
+
+  return {
+    accept: (socket) => {
+      const [oldest] = pending.keys();
+      if (pending.size >= limits.maxPendingHeads && oldest !== undefined) {
+        leavePending(oldest);
+        refuse(oldest, REFUSAL.requestTimeout);
+      }
+      pending.set(
+        socket,
+        setTimeout(() => {
+          leavePending(socket);
+          refuse(socket, REFUSAL.requestTimeout);
+        }, limits.headDeadlineMs),
+      );
+      socket.once("close", () => {
+        leavePending(socket);
+      });
+    },
+    headReceived: leavePending,
+    establish: (socket, capability) => {
+      if (tunnels >= limits.maxTunnels) {
+        return false;
+      }
+      tunnels += 1;
+      const sockets = authenticated.get(capability) ?? new Set<net.Socket>();
+      sockets.add(socket);
+      authenticated.set(capability, sockets);
+      socket.once("close", () => {
+        tunnels -= 1;
+        sockets.delete(socket);
+        if (sockets.size === 0 && authenticated.get(capability) === sockets) {
+          authenticated.delete(capability);
+        }
+      });
+      return true;
+    },
+    close: () => {
+      clearInterval(revalidation);
+      for (const deadline of pending.values()) {
+        clearTimeout(deadline);
+      }
+      pending.clear();
+    },
+  };
+}
+
+/**
+ * Answers a connection with a bodiless status and closes it once the answer is written. The head parser is detached first, so nothing that arrives afterwards can be read as a CONNECT head and routed on a connection already refused.
+ */
+function refuse(socket: net.Socket, status: string, headers: readonly string[] = []): void {
+  socket.removeAllListeners("data");
+  socket.pause();
+  if (socket.destroyed || socket.writableEnded) {
+    return;
+  }
+  socket.end(`HTTP/1.1 ${status}\r\n${headers.map((header) => `${header}\r\n`).join("")}content-length: 0\r\nconnection: close\r\n\r\n`, () => {
+    socket.destroy();
+  });
+}
+
+/** Reads one CONNECT head off the socket within the deadline and routes the connection: blind tunnel, or TLS termination into the acceptor. */
+function handleConnect(socket: net.Socket, context: ConnectionContext): void {
+  socket.on("error", () => {
+    socket.destroy();
+  });
+  context.ledger.accept(socket);
   let buffer = Buffer.alloc(0);
   const onData = (chunk: Buffer): void => {
     buffer = Buffer.concat([buffer, chunk]);
     const headEnd = buffer.indexOf(HEAD_TERMINATOR);
+    // A head is too large whether or not its terminator has arrived: one oversized segment can carry both.
+    if (headEnd === -1 ? buffer.length > MAX_CONNECT_HEAD_BYTES : headEnd > MAX_CONNECT_HEAD_BYTES) {
+      context.ledger.headReceived(socket);
+      refuse(socket, REFUSAL.headTooLarge);
+      return;
+    }
     if (headEnd === -1) {
-      if (buffer.length > MAX_CONNECT_HEAD_BYTES) {
-        socket.removeListener("data", onData);
-        socket.pause();
-        socket.destroy();
-      }
       return;
     }
     socket.removeListener("data", onData);
     // Detaching a 'data' listener does NOT return the socket to paused mode, and a still-flowing socket with no listener discards everything that arrives next, which would eat the ClientHello before the TLS layer attaches. Pausing explicitly is what keeps the following bytes buffered for the next consumer.
     socket.pause();
+    context.ledger.headReceived(socket);
     const head = buffer.subarray(0, headEnd).toString("utf8");
     // Whatever followed the head in the buffer (an early TLS ClientHello, typically) belongs to the next consumer, so it goes back to the front of the socket's buffer; the listener comes off before routing so the next consumer, not this parser, drains what follows.
     socket.unshift(buffer.subarray(headEnd + HEAD_TERMINATOR.length));
-    routeConnect(socket, head, config, effects, tlsAcceptor);
+    routeConnect(socket, head, context);
   };
   socket.on("data", onData);
-  socket.on("error", () => {
-    socket.destroy();
-  });
 }
 
-/** Applies the routing decision for one parsed CONNECT head. */
-function routeConnect(socket: net.Socket, head: string, config: ConnectServerConfig, effects: ConnectEffects, tlsAcceptor: TlsAcceptor): void {
+/** The value of the one `Proxy-Authorization` header in a CONNECT head, or undefined when there is none or more than one (a repeated credential is malformed, and the surface refuses rather than guessing which copy counts). */
+function proxyAuthorizationOf(head: string): string | undefined {
+  const values = head
+    .split("\r\n")
+    .slice(1)
+    .flatMap((line) => {
+      const colon = line.indexOf(":");
+      return colon > 0 && line.slice(0, colon).trim().toLowerCase() === "proxy-authorization" ? [line.slice(colon + 1)] : [];
+    });
+  const [value] = values;
+  return values.length === 1 ? value : undefined;
+}
+
+/**
+ * Applies the decision for one received CONNECT head: authenticate it, then route it. Authentication comes before anything else the head says is acted on, so a client without a live capability learns nothing and causes nothing: no target is parsed for it, dialled or intercepted, and its only answer is 407 with the challenge naming the scheme the surface accepts.
+ */
+function routeConnect(socket: net.Socket, head: string, context: ConnectionContext): void {
+  const { config, effects, tlsAcceptor, ledger } = context;
+  const credential = proxyAuthorizationOf(head);
+  const capability = credential === undefined ? undefined : capabilityFromProxyAuthorization(credential);
+  if (capability === undefined || !config.isLiveCapability(capability)) {
+    refuse(socket, REFUSAL.proxyAuthenticationRequired, [`Proxy-Authenticate: Basic realm="${CONNECT_PROXY_REALM}"`]);
+    return;
+  }
   const requestLine = head.split("\r\n", 1)[0] ?? "";
   const parts = requestLine.split(" ");
   const authority = parts.length === CONNECT_LINE_TOKENS && parts[0]?.toUpperCase() === "CONNECT" ? (parts[1] ?? "") : undefined;
   const target = authority === undefined ? undefined : parseConnectTarget(authority);
   if (target === undefined) {
-    socket.write("HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\n\r\n");
-    socket.destroy();
+    refuse(socket, REFUSAL.badRequest);
+    return;
+  }
+  if (!ledger.establish(socket, capability)) {
+    refuse(socket, REFUSAL.serviceUnavailable);
     return;
   }
   socket.write(CONNECT_ESTABLISHED);
@@ -404,6 +596,11 @@ async function blindTunnel(socket: net.Socket, target: ConnectTarget, effects: C
   } catch {
     // Nothing to tunnel to: the only honest response is to drop the connection the client asked to open.
     socket.destroy();
+    return;
+  }
+  if (socket.destroyed) {
+    // The client went away (or its launch was revoked) while the target was being dialled; the close handlers below were not yet attached to see it, so the fresh upstream would otherwise outlive it.
+    upstream.destroy();
     return;
   }
   socket.pipe(upstream);

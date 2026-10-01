@@ -328,7 +328,7 @@ describe("runLauncher headroom routing", () => {
     const env = spawnedEnv(spawn);
     // No provider resolved, so this is an OAuth launch: the base URL stays unset (Remote Control requires the real API) and routing happens at the HTTPS_PROXY layer, pointing at the door's CONNECT surface.
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:4200");
+    expect(env.HTTPS_PROXY).toBe("http://claude-use:launch-token-for-tests@127.0.0.1:4200");
     expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/frontdoor/ca/ca.pem");
     expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
     expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-auth: launch-token-for-tests", "x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
@@ -377,7 +377,7 @@ describe("runLauncher headroom routing", () => {
     // No identity resolved under the escape hatch, so no farm resync happens; the launch flags still come from the cascade, the same way provider selection does. With no provider selected this is an OAuth launch, so routing shows up as HTTPS_PROXY rather than a base-URL override.
     expect(headroom.ensures).toBe(1);
     expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://127.0.0.1:4200");
+    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://claude-use:launch-token-for-tests@127.0.0.1:4200");
     expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe("/somewhere/explicit");
   });
 
@@ -530,7 +530,7 @@ describe("runLauncher headroom routing", () => {
     });
 
     expect(headroom.ensures).toBe(1);
-    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://127.0.0.1:4200");
+    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://claude-use:launch-token-for-tests@127.0.0.1:4200");
   });
 });
 
