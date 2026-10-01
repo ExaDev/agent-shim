@@ -6,7 +6,8 @@ describe("library surface", () => {
   it("exposes the three module groups", () => {
     expect(typeof library.resolveDecisions).toBe("function");
     expect(typeof library.resyncFarm).toBe("function");
-    expect(typeof library.startMitmServer).toBe("function");
+    expect(typeof library.startConnectServer).toBe("function");
+    expect(typeof library.runFrontDoorSupervisor).toBe("function");
     expect(typeof library.runSupervisor).toBe("function");
     expect(typeof library.evaluateAmbientCredentialGuard).toBe("function");
   });

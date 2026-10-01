@@ -2,7 +2,7 @@
  * The library surface of claude-use: the pure, port-injected parts other tools can call in-process instead of shelling out to the CLI. Three groups, none of which imports interactive prompting or argument parsing:
  *
  * - identity and configuration-profile resolution and farm sync (`resolveDecisions`, `resyncFarm`, `buildEntryFacts`, ...), pure over facts and ports passed in;
- * - headroom routing: the Remote-Control-preserving MITM CONNECT proxy and its certificate authority, and the supervisor and ensure lifecycle, pure over `SupervisorPorts`;
+ * - routing: the front door's Remote-Control-preserving, capability-authenticated CONNECT surface and its certificate authority, the front-door supervisor and ensure lifecycle, and the headroom supervisor and ensure lifecycle, each pure over its injected ports;
  * - the ambient-credential guard.
  *
  * Everything the CLI alone needs (commander wiring, prompts, `doctor`, `check`) is deliberately not exported here.
@@ -28,27 +28,31 @@ export {
 } from "./launcher/farm";
 
 export {
+  CONNECT_INTERCEPT_HOST,
+  CONNECT_LIMITS,
   createLeafCache,
   ensureCa,
   forwardableHeaders,
   generateCa,
-  HEADROOM_SERVED_PATH_PREFIX,
   isInterceptedHost,
-  MITM_INTERCEPT_HOST,
   mintLeaf,
   parseConnectTarget,
-  realMitmCertStore,
-  realMitmEffects,
-  servedByHeadroom,
-  startMitmServer,
+  realConnectCertStore,
+  realConnectEffects,
+  ROUTED_PATH_PREFIX,
+  servedByPipeline,
+  startConnectServer,
   type CaMaterial,
+  type ConnectCertStore,
+  type ConnectEffects,
+  type ConnectLimits,
+  type ConnectServerConfig,
+  type ConnectServerHandle,
   type ConnectTarget,
   type LeafCert,
-  type MitmCertStore,
-  type MitmEffects,
-  type MitmServerConfig,
-  type MitmServerHandle,
-} from "./headroom/mitm";
+} from "./frontdoor/connect";
+export { ensureFrontDoor, FrontDoorStartError, type EnsureFrontDoorPorts } from "./frontdoor/ensure";
+export { runFrontDoorSupervisor, type FrontDoorSupervisorPorts, type RunFrontDoorSupervisorOptions } from "./frontdoor/supervisor";
 export { ensureHeadroom, HeadroomStartError, type EnsureHeadroomPorts } from "./headroom/ensure";
 export { resolveSupervisorConfig, runSupervisor, type HeadroomSupervisorConfig, type RunSupervisorOptions, type SupervisorPorts } from "./headroom/supervisor";
 
