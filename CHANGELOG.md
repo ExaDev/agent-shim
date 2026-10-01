@@ -1,3 +1,9 @@
+## [4.4.0](https://github.com/ExaDev/claude-use/compare/v4.3.0...v4.4.0) (2026-10-01)
+
+### Features
+
+* **credential:** cache resolved credentials with a ttl and a chosen store ([2742e2e](https://github.com/ExaDev/claude-use/commit/2742e2e76048d9599ca48c230fa18e20c5369a90)), references [#46](https://github.com/ExaDev/claude-use/issues/46)
+
 ## [4.3.0](https://github.com/ExaDev/claude-use/compare/v4.2.1...v4.3.0) (2026-10-01)
 
 ### Features
