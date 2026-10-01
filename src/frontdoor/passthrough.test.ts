@@ -72,6 +72,7 @@ async function startDoor(target: { readonly baseUrl: string; readonly stripPrefi
         resolveRoute: async () => await Promise.resolve({ ok: true, route }),
         responseObservers: [],
         admit: admitLaunchToken("launch-token-for-tests"),
+        now: () => 0,
         log: () => undefined,
       });
     },

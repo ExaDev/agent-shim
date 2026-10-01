@@ -166,6 +166,8 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
     headroomPort: options.headroomPort,
     hopSecret: HOP_SECRET,
     custody: createCredentialCustody(() => randomUUID()),
+    responseObservers: [],
+    now: () => 0,
     log,
   });
   const direct = createFrontDoorServer(async (request) => {
