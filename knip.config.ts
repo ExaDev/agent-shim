@@ -1,7 +1,7 @@
 import type { KnipConfig } from "knip";
 
 const config: KnipConfig = {
-  entry: ["src/cli.ts"],
+  entry: ["src/cli.ts", "src/index.ts"],
   project: ["src/**/*.ts"],
   ignoreDependencies: [
     // Referenced by preset/plugin name in release.config.ts, not by import -- knip can't trace this.

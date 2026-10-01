@@ -16,6 +16,8 @@ export default defineConfig([
     rules: {
       // exadev's own consistent-type-imports leaves fixStyle at the rule's default (separate-type-imports); this repo prefers the type keyword inline on the same import statement instead.
       "@typescript-eslint/consistent-type-imports": ["error", { fixStyle: "inline-type-imports" }],
+      // This package publishes a library surface, so src/index.ts is its one legitimate barrel: the package entry point. 'single' still bans every other index file and every re-export outside it.
+      "exadev/barrel-policy": ["error", { mode: "single" }],
     },
   },
 ]);
