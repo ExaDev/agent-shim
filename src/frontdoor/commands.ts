@@ -100,8 +100,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         log,
         mintLeaf(authority, LOOPBACK_LEAF_NAMES, new Date()),
       );
-      server.on("error", onListenerError("provider"));
-      const handle = await listenFrontDoor(server, preferredPort, () => undefined, authority.certPem);
+      const handle = await listenFrontDoor(server, { ...(preferredPort === undefined ? {} : { preferredPort }), ca: authority.certPem, onError: onListenerError("provider") });
       return { port: handle.port, close: handle.close };
     },
     startConnectListener: async (preferredPort) => {
@@ -141,9 +140,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       const server = createFrontDoorServer(async (request) => {
         await serveRouted(request, pipelines.direct);
       }, log);
-      server.on("error", onListenerError("direct"));
-      const handle = await listenFrontDoor(server, preferredPort, (port) => {
-        directPort = port;
+      const handle = await listenFrontDoor(server, {
+        ...(preferredPort === undefined ? {} : { preferredPort }),
+        onBound: (port) => {
+          directPort = port;
+        },
+        onError: onListenerError("direct"),
       });
       return { port: handle.port, close: handle.close };
     },

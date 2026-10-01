@@ -84,15 +84,25 @@ export async function frontDoorHealthy(port: number, ca?: string): Promise<boole
   });
 }
 
+/** How a listener is bound. */
+interface ListenOptions {
+  /** The sticky port to try first; any free port is used when it is taken or absent. */
+  readonly preferredPort?: number;
+  /** Receives the actual port the moment the bind succeeds, before the health probe. */
+  readonly onBound?: (port: number) => void;
+  /** The CA a TLS listener's leaf chains to, so its own start-up probe verifies the handshake a child will make; omitted for a plain-HTTP listener. */
+  readonly ca?: string;
+  /**
+   * Called for any error the listener emits once it is bound and serving. Attached only after the bind has settled: a server emits the sticky port's EADDRINUSE as an ordinary `error` event, and a handler attached before the bind would treat the fallback the bind is about to make as fatal.
+   */
+  readonly onError?: (error: Error) => void;
+}
+
 /**
- * Binds the listener on `preferredPort` when it is free and any free port otherwise (bind, do not probe: check-then-bind races), probing its own health endpoint before resolving. `onBound` receives the actual port. `ca` is the CA a TLS listener's leaf chains to, so its own start-up probe verifies the handshake a child will make; omitted for a plain-HTTP listener.
+ * Binds the listener on `preferredPort` when it is free and any free port otherwise (bind, do not probe: check-then-bind races), probing its own health endpoint before resolving.
  */
-export async function listenFrontDoor(
-  server: FrontDoorServer,
-  preferredPort: number | undefined,
-  onBound: (port: number) => void,
-  ca?: string,
-): Promise<{ readonly port: number; readonly close: () => Promise<void> }> {
+export async function listenFrontDoor(server: FrontDoorServer, options: Readonly<ListenOptions> = {}): Promise<{ readonly port: number; readonly close: () => Promise<void> }> {
+  const { preferredPort, ca } = options;
   const tryListen = async (port: number): Promise<number> =>
     await new Promise<number>((resolve, reject) => {
       const onError = (error: Error): void => {
@@ -123,7 +133,10 @@ export async function listenFrontDoor(
   } else {
     bound = await tryListen(0);
   }
-  onBound(bound);
+  options.onBound?.(bound);
+  if (options.onError !== undefined) {
+    server.on("error", options.onError);
+  }
   const deadline = Date.now() + HEALTH_START_BUDGET_MS;
   for (;;) {
     if (await frontDoorHealthy(bound, ca)) {

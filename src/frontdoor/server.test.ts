@@ -1,4 +1,5 @@
 import https from "node:https";
+import * as net from "node:net";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { CodexRoutePorts } from "../codex/route";
@@ -56,7 +57,7 @@ async function startDoor(resolveRoute: PipelineDeps["resolveRoute"], preferredPo
       logs.push(line);
     },
   );
-  const handle = await listenFrontDoor(server, preferredPort, () => undefined);
+  const handle = await listenFrontDoor(server, preferredPort === undefined ? {} : { preferredPort });
   return { url: `http://127.0.0.1:${String(handle.port)}`, port: handle.port, close: handle.close };
 }
 
@@ -295,6 +296,37 @@ describe("createFrontDoorServer", () => {
     }
   });
 
+  it("moves off a sticky port something else holds without reporting that bind failure as a fatal listener error", async () => {
+    const squatter = net.createServer();
+    await new Promise<void>((resolve) => {
+      squatter.listen(0, "127.0.0.1", resolve);
+    });
+    const address = squatter.address();
+    const taken = typeof address === "object" && address !== null ? address.port : 0;
+    const fatal: Error[] = [];
+    const server = createFrontDoorServer(async () => {
+      await Promise.resolve();
+    }, () => undefined);
+    try {
+      const handle = await listenFrontDoor(server, {
+        preferredPort: taken,
+        onError: (error) => {
+          fatal.push(error);
+        },
+      });
+      expect(handle.port).not.toBe(taken);
+      expect(await frontDoorHealthy(handle.port)).toBe(true);
+      expect(fatal).toEqual([]);
+      await handle.close();
+    } finally {
+      await new Promise<void>((resolve) => {
+        squatter.close(() => {
+          resolve(undefined);
+        });
+      });
+    }
+  });
+
   it("restores service on the same port after the door dies, which is what a frozen base URL needs", async () => {
     const door = await startProviderDoor({ [`${PROVIDERS_DIR}/codex.json`]: codexProvider });
     const port = door.port;
@@ -350,7 +382,7 @@ describe("the TLS provider listener", () => {
       () => undefined,
       leaf,
     );
-    const handle = await listenFrontDoor(server, undefined, () => undefined, ca.certPem);
+    const handle = await listenFrontDoor(server, { ca: ca.certPem });
     return { port: handle.port, close: handle.close };
   }
 

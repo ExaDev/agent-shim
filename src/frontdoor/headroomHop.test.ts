@@ -171,7 +171,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
   const direct = createFrontDoorServer(async (request) => {
     await serveRouted(request, pipelines.direct);
   }, log);
-  const directHandle = await listenFrontDoor(direct, undefined, () => undefined);
+  const directHandle = await listenFrontDoor(direct);
   directPort = directHandle.port;
   const main = createFrontDoorServer(
     async (request) => {
@@ -180,7 +180,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
     log,
     leaf,
   );
-  const mainHandle = await listenFrontDoor(main, undefined, () => undefined, ca.certPem);
+  const mainHandle = await listenFrontDoor(main, { ca: ca.certPem });
   return {
     url: `https://127.0.0.1:${String(mainHandle.port)}`,
     close: async () => {
