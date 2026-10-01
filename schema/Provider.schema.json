@@ -162,6 +162,23 @@
                 "bearer",
                 "apiKey"
               ]
+            },
+            "cache": {
+              "type": "object",
+              "properties": {
+                "ttl": {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*[smhd]$"
+                },
+                "store": {
+                  "type": "string",
+                  "enum": [
+                    "keychain",
+                    "file"
+                  ]
+                }
+              },
+              "additionalProperties": false
             }
           },
           "required": [
@@ -343,6 +360,23 @@
                 "bearer",
                 "apiKey"
               ]
+            },
+            "cache": {
+              "type": "object",
+              "properties": {
+                "ttl": {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*[smhd]$"
+                },
+                "store": {
+                  "type": "string",
+                  "enum": [
+                    "keychain",
+                    "file"
+                  ]
+                }
+              },
+              "additionalProperties": false
             }
           },
           "required": [

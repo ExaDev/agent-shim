@@ -9,6 +9,7 @@ import { resolveOwnInstallDirs } from "./claudeShim";
 import { realFrontDoorPort } from "./frontdoor/commands";
 import { profileExists } from "./configProfiles";
 import { runIdentityWizard } from "./identityManager";
+import { realCredentialCacheEnv } from "./realCredentialCache";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
 import { runLauncher, type FarmRuntime } from "./launcher";
 import { parseLauncherArgv } from "./launcher/argv";
@@ -152,7 +153,7 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
     farm: farm.runtime,
     headroom: realHeadroomPort(paths),
     frontdoor: realFrontDoorPort(paths),
-    credentials: realCredentialPort,
+    credentials: { ...realCredentialPort, cache: realCredentialCacheEnv(paths) },
     ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
     ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
     ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),

@@ -11,6 +11,7 @@ import {
   resolveCredential,
   summariseCredential,
 } from "./credential";
+import type { CachedCredential, CredentialCachePort } from "./credentialCache";
 import { fakeCredentials } from "./test-helpers";
 
 const resolve = (credential: Credential, env: Readonly<Record<string, string | undefined>>, port = fakeCredentials()) =>
@@ -163,5 +164,83 @@ describe("credentialVariables", () => {
     expect({ ...ambient, ...credentialVariables("oauthToken", "tok") }).toEqual({ KEEP: "1", CLAUDE_CODE_OAUTH_TOKEN: "tok" });
     expect({ ...ambient, ...credentialVariables("apiKey", "key") }).toEqual({ KEEP: "1", ANTHROPIC_API_KEY: "key" });
     expect({ ...ambient, ...credentialVariables("bearer", "bear") }).toEqual({ KEEP: "1", ANTHROPIC_AUTH_TOKEN: "bear" });
+  });
+});
+
+/** An in-memory cache port that records every write and removal. */
+function memoryCache(initial: Record<string, CachedCredential> = {}): CredentialCachePort & { readonly entries: Map<string, CachedCredential> } {
+  const entries = new Map(Object.entries(initial));
+  return {
+    entries,
+    read: (_store, owner) => entries.get(owner),
+    write: (_store, owner, entry) => {
+      entries.set(owner, entry);
+    },
+    remove: (_store, owner) => {
+      entries.delete(owner);
+    },
+  };
+}
+
+describe("resolveCredential with a cache", () => {
+  const NOW = 1_000_000;
+  const HOUR = 3_600_000;
+  const block: Credential = { sources: [{ op: "op://vault/z/credential" }], cache: { ttl: "1h", store: "file" } };
+  const portWith = (cache: CredentialCachePort, command = { stdout: "fetched\n" }) => ({
+    ...fakeCredentials({ command }),
+    cache: { port: cache, platform: "linux" as const, now: () => NOW },
+  });
+
+  it("returns a fresh cached token without running any source", () => {
+    const cache = memoryCache({ "provider z": { token: "cached", fetchedAt: NOW - HOUR + 1, source: { op: "op://vault/z/credential" } } });
+    const port = portWith(cache);
+    const result = resolveCredential({ credential: block, env: {}, port, subject: "provider z" });
+    expect(result).toMatchObject({ ok: true, credential: { token: "cached", cachedAt: NOW - HOUR + 1 } });
+    expect(port.runCommand).not.toHaveBeenCalled();
+  });
+
+  it("fetches and stores when nothing is cached or the entry has expired", () => {
+    const stale: Record<string, CachedCredential> = { "provider z": { token: "old", fetchedAt: NOW - HOUR, source: { env: "X" } } };
+    for (const initial of [{}, stale]) {
+      const cache = memoryCache(initial);
+      const result = resolveCredential({ credential: block, env: {}, port: portWith(cache), subject: "provider z" });
+      expect(result).toMatchObject({ ok: true, credential: { token: "fetched" } });
+      expect(cache.entries.get("provider z")).toEqual({ token: "fetched", fetchedAt: NOW, source: { op: "op://vault/z/credential" } });
+    }
+  });
+
+  it("skips a fresh entry and replaces it when asked to refresh", () => {
+    const cache = memoryCache({ "provider z": { token: "cached", fetchedAt: NOW, source: { env: "X" } } });
+    const result = resolveCredential({ credential: block, env: {}, port: portWith(cache), subject: "provider z", refresh: true });
+    expect(result).toMatchObject({ ok: true, credential: { token: "fetched" } });
+    expect(cache.entries.get("provider z")?.token).toBe("fetched");
+  });
+
+  it("never touches the cache for a block that does not ask for one", () => {
+    const cache = memoryCache({ "provider z": { token: "cached", fetchedAt: NOW, source: { env: "X" } } });
+    const result = resolveCredential({ credential: { sources: block.sources }, env: {}, port: portWith(cache), subject: "provider z" });
+    expect(result).toMatchObject({ ok: true, credential: { token: "fetched" } });
+    expect(cache.entries.get("provider z")?.token).toBe("cached");
+  });
+
+  it("caches nothing when every source fails, and names the warm command in the refusal", () => {
+    const cache = memoryCache();
+    const result = resolveCredential({ credential: block, env: {}, port: portWith(cache, { stdout: "" }), subject: "identity work" });
+    expect(result.ok).toBe(false);
+    expect(messageOf(result)).toContain("claude-use credential warm work");
+    expect(cache.entries.size).toBe(0);
+  });
+
+  it("names the provider flag in the warm command for a provider", () => {
+    const result = resolveCredential({ credential: block, env: {}, port: portWith(memoryCache(), { stdout: "" }), subject: "provider z" });
+    expect(messageOf(result)).toContain("claude-use credential warm --provider z");
+  });
+});
+
+describe("describeCredential with a cache", () => {
+  it("states the ttl and store, and no expiry when there is no ttl", () => {
+    expect(describeCredential({ sources: [{ env: "X" }], cache: { ttl: "12h", store: "file" } })).toBe("bearer from env X, cached for 12h in the file store");
+    expect(describeCredential({ sources: [{ env: "X" }], cache: {} })).toBe("bearer from env X, cached with no expiry");
+    expect(describeCredential({ sources: [{ env: "X" }] })).toBe("bearer from env X");
   });
 });
