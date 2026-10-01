@@ -102,7 +102,7 @@ describe("certificate authority", () => {
     expect(commonNameOf(caCert.subject.attributes)).toBe("claude-use front door CA");
     expect(commonNameOf(forge.pki.certificateFromPem(again.certPem).subject.attributes)).toBe("claude-use front door CA");
 
-    const leaf = mintLeaf(ca, CONNECT_INTERCEPT_HOST, now);
+    const leaf = mintLeaf(ca, [CONNECT_INTERCEPT_HOST], now);
     const cert = forge.pki.certificateFromPem(leaf.certPem);
     expect(commonNameOf(cert.issuer.attributes)).toBe("claude-use front door CA");
     expect(JSON.stringify(cert.getExtension("subjectAltName"))).toContain(CONNECT_INTERCEPT_HOST);
@@ -247,7 +247,7 @@ function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial) {
     res.end(total.slice(1));
   }
 
-  const upstreamLeaf = mintLeaf(upstreamCa, CONNECT_INTERCEPT_HOST, new Date());
+  const upstreamLeaf = mintLeaf(upstreamCa, [CONNECT_INTERCEPT_HOST], new Date());
   const fakeUpstream = https.createServer({ key: upstreamLeaf.keyPem, cert: upstreamLeaf.certPem }, (req, res) => {
     upstreamRequests.push({ method: req.method ?? "", url: req.url ?? "", headers: { ...req.headers } });
     const body = "upstream-says-no";

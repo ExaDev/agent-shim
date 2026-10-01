@@ -407,16 +407,26 @@ export function fakeFs(ownFiles: Record<string, unknown>): FsPort {
   };
 }
 
-/** A fake `FrontDoorPort` that counts its bring-ups and releases, so a test can assert both that the door came up and that the launcher released its session. */
-export function fakeFrontDoorPort(port = 4100, connectPort = 4200): FrontDoorPort & { readonly ensures: () => number; readonly releases: () => number } {
+/** The trust bundle path every fake front door hands its launches. */
+export const FAKE_TRUST_BUNDLE = "/home/testuser/.claude-use/frontdoor/ca/ca.pem";
+
+/** A fake `FrontDoorPort` that counts its bring-ups and releases and records the inherited CA bundle each bring-up was given, so a test can assert both that the door came up and that the launcher released its session. */
+export function fakeFrontDoorPort(
+  port = 4100,
+  connectPort = 4200,
+  trust: { readonly path: string; readonly warning?: string } = { path: FAKE_TRUST_BUNDLE },
+): FrontDoorPort & { readonly ensures: () => number; readonly releases: () => number; readonly inherited: () => readonly (string | undefined)[] } {
   let ensures = 0;
   let releases = 0;
+  const inherited: (string | undefined)[] = [];
   return {
     ensures: () => ensures,
     releases: () => releases,
-    ensure: () => {
+    inherited: () => inherited,
+    ensure: (inheritedExtraCaCerts) => {
       ensures += 1;
-      return { port, connectPort, caCertPath: "/home/testuser/.claude-use/frontdoor/ca/ca.pem", sessionToken: "launch-token-for-tests" };
+      inherited.push(inheritedExtraCaCerts);
+      return { port, connectPort, trustBundlePath: trust.path, ...(trust.warning === undefined ? {} : { trustWarning: trust.warning }), sessionToken: "launch-token-for-tests" };
     },
     release: () => {
       releases += 1;

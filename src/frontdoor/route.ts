@@ -115,9 +115,9 @@ export function identifyRequest(headers: Readonly<IncomingHttpHeaders>): Identif
 /** The path prefix every provider-scoped request sits under: a routed session's base URL is the front door's address plus `/providers/<name>`, so one listener serves any number of providers, each with its own credential and translation settings. */
 export const PROVIDER_PATH_PREFIX = "/providers/";
 
-/** The base URL a provider's sessions are pointed at. */
+/** The base URL a provider's sessions are pointed at: HTTPS, because the child sends its provider credential on every request and only a listener presenting a leaf signed by claude-use's CA may receive it. */
 export function providerBaseUrl(port: number, provider: string): string {
-  return `http://127.0.0.1:${String(port)}${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`;
+  return `https://127.0.0.1:${String(port)}${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`;
 }
 
 /** The bare origin of a loopback listener, which is what a headroom hop is told to forward to: headroom appends the client's own request path to it. */

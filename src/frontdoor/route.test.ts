@@ -40,9 +40,9 @@ describe("identifyRequest", () => {
 const PORT = 4100;
 
 describe("provider paths", () => {
-  it("builds a provider's base URL from the front door's port", () => {
-    expect(providerBaseUrl(PORT, "codex")).toBe(`http://127.0.0.1:${String(PORT)}/providers/codex`);
-    expect(providerBaseUrl(PORT, "work codex")).toBe(`http://127.0.0.1:${String(PORT)}/providers/work%20codex`);
+  it("builds a provider's HTTPS base URL from the front door's port", () => {
+    expect(providerBaseUrl(PORT, "codex")).toBe(`https://127.0.0.1:${String(PORT)}/providers/codex`);
+    expect(providerBaseUrl(PORT, "work codex")).toBe(`https://127.0.0.1:${String(PORT)}/providers/work%20codex`);
   });
 
   it("splits a provider-scoped path into its name and the rest", () => {

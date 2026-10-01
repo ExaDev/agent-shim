@@ -404,7 +404,7 @@ describe("runLauncher headroom routing", () => {
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/z");
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/z");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
     expect(env.HTTPS_PROXY).toBeUndefined();
     expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-auth: launch-token-for-tests", "x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
@@ -433,7 +433,7 @@ describe("runLauncher headroom routing", () => {
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/anthropic-api");
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/anthropic-api");
     expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();

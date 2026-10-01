@@ -15,20 +15,25 @@ import { createDoorPipelines } from "./assembly";
 import {
   CONNECT_INTERCEPT_HOST,
   HTTPS_PORT,
+  LOOPBACK_LEAF_NAMES,
   createLeafCache,
   ensureCa,
   generateCa,
+  mintLeaf,
   realConnectCertStore,
   realConnectEffects,
   startConnectServer,
+  type CaMaterial,
 } from "./connect";
 import { createCredentialCustody } from "./custody";
 import { ensureFrontDoor } from "./ensure";
 import { serveRouted } from "./pipeline";
+import { probeFrontDoorSync } from "./probe";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
+import { resolveTrustBundle, type TrustBundleFs } from "./trust";
 import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, removeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
-import { runFrontDoorSupervisor, type FrontDoorListenerHandle, type FrontDoorSupervisorPorts } from "./supervisor";
+import { runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
 
 function appendLog(paths: LayoutPaths, line: string): void {
   fs.mkdirSync(paths.logsDir, { recursive: true });
@@ -40,14 +45,8 @@ function liveHeadroomPort(paths: LayoutPaths): number | undefined {
   return readHeadroomState(realFarmFs, paths.headroomStateFile)?.port;
 }
 
-/** Binds a front-door server on the preferred port (falling back to any free one) and hands back its close handle. */
-async function bind(server: ReturnType<typeof createFrontDoorServer>, preferredPort: number | undefined): Promise<FrontDoorListenerHandle> {
-  const handle = await listenFrontDoor(server, preferredPort, () => undefined);
-  return { port: handle.port, close: handle.close };
-}
-
 /**
- * The real supervisor ports. The three listener starts are where the whole routing assembly is built: the codex translation's real ports, the provider route resolver over them, both pipelines (see `createDoorPipelines`), the three listeners that feed them, and the CA the CONNECT surface terminates TLS with.
+ * The real supervisor ports. The three listener starts are where the whole routing assembly is built: the codex translation's real ports, the provider route resolver over them, both pipelines (see `createDoorPipelines`), the three listeners that feed them, and the CA that signs both TLS-serving listeners' leaves.
  */
 function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPorts {
   const log = (line: string): void => {
@@ -69,6 +68,13 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     log,
   });
 
+  // The CA is generated once on this machine's first front-door start and reused after: regenerating it would strand every child still pointing NODE_EXTRA_CA_CERTS at the old certificate. Loaded on first use by whichever listener starts first, and shared by both TLS-serving listeners.
+  let ca: CaMaterial | undefined;
+  const loadCa = (): CaMaterial => {
+    ca ??= ensureCa(realConnectCertStore(paths), () => generateCa(new Date()));
+    return ca;
+  };
+
   const onListenerError = (name: string) => (error: Error): void => {
     appendLog(paths, `frontdoor ${String(process.pid)}: ${name} listener failed: ${error.message}; exiting`);
     process.exit(1);
@@ -85,22 +91,26 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       });
     },
     isRunning: realIsProcessRunning,
-    startHttpListener: async (preferredPort) => {
-      const server = createFrontDoorServer(async (request) => {
-        await serveRouted(request, pipelines.clientFacing);
-      }, log);
-      server.on("error", onListenerError("front door"));
-      return await bind(server, preferredPort);
+    startProviderListener: async (preferredPort) => {
+      const authority = loadCa();
+      const server = createFrontDoorServer(
+        async (request) => {
+          await serveRouted(request, pipelines.clientFacing);
+        },
+        log,
+        mintLeaf(authority, LOOPBACK_LEAF_NAMES, new Date()),
+      );
+      server.on("error", onListenerError("provider"));
+      const handle = await listenFrontDoor(server, preferredPort, () => undefined, authority.certPem);
+      return { port: handle.port, close: handle.close };
     },
     startConnectListener: async (preferredPort) => {
-      // The CA is generated once on this machine's first front-door start and reused after: regenerating it would strand every child still pointing NODE_EXTRA_CA_CERTS at the old certificate.
-      const ca = ensureCa(realConnectCertStore(paths), () => generateCa(new Date()));
-      const leafFor = createLeafCache(ca, () => new Date());
+      const leafFor = createLeafCache(loadCa(), () => new Date());
       const server = await startConnectServer(
         {
           interceptHost: CONNECT_INTERCEPT_HOST,
           serveRouted: (request, response) => {
-            // The connect surface hands the pipeline the same request shape the plain listener builds: identified, middleware-run, routed, with the abort wired to the client going away.
+            // The connect surface hands the pipeline the same request shape the provider listener builds: identified, admitted, middleware-run, routed, with the abort wired to the client going away.
             const abort = new AbortController();
             response.on("close", () => {
               if (!response.writableFinished) {
@@ -143,10 +153,22 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   };
 }
 
-/** The real `FrontDoorPort` for one launch: `ensure` runs the lock-and-poll coordination and registers this launcher; `release` removes its registration. */
+/** The real file effects for `resolveTrustBundle`. The bundle is public certificate material, so the atomic write's owner-only mode costs nothing: only this user's children read it. */
+const realTrustBundleFs: TrustBundleFs = {
+  readFileUtf8: (file) => fs.readFileSync(file, "utf8"),
+  exists: (file) => fs.existsSync(file),
+  mkdirp: (dir) => {
+    fs.mkdirSync(dir, { recursive: true });
+  },
+  writeFileAtomic: (file, contents) => {
+    realFarmFs.writeFilePrivate(file, contents);
+  },
+};
+
+/** The real `FrontDoorPort` for one launch: `ensure` runs the lock-and-poll coordination, authenticates the listener and registers this launcher; `release` removes its registration. */
 export function realFrontDoorPort(paths: LayoutPaths): FrontDoorPort {
   return {
-    ensure: () => {
+    ensure: (inheritedExtraCaCerts) => {
       const up = ensureFrontDoor({
         paths,
         launcherPid: process.pid,
@@ -156,9 +178,18 @@ export function realFrontDoorPort(paths: LayoutPaths): FrontDoorPort {
           now: () => Date.now(),
           sleep: realSleepSync,
           spawnSupervisor: (layout) => spawnDetachedSupervisor(layout, "__frontdoor-supervisor", layout.frontdoorLogPath),
+          // Read fresh for each probe: a replacement supervisor may have regenerated an unparseable CA, and the probe must trust exactly what the serving door's leaf chains to.
+          verifyListener: (port) => probeFrontDoorSync(port, fs.readFileSync(paths.frontdoorCaCertFile, "utf8")),
         },
       });
-      return { port: up.port, connectPort: up.connectPort, caCertPath: paths.frontdoorCaCertFile, sessionToken: up.token };
+      const trust = resolveTrustBundle({ caCertFile: paths.frontdoorCaCertFile, bundlesDir: paths.frontdoorCaBundlesDir, inherited: inheritedExtraCaCerts, fs: realTrustBundleFs });
+      return {
+        port: up.port,
+        connectPort: up.connectPort,
+        trustBundlePath: trust.path,
+        ...(trust.warning === undefined ? {} : { trustWarning: trust.warning }),
+        sessionToken: up.token,
+      };
     },
     release: () => {
       removeFrontDoorSession(realFarmFs, paths.frontdoorSessionsDir, process.pid);
@@ -206,7 +237,7 @@ export function formatFrontDoorStatus(status: FrontDoorStatus, caCertPath: strin
   if (status.state.port === undefined) {
     lines.push(`front door: not listening${status.state.lastPort === undefined ? "" : ` (next start on 127.0.0.1:${String(status.state.lastPort)})`}`);
   } else {
-    lines.push(`front door: listening on 127.0.0.1:${String(status.state.port)}, routing /providers/<name> requests`);
+    lines.push(`front door: listening on https://127.0.0.1:${String(status.state.port)}, routing /providers/<name> requests`);
   }
   if (status.state.connectPort === undefined) {
     lines.push(`connect surface: not listening${status.state.lastConnectPort === undefined ? "" : ` (next start on 127.0.0.1:${String(status.state.lastConnectPort)})`}`);

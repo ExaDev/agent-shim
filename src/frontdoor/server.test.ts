@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import https from "node:https";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
@@ -8,6 +9,7 @@ import type { SessionIdentity } from "./route";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute } from "./route";
 import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
+import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial } from "./connect";
 import { createFrontDoorServer, frontDoorHealthy, listenFrontDoor } from "./server";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.claude-use/providers`;
@@ -313,3 +315,101 @@ describe("createFrontDoorServer", () => {
     }
   });
 });
+
+/** Enough time for the pure-JS 2048-bit keypairs the TLS tests generate once. */
+const KEYGEN_TIMEOUT_MS = 120_000;
+
+/** One HTTPS request that trusts exactly `ca` and nothing else: what a routed child does with NODE_EXTRA_CA_CERTS for a loopback address no public CA will certify. Resolves with the status, or rejects with the TLS error. */
+async function requestTrusting(port: number, ca: string, headers: Readonly<Record<string, string>>): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const request = https.request({ host: "127.0.0.1", port, method: "POST", path: "/providers/codex/v1/messages", ca: [ca], agent: false, headers: { "content-type": "application/json", ...headers } }, (response) => {
+      response.resume();
+      resolve(response.statusCode ?? 0);
+    });
+    request.on("error", reject);
+    request.end(MESSAGES_BODY);
+  });
+}
+
+describe("the TLS provider listener", () => {
+  let ca: CaMaterial;
+  let foreignCa: CaMaterial;
+
+  beforeAll(() => {
+    ca = generateCa(new Date());
+    foreignCa = generateCa(new Date());
+  }, KEYGEN_TIMEOUT_MS);
+
+  /** A door serving the given leaf over TLS, admitting the test's launch token. */
+  async function startTlsDoor(leaf: ReturnType<typeof mintLeaf>, onRequest: (authorization: string | undefined) => void): Promise<{ readonly port: number; readonly close: () => Promise<void> }> {
+    const server = createFrontDoorServer(
+      async (request) => {
+        onRequest(request.headers.authorization);
+        await serveRouted(request, { resolveRoute: refuses(HTTP_STATUS.notFound, "nothing here"), responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), log: () => undefined });
+      },
+      () => undefined,
+      leaf,
+    );
+    const handle = await listenFrontDoor(server, undefined, () => undefined, ca.certPem);
+    return { port: handle.port, close: handle.close };
+  }
+
+  it(
+    "completes a handshake with a client that trusts only claude-use's CA, and answers its health probe only over that trust",
+    async () => {
+      const seen: (string | undefined)[] = [];
+      const door = await startTlsDoor(mintLeaf(ca, LOOPBACK_LEAF_NAMES, new Date()), (authorization) => {
+        seen.push(authorization);
+      });
+      try {
+        expect(await requestTrusting(door.port, ca.certPem, { [AUTH_HEADER]: LAUNCH_TOKEN, authorization: "Bearer made-up" })).toBe(HTTP_STATUS.notFound);
+        expect(seen).toEqual(["Bearer made-up"]);
+        expect(await frontDoorHealthy(door.port, ca.certPem)).toBe(true);
+        expect(await frontDoorHealthy(door.port, foreignCa.certPem)).toBe(false);
+      } finally {
+        await door.close();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "leaves a client trusting claude-use's CA unable to talk to a server holding a certificate from any other CA, so its credential is never sent",
+    async () => {
+      const seen: (string | undefined)[] = [];
+      // The hostile server is a complete front door in every respect but its certificate, which chains to a CA whose key it does hold.
+      const impostor = await new Promise<{ readonly port: number; readonly close: () => Promise<void> }>((resolve) => {
+        const leaf = mintLeaf(foreignCa, LOOPBACK_LEAF_NAMES, new Date());
+        const server = createFrontDoorServer(
+          async (request) => {
+            seen.push(request.headers.authorization);
+            await Promise.resolve();
+          },
+          () => undefined,
+          leaf,
+        );
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          resolve({
+            port: typeof address === "object" && address !== null ? address.port : 0,
+            close: async () => {
+              await new Promise<void>((closed) => {
+                server.close(() => {
+                  closed(undefined);
+                });
+              });
+            },
+          });
+        });
+      });
+      try {
+        await expect(requestTrusting(impostor.port, ca.certPem, { [AUTH_HEADER]: LAUNCH_TOKEN, authorization: "Bearer made-up" })).rejects.toThrow(/certificate/i);
+        expect(seen).toEqual([]);
+      } finally {
+        await impostor.close();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+});
+

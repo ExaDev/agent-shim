@@ -13,10 +13,10 @@ export type FrontDoorSession = z.infer<typeof FrontDoorSessionSchema>;
 const FrontDoorStateSchema = z.strictObject({
   /** The supervisor process serving the front door. Alive means both listeners are up in that process. */
   supervisorPid: z.number().int().positive().optional(),
-  /** The loopback port the plain-HTTP front-door listener serves on. Absent until the listener has bound and answered its health probe, so "port is set" is itself the ready signal a launcher polls for. */
+  /** The loopback port the HTTPS provider listener serves on. Absent until the listener has bound and answered its health probe, so "port is set" is itself the ready signal a launcher polls for. */
   port: z.number().int().positive().optional(),
   /**
-   * The sticky port preference for the plain-HTTP listener: kept across crashes, restarts and idle shutdowns so every provider session, whose base URL was frozen at launch, keeps finding the front door at the same address.
+   * The sticky port preference for the provider listener: kept across crashes, restarts and idle shutdowns so every provider session, whose base URL was frozen at launch, keeps finding the front door at the same address.
    */
   lastPort: z.number().int().positive().optional(),
   /**

@@ -1,7 +1,9 @@
 import http from "node:http";
-import type { IncomingMessage } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import https from "node:https";
 
 import { HTTP_STATUS } from "../codex/http";
+import type { LeafCert } from "./connect";
 import type { PipelineRequest } from "./pipeline";
 
 /** How long one health probe waits before giving up: a listener that just bound answers in milliseconds, so the bound only bites when the request path itself is broken. */
@@ -11,13 +13,18 @@ const HEALTH_TIMEOUT_MS = 2_000;
 const HEALTH_START_BUDGET_MS = 5_000;
 const HEALTH_RETRY_MS = 50;
 
+/** A front-door listener: plain HTTP for the direct listener only headroom reaches, HTTPS for the provider listener every provider session's child connects to. */
+export type FrontDoorServer = http.Server | https.Server;
+
 /**
- * The front door's plain-HTTP listener: the transport every routed session whose base URL claude-use controls points at. It turns each Node request into a `PipelineRequest` (the raw request plus an abort signal that fires the moment the client goes away before the response finished) and hands it to the pipeline; the pipeline owns identification, middleware and routing.
+ * A front-door listener: the transport a routed session's requests arrive on. It turns each Node request into a `PipelineRequest` (the raw request plus an abort signal that fires the moment the client goes away before the response finished) and hands it to the pipeline; the pipeline owns identification, admission, middleware and routing.
  *
- * The disconnect is read from the response's `close` event, not the request's: the request emits `close` as soon as its body has been read, long before the response ends. `GET /healthz` is answered here, before the pipeline, because a readiness probe is not a routed session and carries no session headers.
+ * With `tls`, the listener serves HTTPS with that leaf, which is how the provider listener authenticates itself to the child: the leaf is signed by claude-use's CA, whose key only the owning user can read, and the only CA the child trusts for a 127.0.0.1 certificate is that one (no public CA issues certificates for a loopback address), so a process that merely binds the port cannot complete a handshake the child accepts and never receives the request (credentials and capability included). Without `tls` it serves plain HTTP, which only the direct listener does: nothing that reaches it carries a real credential (see the credential custody).
+ *
+ * The disconnect is read from the response's `close` event, not the request's: the request emits `close` as soon as its body has been read, long before the response ends. `GET /healthz` is answered here, before the pipeline, because a readiness probe is not a routed session and carries no session headers or capability.
  */
-export function createFrontDoorServer(pipeline: (request: PipelineRequest) => Promise<void>, log: (line: string) => void): http.Server {
-  return http.createServer((request, response) => {
+export function createFrontDoorServer(pipeline: (request: PipelineRequest) => Promise<void>, log: (line: string) => void, tls?: LeafCert): FrontDoorServer {
+  const handler = (request: IncomingMessage, response: ServerResponse): void => {
     if (request.method === "GET" && request.url === "/healthz") {
       response.writeHead(HTTP_STATUS.ok, { "Content-Type": "text/plain" });
       response.end("ok");
@@ -45,26 +52,46 @@ export function createFrontDoorServer(pipeline: (request: PipelineRequest) => Pr
         response.destroy();
       }
     });
-  });
-}
-
-/** Probes the listener's health endpoint once: the check the supervisor's start and the tests use to know the door is actually serving, not merely bound. */
-export async function frontDoorHealthy(port: number): Promise<boolean> {
-  try {
-    const response = await fetch(`http://127.0.0.1:${String(port)}/healthz`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
-    return response.ok;
-  } catch {
-    return false;
+  };
+  if (tls === undefined) {
+    return http.createServer(handler);
   }
+  const server = https.createServer({ key: tls.keyPem, cert: tls.certPem }, handler);
+  // A failed handshake (a client that does not trust the CA, or speaks no TLS) is that client's problem, not the listener's: drop the connection and keep serving.
+  server.on("tlsClientError", (_error: Error, socket) => {
+    socket.destroy();
+  });
+  return server;
 }
 
 /**
- * Binds the listener on `preferredPort` when it is free and any free port otherwise (bind, do not probe: check-then-bind races), probing its own health endpoint before resolving. `onBound` receives the actual port.
+ * Probes a listener's health endpoint once: the check the supervisor's start and the tests use to know the door is actually serving, not merely bound. With `ca`, the probe speaks HTTPS and accepts only a certificate chaining to that CA for 127.0.0.1, so a healthy answer also proves who is answering; without it, plain HTTP. No capability is ever sent: the health endpoint needs none.
+ */
+export async function frontDoorHealthy(port: number, ca?: string): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const onResponse = (response: IncomingMessage): void => {
+      response.resume();
+      resolve(response.statusCode === HTTP_STATUS.ok);
+    };
+    const options = { host: "127.0.0.1", port, path: "/healthz", agent: false, timeout: HEALTH_TIMEOUT_MS };
+    const request = ca === undefined ? http.get(options, onResponse) : https.get({ ...options, ca: [ca] }, onResponse);
+    request.on("timeout", () => {
+      request.destroy();
+    });
+    request.on("error", () => {
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * Binds the listener on `preferredPort` when it is free and any free port otherwise (bind, do not probe: check-then-bind races), probing its own health endpoint before resolving. `onBound` receives the actual port. `ca` is the CA a TLS listener's leaf chains to, so its own start-up probe verifies the handshake a child will make; omitted for a plain-HTTP listener.
  */
 export async function listenFrontDoor(
-  server: http.Server,
+  server: FrontDoorServer,
   preferredPort: number | undefined,
   onBound: (port: number) => void,
+  ca?: string,
 ): Promise<{ readonly port: number; readonly close: () => Promise<void> }> {
   const tryListen = async (port: number): Promise<number> =>
     await new Promise<number>((resolve, reject) => {
@@ -99,7 +126,7 @@ export async function listenFrontDoor(
   onBound(bound);
   const deadline = Date.now() + HEALTH_START_BUDGET_MS;
   for (;;) {
-    if (await frontDoorHealthy(bound)) {
+    if (await frontDoorHealthy(bound, ca)) {
       return {
         port: bound,
         close: async () => {

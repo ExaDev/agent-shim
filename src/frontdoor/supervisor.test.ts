@@ -56,7 +56,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
       await Promise.resolve();
     },
     isRunning: (pid) => alive.has(pid),
-    startHttpListener: async (preferred) => {
+    startProviderListener: async (preferred) => {
       if (failListener) {
         throw new Error("port chaos");
       }

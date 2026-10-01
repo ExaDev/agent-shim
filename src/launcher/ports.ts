@@ -124,22 +124,24 @@ export interface HeadroomPort {
 }
 
 /**
- * Everything the launcher needs from the front-door daemon, injected like `HeadroomPort`: `ensure` brings the door up (spawning its detached supervisor when nothing healthy is serving), registers this launch in its session registry and returns both listeners' loopback ports; `release` removes that registration when the spawned `claude` exits.
+ * Everything the launcher needs from the front-door daemon, injected like `HeadroomPort`: `ensure` brings the door up (spawning its detached supervisor when nothing authenticated is serving), registers this launch in its session registry and returns both listeners' loopback ports plus the CA bundle the child must trust; `release` removes that registration when the spawned `claude` exits.
  */
 export interface FrontDoorPort {
-  /** `ensure` reports the plain-HTTP listener's port (what a provider session's base URL points at) and the CONNECT surface's port (what an OAuth session points HTTPS_PROXY at), plus the CA certificate an OAuth session's child must trust. */
-  readonly ensure: () => FrontDoorUp;
+  /** `inheritedExtraCaCerts` is the parent environment's own `NODE_EXTRA_CA_CERTS`, which the returned trust bundle keeps (see `resolveTrustBundle`). */
+  readonly ensure: (inheritedExtraCaCerts: string | undefined) => FrontDoorUp;
   readonly release: () => void;
 }
 
 /** The running front door one launch routed through, as `FrontDoorPort.ensure` reports it. */
 export interface FrontDoorUp {
-  /** The loopback port the plain-HTTP front-door listener serves on: the base URL every provider session points at. */
+  /** The loopback port the provider listener serves HTTPS on: the base URL every provider session points at. */
   readonly port: number;
   /** The loopback port the CONNECT surface listens on: what an OAuth launch points HTTPS_PROXY at. */
   readonly connectPort: number;
-  /** Path to the CONNECT surface's CA certificate, what an OAuth launch points NODE_EXTRA_CA_CERTS at so the child trusts the terminated TLS. */
-  readonly caCertPath: string;
+  /** The CA bundle every routed child points NODE_EXTRA_CA_CERTS at: claude-use's CA (which signs both the provider listener's leaf and the CONNECT surface's), plus whatever the parent environment already trusted that way. */
+  readonly trustBundlePath: string;
+  /** Why the trust bundle dropped something the parent environment named, when it did; the launcher logs it. */
+  readonly trustWarning?: string;
   /** This launch's capability token, injected alongside the session headers and required by the door before it routes anything. */
   readonly sessionToken: string;
 }
