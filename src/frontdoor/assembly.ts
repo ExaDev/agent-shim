@@ -1,5 +1,5 @@
 import { restoreCredentials, type CredentialCustody } from "./custody";
-import type { PipelineDeps, RouteResolution } from "./pipeline";
+import type { PipelineDeps, ResponseObserver, RouteResolution } from "./pipeline";
 import { AUTH_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, parseProviderPath, type RoutedRequest } from "./route";
 
 /** Everything the two listeners' pipelines are assembled from. */
@@ -13,6 +13,9 @@ export interface DoorPipelineDeps {
   readonly hopSecret: string;
   /** Where the hop parks a provider session's real credentials while its request crosses headroom. */
   readonly custody: CredentialCustody;
+  /** The response middleware the client-facing pipeline runs at every response head: usage tracking registers here. */
+  readonly responseObservers: readonly ResponseObserver[];
+  readonly now: () => number;
   readonly log: (line: string) => void;
 }
 
@@ -56,16 +59,18 @@ export function createDoorPipelines(deps: DoorPipelineDeps): { readonly clientFa
   return {
     clientFacing: {
       resolveRoute: deps.resolveRoute,
-      // The response middleware hook point: the usage-tracking work registers its observers here. The direct listener registers none, because its responses are consumed by headroom, not by the client; the entry the client sees is where observation belongs.
-      responseObservers: [],
+      // The response middleware hook point, where usage tracking registers. The direct listener registers none, because its responses are consumed by headroom, not by the client: the entry the client sees is where observation belongs, and observing both would record every hopped request twice.
+      responseObservers: deps.responseObservers,
       admit: admitLaunch(deps.isLiveToken),
       headroom: { headroomPort: deps.headroomPort, hopSecret: deps.hopSecret, custody: deps.custody, log: deps.log },
+      now: deps.now,
       log: deps.log,
     },
     direct: {
       resolveRoute: deps.resolveRoute,
       responseObservers: [],
       admit: admitHop(deps.hopSecret, deps.custody),
+      now: deps.now,
       log: deps.log,
     },
   };

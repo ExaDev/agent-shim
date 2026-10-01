@@ -70,6 +70,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     // The per-generation capability the direct listener demands: held only in this process's memory, so a loopback process that discovers the direct port still cannot use it.
     hopSecret: randomUUID(),
     custody: createCredentialCustody(() => randomUUID()),
+    responseObservers: [],
+    now: () => Date.now(),
     log,
   });
 
