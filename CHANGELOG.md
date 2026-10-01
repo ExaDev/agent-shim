@@ -1,3 +1,9 @@
+## [4.3.0](https://github.com/ExaDev/claude-use/compare/v4.2.1...v4.3.0) (2026-10-01)
+
+### Features
+
+* **credential:** store a setup-token token for an identity ([5b8b403](https://github.com/ExaDev/claude-use/commit/5b8b403f1ec6c365a36f75aca2bb03508acba832)), references [#45](https://github.com/ExaDev/claude-use/issues/45)
+
 ## [4.2.1](https://github.com/ExaDev/claude-use/compare/v4.2.0...v4.2.1) (2026-10-01)
 
 ### Bug Fixes
