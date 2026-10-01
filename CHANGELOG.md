@@ -1,3 +1,9 @@
+## [5.0.1](https://github.com/ExaDev/claude-use/compare/v5.0.0...v5.0.1) (2026-10-01)
+
+### Bug Fixes
+
+* **launcher:** exempt loopback from an inherited proxy for provider launches ([753c715](https://github.com/ExaDev/claude-use/commit/753c715ab0b92c6fdf1a2945c7574b0df760ed29)), closes [#64](https://github.com/ExaDev/claude-use/issues/64)
+
 ## [5.0.0](https://github.com/ExaDev/claude-use/compare/v4.5.0...v5.0.0) (2026-10-01)
 
 ### ⚠ BREAKING CHANGES
