@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CommanderError } from "commander";
 
-import { CliError, EXIT_FAILURE, EXIT_USAGE, MissingInputError, PromptCancelledError, reportFatalError, UsageError } from "./cliError";
+import { CliError, EXIT_FAILURE, EXIT_USAGE, MissingInputError, PromptCancelledError, UsageError } from "./cliError";
+import { reportFatalError } from "./cliReport";
 import { IdentityAlreadyExistsError, IdentityNotFoundError, InvalidIdentityNameError } from "./identityManager";
 import { InvalidCategoryNameError, ProfileAlreadyExistsError, ProfileNotFoundError } from "./configProfiles";
 import { DirectoryRuleAlreadyExistsError, DirectoryRuleMissingTargetError, DirectoryRuleNotFoundError } from "./directoryRules";
