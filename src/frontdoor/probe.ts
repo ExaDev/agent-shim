@@ -38,7 +38,7 @@ const finish = (verdict, message) => {
   Atomics.store(header, 0, verdict);
   Atomics.notify(header, 0);
 };
-const request = https.get({ host: "127.0.0.1", port, path: "/healthz", ca: [ca], agent: false, timeout: timeoutMs }, (response) => {
+const request = https.get({ host: "127.0.0.1", port, path: "/healthz", ca: [ca], agent: false }, (response) => {
   let body = "";
   response.setEncoding("utf8");
   response.on("data", (chunk) => { body += chunk; });
@@ -48,7 +48,8 @@ const request = https.get({ host: "127.0.0.1", port, path: "/healthz", ca: [ca],
   });
   response.on("error", (error) => finish(failed, error.message));
 });
-request.on("timeout", () => { request.destroy(new Error("no answer within " + String(timeoutMs) + "ms")); });
+// A hard deadline over the whole exchange, handshake included: a listener that accepts the connection and then says nothing must still fail the probe.
+setTimeout(() => { request.destroy(new Error("no answer within " + String(timeoutMs) + "ms")); }, timeoutMs);
 request.on("error", (error) => finish(failed, (error.code ? error.code + ": " : "") + error.message));
 `;
 

@@ -102,6 +102,21 @@ describe("probeFrontDoorSync", () => {
     KEYGEN_TIMEOUT_MS,
   );
 
+  it("fails within its own bound against a listener that accepts the connection and never answers", async () => {
+    // The kernel completes the TCP handshake for a listening socket whether or not anything reads from it, so this squatter needs no thread of its own.
+    const silent = net.createServer(() => undefined);
+    await new Promise<void>((resolve) => {
+      silent.listen(0, "127.0.0.1", resolve);
+    });
+    const address = silent.address();
+    try {
+      const verdict = probeFrontDoorSync(typeof address === "object" && address !== null ? address.port : 0, ca.certPem);
+      expect(verdict.ok ? "" : verdict.reason).toContain("no answer within");
+    } finally {
+      silent.close();
+    }
+  });
+
   it("rejects a plain-HTTP listener and a port nothing holds", async () => {
     const plain = await listenerThread(undefined);
     expect(probeFrontDoorSync(plain, ca.certPem).ok).toBe(false);
