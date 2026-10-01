@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { writeSession } from "../headroom/state";
 import { ensureFrontDoor, FrontDoorStartError } from "./ensure";
-import { writeFrontDoorState } from "./state";
+import { writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.claude-use");
 
 const SUPERVISOR_PID = 500;
+/** A stand-in capability: front-door registry records carry one per launch. */
+const SESSION_TOKEN = "test-capability";
 const OTHER_LAUNCHER_PID = 777;
 const LAUNCHER_PID = 42;
 const PORT = 4100;
@@ -175,7 +176,7 @@ describe("ensureFrontDoor", () => {
   it("registers a session for a launcher joining a door another launcher already holds", () => {
     const world = makeWorld();
     world.writeReadyState();
-    writeSession(world.fs, paths.frontdoorSessionsDir, { pid: OTHER_LAUNCHER_PID, startedAt: 0 });
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: OTHER_LAUNCHER_PID, startedAt: 0, token: SESSION_TOKEN });
     ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
     expect(world.fs.readFileUtf8(`${paths.frontdoorSessionsDir}/${String(LAUNCHER_PID)}.json`)).toBeDefined();
     expect(world.fs.readFileUtf8(`${paths.frontdoorSessionsDir}/${String(OTHER_LAUNCHER_PID)}.json`)).toBeDefined();

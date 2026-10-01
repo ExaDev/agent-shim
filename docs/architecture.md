@@ -47,7 +47,7 @@ src/
     providerRoute.ts        # resolves /providers/<name> requests to a route by reading the provider file fresh per request
     codexMount.ts           # the codex translation mounted as one route (an adapter over createCodexRoute, not a second implementation)
     server.ts, connect.ts   # the plain-HTTP listener transport, and the CONNECT surface OAuth launches point HTTPS_PROXY at: node-forge CA/leaf minting, TLS termination, blind tunnels, and the same pipeline for /v1/
-    supervisor.ts, ensure.ts, state.ts   # the three-listener lifecycle (sticky ports, session registry, idle shutdown), the launcher's lock-and-poll bring-up, and the coordination state
+    supervisor.ts, ensure.ts, state.ts   # the three-listener lifecycle (sticky ports, session registry, idle shutdown), the launcher's lock-and-poll bring-up, and the coordination state; the session registry holds each launch's capability token behind owner-only modes and has its own list, prune and remove (never headroom's token-less ones)
     commands.ts             # real ports wiring the whole pipeline in the supervisor process, `frontdoor status`, and the hidden supervisor subcommand
   codex/                    # the codex translation the front door serves in process for `kind: codex` providers (the port of the old codex-claude-proxy.mjs)
     anthropic.ts, translate.ts, events.ts   # the pure core: Zod-validated Anthropic Messages and Codex Responses shapes, the translation between them, and the Codex SSE events translated back to Anthropic SSE

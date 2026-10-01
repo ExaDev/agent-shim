@@ -132,6 +132,10 @@ export function makeFacts(
   };
 }
 
+/** The modes the owner-only primitives record, mirroring the real port's. */
+const OWNER_ONLY_DIR_MODE = 0o700;
+const OWNER_ONLY_FILE_MODE = 0o600;
+
 /** One node of the in-memory filesystem behind `createFakeFarmFs`. */
 type FakeNode =
   | { kind: "dir"; mtimeMs: number }
@@ -157,6 +161,8 @@ export interface FakeFarmFs extends FarmFs {
   readonly snapshot: (root?: string) => string[];
   /** The symlink target at `path`, or undefined when it is not a symlink. */
   readonly linkTarget: (path: string) => string | undefined;
+  /** The permission mode recorded for `path` by `mkdirPrivate` or `writeFilePrivate`, or undefined for anything created without an explicit mode. */
+  readonly modeOf: (path: string) => number | undefined;
 }
 
 /**
@@ -166,6 +172,7 @@ export interface FakeFarmFs extends FarmFs {
  */
 export function createFakeFarmFs(initial: Readonly<Record<string, FakeFsSeed>> = {}): FakeFarmFs {
   const nodes = new Map<string, FakeNode>();
+  const modes = new Map<string, number>();
   const writes: FakeFsWrite[] = [];
   let clock = 1_000;
 
@@ -221,6 +228,7 @@ export function createFakeFarmFs(initial: Readonly<Record<string, FakeFsSeed>> =
   const fs: FakeFarmFs = {
     seed,
     writes,
+    modeOf: (target: string) => modes.get(path.resolve(target)),
     snapshot: (root?: string) =>
       [...nodes.keys()].filter((candidate) => root === undefined || candidate === root || candidate.startsWith(`${root}/`)).sort(),
     linkTarget: (linkPath: string) => {
@@ -253,6 +261,20 @@ export function createFakeFarmFs(initial: Readonly<Record<string, FakeFsSeed>> =
     mkdirp: (dirPath: string) => {
       writes.push({ op: "mkdirp", path: dirPath });
       mkdirp(dirPath);
+    },
+    mkdirPrivate: (dirPath: string) => {
+      writes.push({ op: "mkdirp", path: dirPath });
+      mkdirp(dirPath);
+      modes.set(path.resolve(dirPath), OWNER_ONLY_DIR_MODE);
+    },
+    writeFilePrivate: (filePath: string, contents: string) => {
+      const resolved = path.resolve(filePath);
+      writes.push({ op: "write", path: resolved });
+      if (nodes.get(path.dirname(resolved))?.kind !== "dir") {
+        throw new Error(`Cannot write ${resolved}: its parent directory does not exist.`);
+      }
+      nodes.set(resolved, { kind: "file", mtimeMs: nextMtime(), content: contents });
+      modes.set(resolved, OWNER_ONLY_FILE_MODE);
     },
     symlink: (target: string, linkPath: string) => {
       const resolved = path.resolve(linkPath);

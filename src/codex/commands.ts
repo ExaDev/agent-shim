@@ -5,9 +5,9 @@ import path from "node:path";
 import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
-import { readFrontDoorState, type FrontDoorState } from "../frontdoor/state";
+import { listFrontDoorSessions, readFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState } from "../frontdoor/state";
 import { isCodexProvider } from "../config/schema";
-import { listSessions, readAllProviders, type HeadroomFs, type HeadroomSession } from "../headroom/state";
+import { readAllProviders, type HeadroomFs } from "../headroom/state";
 import { resolveClaudeHome, type LayoutPaths } from "../paths";
 import { realFarmFs, realIsProcessRunning } from "../realPorts";
 import { createUpstreamAgent, createUpstreamFetch } from "./agent";
@@ -92,7 +92,7 @@ export function createCodexRoutePorts(log: (line: string) => void): Omit<CodexRo
 }
 
 /** One session-registry entry plus whether its launcher is still running. */
-interface CodexSessionStatus extends HeadroomSession {
+interface CodexSessionStatus extends FrontDoorSessionSummary {
   readonly alive: boolean;
 }
 
@@ -125,7 +125,7 @@ export function collectCodexStatus(fsPort: HeadroomFs, paths: LayoutPaths, isRun
   return {
     frontDoor: state,
     supervisorAlive: state.supervisorPid !== undefined && isRunning(state.supervisorPid),
-    sessions: listSessions(fsPort, paths.frontdoorSessionsDir).map((session) => ({ ...session, alive: isRunning(session.pid) })),
+    sessions: listFrontDoorSessions(fsPort, paths.frontdoorSessionsDir).map((session) => ({ ...session, alive: isRunning(session.pid) })),
     codexProviders: codexProviderNames(fsPort, paths.providersDir),
     usageSnapshotPath: codexUsageSnapshotPath(),
     usageSnapshotExists: fsPort.readFileUtf8(codexUsageSnapshotPath()) !== undefined,
