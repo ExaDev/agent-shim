@@ -318,7 +318,7 @@ Coordination lives under `~/.claude-use/headroom/`: `state.json` (supervisor pid
 Two settings live in the global `~/.claude-use/config.json` under `headroom` (they describe one daemon per machine, so they are deliberately global-only, never per-directory):
 
 ```json
-{ "headroom": { "source": "headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@feat/per-session-savings", "idleShutdownMinutes": 15 } }
+{ "headroom": { "source": "headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@eb02fa4126450c9905a49394fdec19ae2e7c9c30", "idleShutdownMinutes": 15 } }
 ```
 
 `source` is the install spec handed to `uv tool install` (any PEP 508 form works; a pinned `headroom==0.39.0` is checked against the installed version on every start), and `idleShutdownMinutes` is how long an idle daemon lingers before shutdown.
