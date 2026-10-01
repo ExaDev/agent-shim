@@ -7,6 +7,7 @@ import { registerFrontDoorCommand } from "./frontdoor/commands";
 import type { CommandDeps } from "./cli/commandDeps";
 import { registerCompletionCommand } from "./completion";
 import { registerConfigureCommand } from "./configure";
+import { registerCredentialCommand } from "./credentialCommand";
 import { registerShimCommand } from "./claudeShim";
 import { registerDoctorCommand } from "./doctor";
 import { registerHeadroomCommand } from "./headroom/commands";
@@ -27,6 +28,7 @@ const ROOT_HELP_AFTER = `
 Grammar:
   claude-use <noun> <verb> [name] [options], where the nouns are identity, profile,
   provider and rule, and the verbs are add, set, list, show, remove and use.
+  credential is the exception: it acts on the credentials identities use (store).
 
 Launching:
   claude-use run [@<identity>] [launch flags] [claude arguments]
@@ -56,7 +58,7 @@ Examples:
   $ claude-use run --identity work --provider z -p "hello"`;
 
 /**
- * Builds the complete `claude-use` Commander tree: the `identity`, `profile`, `provider` and `rule` nouns (each with the same `add`/`set`/`list`/`show`/`remove`/`use` verbs where they apply), `check`, `configure`, `doctor`, `shim`, `headroom`, `codex`, `frontdoor`, `run`, and `completion`, each registered by its own module as a thin adapter over `src/config/store.ts` and the Zod schemas in `src/config/schema.ts`.
+ * Builds the complete `claude-use` Commander tree: the `identity`, `profile`, `provider` and `rule` nouns (each with the same `add`/`set`/`list`/`show`/`remove`/`use` verbs where they apply), `credential`, `check`, `configure`, `doctor`, `shim`, `headroom`, `codex`, `frontdoor`, `run`, and `completion`, each registered by its own module as a thin adapter over `src/config/store.ts` and the Zod schemas in `src/config/schema.ts`.
  *
  * Construction has no side effects: nothing is parsed, read or launched until the caller invokes `parseAsync` on the result. That is what lets the whole command surface be unit-tested against a throwaway `LayoutPaths`, scripted prompts and a fake `runClaude`, while `src/cli.ts` stays the one module that runs on import.
  *
@@ -77,6 +79,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   registerProfileCommand(program, deps);
   registerProviderCommand(program, deps);
   registerRuleCommand(program, deps);
+  registerCredentialCommand(program, deps);
   registerCheckCommand(program, deps);
   registerConfigureCommand(program, deps);
   registerDoctorCommand(program, deps);
