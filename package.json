@@ -1,6 +1,6 @@
 {
   "name": "claude-use",
-  "version": "4.2.0",
+  "version": "4.2.1",
   "description": "A profile manager and launcher for Claude Code that lets one person run multiple logins from one machine while controlling what gets shared between them.",
   "license": "Apache-2.0",
   "author": "Joseph Mearman <joseph@mearman.co.uk>",

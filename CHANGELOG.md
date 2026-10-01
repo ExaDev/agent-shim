@@ -1,3 +1,9 @@
+## [4.2.1](https://github.com/ExaDev/claude-use/compare/v4.2.0...v4.2.1) (2026-10-01)
+
+### Bug Fixes
+
+* **headroom:** pin the default install source to a commit and warn on moving git refs ([ecc4cdc](https://github.com/ExaDev/claude-use/commit/ecc4cdc6fbe1a1383138336ceb633b436be8824a)), closes [#54](https://github.com/ExaDev/claude-use/issues/54)
+
 ## [4.2.0](https://github.com/ExaDev/claude-use/compare/v4.1.0...v4.2.0) (2026-09-30)
 
 ### Features
