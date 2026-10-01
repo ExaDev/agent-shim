@@ -297,6 +297,39 @@ describe("buildEnv", () => {
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-claude-use-identity: work\nx-claude-use-session: session-test\nx-claude-use-auth: launch-token-for-tests\nx-claude-use-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
   });
 
+  it("exempts loopback from an inherited proxy for a provider session, keeping what the parent already exempted", () => {
+    const launch = (parent: Readonly<Record<string, string>>) =>
+      buildEnv({
+        sessionId: "session-test",
+        baseEnv: { ...baseEnv, HTTPS_PROXY: "http://claude-use:parent-token@127.0.0.1:4200", ...parent },
+        configDirEscapeHatch: false,
+        resolvedIdentityName: "work",
+        identitiesDir: "/home/testuser/.claude-use/identities",
+        provider: resolvedProvider({ baseUrl: "https://127.0.0.1:4100/providers/z" }),
+        frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/bundle.pem", sessionToken: "launch-token-for-tests" },
+      });
+    const inherited = launch({});
+    expect(inherited.HTTPS_PROXY).toBe("http://claude-use:parent-token@127.0.0.1:4200");
+    expect(inherited.NO_PROXY).toBe("127.0.0.1,localhost,::1");
+    expect(inherited.no_proxy).toBe("127.0.0.1,localhost,::1");
+    const merged = launch({ NO_PROXY: "corp.example,localhost", no_proxy: ".internal" });
+    expect(merged.NO_PROXY).toBe("corp.example,localhost,127.0.0.1,::1");
+    expect(merged.no_proxy).toBe(".internal,127.0.0.1,localhost,::1");
+  });
+
+  it("leaves NO_PROXY alone when the provider's base URL is not loopback", () => {
+    const env = buildEnv({
+      sessionId: "session-test",
+      baseEnv: { ...baseEnv, NO_PROXY: "corp.example" },
+      configDirEscapeHatch: false,
+      resolvedIdentityName: "work",
+      identitiesDir: "/home/testuser/.claude-use/identities",
+      provider: resolvedProvider({ baseUrl: "https://api.z.ai/api/anthropic" }),
+    });
+    expect(env.NO_PROXY).toBe("corp.example");
+    expect(env.no_proxy).toBeUndefined();
+  });
+
   it("injects only the identity and session headers when the door is engaged without headroom", () => {
     const env = buildEnv({
       sessionId: "session-test",
