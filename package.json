@@ -24,7 +24,10 @@
     "claude-use": "dist/cli.cjs"
   },
   "files": [
-    "dist/cli.cjs"
+    "dist/cli.cjs",
+    "dist/index.mjs",
+    "dist/index.cjs",
+    "dist/types"
   ],
   "scripts": {
     "prepare": "husky && node scripts/build.mts --bundle-only",
@@ -77,5 +80,16 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0",
     "vitest": "^4.1.11"
+  },
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
   }
 }

@@ -61,6 +61,40 @@ async function bundle(): Promise<void> {
   fs.chmodSync(path.join(distDir, bundleFileName), EXECUTABLE_FILE_MODE);
 }
 
+/**
+ * Builds the library surface (`src/index.ts`) alongside the CLI bundle: an ESM and a CJS file with every dependency left external, so a consumer installs them through this package's own `dependencies` rather than receiving copies, plus declaration files from `tsconfig.lib.json`. Unlike `cli.cjs`, nothing here is bundled for self-containment, and nothing reachable from `src/index.ts` imports `commander` or `@clack/prompts`; `assertNoCliOnlyImports` fails the build if that stops being true.
+ */
+async function buildLibrary(): Promise<void> {
+  for (const [format, extension] of [["esm", "mjs"], ["cjs", "cjs"]] as const) {
+    const result = await esbuild.build({
+      entryPoints: [path.join(rootDir, "src", "index.ts")],
+      bundle: true,
+      packages: "external",
+      platform: "node",
+      format,
+      target: ESBUILD_TARGET,
+      outfile: path.join(distDir, `index.${extension}`),
+      metafile: true,
+      logLevel: "info",
+    });
+    assertNoCliOnlyImports(result.metafile);
+  }
+  execFileSync(process.execPath, [path.join(rootDir, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.lib.json"], { cwd: rootDir, stdio: "inherit" });
+}
+
+/** Dependencies that exist for the command line alone. The library must work for a consumer that has installed neither. */
+const CLI_ONLY_PACKAGES = ["commander", "@clack/prompts"] as const;
+
+function assertNoCliOnlyImports(metafile: esbuild.Metafile): void {
+  for (const output of Object.values(metafile.outputs)) {
+    for (const imported of output.imports) {
+      if (CLI_ONLY_PACKAGES.some((name) => imported.path === name || imported.path.startsWith(`${name}/`))) {
+        throw new Error(`the library bundle imports ${imported.path}, which only the CLI should depend on`);
+      }
+    }
+  }
+}
+
 function writeSeaConfig(): string {
   const seaConfigPath = path.join(distDir, seaConfigFileName);
   // Schema per https://nodejs.org/api/single-executable-applications.html — every field here is read directly from that page, not guessed. Paths are relative to `distDir`, since that is where `node --build-sea=` is invoked from below.
@@ -127,6 +161,7 @@ function reportSize(outputPath: string): void {
 async function main(): Promise<void> {
   fs.mkdirSync(distDir, { recursive: true });
   await bundle();
+  await buildLibrary();
   if (bundleOnly) {
     reportSize(path.join(distDir, bundleFileName));
     return;
