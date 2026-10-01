@@ -124,6 +124,25 @@ describe("runDoctor: headroom", () => {
     expect(findingsFor(report, "headroom").some((finding) => finding.severity === "warn" && finding.message.includes("previous crash"))).toBe(true);
   });
 
+  it("warns when the installed headroom source follows a git branch that can move", () => {
+    const alive = new Set([ALIVE_SUPERVISOR_PID, ALIVE_DAEMON_PID]);
+    const stateFor = (installedSource: string) =>
+      baseParams({
+        headroom: {
+          state: {
+            path: "/claude-use/headroom/state.json",
+            raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT, installedSource }),
+          },
+          isRunning: (pid: number) => alive.has(pid),
+          caCert: { path: "/claude-use/headroom/ca/ca.pem", exists: true },
+        },
+      });
+    const moving = findingsFor(runDoctor(stateFor("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@feat/branch")), "headroom");
+    expect(moving.some((finding) => finding.severity === "warn" && finding.message.includes("can move"))).toBe(true);
+    const pinned = findingsFor(runDoctor(stateFor("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@eb02fa4126450c9905a49394fdec19ae2e7c9c30")), "headroom");
+    expect(pinned.some((finding) => finding.message.includes("can move"))).toBe(false);
+  });
+
   it("names the MITM port and CA path when the proxy is serving alongside the daemon", () => {
     const alive = new Set([ALIVE_SUPERVISOR_PID, ALIVE_DAEMON_PID]);
     const report = runDoctor(

@@ -24,6 +24,7 @@ import {
   ProviderSchema,
 } from "./config/schema";
 import { describeCredential } from "./credential";
+import { isMovingGitSource } from "./headroom/source";
 import { HeadroomStateSchema } from "./headroom/state";
 import { isIdentityDirectoryName } from "./identityManager";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providers";
@@ -480,6 +481,13 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
       }
       if (state.lastError !== undefined && supervisorAlive) {
         push("headroom", "warn", `Headroom recorded a previous error: ${state.lastError}`);
+      }
+      if (state.installedSource !== undefined && isMovingGitSource(state.installedSource)) {
+        push(
+          "headroom",
+          "warn",
+          `Headroom is installed from a git ref that can move (${state.installedSource}); pin headroom.source to a full commit SHA so a rebased or deleted branch cannot change or break the install.`,
+        );
       }
     }
   }
