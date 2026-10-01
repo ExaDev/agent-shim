@@ -3,7 +3,16 @@ import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 /**
  * The claude-use-internal headers the launcher injects through `ANTHROPIC_CUSTOM_HEADERS` so the front door can identify and route a request's session. None of them may ever leave the machine: the identity step strips every one before a route sees the request, so no upstream, and not even the headroom hop, learns what they say.
  */
-export const INTERNAL_HEADER_NAMES = ["x-claude-use-identity", "x-claude-use-session", "x-claude-use-headroom", "x-claude-use-auth", "x-claude-use-hop", "x-headroom-project-id", "x-headroom-base-url"] as const;
+export const INTERNAL_HEADER_NAMES = [
+  "x-claude-use-identity",
+  "x-claude-use-session",
+  "x-claude-use-headroom",
+  "x-claude-use-auth",
+  "x-claude-use-hop",
+  "x-claude-use-hop-id",
+  "x-headroom-project-id",
+  "x-headroom-base-url",
+] as const;
 
 /** Carries the launching identity's name (the `@name` the launch resolved), set by the launcher and stripped at the door. */
 export const IDENTITY_HEADER = "x-claude-use-identity";
@@ -33,6 +42,11 @@ export const AUTH_HEADER = "x-claude-use-auth";
  * The capability the direct listener requires: a per-generation random secret held only in the door process's memory, set by the headroom hop on the requests it forwards back. A loopback process that finds the direct port still cannot use it, and nothing on disk ever holds the secret.
  */
 export const HOP_SECRET_HEADER = "x-claude-use-hop";
+
+/**
+ * Names the credential custody record one headroom hop holds: a random id the hop sets on the request it hands headroom, alongside placeholders where the real credential headers were. The direct listener exchanges a live id (and only for the provider the record was made for) for the real headers before routing, so the credential itself never crosses headroom or the plain-HTTP leg back.
+ */
+export const HOP_ID_HEADER = "x-claude-use-hop-id";
 
 /** What the identity step learned about one request from the launcher-injected headers. */
 export interface SessionIdentity {
@@ -165,7 +179,7 @@ export interface FrontDoorRoute {
    */
   readonly headroomEligible: boolean;
   /**
-   * The upstream headroom is told to use (its per-request base URL header) when the hop sits in front of this route. Undefined leaves headroom's own default upstream in charge, which is Claude Code's API.
+   * The upstream headroom is told to use (its per-request base URL header) when the hop sits in front of this route. When defined it is always this door's direct listener, which is what lets the hop keep the route's credential in custody and the direct listener restore it; a route must never name any other address here. Undefined leaves headroom's own default upstream in charge, which is Claude Code's API.
    */
   readonly headroomUpstream: string | undefined;
   /**

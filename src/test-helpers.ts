@@ -15,6 +15,8 @@ import type { FsPort, FrontDoorPort, LogPort, ProcPort, SpawnPort, SpawnResult }
 import { buildLayoutPaths } from "./paths";
 import type { CascadeInput } from "./resolve/walk";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
+import type { PipelineDeps } from "./frontdoor/pipeline";
+import { AUTH_HEADER } from "./frontdoor/route";
 
 /** The shipped classification map, parsed once, for use as the default in tests. */
 export const shippedClassification: CategoryClassification = CategoryClassificationSchema.parse(categoriesDefaultJson);
@@ -420,6 +422,14 @@ export function fakeFrontDoorPort(port = 4100, connectPort = 4200): FrontDoorPor
       releases += 1;
     },
   };
+}
+
+/** An admission step that routes every request with its forwardable headers unchanged: for tests exercising the pipeline's other stages, never for one asserting what a listener admits. */
+export const admitEverything: PipelineDeps["admit"] = (request) => ({ ok: true, headers: { ...request.forwardable } });
+
+/** An admission step that routes only requests presenting `token` as their launch capability, the way a client-facing listener admits a live launch. */
+export function admitLaunchToken(token: string): PipelineDeps["admit"] {
+  return (request) => (request.headers[AUTH_HEADER] === token ? { ok: true, headers: { ...request.forwardable } } : { ok: false, message: "no live capability" });
 }
 
 export function fakeLog(): LogPort & { infos: string[]; warns: string[]; errors: string[] } {

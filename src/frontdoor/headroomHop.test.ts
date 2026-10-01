@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,12 +7,18 @@ import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, fakeResponse, recordingFetch } from "../codex/testing";
 import { FAKE_HOME, fakeFs } from "../test-helpers";
-import { AUTH_HEADER, HEADROOM_FLAG_HEADER, HOP_SECRET_HEADER, IDENTITY_HEADER, SESSION_HEADER } from "./route";
-import { serveRouted, type PipelineDeps } from "./pipeline";
+import { createDoorPipelines } from "./assembly";
+import { SEQUESTERED_CREDENTIAL, createCredentialCustody } from "./custody";
+import { AUTH_HEADER, HEADROOM_FLAG_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, IDENTITY_HEADER, SESSION_HEADER } from "./route";
+import { serveRouted } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.claude-use/providers`;
+/** This door generation's hop secret in these tests. */
+const HOP_SECRET = "hop-secret-for-tests";
+/** A made-up provider credential: what must reach the provider's upstream and nothing in between. */
+const PROVIDER_TOKEN = "made-up-provider-token";
 const SETTLE_MS = 50;
 const MESSAGES_BODY = JSON.stringify({ model: "claude-sonnet-4-5", stream: false, messages: [{ role: "user", content: "hi" }], metadata: { user_id: "user-a" } });
 /** The per-launch capability token the door's client-facing listeners accept in these tests. */
@@ -33,9 +40,9 @@ interface HopSeen {
 }
 
 /**
- * The fake headroom: records each request it is handed, then forwards it verbatim (minus its internal headers, the way the real one strips x-headroom-*) to whatever x-headroom-base-url names, or answers itself when the header is absent. Standing in for the real daemon is exactly this much: a forwarding hop keyed by the per-request base URL.
+ * The fake headroom: records each request it is handed, optionally holds it (so a test can act while the hop is live), then forwards it the way the real daemon does. Standing in for the real daemon is exactly this much: a forwarding hop keyed by the per-request base URL.
  */
-async function fakeHeadroom(): Promise<{ readonly seen: () => readonly HopSeen[]; readonly port: () => number; readonly closedRequests: () => number; readonly close: () => Promise<void> }> {
+async function fakeHeadroom(options: { readonly hold?: () => Promise<void> } = {}): Promise<{ readonly seen: () => readonly HopSeen[]; readonly port: () => number; readonly closedRequests: () => number; readonly close: () => Promise<void> }> {
   const requests: HopSeen[] = [];
   let closedRequests = 0;
   const server = http.createServer((request, response) => {
@@ -48,26 +55,9 @@ async function fakeHeadroom(): Promise<{ readonly seen: () => readonly HopSeen[]
     });
     request.on("end", () => {
       requests.push({ method: request.method ?? "", url: request.url ?? "", headers: { ...request.headers }, body });
-      const base = request.headers["x-headroom-base-url"];
-      if (base === undefined) {
-        // No per-request upstream: the real daemon's default is Claude Code's API, which the test stands in for directly.
-        response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
-        response.end(JSON.stringify({ via: "default-upstream", body }));
-        return;
-      }
-      const forward = http.request(
-        `${String(base)}${request.url ?? ""}`,
-        { method: request.method, headers: { ...request.headers, host: new URL(String(base)).host } },
-        (upstream) => {
-          response.writeHead(upstream.statusCode ?? HTTP_STATUS.badGateway, upstream.headers);
-          upstream.pipe(response);
-        },
-      );
-      forward.on("error", () => {
-        response.writeHead(HTTP_STATUS.badGateway);
-        response.end("forward failed");
+      void (options.hold?.() ?? Promise.resolve()).then(() => {
+        forwardLikeHeadroom(request, response, body);
       });
-      forward.end(body);
     });
   });
   await listen(server);
@@ -79,6 +69,32 @@ async function fakeHeadroom(): Promise<{ readonly seen: () => readonly HopSeen[]
       await closeServer(server);
     },
   };
+}
+
+/** What the real daemon does with a request once its work is done: strip its own x-headroom-* controls and forward to the per-request base URL, or answer from its default upstream when none was named. Every other header, credentials included, goes on verbatim, which is what the custody design relies on. */
+function forwardLikeHeadroom(request: http.IncomingMessage, response: http.ServerResponse, body: string): void {
+  const base = request.headers["x-headroom-base-url"];
+  if (base === undefined) {
+    // No per-request upstream: the real daemon's default is Claude Code's API, which the test stands in for directly.
+    response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
+    response.end(JSON.stringify({ via: "default-upstream", body }));
+    return;
+  }
+  const headers: http.OutgoingHttpHeaders = {};
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (!name.startsWith("x-headroom-")) {
+      headers[name] = value;
+    }
+  }
+  const forward = http.request(`${String(base)}${request.url ?? ""}`, { method: request.method, headers: { ...headers, host: new URL(String(base)).host } }, (upstream) => {
+    response.writeHead(upstream.statusCode ?? HTTP_STATUS.badGateway, upstream.headers);
+    upstream.pipe(response);
+  });
+  forward.on("error", () => {
+    response.writeHead(HTTP_STATUS.badGateway);
+    response.end("forward failed");
+  });
+  forward.end(body);
 }
 
 const servers: http.Server[] = [];
@@ -115,7 +131,9 @@ afterEach(async () => {
   );
 });
 
-/** The whole door assembly over a fake headroom: the main listener (with the hop) and the direct listener (without it), sharing one resolver whose in-process routes name the direct address. */
+/**
+ * The whole door assembly over a fake headroom, built from the production `createDoorPipelines`: the main listener (with the hop and launch admission) and the direct listener (without the hop, admitting only the hop's own requests), sharing one resolver whose in-process routes name the direct address and one credential custody.
+ */
 async function startDoor(options: { readonly files: Record<string, unknown>; readonly headroomPort: () => number | undefined }): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly directPort: () => number }> {
   const upstream = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const ports: Omit<CodexRoutePorts, "loadProvider"> = {
@@ -126,25 +144,22 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
   };
   let directPort = 0;
   const resolveRoute = createProviderRouteResolver({ fs: fakeFs(options.files), providersDir: PROVIDERS_DIR, codexPorts: ports, directPort: () => directPort });
-  const logs: string[] = [];
-  const log = (line: string): void => {
-    logs.push(line);
-  };
-  const hopSecret = "hop-secret-for-tests";
-  const buildPipeline = (clientFacing: boolean): PipelineDeps => ({
+  const log = (): void => undefined;
+  const pipelines = createDoorPipelines({
     resolveRoute,
-    responseObservers: [],
-    authorize: clientFacing ? (headers) => headers[AUTH_HEADER] === LAUNCH_TOKEN : (headers) => headers[HOP_SECRET_HEADER] === hopSecret,
-    ...(clientFacing ? { headroom: { headroomPort: options.headroomPort, hopSecret, log } } : {}),
+    isLiveToken: (token) => token === LAUNCH_TOKEN,
+    headroomPort: options.headroomPort,
+    hopSecret: HOP_SECRET,
+    custody: createCredentialCustody(() => randomUUID()),
     log,
   });
   const direct = createFrontDoorServer(async (request) => {
-    await serveRouted(request, buildPipeline(false));
+    await serveRouted(request, pipelines.direct);
   }, log);
   const directHandle = await listenFrontDoor(direct, undefined, () => undefined);
   directPort = directHandle.port;
   const main = createFrontDoorServer(async (request) => {
-    await serveRouted(request, buildPipeline(true));
+    await serveRouted(request, pipelines.clientFacing);
   }, log);
   const mainHandle = await listenFrontDoor(main, undefined, () => undefined);
   return {
@@ -157,6 +172,28 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
   };
 }
 
+/** A fake http provider upstream recording every request it receives, headers included. */
+async function fakeProviderUpstream(): Promise<{ readonly port: number; readonly seen: () => readonly HopSeen[] }> {
+  const requests: HopSeen[] = [];
+  const server = http.createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk: Buffer) => {
+      body += chunk.toString("utf8");
+    });
+    request.on("end", () => {
+      requests.push({ method: request.method ?? "", url: request.url ?? "", headers: { ...request.headers }, body });
+      response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true }));
+    });
+  });
+  await listen(server);
+  return { port: portOf(server), seen: () => requests };
+}
+
+/** An http provider file pointing at a local upstream. */
+function httpProvider(upstreamPort: number): Record<string, unknown> {
+  return { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstreamPort)}`, credential: { sources: [{ literal: "unused-here" }] } };
+}
 
 const codexProvider = { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } };
 
@@ -261,4 +298,110 @@ describe("the headroom hop", () => {
       await headroom.close();
     }
   });
+
+  it(
+    "keeps an http provider's credential away from headroom: headroom sees only placeholders and a hop id, and the provider's upstream receives the credential the client sent",
+    async () => {
+      const upstream = await fakeProviderUpstream();
+      const headroom = await fakeHeadroom();
+      const door = await startDoor({ files: { [`${PROVIDERS_DIR}/z.json`]: httpProvider(upstream.port) }, headroomPort: headroom.port });
+      try {
+        const base = { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN };
+        const bearer = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { ...base, authorization: `Bearer ${PROVIDER_TOKEN}` }, body: MESSAGES_BODY });
+        expect(bearer.status).toBe(HTTP_STATUS.ok);
+        const apiKey = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { ...base, "x-api-key": PROVIDER_TOKEN }, body: MESSAGES_BODY });
+        expect(apiKey.status).toBe(HTTP_STATUS.ok);
+
+        const [bearerHop, apiKeyHop] = headroom.seen();
+        expect(bearerHop?.headers.authorization).toBe(`Bearer ${SEQUESTERED_CREDENTIAL}`);
+        expect(apiKeyHop?.headers["x-api-key"]).toBe(SEQUESTERED_CREDENTIAL);
+        for (const seen of headroom.seen()) {
+          expect(JSON.stringify(seen.headers)).not.toContain(PROVIDER_TOKEN);
+          expect(seen.headers[HOP_ID_HEADER]).toMatch(/^[0-9a-f-]{36}$/);
+        }
+        expect(bearerHop?.headers[HOP_ID_HEADER]).not.toBe(apiKeyHop?.headers[HOP_ID_HEADER]);
+
+        const [bearerUpstream, apiKeyUpstream] = upstream.seen();
+        expect(bearerUpstream?.headers.authorization).toBe(`Bearer ${PROVIDER_TOKEN}`);
+        expect(apiKeyUpstream?.headers["x-api-key"]).toBe(PROVIDER_TOKEN);
+        expect(apiKeyUpstream?.headers.authorization).toBeUndefined();
+        expect(bearerUpstream?.url).toBe("/v1/messages");
+        // Nothing of the door's own machinery reaches the provider.
+        for (const seen of upstream.seen()) {
+          expect(seen.headers[HOP_ID_HEADER]).toBeUndefined();
+          expect(seen.headers[HOP_SECRET_HEADER]).toBeUndefined();
+          expect(JSON.stringify(seen.headers)).not.toContain(SEQUESTERED_CREDENTIAL);
+        }
+      } finally {
+        await door.close();
+        await headroom.close();
+      }
+    },
+  );
+
+  it(
+    "admits on the direct listener only a live hop id for its own provider with this generation's secret, and never a reused one",
+    async () => {
+      const upstream = await fakeProviderUpstream();
+      let releaseHop: () => void = () => undefined;
+      const held = new Promise<void>((resolve) => {
+        releaseHop = resolve;
+      });
+      const headroom = await fakeHeadroom({ hold: async () => { await held; } });
+      const door = await startDoor({ files: { [`${PROVIDERS_DIR}/z.json`]: httpProvider(upstream.port), [`${PROVIDERS_DIR}/other.json`]: httpProvider(upstream.port) }, headroomPort: headroom.port });
+      const direct = async (path: string, headers: Readonly<Record<string, string>>): Promise<number> =>
+        (await fetch(`http://127.0.0.1:${String(door.directPort())}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: MESSAGES_BODY })).status;
+      try {
+        const client = fetch(`${door.url}/providers/z/v1/messages`, {
+          method: "POST",
+          headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN, authorization: `Bearer ${PROVIDER_TOKEN}` },
+          body: MESSAGES_BODY,
+        });
+        while (headroom.seen().length === 0) {
+          await settle();
+        }
+        const hopId = String(headroom.seen()[0]?.headers[HOP_ID_HEADER]);
+
+        // While the hop is live: an unknown id, the wrong secret, and the right id for another provider all fail before any route runs.
+        expect(await direct("/providers/z/v1/messages", { [HOP_SECRET_HEADER]: HOP_SECRET, [HOP_ID_HEADER]: randomUUID() })).toBe(HTTP_STATUS.unauthorized);
+        expect(await direct("/providers/z/v1/messages", { [HOP_SECRET_HEADER]: "not-this-generation", [HOP_ID_HEADER]: hopId })).toBe(HTTP_STATUS.unauthorized);
+        expect(await direct("/providers/other/v1/messages", { [HOP_SECRET_HEADER]: HOP_SECRET, [HOP_ID_HEADER]: hopId })).toBe(HTTP_STATUS.unauthorized);
+        expect(await direct("/providers/z/v1/messages", { [HOP_SECRET_HEADER]: HOP_SECRET })).toBe(HTTP_STATUS.unauthorized);
+        expect(upstream.seen()).toHaveLength(0);
+
+        releaseHop();
+        expect((await client).status).toBe(HTTP_STATUS.ok);
+        expect(upstream.seen()).toHaveLength(1);
+
+        // The hop has ended: its id redeems nothing any more, even with the right secret and provider.
+        expect(await direct("/providers/z/v1/messages", { [HOP_SECRET_HEADER]: HOP_SECRET, [HOP_ID_HEADER]: hopId })).toBe(HTTP_STATUS.unauthorized);
+        expect(upstream.seen()).toHaveLength(1);
+      } finally {
+        releaseHop();
+        await door.close();
+        await headroom.close();
+      }
+    },
+  );
+
+  it(
+    "leaves an OAuth session's bearer untouched on the hop, since headroom forwards it straight to Claude Code's API and never back to the door",
+    async () => {
+      const headroom = await fakeHeadroom();
+      const door = await startDoor({ files: {}, headroomPort: headroom.port });
+      try {
+        const response = await fetch(`${door.url}/v1/messages`, {
+          method: "POST",
+          headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN, authorization: "Bearer made-up-oauth-token" },
+          body: MESSAGES_BODY,
+        });
+        expect(response.status).toBe(HTTP_STATUS.ok);
+        expect(headroom.seen()[0]?.headers.authorization).toBe("Bearer made-up-oauth-token");
+        expect(headroom.seen()[0]?.headers[HOP_ID_HEADER]).toBeUndefined();
+      } finally {
+        await door.close();
+        await headroom.close();
+      }
+    },
+  );
 });

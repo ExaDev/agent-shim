@@ -3,6 +3,7 @@ import type { IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
+import { admitEverything } from "../test-helpers";
 import { createRoutedResponse, serveRouted, type PipelineDeps, type PipelineRequest, type ResponseObserver, type RouteResolution, type RoutedResponseEvent } from "./pipeline";
 import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse } from "./route";
 
@@ -81,6 +82,7 @@ function deps(resolution: RouteResolution, observers: readonly ResponseObserver[
     deps: {
       resolveRoute: async () => await Promise.resolve(resolution),
       responseObservers: observers,
+      admit: admitEverything,
       log: (line) => {
         logs.push(line);
       },
@@ -155,7 +157,7 @@ describe("serveRouted", () => {
       {
         resolveRoute: async () => await Promise.resolve({ ok: true, route: recordingRoute() }),
         responseObservers: [(event) => { statuses.push(event.status); }],
-        authorize: () => false,
+        admit: () => ({ ok: false, message: "claude-use front door: this request carries no capability from a live claude-use launch" }),
         log: () => undefined,
       },
     );
@@ -188,6 +190,7 @@ describe("serveRouted", () => {
             throw new Error("observer bug");
           },
         ],
+        admit: admitEverything,
         log: (line) => {
           logs.push(line);
         },

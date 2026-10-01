@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
+import { admitLaunchToken } from "../test-helpers";
 import { createPassthroughRoute } from "./passthrough";
 import { serveRouted } from "./pipeline";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -70,7 +71,7 @@ async function startDoor(target: { readonly baseUrl: string; readonly stripPrefi
       await serveRouted(request, {
         resolveRoute: async () => await Promise.resolve({ ok: true, route }),
         responseObservers: [],
-        authorize: (headers) => headers[AUTH_HEADER] === "launch-token-for-tests",
+        admit: admitLaunchToken("launch-token-for-tests"),
         log: () => undefined,
       });
     },

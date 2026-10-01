@@ -1,6 +1,7 @@
 import http from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
+import { admitEverything } from "../test-helpers";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -60,7 +61,7 @@ describe("the added hop's latency", () => {
     const route = createPassthroughRoute("http:z", { baseUrl: `http://127.0.0.1:${String(upstreamPort)}`, stripPrefix: "/providers/z", headroomUpstream: undefined });
     const door = createFrontDoorServer(
       async (request) => {
-        await serveRouted(request, { resolveRoute: async () => await Promise.resolve({ ok: true, route }), responseObservers: [], log: () => undefined });
+        await serveRouted(request, { resolveRoute: async () => await Promise.resolve({ ok: true, route }), responseObservers: [], admit: admitEverything, log: () => undefined });
       },
       () => undefined,
     );

@@ -33,7 +33,7 @@ describe("identifyRequest", () => {
   });
 
   it("names exactly the internal headers, so a new one cannot be added without widening the strip", () => {
-    expect(INTERNAL_HEADER_NAMES).toEqual(["x-claude-use-identity", "x-claude-use-session", "x-claude-use-headroom", "x-claude-use-auth", "x-claude-use-hop", "x-headroom-project-id", "x-headroom-base-url"]);
+    expect(INTERNAL_HEADER_NAMES).toEqual(["x-claude-use-identity", "x-claude-use-session", "x-claude-use-headroom", "x-claude-use-auth", "x-claude-use-hop", "x-claude-use-hop-id", "x-headroom-project-id", "x-headroom-base-url"]);
   });
 });
 
