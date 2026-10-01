@@ -1,3 +1,9 @@
+## [4.5.0](https://github.com/ExaDev/claude-use/compare/v4.4.0...v4.5.0) (2026-10-01)
+
+### Features
+
+* publish a library export surface alongside the CLI binary ([16a87c6](https://github.com/ExaDev/claude-use/commit/16a87c6329fa5cacd3fe212c689839bc860021b5)), references [#37](https://github.com/ExaDev/claude-use/issues/37)
+
 ## [4.4.0](https://github.com/ExaDev/claude-use/compare/v4.3.0...v4.4.0) (2026-10-01)
 
 ### Features
