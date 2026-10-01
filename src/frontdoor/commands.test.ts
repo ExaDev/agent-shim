@@ -29,7 +29,7 @@ describe("frontdoor status", () => {
     expect(status.headroomPort).toBe(HEADROOM_PORT);
     expect(formatFrontDoorStatus(status, paths.frontdoorCaCertFile)).toEqual([
       "supervisor: pid 10 (alive)",
-      `front door: listening on 127.0.0.1:${String(PORT)}, routing /providers/<name> requests`,
+      `front door: listening on https://127.0.0.1:${String(PORT)}, routing /providers/<name> requests`,
       `connect surface: listening on 127.0.0.1:${String(CONNECT_PORT)}, CA ${paths.frontdoorCaCertFile}`,
       `headroom hop: daemon on 127.0.0.1:${String(HEADROOM_PORT)}`,
       "sessions: 2 registered (20, 21 (dead))",

@@ -39,12 +39,14 @@ export interface LayoutPaths {
   readonly headroomLogPath: string;
   /** Directory holding the front-door daemon's coordination state: state.json, the start lock, and the session registry. */
   readonly frontdoorDir: string;
-  /** Directory holding the front door's certificate authority for its CONNECT surface: ca.pem (public, handed to children as NODE_EXTRA_CA_CERTS) and ca.key (mode 0600). */
+  /** Directory holding the front door's certificate authority, which signs both the provider listener's loopback leaf and the CONNECT surface's intercept leaf: ca.pem (public, handed to children through NODE_EXTRA_CA_CERTS) and ca.key (mode 0600). */
   readonly frontdoorCaDir: string;
-  /** Path to the front door's CONNECT CA certificate, generated once and stable across restarts so children keep trusting it. */
+  /** Path to the front door's CA certificate, generated once and stable across restarts so children keep trusting it. */
   readonly frontdoorCaCertFile: string;
-  /** Path to the front door's CONNECT CA private key, mode 0600. */
+  /** Path to the front door's CA private key, mode 0600: whoever can read it can impersonate the door to every routed child. */
   readonly frontdoorCaKeyFile: string;
+  /** Directory of combined CA bundles: a parent environment's own NODE_EXTRA_CA_CERTS file plus the front door's CA, one file per distinct combination, for children that must keep trusting both. */
+  readonly frontdoorCaBundlesDir: string;
   /** Path to the front door's state.json: its supervisor pid, its port, and the sticky port it last served on. */
   readonly frontdoorStateFile: string;
   /** Path to the exclusive-create marker guarding "who spawns the front-door supervisor" so concurrent launches start at most one. */
@@ -101,6 +103,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     frontdoorCaDir: path.join(root, "frontdoor", "ca"),
     frontdoorCaCertFile: path.join(root, "frontdoor", "ca", "ca.pem"),
     frontdoorCaKeyFile: path.join(root, "frontdoor", "ca", "ca.key"),
+    frontdoorCaBundlesDir: path.join(root, "frontdoor", "ca", "bundles"),
     frontdoorStateFile: path.join(root, "frontdoor", "state.json"),
     frontdoorLockFile: path.join(root, "frontdoor", "start.lock"),
     frontdoorSessionsDir: path.join(root, "frontdoor", "sessions"),

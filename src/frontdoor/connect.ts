@@ -9,7 +9,7 @@ import forge from "node-forge";
 /**
  * The front door's CONNECT surface, so an OAuth session can have claude-use's routing AND Claude Code's Remote Control at once: Remote Control refuses any `ANTHROPIC_BASE_URL` other than the real API, but happily honours `HTTPS_PROXY`, so OAuth launches route at the proxy layer instead.
  *
- * Every CONNECT target is blind-tunnelled byte for byte EXCEPT the intercept host (Claude Code's own API), whose TLS this surface terminates with a leaf certificate signed by a locally generated CA. On the terminated session, the paths the front door routes (`/v1/`) are handed to the same ordered pipeline the plain-HTTP listener serves (the client's Authorization header passes through untouched), and every other path is piped by this surface to the real upstream over TLS, so Remote Control's streaming, OAuth refreshes, and unknown endpoints bypass the pipeline entirely.
+ * Every CONNECT target is blind-tunnelled byte for byte EXCEPT the intercept host (Claude Code's own API), whose TLS this surface terminates with a leaf certificate signed by a locally generated CA. On the terminated session, the paths the front door routes (`/v1/`) are handed to the same ordered pipeline the provider listener serves (the client's Authorization header passes through untouched), and every other path is piped by this surface to the real upstream over TLS, so Remote Control's streaming, OAuth refreshes, and unknown endpoints bypass the pipeline entirely.
  */
 
 /** The one CONNECT host whose TLS gets terminated: Claude Code's own API, the upstream every OAuth session is really talking to. */
@@ -156,8 +156,21 @@ export function generateCa(now: Readonly<Date>): CaMaterial {
   return { certPem: forge.pki.certificateToPem(cert), keyPem: forge.pki.privateKeyToPem(keys.privateKey) };
 }
 
-/** Mints the TLS leaf for one host, signed by the CA: its own RSA keypair, the host in the SAN, server-auth usage only. */
-export function mintLeaf(ca: CaMaterial, host: string, now: Readonly<Date>): LeafCert {
+/** The names the front door's provider listener answers to: the loopback address every provider session's base URL names, plus the loopback hostname for a client that spells it that way. */
+export const LOOPBACK_LEAF_NAMES: readonly string[] = ["127.0.0.1", "localhost"];
+
+/** node-forge's subjectAltName type codes (RFC 5280's GeneralName tags): 2 is a DNS name, 7 an IP address. */
+const SAN_TYPE_DNS = 2;
+const SAN_TYPE_IP = 7;
+
+/**
+ * Mints a TLS leaf signed by the CA: its own RSA keypair, server-auth usage only, the first name as the subject's common name and every name in the SAN. A name that parses as an IP address goes in as an IP SAN, because TLS clients match an IP host only against IP SANs, never against a DNS SAN spelling the same digits.
+ */
+export function mintLeaf(ca: CaMaterial, names: readonly string[], now: Readonly<Date>): LeafCert {
+  const [commonName] = names;
+  if (commonName === undefined) {
+    throw new Error("a leaf certificate needs at least one name");
+  }
   const caCert = forge.pki.certificateFromPem(ca.certPem);
   const caKey = forge.pki.privateKeyFromPem(ca.keyPem);
   const keys = forge.pki.rsa.generateKeyPair({ bits: 2048 });
@@ -166,13 +179,13 @@ export function mintLeaf(ca: CaMaterial, host: string, now: Readonly<Date>): Lea
   cert.serialNumber = forge.util.bytesToHex(forge.random.getBytesSync(SERIAL_NUMBER_BYTES));
   cert.validity.notBefore = new Date(now.getTime() - MS_PER_DAY);
   cert.validity.notAfter = new Date(now.getTime() + LEAF_VALIDITY_DAYS * MS_PER_DAY);
-  cert.setSubject([{ name: "commonName", value: host }]);
+  cert.setSubject([{ name: "commonName", value: commonName }]);
   cert.setIssuer(caCert.subject.attributes);
   cert.setExtensions([
     { name: "basicConstraints", cA: false, critical: true },
     { name: "keyUsage", digitalSignature: true, keyEncipherment: true, critical: true },
     { name: "extKeyUsage", serverAuth: true },
-    { name: "subjectAltName", altNames: [{ type: 2, value: host }] },
+    { name: "subjectAltName", altNames: names.map((name) => (net.isIP(name) === 0 ? { type: SAN_TYPE_DNS, value: name } : { type: SAN_TYPE_IP, ip: name })) },
     { name: "subjectKeyIdentifier" },
     { name: "authorityKeyIdentifier", keyLocatorFields: [] },
   ]);
@@ -188,7 +201,7 @@ export function createLeafCache(ca: CaMaterial, now: () => Date): (host: string)
     if (existing !== undefined) {
       return existing;
     }
-    const minted = mintLeaf(ca, host, now());
+    const minted = mintLeaf(ca, [host], now());
     cache.set(host, minted);
     return minted;
   };
@@ -286,7 +299,7 @@ export interface ConnectServerConfig {
   /** The CONNECT host whose TLS gets terminated. */
   readonly interceptHost: string;
   /**
-   * Serves one routed path (`/v1/...`) from the terminated session: the same ordered pipeline the plain-HTTP listener hands requests to, so an OAuth session and a provider session run identical identification, middleware and routing.
+   * Serves one routed path (`/v1/...`) from the terminated session: the same ordered pipeline the provider listener hands requests to, so an OAuth session and a provider session run identical identification, middleware and routing.
    */
   readonly serveRouted: ConnectRequestHandler;
   /** The leaf to terminate `interceptHost` with, minted and cached per host. */

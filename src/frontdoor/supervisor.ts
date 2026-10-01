@@ -20,15 +20,15 @@ export interface FrontDoorSupervisorPorts {
   /** Zombie-aware liveness, the notion every coordination decision in this project uses. */
   readonly isRunning: (pid: number) => boolean;
   /**
-   * Starts the plain-HTTP front-door listener in this process on `preferredPort` (falling back to any free port when the sticky one is taken, decided at bind time rather than by a racy check-then-bind probe) and resolves once it has bound and answered its health probe. This is the listener every provider session's base URL points at.
+   * Starts the provider listener in this process on `preferredPort` (falling back to any free port when the sticky one is taken, decided at bind time rather than by a racy check-then-bind probe) and resolves once it has bound and answered its own health probe over TLS. This is the HTTPS listener every provider session's base URL points at, serving a loopback leaf signed by claude-use's CA.
    */
-  readonly startHttpListener: (preferredPort: number | undefined) => Promise<FrontDoorListenerHandle>;
+  readonly startProviderListener: (preferredPort: number | undefined) => Promise<FrontDoorListenerHandle>;
   /**
    * Starts the CONNECT surface in this process on `preferredPort` (same bind-time fallback): the TLS-terminating listener an OAuth session's HTTPS_PROXY points at. Bound before any state names it, so an OAuth launch never finds one listener up without the other.
    */
   readonly startConnectListener: (preferredPort: number | undefined) => Promise<FrontDoorListenerHandle>;
   /**
-   * Starts the direct listener on `preferredPort` (same bind-time fallback): the same routes as the main listener, minus the headroom hop. Headroom forwards routed traffic back here, which is what keeps the hop from looping, and the port is sticky like the others because headroom's allowlist admits its exact origin.
+   * Starts the direct listener on `preferredPort` (same bind-time fallback): the same routes as the provider listener, minus the headroom hop, over plain HTTP because headroom is what connects to it. Headroom forwards routed traffic back here, which is what keeps the hop from looping, and the port is sticky like the others because headroom's allowlist admits its exact origin. It admits only the hop's own requests and holds no credential until it redeems one from the hop's custody.
    */
   readonly startDirectListener: (preferredPort: number | undefined) => Promise<FrontDoorListenerHandle>;
   readonly log: (line: string) => void;
@@ -49,7 +49,7 @@ export const FRONTDOOR_POLL_MS = 1_000;
 const MS_PER_MINUTE = 60_000;
 
 /**
- * Runs the front-door supervisor: binds all three listeners (the plain-HTTP front door and the CONNECT surface on their sticky ports, the direct listener on an ephemeral one), records the serving state, and shuts down after `idleShutdownMinutes` with an empty session registry. Returns the exit code: 0 for an idle shutdown, 1 for a fatal start failure.
+ * Runs the front-door supervisor: binds all three listeners (the HTTPS provider listener, the CONNECT surface and the plain-HTTP direct listener, each on its sticky port), records the serving state, and shuts down after `idleShutdownMinutes` with an empty session registry. Returns the exit code: 0 for an idle shutdown, 1 for a fatal start failure.
  *
  * The listeners live in this process, so there is no child to keep alive: a crash of this process is a crash of every routed session's door at once, and recovery is the next launch's ensure spawning a replacement on the same sticky ports, which is exactly the failure model the issue asks to settle with tests. Keeping the headroom daemon alive is the headroom supervisor's job, not this one's; the two daemons idle out independently.
  */
@@ -78,9 +78,9 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
   const previousSticky = lastPort;
   let http;
   try {
-    http = await ports.startHttpListener(lastPort);
+    http = await ports.startProviderListener(lastPort);
   } catch (error) {
-    return fail(`could not start the front-door listener: ${error instanceof Error ? error.message : String(error)}`);
+    return fail(`could not start the provider listener: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (previousSticky !== undefined && http.port !== previousSticky) {
     ports.log(`claude-use frontdoor supervisor: sticky port ${String(previousSticky)} was occupied; moving to ${String(http.port)} (sessions launched against the old port are stale until they relaunch)`);

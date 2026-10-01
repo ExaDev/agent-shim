@@ -44,7 +44,7 @@ describe("runLauncher provider selection", () => {
     const env = call?.[2]?.env;
     expect(env).toMatchObject({
       Z_API_TOKEN: "tok-z",
-      ANTHROPIC_BASE_URL: "http://127.0.0.1:4100/providers/z",
+      ANTHROPIC_BASE_URL: "https://127.0.0.1:4100/providers/z",
       ANTHROPIC_AUTH_TOKEN: "tok-z",
       ANTHROPIC_MODEL: "glm-4.6",
       CLAUDE_USE_PROVIDER: "GLM",
@@ -113,7 +113,7 @@ describe("runLauncher provider selection", () => {
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/codex");
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/codex");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("codex-subscription-local");
     expect(env.CLAUDE_USE_PROVIDER).toBe("Codex");
   });
@@ -134,7 +134,7 @@ describe("runLauncher provider selection", () => {
 
     const env = spawnedEnv(spawn);
     expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.claude-use/identities/work`);
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/o");
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/o");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-o");
     expect(env.CLAUDE_USE_PROVIDER).toBe("OpenRouter");
   });
@@ -154,7 +154,7 @@ describe("runLauncher provider selection", () => {
     expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["-p", "say hi"]);
     const env = spawnedEnv(spawn);
     expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.claude-use/identities/work`);
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/z");
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/z");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
   });
 
@@ -195,7 +195,7 @@ describe("runLauncher provider selection", () => {
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/z");
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/z");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
   });
 
@@ -244,7 +244,7 @@ describe("runLauncher provider selection", () => {
       expect(credentials.runCommand.mock.calls[0]?.[0]).toEqual(["op", "read", "op://vault/item/field"]);
       expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["--print"]);
       const env = spawnedEnv(spawn);
-      expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/anthropic-api");
+      expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/anthropic-api");
       expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
       expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
       expect([...log.infos, ...log.warns, ...log.errors].join("\n")).not.toContain("sk-ant-REDACTED");

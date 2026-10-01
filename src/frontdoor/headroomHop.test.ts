@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { Agent, fetch } from "undici";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, fakeResponse, recordingFetch } from "../codex/testing";
 import { FAKE_HOME, fakeFs } from "../test-helpers";
 import { createDoorPipelines } from "./assembly";
+import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
 import { SEQUESTERED_CREDENTIAL, createCredentialCustody } from "./custody";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, IDENTITY_HEADER, SESSION_HEADER } from "./route";
 import { serveRouted } from "./pipeline";
@@ -15,6 +17,8 @@ import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.claude-use/providers`;
+/** Enough time for the pure-JS 2048-bit keypairs this file generates once. */
+const KEYGEN_TIMEOUT_MS = 120_000;
 /** This door generation's hop secret in these tests. */
 const HOP_SECRET = "hop-secret-for-tests";
 /** A made-up provider credential: what must reach the provider's upstream and nothing in between. */
@@ -131,8 +135,19 @@ afterEach(async () => {
   );
 });
 
+/** The trust every request to the door's TLS provider listener is made with: claude-use's CA alone, as a routed child's NODE_EXTRA_CA_CERTS gives it. */
+let ca: CaMaterial;
+let leaf: LeafCert;
+let trusting: Agent;
+
+beforeAll(() => {
+  ca = generateCa(new Date());
+  leaf = mintLeaf(ca, LOOPBACK_LEAF_NAMES, new Date());
+  trusting = new Agent({ connect: { ca: ca.certPem } });
+}, KEYGEN_TIMEOUT_MS);
+
 /**
- * The whole door assembly over a fake headroom, built from the production `createDoorPipelines`: the main listener (with the hop and launch admission) and the direct listener (without the hop, admitting only the hop's own requests), sharing one resolver whose in-process routes name the direct address and one credential custody.
+ * The whole door assembly over a fake headroom, built from the production `createDoorPipelines`: the TLS provider listener (with the hop and launch admission) and the plain-HTTP direct listener (without the hop, admitting only the hop's own requests), sharing one resolver whose in-process routes name the direct address and one credential custody.
  */
 async function startDoor(options: { readonly files: Record<string, unknown>; readonly headroomPort: () => number | undefined }): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly directPort: () => number }> {
   const upstream = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
@@ -158,12 +173,16 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
   }, log);
   const directHandle = await listenFrontDoor(direct, undefined, () => undefined);
   directPort = directHandle.port;
-  const main = createFrontDoorServer(async (request) => {
-    await serveRouted(request, pipelines.clientFacing);
-  }, log);
-  const mainHandle = await listenFrontDoor(main, undefined, () => undefined);
+  const main = createFrontDoorServer(
+    async (request) => {
+      await serveRouted(request, pipelines.clientFacing);
+    },
+    log,
+    leaf,
+  );
+  const mainHandle = await listenFrontDoor(main, undefined, () => undefined, ca.certPem);
   return {
-    url: `http://127.0.0.1:${String(mainHandle.port)}`,
+    url: `https://127.0.0.1:${String(mainHandle.port)}`,
     close: async () => {
       await mainHandle.close();
       await directHandle.close();
@@ -210,6 +229,7 @@ describe("the headroom hop", () => {
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: headroom.port });
     try {
       const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting,
         method: "POST",
         headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN },
         body: MESSAGES_BODY,
@@ -236,6 +256,7 @@ describe("the headroom hop", () => {
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: headroom.port });
     try {
       await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting,
         method: "POST",
         headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN, "x-headroom-project-id": "/repo" },
         body: MESSAGES_BODY,
@@ -253,7 +274,8 @@ describe("the headroom hop", () => {
   it("answers 502 rather than bypassing headroom while the daemon is between restarts", async () => {
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: () => undefined });
     try {
-      const response = await fetch(`${door.url}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
       expect(response.status).toBe(HTTP_STATUS.badGateway);
       expect(await response.json()).toMatchObject({ type: "error", error: { type: "api_error" } });
     } finally {
@@ -269,7 +291,8 @@ describe("the headroom hop", () => {
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: () => holdingPort });
     try {
       const abort = new AbortController();
-      const pending = fetch(`${door.url}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY, signal: abort.signal });
+      const pending = fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY, signal: abort.signal });
       await new Promise((resolve) => {
         setTimeout(resolve, SETTLE_MS);
       });
@@ -289,7 +312,8 @@ describe("the headroom hop", () => {
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: headroom.port });
     try {
       // No headroom flag header: the session never asked for the hop, so the door serves the route itself.
-      const response = await fetch(`${door.url}/providers/codex/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
       expect(response.status).toBe(HTTP_STATUS.ok);
       await settle();
       expect(headroom.seen()).toHaveLength(0);
@@ -307,9 +331,9 @@ describe("the headroom hop", () => {
       const door = await startDoor({ files: { [`${PROVIDERS_DIR}/z.json`]: httpProvider(upstream.port) }, headroomPort: headroom.port });
       try {
         const base = { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN };
-        const bearer = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { ...base, authorization: `Bearer ${PROVIDER_TOKEN}` }, body: MESSAGES_BODY });
+        const bearer = await fetch(`${door.url}/providers/z/v1/messages`, { dispatcher: trusting, method: "POST", headers: { ...base, authorization: `Bearer ${PROVIDER_TOKEN}` }, body: MESSAGES_BODY });
         expect(bearer.status).toBe(HTTP_STATUS.ok);
-        const apiKey = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { ...base, "x-api-key": PROVIDER_TOKEN }, body: MESSAGES_BODY });
+        const apiKey = await fetch(`${door.url}/providers/z/v1/messages`, { dispatcher: trusting, method: "POST", headers: { ...base, "x-api-key": PROVIDER_TOKEN }, body: MESSAGES_BODY });
         expect(apiKey.status).toBe(HTTP_STATUS.ok);
 
         const [bearerHop, apiKeyHop] = headroom.seen();
@@ -337,6 +361,7 @@ describe("the headroom hop", () => {
         await headroom.close();
       }
     },
+    KEYGEN_TIMEOUT_MS,
   );
 
   it(
@@ -353,6 +378,7 @@ describe("the headroom hop", () => {
         (await fetch(`http://127.0.0.1:${String(door.directPort())}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: MESSAGES_BODY })).status;
       try {
         const client = fetch(`${door.url}/providers/z/v1/messages`, {
+          dispatcher: trusting,
           method: "POST",
           headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN, authorization: `Bearer ${PROVIDER_TOKEN}` },
           body: MESSAGES_BODY,
@@ -382,6 +408,7 @@ describe("the headroom hop", () => {
         await headroom.close();
       }
     },
+    KEYGEN_TIMEOUT_MS,
   );
 
   it(
@@ -391,6 +418,7 @@ describe("the headroom hop", () => {
       const door = await startDoor({ files: {}, headroomPort: headroom.port });
       try {
         const response = await fetch(`${door.url}/v1/messages`, {
+          dispatcher: trusting,
           method: "POST",
           headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN, authorization: "Bearer made-up-oauth-token" },
           body: MESSAGES_BODY,
@@ -403,5 +431,6 @@ describe("the headroom hop", () => {
         await headroom.close();
       }
     },
+    KEYGEN_TIMEOUT_MS,
   );
 });

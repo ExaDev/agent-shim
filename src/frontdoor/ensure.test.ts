@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { ensureFrontDoor, FrontDoorStartError } from "./ensure";
+import type { ListenerVerdict } from "./probe";
 import { writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.claude-use");
@@ -20,29 +21,41 @@ const DEAD_SUPERVISOR_PID = 999;
 const SLEEPS_BEFORE_READY = 2;
 /** A launcher pid holding a start lock in the dead-holder test, distinct from every live fake. */
 const DEAD_LOCK_HOLDER = 12345;
+/** A port held by something that cannot present claude-use's certificate. */
+const HOSTILE_PORT = 4666;
+/** The pid and port a replacement supervisor comes up on after the recorded one was distrusted. */
+const REPLACEMENT_PID = 501;
+const REPLACEMENT_PORT = 4101;
 /** The bring-up timeout the implementation documents, asserted so the waiting path really ran its course. */
 const START_TIMEOUT_MS = 30_000;
 
 /**
  * The fake world `ensureFrontDoor` runs against: a fake filesystem, a clock that only advances when the code sleeps, a live-pid set, and a `spawnSupervisor` that records itself and can simulate the freshly spawned supervisor writing a ready state (immediately, or lazily on a later poll via `onSleep`).
  */
-function makeWorld(options: { readonly spawnWritesReadyState?: boolean } = {}) {
+function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly spawnedPid?: number; readonly spawnedPort?: number } = {}) {
   const fs = createFakeFarmFs({});
   let clock = 0;
   let onSleep: (() => void) | undefined;
   const alive = new Set<number>([SUPERVISOR_PID, process.pid, OTHER_LAUNCHER_PID]);
   const spawns: number[] = [];
+  /** Ports whose listener authenticates; every other port fails the probe, the way a listener without a leaf from claude-use's CA does. */
+  const authentic = new Set<number>([PORT]);
+  const probed: number[] = [];
+  const spawnedPid = options.spawnedPid ?? SUPERVISOR_PID;
+  const spawnedPort = options.spawnedPort ?? PORT;
 
   const world = {
     fs,
     alive,
     spawns,
+    authentic,
+    probed,
     clock: () => clock,
     set onSleep(hook: (() => void) | undefined) {
       onSleep = hook;
     },
-    writeReadyState(port = PORT): void {
-      writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: SUPERVISOR_PID, port, lastPort: port, connectPort: CONNECT_PORT, lastConnectPort: CONNECT_PORT });
+    writeReadyState(port = PORT, pid = SUPERVISOR_PID): void {
+      writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: pid, port, lastPort: port, connectPort: CONNECT_PORT, lastConnectPort: CONNECT_PORT });
     },
     /** What the recorded session file for a launcher holds, so a test can read the launch's token back. */
     sessionToken(pid: number): string | undefined {
@@ -64,11 +77,16 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean } = {}) {
         }
       },
       spawnSupervisor: () => {
-        spawns.push(SUPERVISOR_PID);
+        spawns.push(spawnedPid);
+        alive.add(spawnedPid);
         if (options.spawnWritesReadyState !== false) {
-          world.writeReadyState();
+          world.writeReadyState(spawnedPort, spawnedPid);
         }
-        return SUPERVISOR_PID;
+        return spawnedPid;
+      },
+      verifyListener: (port: number): ListenerVerdict => {
+        probed.push(port);
+        return authentic.has(port) ? { ok: true } : { ok: false, reason: "SELF_SIGNED_CERT_IN_CHAIN: self-signed certificate in certificate chain" };
       },
     },
   };
@@ -181,4 +199,41 @@ describe("ensureFrontDoor", () => {
     expect(world.fs.readFileUtf8(`${paths.frontdoorSessionsDir}/${String(LAUNCHER_PID)}.json`)).toBeDefined();
     expect(world.fs.readFileUtf8(`${paths.frontdoorSessionsDir}/${String(OTHER_LAUNCHER_PID)}.json`)).toBeDefined();
   });
+
+  it("authenticates the listener before registering anything, and never probes with the launch's capability", () => {
+    const world = makeWorld();
+    world.writeReadyState();
+    const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(world.probed).toEqual([PORT]);
+    expect(ensured.port).toBe(PORT);
+  });
+
+  it("refuses a listener whose certificate does not validate when the supervisor it spawned serves it: no session, no port, the reason and the log named", () => {
+    const world = makeWorld({ spawnedPort: HOSTILE_PORT });
+    let thrown: unknown;
+    try {
+      ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(FrontDoorStartError);
+    expect(String(thrown)).toContain(`127.0.0.1:${String(HOSTILE_PORT)}`);
+    expect(String(thrown)).toContain("SELF_SIGNED_CERT_IN_CHAIN");
+    expect(String(thrown)).toContain(paths.frontdoorLogPath);
+    expect(world.fs.readFileUtf8(`${paths.frontdoorSessionsDir}/${String(LAUNCHER_PID)}.json`)).toBeUndefined();
+  });
+
+  it("distrusts a recorded live pid whose listener fails authentication and brings up a verified replacement instead", () => {
+    // A reused pid (or a hostile process) holds the state's port: the pid is alive, but nothing on that port presents claude-use's certificate.
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: REPLACEMENT_PORT });
+    world.authentic.delete(PORT);
+    world.authentic.add(REPLACEMENT_PORT);
+    world.writeReadyState(PORT, SUPERVISOR_PID);
+    const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(world.spawns).toEqual([REPLACEMENT_PID]);
+    expect(ensured.port).toBe(REPLACEMENT_PORT);
+    expect(world.probed).toEqual([PORT, REPLACEMENT_PORT]);
+    expect(world.sessionToken(LAUNCHER_PID)).toBe(ensured.token);
+  });
 });
+

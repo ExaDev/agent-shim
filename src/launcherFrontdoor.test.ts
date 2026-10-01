@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { HeadroomPort } from "./launcher/ports";
-import { discovered, FAKE_HOME, fakeCredentials, fakeFs, fakeFrontDoorPort, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
+import { discovered, FAKE_HOME, FAKE_TRUST_BUNDLE, fakeCredentials, fakeFs, fakeFrontDoorPort, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
 const FRONTDOOR_PORT = 4100;
 const HEADROOM_PORT = 8123;
@@ -45,7 +45,7 @@ describe("runLauncher with a provider", () => {
     });
     const env = spawnedEnv(spawn);
     expect(order).toEqual([]);
-    expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
+    expect(env.ANTHROPIC_BASE_URL).toBe(`https://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("codex-placeholder");
     expect(env.CLAUDE_USE_PROVIDER).toBe("Codex");
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-claude-use-session: [0-9a-f-]{36}\nx-claude-use-auth: launch-token-for-tests$/);
@@ -66,14 +66,35 @@ describe("runLauncher with a provider", () => {
       credentials: fakeCredentials(),
     });
     expect(frontdoor.ensures()).toBe(1);
-    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/z`);
+    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBe(`https://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/z`);
+    // The base URL is HTTPS with a leaf from claude-use's CA, so the child must trust that CA.
+    expect(spawnedEnv(spawn).NODE_EXTRA_CA_CERTS).toBe(FAKE_TRUST_BUNDLE);
+  });
+
+  it("hands the door the parent's own NODE_EXTRA_CA_CERTS and logs why the trust bundle dropped it, when it did", () => {
+    const spawn = fakeSpawn();
+    const log = fakeLog();
+    const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT, undefined, { path: "/bundle.pem", warning: "claude-use: NODE_EXTRA_CA_CERTS names /corp.pem, which could not be read" });
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } } }),
+      spawn,
+      proc: fakeProc({ Z: "tok", NODE_EXTRA_CA_CERTS: "/corp.pem" }, ["--provider", "z"]),
+      log,
+      resolveClaudeBinary: () => discovered,
+      frontdoor,
+      credentials: fakeCredentials(),
+    });
+    expect(frontdoor.inherited()).toEqual(["/corp.pem"]);
+    expect(spawnedEnv(spawn).NODE_EXTRA_CA_CERTS).toBe("/bundle.pem");
+    expect(log.warns).toContain("claude-use: NODE_EXTRA_CA_CERTS names /corp.pem, which could not be read");
   });
 
   it("starts the front door before headroom, whose allowlist must already admit the door's address", () => {
     const spawn = fakeSpawn();
     const order: string[] = [];
     const plainDoor = fakeFrontDoorPort(FRONTDOOR_PORT);
-    const recordingDoor = { ensure: () => { order.push("frontdoor"); return plainDoor.ensure(); }, release: () => { plainDoor.release(); } };
+    const recordingDoor = { ensure: (inherited: string | undefined) => { order.push("frontdoor"); return plainDoor.ensure(inherited); }, release: () => { plainDoor.release(); } };
     runAndCaptureExit({
       paths,
       fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/codex.json`]: codexProvider }),
@@ -87,7 +108,7 @@ describe("runLauncher with a provider", () => {
     });
     const env = spawnedEnv(spawn);
     expect(order).toEqual(["frontdoor", "headroom"]);
-    expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
+    expect(env.ANTHROPIC_BASE_URL).toBe(`https://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
     expect(env.HEADROOM_PROXY_URL).toBe(`http://127.0.0.1:${String(HEADROOM_PORT)}`);
     // The child names no upstream for headroom: the door's hop decides where headroom forwards, so no x-headroom-base-url exists any more.
     expect(env.ANTHROPIC_CUSTOM_HEADERS).not.toContain("x-headroom-base-url");

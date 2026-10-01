@@ -278,21 +278,21 @@ describe("buildEnv", () => {
     expect(env.API_TIMEOUT_MS).toBe("600000");
   });
 
-  it("routes a provider session through the front door: the child's base URL is the door's provider path and the session headers are injected", () => {
+  it("routes a provider session through the front door over TLS: the child's base URL is the door's HTTPS provider path, it trusts the door's CA bundle, and the session headers are injected", () => {
     const env = buildEnv({
       sessionId: "session-test",
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
       identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: resolvedProvider({ baseUrl: "http://127.0.0.1:4100/providers/z" }),
-      frontdoor: { port: 4100, connectPort: 4200, caCertPath: "/home/testuser/.claude-use/frontdoor/ca/ca.pem", sessionToken: "launch-token-for-tests" },
+      provider: resolvedProvider({ baseUrl: "https://127.0.0.1:4100/providers/z" }),
+      frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/home/testuser/.claude-use/frontdoor/ca/bundles/0123abcd.pem", sessionToken: "launch-token-for-tests" },
       headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
     });
-    expect(env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4100/providers/z");
+    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/z");
     expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
     expect(env.HTTPS_PROXY).toBeUndefined();
-    expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
+    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/frontdoor/ca/bundles/0123abcd.pem");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-claude-use-identity: work\nx-claude-use-session: session-test\nx-claude-use-auth: launch-token-for-tests\nx-claude-use-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
   });
@@ -304,8 +304,8 @@ describe("buildEnv", () => {
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
       identitiesDir,
-      provider: resolvedProvider({ baseUrl: "http://127.0.0.1:4100/providers/z" }),
-      frontdoor: { port: 4100, connectPort: 4200, caCertPath: "/ca.pem", sessionToken: "launch-token-for-tests" },
+      provider: resolvedProvider({ baseUrl: "https://127.0.0.1:4100/providers/z" }),
+      frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" },
     });
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-claude-use-identity: work\nx-claude-use-session: session-test\nx-claude-use-auth: launch-token-for-tests");
     expect(env.HEADROOM_PROXY_URL).toBeUndefined();
@@ -318,7 +318,7 @@ describe("buildEnv", () => {
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
       identitiesDir: "/home/testuser/.claude-use/identities",
-      frontdoor: { port: 4100, connectPort: 4200, caCertPath: "/home/testuser/.claude-use/frontdoor/ca/ca.pem", sessionToken: "launch-token-for-tests" },
+      frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/home/testuser/.claude-use/frontdoor/ca/ca.pem", sessionToken: "launch-token-for-tests" },
       headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
     });
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
@@ -334,7 +334,7 @@ describe("buildEnv", () => {
       baseEnv: { ...baseEnv, ANTHROPIC_BASE_URL: "https://custom-gateway.example" },
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.claude-use/identities",
-      frontdoor: { port: 4100, connectPort: 4200, caCertPath: "/ca.pem", sessionToken: "launch-token-for-tests" },
+      frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" },
       headroom: { port: 8123, projectId: "/repo" },
     });
     expect(env.ANTHROPIC_BASE_URL).toBe("https://custom-gateway.example");
@@ -346,8 +346,8 @@ describe("buildEnv", () => {
       baseEnv: { ...baseEnv, ANTHROPIC_CUSTOM_HEADERS: "x-from-parent: yes" },
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.claude-use/identities",
-      provider: resolvedProvider({ name: "o", displayName: "OpenRouter", baseUrl: "http://127.0.0.1:4100/providers/o", env: { ANTHROPIC_CUSTOM_HEADERS: "x-from-provider: indeed" } }),
-      frontdoor: { port: 4100, connectPort: 4200, caCertPath: "/ca.pem", sessionToken: "launch-token-for-tests" },
+      provider: resolvedProvider({ name: "o", displayName: "OpenRouter", baseUrl: "https://127.0.0.1:4100/providers/o", env: { ANTHROPIC_CUSTOM_HEADERS: "x-from-provider: indeed" } }),
+      frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" },
     });
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-from-parent: yes\nx-from-provider: indeed\nx-claude-use-session: session-test\nx-claude-use-auth: launch-token-for-tests");
   });

@@ -325,14 +325,17 @@ export function runLauncher(params: RunLauncherParams): void {
     },
   });
 
-  // The front door comes up first, before headroom: every routed session (a provider's, or headroom's) enters through it, and headroom's allowlist is fixed when its daemon starts and must already contain the door's origin, which is what a codex session routed through headroom is forwarded back to.
+  // The front door comes up first, before headroom: every routed session (a provider's, or headroom's) enters through it, and headroom's allowlist is fixed when its daemon starts and must already contain the door's origin, which is what a codex session routed through headroom is forwarded back to. `ensure` authenticates the door's listener over TLS before returning anything, so the address the child is handed below (and sends its credential to) belongs to a listener holding a leaf from claude-use's CA.
   const frontDoorPort = params.frontdoor;
   const frontDoorEngaged = resolvedProvider !== undefined || resolvedFlags.headroom;
   if (frontDoorEngaged && frontDoorPort === undefined) {
     log.error("claude-use: this launch routes through the front-door daemon, but this launcher has no front-door port wired; refusing to launch without it.");
     proc.exit(1);
   }
-  const frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure() : undefined;
+  const frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS) : undefined;
+  if (frontDoor?.trustWarning !== undefined) {
+    log.warn(frontDoor.trustWarning);
+  }
   let routedProvider: RoutedProvider | undefined;
   if (resolvedProvider !== undefined && frontDoor !== undefined) {
     routedProvider = { ...resolvedProvider, baseUrl: providerBaseUrl(frontDoor.port, resolvedProvider.name) };
