@@ -130,7 +130,6 @@ describe("runDoctor: headroom", () => {
             raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT, installedSource }),
           },
           isRunning: (pid: number) => alive.has(pid),
-          caCert: { path: "/claude-use/headroom/ca/ca.pem", exists: true },
         },
       });
     const moving = findingsFor(runDoctor(stateFor("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@feat/branch")), "headroom");
