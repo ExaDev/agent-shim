@@ -1,3 +1,9 @@
+## [5.1.0](https://github.com/ExaDev/claude-use/compare/v5.0.1...v5.1.0) (2026-10-01)
+
+### Features
+
+* **headroom:** configurable token-saving settings in the global headroom block ([2581a81](https://github.com/ExaDev/claude-use/commit/2581a812a7d3f8fa840d7a0396ef20063e6ac407)), closes [#58](https://github.com/ExaDev/claude-use/issues/58)
+
 ## [5.0.1](https://github.com/ExaDev/claude-use/compare/v5.0.0...v5.0.1) (2026-10-01)
 
 ### Bug Fixes
