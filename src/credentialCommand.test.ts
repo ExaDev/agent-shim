@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { EXIT_FAILURE, EXIT_USAGE, reportFatalError } from "./cliError";
+import { EXIT_FAILURE, EXIT_USAGE } from "./cliError";
+import { reportFatalError } from "./cliReport";
 import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
 import type { CachedCredential, CredentialCachePort } from "./credentialCache";
 import type { CredentialCommandPorts } from "./credentialCommand";

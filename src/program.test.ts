@@ -5,7 +5,8 @@ import path from "node:path";
 import { Help, type Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { EXIT_FAILURE, EXIT_USAGE, reportFatalError } from "./cliError";
+import { EXIT_FAILURE, EXIT_USAGE } from "./cliError";
+import { reportFatalError } from "./cliReport";
 import { addIdentity, readActiveIdentity, readIdentity, useIdentity } from "./identityManager";
 import { createProfile, readGlobalConfig, readProfile } from "./configProfiles";
 import { readProvider } from "./providers";

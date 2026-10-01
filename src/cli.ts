@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { reportFatalError } from "./cliError";
+import { reportFatalError } from "./cliReport";
 import type { CommandDeps } from "./cli/commandDeps";
 import { isInvokedAsClaude } from "./claudeShim";
 import { realPromptsPort } from "./configure";
