@@ -46,6 +46,10 @@ export interface FarmFs {
   readonly readFileUtf8: (path: string) => string | undefined;
   /** Writes a file's full contents as UTF-8 text, creating or truncating it. */
   readonly writeFileUtf8: (path: string, contents: string) => void;
+  /** Creates a directory (and any missing parents) readable only by its owner: mode 0700, enforced on the leaf even when it already existed with a wider mode. For a directory holding capabilities another local account must never read. */
+  readonly mkdirPrivate: (path: string) => void;
+  /** Writes a file's full contents as UTF-8 text readable only by its owner (mode 0600), atomically: a temporary sibling is written at that mode and renamed into place, so no reader ever sees a partial file or a wider mode. */
+  readonly writeFilePrivate: (path: string, contents: string) => void;
   /** Creates a file only if it does not already exist, returning false when it does. This is the exclusive-create the identity lock depends on for its mutual exclusion — a read-then-write pair would race. */
   readonly writeFileExclusive: (path: string, contents: string) => boolean;
   /** A stable content hash of one file, or undefined when it is missing or is not a regular file. Used only to recognise farm data that has already been adopted into the canonical tree. */

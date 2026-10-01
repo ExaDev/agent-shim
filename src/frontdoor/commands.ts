@@ -8,7 +8,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { readGlobalConfig } from "../configProfiles";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
 import { createCodexRoutePorts } from "../codex/commands";
-import { readHeadroomState, listSessions, removeSession, type HeadroomFs, type HeadroomSession } from "../headroom/state";
+import { readHeadroomState, type HeadroomFs } from "../headroom/state";
 import type { FrontDoorPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realFsPort, realIsProcessRunning, realSleepSync, spawnDetachedSupervisor } from "../realPorts";
@@ -27,7 +27,7 @@ import { serveRouted, type PipelineDeps } from "./pipeline";
 import { AUTH_HEADER, HOP_SECRET_HEADER } from "./route";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { liveSessionTokens, readFrontDoorState, type FrontDoorState } from "./state";
+import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, removeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
 import { runFrontDoorSupervisor, type FrontDoorListenerHandle, type FrontDoorSupervisorPorts } from "./supervisor";
 
 function appendLog(paths: LayoutPaths, line: string): void {
@@ -173,13 +173,13 @@ export function realFrontDoorPort(paths: LayoutPaths): FrontDoorPort {
       return { port: up.port, connectPort: up.connectPort, caCertPath: paths.frontdoorCaCertFile, sessionToken: up.token };
     },
     release: () => {
-      removeSession(realFarmFs, paths.frontdoorSessionsDir, process.pid);
+      removeFrontDoorSession(realFarmFs, paths.frontdoorSessionsDir, process.pid);
     },
   };
 }
 
 /** One session-registry entry plus whether its launcher is still running. */
-interface FrontDoorSessionStatus extends HeadroomSession {
+interface FrontDoorSessionStatus extends FrontDoorSessionSummary {
   readonly alive: boolean;
 }
 
@@ -200,7 +200,7 @@ export function collectFrontDoorStatus(fsPort: HeadroomFs, paths: LayoutPaths, i
   return {
     state,
     supervisorAlive: state.supervisorPid !== undefined && isRunning(state.supervisorPid),
-    sessions: listSessions(fsPort, paths.frontdoorSessionsDir).map((session) => ({ ...session, alive: isRunning(session.pid) })),
+    sessions: listFrontDoorSessions(fsPort, paths.frontdoorSessionsDir).map((session) => ({ ...session, alive: isRunning(session.pid) })),
     headroomPort: readHeadroomState(fsPort, paths.headroomStateFile)?.port,
     logPath: paths.frontdoorLogPath,
     logExists: fsPort.readFileUtf8(paths.frontdoorLogPath) !== undefined,

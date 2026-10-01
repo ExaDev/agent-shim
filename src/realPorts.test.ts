@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { realCredentialPort, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
+import { realCredentialPort, realFarmFs, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
 
 /** Owner read and write only: the mode a secret file is written with here. */
 const OWNER_ONLY_PERMISSIONS = 0o600;
@@ -316,5 +316,46 @@ describe("resolveOwnExecutablePath", () => {
       },
     });
     expect(result).toBe(directCandidate);
+  });
+});
+
+describe("realFarmFs owner-only writes", () => {
+  /** A permissive umask, the common default, which would leave a plainly created file world-readable. */
+  const PERMISSIVE_UMASK = 0o022;
+  const OWNER_ONLY_DIRECTORY = 0o700;
+
+  it.skipIf(process.platform === "win32")("creates a directory and a file readable only by their owner even under a permissive umask", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "private-fs-"));
+    const previousUmask = process.umask(PERMISSIVE_UMASK);
+    try {
+      const dir = path.join(root, "sessions");
+      const file = path.join(dir, "1.json");
+      realFarmFs.mkdirPrivate(dir);
+      realFarmFs.writeFilePrivate(file, "{}\n");
+      expect(fs.statSync(dir).mode & PERMISSION_BITS).toBe(OWNER_ONLY_DIRECTORY);
+      expect(fs.statSync(file).mode & PERMISSION_BITS).toBe(OWNER_ONLY_PERMISSIONS);
+      expect(fs.readFileSync(file, "utf8")).toBe("{}\n");
+      expect(fs.readdirSync(dir)).toEqual(["1.json"]);
+    } finally {
+      process.umask(previousUmask);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("narrows a directory and file that already existed with wider modes", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "private-fs-"));
+    try {
+      const dir = path.join(root, "sessions");
+      const file = path.join(dir, "1.json");
+      fs.mkdirSync(dir, { mode: 0o755 });
+      fs.writeFileSync(file, "old", { mode: 0o644 });
+      realFarmFs.mkdirPrivate(dir);
+      realFarmFs.writeFilePrivate(file, "new");
+      expect(fs.statSync(dir).mode & PERMISSION_BITS).toBe(OWNER_ONLY_DIRECTORY);
+      expect(fs.statSync(file).mode & PERMISSION_BITS).toBe(OWNER_ONLY_PERMISSIONS);
+      expect(fs.readFileSync(file, "utf8")).toBe("new");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

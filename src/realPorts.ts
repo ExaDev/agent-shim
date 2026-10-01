@@ -57,6 +57,11 @@ function isErrorWithCode(error: unknown, code: string): boolean {
  *
  * `lstat` never follows symlinks, `copyRecursive` copies a symlink as a symlink rather than as its target's contents, and `writeFileExclusive` uses the `wx` flag so the identity lock's mutual exclusion rests on one atomic syscall rather than a read-then-write pair.
  */
+/** Mode of a directory only its owner may enter: the sessions registry holds per-launch capability tokens, so another local account must not even list it. */
+const OWNER_ONLY_DIR_MODE = 0o700;
+/** Mode of a file only its owner may read or write, for the capability record inside that directory. */
+const OWNER_ONLY_FILE_MODE = 0o600;
+
 export const realFarmFs: FarmFs = {
   lstat(filePath) {
     let stat: fs.Stats;
@@ -108,6 +113,16 @@ export const realFarmFs: FarmFs = {
   },
   writeFileUtf8(filePath, contents) {
     fs.writeFileSync(filePath, contents, "utf8");
+  },
+  mkdirPrivate(dirPath) {
+    fs.mkdirSync(dirPath, { recursive: true, mode: OWNER_ONLY_DIR_MODE });
+    fs.chmodSync(dirPath, OWNER_ONLY_DIR_MODE);
+  },
+  writeFilePrivate(filePath, contents) {
+    const temp = `${filePath}.${String(process.pid)}.tmp`;
+    fs.writeFileSync(temp, contents, { encoding: "utf8", mode: OWNER_ONLY_FILE_MODE });
+    fs.chmodSync(temp, OWNER_ONLY_FILE_MODE);
+    fs.renameSync(temp, filePath);
   },
   writeFileExclusive(filePath, contents) {
     try {

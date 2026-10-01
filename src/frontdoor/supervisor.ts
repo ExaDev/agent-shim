@@ -1,7 +1,6 @@
 import type { HeadroomFs } from "../headroom/state";
-import { listSessions, pruneDeadSessions } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
-import { readFrontDoorState, writeFrontDoorState, type FrontDoorState } from "./state";
+import { listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, writeFrontDoorState, type FrontDoorState } from "./state";
 
 /** A bound front-door listener in this process, and how to stop it. */
 export interface FrontDoorListenerHandle {
@@ -127,8 +126,8 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
       return FRONTDOOR_SUPERVISOR_STILL_RUNNING;
     }
     ticks += 1;
-    pruneDeadSessions(fs, paths.frontdoorSessionsDir, ports.isRunning);
-    if (listSessions(fs, paths.frontdoorSessionsDir).length === 0) {
+    pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, ports.isRunning);
+    if (listFrontDoorSessions(fs, paths.frontdoorSessionsDir).length === 0) {
       idleSince ??= ports.now();
       if (ports.now() - idleSince >= idleShutdownMinutes * MS_PER_MINUTE) {
         ports.log(`claude-use frontdoor supervisor: no sessions for ${String(idleShutdownMinutes)} minute(s); closing the front door and exiting`);

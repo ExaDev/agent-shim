@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { listSessions, writeSession, type HeadroomFs } from "../headroom/state";
+import type { HeadroomFs } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { readFrontDoorState, writeFrontDoorState } from "./state";
+import { listFrontDoorSessions, readFrontDoorState, writeFrontDoorSession, writeFrontDoorState } from "./state";
 import { FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
 
 const paths = buildLayoutPaths("/home/testuser/.claude-use");
 
+/** A stand-in capability: the registry records one per launch, and the supervisor must see a record that carries it. */
+const SESSION_TOKEN = "test-capability";
 const OWN_PID = 4242;
 const SUCCESSOR_PID = 4243;
 const LIVE_SESSION = 301;
@@ -199,10 +201,10 @@ describe("runFrontDoorSupervisor", () => {
   it("prunes dead launcher sessions and never idles out while one is live", async () => {
     const world = makeWorld();
     world.alive.add(LIVE_SESSION);
-    writeSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0 });
-    writeSession(world.fs, paths.frontdoorSessionsDir, { pid: DEAD_SESSION, startedAt: 0 });
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0, token: SESSION_TOKEN });
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: DEAD_SESSION, startedAt: 0, token: SESSION_TOKEN });
     expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
-    expect(listSessions(world.fs, paths.frontdoorSessionsDir).map((session) => session.pid)).toEqual([LIVE_SESSION]);
+    expect(listFrontDoorSessions(world.fs, paths.frontdoorSessionsDir).map((session) => session.pid)).toEqual([LIVE_SESSION]);
     expect(world.closes).toEqual([]);
   });
 
@@ -225,7 +227,7 @@ describe("runFrontDoorSupervisor", () => {
       ticks += 1;
       if (ticks === halfway) {
         world.alive.add(NEW_SESSION);
-        writeSession(world.fs, paths.frontdoorSessionsDir, { pid: NEW_SESSION, startedAt: world.clock() });
+        writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: NEW_SESSION, startedAt: world.clock(), token: SESSION_TOKEN });
       }
     };
     expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);

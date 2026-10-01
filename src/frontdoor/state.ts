@@ -71,10 +71,53 @@ export function frontDoorOrigin(state: FrontDoorState | undefined): string | und
   return port === undefined ? undefined : `http://127.0.0.1:${String(port)}`;
 }
 
-/** Writes one launch's session record: the registry entry that both keeps the door from idling out and holds the token that launch's requests must present. */
+/**
+ * Writes one launch's session record: the registry entry that both keeps the door from idling out and holds the token that launch's requests must present. The token is a bearer capability, so the directory is created owner-only (0700) and the record written owner-only (0600): on a multi-user host another local account must be able neither to list nor to read it, since presenting it to a listener would spend the victim's provider credential or Codex login.
+ */
 export function writeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, session: Readonly<FrontDoorSession>): void {
-  fs.mkdirp(sessionsDir);
-  fs.writeFileUtf8(path.join(sessionsDir, `${String(session.pid)}.json`), `${JSON.stringify(session, null, 2)}\n`);
+  fs.mkdirPrivate(sessionsDir);
+  fs.writeFilePrivate(path.join(sessionsDir, `${String(session.pid)}.json`), `${JSON.stringify(session, null, 2)}\n`);
+}
+
+/** A registered launch as status and the idle decision see it: the pid and start time, never the token, so nothing that prints or serialises a session can leak the capability. */
+export type FrontDoorSessionSummary = Pick<FrontDoorSession, "pid" | "startedAt">;
+
+/**
+ * Every registered launch, unreadable or malformed files skipped, sorted by pid. Read through `FrontDoorSessionSchema`, which carries the token: headroom's token-less `listSessions` is strict and rejects every front-door record, which would make a live session invisible to the supervisor's idle decision and close the listeners (releasing the sticky ports) under a running child.
+ */
+export function listFrontDoorSessions(fs: HeadroomFs, sessionsDir: string): readonly FrontDoorSessionSummary[] {
+  const sessions: FrontDoorSessionSummary[] = [];
+  for (const name of fs.readdir(sessionsDir)) {
+    if (!name.endsWith(".json")) {
+      continue;
+    }
+    try {
+      const parsed = FrontDoorSessionSchema.safeParse(JSON.parse(fs.readFileUtf8(path.join(sessionsDir, name)) ?? ""));
+      if (parsed.success) {
+        sessions.push({ pid: parsed.data.pid, startedAt: parsed.data.startedAt });
+      }
+    } catch {
+      continue;
+    }
+  }
+  return sessions.sort((a, b) => a.pid - b.pid);
+}
+
+/** Removes one launcher's registry entry, and with it that launch's capability. Idempotent. */
+export function removeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, pid: number): void {
+  fs.removeRecursive(path.join(sessionsDir, `${String(pid)}.json`));
+}
+
+/** Removes every entry whose launcher is no longer running, so a dead launch's capability stops being accepted and cannot keep the door awake. The predicate must be zombie-aware, as for headroom's. */
+export function pruneDeadFrontDoorSessions(fs: HeadroomFs, sessionsDir: string, isRunning: (pid: number) => boolean): readonly number[] {
+  const removed: number[] = [];
+  for (const session of listFrontDoorSessions(fs, sessionsDir)) {
+    if (!isRunning(session.pid)) {
+      removeFrontDoorSession(fs, sessionsDir, session.pid);
+      removed.push(session.pid);
+    }
+  }
+  return removed;
 }
 
 /**
