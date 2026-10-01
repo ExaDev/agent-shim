@@ -289,7 +289,7 @@ type IdentityCredentialChange = { readonly sources?: readonly CredentialSource[]
 /**
  * Sets, changes or removes `identityName`'s credential block. New `sources` replace the whole ordered list (the order is the meaning); a `target` alone keeps the existing sources, and so needs a credential block to exist already. Throws `IdentityNotFoundError` when the identity does not exist, and `UsageError` when only a target is given for an identity with no credential yet.
  */
-function setIdentityCredential(paths: LayoutPaths, identityName: string, change: IdentityCredentialChange): Identity {
+export function setIdentityCredential(paths: LayoutPaths, identityName: string, change: IdentityCredentialChange): Identity {
   const existing = readIdentity(paths, identityName);
   if (existing === undefined) {
     throw new IdentityNotFoundError(identityName);

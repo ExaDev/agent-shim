@@ -95,7 +95,7 @@ describe("buildProgram", () => {
     const built = program(runClaude);
 
     expect(built.commands.map((command) => command.name()).sort()).toEqual(
-      ["__frontdoor-supervisor", "__headroom-supervisor", "check", "codex", "completion", "configure", "doctor", "frontdoor", "headroom", "identity", "profile", "provider", "rule", "run", "shim"].sort(),
+      ["__frontdoor-supervisor", "__headroom-supervisor", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "profile", "provider", "rule", "run", "shim"].sort(),
     );
     expect(runClaude).not.toHaveBeenCalled();
     expect(fs.readdirSync(root)).toEqual([]);
@@ -107,6 +107,20 @@ describe("buildProgram", () => {
     expect(subcommandNames(built, "profile")).toEqual(["add", "list", "remove", "set", "show", "use"]);
     expect(subcommandNames(built, "provider")).toEqual(["add", "list", "remove", "set", "show"]);
     expect(subcommandNames(built, "rule")).toEqual(["add", "list", "remove", "set", "show"]);
+    expect(subcommandNames(built, "credential")).toEqual(["store"]);
+  });
+
+  it("refuses to store a credential for an identity that does not exist", async () => {
+    const result = await cli(["credential", "store", "ghost"]);
+    expect(result.code).toBe(EXIT_FAILURE);
+    expect(result.stderr).toContain("ghost");
+  });
+
+  it("refuses to take a token on a terminal, so it cannot land in shell history", async () => {
+    expect((await cli(["identity", "add", "work"])).code).toBe(0);
+    const result = await cli(["credential", "store", "work"], { interactive: true });
+    expect(result.code).toBe(EXIT_USAGE);
+    expect(result.stderr).toContain("standard input");
   });
 
   it("forwards run's arguments verbatim to the injected launcher", async () => {
