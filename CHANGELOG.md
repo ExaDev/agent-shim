@@ -1,3 +1,38 @@
+## [5.0.0](https://github.com/ExaDev/claude-use/compare/v4.5.0...v5.0.0) (2026-10-01)
+
+### ⚠ BREAKING CHANGES
+
+* **library:** the library no longer exports startMitmServer,
+  realMitmEffects, realMitmCertStore, MITM_INTERCEPT_HOST,
+  HEADROOM_SERVED_PATH_PREFIX, servedByHeadroom or the Mitm* types.
+  Use startConnectServer, realConnectEffects, realConnectCertStore,
+  CONNECT_INTERCEPT_HOST, ROUTED_PATH_PREFIX, servedByPipeline and the
+  Connect* types. The CONNECT server now requires a launch capability
+  on every request and takes ConnectServerConfig, which differs from
+  MitmServerConfig.
+
+### Features
+
+* **frontdoor:** apply the headroom hop and pass every provider through the door ([bf083bd](https://github.com/ExaDev/claude-use/commit/bf083bdda5b6c52277b6af887b3963ba679a3cd2))
+* **launcher:** route every provider and headroom session through the front door ([9b28919](https://github.com/ExaDev/claude-use/commit/9b2891959684d81757ca836ef5548d6cba0a5cb1))
+* **library:** export the front door's CONNECT surface and lifecycle ([b7fdb36](https://github.com/ExaDev/claude-use/commit/b7fdb36504a357d644ca1f5ce724e31fbe0dcea8))
+
+### Bug Fixes
+
+* **frontdoor:** authenticate every CONNECT and bound the surface's connections ([a133609](https://github.com/ExaDev/claude-use/commit/a13360935e942d9fc2a62fa2d4a955ae5be45a06)), closes [#63](https://github.com/ExaDev/claude-use/issues/63)
+* **frontdoor:** authenticate the door to the child before it sends credentials ([52c1acb](https://github.com/ExaDev/claude-use/commit/52c1acb320300ba6e8d7c993f74af13683ea1275))
+* **frontdoor:** bound the listener probe against a silent squatter ([abbb5c2](https://github.com/ExaDev/claude-use/commit/abbb5c265c86ad55fecf3fd87ede947f687cb6ce))
+* **frontdoor:** keep provider credentials out of the headroom hop ([9caad5a](https://github.com/ExaDev/claude-use/commit/9caad5acf74d8e77ecfbf15bee77944225f8f0b3))
+* **frontdoor:** keep tokenised sessions visible to the supervisor and store capabilities owner-only ([4de7e78](https://github.com/ExaDev/claude-use/commit/4de7e78efe1bde7c62ac99b731ec25b04443a8f0))
+* **frontdoor:** let a listener move off an occupied sticky port ([4198705](https://github.com/ExaDev/claude-use/commit/4198705ee58577e77bdf7238c59e65fe97f2b516))
+* **frontdoor:** own headroom's per-request upstream header and serve bare /v1/ targets ([5cb4277](https://github.com/ExaDev/claude-use/commit/5cb42775f9570147c08899f89596e9ba85fb1b15))
+* **frontdoor:** require a per-launch capability before routing anything ([6a86d91](https://github.com/ExaDev/claude-use/commit/6a86d91cd28fadcb8fed522b934b73ea2b4a20a1))
+* **frontdoor:** strip hop-by-hop headers from forwarded responses ([8931913](https://github.com/ExaDev/claude-use/commit/8931913df24b128a735811c155f58d6a2ceaafcc))
+
+### Performance Improvements
+
+* **frontdoor:** cache pass-through routes so their connection pools persist ([3d85d57](https://github.com/ExaDev/claude-use/commit/3d85d5794041a653aad60272b72325cd9193921e))
+
 ## [4.5.0](https://github.com/ExaDev/claude-use/compare/v4.4.0...v4.5.0) (2026-10-01)
 
 ### Features
