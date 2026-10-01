@@ -1,4 +1,5 @@
 import type { Credential, CredentialSource, CredentialTarget, CredentialTargetVar } from "./config/schema";
+import { effectiveStore, isFresh, type CredentialCachePort } from "./credentialCache";
 
 /** The exit status for a launch whose selected provider or identity has a credential block none of whose sources yields a token: 64, the conventional `EX_USAGE`, because the invocation asked for a credential the environment cannot supply. */
 export const CREDENTIAL_UNAVAILABLE_EXIT = 64;
@@ -44,6 +45,8 @@ export interface CredentialPort {
   ) => CredentialCommandResult;
   /** Whether a person can answer a prompt now: standard input is a terminal, or there is a desktop session to show a dialog in. */
   readonly personPresent: () => boolean;
+  /** Where cached credentials live, used only for a credential block that asks for caching. Omit to resolve every launch from the sources. */
+  readonly cache?: CredentialCacheEnv;
 }
 
 /** The sources that run a command: `command` itself and the two presets that compile to one. */
@@ -89,6 +92,8 @@ type CredentialSourceSummary =
 export interface CredentialSummary {
   readonly target: CredentialTarget;
   readonly sources: readonly CredentialSourceSummary[];
+  /** The block's cache setting when it asks for caching: how long a token is kept (absent for no expiry) and where. */
+  readonly cache?: { readonly ttl?: string; readonly store?: string };
 }
 
 function summariseSource(source: CredentialSource): CredentialSourceSummary {
@@ -116,7 +121,11 @@ function summariseSource(source: CredentialSource): CredentialSourceSummary {
 
 /** Summarises a credential block for reporting, with `target` resolved to its default. */
 export function summariseCredential(credential: Credential): CredentialSummary {
-  return { target: credential.target ?? "bearer", sources: credential.sources.map(summariseSource) };
+  return {
+    target: credential.target ?? "bearer",
+    sources: credential.sources.map(summariseSource),
+    ...(credential.cache === undefined ? {} : { cache: credential.cache }),
+  };
 }
 
 /** Renders a source summary for a message: its kind and the non-secret detail that identifies it (a variable name, a path, a program, a reference, a Keychain service). Never a token, and never a `literal` source's value. */
@@ -146,7 +155,8 @@ export function describeSource(source: CredentialSource): string {
 
 /** Renders a credential summary on one line for human-readable output: `bearer from env Z_API_TOKEN, then op op://...`. */
 export function formatCredentialSummary(summary: CredentialSummary): string {
-  return `${summary.target} from ${summary.sources.map(formatSourceSummary).join(", then ")}`;
+  const cache = summary.cache === undefined ? "" : `, cached ${summary.cache.ttl === undefined ? "with no expiry" : `for ${summary.cache.ttl}`}${summary.cache.store === undefined ? "" : ` in the ${summary.cache.store} store`}`;
+  return `${summary.target} from ${summary.sources.map(formatSourceSummary).join(", then ")}${cache}`;
 }
 
 /** Renders a credential block on one line, as `formatCredentialSummary` does its summary. */
@@ -165,8 +175,17 @@ export interface ResolveCredentialParams {
   /** The launching environment: where `env` sources are read, and what decides whether `op` is interactive. */
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly port: CredentialPort;
-  /** What the credential belongs to, for messages: `provider z` or `identity work`. */
+  /** What the credential belongs to, for messages and as its cache key: `provider z` or `identity work`. */
   readonly subject: string;
+  /** True to skip a cached token and fetch from the sources, replacing the cached copy: what `credential warm` does. */
+  readonly refresh?: boolean;
+}
+
+/** What caching a credential needs beyond the block's own `cache` setting: the port holding entries, the platform that picks the default store, and the clock the TTL is measured on. */
+export interface CredentialCacheEnv {
+  readonly port: CredentialCachePort;
+  readonly platform: NodeJS.Platform;
+  readonly now: () => number;
 }
 
 /** A resolved credential: the token, where it goes, and which source produced it. `warnings` carries any source refused on the way for a reason worth reporting (a secret file with loose permissions). */
@@ -175,6 +194,8 @@ export interface ResolvedCredential {
   readonly token: string;
   readonly source: CredentialSource;
   readonly warnings: readonly string[];
+  /** When the token was fetched, if it came from the cache rather than a source; undefined for a live fetch. */
+  readonly cachedAt?: number;
 }
 
 /** The outcome of `resolveCredential`: a resolved credential, or a message naming every source and why none yielded a token. */
@@ -227,16 +248,35 @@ function trySource(source: CredentialSource, params: ResolveCredentialParams): S
   return token === "" ? none("printed no token") : { ok: true, token };
 }
 
+/** The `claude-use credential warm` invocation that refills the cache for a subject such as `identity work` or `provider z`. */
+function warmCommandFor(subject: string): string {
+  const [kind, name] = subject.split(" ");
+  return kind === "provider" ? `claude-use credential warm --provider ${name ?? ""}` : `claude-use credential warm ${name ?? ""}`;
+}
+
 /**
- * Resolves a credential block: tries each source in order and returns the first non-empty token, with the block's target. When none yields one, the message names every source and why, and never a value. Pure over its injected port.
+ * Resolves a credential block: a fresh cached token if the block caches one, else tries each source in order and returns the first non-empty token, with the block's target, storing it when the block caches. When none yields one, the message names every source and why, and never a value; for a caching block it also names the command that fills the cache from a terminal. Pure over its injected ports.
  */
 export function resolveCredential(params: ResolveCredentialParams): CredentialResolution {
+  const target = params.credential.target ?? "bearer";
+  const cacheBlock = params.credential.cache;
+  const cache = cacheBlock === undefined ? undefined : params.port.cache;
+  const store = cacheBlock === undefined || cache === undefined ? undefined : effectiveStore(cacheBlock, cache.platform);
+  if (cacheBlock !== undefined && cache !== undefined && store !== undefined && params.refresh !== true) {
+    const entry = cache.port.read(store, params.subject);
+    if (entry !== undefined && isFresh(entry, cacheBlock, cache.now())) {
+      return { ok: true, credential: { target, token: entry.token, source: entry.source, warnings: [], cachedAt: entry.fetchedAt } };
+    }
+  }
   const attempts: string[] = [];
   const warnings: string[] = [];
   for (const source of params.credential.sources) {
     const outcome = trySource(source, params);
     if (outcome.ok) {
-      return { ok: true, credential: { target: params.credential.target ?? "bearer", token: outcome.token, source, warnings } };
+      if (cache !== undefined && store !== undefined) {
+        cache.port.write(store, params.subject, { token: outcome.token, fetchedAt: cache.now(), source });
+      }
+      return { ok: true, credential: { target, token: outcome.token, source, warnings } };
     }
     const line = `${describeSource(source)} ${outcome.reason}`;
     attempts.push(line);
@@ -244,7 +284,8 @@ export function resolveCredential(params: ResolveCredentialParams): CredentialRe
       warnings.push(`claude-use: ${params.subject}: skipped ${line}`);
     }
   }
-  return { ok: false, message: `claude-use: ${params.subject} has no usable credential: ${attempts.join("; ")}` };
+  const hint = cacheBlock === undefined ? "" : `; fill the cache from a terminal with \`${warmCommandFor(params.subject)}\``;
+  return { ok: false, message: `claude-use: ${params.subject} has no usable credential: ${attempts.join("; ")}${hint}` };
 }
 
 /**

@@ -3,11 +3,11 @@ import path from "node:path";
 import { Option, type Command } from "commander";
 
 import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
-import { collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX } from "./cli/credentialOption";
+import { addCredentialCacheOptions, cacheChange, collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX, type CredentialCacheOptions } from "./cli/credentialOption";
 import { loadClassification } from "./config/classify";
 import { ConfigValidationError } from "./config/load";
 import { applyPatch, readJson, writeJsonAtomic, writeTextAtomic } from "./config/store";
-import { CREDENTIAL_TARGETS, IdentitySchema, type CredentialSource, type CredentialTarget, type Identity } from "./config/schema";
+import { CREDENTIAL_TARGETS, IdentitySchema, type CredentialCache, type CredentialSource, type CredentialTarget, type Identity } from "./config/schema";
 import { describeCredential, summariseCredential, type CredentialSummary } from "./credential";
 import { runProfileWizard, type PromptsPort } from "./configure";
 import { CliError, PromptCancelledError, UsageError } from "./cliError";
@@ -284,7 +284,7 @@ export function setAllowAmbientCredential(paths: LayoutPaths, identityName: stri
 }
 
 /** The change `setIdentityCredential` makes: new sources and/or a new target for the credential block, or `false` to remove the block and return the identity to its stored login. */
-type IdentityCredentialChange = { readonly sources?: readonly CredentialSource[]; readonly target?: CredentialTarget } | false;
+type IdentityCredentialChange = { readonly sources?: readonly CredentialSource[]; readonly target?: CredentialTarget; readonly cache?: CredentialCache | false } | false;
 
 /**
  * Sets, changes or removes `identityName`'s credential block. New `sources` replace the whole ordered list (the order is the meaning); a `target` alone keeps the existing sources, and so needs a credential block to exist already. Throws `IdentityNotFoundError` when the identity does not exist, and `UsageError` when only a target is given for an identity with no credential yet.
@@ -302,8 +302,9 @@ export function setIdentityCredential(paths: LayoutPaths, identityName: string, 
     throw new UsageError(`Identity "${identityName}" has no credential yet: pass --credential to give it one before choosing its target.`);
   }
   const target = change.target ?? existing.credential?.target;
+  const cache = change.cache === undefined ? existing.credential?.cache : change.cache === false ? undefined : change.cache;
   return applyPatch(identityJsonPath(paths, identityName), IdentitySchema, {
-    credential: { sources: [...sources], ...(target === undefined ? {} : { target }) },
+    credential: { sources: [...sources], ...(target === undefined ? {} : { target }), ...(cache === undefined ? {} : { cache }) },
   });
 }
 
@@ -375,7 +376,7 @@ function formatIdentityLine(entry: IdentityListing): string {
 }
 
 /** Options `identity set` accepts. `defaultProfile` is `false` for `--no-default-profile`, and `credential` is `false` for `--no-credential`. */
-interface IdentitySetOptions {
+interface IdentitySetOptions extends CredentialCacheOptions {
   readonly defaultProfile?: string | false;
   readonly allowAmbientCredential?: boolean;
   readonly credential?: CredentialSource[] | false;
@@ -454,8 +455,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
     ["claude-use identity show work", "claude-use identity show work --json"],
   );
 
-  withExamples(
-    identity
+  const identitySet = identity
       .command("set <name>")
       .description("Update an identity's settings.")
       .option("--default-profile <profile>", "Configuration profile this identity uses when nothing more specific selects one.")
@@ -473,11 +473,14 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
           "--credential-target <target>",
           "Where the token goes: oauthToken sets CLAUDE_CODE_OAUTH_TOKEN (a `claude setup-token` token), bearer sets ANTHROPIC_AUTH_TOKEN (the default), apiKey sets ANTHROPIC_API_KEY.",
         ).choices(CREDENTIAL_TARGETS),
-      )
+      );
+  addCredentialCacheOptions(identitySet);
+  withExamples(
+    identitySet
       .action(async (name: string, options: IdentitySetOptions) => {
         if (Object.values(options).every((value) => value === undefined)) {
           throw new UsageError(
-            "Nothing to change: pass --default-profile, --no-default-profile, --allow-ambient-credential, --no-allow-ambient-credential, --credential, --no-credential or --credential-target.",
+            "Nothing to change: pass --default-profile, --no-default-profile, --allow-ambient-credential, --no-allow-ambient-credential, --credential, --no-credential, --credential-target or a --credential-cache option.",
           );
         }
         if (!identityExists(paths, name)) {
@@ -504,10 +507,12 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         if (options.credential === false) {
           setIdentityCredential(paths, name, false);
           console.log(`Identity "${name}" no longer has a credential and uses its stored login.`);
-        } else if (options.credential !== undefined || options.credentialTarget !== undefined) {
+        } else if (options.credential !== undefined || options.credentialTarget !== undefined || cacheChange(options, undefined) !== undefined) {
+          const cache = cacheChange(options, readIdentity(paths, name)?.credential?.cache);
           const updated = setIdentityCredential(paths, name, {
             ...(options.credential === undefined ? {} : { sources: options.credential }),
             ...(options.credentialTarget === undefined ? {} : { target: options.credentialTarget }),
+            ...(cache === undefined ? {} : { cache }),
           });
           if (updated.credential !== undefined) {
             console.log(`Identity "${name}" now authenticates with credential ${describeCredential(updated.credential)}.`);

@@ -151,12 +151,29 @@ export const CredentialSourceSchema = z.union([
 ]);
 export type CredentialSource = z.infer<typeof CredentialSourceSchema>;
 
+/** Where a cached credential is kept: the macOS login Keychain, or a mode-0600 file under the claude-use home. */
+export const CREDENTIAL_CACHE_STORES = ["keychain", "file"] as const;
+export type CredentialCacheStore = (typeof CREDENTIAL_CACHE_STORES)[number];
+
+/**
+ * An optional cache on a credential block: the resolved token is kept for `ttl` (a whole number followed by `s`, `m`, `h` or `d`, for example `12h`) so a launch does not re-run a source that needs a person, such as a desktop-unlocked `op`. With no `ttl` the cached token never expires and is replaced only by `credential warm` or removed by `credential forget`. `store` defaults to the Keychain on macOS and a file elsewhere. A block with no `cache` stores nothing and fetches on every launch.
+ */
+export const CredentialCacheSchema = z.strictObject({
+  ttl: z
+    .string()
+    .regex(/^[1-9]\d*[smhd]$/, { message: "ttl is a whole number followed by s, m, h or d, for example 12h" })
+    .optional(),
+  store: z.enum(CREDENTIAL_CACHE_STORES).optional(),
+});
+export type CredentialCache = z.infer<typeof CredentialCacheSchema>;
+
 /**
  * The credential block providers and identities share: an ordered list of sources, tried in turn until one yields a non-empty token, and the target that token is exported as. `target` defaults to `bearer`.
  */
 export const CredentialSchema = z.strictObject({
   sources: z.array(CredentialSourceSchema).min(1),
   target: z.enum(CREDENTIAL_TARGETS).optional(),
+  cache: CredentialCacheSchema.optional(),
 });
 export type Credential = z.infer<typeof CredentialSchema>;
 

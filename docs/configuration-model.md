@@ -290,6 +290,22 @@ The ambient-credential guard (below) checks the parent environment and is unaffe
 
 **Provider files from before the credential block.** The separate `tokenEnv`, `tokenCommand` and `authScheme` fields, and a fixed `env.ANTHROPIC_AUTH_TOKEN`, were replaced by the `credential` block with no compatibility period. A file still using them is refused wherever it is read, and `claude-use doctor` fails it with the old fields named and the whole file rewritten in the current format: `tokenEnv` becomes an `env` source, `tokenCommand` a `command` source, a fixed `env.ANTHROPIC_AUTH_TOKEN` a `literal` source (shown as a placeholder for you to copy the value into, never printed), `authScheme: "apiKey"` the `target`, and any credential variable leaves `env`.
 
+### Caching a credential
+
+A source that needs a person (a desktop-unlocked `op`) prompts on every launch. A credential block can ask for its resolved token to be kept:
+
+```json
+{ "credential": { "sources": [{ "op": "op://vault/z/credential" }], "cache": { "ttl": "12h", "store": "keychain" } } }
+```
+
+`ttl` is a whole number and `s`, `m`, `h` or `d`; without one the cached token never expires and is replaced only by `credential warm`. `store` is `keychain` (the macOS login Keychain, the default there) or `file` (a mode 0600 file under `credential-cache/` in the claude-use home, the default elsewhere). A block with no `cache` stores nothing. The token, when it was fetched and the source that produced it are stored together; a launch uses the cached token until it is older than the `ttl`, then fetches again from the sources.
+
+`claude-use identity set <name>` and `claude-use provider set <name>` take `--credential-cache`, `--credential-cache-ttl`, `--credential-cache-store` and `--no-credential-cache`. `claude-use credential warm` does the interactive fetch from a terminal and fills the cache before unattended work, `credential forget` removes it, and `credential push <identity> <host>` reads the credential locally and writes it into that host's file store over SSH (mode 0600, the token on standard input rather than in a command), so the host needs no 1Password; on that host the credential's store is set to `file`. An unattended launch with an empty cache and only sources that need a person fails with the identity or provider named and the `credential warm` command to run, instead of hanging.
+
+The Keychain store is written through `security -i` on standard input, so the token is never an argument, and the item is readable by `security`, which is what claude-use reads it with, so later reads do not prompt. Over SSH the login keychain reports "User interaction is not allowed", so use the file store on remote hosts.
+
+A launch replaces the claude-use process with `claude`, so a launch cannot see a 401 from the API and re-fetch; a rejected cached token is replaced with `credential warm`.
+
 ## Identity credentials
 
 An identity authenticates with the login stored in its own directory unless its `identity.json` carries a `credential` block (see [Credentials](#credentials)), typically a `claude setup-token` token exported as `oauthToken`:

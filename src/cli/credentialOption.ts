@@ -1,6 +1,6 @@
-import { InvalidArgumentError } from "commander";
+import { InvalidArgumentError, Option, type Command } from "commander";
 
-import { CredentialSourceSchema, type CredentialSource } from "../config/schema";
+import { CREDENTIAL_CACHE_STORES, CredentialCacheSchema, CredentialSourceSchema, type CredentialCache, type CredentialSource } from "../config/schema";
 
 /** The `--credential` spellings, for help text: every kind's short form, and the JSON form that reaches every field. */
 export const CREDENTIAL_SOURCE_SYNTAX =
@@ -57,4 +57,45 @@ function parseCredentialSource(spec: string): CredentialSource {
 /** Commander repeatable-option collector for `--credential`: each occurrence appends one source, preserving the order given, which is the order sources are tried in. */
 export function collectCredentialSource(value: string, previous: readonly CredentialSource[] = []): CredentialSource[] {
   return [...previous, parseCredentialSource(value)];
+}
+
+/** The cache options `identity set` and `provider set` share, as commander parses them. `credentialCache` is true for `--credential-cache` and false for `--no-credential-cache`. */
+export interface CredentialCacheOptions {
+  readonly credentialCacheTtl?: string;
+  readonly credentialCacheStore?: (typeof CREDENTIAL_CACHE_STORES)[number];
+  readonly credentialCache?: boolean;
+}
+
+/** Adds `--credential-cache-ttl`, `--credential-cache-store` and `--no-credential-cache` to a `set` command. */
+export function addCredentialCacheOptions(command: Command): Command {
+  return command
+    .option("--credential-cache-ttl <ttl>", "Keep the resolved credential for this long (a whole number and s, m, h or d, for example 12h) so a launch need not re-run a source that needs a person. Enables caching.")
+    .addOption(
+      new Option("--credential-cache-store <store>", "Where the cached credential is kept: keychain (macOS login Keychain, the default there) or file (mode 0600 under the claude-use home, the default elsewhere). Enables caching.").choices(
+        CREDENTIAL_CACHE_STORES,
+      ),
+    )
+    .option("--credential-cache", "Cache this credential in the default store with no expiry (add --credential-cache-ttl for one).")
+    .option("--no-credential-cache", "Stop caching this credential. Run `credential forget` first to drop the stored copy.");
+}
+
+/**
+ * The cache block the parsed options ask for, merged over `existing`: undefined when no cache option was given (leave it alone), false for `--no-credential-cache`, otherwise the existing block with the given `ttl` and `store` replaced. Throws `InvalidArgumentError` for a malformed ttl.
+ */
+export function cacheChange(options: CredentialCacheOptions, existing: CredentialCache | undefined): CredentialCache | false | undefined {
+  if (options.credentialCache === false) {
+    return false;
+  }
+  if (options.credentialCacheTtl === undefined && options.credentialCacheStore === undefined && options.credentialCache !== true) {
+    return undefined;
+  }
+  const parsed = CredentialCacheSchema.safeParse({
+    ...existing,
+    ...(options.credentialCacheTtl === undefined ? {} : { ttl: options.credentialCacheTtl }),
+    ...(options.credentialCacheStore === undefined ? {} : { store: options.credentialCacheStore }),
+  });
+  if (!parsed.success) {
+    throw new InvalidArgumentError(parsed.error.issues.map((issue) => issue.message).join("; "));
+  }
+  return parsed.data;
 }

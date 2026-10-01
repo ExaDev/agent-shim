@@ -7,7 +7,7 @@ import { registerFrontDoorCommand } from "./frontdoor/commands";
 import type { CommandDeps } from "./cli/commandDeps";
 import { registerCompletionCommand } from "./completion";
 import { registerConfigureCommand } from "./configure";
-import { registerCredentialCommand } from "./credentialCommand";
+import { registerCredentialCommand, type CredentialCommandPorts } from "./credentialCommand";
 import { registerShimCommand } from "./claudeShim";
 import { registerDoctorCommand } from "./doctor";
 import { registerHeadroomCommand } from "./headroom/commands";
@@ -21,6 +21,8 @@ import { registerRunCommand } from "./runCommand";
 export interface ProgramDeps extends CommandDeps {
   /** Runs the launcher pipeline with `run`'s forwarded arguments. Injected so building the program never wires real ports, and a test can assert what `run` forwards without launching anything. */
   readonly runClaude: (args: readonly string[]) => Promise<void>;
+  /** Replaces the real Keychain, secret stores and `ssh` behind the `credential` commands. Omitted outside tests. */
+  readonly credentialPorts?: CredentialCommandPorts;
 }
 
 /** The root help's closing section: the launch command whose own help belongs to claude, the flags only claude-use reads, and the exit statuses every command shares. */
@@ -79,7 +81,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   registerProfileCommand(program, deps);
   registerProviderCommand(program, deps);
   registerRuleCommand(program, deps);
-  registerCredentialCommand(program, deps);
+  registerCredentialCommand(program, deps, deps.credentialPorts);
   registerCheckCommand(program, deps);
   registerConfigureCommand(program, deps);
   registerDoctorCommand(program, deps);

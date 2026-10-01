@@ -45,13 +45,14 @@ Every failure prints as `claude-use: <message>` on standard error. An unexpected
 ### Full command list
 
 ```
-claude-use <noun> <verb> [name] [options]      # nouns: identity, profile, provider, rule
+claude-use <noun> <verb> [name] [options]      # nouns: identity, profile, provider, rule (credential acts on the credentials they use)
 
 claude-use identity add <name>
 claude-use identity list [--json]
 claude-use identity show <name> [--json]
 claude-use identity set <name> [--default-profile <profile> | --no-default-profile] [--[no-]allow-ambient-credential]
 claude-use identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential]
+claude-use identity set <name> [--credential-cache] [--credential-cache-ttl <ttl>] [--credential-cache-store <keychain|file>] [--no-credential-cache]
 claude-use identity remove <name> [--yes]
 claude-use identity use <name>
 claude-use @<name>                          # shorthand for `identity use <name>`
@@ -70,6 +71,7 @@ claude-use profile use <name>               # the global default configuration p
 claude-use provider add <name> --display-name <name> (--base-url <url> | --kind codex) (--credential <source>)... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]...
                                               [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>]
 claude-use provider set <name> [--display-name <name>] ([--base-url <url>] | --kind codex) [--credential <source>]... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]...
+claude-use provider set <name> [--credential-cache] [--credential-cache-ttl <ttl>] [--credential-cache-store <keychain|file>] [--no-credential-cache]
                                               [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>]
 claude-use provider list [--json]
 claude-use provider show <name> [--json]
@@ -80,6 +82,11 @@ claude-use rule set <path> [--config-profile <profile> | --no-config-profile] [-
 claude-use rule list [--json]
 claude-use rule show <path> [--json]
 claude-use rule remove <path> [--yes]
+
+claude-use credential store <identity>                 # token on standard input
+claude-use credential warm [<identity> | --provider <name>]
+claude-use credential forget [<identity> | --provider <name>]
+claude-use credential push <identity> <host> [--provider <name>]
 
 claude-use configure [path] [--identity <identity>]
 claude-use check [path] [--identity <identity>] [--json] [--strict]

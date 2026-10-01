@@ -107,7 +107,7 @@ describe("buildProgram", () => {
     expect(subcommandNames(built, "profile")).toEqual(["add", "list", "remove", "set", "show", "use"]);
     expect(subcommandNames(built, "provider")).toEqual(["add", "list", "remove", "set", "show"]);
     expect(subcommandNames(built, "rule")).toEqual(["add", "list", "remove", "set", "show"]);
-    expect(subcommandNames(built, "credential")).toEqual(["store"]);
+    expect(subcommandNames(built, "credential")).toEqual(["forget", "push", "store", "warm"]);
   });
 
   it("refuses to store a credential for an identity that does not exist", async () => {

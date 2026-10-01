@@ -3,7 +3,7 @@ import path from "node:path";
 import { Option, type Command } from "commander";
 
 import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
-import { collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX } from "./cli/credentialOption";
+import { addCredentialCacheOptions, cacheChange, collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX, type CredentialCacheOptions } from "./cli/credentialOption";
 import { collectRepeated, collectStringPair } from "./cli/parsers";
 import { ConfigValidationError } from "./config/load";
 import { writeJsonAtomic } from "./config/store";
@@ -19,6 +19,7 @@ import {
   ProviderSchema,
   type CodexEffort,
   type CodexProviderConfig,
+  type CredentialCache,
   type CredentialSource,
   type Provider,
 } from "./config/schema";
@@ -296,6 +297,8 @@ interface UpdateProviderInput {
   readonly baseUrl?: string;
   readonly sources?: readonly CredentialSource[];
   readonly target?: ProviderCredentialTarget;
+  /** A new cache block, or false to remove it; undefined leaves the existing one. */
+  readonly cache?: CredentialCache | false;
   readonly env?: Readonly<Record<string, string>>;
   readonly unsetEnv?: readonly string[];
   /** Merged over a codex provider's existing settings: a field given here replaces that field, and `models` entries merge per tier. */
@@ -313,6 +316,7 @@ function updateProvider(paths: LayoutPaths, name: string, input: UpdateProviderI
   const unset = new Set(input.unsetEnv);
   const env = Object.fromEntries(Object.entries({ ...existing.env, ...input.env }).filter(([key]) => !unset.has(key)));
   const target = input.target ?? existing.credential.target;
+  const cache = input.cache === undefined ? existing.credential.cache : input.cache === false ? undefined : input.cache;
   if (isCodexProvider(existing) && input.baseUrl !== undefined) {
     throw new ProviderKindMismatchError(`Provider "${name}" is a codex provider, which has no base URL.`);
   }
@@ -324,6 +328,7 @@ function updateProvider(paths: LayoutPaths, name: string, input: UpdateProviderI
     credential: {
       sources: input.sources ?? existing.credential.sources,
       ...(target === undefined ? {} : { target }),
+      ...(cache === undefined ? {} : { cache }),
     },
     env: Object.keys(env).length === 0 ? undefined : env,
   };
@@ -470,7 +475,7 @@ function codexConfigFromOptions(options: CodexOptions): CodexProviderConfig | un
 }
 
 /** Options `provider set` accepts. */
-interface ProviderSetOptions extends CodexOptions {
+interface ProviderSetOptions extends CodexOptions, CredentialCacheOptions {
   readonly displayName?: string;
   readonly baseUrl?: string;
   readonly credential?: CredentialSource[];
@@ -531,8 +536,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
     ],
   );
 
-  withExamples(
-    provider
+  const providerSet = provider
       .command("set <name>")
       .description("Update an existing API provider definition.")
       .option("--display-name <name>", "Replace the human-readable name.")
@@ -551,16 +555,21 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--unset-env <KEY>", "Remove an environment entry (repeatable).", collectRepeated)
       .option("--codex-default-model <model>", "Codex providers: replace the model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: set the codex model one tier maps to (repeatable; other tiers are kept).", collectStringPair)
-      .addOption(new Option("--codex-effort <effort>", "Codex providers: replace the default reasoning effort.").choices(CODEX_EFFORTS))
+      .addOption(new Option("--codex-effort <effort>", "Codex providers: replace the default reasoning effort.").choices(CODEX_EFFORTS));
+  addCredentialCacheOptions(providerSet);
+  withExamples(
+    providerSet
       .action((name: string, options: ProviderSetOptions) => {
         if (Object.values(options).every((value) => value === undefined)) {
           throw new UsageError(
-            "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, --env, --unset-env, --codex-default-model, --codex-model or --codex-effort.",
+            "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, a --credential-cache option, --env, --unset-env, --codex-default-model, --codex-model or --codex-effort.",
           );
         }
         const codex = codexConfigFromOptions(options);
+        const cache = cacheChange(options, readProvider(paths, name)?.credential.cache);
         const updated = updateProvider(paths, name, {
           ...(codex === undefined ? {} : { codex }),
+          ...(cache === undefined ? {} : { cache }),
           ...(options.displayName === undefined ? {} : { displayName: options.displayName }),
           ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
           ...(options.credential === undefined ? {} : { sources: options.credential }),
@@ -573,7 +582,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
     [
       "claude-use provider set z --base-url https://api.z.ai/api/anthropic",
       "claude-use provider set z --env API_TIMEOUT_MS=600000",
-      "claude-use provider set z --credential op:op://vault/z/credential",
+      "claude-use provider set z --credential op:op://vault/z/credential --credential-cache-ttl 12h",
       "claude-use provider set anthropic-api --credential-target apiKey",
       "claude-use provider set codex --codex-model haiku=gpt-5.6-terra",
     ],
