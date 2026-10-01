@@ -99,6 +99,21 @@ export interface RoutedProvider extends ResolvedProvider {
   readonly baseUrl: string;
 }
 
+/** The hosts a loopback base URL can name, which a proxy inherited from the parent must never be asked to reach. */
+const LOOPBACK_HOSTS = ["127.0.0.1", "localhost", "::1"] as const;
+
+/** Whether `baseUrl` points at this machine. */
+function isLoopbackUrl(baseUrl: string): boolean {
+  const host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "");
+  return LOOPBACK_HOSTS.some((loopback) => loopback === host);
+}
+
+/** `existing` (a comma-separated `NO_PROXY` value) with every loopback host appended that it does not already list, keeping what was there. */
+function withLoopbackHosts(existing: string | undefined): string {
+  const listed = (existing ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
+  return [...listed, ...LOOPBACK_HOSTS.filter((host) => !listed.includes(host))].join(",");
+}
+
 /** Inputs to `buildEnv`. */
 export interface BuildEnvParams {
   readonly baseEnv: Readonly<Record<string, string | undefined>>;
@@ -144,6 +159,11 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
     const providerEnv = params.provider.definition.env ?? {};
     providerCustomHeaders = providerEnv.ANTHROPIC_CUSTOM_HEADERS;
     env.ANTHROPIC_BASE_URL = params.provider.baseUrl;
+    if (isLoopbackUrl(params.provider.baseUrl)) {
+      // A launch started from inside an OAuth session inherits that session's HTTPS_PROXY, which would send this loopback request to the parent's CONNECT surface instead of the address it names. A corporate proxy stays in force for everything else, so the proxy variables are kept and loopback is exempted from them in both spellings clients read.
+      env.NO_PROXY = withLoopbackHosts(params.baseEnv.NO_PROXY);
+      env.no_proxy = withLoopbackHosts(params.baseEnv.no_proxy);
+    }
     env.CLAUDE_USE_PROVIDER = params.provider.definition.displayName;
     for (const [key, value] of Object.entries(providerEnv)) {
       env[key] = value;
