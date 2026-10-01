@@ -13,11 +13,14 @@ import {
   KILL_GRACE_MS,
   resolveSupervisorConfig,
   runSupervisor,
+  type HeadroomSupervisorConfig,
+  type RunSupervisorOptions,
   stopSupervisedProcess,
   TERM_GRACE_MS,
   versionSatisfies,
   type SupervisorPorts,
 } from "./supervisor";
+import type { HeadroomSettings } from "./settings";
 import { hashAllowlist, headroomAllowlist, writeHeadroomState, writeSession } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.claude-use");
@@ -69,7 +72,8 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
   const zombies = new Set<number>();
   const occupied = new Set<number>();
   let freePortCalls = 0;
-  const spawns: { pid: number; port: number; allowlist: readonly string[] }[] = [];
+  const spawns: { pid: number; port: number; allowlist: readonly string[]; settings: HeadroomSettings }[] = [];
+  let currentConfig: HeadroomSupervisorConfig = resolveSupervisorConfig({});
   const stops: number[] = [];
   const installs: string[] = [];
   const logLines: string[] = [];
@@ -93,6 +97,9 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
   }
 
   const world = {
+    setConfig: (next: HeadroomSupervisorConfig) => {
+      currentConfig = next;
+    },
     fs,
     alive,
     zombies,
@@ -152,11 +159,12 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
         return await settled(nextPort);
       },
       isPortFree: async (port: number) => await settled(!occupied.has(port)),
-      spawnHeadroom: (port: number, allowlist: readonly string[]) => {
+      readConfig: () => currentConfig,
+      spawnHeadroom: (port: number, allowlist: readonly string[], settings: Readonly<HeadroomSettings>) => {
         nextPid += 1;
         alive.add(nextPid);
         zombies.delete(nextPid);
-        spawns.push({ pid: nextPid, port, allowlist: [...allowlist] });
+        spawns.push({ pid: nextPid, port, allowlist: [...allowlist], settings });
         if (autoReady) {
           readyPorts.add(port);
         }
@@ -187,15 +195,23 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
 
 const config = resolveSupervisorConfig({});
 
+/** Runs the supervisor against `world` with `supervisorConfig` as both its starting configuration and what it reads from disk each tick. */
+async function supervise(world: ReturnType<typeof makeWorld>, supervisorConfig: HeadroomSupervisorConfig, options?: RunSupervisorOptions): Promise<number> {
+  world.setConfig(supervisorConfig);
+  return await runSupervisor(supervisorConfig, world.ports, options);
+}
+
 describe("resolveSupervisorConfig", () => {
   it("defaults source and idle shutdown from the named constants", () => {
     expect(resolveSupervisorConfig({})).toEqual({
       source: HEADROOM_DEFAULT_SOURCE,
       idleShutdownMinutes: HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES,
+      settings: {},
     });
-    expect(resolveSupervisorConfig({ source: "headroom==0.39.0", idleShutdownMinutes: 5 })).toEqual({
+    expect(resolveSupervisorConfig({ source: "headroom==0.39.0", idleShutdownMinutes: 5, mode: "token", ccr: "lossless" })).toEqual({
       source: "headroom==0.39.0",
       idleShutdownMinutes: 5,
+      settings: { mode: "token", ccr: "lossless" },
     });
   });
 });
@@ -233,7 +249,7 @@ describe("runSupervisor", () => {
     const world = makeWorld([{ name: "z", baseUrl: "https://api.z.ai/api/anthropic" }]);
     world.version = undefined;
 
-    const code = await runSupervisor(config, world.ports, { tickLimit: TICKS_INSTALL_TEST });
+    const code = await supervise(world, config, { tickLimit: TICKS_INSTALL_TEST });
 
     expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     expect(world.installs).toEqual([HEADROOM_DEFAULT_SOURCE]);
@@ -256,7 +272,7 @@ describe("runSupervisor", () => {
 
   it("does not install when the installed version already satisfies the configured source", async () => {
     const world = makeWorld();
-    await runSupervisor(resolveSupervisorConfig({ source: "headroom>=0.39" }), world.ports, { tickLimit: TICKS_SHORT });
+    await supervise(world, resolveSupervisorConfig({ source: "headroom>=0.39" }), { tickLimit: TICKS_SHORT });
     expect(world.installs).toEqual([]);
     expect(world.spawns).toHaveLength(1);
   });
@@ -266,7 +282,7 @@ describe("runSupervisor", () => {
     world.version = undefined;
     world.installOk = false;
 
-    const code = await runSupervisor(config, world.ports);
+    const code = await supervise(world, config);
 
     expect(code).toBe(1);
     expect(world.spawns).toHaveLength(0);
@@ -287,7 +303,7 @@ describe("runSupervisor", () => {
         }
       }
     };
-    const code = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_CRASH_RESTART });
+    const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_CRASH_RESTART });
     expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     expect(world.spawns).toHaveLength(2);
   });
@@ -304,7 +320,7 @@ describe("runSupervisor", () => {
         }
       }
     };
-    const code = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_CRASH_RESTART });
+    const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_CRASH_RESTART });
     expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     const first = world.spawns[0];
     if (first === undefined) {
@@ -330,7 +346,7 @@ describe("runSupervisor", () => {
         }
       }
     };
-    await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_SHORT });
+    await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_SHORT });
     const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
     expect(state.port).toBeUndefined();
     expect(state.headroomPid).toBeUndefined();
@@ -347,7 +363,7 @@ describe("runSupervisor", () => {
       port: ORPHAN_DAEMON_PORT,
       installedSource: HEADROOM_DEFAULT_SOURCE,
     });
-    const code = await runSupervisor(config, world.ports, { tickLimit: TICKS_SHORT });
+    const code = await supervise(world, config, { tickLimit: TICKS_SHORT });
     expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     expect(world.stops).toContain(ORPHAN_DAEMON_PID);
     expect(world.spawns).toHaveLength(1);
@@ -367,7 +383,7 @@ describe("runSupervisor", () => {
         }
       }
     };
-    const code = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_CRASH_RESTART });
+    const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_CRASH_RESTART });
     expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     expect(world.spawns).toHaveLength(2);
     expect(world.spawns.map((spawn) => spawn.port)).toEqual([STICKY_PORT, STICKY_PORT]);
@@ -381,7 +397,7 @@ describe("runSupervisor", () => {
     const world = makeWorld();
     writeHeadroomState(world.fs, paths.headroomStateFile, { lastPort: STICKY_PORT });
     world.occupied.add(STICKY_PORT);
-    await runSupervisor(config, world.ports, { tickLimit: TICKS_SHORT });
+    await supervise(world, config, { tickLimit: TICKS_SHORT });
     const fresh = world.spawns[0];
     if (fresh === undefined) {
       throw new Error("expected a spawn");
@@ -396,12 +412,12 @@ describe("runSupervisor", () => {
   it("keeps lastPort across an idle shutdown and seeds the next supervisor generation with it", async () => {
     const world = makeWorld();
     writeHeadroomState(world.fs, paths.headroomStateFile, { lastPort: STICKY_PORT });
-    const idleCode = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_ONE_MINUTE }, world.ports);
+    const idleCode = await supervise(world, { ...config, idleShutdownMinutes: IDLE_ONE_MINUTE });
     expect(idleCode).toBe(0);
     const shutDown = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
     expect(shutDown.port).toBeUndefined();
     expect(shutDown.lastPort).toBe(STICKY_PORT);
-    const nextCode = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_SHORT });
+    const nextCode = await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_SHORT });
     expect(nextCode).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     expect(world.spawns[0]?.port).toBe(STICKY_PORT);
     expect(world.freePortCallCount()).toBe(0);
@@ -411,7 +427,7 @@ describe("runSupervisor", () => {
     const world = makeWorld();
     world.autoReady = false;
 
-    const code = await runSupervisor(config, world.ports);
+    const code = await supervise(world, config);
 
     expect(code).toBe(1);
     expect(world.spawns).toHaveLength(HEADROOM_START_RETRY_BUDGET);
@@ -452,7 +468,7 @@ describe("runSupervisor", () => {
       }
     };
 
-    const code = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_DRIFT_TEST });
+    const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_DRIFT_TEST });
 
     expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     expect(world.spawns).toHaveLength(2);
@@ -464,9 +480,41 @@ describe("runSupervisor", () => {
     expect(world.stops).toHaveLength(1);
   });
 
+  it("starts the daemon with the configured settings", async () => {
+    const world = makeWorld();
+    const settings: HeadroomSettings = { mode: "token", targetRatio: 0.4, ccr: "lossless" };
+    await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES, settings }, { tickLimit: TICKS_SHORT });
+    expect(world.spawns).toHaveLength(1);
+    expect(world.spawns[0]?.settings).toEqual(settings);
+  });
+
+  it("restarts with the new settings once no session is live after the config changes, and defers while one is", async () => {
+    const world = makeWorld();
+    const next: HeadroomSupervisorConfig = { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES, settings: { mode: "token" } };
+    let phase = 0;
+    world.onSleep = () => {
+      if (phase === 0 && world.spawns.length === 1) {
+        world.writeSessionFile(SESSION_PID);
+        world.setConfig(next);
+        phase = 1;
+        return;
+      }
+      if (phase === 1 && world.sleepDelays.filter((delay) => delay === HEADROOM_POLL_MS).length >= DEFERRAL_TICKS) {
+        expect(world.spawns).toHaveLength(1);
+        world.alive.delete(SESSION_PID);
+        world.fs.removeRecursive(`${paths.headroomSessionsDir}/${String(SESSION_PID)}.json`);
+        phase = DRIFT_DONE_PHASE;
+      }
+    };
+    await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_DRIFT_TEST });
+    expect(world.spawns).toHaveLength(2);
+    expect(world.spawns[1]?.settings).toEqual({ mode: "token" });
+    expect(world.stops).toHaveLength(1);
+  });
+
   it("shuts the daemon down after the idle period with an empty registry", async () => {
     const world = makeWorld();
-    const code = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_ONE_MINUTE }, world.ports);
+    const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_ONE_MINUTE });
     expect(code).toBe(0);
     expect(world.stops).toHaveLength(1);
     const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
@@ -481,7 +529,7 @@ describe("runSupervisor", () => {
         world.writeSessionFile(SESSION_PID);
       }
     };
-    const code = await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_ONE_MINUTE }, world.ports, { tickLimit: TICKS_LONG_SESSION });
+    const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_ONE_MINUTE }, { tickLimit: TICKS_LONG_SESSION });
     expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     expect(world.stops).toHaveLength(0);
   });
@@ -492,7 +540,7 @@ describe("runSupervisor", () => {
     world.alive.delete(SESSION_PID);
     world.writeSessionFile(ZOMBIE_SESSION_PID);
     world.zombify(ZOMBIE_SESSION_PID);
-    await runSupervisor({ source: config.source, idleShutdownMinutes: IDLE_NEVER_MINUTES }, world.ports, { tickLimit: TICKS_INSTALL_TEST });
+    await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_INSTALL_TEST });
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/${String(SESSION_PID)}.json`)).toBeUndefined();
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/${String(ZOMBIE_SESSION_PID)}.json`)).toBeUndefined();
   });
@@ -503,7 +551,7 @@ describe("runSupervisor", () => {
       supervisorPid: 1,
       installedSource: "headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@feat/per-session-savings",
     });
-    await runSupervisor(resolveSupervisorConfig({ source: "headroom==0.39.0" }), world.ports, { tickLimit: TICKS_SHORT });
+    await supervise(world, resolveSupervisorConfig({ source: "headroom==0.39.0" }), { tickLimit: TICKS_SHORT });
     expect(world.installs).toEqual(["headroom==0.39.0"]);
   });
 });

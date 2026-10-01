@@ -125,6 +125,40 @@
           "type": "integer",
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "cache",
+            "token"
+          ]
+        },
+        "targetRatio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "ccr": {
+          "type": "string",
+          "enum": [
+            "default",
+            "lossless",
+            "none"
+          ]
+        },
+        "rolloutChannel": {
+          "type": "string",
+          "enum": [
+            "beta",
+            "canary",
+            "dev"
+          ]
+        },
+        "interceptToolResults": {
+          "type": "boolean"
+        },
+        "readMaturation": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

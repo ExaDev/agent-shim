@@ -5,6 +5,7 @@ import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { readGlobalConfig } from "../configProfiles";
+import { hashSettings, settingsArgs, settingsEnv, settingsOf, type HeadroomSettings } from "./settings";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realIsPortFree, realIsProcessRunning, realSleepSync } from "../realPorts";
 import {
@@ -32,6 +33,10 @@ export interface HeadroomStatus {
   readonly allowlist: readonly string[];
   /** True when that allowlist differs from the one the running daemon was started with, i.e. a drift restart is pending. */
   readonly allowlistDrifted: boolean;
+  /** The token-saving settings the daemon WOULD be started with now, from the global config. */
+  readonly settings: HeadroomSettings;
+  /** True when those settings differ from the ones the running daemon was started with, i.e. a drift restart is pending. */
+  readonly settingsDrifted: boolean;
   readonly logPath: string;
   readonly logExists: boolean;
 }
@@ -44,6 +49,7 @@ export function collectHeadroomStatus(
 ): HeadroomStatus {
   const state = readHeadroomState(fsPort, paths.headroomStateFile) ?? {};
   const allowlist = currentHeadroomAllowlist(fsPort, paths);
+  const settings = settingsOf(readGlobalConfig(paths)?.headroom ?? {});
   return {
     state,
     supervisorAlive: state.supervisorPid !== undefined && isRunning(state.supervisorPid),
@@ -54,6 +60,8 @@ export function collectHeadroomStatus(
     })),
     allowlist,
     allowlistDrifted: state.allowlistHash !== undefined && state.allowlistHash !== hashAllowlist(allowlist),
+    settings,
+    settingsDrifted: state.settingsHash !== undefined && state.settingsHash !== hashSettings(settings),
     logPath: paths.headroomLogPath,
     logExists: fsPort.readFileUtf8(paths.headroomLogPath) !== undefined,
   };
@@ -80,6 +88,9 @@ export function formatHeadroomStatus(status: HeadroomStatus): string[] {
   }
   const drift = status.allowlistDrifted ? " (DRIFTED: current provider files differ from the running daemon's allowlist; a restart is pending)" : "";
   lines.push(`allowlist: ${status.allowlist.join(", ")}${drift}`);
+  const configured = Object.entries(status.settings).map(([name, value]) => `${name} ${String(value)}`);
+  const settingsDrift = status.settingsDrifted ? " (DRIFTED: the configured settings differ from the running daemon's; a restart is pending)" : "";
+  lines.push(`settings: ${configured.length === 0 ? "headroom defaults" : configured.join(", ")}${settingsDrift}`);
   if (status.sessions.length === 0) {
     lines.push("sessions: none");
   } else {
@@ -135,11 +146,12 @@ function headroomPidRunning(pid: number): boolean {
 /**
  * Environment for the supervised headroom proxy. `HEADROOM_HTTP2` defaults to `0`: headroom's HTTP/2 upstream pool multiplexes every request over shared keep-alive connections, and when a provider retires one (GOAWAY is routine load-balancer behaviour, not an error) every in-flight request on it dies at once; headroom retries exactly once, and that retry regularly lands on another dying connection from the same co-aged pool, which surfaces to Claude Code as "No response from API" after its full timeout budget. HTTP/1.1 gives each request its own connection, so a retirement can only kill the one request already being retried. An explicit `HEADROOM_HTTP2` in the parent environment wins, so the default can be overridden without editing claude-use once headroom fixes its pool management.
  */
-export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readonly string[]): NodeJS.ProcessEnv {
+export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readonly string[], settings: Readonly<HeadroomSettings>): NodeJS.ProcessEnv {
   return {
     ...parentEnv,
     HEADROOM_ALLOWED_BASE_URLS: allowlist.join(","),
     HEADROOM_HTTP2: parentEnv.HEADROOM_HTTP2 ?? "0",
+    ...settingsEnv(settings),
   };
 }
 
@@ -159,14 +171,15 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
     isRunning: headroomPidRunning,
     freePort: realFreePort,
     isPortFree: realIsPortFree,
-    spawnHeadroom: (port, allowlist) => {
+    readConfig: () => resolveSupervisorConfig(readGlobalConfig(paths)?.headroom ?? {}),
+    spawnHeadroom: (port, allowlist, settings) => {
       fs.mkdirSync(paths.logsDir, { recursive: true });
       const logFd = fs.openSync(paths.headroomLogPath, "a");
       try {
-        const child = spawn("headroom", ["proxy", "--host", "127.0.0.1", "--port", String(port)], {
+        const child = spawn("headroom", ["proxy", "--host", "127.0.0.1", "--port", String(port), ...settingsArgs(settings)], {
           detached: true,
           stdio: ["ignore", logFd, logFd],
-          env: headroomSpawnEnv(process.env, allowlist),
+          env: headroomSpawnEnv(process.env, allowlist, settings),
         });
         if (child.pid === undefined) {
           throw new Error("spawning headroom returned no pid");

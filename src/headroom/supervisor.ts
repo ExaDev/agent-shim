@@ -1,6 +1,7 @@
-import { HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES, HEADROOM_DEFAULT_SOURCE } from "../config/schema";
+import { HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES, HEADROOM_DEFAULT_SOURCE, type HeadroomGlobalConfig } from "../config/schema";
 import type { LayoutPaths } from "../paths";
 import { frontDoorOrigin, readFrontDoorState } from "../frontdoor/state";
+import { hashSettings, settingsOf, type HeadroomSettings } from "./settings";
 import {
   hashAllowlist,
   headroomAllowlist,
@@ -20,13 +21,16 @@ export interface HeadroomSupervisorConfig {
   readonly source: string;
   /** `headroom.idleShutdownMinutes`, already defaulted. */
   readonly idleShutdownMinutes: number;
+  /** The token-saving settings (`mode`, `targetRatio`, `ccr`, the rollout channel and its opt-ins), as configured; unset fields leave headroom on its own defaults. */
+  readonly settings: HeadroomSettings;
 }
 
 /** How the supervisor resolves the configured source against its defaults. */
-export function resolveSupervisorConfig(configured: { readonly source?: string; readonly idleShutdownMinutes?: number }): HeadroomSupervisorConfig {
+export function resolveSupervisorConfig(configured: Readonly<HeadroomGlobalConfig>): HeadroomSupervisorConfig {
   return {
     source: configured.source ?? HEADROOM_DEFAULT_SOURCE,
     idleShutdownMinutes: configured.idleShutdownMinutes ?? HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES,
+    settings: settingsOf(configured),
   };
 }
 
@@ -53,7 +57,9 @@ export interface SupervisorPorts {
   /**
    * Starts `headroom proxy` bound to `port` with the given allowlist, returning its pid. Output goes to the daemon log. The implementation must keep the ChildProcess handle and attach an exit listener (detaching the process is fine; unref'ing a child you still need events from is not, since without the listener nothing reaps it and it lingers as a zombie).
    */
-  readonly spawnHeadroom: (port: number, allowlist: readonly string[]) => number;
+  readonly spawnHeadroom: (port: number, allowlist: readonly string[], settings: Readonly<HeadroomSettings>) => number;
+  /** Reads the headroom config block as it stands on disk now. The supervisor calls it every tick, so a changed `source` or setting is noticed while the daemon runs and applied by the same quiet-registry restart an allowlist change gets. */
+  readonly readConfig: () => HeadroomSupervisorConfig;
   /** Stops a process the supervisor owns, escalating SIGTERM to SIGKILL on a bounded timeout (see `stopSupervisedProcess`). */
   readonly stopProcess: (pid: number) => void;
   /** True once `GET /readyz` on the port succeeds. */
@@ -215,11 +221,13 @@ export const HEADROOM_SUPERVISOR_STILL_RUNNING = -1;
  * Every effect flows through `ports`, so the whole loop is unit-testable with a fake clock, filesystem, and processes. The loop awaits its sleeps, which in the real implementation run on a timer: between ticks the event loop turns, the spawned child's exit event is delivered (and the child thereby reaped), and the next tick's liveness check reads the truth.
  */
 export async function runSupervisor(
-  config: HeadroomSupervisorConfig,
+  initialConfig: HeadroomSupervisorConfig,
   ports: SupervisorPorts,
   options: RunSupervisorOptions = {},
 ): Promise<number> {
   const { fs, paths } = ports;
+  // Replaced from disk at the top of every tick, so an edited `source` or setting is seen while the daemon runs.
+  let config = initialConfig;
 
   const previousState = readHeadroomState(fs, paths.headroomStateFile);
   let installedSource = previousState?.installedSource;
@@ -277,6 +285,7 @@ export async function runSupervisor(
 
   let headroomPid: number | undefined;
   let runningHash: string | undefined;
+  let runningSettingsHash: string | undefined;
   let consecutiveFailures = 0;
   let idleSince: number | undefined;
   let ticks = 0;
@@ -286,6 +295,8 @@ export async function runSupervisor(
       return HEADROOM_SUPERVISOR_STILL_RUNNING;
     }
     ticks += 1;
+    config = ports.readConfig();
+    const settingsHash = hashSettings(config.settings);
     // Recomputed every tick: provider files can change on disk at any moment, and the allowlist is the daemon's whole security posture.
     const allowlist = allowlistOf(ports);
     const allowlistHash = hashAllowlist(allowlist);
@@ -297,6 +308,7 @@ export async function runSupervisor(
         ports.log(`claude-use headroom supervisor: headroom pid ${String(headroomPid)} died`);
         headroomPid = undefined;
         runningHash = undefined;
+        runningSettingsHash = undefined;
         // Clear the daemon fields immediately: until the replacement is ready, state must not claim a serving port for a process that just died, or `headroom status` and waiting launchers read a healthy daemon that no longer exists. The front door reads the port live and its headroom hop answers 502 until the daemon is back. `lastPort` stays, so the replacement restarts on the same address.
         writeHeadroomState(fs, paths.headroomStateFile, {
           supervisorPid: ports.ownPid,
@@ -316,12 +328,13 @@ export async function runSupervisor(
       const previousSticky = lastPort;
       const port =
         lastPort !== undefined && (await ports.isPortFree(lastPort)) ? lastPort : await ports.freePort();
-      const pid = ports.spawnHeadroom(port, allowlist);
+      const pid = ports.spawnHeadroom(port, allowlist, config.settings);
       const ready = await waitUntilReady(ports, port);
       if (ready) {
         consecutiveFailures = 0;
         headroomPid = pid;
         runningHash = allowlistHash;
+        runningSettingsHash = settingsHash;
         lastPort = port;
         if (previousSticky !== undefined && port !== previousSticky) {
           ports.log(
@@ -334,6 +347,7 @@ export async function runSupervisor(
           port,
           version,
           allowlistHash,
+          settingsHash,
           installedSource: config.source,
           ...sticky(),
         });
@@ -352,13 +366,14 @@ export async function runSupervisor(
         continue;
       }
     } else {
-      // Running: drift first. A changed allowlist or install spec means the daemon would serve different upstreams than the configuration asks for, but restarting would cut off live sessions, so it waits for a quiet registry.
-      if (runningHash !== allowlistHash || installedSource !== config.source) {
+      // Running: drift first. A changed allowlist, install spec or setting means the daemon would run differently from what the configuration asks for, but restarting would cut off live sessions, so it waits for a quiet registry.
+      if (runningHash !== allowlistHash || runningSettingsHash !== settingsHash || installedSource !== config.source) {
         if (listSessions(fs, paths.headroomSessionsDir).length === 0) {
           ports.log("claude-use headroom supervisor: configuration drifted and no sessions are live; restarting headroom");
           ports.stopProcess(headroomPid);
           headroomPid = undefined;
           runningHash = undefined;
+          runningSettingsHash = undefined;
           continue;
         }
       }
