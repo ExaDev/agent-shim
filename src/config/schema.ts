@@ -317,12 +317,49 @@ export type PortableConfig = z.infer<typeof PortableConfigSchema>;
 /**
  * The user-global headroom daemon block: how claude-use installs and supervises the local headroom proxy when a launch routes through it. Deliberately global-only: the daemon is one per machine (one per CLAUDE_USE_HOME), so a per-directory or per-profile setting would be a claim about the same singleton from several places at once.
  */
-const HeadroomGlobalConfigSchema = z.strictObject({
+/** `cache` freezes earlier turns for provider prefix-cache hits; `token` may rewrite them for more compression. */
+const HEADROOM_MODES = ["cache", "token"] as const;
+
+/** `default` keeps headroom's retrieval markers and `headroom_retrieve` tool; `lossless` compacts tool output with no markers; `none` drops both the markers and the tool, so an original cannot be recovered. */
+const HEADROOM_CCR_MODES = ["default", "lossless", "none"] as const;
+
+/** The release channels headroom gates its experimental features behind. `beta` unlocks read maturation, `canary` the tool-result interceptors, and `dev` both. */
+const HEADROOM_ROLLOUT_CHANNELS = ["beta", "canary", "dev"] as const;
+
+/** Channels that unlock tool-result interceptors. */
+const INTERCEPT_CHANNELS: readonly string[] = ["canary", "dev"];
+
+/** Channels that unlock read maturation. */
+const READ_MATURATION_CHANNELS: readonly string[] = ["beta", "dev"];
+
+const HeadroomGlobalConfigObjectSchema = z.strictObject({
   /** Install spec handed to `uv tool install`. Defaults to HEADROOM_DEFAULT_SOURCE. */
   source: z.string().min(1).optional(),
   /** How long the daemon may sit with no registered sessions before the supervisor stops it. Defaults to HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES. */
   idleShutdownMinutes: z.number().int().positive().optional(),
+  /** Optimisation mode, passed as `--mode`. Unset leaves headroom's own default (`cache`). */
+  mode: z.enum(HEADROOM_MODES).optional(),
+  /** Keep-ratio for prose and code compression, passed as `--target-ratio`: lower is more aggressive. Unset lets headroom decide. */
+  targetRatio: z.number().gt(0).max(1).optional(),
+  /** How compressed tool output stays recoverable. Unset leaves headroom's own default (`default`). */
+  ccr: z.enum(HEADROOM_CCR_MODES).optional(),
+  /** Headroom's experimental release channel, exported as `HEADROOM_ROLLOUT_CHANNEL`. Required by `interceptToolResults` and `readMaturation`, which are refused without a channel that unlocks them. */
+  rolloutChannel: z.enum(HEADROOM_ROLLOUT_CHANNELS).optional(),
+  /** Opt in to headroom's tool-result interceptors (`--intercept-tool-results`). Needs `rolloutChannel` canary or dev. */
+  interceptToolResults: z.boolean().optional(),
+  /** Opt in to headroom's experimental read maturation (`--read-maturation`). Needs `rolloutChannel` beta or dev. */
+  readMaturation: z.boolean().optional(),
 });
+
+const HeadroomGlobalConfigSchema = HeadroomGlobalConfigObjectSchema.superRefine((config, context) => {
+  if (config.interceptToolResults === true && !INTERCEPT_CHANNELS.includes(config.rolloutChannel ?? "")) {
+    context.addIssue({ code: "custom", path: ["interceptToolResults"], message: "interceptToolResults needs rolloutChannel canary or dev" });
+  }
+  if (config.readMaturation === true && !READ_MATURATION_CHANNELS.includes(config.rolloutChannel ?? "")) {
+    context.addIssue({ code: "custom", path: ["readMaturation"], message: "readMaturation needs rolloutChannel beta or dev" });
+  }
+});
+export type HeadroomGlobalConfig = z.infer<typeof HeadroomGlobalConfigSchema>;
 
 /**
  * The default `headroom.source` install spec: the ExaDev headroom repository, with the `proxy` extra that provides the `headroom proxy` entry point. Pinned to a full commit SHA (the fork's `exadev-per-session-savings-1` tag), because a branch name can be rebased or deleted and would change or break every fresh install; bump it deliberately when the fork's per-session savings work changes. Kept here rather than in the supervisor because it is the schema's own documented default, referenced by `HeadroomGlobalConfigSchema`'s field docs.

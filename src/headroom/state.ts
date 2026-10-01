@@ -26,6 +26,8 @@ export const HeadroomStateSchema = z.strictObject({
   version: z.string().optional(),
   /** Hash of the allowlist the running proxy was started with, so a provider-file change is detected as drift. */
   allowlistHash: z.string().optional(),
+  /** Hash of the token-saving settings the running proxy was started with, so a settings change is detected as drift. */
+  settingsHash: z.string().optional(),
   /** The install spec the running install was last installed from, so a `source` config change is detected as drift. */
   installedSource: z.string().optional(),
   /** The last fatal error, kept across shutdowns so `headroom status` can explain a daemon that is not running. */

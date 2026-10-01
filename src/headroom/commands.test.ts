@@ -73,7 +73,8 @@ describe("formatHeadroomStatus", () => {
       `headroom: pid ${String(HEADROOM_PID)} (alive), listening on 127.0.0.1:${String(PORT)}, headroom 0.39.1`,
     );
     expect(lines[2]).toBe("allowlist: https://api.anthropic.com, https://api.z.ai/api/anthropic");
-    expect(lines[3]).toBe(`sessions: 1 registered (${String(SESSION_PID)})`);
+    expect(lines[3]).toBe("settings: headroom defaults");
+    expect(lines[4]).toBe(`sessions: 1 registered (${String(SESSION_PID)})`);
     expect(lines.at(-1)).toBe(`daemon log: ${paths.headroomLogPath} (not created yet)`);
   });
 
@@ -82,20 +83,21 @@ describe("formatHeadroomStatus", () => {
     expect(lines[0]).toBe("supervisor: not running (no state recorded)");
     expect(lines[1]).toBe("headroom: not running");
     expect(lines[2]).toBe("allowlist: https://api.anthropic.com");
-    expect(lines[3]).toBe("sessions: none");
+    expect(lines[3]).toBe("settings: headroom defaults");
+    expect(lines[4]).toBe("sessions: none");
   });
 });
 
 describe("headroomSpawnEnv", () => {
   it("defaults HEADROOM_HTTP2 to 0 and joins the allowlist into the environment", () => {
-    const env = headroomSpawnEnv({ PATH: "/usr/bin" }, ["https://api.anthropic.com", "https://api.z.ai/api/anthropic"]);
+    const env = headroomSpawnEnv({ PATH: "/usr/bin" }, ["https://api.anthropic.com", "https://api.z.ai/api/anthropic"], {});
     expect(env.HEADROOM_HTTP2).toBe("0");
     expect(env.HEADROOM_ALLOWED_BASE_URLS).toBe("https://api.anthropic.com,https://api.z.ai/api/anthropic");
     expect(env.PATH).toBe("/usr/bin");
   });
 
   it("leaves an explicit HEADROOM_HTTP2 from the parent environment in place", () => {
-    const env = headroomSpawnEnv({ HEADROOM_HTTP2: "1" }, ["https://api.anthropic.com"]);
+    const env = headroomSpawnEnv({ HEADROOM_HTTP2: "1" }, ["https://api.anthropic.com"], {});
     expect(env.HEADROOM_HTTP2).toBe("1");
   });
 });
