@@ -3,7 +3,7 @@ import type { LayoutPaths } from "../paths";
 import { listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, writeFrontDoorState, type FrontDoorState } from "./state";
 
 /** A bound front-door listener in this process, and how to stop it. */
-export interface FrontDoorListenerHandle {
+interface FrontDoorListenerHandle {
   readonly port: number;
   /** Stops accepting, ends every live connection, and resolves once the port is released. */
   readonly close: () => Promise<void>;

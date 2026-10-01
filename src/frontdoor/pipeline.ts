@@ -43,7 +43,7 @@ export interface PipelineDeps {
 }
 
 /** What the admission step sees of one request. */
-export interface AdmissionRequest {
+interface AdmissionRequest {
   /** The request target exactly as received. */
   readonly url: string;
   /** Every header as received, internal ones included: the capability and hop headers live here. */
@@ -53,7 +53,7 @@ export interface AdmissionRequest {
 }
 
 /** The admission step's verdict: route with these headers, or refuse with this message. */
-export type Admission = { readonly ok: true; readonly headers: IncomingHttpHeaders } | { readonly ok: false; readonly message: string };
+type Admission = { readonly ok: true; readonly headers: IncomingHttpHeaders } | { readonly ok: false; readonly message: string };
 
 /** One request as a transport hands it to the pipeline, before anything has been identified or routed. */
 export interface PipelineRequest {
