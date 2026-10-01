@@ -5,7 +5,9 @@ import * as tls from "node:tls";
 import { beforeAll, describe, expect, it } from "vitest";
 import forge from "node-forge";
 
+import { connectProxyUrl, isLiveCapability } from "./capability";
 import {
+  CONNECT_LIMITS,
   createLeafCache,
   ensureCa,
   forwardableHeaders,
@@ -22,7 +24,12 @@ import {
   type CaMaterial,
   type ConnectCertStore,
   type ConnectEffects,
+  type ConnectLimits,
+  MAX_CONNECT_HEAD_BYTES,
 } from "./connect";
+import { buildLayoutPaths } from "../paths";
+import { createFakeFarmFs } from "../test-helpers";
+import { liveSessionTokens, pruneDeadFrontDoorSessions, writeFrontDoorSession } from "./state";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates in `beforeAll`. */
 const KEYGEN_TIMEOUT_MS = 120_000;
@@ -40,6 +47,15 @@ const HTTP_UNAUTHORIZED = 401;
 
 /** The byte length of an HTTP head terminator, the framing this file's hand-rolled client parses. */
 const HEAD_TERMINATOR = "\r\n\r\n";
+
+/** A made-up launch capability the round-trip world accepts as live. */
+const TEST_CAPABILITY = "connect-test-capability";
+
+/** The `Proxy-Authorization` header a client derives from a launch's `HTTPS_PROXY` URL, built from the URL the launcher would set so the test exercises the same encoding round trip a real client does. */
+function proxyAuthorizationFor(token: string): string {
+  const url = new URL(connectProxyUrl(1, token));
+  return `Proxy-Authorization: Basic ${Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString("base64")}`;
+}
 
 describe("CONNECT routing decisions", () => {
   it("parses an authority into a lowercased host and numeric port, defaulting to 443", () => {
@@ -152,7 +168,7 @@ async function settled<T>(value: T): Promise<T> {
 /** Connects through the proxy the way curl or undici would: CONNECT, then TLS presenting only the given CA as trust. */
 async function connectThroughProxy(port: number, host: string, caPem: string): Promise<tls.TLSSocket> {
   const raw = net.connect(port, "127.0.0.1");
-  raw.write(`CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n\r\n`);
+  raw.write(`CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n${proxyAuthorizationFor(TEST_CAPABILITY)}\r\n\r\n`);
   const head = await new Promise<string>((resolve, reject) => {
     let buffer = "";
     function onData(chunk: Buffer): void {
@@ -226,7 +242,9 @@ async function requestTimingOn(secure: tls.TLSSocket, request: string): Promise<
 /**
  * The real-socket world the round-trip tests run against: a node-forge CA, a fake routed backend on plain HTTP (standing in for whatever the pipeline would serve), a fake upstream presenting TLS signed by its own CA, and the real connect surface with only its tunnel target redirected.
  */
-function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial) {
+function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { readonly limits?: Partial<ConnectLimits>; readonly isLiveCapability?: (token: string) => boolean } = {}) {
+  /** Every tunnel target the surface dialled, so a refusal can be shown never to have reached one. */
+  const dials: { host: string; port: number }[] = [];
   const routedRequests: { method: string; url: string; headers: http.IncomingHttpHeaders }[] = [];
   const upstreamRequests: { method: string; url: string; headers: http.IncomingHttpHeaders }[] = [];
   let routedPort = 0;
@@ -262,8 +280,9 @@ function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial) {
   let echoPort = 0;
   const effects: ConnectEffects = {
     ...realConnectEffects(),
-    connectTcp: async () =>
+    connectTcp: async (host, port) =>
       await new Promise((resolve, reject) => {
+        dials.push({ host, port });
         // The real implementation connects to whatever host the CONNECT authority named; a test always tunnels to the local echo server standing in for it.
         const socket = net.connect(echoPort, "127.0.0.1");
         socket.once("connect", () => {
@@ -274,6 +293,7 @@ function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial) {
   };
 
   return {
+    dials,
     routedRequests,
     upstreamRequests,
     async start(): Promise<{ readonly connectPort: number; readonly close: () => Promise<void> }> {
@@ -297,6 +317,8 @@ function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial) {
             ca: [upstreamCa.certPem],
             rejectUnauthorized: true,
           },
+          isLiveCapability: options.isLiveCapability ?? ((token) => token === TEST_CAPABILITY),
+          limits: { ...CONNECT_LIMITS, ...options.limits },
         },
         effects,
         undefined,
@@ -419,7 +441,7 @@ describe("MITM proxy over real sockets", () => {
       const { connectPort, close } = await world.start();
       try {
         const raw = net.connect(connectPort, "127.0.0.1");
-        raw.write("CONNECT mcp-proxy.anthropic.com:443 HTTP/1.1\r\nHost: mcp-proxy.anthropic.com:443\r\n\r\n");
+        raw.write(`CONNECT mcp-proxy.anthropic.com:443 HTTP/1.1\r\nHost: mcp-proxy.anthropic.com:443\r\n${proxyAuthorizationFor(TEST_CAPABILITY)}\r\n\r\n`);
         const echoed = await new Promise<string>((resolve, reject) => {
           let buffer = "";
           function onData(chunk: Buffer): void {
@@ -474,6 +496,282 @@ describe("MITM proxy over real sockets", () => {
         });
       });
       expect(rebound).toBe(true);
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+});
+
+/** One raw client connection to the surface: what it answered (the head, or whatever arrived before it closed) and when it closed. */
+interface RawAttempt {
+  readonly socket: net.Socket;
+  readonly answer: Promise<string>;
+  readonly closed: Promise<void>;
+  /** Resolves once the TCP connection is open, so a test can order several attempts as the surface accepts them. */
+  readonly connected: Promise<void>;
+}
+
+/** Opens a connection to the surface and writes `bytes` (a full or partial CONNECT head) without any of the round-trip helpers' expectations. */
+function rawAttempt(port: number, bytes: string): RawAttempt {
+  const socket = net.connect(port, "127.0.0.1");
+  socket.on("error", () => {
+    // A refused connection may be reset under the client; the answer and close promises are what the tests read.
+  });
+  let buffer = "";
+  const answer = new Promise<string>((resolve) => {
+    socket.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf8");
+      const end = buffer.indexOf(HEAD_TERMINATOR);
+      if (end !== -1) {
+        resolve(buffer.slice(0, end));
+      }
+    });
+    socket.on("close", () => {
+      resolve(buffer);
+    });
+  });
+  const closed = new Promise<void>((resolve) => {
+    socket.on("close", () => {
+      resolve(undefined);
+    });
+  });
+  const connected = new Promise<void>((resolve) => {
+    socket.once("connect", () => {
+      resolve(undefined);
+    });
+  });
+  socket.write(bytes);
+  return { socket, answer, closed, connected };
+}
+
+/** A complete CONNECT head for `host`, with whatever extra header lines a case needs. */
+function connectHead(host: string, headerLines: readonly string[]): string {
+  return `CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n${headerLines.map((line) => `${line}\r\n`).join("")}\r\n`;
+}
+
+/** How long `settle` waits: loopback delivery is sub-millisecond, so this is generous rather than tuned. */
+const SETTLE_MS = 50;
+
+/** Waits long enough for the surface's side of an already-written event (an accept, a close) to have run: loopback delivery is sub-millisecond, so this is generous rather than tuned. */
+async function settle(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, SETTLE_MS);
+  });
+}
+
+/** The head deadline the slow-head cases run with: short enough to reach in a test, long enough above `SETTLE_MS` that a connection opened and settled has not already timed out. */
+const TEST_HEAD_DEADLINE_MS = 300;
+
+/** The revalidation interval the revocation case runs with. */
+const TEST_REVALIDATE_MS = 50;
+
+/** Statuses the authentication and limit cases expect. */
+const HTTP_PROXY_AUTH_REQUIRED = 407;
+const HTTP_REQUEST_TIMEOUT = 408;
+const HTTP_HEADERS_TOO_LARGE = 431;
+const HTTP_SERVICE_UNAVAILABLE = 503;
+
+/** Sends one byte through an established tunnel to the echo server and resolves with what came back. */
+async function echoThrough(socket: net.Socket, payload: string): Promise<string> {
+  return await new Promise((resolve) => {
+    let buffer = "";
+    const onData = (chunk: Buffer): void => {
+      buffer += chunk.toString("utf8");
+      if (buffer.includes(payload)) {
+        socket.off("data", onData);
+        resolve(buffer);
+      }
+    };
+    socket.on("data", onData);
+    socket.write(payload);
+  });
+}
+
+describe("CONNECT authentication and limits over real sockets", () => {
+  let ca: CaMaterial;
+  let upstreamCa: CaMaterial;
+
+  beforeAll(async () => {
+    ca = generateCa(new Date());
+    upstreamCa = generateCa(new Date());
+    await settled(undefined);
+  }, KEYGEN_TIMEOUT_MS);
+
+  it(
+    "answers a CONNECT with no, a wrong, a non-Basic or a repeated credential 407 with a Basic challenge, and never dials, intercepts or routes anything for it",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa);
+      const { connectPort, close } = await world.start();
+      try {
+        const cases: readonly (readonly string[])[] = [
+          [],
+          [proxyAuthorizationFor("not-a-live-capability")],
+          [`Proxy-Authorization: Bearer ${TEST_CAPABILITY}`],
+          [proxyAuthorizationFor(TEST_CAPABILITY), proxyAuthorizationFor(TEST_CAPABILITY)],
+          // Basic with no colon at all: a user name and no password.
+          [`Proxy-Authorization: Basic ${Buffer.from(TEST_CAPABILITY).toString("base64")}`],
+        ];
+        for (const host of [CONNECT_INTERCEPT_HOST, "mcp-proxy.anthropic.com"]) {
+          for (const headerLines of cases) {
+            const attempt = rawAttempt(connectPort, connectHead(host, headerLines));
+            const answer = await attempt.answer;
+            expect(answer.split("\r\n")[0]).toBe(`HTTP/1.1 ${String(HTTP_PROXY_AUTH_REQUIRED)} Proxy Authentication Required`);
+            expect(answer).toContain('Proxy-Authenticate: Basic realm="claude-use front door"');
+            await attempt.closed;
+          }
+        }
+        expect(world.dials).toEqual([]);
+        expect(world.routedRequests).toEqual([]);
+        expect(world.upstreamRequests).toEqual([]);
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "drops a client that has not finished its head by the deadline with 408, never dialling, while an established tunnel outlives the deadline",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa, { limits: { headDeadlineMs: TEST_HEAD_DEADLINE_MS } });
+      const { connectPort, close } = await world.start();
+      try {
+        const tunnel = rawAttempt(connectPort, connectHead("mcp-proxy.anthropic.com", [proxyAuthorizationFor(TEST_CAPABILITY)]));
+        expect(await tunnel.answer).toContain(String(HTTP_OK));
+
+        const started = Date.now();
+        const slow = rawAttempt(connectPort, `CONNECT mcp-proxy.anthropic.com:443 HTTP/1.1\r\n${proxyAuthorizationFor(TEST_CAPABILITY)}\r\n`);
+        const answer = await slow.answer;
+        await slow.closed;
+        expect(answer.split("\r\n")[0]).toBe(`HTTP/1.1 ${String(HTTP_REQUEST_TIMEOUT)} Request Timeout`);
+        expect(Date.now() - started).toBeGreaterThanOrEqual(TEST_HEAD_DEADLINE_MS - SETTLE_MS);
+
+        // Well past the deadline, the tunnel whose head arrived in time still carries bytes: the deadline is disarmed once the head is in.
+        expect(await echoThrough(tunnel.socket, "still-open")).toContain("still-open");
+        expect(world.dials).toHaveLength(1);
+        tunnel.socket.destroy();
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a head larger than the limit with 431 without dialling",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa);
+      const { connectPort, close } = await world.start();
+      try {
+        const oversized = rawAttempt(connectPort, connectHead("mcp-proxy.anthropic.com", [proxyAuthorizationFor(TEST_CAPABILITY), `X-Pad: ${"a".repeat(MAX_CONNECT_HEAD_BYTES)}`]));
+        expect((await oversized.answer).split("\r\n")[0]).toBe(`HTTP/1.1 ${String(HTTP_HEADERS_TOO_LARGE)} Request Header Fields Too Large`);
+        await oversized.closed;
+        expect(world.dials).toEqual([]);
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "evicts the oldest half-sent head when the pending cap is reached, so squatters cannot lock out a live launch",
+    async () => {
+      // The head deadline is set beyond the test's own timeout, so the only thing that can answer a squatter is eviction.
+      const world = makeTlsWorld(ca, upstreamCa, { limits: { maxPendingHeads: 2, headDeadlineMs: KEYGEN_TIMEOUT_MS * 2 } });
+      const { connectPort, close } = await world.start();
+      try {
+        const partial = "CONNECT mcp-proxy.anthropic.com:443 HTTP/1.1\r\n";
+        const first = rawAttempt(connectPort, partial);
+        await first.connected;
+        await settle();
+        const second = rawAttempt(connectPort, partial);
+        await second.connected;
+        await settle();
+        const third = rawAttempt(connectPort, partial);
+        await third.connected;
+
+        expect((await first.answer).split("\r\n")[0]).toBe(`HTTP/1.1 ${String(HTTP_REQUEST_TIMEOUT)} Request Timeout`);
+        await first.closed;
+
+        // The cap is full of squatters again, yet a launch's connection still gets through: its head evicts the oldest squatter on accept and authenticates at once.
+        const launch = rawAttempt(connectPort, connectHead("mcp-proxy.anthropic.com", [proxyAuthorizationFor(TEST_CAPABILITY)]));
+        expect(await launch.answer).toContain(String(HTTP_OK));
+        expect((await second.answer).split("\r\n")[0]).toBe(`HTTP/1.1 ${String(HTTP_REQUEST_TIMEOUT)} Request Timeout`);
+        expect(third.socket.destroyed).toBe(false);
+        expect(world.dials).toHaveLength(1);
+        launch.socket.destroy();
+        third.socket.destroy();
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "answers an authenticated CONNECT beyond the tunnel cap 503 without dialling, and admits one again once a tunnel closes",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa, { limits: { maxTunnels: 1 } });
+      const { connectPort, close } = await world.start();
+      try {
+        const head = connectHead("mcp-proxy.anthropic.com", [proxyAuthorizationFor(TEST_CAPABILITY)]);
+        const first = rawAttempt(connectPort, head);
+        expect(await first.answer).toContain(String(HTTP_OK));
+
+        const over = rawAttempt(connectPort, head);
+        expect((await over.answer).split("\r\n")[0]).toBe(`HTTP/1.1 ${String(HTTP_SERVICE_UNAVAILABLE)} Service Unavailable`);
+        await over.closed;
+        expect(world.dials).toHaveLength(1);
+
+        first.socket.destroy();
+        await first.closed;
+        await settle();
+        const again = rawAttempt(connectPort, head);
+        expect(await again.answer).toContain(String(HTTP_OK));
+        expect(world.dials).toHaveLength(2);
+        again.socket.destroy();
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "closes a launch's tunnels once its registry entry is pruned, and refuses its capability 407 afterwards",
+    async () => {
+      const paths = buildLayoutPaths("/home/testuser/.claude-use");
+      const registry = createFakeFarmFs({});
+      const launcherPid = 4242;
+      writeFrontDoorSession(registry, paths.frontdoorSessionsDir, { pid: launcherPid, startedAt: 0, token: TEST_CAPABILITY });
+      // The production check: constant-time membership in the registry's live tokens, read fresh on every call.
+      const world = makeTlsWorld(ca, upstreamCa, {
+        limits: { revalidateMs: TEST_REVALIDATE_MS },
+        isLiveCapability: (token) => isLiveCapability(token, liveSessionTokens(registry, paths.frontdoorSessionsDir)),
+      });
+      const { connectPort, close } = await world.start();
+      try {
+        const head = connectHead("mcp-proxy.anthropic.com", [proxyAuthorizationFor(TEST_CAPABILITY)]);
+        const tunnel = rawAttempt(connectPort, head);
+        expect(await tunnel.answer).toContain(String(HTTP_OK));
+        expect(await echoThrough(tunnel.socket, "while-live")).toContain("while-live");
+
+        // The launcher dies; the supervisor's next tick prunes it, and the tunnel it opened goes at the next revalidation.
+        expect(pruneDeadFrontDoorSessions(registry, paths.frontdoorSessionsDir, () => false)).toEqual([launcherPid]);
+        await tunnel.closed;
+
+        const stale = rawAttempt(connectPort, head);
+        expect((await stale.answer).split("\r\n")[0]).toBe(`HTTP/1.1 ${String(HTTP_PROXY_AUTH_REQUIRED)} Proxy Authentication Required`);
+        expect(world.dials).toHaveLength(1);
+      } finally {
+        await close();
+        await world.stop();
+      }
     },
     KEYGEN_TIMEOUT_MS,
   );

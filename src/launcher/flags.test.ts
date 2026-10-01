@@ -311,7 +311,7 @@ describe("buildEnv", () => {
     expect(env.HEADROOM_PROXY_URL).toBeUndefined();
   });
 
-  it("routes an OAuth launch (no provider) through the door's CONNECT surface: HTTPS_PROXY and the CA are set, ANTHROPIC_BASE_URL stays unset so Remote Control keeps working", () => {
+  it("routes an OAuth launch (no provider) through the door's CONNECT surface: HTTPS_PROXY (carrying the launch's capability as its proxy credential) and the CA are set, ANTHROPIC_BASE_URL stays unset so Remote Control keeps working", () => {
     const env = buildEnv({
       sessionId: "session-test",
       baseEnv,
@@ -322,7 +322,7 @@ describe("buildEnv", () => {
       headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
     });
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.HTTPS_PROXY).toBe("http://127.0.0.1:4200");
+    expect(env.HTTPS_PROXY).toBe("http://claude-use:launch-token-for-tests@127.0.0.1:4200");
     expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/frontdoor/ca/ca.pem");
     expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-claude-use-identity: work\nx-claude-use-session: session-test\nx-claude-use-auth: launch-token-for-tests\nx-claude-use-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");

@@ -12,8 +12,10 @@ import type { FrontDoorPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realFsPort, realIsProcessRunning, realSleepSync, spawnDetachedSupervisor } from "../realPorts";
 import { createDoorPipelines } from "./assembly";
+import { isLiveCapability } from "./capability";
 import {
   CONNECT_INTERCEPT_HOST,
+  CONNECT_LIMITS,
   HTTPS_PORT,
   LOOPBACK_LEAF_NAMES,
   createLeafCache,
@@ -58,9 +60,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   const codexPorts = createCodexRoutePorts(log);
   const resolveRoute = createProviderRouteResolver({ fs: realFsPort, providersDir: paths.providersDir, codexPorts, directPort: () => directPort });
 
+  // One check for every listener that admits launches, read fresh on each call since launches come and go: the provider listener's and the CONNECT surface's routed paths (the capability header), and the CONNECT surface's own CONNECT requests (the proxy credential).
+  const isLiveToken = (token: string): boolean => isLiveCapability(token, liveSessionTokens(realFarmFs, paths.frontdoorSessionsDir));
+
   const pipelines = createDoorPipelines({
     resolveRoute,
-    isLiveToken: (token) => liveSessionTokens(realFarmFs, paths.frontdoorSessionsDir).has(token),
+    isLiveToken,
     headroomPort: () => liveHeadroomPort(paths),
     // The per-generation capability the direct listener demands: held only in this process's memory, so a loopback process that discovers the direct port still cannot use it.
     hopSecret: randomUUID(),
@@ -130,6 +135,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
           },
           leafFor,
           upstream: { host: CONNECT_INTERCEPT_HOST, port: HTTPS_PORT, tls: true },
+          isLiveCapability: isLiveToken,
+          limits: CONNECT_LIMITS,
         },
         realConnectEffects(),
         preferredPort,
