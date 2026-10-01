@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, fakeResponse, parseAnthropicSse, recordingFetch, type RecordedCall } from "../codex/testing";
-import { FAKE_HOME, fakeFs } from "../test-helpers";
+import { FAKE_HOME, admitLaunchToken, fakeFs } from "../test-helpers";
 import type { SessionIdentity } from "./route";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute } from "./route";
 import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
@@ -48,7 +48,7 @@ async function startDoor(resolveRoute: PipelineDeps["resolveRoute"], preferredPo
   const logs: string[] = [];
   const server = createFrontDoorServer(
     async (request) => {
-      await serveRouted(request, { resolveRoute, responseObservers: [], authorize: (headers) => headers[AUTH_HEADER] === LAUNCH_TOKEN, log: (line) => { logs.push(line); } });
+      await serveRouted(request, { resolveRoute, responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), log: (line) => { logs.push(line); } });
     },
     (line) => {
       logs.push(line);

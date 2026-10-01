@@ -3,7 +3,8 @@ import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
 import { forwardableHeaders } from "./connect";
-import { HEADROOM_BASE_URL_HEADER, HOP_SECRET_HEADER, PROJECT_ID_HEADER, type RoutedRequest, type RoutedResponse } from "./route";
+import type { CredentialCustody } from "./custody";
+import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, PROJECT_ID_HEADER, parseProviderPath, type RoutedRequest, type RoutedResponse } from "./route";
 import { upstreamChunks } from "./server";
 
 /** What one hop answers when it cannot serve: the daemon is between restarts, or unreachable. Answering with 502 (rather than bypassing headroom) is what keeps a launch that asked for compression from silently losing it. */
@@ -19,6 +20,8 @@ export interface HeadroomHopDeps {
    * The per-generation secret the direct listener requires on what the hop forwards back. Headroom passes non-x-headroom headers through untouched, so the secret survives the round trip and arrives where this process can check it, while no loopback process outside this door ever holds it.
    */
   readonly hopSecret: string;
+  /** Holds a provider session's real credentials while its request crosses headroom; the direct listener redeems them by the hop id. */
+  readonly custody: CredentialCustody;
   readonly log: (line: string) => void;
 }
 
@@ -39,7 +42,7 @@ function responseHeaders(headers: Readonly<IncomingHttpHeaders>): Record<string,
 /**
  * Applies the headroom hop: forwards the request, still Anthropic-shaped, to the headroom daemon as a backend hop and streams its response back to the client. The hop ALWAYS sits before the route's own serving (a translator needs the request headroom has compressed, never the reverse), which is why this runs in the pipeline and not inside any route.
  *
- * `upstream` is what headroom is told to forward to once it has done its work (its per-request base URL header): the route's own upstream for a pass-through route, or this door's direct listener for an in-process translator. Undefined leaves headroom's default upstream (Claude Code's API) in charge, which is exactly what an OAuth session wants. The session's project identity is re-set here, and only here: the identity step stripped it from everything that leaves the machine, and headroom is the one consumer that needs it.
+ * `upstream` is what headroom is told to forward to once it has done its work (its per-request base URL header). When it is set it is always this door's direct listener (every provider route declares exactly that), and the provider credential is then taken into custody for the hop: headroom receives placeholders and a hop id, and the direct listener restores the real headers when headroom forwards the request back. Neither headroom nor anything that binds a port on that plain-HTTP round trip ever holds the credential. Undefined leaves headroom's default upstream (Claude Code's API) in charge, which is exactly what an OAuth session wants, and the OAuth bearer then passes through untouched: headroom forwards it straight to that API, never back here, and uses it for its subscription tracking. The session's project identity is re-set here, and only here: the identity step stripped it from everything that leaves the machine, and headroom is the one consumer that needs it.
  */
 export async function applyHeadroomHop(request: RoutedRequest, response: RoutedResponse, upstream: string | undefined, deps: HeadroomHopDeps): Promise<void> {
   const port = deps.headroomPort();
@@ -49,15 +52,42 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
     response.end();
     return;
   }
-  const headers: Record<string, string | string[] | undefined> = forwardableHeaders(request.headers);
+  let headers: Record<string, string | string[] | undefined> = forwardableHeaders(request.headers);
+  let hopId: string | undefined;
   // Set only by the door, never inherited: which upstream headroom forwards to is this route's own declaration, and any inbound copy of the header was already stripped at the identity step, so nothing a client sends can redirect the daemon behind the door's back.
   if (upstream !== undefined) {
+    const provider = parseProviderPath(new URL(request.url, "http://127.0.0.1").pathname)?.provider;
+    if (provider === undefined) {
+      // Only a provider route names an upstream, and a provider route is only ever resolved from a provider-scoped path; reaching here means that invariant broke, and forwarding the credential to headroom unsequestered is exactly what must never happen.
+      throw new Error(`headroom hop for ${request.url} names an upstream but no provider`);
+    }
+    const sequestered = deps.custody.sequester(headers, provider);
+    hopId = sequestered.hopId;
+    headers = sequestered.headers;
+    headers[HOP_ID_HEADER] = hopId;
     headers[HEADROOM_BASE_URL_HEADER] = upstream;
   }
   if (request.session.projectId !== undefined) {
     headers[PROJECT_ID_HEADER] = request.session.projectId;
   }
   headers[HOP_SECRET_HEADER] = deps.hopSecret;
+  try {
+    await forwardThroughHeadroom(request, response, { port, headers, log: deps.log });
+  } finally {
+    // The hop is over (answered, failed, or abandoned by the client): its custody id stops redeeming, so a copy of it seen anywhere along the way is worthless from here on.
+    if (hopId !== undefined) {
+      deps.custody.release(hopId);
+    }
+  }
+}
+
+/** Streams one request to headroom and its response back to the client, resolving once the response has ended, failed, or been abandoned. */
+async function forwardThroughHeadroom(
+  request: RoutedRequest,
+  response: RoutedResponse,
+  target: { readonly port: number; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void },
+): Promise<void> {
+  const { port, headers } = target;
   await new Promise<void>((resolve) => {
     const onUpstreamResponse = (upstreamResponse: IncomingMessage): void => {
       response.start(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, responseHeaders(upstreamResponse.headers));
@@ -67,11 +97,13 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
         try {
           for await (const chunk of upstreamChunks(upstreamResponse)) {
             if (request.signal.aborted) {
-              return;
+              break;
             }
             await response.write(chunk);
           }
-          response.end();
+          if (!request.signal.aborted) {
+            response.end();
+          }
         } catch {
           // The client went away mid-stream, or the daemon dropped the connection: either way the response is no longer salvageable.
           response.destroy();
@@ -82,7 +114,7 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
     };
     const hop = http.request({ host: "127.0.0.1", port, method: request.method, path: request.url, headers }, onUpstreamResponse);
     hop.on("error", (error: Error) => {
-      deps.log(`front door: headroom hop to 127.0.0.1:${String(port)} failed: ${error.message}`);
+      target.log(`front door: headroom hop to 127.0.0.1:${String(port)} failed: ${error.message}`);
       if (!response.headersSent) {
         response.start(HTTP_BAD_GATEWAY, { "Content-Type": "application/json" });
         void response

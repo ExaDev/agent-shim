@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import type { IncomingHttpHeaders } from "node:http";
 import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
@@ -12,6 +11,7 @@ import { readHeadroomState, type HeadroomFs } from "../headroom/state";
 import type { FrontDoorPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realFsPort, realIsProcessRunning, realSleepSync, spawnDetachedSupervisor } from "../realPorts";
+import { createDoorPipelines } from "./assembly";
 import {
   CONNECT_INTERCEPT_HOST,
   HTTPS_PORT,
@@ -22,9 +22,9 @@ import {
   realConnectEffects,
   startConnectServer,
 } from "./connect";
+import { createCredentialCustody } from "./custody";
 import { ensureFrontDoor } from "./ensure";
-import { serveRouted, type PipelineDeps } from "./pipeline";
-import { AUTH_HEADER, HOP_SECRET_HEADER } from "./route";
+import { serveRouted } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, removeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
@@ -47,7 +47,7 @@ async function bind(server: ReturnType<typeof createFrontDoorServer>, preferredP
 }
 
 /**
- * The real supervisor ports. The three listener starts are where the whole routing assembly is built: the codex translation's real ports, the provider route resolver over them, the ordered pipeline (with and without the headroom hop), the two long-lived listeners that feed it, and the CA the CONNECT surface terminates TLS with.
+ * The real supervisor ports. The three listener starts are where the whole routing assembly is built: the codex translation's real ports, the provider route resolver over them, both pipelines (see `createDoorPipelines`), the three listeners that feed them, and the CA the CONNECT surface terminates TLS with.
  */
 function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPorts {
   const log = (line: string): void => {
@@ -59,25 +59,13 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   const codexPorts = createCodexRoutePorts(log);
   const resolveRoute = createProviderRouteResolver({ fs: realFsPort, providersDir: paths.providersDir, codexPorts, directPort: () => directPort });
 
-  // The per-generation capability the direct listener demands: held only in this process's memory, so a loopback process that discovers the direct port still cannot use it.
-  const hopSecret = randomUUID();
-
-  /** What a client-facing listener accepts: the per-launch token of any live registered session. Read fresh, since sessions come and go with launches. */
-  const authorizeClient = (headers: Readonly<IncomingHttpHeaders>): boolean => {
-    const presented = headers[AUTH_HEADER];
-    const token = Array.isArray(presented) ? presented[0] : presented;
-    return token !== undefined && liveSessionTokens(realFarmFs, paths.frontdoorSessionsDir).has(token);
-  };
-
-  /** What the direct listener accepts: only what this process's own hop forwarded back through headroom. */
-  const authorizeHop = (headers: Readonly<IncomingHttpHeaders>): boolean => headers[HOP_SECRET_HEADER] === hopSecret;
-
-  const buildPipeline = (clientFacing: boolean): PipelineDeps => ({
+  const pipelines = createDoorPipelines({
     resolveRoute,
-    // The response middleware hook point: the usage-tracking work registers its observers here. The direct listener registers none, because its responses are consumed by headroom, not by the client; the entry the client sees is where observation belongs.
-    responseObservers: [],
-    ...(clientFacing ? { authorize: authorizeClient } : { authorize: authorizeHop }),
-    ...(clientFacing ? { headroom: { headroomPort: () => liveHeadroomPort(paths), hopSecret, log } } : {}),
+    isLiveToken: (token) => liveSessionTokens(realFarmFs, paths.frontdoorSessionsDir).has(token),
+    headroomPort: () => liveHeadroomPort(paths),
+    // The per-generation capability the direct listener demands: held only in this process's memory, so a loopback process that discovers the direct port still cannot use it.
+    hopSecret: randomUUID(),
+    custody: createCredentialCustody(() => randomUUID()),
     log,
   });
 
@@ -99,7 +87,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     isRunning: realIsProcessRunning,
     startHttpListener: async (preferredPort) => {
       const server = createFrontDoorServer(async (request) => {
-        await serveRouted(request, buildPipeline(true));
+        await serveRouted(request, pipelines.clientFacing);
       }, log);
       server.on("error", onListenerError("front door"));
       return await bind(server, preferredPort);
@@ -119,7 +107,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
                 abort.abort();
               }
             });
-            void serveRouted({ method: request.method ?? "GET", url: request.url ?? "/", headers: request.headers, body: request, signal: abort.signal, response }, buildPipeline(true)).catch(
+            void serveRouted({ method: request.method ?? "GET", url: request.url ?? "/", headers: request.headers, body: request, signal: abort.signal, response }, pipelines.clientFacing).catch(
               (error: unknown) => {
                 log(`connect request ${request.method ?? "?"} ${request.url ?? "?"} failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
                 if (!response.headersSent) {
@@ -141,7 +129,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     },
     startDirectListener: async (preferredPort) => {
       const server = createFrontDoorServer(async (request) => {
-        await serveRouted(request, buildPipeline(false));
+        await serveRouted(request, pipelines.direct);
       }, log);
       server.on("error", onListenerError("direct"));
       const handle = await listenFrontDoor(server, preferredPort, (port) => {

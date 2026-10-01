@@ -37,10 +37,23 @@ export interface PipelineDeps {
   readonly headroom?: HeadroomHopDeps;
   readonly log: (line: string) => void;
   /**
-   * The listener's authorisation check, run after identification and before anything is routed. A client-facing listener checks the request's per-launch capability token against the live session registry; the direct listener checks the hop secret only this process knows. Omitted by no listener in production; omitted in tests that exercise the pipeline's own stages. An unauthorized request is answered 401 without ever reaching a route, so a loopback process that never launched through claude-use cannot spend a session's credentials or quota.
+   * The listener's admission step, run after identification and before anything is routed: it decides whether the request may be routed at all and with which headers. A client-facing listener admits a request carrying the per-launch capability of a live registered session, unchanged; the direct listener admits only what this process's own headroom hop sent back (the generation's hop secret plus a live custody id for the provider the path names) and swaps the hop's placeholder credentials for the real ones. A refused request is answered 401 without ever reaching a route, so a loopback process that never launched through claude-use cannot spend a session's credentials or quota.
    */
-  readonly authorize?: (headers: Readonly<IncomingHttpHeaders>) => boolean;
+  readonly admit: (request: AdmissionRequest) => Admission;
 }
+
+/** What the admission step sees of one request. */
+export interface AdmissionRequest {
+  /** The request target exactly as received. */
+  readonly url: string;
+  /** Every header as received, internal ones included: the capability and hop headers live here. */
+  readonly headers: Readonly<IncomingHttpHeaders>;
+  /** The headers the identity step judged forwardable, internal ones stripped. */
+  readonly forwardable: Readonly<IncomingHttpHeaders>;
+}
+
+/** The admission step's verdict: route with these headers, or refuse with this message. */
+export type Admission = { readonly ok: true; readonly headers: IncomingHttpHeaders } | { readonly ok: false; readonly message: string };
 
 /** One request as a transport hands it to the pipeline, before anything has been identified or routed. */
 export interface PipelineRequest {
@@ -136,17 +149,18 @@ export function createRoutedResponse(response: ServerResponse, context: { readon
  */
 export async function serveRouted(request: PipelineRequest, deps: PipelineDeps): Promise<void> {
   const identified = identifyRequest(request.headers);
-  if (deps.authorize !== undefined && !deps.authorize(request.headers)) {
+  const admission = deps.admit({ url: request.url, headers: request.headers, forwardable: identified.forwardableHeaders });
+  if (!admission.ok) {
     const response = createRoutedResponse(request.response, { deps, session: identified.session, route: "(unauthorized)" });
     response.start(HTTP_STATUS.unauthorized, { "Content-Type": "application/json" });
-    await response.write(errorBody(HTTP_STATUS.unauthorized, "claude-use front door: this request carries no capability from a live claude-use launch"));
+    await response.write(errorBody(HTTP_STATUS.unauthorized, admission.message));
     response.end();
     return;
   }
   const routed: RoutedRequest = {
     method: request.method,
     url: request.url,
-    headers: identified.forwardableHeaders,
+    headers: admission.headers,
     body: request.body,
     signal: request.signal,
     session: identified.session,
