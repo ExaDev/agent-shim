@@ -65,7 +65,7 @@ describe("the added hop's latency", () => {
       },
       () => undefined,
     );
-    const handle = await listenFrontDoor(door, undefined, () => undefined);
+    const handle = await listenFrontDoor(door);
     const doorUrl = `http://127.0.0.1:${String(handle.port)}/providers/z/v1/messages`;
     const directUrl = `http://127.0.0.1:${String(upstreamPort)}/v1/messages`;
 

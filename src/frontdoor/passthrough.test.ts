@@ -77,7 +77,7 @@ async function startDoor(target: { readonly baseUrl: string; readonly stripPrefi
     },
     () => undefined,
   );
-  const handle = await listenFrontDoor(server, undefined, () => undefined);
+  const handle = await listenFrontDoor(server);
   return { url: `http://127.0.0.1:${String(handle.port)}`, close: handle.close };
 }
 
