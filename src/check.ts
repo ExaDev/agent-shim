@@ -21,6 +21,8 @@ import { AMBIENT_CREDENTIAL_VARS, evaluateAmbientCredentialGuard, type AmbientCr
 import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDecisionSource, type IdentityDecisionSource } from "./launcher/identity";
 import type { FarmFs, RunPort } from "./launcher/ports";
 import { resolveClaudeHome, type LayoutPaths } from "./paths";
+import { collectPoolPick, type PoolPickReport } from "./pools";
+import { PoolNotFoundError } from "./poolStore";
 import { cascadeProviderName, LegacyProviderFileError, readProvider } from "./providers";
 import {
   realFarmFs,
@@ -277,6 +279,8 @@ export interface RunCheckParams {
   readonly classification: { readonly defaults: CategoryClassification; readonly overlay?: CategoryClassificationOverlay };
   readonly identityName?: string;
   readonly identitySource: IdentityDecisionSource;
+  /** The pool the launch selected and how it ranks right now, when it named a pool instead of an identity; `identityName` is then the member it would pick. */
+  readonly poolPick?: PoolPickReport;
   readonly configProfileName?: string;
   readonly configProfileSource: ConfigProfileDecisionSource;
   /** The resolved identity's own `identity.json`, when one was found. */
@@ -297,6 +301,7 @@ export interface RunCheckParams {
 export interface CheckReport {
   readonly identityName?: string;
   readonly identitySource: IdentityDecisionSource;
+  readonly poolPick?: PoolPickReport;
   readonly configProfileName?: string;
   readonly configProfileSource: ConfigProfileDecisionSource;
   readonly resolved: ResolvedState;
@@ -353,6 +358,7 @@ export function runCheck(params: RunCheckParams): CheckReport {
   return {
     ...(params.identityName === undefined ? {} : { identityName: params.identityName }),
     identitySource: params.identitySource,
+    ...(params.poolPick === undefined ? {} : { poolPick: params.poolPick }),
     ...(params.configProfileName === undefined ? {} : { configProfileName: params.configProfileName }),
     configProfileSource: params.configProfileSource,
     resolved,
@@ -369,6 +375,10 @@ export function runCheck(params: RunCheckParams): CheckReport {
 export function formatCheckReport(report: CheckReport): string[] {
   const lines: string[] = [];
   lines.push(`Identity: ${report.identityName ?? "(none)"} (${report.identitySource})`);
+  if (report.poolPick !== undefined) {
+    const top = report.poolPick.candidates.find((candidate) => candidate.identity === report.poolPick?.pick);
+    lines.push(`Pool: ${report.poolPick.pool}${top === undefined ? ", every member is refused right now" : `, would pick ${top.identity} (${top.reasons.join("; ")})`}`);
+  }
   lines.push(`Configuration profile: ${report.configProfileName ?? "(none)"} (${report.configProfileSource})`);
 
   lines.push("", "Layers (shallowest/earliest first):");
@@ -450,6 +460,7 @@ export function checkReportToJson(report: CheckReport): Record<string, unknown> 
   const decisions = [...report.resolved.decisions.values()].sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
   return {
     identity: { name: report.identityName ?? null, source: report.identitySource },
+    ...(report.poolPick === undefined ? {} : { pool: report.poolPick }),
     configProfile: { name: report.configProfileName ?? null, source: report.configProfileSource },
     layers: report.resolved.assembled.layers.map((layer) => ({ id: layer.id, kind: layer.kind, source: layer.source })),
     entries: decisions.map((decision) => ({
@@ -526,7 +537,7 @@ export function registerCheckCommand(program: Command, deps: CommandDeps): void 
       const selections = readDirectorySelections(loaded);
       const git = resolveGitBranch(realRunPort, cwd);
 
-      const identityDecision = decideIdentity({
+      const decidedIdentity = decideIdentity({
         env: process.env,
         argv0Identity: options.identity,
         directoryPinnedIdentity: selections.identity,
@@ -539,6 +550,17 @@ export function registerCheckCommand(program: Command, deps: CommandDeps): void 
           return trimmed === "" ? undefined : trimmed;
         },
       });
+
+      // A pool selector is ranked the way a launch here would rank it, so the rest of the report describes the member that launch would run as.
+      let poolPick: PoolPickReport | undefined;
+      if (decidedIdentity.pool !== undefined) {
+        const pool = loaded.globalConfig?.pools?.[decidedIdentity.pool];
+        if (pool === undefined) {
+          throw new PoolNotFoundError(decidedIdentity.pool);
+        }
+        poolPick = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: decidedIdentity.pool, pool, directory: cwd, nowMs: Date.now() });
+      }
+      const identityDecision = poolPick?.pick === undefined ? decidedIdentity : { ...decidedIdentity, name: poolPick.pick };
 
       const loadedIdentity =
         identityDecision.name === undefined ? undefined : loadIdentity(paths.identitiesDir, identityDecision.name, realFsPort);
@@ -580,6 +602,7 @@ export function registerCheckCommand(program: Command, deps: CommandDeps): void 
         classification,
         ...(identityDecision.name === undefined ? {} : { identityName: identityDecision.name }),
         identitySource: identityDecision.source,
+        ...(poolPick === undefined ? {} : { poolPick }),
         ...(configProfileDecision.name === undefined ? {} : { configProfileName: configProfileDecision.name }),
         configProfileSource: configProfileDecision.source,
         ...(loadedIdentity === undefined ? {} : { identity: loadedIdentity.config }),

@@ -412,3 +412,24 @@ describe("runCheck credential report", () => {
     expect(checkReportHasWarnings(report)).toBe(true);
   });
 });
+
+describe("runCheck pool pick", () => {
+  const poolPick = {
+    pool: "subs",
+    directory: `${FAKE_HOME}/work`,
+    pick: "work",
+    candidates: [{ identity: "work", class: "scored" as const, score: 1, feasible: true, plan: { kind: "subscription" as const, capacity: 20, recognised: true }, reasons: ["7d 60% used, resets in 1h", "20x plan"] }],
+    missing: [],
+  };
+
+  it("names the pool and the member a launch would pick, with its reasons, in the text and JSON forms", () => {
+    const report = runCheck(baseParams({ identityName: "work", identitySource: "argv", poolPick }));
+    expect(formatCheckReport(report)).toContain("Pool: subs, would pick work (7d 60% used, resets in 1h; 20x plan)");
+    expect(checkReportToJson(report)).toMatchObject({ pool: { pool: "subs", pick: "work" } });
+  });
+
+  it("says every member is refused when none could be picked", () => {
+    const refused = { pool: "subs", directory: `${FAKE_HOME}/work`, candidates: [], missing: [] };
+    expect(formatCheckReport(runCheck(baseParams({ identitySource: "argv", poolPick: refused })))).toContain("Pool: subs, every member is refused right now");
+  });
+});
