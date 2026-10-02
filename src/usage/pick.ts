@@ -19,7 +19,7 @@ const PERCENT = 100;
 const SEVEN_DAYS = 7;
 
 /** The lengths of Anthropic's two subscription windows, used when a window reported no reset time of its own. */
-const FIVE_HOUR_WINDOW_MS = FIVE_HOURS * MS_PER_HOUR;
+export const FIVE_HOUR_WINDOW_MS = FIVE_HOURS * MS_PER_HOUR;
 const SEVEN_DAY_WINDOW_MS = SEVEN_DAYS * HOURS_PER_DAY * MS_PER_HOUR;
 
 /** Anthropic's longest prompt-cache lifetime (the one-hour tier): a conversation resumed within it still has a warm cache on the account that served it, and the cache is per organisation, so it is lost by switching. */
@@ -30,8 +30,8 @@ export interface PoolMember {
   readonly identity: string;
   /** The identity's usage snapshot, when it has one. */
   readonly snapshot?: UsageSnapshot;
-  /** Why the snapshot could not be read (corrupt, newer schema), when that is the case. */
-  readonly snapshotError?: string;
+  /** Why the member's recorded state could not be read (a corrupt or newer-schema snapshot, an unreadable login file), when that is the case. */
+  readonly readError?: string;
   readonly account?: AccountMetadata;
   /** The member's usage-log records from the current five-hour window on. */
   readonly records: readonly UsageRecord[];
@@ -164,8 +164,8 @@ function assess(member: PoolMember, nowMs: number): Assessment {
   const planReasons = plan.kind === "pay-per-use" ? ["billed by use (no plan allowance)"] : plan.recognised ? [`${String(plan.capacity)}x plan`] : [`plan tier ${plan.tier === undefined ? "not known" : `"${plan.tier}" not recognised`}, counted as 1x`];
   const base = { identity: member.identity, plan };
 
-  if (member.snapshotError !== undefined) {
-    return { candidate: { ...base, class: "unknown", reasons: [`usage snapshot unreadable: ${member.snapshotError}`, ...planReasons] } };
+  if (member.readError !== undefined) {
+    return { candidate: { ...base, class: "unknown", reasons: [`usage state unreadable: ${member.readError}`, ...planReasons] } };
   }
   const state = member.snapshot?.providers[ANTHROPIC_PROVIDER];
   const unified = unifiedOf(state);

@@ -220,7 +220,7 @@ describe("rankPool", () => {
   });
 
   it("reports an unreadable snapshot as unknown with the reason", () => {
-    const ranking = rank([{ identity: "a", records: [], snapshotError: "schema version 2" }]);
+    const ranking = rank([{ identity: "a", records: [], readError: "schema version 2" }]);
     expect(ranking.candidates[0]).toMatchObject({ class: "unknown" });
     expect(ranking.candidates[0]?.reasons[0]).toContain("schema version 2");
   });
