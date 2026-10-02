@@ -26,11 +26,18 @@ if [ "$os" = "Darwin" ] && [ "$arch" = "x86_64" ]; then
   npm_prefix=$(mktemp -d)
   trap 'rm -rf "$npm_prefix"' EXIT
   echo "macOS x64's SEA binary is currently broken upstream (see https://github.com/ExaDev/claude-use#build-node-sea) -- installing via npm instead..."
-  # The npm registry's own package metadata (what `npm install` resolves a bare package name against) and the tarball blob it then fetches are served from different backing stores, and the metadata can go live before the tarball does -- confirmed directly: right after this project's own CI published a release, the registry already listed and resolved the new version, but downloading its tarball kept 404ing for several minutes. A user running this script in that same window would otherwise see a hard, unrecoverable failure for a release that is, from every other angle, already fully published. Retry rather than fail on the first attempt.
+  # Every other platform installs the release GitHub calls latest, so this one installs exactly that version rather than npm's `latest` dist-tag: right after a publish the registry's metadata can still name the previous release as latest, and a bare `npm install claude-use` then installs it (confirmed in this project's own post-release verification, which installed the previous version). Naming the version also lets the retry below cover the version not being resolvable yet.
+  release_url=$(curl -fsSIL --retry 3 -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest")
+  version="${release_url##*/v}"
+  case "$version" in
+    [0-9]*) ;;
+    *) echo "error: could not read the latest release version from $release_url" >&2; exit 1 ;;
+  esac
+  # The npm registry's own package metadata (what `npm install` resolves a version against) and the tarball blob it then fetches are served from different backing stores, and the metadata can go live before the tarball does -- confirmed directly: right after this project's own CI published a release, the registry already listed and resolved the new version, but downloading its tarball kept 404ing for several minutes. A user running this script in that same window would otherwise see a hard, unrecoverable failure for a release that is, from every other angle, already fully published. Retry rather than fail on the first attempt.
   npm_install_attempt=1
-  until npm install --global --silent --no-fund --no-audit --prefix="$npm_prefix" claude-use; do
+  until npm install --global --silent --no-fund --no-audit --prefix="$npm_prefix" "claude-use@$version"; do
     if [ "$npm_install_attempt" -ge 40 ]; then
-      echo "error: npm still can't fetch claude-use after $npm_install_attempt attempts -- this is likely a genuine npm registry problem, not a transient propagation delay. Try again shortly, or use Homebrew instead: brew install ExaDev/claude-use/claude-use" >&2
+      echo "error: npm still can't fetch claude-use@$version after $npm_install_attempt attempts -- this is likely a genuine npm registry problem, not a transient propagation delay. Try again shortly, or use Homebrew instead: brew install ExaDev/claude-use/claude-use" >&2
       exit 1
     fi
     echo "npm registry not ready yet, retrying in 15s... ($npm_install_attempt/40)"
