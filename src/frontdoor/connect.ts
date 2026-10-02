@@ -1,11 +1,12 @@
+import { X509Certificate, createPrivateKey } from "node:crypto";
 import * as fs from "node:fs";
 import * as http from "node:http";
 import * as https from "node:https";
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import * as net from "node:net";
 import * as tls from "node:tls";
-import forge from "node-forge";
 
+import { issueCaCertificate, issueLeafCertificate } from "./x509";
 import { CONNECT_PROXY_REALM, capabilityFromProxyAuthorization } from "./capability";
 import { FRONTDOOR_POLL_MS } from "./supervisor";
 
@@ -28,9 +29,6 @@ export const HTTPS_PORT = 443;
 
 /** The highest TCP port an authority can name; anything above it is malformed, not a port. */
 const MAX_PORT = 65535;
-
-/** Bytes of randomness in a certificate serial number: 128 bits, more than any collision a single machine's CA will ever mint. */
-const SERIAL_NUMBER_BYTES = 16;
 
 /** What the forwarding effect answers with when the upstream is unreachable. */
 const HTTP_BAD_GATEWAY = 502;
@@ -186,64 +184,22 @@ export interface LeafCert {
   readonly keyPem: string;
 }
 
-/** Generates the local CA: one RSA keypair, self-signed, CA-only by basicConstraints and keyUsage, with a random serial. Pure node-forge, no openssl, so the same code works on every platform claude-use ships to. */
+/** Generates the local CA: one RSA keypair, self-signed, CA-only by basicConstraints and keyUsage, with a random serial. Built on `node:crypto` alone (see `x509.ts`), no openssl, so the same code works on every platform claude-use ships to. */
 export function generateCa(now: Readonly<Date>): CaMaterial {
-  const keys = forge.pki.rsa.generateKeyPair({ bits: 2048 });
-  const cert = forge.pki.createCertificate();
-  cert.publicKey = keys.publicKey;
-  cert.serialNumber = forge.util.bytesToHex(forge.random.getBytesSync(SERIAL_NUMBER_BYTES));
-  cert.validity.notBefore = new Date(now.getTime() - MS_PER_DAY);
-  cert.validity.notAfter = new Date(now.getTime() + CA_VALIDITY_DAYS * MS_PER_DAY);
-  const subject = [{ name: "commonName", value: CA_SUBJECT_COMMON_NAME }];
-  cert.setSubject(subject);
-  cert.setIssuer(subject);
-  cert.setExtensions([
-    { name: "basicConstraints", cA: true, critical: true },
-    { name: "keyUsage", keyCertSign: true, cRLSign: true, critical: true },
-    { name: "subjectKeyIdentifier" },
-  ]);
-  cert.sign(keys.privateKey, forge.md.sha256.create());
-  return { certPem: forge.pki.certificateToPem(cert), keyPem: forge.pki.privateKeyToPem(keys.privateKey) };
+  return issueCaCertificate(CA_SUBJECT_COMMON_NAME, new Date(now.getTime() - MS_PER_DAY), new Date(now.getTime() + CA_VALIDITY_DAYS * MS_PER_DAY));
 }
 
 /** The names the front door's provider listener answers to: the loopback address every provider session's base URL names, plus the loopback hostname for a client that spells it that way. */
 export const LOOPBACK_LEAF_NAMES: readonly string[] = ["127.0.0.1", "localhost"];
 
-/** node-forge's subjectAltName type codes (RFC 5280's GeneralName tags): 2 is a DNS name, 7 an IP address. */
-const SAN_TYPE_DNS = 2;
-const SAN_TYPE_IP = 7;
-
 /**
  * Mints a TLS leaf signed by the CA: its own RSA keypair, server-auth usage only, the first name as the subject's common name and every name in the SAN. A name that parses as an IP address goes in as an IP SAN, because TLS clients match an IP host only against IP SANs, never against a DNS SAN spelling the same digits.
  */
 export function mintLeaf(ca: CaMaterial, names: readonly string[], now: Readonly<Date>): LeafCert {
-  const [commonName] = names;
-  if (commonName === undefined) {
-    throw new Error("a leaf certificate needs at least one name");
-  }
-  const caCert = forge.pki.certificateFromPem(ca.certPem);
-  const caKey = forge.pki.privateKeyFromPem(ca.keyPem);
-  const keys = forge.pki.rsa.generateKeyPair({ bits: 2048 });
-  const cert = forge.pki.createCertificate();
-  cert.publicKey = keys.publicKey;
-  cert.serialNumber = forge.util.bytesToHex(forge.random.getBytesSync(SERIAL_NUMBER_BYTES));
-  cert.validity.notBefore = new Date(now.getTime() - MS_PER_DAY);
-  cert.validity.notAfter = new Date(now.getTime() + LEAF_VALIDITY_DAYS * MS_PER_DAY);
-  cert.setSubject([{ name: "commonName", value: commonName }]);
-  cert.setIssuer(caCert.subject.attributes);
-  cert.setExtensions([
-    { name: "basicConstraints", cA: false, critical: true },
-    { name: "keyUsage", digitalSignature: true, keyEncipherment: true, critical: true },
-    { name: "extKeyUsage", serverAuth: true },
-    { name: "subjectAltName", altNames: names.map((name) => (net.isIP(name) === 0 ? { type: SAN_TYPE_DNS, value: name } : { type: SAN_TYPE_IP, ip: name })) },
-    { name: "subjectKeyIdentifier" },
-    { name: "authorityKeyIdentifier", keyLocatorFields: [] },
-  ]);
-  cert.sign(caKey, forge.md.sha256.create());
-  return { certPem: forge.pki.certificateToPem(cert), keyPem: forge.pki.privateKeyToPem(keys.privateKey) };
+  return issueLeafCertificate(ca, names, new Date(now.getTime() - MS_PER_DAY), new Date(now.getTime() + LEAF_VALIDITY_DAYS * MS_PER_DAY));
 }
 
-/** Mints each host's leaf once from the CA and reuses it, because a 2048-bit keypair in pure JS costs seconds and nothing about the certificate changes between sessions. */
+/** Mints each host's leaf once from the CA and reuses it, because generating a 2048-bit RSA keypair costs noticeable time and nothing about the certificate changes between sessions. */
 export function createLeafCache(ca: CaMaterial, now: () => Date): (host: string) => LeafCert {
   const cache = new Map<string, LeafCert>();
   return (host: string): LeafCert => {
@@ -268,7 +224,7 @@ export interface ConnectCertStore {
 }
 
 /**
- * Loads the persisted CA, generating and persisting one when no usable CA exists. A stored pair that node-forge cannot parse is treated as absent and replaced: a truncated write is the one failure mode a regeneration can actually repair, and every child that trusted the old file needs a new `NODE_EXTRA_CA_CERTS` anyway once its CA stops parsing.
+ * Loads the persisted CA, generating and persisting one when no usable CA exists. A stored pair that `node:crypto` cannot parse is treated as absent and replaced: a truncated write is the one failure mode a regeneration can actually repair, and every child that trusted the old file needs a new `NODE_EXTRA_CA_CERTS` anyway once its CA stops parsing.
  */
 export function ensureCa(store: ConnectCertStore, generate: () => CaMaterial): CaMaterial {
   const existing = store.loadCa();
@@ -283,8 +239,8 @@ export function ensureCa(store: ConnectCertStore, generate: () => CaMaterial): C
 /** Whether both PEMs parse as certificate and private key: the minimum a leaf-minting round trip needs from the pair. */
 function caParses(ca: CaMaterial): boolean {
   try {
-    forge.pki.certificateFromPem(ca.certPem);
-    forge.pki.privateKeyFromPem(ca.keyPem);
+    new X509Certificate(ca.certPem);
+    createPrivateKey(ca.keyPem);
     return true;
   } catch {
     return false;
