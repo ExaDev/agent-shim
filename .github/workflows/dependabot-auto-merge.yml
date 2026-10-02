@@ -32,23 +32,36 @@ jobs:
 
             - name: Wait for CI and merge
               if: steps.find-prs.outputs.numbers != ''
+              shell: bash
               run: |
+                  # `gh pr checks` prints a human summary only on a terminal, so the check buckets are read as JSON: any fail or cancel skips the PR, any pending (or no check at all yet) keeps waiting, and anything else (pass, skipping) merges.
+                  # A major version bump is left for a person: it can raise requirements (a minimum Node version, say) that CI does not exercise.
                   for PR in ${{ steps.find-prs.outputs.numbers }}; do
                       echo "Processing PR $PR..."
 
+                      TITLE=$(gh pr view "$PR" --json title --jq .title)
+                      if [[ "$TITLE" =~ from\ ([0-9]+)\.[^\ ]*\ to\ ([0-9]+)\. ]] && [ "${BASH_REMATCH[1]}" != "${BASH_REMATCH[2]}" ]; then
+                          echo "PR $PR is a major version bump ($TITLE), leaving it for a person."
+                          continue
+                      fi
+
                       for i in $(seq 1 60); do
-                          STATUS=$(gh pr checks "$PR" 2>&1) || true
-                          if echo "$STATUS" | grep -q "all checks passed"; then
-                              echo "CI passed on PR $PR, merging."
-                              gh pr merge --rebase "$PR"
-                              continue 2
-                          fi
-                          if echo "$STATUS" | grep -qE "fail|cancelled"; then
-                              echo "CI failed on PR $PR, skipping."
-                              continue 2
-                          fi
-                          echo "Checks pending on PR $PR... ($i/60)"
-                          sleep 30
+                          BUCKETS=$(gh pr checks "$PR" --json bucket --jq '[.[].bucket] | unique | join(" ")' 2>/dev/null || true)
+                          case " $BUCKETS " in
+                              *" fail "* | *" cancel "*)
+                                  echo "CI failed on PR $PR, skipping."
+                                  continue 2
+                                  ;;
+                              "  " | *" pending "*)
+                                  echo "Checks pending on PR $PR... ($i/60)"
+                                  sleep 30
+                                  ;;
+                              *)
+                                  echo "CI passed on PR $PR, merging."
+                                  gh pr merge --rebase "$PR" || echo "Could not merge PR $PR (a conflict, say), moving on."
+                                  continue 2
+                                  ;;
+                          esac
                       done
 
                       echo "Timed out waiting for CI on PR $PR, skipping."
