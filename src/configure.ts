@@ -781,12 +781,20 @@ export function registerConfigureCommand(program: Command, deps: CommandDeps): v
   withExamples(command, ["claude-use configure", "claude-use configure --identity work", "claude-use configure projects --identity work"]);
 }
 
-/** The identity a launch in `cwd` would resolve with no `@name` or `--identity`: `CLAUDE_USE_IDENTITY`, then a directory pin, then the active identity. Undefined when none applies, or when `CLAUDE_CONFIG_DIR` bypasses identity resolution. */
+/**
+ * The identity a launch in `cwd` would resolve with no `@name` or `--identity`: `CLAUDE_USE_IDENTITY`, then a directory pin, then the active identity. Undefined when none applies, or when `CLAUDE_CONFIG_DIR` bypasses identity resolution.
+ *
+ * A pool selection has no single identity: which member a launch runs as depends on the quota at launch time, so what to configure is ambiguous. That throws a `UsageError` asking for `--identity`, rather than configuring whichever member happens to rank first today.
+ */
 function resolveLaunchIdentity(paths: LayoutPaths, cwd: string): string | undefined {
   const loaded = loadCascadeInput({ paths, home: os.homedir(), cwd, read: cosmiconfigReader() });
-  return decideIdentity({
+  const decision = decideIdentity({
     env: process.env,
     directoryPinnedIdentity: readDirectorySelections(loaded).identity,
     readActiveIdentityFile: () => readActiveIdentity(paths),
-  }).name;
+  });
+  if (decision.pool !== undefined) {
+    throw new UsageError(`Launches here pick a member of pool "${decision.pool}" at launch time, so there is no single identity to configure. Pass --identity <name>.`);
+  }
+  return decision.name;
 }
