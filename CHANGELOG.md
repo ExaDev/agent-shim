@@ -1,3 +1,10 @@
+## [5.5.0](https://github.com/ExaDev/claude-use/compare/v5.4.1...v5.5.0) (2026-10-02)
+
+### Features
+
+* **usage:** pull OpenRouter's key, credit and free-model quota into the snapshot ([b272fdd](https://github.com/ExaDev/claude-use/commit/b272fddaad5dd40a3de8eca39913060463467ff4))
+* **usage:** pull z.ai's quota from its usage endpoint into the snapshot ([c683bbe](https://github.com/ExaDev/claude-use/commit/c683bbeb2268d37efc9c979fedc27f443f88db76))
+
 ## [5.4.1](https://github.com/ExaDev/claude-use/compare/v5.4.0...v5.4.1) (2026-10-02)
 
 ### Bug Fixes
