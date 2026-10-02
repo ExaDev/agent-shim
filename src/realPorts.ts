@@ -61,6 +61,8 @@ function isErrorWithCode(error: unknown, code: string): boolean {
 const OWNER_ONLY_DIR_MODE = 0o700;
 /** Mode of a file only its owner may read or write, for the capability record inside that directory. */
 const OWNER_ONLY_FILE_MODE = 0o600;
+/** The permission bits of a file mode, without its type bits. */
+const PERMISSION_BITS = 0o777;
 
 export const realFarmFs: FarmFs = {
   lstat(filePath) {
@@ -123,6 +125,23 @@ export const realFarmFs: FarmFs = {
     fs.writeFileSync(temp, contents, { encoding: "utf8", mode: OWNER_ONLY_FILE_MODE });
     fs.chmodSync(temp, OWNER_ONLY_FILE_MODE);
     fs.renameSync(temp, filePath);
+  },
+  appendFilePrivate(filePath, contents) {
+    const descriptor = fs.openSync(filePath, "a", OWNER_ONLY_FILE_MODE);
+    try {
+      // A file created here already has the mode (the umask can only narrow it); one that existed wider is narrowed before anything is appended to it.
+      if ((fs.fstatSync(descriptor).mode & PERMISSION_BITS) !== OWNER_ONLY_FILE_MODE) {
+        fs.fchmodSync(descriptor, OWNER_ONLY_FILE_MODE);
+      }
+      const bytes = Buffer.from(contents, "utf8");
+      let written = 0;
+      // A write to a regular file may take fewer bytes than offered; the rest follows until all of it has landed.
+      while (written < bytes.length) {
+        written += fs.writeSync(descriptor, bytes, written, bytes.length - written);
+      }
+    } finally {
+      fs.closeSync(descriptor);
+    }
   },
   writeFileExclusive(filePath, contents) {
     try {

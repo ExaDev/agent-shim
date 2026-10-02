@@ -64,6 +64,40 @@ describe("realCredentialPort", () => {
   });
 });
 
+describe("realFarmFs.appendFilePrivate", () => {
+  /** A group- and world-readable mode, wider than the owner-only mode the primitive guarantees. */
+  const WIDE_PERMISSIONS = 0o644;
+
+  it("creates a missing file owner-only and appends to the end of an existing one", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "append-private-"));
+    try {
+      const file = path.join(dir, "log.jsonl");
+      realFarmFs.appendFilePrivate(file, "one\n");
+      realFarmFs.appendFilePrivate(file, "two\n");
+      expect(fs.readFileSync(file, "utf8")).toBe("one\ntwo\n");
+      if (process.platform !== "win32") {
+        expect(fs.statSync(file).mode & PERMISSION_BITS).toBe(OWNER_ONLY_PERMISSIONS);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("narrows a file that already existed wider before appending", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "append-private-"));
+    try {
+      const file = path.join(dir, "log.jsonl");
+      fs.writeFileSync(file, "old\n");
+      fs.chmodSync(file, WIDE_PERMISSIONS);
+      realFarmFs.appendFilePrivate(file, "new\n");
+      expect(fs.readFileSync(file, "utf8")).toBe("old\nnew\n");
+      expect(fs.statSync(file).mode & PERMISSION_BITS).toBe(OWNER_ONLY_PERMISSIONS);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("resolveContentSourcePath", () => {
   it("uses execPath when running as a single executable application", () => {
     const result = resolveContentSourcePath({ isSea: true, execPath: "/opt/homebrew/Cellar/claude-use/0.2.3/bin/claude-use", argv1: "claude-use" });
