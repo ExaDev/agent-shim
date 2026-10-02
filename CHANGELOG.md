@@ -1,3 +1,16 @@
+## [6.2.0](https://github.com/ExaDev/claude-use/compare/v6.1.0...v6.2.0) (2026-10-02)
+
+### Features
+
+* **check:** report the member a pool selection would pick ([3b07160](https://github.com/ExaDev/claude-use/commit/3b07160d144494613d1bf21b6701dbebc55be019))
+* **config:** pools and the pool selector for identity choice ([070a78c](https://github.com/ExaDev/claude-use/commit/070a78cae7663cb45ddf025627302cf0b604e3b3))
+* **config:** publish the pools and selector schemas ([fd89a12](https://github.com/ExaDev/claude-use/commit/fd89a12ae394a7bd7ed18fbe0dce0d5da292214e))
+* **doctor:** audit pools and pool selectors in rules and the active-identity file ([e15799c](https://github.com/ExaDev/claude-use/commit/e15799c8e6ef168255b6a7058c711921f75c7d23))
+* **launcher:** resolve a pool selector to one member at launch ([d441e91](https://github.com/ExaDev/claude-use/commit/d441e91168d76a2ce73088e7c913b4baef8e8c5c))
+* **pool:** add the pool command noun with add, set, list, show, remove, use and pick ([6eb4d42](https://github.com/ExaDev/claude-use/commit/6eb4d42ac42198e9dd97a181dc437429fece63ed))
+* **usage:** rank pool members by plan-weighted quota expiring soonest ([4adb7a7](https://github.com/ExaDev/claude-use/commit/4adb7a7fb5aad39420e214bc4bcf950f3e4a175a))
+* **usage:** rank pool members from the usage store and remember the last pick per directory ([a19422c](https://github.com/ExaDev/claude-use/commit/a19422c11c368a96d10812f9890114459258a754))
+
 ## [6.1.0](https://github.com/ExaDev/claude-use/compare/v6.0.0...v6.1.0) (2026-10-02)
 
 ### Features
