@@ -36,6 +36,9 @@ import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { resolveTrustBundle, type TrustBundleFs } from "./trust";
 import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, removeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
 import { runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
+import { createAccountReader } from "../usage/account";
+import { createUsageMiddleware } from "../usage/middleware";
+import { createUsageStore } from "../usage/store";
 
 function appendLog(paths: LayoutPaths, line: string): void {
   fs.mkdirSync(paths.logsDir, { recursive: true });
@@ -63,15 +66,33 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   // One check for every listener that admits launches, read fresh on each call since launches come and go: the provider listener's and the CONNECT surface's routed paths (the capability header), and the CONNECT surface's own CONNECT requests (the proxy credential).
   const isLiveToken = (token: string): boolean => isLiveCapability(token, liveSessionTokens(realFarmFs, paths.frontdoorSessionsDir));
 
+  // Usage tracking: one store per door process, its log segments named by this pid, written on a deferred turn so recording never sits in a response's path.
+  const usageStore = createUsageStore({
+    fs: realFarmFs,
+    paths,
+    pid: process.pid,
+    now: () => Date.now(),
+    readAccount: createAccountReader(realFarmFs, paths.identitiesDir),
+    log,
+  });
+  const usageMiddleware = createUsageMiddleware({
+    record: usageStore.record,
+    defer: (task) => {
+      setImmediate(task);
+    },
+    now: () => Date.now(),
+    log,
+  });
+
   const pipelines = createDoorPipelines({
     resolveRoute,
     isLiveToken,
+    responseObservers: [usageMiddleware],
+    now: () => Date.now(),
     headroomPort: () => liveHeadroomPort(paths),
     // The per-generation capability the direct listener demands: held only in this process's memory, so a loopback process that discovers the direct port still cannot use it.
     hopSecret: randomUUID(),
     custody: createCredentialCustody(() => randomUUID()),
-    responseObservers: [],
-    now: () => Date.now(),
     log,
   });
 

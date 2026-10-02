@@ -1,6 +1,7 @@
 import { InvalidArgumentError } from "commander";
 
 import { UsageError } from "../cliError";
+import { parseDuration } from "../resolve/conditions";
 import { parseBoolWord } from "./bool";
 
 /**
@@ -119,4 +120,9 @@ export function collectStringPair(value: string, previous: Readonly<Record<strin
 /** Commander repeatable-option collector for a plain repeated value (`--extends a --extends b`), preserving the order given. */
 export function collectRepeated(value: string, previous: readonly string[] = []): string[] {
   return [...previous, value];
+}
+
+/** Commander option parser for a duration such as `30m`, `5h` or `7d` (a count followed by ms, s, m, h, d or w), returning milliseconds. A malformed value is a usage error naming the option. */
+export function parseDurationOption(value: string): number {
+  return asInvalidArgument(() => parseDuration(value));
 }

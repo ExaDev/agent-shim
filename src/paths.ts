@@ -55,6 +55,12 @@ export interface LayoutPaths {
   readonly frontdoorSessionsDir: string;
   /** Path to the front door's log: one line per lifecycle event and routed failure, never a token. */
   readonly frontdoorLogPath: string;
+  /** Directory holding the usage store, mode 0700: the request log and the per-identity snapshots. Metadata only, never content or credentials. */
+  readonly usageDir: string;
+  /** Directory of the append-only usage log: one `<YYYY-MM-DD>.<writer-pid>.jsonl` segment per writing process per UTC day. */
+  readonly usageLogDir: string;
+  /** Directory of the latest-state snapshots, one `<identity>.json` per identity: the stable file other tools read. */
+  readonly usageSnapshotsDir: string;
 }
 
 /**
@@ -108,6 +114,9 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     frontdoorLockFile: path.join(root, "frontdoor", "start.lock"),
     frontdoorSessionsDir: path.join(root, "frontdoor", "sessions"),
     frontdoorLogPath: path.join(root, "logs", "frontdoor.log"),
+    usageDir: path.join(root, "usage"),
+    usageLogDir: path.join(root, "usage", "log"),
+    usageSnapshotsDir: path.join(root, "usage", "snapshots"),
   };
 }
 
