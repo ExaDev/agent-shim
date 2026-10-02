@@ -592,7 +592,7 @@ jobs:
             - **macOS x64** (`claude-use-macos-x64-unverified`): best-effort only. Node core does not test or verify single-executable-application support on x64 — this binary is provided for convenience, not as a supported target. If it's missing from this release, the best-effort build failed and was skipped rather than silently shipping a broken binary.
             - **Linux x64 / arm64** (`claude-use-linux-x64`, `claude-use-linux-arm64`): verified. Node core tests `--build-sea` on every Linux distribution it supports except Alpine, and every architecture except s390x.
             - **Windows x64 / arm64** (`claude-use-windows-x64.zip`, `claude-use-windows-arm64.zip`): verified. Node core documents Windows support for `--build-sea` without the x64-only carve-out that applies to macOS.
-            - **npm** (`npx claude-use` / `npm install -g claude-use`): the plain bundle, not a SEA binary — runs under whatever Node ≥ 22.12 you already have.
+            - **npm** (`npx claude-use` / `npm install -g claude-use`): the plain bundle, not a SEA binary — runs under whatever Node (22.18 or later, or 24 and above) you already have.
             - **Homebrew** (`brew install ExaDev/claude-use/claude-use`) and **Scoop** (`scoop install claude-use` after `scoop bucket add claude-use https://github.com/ExaDev/scoop-claude-use`) are updated automatically to this release by the jobs below.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
