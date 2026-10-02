@@ -45,6 +45,8 @@ That's it — with no further configuration, everything in `~/.claude` that isn'
 - **An identity** is a login: the thing that owns credentials and daemon state, selected with `claude-use run @<name>` or, once `claude-use shim enable` has run, `claude @<name>`.
 - **A configuration profile** is a reusable, named bundle of sharing rules, independent of any identity, resolved per working directory via directory rules or a committed `.claude-use.json`.
 
+A third, optional thing sits on top of identities: **a pool** is a named list of them. Select `pool:<name>` where an identity name goes (`claude @pool:subs`) and claude-use picks the member whose unused quota is closest to expiring, skipping any that are refused right now, using the usage it already records. See [docs/configuration-model.md](docs/configuration-model.md#pools-picking-an-account-at-launch).
+
 Every top-level entry in `~/.claude` is classified into one of five categories, shipped as a default map (`config/categories.default.json`):
 
 | Category | Default shared? | Example entries |
@@ -66,7 +68,7 @@ The full mechanics, including the credential block, the merge algorithm, conditi
 ## CLI reference
 
 ```
-claude-use <noun> <verb> [name] [options]      # nouns: identity, profile, provider, rule
+claude-use <noun> <verb> [name] [options]      # nouns: identity, profile, pool, provider, rule
 
 claude-use identity add <name>
 claude-use identity list [--json]
@@ -87,6 +89,14 @@ claude-use profile list [--json]
 claude-use profile show <name> [--json]
 claude-use profile remove <name> [--yes]
 claude-use profile use <name>               # the global default configuration profile
+
+claude-use pool add <name> --identity <identity>...
+claude-use pool set <name> --identity <identity>...
+claude-use pool list [--json]
+claude-use pool show <name> [--json]
+claude-use pool remove <name> [--yes]
+claude-use pool use <name>
+claude-use pool pick <name> [--json]
 
 claude-use provider add <name> --display-name <name> (--base-url <url> | --kind codex) (--credential <source>)... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]...
                                               [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>]
@@ -118,7 +128,7 @@ claude-use run [@<identity>] [launch flags] [claude arguments]
   # launch flags, recognised only before a `--` terminator:
   #   --identity <name>  --config-profile <name>  --provider <name> | --no-provider
   #   --category <category>=<bool>  --share <category>/<path>  --hide <category>/<path>   (each repeatable)
-  #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom  --[no-]track-usage
+  #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom  --[no-]track-usage  --[no-]wait
 claude @<identity> ...                      # the same, once `claude-use shim enable` has run
 ```
 

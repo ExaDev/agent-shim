@@ -7,6 +7,7 @@ The full flag/command reference table, the complete command list, `configure`'s 
 | What you're setting | Global (persistent) | Temporary (this run only) | Directory-scoped (persistent) |
 |---|---|---|---|
 | **Identity** | `claude-use identity use <name>` / `claude-use @<name>` (writes `~/.claude-use/active-identity`) | `claude-use run @<name>` or `claude-use run --identity <name>` / `claude @<name>` (needs `claude-use shim enable`) / `CLAUDE_USE_IDENTITY=<name> claude` (same) | `claude-use rule add <path> --identity <name>`; or `.claude-use.json`'s `"identity"` |
+| **Pool** | `claude-use pool add <name> --identity <a> --identity <b>` defines one; `claude-use pool use <name>` / `claude-use @pool:<name>` selects it persistently | `claude-use run @pool:<name>` or `--identity pool:<name>` / `CLAUDE_USE_IDENTITY=pool:<name>`; `--wait` sleeps when every member is refused | rule's `identity` as `pool:<name>`; or `.claude-use.json`'s `"identity"` |
 | **Configuration profile** | `claude-use profile use <name>`; or `claude-use identity set <identity> --default-profile <profile>` | `claude --config-profile <name>` / `CLAUDE_USE_CONFIG_PROFILE=<name> claude` | `claude-use rule add <path> --config-profile <name>`; or `.claude-use.json`'s `"configProfile"` |
 | **A category** | `claude-use profile set <name> --category history=true`; or `claude-use configure` | `claude --category history=true [--category knowledge=false ...]` / `CLAUDE_USE_CATEGORY_OVERRIDE="history=true,knowledge=false"` | `claude-use configure` run from inside the ruled directory; or `.claude-use.json`'s `"categories"` |
 | **An individual entry** | `claude-use profile set <name> --entry "<category>/<path>=true"`; or `claude-use configure <path>` | `claude --share <path> [--share <path> ...]` / `claude --hide <path>` / `CLAUDE_USE_ENTRY_OVERRIDE="path=true,otherpath=false"` | `claude-use configure <path>` run from inside the ruled directory; or `.claude-use.json`'s `"entries"` |
@@ -46,7 +47,7 @@ Every failure prints as `claude-use: <message>` on standard error. An unexpected
 ### Full command list
 
 ```
-claude-use <noun> <verb> [name] [options]      # nouns: identity, profile, provider, rule (credential acts on the credentials they use)
+claude-use <noun> <verb> [name] [options]      # nouns: identity, profile, pool, provider, rule (credential acts on the credentials they use)
 
 claude-use identity add <name>
 claude-use identity list [--json]
@@ -68,6 +69,14 @@ claude-use profile list [--json]
 claude-use profile show <name> [--json]
 claude-use profile remove <name> [--yes]
 claude-use profile use <name>               # the global default configuration profile
+
+claude-use pool add <name> --identity <identity>...
+claude-use pool set <name> --identity <identity>...
+claude-use pool list [--json]
+claude-use pool show <name> [--json]
+claude-use pool remove <name> [--yes]
+claude-use pool use <name>                   # the active selection becomes pool:<name>
+claude-use pool pick <name> [--json]         # the ranking a launch from here would act on; records nothing
 
 claude-use provider add <name> --display-name <name> (--base-url <url> | --kind codex) (--credential <source>)... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]...
                                               [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>]
@@ -105,7 +114,7 @@ claude-use run [@<identity>] [launch flags] [claude arguments]
   # launch flags, recognised only before a `--` terminator:
   #   --identity <name>  --config-profile <name>  --provider <name> | --no-provider
   #   --category <category>=<bool>  --share <category>/<path>  --hide <category>/<path>   (each repeatable)
-  #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom  --[no-]track-usage
+  #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom  --[no-]track-usage  --[no-]wait
 claude @<identity> ...                      # the same, once `claude-use shim enable` has run
 ```
 
