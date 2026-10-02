@@ -16,7 +16,7 @@ If you'd also like the shorter `claude @<name>` form instead of `claude-use run 
 claude-use shim enable   # creates a `claude` launcher next to claude-use; claude-use shim disable undoes it
 ```
 
-**Alternative: npm.** `claude-use` is also published as an npm package — useful if you already have Node ≥ 22.12 and would rather not download a platform-specific binary:
+**Alternative: npm.** `claude-use` is also published as an npm package — useful if you already have Node 22.18 or later (or 24 and above) and would rather not download a platform-specific binary:
 
 ```bash
 npx claude-use identity list
@@ -61,5 +61,5 @@ scoop bucket add claude-use https://github.com/ExaDev/scoop-claude-use
 scoop install claude-use
 ```
 
-Every channel installs `claude-use` alone — none of them install a `claude` command; `claude-use shim enable` is the one explicit action that does, on any of them. The GitHub Release binary and Scoop ship the self-contained Node SEA build (no Node.js installation required) — macOS arm64, both Linux architectures, and both Windows architectures are all targets Node core itself tests and verifies `--build-sea` against upstream; the raw GitHub Release binary for macOS x64 is published best-effort, since Node core does not test or verify single-executable-application support on that target and the resulting binary genuinely crashes there (see [Build (Node SEA)](release-process.md#build-node-sea) below). **Homebrew and `install.sh` both work around this on macOS x64 specifically**: rather than installing that broken binary, they depend on (or check for) Node and install the same plain bundle the npm channel publishes — a real, working `claude-use`, not a best-effort one. npm ships the plain bundle everywhere, running under whatever Node ≥ 22.12 you already have.
+Every channel installs `claude-use` alone — none of them install a `claude` command; `claude-use shim enable` is the one explicit action that does, on any of them. The GitHub Release binary and Scoop ship the self-contained Node SEA build (no Node.js installation required) — macOS arm64, both Linux architectures, and both Windows architectures are all targets Node core itself tests and verifies `--build-sea` against upstream; the raw GitHub Release binary for macOS x64 is published best-effort, since Node core does not test or verify single-executable-application support on that target and the resulting binary genuinely crashes there (see [Build (Node SEA)](release-process.md#build-node-sea) below). **Homebrew and `install.sh` both work around this on macOS x64 specifically**: rather than installing that broken binary, they depend on (or check for) Node and install the same plain bundle the npm channel publishes — a real, working `claude-use`, not a best-effort one. npm ships the plain bundle everywhere, running under whatever Node (22.18 or later, or 24 and above) you already have.
 

@@ -23,7 +23,7 @@ curl -fsSL https://github.com/ExaDev/claude-use/releases/latest/download/install
 
 This installs `claude-use` alone into `~/.local/bin`; your existing `claude` command is left untouched. `claude-use run [args...]` reaches the same identity-resolve, farm-resync, spawn pipeline a `claude`-named binary would, so every feature already works with no further setup. Run `claude-use shim enable` once for the shorter `claude @<name>` form (`shim disable` reverses it).
 
-Also available: npm (`npm install -g claude-use`, needs Node 22.12 or later), Homebrew (`brew install ExaDev/claude-use/claude-use`), Scoop on Windows, a scoped GitHub Packages alias, and installing straight from the git repository with no registry at all. Each channel's exact commands, the platform support matrix, and the one architecture (macOS x64) that needs a different install path are in [docs/installation.md](docs/installation.md).
+Also available: npm (`npm install -g claude-use`, needs Node 22.18 or later, or 24 and above), Homebrew (`brew install ExaDev/claude-use/claude-use`), Scoop on Windows, a scoped GitHub Packages alias, and installing straight from the git repository with no registry at all. Each channel's exact commands, the platform support matrix, and the one architecture (macOS x64) that needs a different install path are in [docs/installation.md](docs/installation.md).
 
 ## Quick start
 
