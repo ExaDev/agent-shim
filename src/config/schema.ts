@@ -289,11 +289,32 @@ export const ConfigProfileSchema = z.strictObject({
 });
 export type ConfigProfile = z.infer<typeof ConfigProfileSchema>;
 
+/** The prefix that turns a pool name into an identity selector. `:` is outside an identity name's character set, so a selector can never be mistaken for an identity. */
+export const POOL_SELECTOR_PREFIX = "pool:";
+
+const POOL_NAME_PATTERN = "[A-Za-z0-9][A-Za-z0-9._-]*";
+const IDENTITY_NAME_PATTERN = "[A-Za-z0-9][A-Za-z0-9._@-]*";
+
+/** A pool's own name: the identity alphabet minus `@`, since a pool is never an email address. */
+export const PoolNameSchema = z.string().min(1).regex(new RegExp(`^${POOL_NAME_PATTERN}$`));
+
+/** What a directory rule, a portable config or the active-identity file may name: a concrete identity, or `pool:<name>` to have claude-use pick one member of a pool at launch. */
+export const IdentitySelectorSchema = z.string().min(1).regex(new RegExp(`^(${POOL_SELECTOR_PREFIX}${POOL_NAME_PATTERN}|${IDENTITY_NAME_PATTERN})$`));
+
+/** A named, explicit set of identities to choose among at launch. Never implicit: a pool lists its members, so an identity that bills a client is only ever picked when someone put it there. */
+export const PoolSchema = z.strictObject({
+  identities: z
+    .array(z.string().min(1).regex(new RegExp(`^${IDENTITY_NAME_PATTERN}$`)))
+    .min(1)
+    .refine((names) => new Set(names).size === names.length, { message: "pool members must be unique" }),
+});
+export type Pool = z.infer<typeof PoolSchema>;
+
 /** One directory rule in `~/.claude-use/directory-rules.json`, scoped to an explicit absolute (or `~`-rooted) path. */
 export const DirectoryRuleSchema = ConfigProfileSchema.omit({ description: true }).extend({
   path: z.string().min(1),
   configProfile: z.string().min(1).optional(),
-  identity: z.string().min(1).optional(),
+  identity: IdentitySelectorSchema.optional(),
   when: WhenSchema.optional(),
 });
 export type DirectoryRule = z.infer<typeof DirectoryRuleSchema>;
@@ -310,7 +331,7 @@ export type DirectoryRules = z.infer<typeof DirectoryRulesSchema>;
  */
 export const PortableConfigSchema = ConfigProfileSchema.omit({ description: true }).extend({
   configProfile: z.string().min(1).optional(),
-  identity: z.string().min(1).optional(),
+  identity: IdentitySelectorSchema.optional(),
   when: WhenSchema.optional(),
 });
 export type PortableConfig = z.infer<typeof PortableConfigSchema>;
@@ -393,6 +414,7 @@ export const GlobalConfigSchema = z.strictObject({
   launch: LaunchSchema.optional(),
   headroom: HeadroomGlobalConfigSchema.optional(),
   frontdoor: FrontDoorGlobalConfigSchema.optional(),
+  pools: z.record(PoolNameSchema, PoolSchema).optional(),
 });
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 

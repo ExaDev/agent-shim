@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import { loadConfigFile, type LoadedFile } from "../config/load";
-import { IdentitySchema, type Identity } from "../config/schema";
+import { IdentitySchema, POOL_SELECTOR_PREFIX, type Identity } from "../config/schema";
 import type { FsPort } from "./ports";
 
 /** Which precedence rule produced an identity decision. */
@@ -19,10 +19,17 @@ export type IdentityDecisionSource =
   /** Nothing resolved an identity at all — a bare launch with no active identity. */
   | "none";
 
+/** The pool a `pool:<name>` selector names, or undefined when `selector` names an identity directly. */
+export function poolNameOf(selector: string): string | undefined {
+  return selector.startsWith(POOL_SELECTOR_PREFIX) ? selector.slice(POOL_SELECTOR_PREFIX.length) : undefined;
+}
+
 /** The result of deciding which identity applies to this launch. */
 export interface IdentityDecision {
-  /** The resolved identity name. Absent when the escape hatch applied, or when nothing resolved one. */
+  /** The resolved identity name. Absent when the escape hatch applied, when nothing resolved one, or when a pool was selected (the launcher picks a member from `pool`). */
   readonly name?: string;
+  /** The pool selected by a `pool:<name>` selector, when the launch named a pool instead of an identity. */
+  readonly pool?: string;
   readonly source: IdentityDecisionSource;
   /** True when `CLAUDE_CONFIG_DIR` was already set and every step below was skipped as a result. */
   readonly configDirEscapeHatch: boolean;
@@ -43,6 +50,11 @@ function isNonEmpty(value: string | undefined): value is string {
   return value !== undefined && value !== "";
 }
 
+function selected(selector: string, source: IdentityDecisionSource): IdentityDecision {
+  const pool = poolNameOf(selector);
+  return pool === undefined ? { name: selector, source, configDirEscapeHatch: false } : { pool, source, configDirEscapeHatch: false };
+}
+
 /**
  * Decides which identity applies to this launch, in precedence order:
  *
@@ -52,6 +64,8 @@ function isNonEmpty(value: string | undefined): value is string {
  * 4. A directory-pinned identity from a directory rule.
  * 5. The persisted `~/.claude-use/active-identity` file.
  *
+ * Each of steps 2 to 5 may name `pool:<name>` instead of an identity; the decision then carries `pool` and no `name`, and the launcher picks the member.
+ *
  * An empty string counts as unset for `CLAUDE_CONFIG_DIR` and `CLAUDE_USE_IDENTITY`, consistent with how this project treats empty-string environment variables everywhere else (see `src/paths.ts` and the ambient-credential guard).
  */
 export function decideIdentity(params: DecideIdentityParams): IdentityDecision {
@@ -59,17 +73,17 @@ export function decideIdentity(params: DecideIdentityParams): IdentityDecision {
     return { source: "config-dir-escape-hatch", configDirEscapeHatch: true };
   }
   if (isNonEmpty(params.argv0Identity)) {
-    return { name: params.argv0Identity, source: "argv", configDirEscapeHatch: false };
+    return selected(params.argv0Identity, "argv");
   }
   if (isNonEmpty(params.env.CLAUDE_USE_IDENTITY)) {
-    return { name: params.env.CLAUDE_USE_IDENTITY, source: "env", configDirEscapeHatch: false };
+    return selected(params.env.CLAUDE_USE_IDENTITY, "env");
   }
   if (isNonEmpty(params.directoryPinnedIdentity)) {
-    return { name: params.directoryPinnedIdentity, source: "directory-pin", configDirEscapeHatch: false };
+    return selected(params.directoryPinnedIdentity, "directory-pin");
   }
   const persisted = params.readActiveIdentityFile();
   if (isNonEmpty(persisted)) {
-    return { name: persisted, source: "active-identity-file", configDirEscapeHatch: false };
+    return selected(persisted, "active-identity-file");
   }
   return { source: "none", configDirEscapeHatch: false };
 }
