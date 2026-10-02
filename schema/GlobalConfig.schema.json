@@ -176,6 +176,32 @@
         }
       },
       "additionalProperties": false
+    },
+    "pools": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "identities": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
+            }
+          }
+        },
+        "required": [
+          "identities"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false

@@ -13,7 +13,7 @@ export class PoolNotFoundError extends CliError {
 }
 
 /** Raised by `addPool` when a pool with the given name is already defined. */
-export class PoolAlreadyExistsError extends CliError {
+class PoolAlreadyExistsError extends CliError {
   constructor(readonly poolName: string) {
     super(`A pool named "${poolName}" already exists. Use \`claude-use pool set ${poolName}\` to change its members.`);
     this.name = "PoolAlreadyExistsError";
@@ -21,7 +21,7 @@ export class PoolAlreadyExistsError extends CliError {
 }
 
 /** Raised when a pool name fails `PoolNameSchema`. */
-export class InvalidPoolNameError extends CliError {
+class InvalidPoolNameError extends CliError {
   constructor(readonly attemptedName: string) {
     super(`"${attemptedName}" is not a valid pool name: it must start with a letter or number and may then contain letters, numbers, dots, hyphens and underscores.`);
     this.name = "InvalidPoolNameError";

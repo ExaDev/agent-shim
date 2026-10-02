@@ -52,7 +52,7 @@ export interface RankPoolInput {
 }
 
 /** In pick order. `scored` has usable quota data; `unknown` has none (never recorded, or unreadable); `pay-per-use` bills by use instead of drawing on a plan; `ineligible` is refused right now. */
-export type CandidateClass = "scored" | "unknown" | "pay-per-use" | "ineligible";
+type CandidateClass = "scored" | "unknown" | "pay-per-use" | "ineligible";
 
 const CLASS_ORDER: Readonly<Record<CandidateClass, number>> = { scored: 0, unknown: 1, "pay-per-use": 2, ineligible: 3 };
 

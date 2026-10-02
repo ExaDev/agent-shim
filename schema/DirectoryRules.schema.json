@@ -134,7 +134,8 @@
           },
           "identity": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]*)$"
           },
           "when": {
             "type": "object",
