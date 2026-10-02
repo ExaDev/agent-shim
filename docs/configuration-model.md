@@ -328,6 +328,8 @@ For an OAuth session the observer also reads Anthropic's unified subscription he
 
 Storage lives under `<home>/usage/`, owner-only. `log/` is append-only JSON Lines, one `<YYYY-MM-DD>.<writer-pid>.jsonl` segment per writing process per UTC day (one writer per file is what makes concurrent door generations safe without locking), pruned by whole day to seven days, the longest quota window any routed upstream enforces. `snapshots/<identity>.json` holds the latest state per identity and provider, with the account's plan and tier copied from its stored login, and is the stable file other tools (a statusline, a launch pre-flight) can read without shelling out. Every observation in a snapshot carries its own timestamp: an identity that has not sent a request lately shows its last-seen quota, not its current one.
 
+`claude-use run` reads the identity's snapshot before spawning and prints a warning (it never blocks the launch) for a window the API itself last marked `allowed_warning` or `rejected` for the provider the launch will use, unless that window's reset time has passed since it was observed. The warning states how long ago the front door saw it, because the snapshot only changes when a request goes through the door; an unreadable snapshot is reported rather than read as no usage.
+
 `claude-use usage` reports request and token totals and the latest quota per identity and provider (`--identity`, `--provider`, `--since 5h`, `--json`); `claude-use account show [identity]` reports plan, tier and quota. Both are read-only and report lines of the log they could not read rather than treating them as no usage.
 
 ## Headroom routing
