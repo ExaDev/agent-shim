@@ -117,6 +117,9 @@
               },
               "headroom": {
                 "type": "boolean"
+              },
+              "trackUsage": {
+                "type": "boolean"
               }
             },
             "additionalProperties": false

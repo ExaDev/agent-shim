@@ -79,6 +79,15 @@ describe("parseLauncherArgv", () => {
     expect(parsed.rest).toEqual(["fix", "the", "bug"]);
   });
 
+  it("parses --track-usage and --no-track-usage as consumed boolean flags, later occurrence winning", () => {
+    expect(parseLauncherArgv(["--track-usage", "-p"]).trackUsage).toBe(true);
+    expect(parseLauncherArgv(["--no-track-usage", "-p"]).trackUsage).toBe(false);
+    expect(parseLauncherArgv(["--no-track-usage", "--track-usage"]).trackUsage).toBe(true);
+    expect(parseLauncherArgv(["--track-usage", "--no-track-usage"]).trackUsage).toBe(false);
+    expect(parseLauncherArgv(["--track-usage", "fix", "it"]).rest).toEqual(["fix", "it"]);
+    expect(parseLauncherArgv(["-p", "hi"]).trackUsage).toBeUndefined();
+  });
+
   it("leaves headroom undefined when neither flag is given", () => {
     expect(parseLauncherArgv(["-p", "hi"]).headroom).toBeUndefined();
   });

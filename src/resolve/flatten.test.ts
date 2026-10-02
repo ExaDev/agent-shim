@@ -154,6 +154,14 @@ describe("phase one: launch flags", () => {
     );
     expect(flattened.launch).toEqual({ headroom: false });
   });
+
+  it("resolves trackUsage last-layer-wins, independently of headroom", () => {
+    const flattened = flattenLayers(
+      [layer(0, { launch: { trackUsage: true, headroom: true } }), layer(1, { launch: { trackUsage: false } })],
+      { home: FAKE_HOME },
+    );
+    expect(flattened.launch).toEqual({ trackUsage: false, headroom: true });
+  });
 });
 
 describe("matchingRules", () => {

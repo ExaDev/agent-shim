@@ -79,7 +79,7 @@ claude-use identity resolve-conflicts <name>  # interactively resolve a retained
 claude-use profile add [name] [--extends <profile>]... [--description <text>]   # interactive with no options on a terminal
 claude-use profile set <name> [--category <category>=<bool>]... [--entry <category>/<path>=<bool>]...
 claude-use profile set <name> [--extends <profile>]... [--no-extends] [--description <text> | --no-description]
-claude-use profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom]
+claude-use profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage]
 claude-use profile set <name> [--launch-provider <provider> | --no-launch-provider]
 claude-use profile list [--json]
 claude-use profile show <name> [--json]
@@ -116,7 +116,7 @@ claude-use run [@<identity>] [launch flags] [claude arguments]
   # launch flags, recognised only before a `--` terminator:
   #   --identity <name>  --config-profile <name>  --provider <name> | --no-provider
   #   --category <category>=<bool>  --share <category>/<path>  --hide <category>/<path>   (each repeatable)
-  #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom
+  #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom  --[no-]track-usage
 claude @<identity> ...                      # the same, once `claude-use shim enable` has run
 ```
 

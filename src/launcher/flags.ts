@@ -13,26 +13,29 @@ export interface ResolvedLaunchFlags {
   readonly skipPermissions: boolean;
   readonly remoteControl: boolean;
   readonly headroom: boolean;
+  /** Whether the launch routes through the front door so its requests are recorded, even with no provider and no headroom. */
+  readonly trackUsage: boolean;
 }
 
-/** The one-off command-line forms of the three boolean launch flags, each undefined when neither its positive nor its `--no-` form was given. */
+/** The one-off command-line forms of the four boolean launch flags, each undefined when neither its positive nor its `--no-` form was given. */
 interface LaunchFlagOverrides {
   readonly skipPermissions?: boolean;
   readonly remoteControl?: boolean;
   readonly headroom?: boolean;
+  readonly trackUsage?: boolean;
 }
 
 /** Inputs to `resolveLaunchFlags`. */
 export interface ResolveLaunchFlagsParams {
   /** The cascade's resolved `launch` block, when a cascade was loaded for this launch. */
   readonly cascade?: LaunchFlags;
-  /** The launch's own `--[no-]skip-permissions`, `--[no-]remote-control` and `--[no-]headroom` flags. */
+  /** The launch's own `--[no-]skip-permissions`, `--[no-]remote-control`, `--[no-]headroom` and `--[no-]track-usage` flags. */
   readonly flags?: LaunchFlagOverrides;
   readonly env: Readonly<Record<string, string | undefined>>;
 }
 
 /**
- * Resolves `skipPermissions`/`remoteControl`/`headroom` for one launch. Each setting has the same three forms, decided in the same order: an explicit command-line flag outright, then its environment variable (`CLAUDE_USE_SKIP_PERMISSIONS`, `CLAUDE_USE_REMOTE_CONTROL`, `CLAUDE_USE_HEADROOM`), then the cascade, and OFF when none of them says otherwise. The flag outranks the environment variable because it is the more deliberate of the two one-off forms (typed on this very command line, not inherited from a shell profile), and both outrank the cascade because they are one-off overrides of it.
+ * Resolves `skipPermissions`/`remoteControl`/`headroom`/`trackUsage` for one launch. Each setting has the same three forms, decided in the same order: an explicit command-line flag outright, then its environment variable (`CLAUDE_USE_SKIP_PERMISSIONS`, `CLAUDE_USE_REMOTE_CONTROL`, `CLAUDE_USE_HEADROOM`, `CLAUDE_USE_TRACK_USAGE`), then the cascade, and OFF when none of them says otherwise. The flag outranks the environment variable because it is the more deliberate of the two one-off forms (typed on this very command line, not inherited from a shell profile), and both outrank the cascade because they are one-off overrides of it.
  *
  * Environment variables read with the shared boolean vocabulary (`true`/`1`, `false`/`0`), so `CLAUDE_USE_SKIP_PERMISSIONS=0` switches off a cascade's `skipPermissions: true` for one launch; any other value throws `InvalidEnvBoolError`.
  *
@@ -52,6 +55,11 @@ export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLa
       false,
     headroom:
       params.flags?.headroom ?? parseEnvBool("CLAUDE_USE_HEADROOM", params.env.CLAUDE_USE_HEADROOM) ?? params.cascade?.headroom ?? false,
+    trackUsage:
+      params.flags?.trackUsage ??
+      parseEnvBool("CLAUDE_USE_TRACK_USAGE", params.env.CLAUDE_USE_TRACK_USAGE) ??
+      params.cascade?.trackUsage ??
+      false,
   };
 }
 

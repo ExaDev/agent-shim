@@ -5,7 +5,7 @@ import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type RoutedProv
 
 describe("resolveLaunchFlags", () => {
   it("defaults both flags to off when nothing sets them — a deliberate change from the legacy always-on script", () => {
-    expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false, headroom: false });
+    expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: false });
   });
 
   it("turns skipPermissions on via the CLAUDE_USE_SKIP_PERMISSIONS=1 escape hatch", () => {
@@ -13,6 +13,7 @@ describe("resolveLaunchFlags", () => {
       skipPermissions: true,
       remoteControl: false,
       headroom: false,
+      trackUsage: false,
     });
   });
 
@@ -21,13 +22,14 @@ describe("resolveLaunchFlags", () => {
       skipPermissions: false,
       remoteControl: true,
       headroom: false,
+      trackUsage: false,
     });
   });
 
   it("treats an empty env value as unset", () => {
     expect(
       resolveLaunchFlags({ env: { CLAUDE_USE_SKIP_PERMISSIONS: "", CLAUDE_USE_REMOTE_CONTROL: "0" } }),
-    ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false });
+    ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: false });
   });
 
   it("honours a cascade value once one is supplied, independent of the env escape hatch", () => {
@@ -35,19 +37,20 @@ describe("resolveLaunchFlags", () => {
       skipPermissions: true,
       remoteControl: true,
       headroom: false,
+      trackUsage: false,
     });
   });
 
   it("combines settings from different sources independently, each setting decided on its own", () => {
     expect(
       resolveLaunchFlags({ env: { CLAUDE_USE_REMOTE_CONTROL: "1" }, cascade: { skipPermissions: true } }),
-    ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false });
+    ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false, trackUsage: false });
   });
 
-  it.each(["skipPermissions", "remoteControl", "headroom"] as const)(
+  it.each(["skipPermissions", "remoteControl", "headroom", "trackUsage"] as const)(
     "lets the %s flag outrank both its env variable and the cascade",
     (key) => {
-      const variable = { skipPermissions: "CLAUDE_USE_SKIP_PERMISSIONS", remoteControl: "CLAUDE_USE_REMOTE_CONTROL", headroom: "CLAUDE_USE_HEADROOM" }[key];
+      const variable = { skipPermissions: "CLAUDE_USE_SKIP_PERMISSIONS", remoteControl: "CLAUDE_USE_REMOTE_CONTROL", headroom: "CLAUDE_USE_HEADROOM", trackUsage: "CLAUDE_USE_TRACK_USAGE" }[key];
       expect(resolveLaunchFlags({ env: { [variable]: "1" }, flags: { [key]: false } })[key]).toBe(false);
       expect(resolveLaunchFlags({ env: {}, cascade: { [key]: true }, flags: { [key]: false } })[key]).toBe(false);
       expect(resolveLaunchFlags({ env: {}, cascade: { [key]: false }, flags: { [key]: true } })[key]).toBe(true);
@@ -55,10 +58,10 @@ describe("resolveLaunchFlags", () => {
     },
   );
 
-  it.each(["skipPermissions", "remoteControl", "headroom"] as const)(
+  it.each(["skipPermissions", "remoteControl", "headroom", "trackUsage"] as const)(
     "lets the %s env variable outrank the cascade in both directions",
     (key) => {
-      const variable = { skipPermissions: "CLAUDE_USE_SKIP_PERMISSIONS", remoteControl: "CLAUDE_USE_REMOTE_CONTROL", headroom: "CLAUDE_USE_HEADROOM" }[key];
+      const variable = { skipPermissions: "CLAUDE_USE_SKIP_PERMISSIONS", remoteControl: "CLAUDE_USE_REMOTE_CONTROL", headroom: "CLAUDE_USE_HEADROOM", trackUsage: "CLAUDE_USE_TRACK_USAGE" }[key];
       expect(resolveLaunchFlags({ env: { [variable]: "0" }, cascade: { [key]: true } })[key]).toBe(false);
       expect(resolveLaunchFlags({ env: { [variable]: "false" }, cascade: { [key]: true } })[key]).toBe(false);
       expect(resolveLaunchFlags({ env: { [variable]: "true" }, cascade: { [key]: false } })[key]).toBe(true);
@@ -81,7 +84,15 @@ describe("resolveLaunchFlags", () => {
       skipPermissions: false,
       remoteControl: false,
       headroom: true,
+      trackUsage: false,
     });
+  });
+
+  it("leaves trackUsage off unless a flag, its env variable or the cascade turns it on, each independent of headroom", () => {
+    expect(resolveLaunchFlags({ env: {} }).trackUsage).toBe(false);
+    expect(resolveLaunchFlags({ env: {}, cascade: { trackUsage: true } })).toMatchObject({ trackUsage: true, headroom: false });
+    expect(resolveLaunchFlags({ env: { CLAUDE_USE_TRACK_USAGE: "1" } })).toMatchObject({ trackUsage: true, headroom: false });
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true } }).trackUsage).toBe(false);
   });
 
   it("resolves headroom from a cascade value and ORs it with the escape hatch", () => {
@@ -93,23 +104,23 @@ describe("resolveLaunchFlags", () => {
 
 describe("buildFlagArgs", () => {
   it("emits nothing when both flags are off", () => {
-    expect(buildFlagArgs({ skipPermissions: false, remoteControl: false, headroom: false })).toEqual([]);
+    expect(buildFlagArgs({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: false })).toEqual([]);
   });
 
   it("emits --dangerously-skip-permissions when skipPermissions is on", () => {
-    expect(buildFlagArgs({ skipPermissions: true, remoteControl: false, headroom: false })).toEqual([
+    expect(buildFlagArgs({ skipPermissions: true, remoteControl: false, headroom: false, trackUsage: false })).toEqual([
       "--dangerously-skip-permissions",
     ]);
   });
 
   it("emits --remote-control= with a literal trailing equals and empty value, never bare --remote-control", () => {
-    const args = buildFlagArgs({ skipPermissions: false, remoteControl: true, headroom: false });
+    const args = buildFlagArgs({ skipPermissions: false, remoteControl: true, headroom: false, trackUsage: false });
     expect(args).toEqual(["--remote-control="]);
     expect(args).not.toContain("--remote-control");
   });
 
   it("emits both flags, skip-permissions before remote-control, matching the legacy script's own order", () => {
-    expect(buildFlagArgs({ skipPermissions: true, remoteControl: true, headroom: false })).toEqual([
+    expect(buildFlagArgs({ skipPermissions: true, remoteControl: true, headroom: false, trackUsage: false })).toEqual([
       "--dangerously-skip-permissions",
       "--remote-control=",
     ]);

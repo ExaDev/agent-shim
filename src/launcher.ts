@@ -340,12 +340,13 @@ export function runLauncher(params: RunLauncherParams): void {
       ...(parsedArgv.skipPermissions === undefined ? {} : { skipPermissions: parsedArgv.skipPermissions }),
       ...(parsedArgv.remoteControl === undefined ? {} : { remoteControl: parsedArgv.remoteControl }),
       ...(parsedArgv.headroom === undefined ? {} : { headroom: parsedArgv.headroom }),
+      ...(parsedArgv.trackUsage === undefined ? {} : { trackUsage: parsedArgv.trackUsage }),
     },
   });
 
   // The front door comes up first, before headroom: every routed session (a provider's, or headroom's) enters through it, and headroom's allowlist is fixed when its daemon starts and must already contain the door's origin, which is what a codex session routed through headroom is forwarded back to. `ensure` authenticates the door's listener over TLS before returning anything, so the address the child is handed below (and sends its credential to) belongs to a listener holding a leaf from claude-use's CA.
   const frontDoorPort = params.frontdoor;
-  const frontDoorEngaged = resolvedProvider !== undefined || resolvedFlags.headroom;
+  const frontDoorEngaged = resolvedProvider !== undefined || resolvedFlags.headroom || resolvedFlags.trackUsage;
   if (frontDoorEngaged && frontDoorPort === undefined) {
     log.error("claude-use: this launch routes through the front-door daemon, but this launcher has no front-door port wired; refusing to launch without it.");
     proc.exit(1);
@@ -369,7 +370,7 @@ export function runLauncher(params: RunLauncherParams): void {
     log.error("claude-use: headroom routing was requested but this launcher has no headroom port wired; refusing to launch without it.");
     proc.exit(1);
   } else if (frontDoor !== undefined) {
-    log.info(`claude-use: routing through the front door on 127.0.0.1:${String(frontDoor.port)}${resolvedProvider === undefined ? "" : ` (provider ${resolvedProvider.name})`}`);
+    log.info(`claude-use: routing through the front door on 127.0.0.1:${String(frontDoor.port)}${resolvedProvider === undefined ? ` (OAuth via the door's CONNECT surface on 127.0.0.1:${String(frontDoor.connectPort)}, usage recorded)` : ` (provider ${resolvedProvider.name})`}`);
   }
   const frontDoorRelease = frontDoor === undefined ? undefined : frontDoorPort?.release;
 

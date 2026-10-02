@@ -90,6 +90,7 @@ const LaunchSchema = z.strictObject({
   remoteControl: z.boolean().optional(),
   provider: z.string().min(1).optional(),
   headroom: z.boolean().optional(),
+  trackUsage: z.boolean().optional(),
 });
 export type LaunchFlags = z.infer<typeof LaunchSchema>;
 

@@ -250,6 +250,7 @@ interface ProfileSetOptions {
   readonly launchSkipPermissions?: boolean;
   readonly launchRemoteControl?: boolean;
   readonly launchHeadroom?: boolean;
+  readonly launchTrackUsage?: boolean;
   readonly launchProvider?: string | false;
 }
 
@@ -280,6 +281,9 @@ function applyProfileSet(paths: LayoutPaths, name: string, options: ProfileSetOp
   }
   if (options.launchHeadroom !== undefined) {
     launchPatch.headroom = options.launchHeadroom;
+  }
+  if (options.launchTrackUsage !== undefined) {
+    launchPatch.trackUsage = options.launchTrackUsage;
   }
   if (options.launchProvider !== undefined) {
     launchPatch.provider = options.launchProvider === false ? undefined : options.launchProvider;
@@ -346,6 +350,8 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
       .option("--no-launch-remote-control", "Launches under this profile leave Remote Control off.")
       .option("--launch-headroom", "Launches under this profile route through headroom.")
       .option("--no-launch-headroom", "Launches under this profile route direct.")
+      .option("--launch-track-usage", "Launches under this profile route through the front door so their requests and quota are recorded, with no headroom needed.")
+      .option("--no-launch-track-usage", "Launches under this profile are not recorded unless a provider or headroom routes them anyway.")
       .option("--launch-provider <provider>", "Launches under this profile route through this provider.")
       .option("--no-launch-provider", "Clear this profile's provider selection.")
       .action(async (name: string, options: ProfileSetOptions) => {
