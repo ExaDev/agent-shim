@@ -97,6 +97,7 @@ function formatLimit(limit: LimitEvent): string {
   return `last limit: ${limit.kind} (${String(limit.status)}) at ${limit.observedAt}${limit.window === undefined ? "" : ` on the ${limit.window} window`}${wait.length === 0 ? "" : `, ${wait.join(", ")}`}`;
 }
 
+const MONEY_DECIMALS = 2;
 const MS_PER_HOUR = 3_600_000;
 const HOURS_PER_DAY = 24;
 
@@ -109,10 +110,15 @@ function formatPeriod(window: Readonly<ProviderQuotaWindow>): string {
   return hours >= HOURS_PER_DAY && Number.isInteger(hours / HOURS_PER_DAY) ? `${String(hours / HOURS_PER_DAY)}d` : `${String(hours)}h`;
 }
 
+/** A count to at most two decimals, since a spend figure arrives with far more than anyone reads. */
+function formatCount(value: number): string {
+  return String(Number(value.toFixed(MONEY_DECIMALS)));
+}
+
 /** The lines for a provider's pulled quota: one per window, with the age of the observation on the first. */
 function formatQuota(quota: ProviderQuota): string[] {
   return quota.windows.map((window, index) => {
-    const counts = window.used !== undefined && window.limit !== undefined ? `, ${String(window.used)} of ${String(window.limit)}` : "";
+    const counts = window.used !== undefined && window.limit !== undefined ? `, ${formatCount(window.used)} of ${formatCount(window.limit)}` : "";
     const resets = window.resetsAt === undefined ? "" : `, resets ${window.resetsAt}`;
     const head = index === 0 ? `quota via ${quota.source}${quota.level === undefined ? "" : ` (${quota.level})`}, observed ${quota.observedAt}: ` : "                                           ";
     return `  ${head}${window.measures} ${formatPeriod(window)} ${String(Math.round(window.utilization * PERCENT))}% used${counts}${resets}`;

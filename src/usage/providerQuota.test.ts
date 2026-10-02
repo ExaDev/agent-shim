@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { adapterFor, ProviderQuotaError, quotaFreshnessMs, zaiQuotaAdapter, type QuotaHttpGet } from "./providerQuota";
+import { adapterFor, openRouterQuotaAdapter, ProviderQuotaError, quotaFreshnessMs, zaiQuotaAdapter, type QuotaHttpGet } from "./providerQuota";
 import type { ProviderQuota, ProviderQuotaWindow } from "./schema";
 
 const API_KEY = "REDACTED";
@@ -205,7 +205,7 @@ describe("adapterFor", () => {
   });
 
   it("returns undefined for a provider no adapter serves", () => {
-    expect(adapterFor("https://openrouter.ai/api")).toBeUndefined();
+    expect(adapterFor("https://api.synthetic.new/anthropic")).toBeUndefined();
   });
 });
 
@@ -218,8 +218,100 @@ describe("quotaFreshnessMs", () => {
     expect(quotaFreshnessMs(quotaWithPeriods([undefined, THIRTY_DAYS_MS]))).toBe(THIRTY_DAYS_MS / PERCENT);
   });
 
-  it("is zero when no window has a known length or there are none", () => {
-    expect(quotaFreshnessMs(quotaWithPeriods([undefined]))).toBe(0);
-    expect(quotaFreshnessMs(quotaWithPeriods([]))).toBe(0);
+  it("is never (infinite) when no window has a known length or there are none, so only an explicit request refreshes it", () => {
+    expect(quotaFreshnessMs(quotaWithPeriods([undefined]))).toBe(Number.POSITIVE_INFINITY);
+    expect(quotaFreshnessMs(quotaWithPeriods([]))).toBe(Number.POSITIVE_INFINITY);
+  });
+});
+
+describe("openRouterQuotaAdapter", () => {
+  const OPENROUTER_BASE_URL = "https://openrouter.ai/api";
+  const KEY_URL = "https://openrouter.ai/api/v1/key";
+  const CREDITS_URL = "https://openrouter.ai/api/v1/credits";
+  const HTTP_FORBIDDEN = 403;
+  const FREE_LIMIT = 1000;
+  const FREE_USED = 250;
+  const CREDITS_TOTAL = 15;
+  const CREDITS_USED = 15.504849611;
+  const KEY_CAP = 50;
+  const KEY_REMAINING = 20;
+  const NEXT_MIDNIGHT = "2026-10-03T00:00:00.000Z";
+  const FRACTION_USED = 0.25;
+  const CAP_USED = KEY_CAP - KEY_REMAINING;
+  const CAP_FRACTION = CAP_USED / KEY_CAP;
+  const OVERSPENT_FRACTION = CREDITS_USED / CREDITS_TOTAL;
+
+  const unlimitedKey = { data: { limit: null, limit_remaining: null, limit_reset: null, is_free_tier: false, usage: 0.44, free_model_daily_requests: { used: FREE_USED, limit: FREE_LIMIT, remaining: FREE_LIMIT - FREE_USED } } };
+  const cappedKey = { data: { ...unlimitedKey.data, limit: KEY_CAP, limit_remaining: KEY_REMAINING, limit_reset: "monthly" } };
+  const credits = { data: { total_credits: CREDITS_TOTAL, total_usage: CREDITS_USED } };
+
+  function routedHttp(answers: Readonly<Record<string, { readonly status: number; readonly body: unknown }>>): ReturnType<typeof vi.fn<QuotaHttpGet>> {
+    return vi.fn<QuotaHttpGet>().mockImplementation(async (url) => {
+      const answer = answers[url];
+      if (answer === undefined) {
+        throw new Error(`unexpected request to ${url}`);
+      }
+      return await Promise.resolve({ status: answer.status, text: JSON.stringify(answer.body) });
+    });
+  }
+
+  async function fetchOpenRouterQuota(http: QuotaHttpGet): Promise<ProviderQuota> {
+    return await openRouterQuotaAdapter.fetch(API_KEY, http, new AbortController().signal, NOW_MS);
+  }
+
+  it("serves openrouter.ai and nothing else", () => {
+    expect(openRouterQuotaAdapter.matches(OPENROUTER_BASE_URL)).toBe(true);
+    expect(openRouterQuotaAdapter.matches("https://api.z.ai/api/anthropic")).toBe(false);
+    expect(openRouterQuotaAdapter.matches("https://evil.example/openrouter.ai")).toBe(false);
+    expect(openRouterQuotaAdapter.matches("not a url")).toBe(false);
+    expect(adapterFor(OPENROUTER_BASE_URL)).toBe(openRouterQuotaAdapter);
+  });
+
+  it("asks both endpoints with the key as a bearer token", async () => {
+    const http = routedHttp({ [KEY_URL]: { status: HTTP_OK, body: unlimitedKey }, [CREDITS_URL]: { status: HTTP_OK, body: credits } });
+    await fetchOpenRouterQuota(http);
+    expect(http.mock.calls.map(([url]) => url)).toEqual([KEY_URL, CREDITS_URL]);
+    for (const [, headers] of http.mock.calls) {
+      expect(headers.authorization).toBe(`Bearer ${API_KEY}`);
+    }
+  });
+
+  it("reports the account credits, overspent as used above the limit with nothing remaining, and the free-model allowance resetting at the next UTC midnight", async () => {
+    const quota = await fetchOpenRouterQuota(routedHttp({ [KEY_URL]: { status: HTTP_OK, body: unlimitedKey }, [CREDITS_URL]: { status: HTTP_OK, body: credits } }));
+    expect(quota).toEqual({
+      observedAt: new Date(NOW_MS).toISOString(),
+      source: "OpenRouter",
+      windows: [
+        { measures: "account-credits", period: "prepaid", utilization: OVERSPENT_FRACTION, limit: CREDITS_TOTAL, used: CREDITS_USED, remaining: 0 },
+        { measures: "free-model-requests", periodMs: HOURS_PER_DAY * MS_PER_HOUR, utilization: FRACTION_USED, resetsAt: NEXT_MIDNIGHT, limit: FREE_LIMIT, used: FREE_USED, remaining: FREE_LIMIT - FREE_USED },
+      ],
+    });
+  });
+
+  it("adds the key's own spending cap, with its reset type, when the key has one", async () => {
+    const quota = await fetchOpenRouterQuota(routedHttp({ [KEY_URL]: { status: HTTP_OK, body: cappedKey }, [CREDITS_URL]: { status: HTTP_OK, body: credits } }));
+    expect(quota.windows[0]).toEqual({ measures: "key-credits", period: "monthly", utilization: CAP_FRACTION, limit: KEY_CAP, used: CAP_USED, remaining: KEY_REMAINING });
+  });
+
+  it("leaves the account balance out when the credits endpoint refuses a regular key", async () => {
+    const quota = await fetchOpenRouterQuota(routedHttp({ [KEY_URL]: { status: HTTP_OK, body: unlimitedKey }, [CREDITS_URL]: { status: HTTP_FORBIDDEN, body: {} } }));
+    expect(quota.windows.map((window) => window.measures)).toEqual(["free-model-requests"]);
+  });
+
+  it("marks a free-tier key", async () => {
+    const freeTier = { data: { ...unlimitedKey.data, is_free_tier: true } };
+    const quota = await fetchOpenRouterQuota(routedHttp({ [KEY_URL]: { status: HTTP_OK, body: freeTier }, [CREDITS_URL]: { status: HTTP_OK, body: credits } }));
+    expect(quota.level).toBe("free");
+  });
+
+  it("fails on a refused key, a server error or a wrong shape without ever printing the key", async () => {
+    const refused = routedHttp({ [KEY_URL]: { status: HTTP_FORBIDDEN, body: { error: API_KEY } } });
+    await expect(fetchOpenRouterQuota(refused)).rejects.toThrow(ProviderQuotaError);
+    const serverError = routedHttp({ [KEY_URL]: { status: HTTP_SERVER_ERROR, body: { error: API_KEY } }, [CREDITS_URL]: { status: HTTP_OK, body: credits } });
+    await expect(fetchOpenRouterQuota(serverError)).rejects.toThrow("answered HTTP 500");
+    const wrongShape = routedHttp({ [KEY_URL]: { status: HTTP_OK, body: { data: { limit: "lots" } } }, [CREDITS_URL]: { status: HTTP_OK, body: credits } });
+    const failure = await fetchOpenRouterQuota(wrongShape).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ProviderQuotaError);
+    expect(String(failure)).not.toContain(API_KEY);
   });
 });
