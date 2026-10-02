@@ -28,9 +28,11 @@ src/
     cascade.ts            # loads and assembles the CascadeInput a real launch needs (profiles, directory rules, .claude-use.json)
     lock.ts               # per-identity resync lock
     farm.ts               # farm resync: plan -> build scratch -> reconcile/carry-over -> atomic swap -> crash recovery
+    pool.ts               # resolves a `pool:<name>` selector to one member at launch (skips members that are not identities, refuses or waits when every member is refused, records the pick)
     spawn.ts              # spawnClaude — spawns the real binary, propagates its exit code
   identityManager.ts      # the `identity` noun: add/list/show/set/remove/use/resolve-conflicts
   configProfiles.ts       # the `profile` noun: add/set/list/show/remove/use
+  pools.ts, poolStore.ts  # the `pool` noun (add/set/list/show/remove/use/pick) and the global-config `pools` map it edits, plus `collectPoolPick`, the read-only ranking `pool pick` and `check` print
   providers.ts            # the `provider` noun (add/set/list/show/remove) + the launch-time provider resolution the launcher calls, and the old-format provider file conversion `doctor` reports
   credential.ts           # the shared credential block's resolver: sources tried in order behind an injected CredentialPort, presets compiled to argv, target variables, summaries that never carry a value
   headroom/                # the headroom routing daemon: coordination state, the launcher-side ensure step, the supervisor loop, and the `headroom status` / hidden `__headroom-supervisor` commands
@@ -46,7 +48,9 @@ src/
     store.ts, read.ts       # the writer (one log segment per writing process per UTC day, so concurrent writers need no lock; snapshots folded newest-observation-wins; whole-day pruning to the retention window) and the readers
     providerQuota.ts        # the adapters for providers that report quota only through their own usage endpoint (z.ai, OpenRouter), and the freshness a pulled quota keeps
     quotaRefresh.ts        # the refresher (throttled, one fetch in flight per identity and provider, failures contained), the provider and credential lookup it fetches with, and the wrapper that triggers it after a recorded request
-    preflight.ts            # the launch-time quota warnings derived from an identity's snapshot, by the API's own window statuses rather than a typed threshold
+    preflight.ts            # `effectiveWindow` (a recorded window read at an instant: one past its reset is empty) and the launch-time quota warnings derived from it, by the API's own window statuses rather than a typed threshold
+    plan.ts, pick.ts        # the account plan class (subscription capacity from the rate-limit tier, or pay-per-use) and `rankPool`, the pure ranking of a pool's members: refused members out, remaining quota weighted by plan size per hour to reset, five-hour feasibility, last-pick stickiness
+    poolPick.ts             # the store-backed side of picking: loads each member's snapshot, login metadata and recent log records for `rankPool`, and keeps the per-directory last-pick record
     account.ts, commands.ts # the plan and tier read from an identity's stored login, and the `usage` and `account show` commands
   frontdoor/                # the front-door daemon: one claude-use listener routing every session claude-use routes (a provider's, or headroom's)
     route.ts                # the URL space (/providers/<name>), the identity step that strips the launcher-injected session headers, and the route interface a destination implements (including whether a headroom hop may sit in front)
