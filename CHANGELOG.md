@@ -1,3 +1,9 @@
+## [5.1.1](https://github.com/ExaDev/claude-use/compare/v5.1.0...v5.1.1) (2026-10-02)
+
+### Bug Fixes
+
+* **build:** declare the node types the declaration build relies on ([82e7814](https://github.com/ExaDev/claude-use/commit/82e78144e53520b9fd8f7410d0ff3c9f7a1a5a0f))
+
 ## [5.1.0](https://github.com/ExaDev/claude-use/compare/v5.0.1...v5.1.0) (2026-10-01)
 
 ### Features
