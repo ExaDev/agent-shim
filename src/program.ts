@@ -43,11 +43,11 @@ Launching:
     --provider <name>            route through an API provider; --no-provider opts out
     --category <category=bool>   share or hide a category (repeatable)
     --share <path>, --hide <path>  share or hide one <category>/<path> entry (repeatable)
-    --[no-]skip-permissions, --[no-]remote-control, --[no-]headroom
+    --[no-]skip-permissions, --[no-]remote-control, --[no-]headroom, --[no-]track-usage
 
 Environment:
   CLAUDE_USE_IDENTITY, CLAUDE_USE_CONFIG_PROFILE, CLAUDE_USE_SKIP_PERMISSIONS,
-  CLAUDE_USE_REMOTE_CONTROL, CLAUDE_USE_HEADROOM, CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL,
+  CLAUDE_USE_REMOTE_CONTROL, CLAUDE_USE_HEADROOM, CLAUDE_USE_TRACK_USAGE, CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL,
   CLAUDE_USE_CATEGORY_OVERRIDE, CLAUDE_USE_ENTRY_OVERRIDE, CLAUDE_USE_HOME,
   CLAUDE_USE_DEBUG (print stack traces), NO_COLOR. Booleans are true, false, 1 or 0.
 

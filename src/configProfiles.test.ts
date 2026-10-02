@@ -194,6 +194,12 @@ describe("configProfiles", () => {
       });
     });
 
+    it("stores trackUsage beside the other launch flags", () => {
+      createProfile(paths, "base");
+      setProfileLaunchFlags(paths, "base", { headroom: true });
+      expect(setProfileLaunchFlags(paths, "base", { trackUsage: true }).launch).toEqual({ headroom: true, trackUsage: true });
+    });
+
     it("throws ProfileNotFoundError for a profile that does not exist", () => {
       expect(() => setProfileLaunchFlags(paths, "ghost", { skipPermissions: true })).toThrow(ProfileNotFoundError);
     });

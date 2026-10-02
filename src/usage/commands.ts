@@ -166,7 +166,7 @@ function formatUsageReport(report: UsageReport): string[] {
     }
   }
   if (lines.length === 1) {
-    lines.push("no usage recorded (only sessions routed through the front door are recorded: provider launches and --headroom launches)");
+    lines.push("no usage recorded (only sessions routed through the front door are recorded: provider launches, --headroom launches, and launches with --track-usage)");
   }
   if (report.invalidLines > 0) {
     lines.push(`warning: ${String(report.invalidLines)} log line(s) could not be read as usage records and were skipped`);

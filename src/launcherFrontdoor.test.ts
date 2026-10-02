@@ -147,4 +147,53 @@ describe("runLauncher with a provider", () => {
     expect(frontdoor.ensures()).toBe(0);
     expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBeUndefined();
   });
+
+  it.each([
+    ["the --track-usage flag", ["--track-usage", "--print"], {}],
+    ["CLAUDE_USE_TRACK_USAGE", ["--print"], { CLAUDE_USE_TRACK_USAGE: "1" }],
+  ] as const)("routes a plain OAuth launch through the door's CONNECT surface, with no headroom and no provider, for %s", (_name, argv, env) => {
+    const spawn = fakeSpawn();
+    const log = fakeLog();
+    const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc(env, argv),
+      log,
+      resolveClaudeBinary: () => discovered,
+      frontdoor,
+    });
+    const childEnv = spawnedEnv(spawn);
+    expect(frontdoor.ensures()).toBe(1);
+    expect(childEnv.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(childEnv.HTTPS_PROXY).toContain("127.0.0.1");
+    expect(childEnv.HEADROOM_PROXY_URL).toBeUndefined();
+    expect(log.infos.join("\n")).toContain("OAuth via the door's CONNECT surface");
+    expect(frontdoor.releases()).toBeGreaterThan(0);
+  });
+
+  it("lets --no-track-usage opt one launch out of a cascade or environment that turns tracking on", () => {
+    const spawn = fakeSpawn();
+    const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc: fakeProc({ CLAUDE_USE_TRACK_USAGE: "1" }, ["--no-track-usage", "--print"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      frontdoor,
+    });
+    expect(frontdoor.ensures()).toBe(0);
+    expect(spawnedEnv(spawn).HTTPS_PROXY).toBeUndefined();
+  });
+
+  it("refuses to launch when tracking is on but no front-door port is wired", () => {
+    const spawn = fakeSpawn();
+    const log = fakeLog();
+    runAndCaptureExit({ paths, fs: fakeFs({}), spawn, proc: fakeProc({}, ["--track-usage", "--print"]), log, resolveClaudeBinary: () => discovered });
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+    expect(log.errors[0]).toContain("front-door");
+  });
 });
