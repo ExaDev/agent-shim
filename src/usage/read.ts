@@ -156,7 +156,7 @@ export function listUsageSnapshots(fs: UsageReadFs, snapshotsDir: string): reado
 }
 
 /** Token totals across a set of records. */
-export interface TokenTotals {
+interface TokenTotals {
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly cacheCreationInputTokens: number;

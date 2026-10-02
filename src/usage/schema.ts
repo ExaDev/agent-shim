@@ -26,7 +26,7 @@ export const TokenUsageSchema = z.strictObject({
 export type TokenUsage = z.infer<typeof TokenUsageSchema>;
 
 /** The two kinds of refusal a consumer acts on differently: a short rate limit is worth retrying on the same credential once its wait has passed, an exhausted quota means moving to the next credential until the reset. */
-export const LIMIT_KINDS = ["rate-limited", "quota-exhausted"] as const;
+const LIMIT_KINDS = ["rate-limited", "quota-exhausted"] as const;
 export type LimitKind = (typeof LIMIT_KINDS)[number];
 
 /** A 429 (or 402) classified, with the wait or reset the upstream announced and the signals the classification rests on. */
@@ -80,7 +80,7 @@ export const UsageRecordSchema = z.strictObject({
 export type UsageRecord = z.infer<typeof UsageRecordSchema>;
 
 /** One quota window from Anthropic's unified rate-limit headers. */
-export const QuotaWindowSchema = z.strictObject({
+const QuotaWindowSchema = z.strictObject({
   /** The fraction of the window used, as the upstream reports it (0 to 1). */
   utilization: z.number().nonnegative().optional(),
   resetsAt: InstantSchema.optional(),
@@ -105,7 +105,7 @@ export const UnifiedRateLimitSchema = z.strictObject({
 export type UnifiedRateLimit = z.infer<typeof UnifiedRateLimitSchema>;
 
 /** The latest rate-limit state an upstream reported on any response. */
-export const RateLimitStateSchema = z.strictObject({
+const RateLimitStateSchema = z.strictObject({
   observedAt: InstantSchema,
   /** Every quota and rate-limit header on that response, by name. */
   headers: z.record(z.string(), z.string()),
@@ -114,14 +114,14 @@ export const RateLimitStateSchema = z.strictObject({
 export type RateLimitState = z.infer<typeof RateLimitStateSchema>;
 
 /** A classified refusal, with when it was seen and its status. */
-export const LimitEventSchema = LimitClassificationSchema.extend({
+const LimitEventSchema = LimitClassificationSchema.extend({
   observedAt: InstantSchema,
   status: z.number().int(),
 });
 export type LimitEvent = z.infer<typeof LimitEventSchema>;
 
 /** One provider's latest state under one identity. */
-export const ProviderUsageStateSchema = z.strictObject({
+const ProviderUsageStateSchema = z.strictObject({
   lastRequestAt: InstantSchema,
   lastStatus: z.number().int(),
   lastModel: z.string().optional(),
