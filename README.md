@@ -106,6 +106,8 @@ claude-use doctor [--json]
 claude-use headroom status [--json]
 claude-use codex status [--json]
 claude-use frontdoor status [--json]
+claude-use usage [--identity <name>] [--provider <name>] [--since <duration>] [--json]
+claude-use account show [<identity>] [--json]
 claude-use completion <bash|zsh|fish>
 claude-use shim enable [--dir <path>] [--force]
 claude-use shim disable [--dir <path>] [--force]

@@ -39,6 +39,12 @@ src/
     supervisor.ts           # install/start/restart/drift/idle decision loop for the daemon plus the in-process MITM proxy, pure over injected SupervisorPorts
     headers.ts              # ANTHROPIC_CUSTOM_HEADERS merge (Name: Value lines, later block wins per name)
     commands.ts             # real ports for the supervisor, `headroom status`, command registration
+  usage/                    # usage and quota tracking: the front door's response middleware, the append-only store it writes, and the `usage` and `account` readers
+    middleware.ts           # the response observer: records one metadata-only record per finished request (never prompt, response or token content), deferred off the response path so a store failure never reaches a request
+    rateLimit.ts, scan.ts   # the unified rate-limit header parser and limit classifier, and the streaming SSE and JSON body scanners that read a response's `usage` and error type
+    schema.ts               # the Zod definitions of the log record, the per-identity snapshot and the account metadata, versioned
+    store.ts, read.ts       # the writer (one log segment per writing process per UTC day, so concurrent writers need no lock; snapshots folded newest-observation-wins; whole-day pruning to the retention window) and the readers
+    account.ts, commands.ts # the plan and tier read from an identity's stored login, and the `usage` and `account show` commands
   frontdoor/                # the front-door daemon: one claude-use listener routing every session claude-use routes (a provider's, or headroom's)
     route.ts                # the URL space (/providers/<name>), the identity step that strips the launcher-injected session headers, and the route interface a destination implements (including whether a headroom hop may sit in front)
     pipeline.ts             # the ordered pipeline (identify, admit, response middleware at each response head, headroom hop then route) and the typed hook point where the usage-tracking middleware registers
