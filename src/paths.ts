@@ -61,6 +61,8 @@ export interface LayoutPaths {
   readonly usageLogDir: string;
   /** Directory of the latest-state snapshots, one `<identity>.json` per identity: the stable file other tools read. */
   readonly usageSnapshotsDir: string;
+  /** The last identity picked from a pool for each directory, so a conversation stays on the account whose prompt cache is warm. */
+  readonly usagePicksFile: string;
 }
 
 /**
@@ -117,6 +119,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     usageDir: path.join(root, "usage"),
     usageLogDir: path.join(root, "usage", "log"),
     usageSnapshotsDir: path.join(root, "usage", "snapshots"),
+    usagePicksFile: path.join(root, "usage", "picks.json"),
   };
 }
 
