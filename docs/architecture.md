@@ -44,6 +44,7 @@ src/
     rateLimit.ts, scan.ts   # the unified rate-limit header parser and limit classifier, and the streaming SSE and JSON body scanners that read a response's `usage` and error type
     schema.ts               # the Zod definitions of the log record, the per-identity snapshot and the account metadata, versioned
     store.ts, read.ts       # the writer (one log segment per writing process per UTC day, so concurrent writers need no lock; snapshots folded newest-observation-wins; whole-day pruning to the retention window) and the readers
+    preflight.ts            # the launch-time quota warnings derived from an identity's snapshot, by the API's own window statuses rather than a typed threshold
     account.ts, commands.ts # the plan and tier read from an identity's stored login, and the `usage` and `account show` commands
   frontdoor/                # the front-door daemon: one claude-use listener routing every session claude-use routes (a provider's, or headroom's)
     route.ts                # the URL space (/providers/<name>), the identity step that strips the launcher-injected session headers, and the route interface a destination implements (including whether a headroom hop may sit in front)

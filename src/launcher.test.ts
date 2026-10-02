@@ -725,3 +725,54 @@ describe("runLauncher crash recovery ordering", () => {
     expect(fs.readFileUtf8(`${identitiesDir}/work/identity.json`)).toBe('{"name":"work"}');
   });
 });
+
+describe("runLauncher quota warning", () => {
+  const snapshotPath = `${paths.usageSnapshotsDir}/work.json`;
+  const HOUR_MS = 3_600_000;
+  const lastSeen = new Date(FAKE_NOW_MS - HOUR_MS).toISOString();
+  const resetsAt = new Date(FAKE_NOW_MS + HOUR_MS).toISOString();
+  const snapshotOf = (status: string): string =>
+    JSON.stringify({
+      schemaVersion: 1,
+      identity: "work",
+      updatedAt: lastSeen,
+      providers: { anthropic: { lastRequestAt: lastSeen, lastStatus: 200, rateLimit: { observedAt: lastSeen, headers: {}, unified: { sevenDay: { status, resetsAt } } } } },
+    });
+
+  function launch(seed: Readonly<Record<string, string>>): { readonly log: ReturnType<typeof fakeLog>; readonly code: number } {
+    const log = fakeLog();
+    const code = runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn: fakeSpawn(),
+      proc: fakeProc({}, ["@work"]),
+      log,
+      resolveClaudeBinary: () => discovered,
+      farm: fakeFarm(createFakeFarmFs(seed)),
+    });
+    return { log, code };
+  }
+
+  it("warns, and still launches, when the identity's last recorded seven-day window was marked exhausted", () => {
+    const { log, code } = launch({ [snapshotPath]: snapshotOf("rejected") });
+    expect(code).toBe(0);
+    expect(log.warns.join("\n")).toContain("identity work: the seven-day quota is exhausted");
+  });
+
+  it("stays quiet when the recorded window is allowed", () => {
+    const { log, code } = launch({ [snapshotPath]: snapshotOf("allowed") });
+    expect(code).toBe(0);
+    expect(log.warns.join("\n")).not.toContain("quota");
+  });
+
+  it("stays quiet for an identity that has no snapshot yet", () => {
+    expect(launch({}).log.warns.join("\n")).not.toContain("quota");
+  });
+
+  it("reports an unreadable snapshot instead of treating it as no usage, and still launches", () => {
+    const { log, code } = launch({ [snapshotPath]: "{ not json" });
+    expect(code).toBe(0);
+    expect(log.warns.join("\n")).toContain("not a usage snapshot this claude-use can read");
+  });
+});
+

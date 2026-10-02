@@ -20,6 +20,9 @@ import { providerBaseUrl } from "./frontdoor/route";
 import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, describeSource, resolveCredential, type CredentialPort, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
+import { ANTHROPIC_PROVIDER } from "./usage/middleware";
+import { quotaWarnings } from "./usage/preflight";
+import { readUsageSnapshot, UsageSnapshotError } from "./usage/read";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 
 /**
@@ -220,6 +223,21 @@ export function runLauncher(params: RunLauncherParams): void {
   const resolvedProvider: ResolvedProvider | undefined = provider?.ok === true ? provider.provider : undefined;
   for (const warning of provider?.ok === true ? provider.warnings : []) {
     log.warn(warning);
+  }
+
+  // A launch is never blocked by quota: the warning only says what the front door last saw for the provider this launch will use.
+  if (farm !== undefined && farmIdentity !== undefined) {
+    try {
+      const snapshot = readUsageSnapshot(farm.fs, paths.usageSnapshotsDir, farmIdentity);
+      for (const warning of quotaWarnings(snapshot, resolvedProvider?.name ?? ANTHROPIC_PROVIDER, farm.now())) {
+        log.warn(warning);
+      }
+    } catch (error) {
+      if (!(error instanceof UsageSnapshotError)) {
+        throw error;
+      }
+      log.warn(`claude-use: ${error.message}`);
+    }
   }
 
   // The identity's own credential applies only when no provider was selected (the provider's credential authenticates against its endpoint instead) and the identity owns this launch's configuration directory (under the CLAUDE_CONFIG_DIR escape hatch, the directory and whatever login it holds are the caller's).
