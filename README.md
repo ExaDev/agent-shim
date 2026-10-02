@@ -4,6 +4,8 @@
 
 A profile manager and launcher for [Claude Code](https://claude.com/claude-code) that lets one person run multiple logins from one machine while controlling — precisely, and per working directory — what gets shared between them.
 
+[![npm downloads chart, log scale](https://shieldcn.dev/chart/npm/claude-use.svg?bg=transparent&logo=false&yScale=log)](https://www.npmjs.com/package/claude-use)
+
 ## The problem
 
 Claude Code keeps everything it knows in one place: `~/.claude`. Skills, memory, conventions, but also every conversation transcript, session file, and task list you've ever produced, across every project you've ever touched. If you want a second login (a personal account alongside a work one, say) or you want to keep one client's work cleanly separated from another's, there's no built-in way to say "share the skills and conventions, but not the history" — it's all one directory, all or nothing.
