@@ -17,6 +17,7 @@ import {
   ProviderSchema,
   WhenSchema,
 } from "../src/config/schema";
+import { UsageSnapshotSchema } from "../src/usage/schema";
 
 /**
  * Generates one published JSON Schema file per exported Zod schema in `src/config/schema.ts`, using Zod v4's native `z.toJSONSchema()` — no separate `zod-to-json-schema` dependency.
@@ -40,6 +41,7 @@ const schemas: Record<string, z.ZodType> = {
   Provider: ProviderSchema,
   Credential: CredentialSchema,
   CategoryClassification: CategoryClassificationSchema,
+  UsageSnapshot: UsageSnapshotSchema,
 };
 
 function main(): void {
