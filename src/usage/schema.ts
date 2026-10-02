@@ -120,6 +120,35 @@ const LimitEventSchema = LimitClassificationSchema.extend({
 });
 export type LimitEvent = z.infer<typeof LimitEventSchema>;
 
+/** One quota window a provider reports through its own usage endpoint (as opposed to headers on a response): how much of it is used and when it resets. */
+const ProviderQuotaWindowSchema = z.strictObject({
+  /** What the window measures, in the provider's terms (`tokens`, `tool-calls`). */
+  measures: z.string(),
+  /** The window's length in milliseconds, when the provider's unit is one this project knows; absent for an unrecognised unit, with `period` carrying the raw code. */
+  periodMs: z.number().int().positive().optional(),
+  /** The provider's own description of the period when `periodMs` could not be derived, such as `unit 4 x 1`. */
+  period: z.string().optional(),
+  /** The fraction of the window used (0 to 1). */
+  utilization: z.number().nonnegative(),
+  resetsAt: InstantSchema.optional(),
+  /** Absolute counts, when the provider reports them for this window. */
+  limit: z.number().nonnegative().optional(),
+  used: z.number().nonnegative().optional(),
+  remaining: z.number().nonnegative().optional(),
+});
+export type ProviderQuotaWindow = z.infer<typeof ProviderQuotaWindowSchema>;
+
+/** A provider's quota as its usage endpoint last reported it. Pulled, not observed on a request, so it carries its own observation time. */
+export const ProviderQuotaSchema = z.strictObject({
+  observedAt: InstantSchema,
+  /** Which usage endpoint produced it (`z.ai`). */
+  source: z.string(),
+  /** The subscription level the endpoint reports, when it does. */
+  level: z.string().optional(),
+  windows: z.array(ProviderQuotaWindowSchema),
+});
+export type ProviderQuota = z.infer<typeof ProviderQuotaSchema>;
+
 /** One provider's latest state under one identity. */
 const ProviderUsageStateSchema = z.strictObject({
   lastRequestAt: InstantSchema,
@@ -129,6 +158,8 @@ const ProviderUsageStateSchema = z.strictObject({
   rateLimit: RateLimitStateSchema.optional(),
   /** The latest classified refusal. It stays after later successes, so a reader compares its `resetAt` (or `observedAt` plus `retryAfterSeconds`) with the current time. */
   lastLimit: LimitEventSchema.optional(),
+  /** The latest quota the provider's usage endpoint reported, for providers whose quota is not visible in response headers. */
+  quota: ProviderQuotaSchema.optional(),
 });
 export type ProviderUsageState = z.infer<typeof ProviderUsageStateSchema>;
 

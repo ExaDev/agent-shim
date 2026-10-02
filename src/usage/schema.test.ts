@@ -4,6 +4,7 @@ import {
   AccountMetadataSchema,
   isRateLimitHeader,
   LimitClassificationSchema,
+  ProviderQuotaSchema,
   TokenUsageSchema,
   UnifiedRateLimitSchema,
   USAGE_SCHEMA_VERSION,
@@ -171,5 +172,27 @@ describe("isRateLimitHeader", () => {
 
   it.each(["authorization", "content-type", "request-id", "x-api-key", "set-cookie", "anthropic-version"])("drops %s", (name) => {
     expect(isRateLimitHeader(name)).toBe(false);
+  });
+});
+
+describe("ProviderQuotaSchema", () => {
+  const window = { measures: "tokens", periodMs: 18_000_000, utilization: 0.13, resetsAt: AT };
+  const quota = { observedAt: AT, source: "z.ai", level: "max", windows: [window] };
+
+  it("accepts a quota with a window carrying only its required fields, and one with absolute counts", () => {
+    expect(ProviderQuotaSchema.safeParse({ observedAt: AT, source: "z.ai", windows: [{ measures: "tokens", utilization: 0 }] }).success).toBe(true);
+    expect(ProviderQuotaSchema.safeParse({ ...quota, windows: [{ ...window, limit: 4000, used: 61, remaining: 3939 }] }).success).toBe(true);
+  });
+
+  it("rides inside a snapshot's provider state", () => {
+    const snapshot = { ...validSnapshot(), providers: { z: { lastRequestAt: AT, lastStatus: OK, quota } } };
+    expect(UsageSnapshotSchema.safeParse(snapshot).success).toBe(true);
+  });
+
+  it("rejects an unknown key on the quota or a window, a negative utilisation and a non-ISO instant", () => {
+    expect(ProviderQuotaSchema.safeParse({ ...quota, extra: true }).success).toBe(false);
+    expect(ProviderQuotaSchema.safeParse({ ...quota, windows: [{ ...window, extra: true }] }).success).toBe(false);
+    expect(ProviderQuotaSchema.safeParse({ ...quota, windows: [{ ...window, utilization: -HALF }] }).success).toBe(false);
+    expect(ProviderQuotaSchema.safeParse({ ...quota, observedAt: "yesterday" }).success).toBe(false);
   });
 });
