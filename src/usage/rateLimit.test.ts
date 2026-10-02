@@ -199,3 +199,61 @@ describe("classifyLimit", () => {
     expect(result?.evidence).toEqual([`status=${String(TOO_MANY_REQUESTS)}`]);
   });
 });
+
+/** Header sets as `api.anthropic.com` returned them to subscription requests (values kept, nothing account-specific among them). */
+describe("headers captured from the live API", () => {
+  const WEEK_EXHAUSTED_RESET_SECONDS = 1_791_115_200;
+  const FIVE_HOUR_IDLE_RESET_SECONDS = 1_790_955_000;
+  const ENTERPRISE_OVERAGE_RESET_SECONDS = 1_793_491_200;
+
+  const weekExhausted: Record<string, string> = {
+    [`${PREFIX}status`]: "rejected",
+    [`${PREFIX}representative-claim`]: "seven_day",
+    [`${PREFIX}reset`]: String(WEEK_EXHAUSTED_RESET_SECONDS),
+    [`${PREFIX}5h-utilization`]: "0.0",
+    [`${PREFIX}5h-reset`]: String(FIVE_HOUR_IDLE_RESET_SECONDS),
+    [`${PREFIX}7d-status`]: "rejected",
+    [`${PREFIX}7d-utilization`]: "1.0",
+    [`${PREFIX}7d-reset`]: String(WEEK_EXHAUSTED_RESET_SECONDS),
+    [`${PREFIX}7d-surpassed-threshold`]: "1.0",
+    [`${PREFIX}overage-status`]: "rejected",
+    [`${PREFIX}overage-disabled-reason`]: "out_of_credits",
+    [`${PREFIX}fallback-percentage`]: "0.5",
+  };
+
+  const enterpriseOverageOnly: Record<string, string> = {
+    [`${PREFIX}status`]: "allowed",
+    [`${PREFIX}representative-claim`]: "overage",
+    [`${PREFIX}reset`]: String(ENTERPRISE_OVERAGE_RESET_SECONDS),
+    [`${PREFIX}overage-status`]: "allowed",
+    [`${PREFIX}overage-reset`]: String(ENTERPRISE_OVERAGE_RESET_SECONDS),
+    [`${PREFIX}overage-utilization`]: "0.0",
+    [`${PREFIX}fallback-percentage`]: "0.5",
+  };
+
+  it("reads an exhausted weekly window beside an idle five-hour window", () => {
+    expect(parseUnifiedRateLimit(weekExhausted)).toMatchObject({
+      status: "rejected",
+      representativeClaim: "seven_day",
+      overageStatus: "rejected",
+      fiveHour: { utilization: 0, resetsAt: new Date(FIVE_HOUR_IDLE_RESET_SECONDS * MS_PER_SECOND).toISOString() },
+      sevenDay: { utilization: 1, status: "rejected", resetsAt: new Date(WEEK_EXHAUSTED_RESET_SECONDS * MS_PER_SECOND).toISOString() },
+    });
+  });
+
+  it("classifies the refusal that goes with it as an exhausted quota resetting with the week", () => {
+    expect(classifyLimit({ status: TOO_MANY_REQUESTS, headers: weekExhausted, error: undefined, nowMs: NOW_MS })).toMatchObject({
+      kind: "quota-exhausted",
+      window: "seven_day",
+      resetAt: new Date(WEEK_EXHAUSTED_RESET_SECONDS * MS_PER_SECOND).toISOString(),
+    });
+  });
+
+  it("reads an account with no five-hour or weekly window, only extra usage, without inventing either", () => {
+    const parsed = parseUnifiedRateLimit(enterpriseOverageOnly);
+    expect(parsed).toMatchObject({ status: "allowed", representativeClaim: "overage", overageStatus: "allowed" });
+    expect(parsed?.fiveHour).toBeUndefined();
+    expect(parsed?.sevenDay).toBeUndefined();
+    expect(classifyLimit({ status: OK, headers: enterpriseOverageOnly, error: undefined, nowMs: NOW_MS })).toBeUndefined();
+  });
+});
