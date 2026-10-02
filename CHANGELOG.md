@@ -1,3 +1,9 @@
+## [5.4.1](https://github.com/ExaDev/claude-use/compare/v5.4.0...v5.4.1) (2026-10-02)
+
+### Bug Fixes
+
+* **install:** install the latest GitHub release's exact version on macOS x64 ([e621f5a](https://github.com/ExaDev/claude-use/commit/e621f5ae1181edbdd3f7d88fc3f760b7dd6b483c))
+
 ## [5.4.0](https://github.com/ExaDev/claude-use/compare/v5.3.0...v5.4.0) (2026-10-02)
 
 ### Features
