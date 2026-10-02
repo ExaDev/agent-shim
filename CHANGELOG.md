@@ -1,3 +1,9 @@
+## [6.1.0](https://github.com/ExaDev/claude-use/compare/v6.0.0...v6.1.0) (2026-10-02)
+
+### Features
+
+* **launcher:** opt-in trackUsage routes plain OAuth launches through the front door ([62f0e18](https://github.com/ExaDev/claude-use/commit/62f0e18bc5a1231f3a0fb36d171cb379fb469413))
+
 ## [6.0.0](https://github.com/ExaDev/claude-use/compare/v5.5.0...v6.0.0) (2026-10-02)
 
 ### ⚠ BREAKING CHANGES
