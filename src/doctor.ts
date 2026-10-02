@@ -29,6 +29,7 @@ import { HeadroomStateSchema } from "./headroom/state";
 import { isIdentityDirectoryName } from "./identityManager";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providers";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
+import { poolNameOf } from "./launcher/identity";
 import type { RunPort } from "./launcher/ports";
 import { findExecutableInDir, realFsPort, realIsProcessRunning, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
 import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./resolve/extends";
@@ -43,6 +44,7 @@ type DoctorSection =
   | "path-resolution"
   | "config-profile"
   | "identity"
+  | "pool"
   | "provider"
   | "keychain"
   | "directory-rules"
@@ -357,6 +359,22 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     }
   }
 
+  const validatedGlobalConfig = params.globalConfig.raw === undefined ? undefined : validateJson(GlobalConfigSchema, params.globalConfig);
+  const pools = validatedGlobalConfig?.ok === true ? (validatedGlobalConfig.data.pools ?? {}) : {};
+  for (const [poolName, pool] of Object.entries(pools)) {
+    const missing = pool.identities.filter((member) => !validIdentityNames.has(member));
+    if (missing.length === 0) {
+      push("pool", "pass", `${poolName} is valid (${pool.identities.join(", ")}).`, poolName);
+    } else {
+      push("pool", "fail", `Pool "${poolName}" names ${missing.map((member) => `identity "${member}"`).join(" and ")}, which ${missing.length === 1 ? "does" : "do"} not exist.`, poolName);
+    }
+  }
+  /** Whether what a rule or the active-identity file selects (an identity, or `pool:<name>`) exists. */
+  const selectionExists = (selector: string): boolean => {
+    const poolName = poolNameOf(selector);
+    return poolName === undefined ? validIdentityNames.has(selector) : poolName in pools;
+  };
+
   for (const entry of params.providers) {
     pushProvider(push, entry);
   }
@@ -380,8 +398,8 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
       push("directory-rules", "pass", `${params.directoryRules.path} is valid.`);
       for (const rule of validated.data.rules) {
         const badRefs: string[] = [];
-        if (rule.identity !== undefined && !validIdentityNames.has(rule.identity)) {
-          badRefs.push(`identity "${rule.identity}"`);
+        if (rule.identity !== undefined && !selectionExists(rule.identity)) {
+          badRefs.push(poolNameOf(rule.identity) === undefined ? `identity "${rule.identity}"` : `pool "${poolNameOf(rule.identity) ?? ""}"`);
         }
         if (rule.configProfile !== undefined && !validProfileNames.has(rule.configProfile)) {
           badRefs.push(`configuration profile "${rule.configProfile}"`);
@@ -488,7 +506,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     const trimmed = params.activeIdentity.raw.trim();
     if (trimmed === "") {
       push("active-identity", "warn", "active-identity is present but empty — treated the same as unset.");
-    } else if (!validIdentityNames.has(trimmed)) {
+    } else if (!selectionExists(trimmed)) {
       push("active-identity", "fail", `active-identity names "${trimmed}", which does not exist.`);
     } else {
       push("active-identity", "pass", `Active identity "${trimmed}" is valid.`);
@@ -505,6 +523,7 @@ const SECTION_TITLES: Readonly<Record<DoctorSection, string>> = {
   "path-resolution": "PATH resolution",
   "config-profile": "Configuration profiles",
   identity: "Identities",
+  pool: "Pools",
   provider: "Providers",
   keychain: "macOS Keychain",
   "directory-rules": "Directory rules",
@@ -521,6 +540,7 @@ const SECTION_ORDER: readonly DoctorSection[] = [
   "path-resolution",
   "config-profile",
   "identity",
+  "pool",
   "provider",
   "keychain",
   "directory-rules",

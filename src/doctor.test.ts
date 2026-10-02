@@ -632,3 +632,29 @@ describe("formatDoctorReport", () => {
     expect(lines.at(-1)).toBe("1 check(s) failed.");
   });
 });
+
+describe("runDoctor: pools", () => {
+  const poolConfig = (pools: Record<string, { identities: string[] }>): RunDoctorParams["globalConfig"] => ({ path: "/claude-use/config.json", raw: JSON.stringify({ pools }) });
+
+  it("passes a pool whose members are all identities", () => {
+    const report = runDoctor(baseParams({ identities: [identity("work"), identity("personal")], globalConfig: poolConfig({ subs: { identities: ["work", "personal"] } }) }));
+    expect(findingsFor(report, "pool")).toEqual([{ section: "pool", severity: "pass", message: "subs is valid (work, personal).", subject: "subs" }]);
+  });
+
+  it("fails a pool naming an identity that does not exist, naming the member", () => {
+    const report = runDoctor(baseParams({ identities: [identity("work")], globalConfig: poolConfig({ subs: { identities: ["work", "ghost"] } }) }));
+    expect(findingsFor(report, "pool")).toEqual([{ section: "pool", severity: "fail", message: 'Pool "subs" names identity "ghost", which does not exist.', subject: "subs" }]);
+    expect(report.ok).toBe(false);
+  });
+
+  it("accepts a pool selector in the active-identity file and in a directory rule, and fails one naming a pool that is not defined", () => {
+    const globalConfig = poolConfig({ subs: { identities: ["work"] } });
+    const rules = (identitySelector: string): RunDoctorParams["directoryRules"] => ({ path: "/x/directory-rules.json", raw: JSON.stringify({ rules: [{ path: "/work", identity: identitySelector }] }) });
+    const good = runDoctor(baseParams({ identities: [identity("work")], globalConfig, activeIdentity: { path: "/a", raw: "pool:subs\n" }, directoryRules: rules("pool:subs") }));
+    expect(findingsFor(good, "active-identity")[0]?.severity).toBe("pass");
+    expect(findingsFor(good, "directory-rules").find((finding) => finding.subject === "/work")?.severity).toBe("pass");
+    const bad = runDoctor(baseParams({ identities: [identity("work")], globalConfig, activeIdentity: { path: "/a", raw: "pool:nope\n" }, directoryRules: rules("pool:nope") }));
+    expect(findingsFor(bad, "active-identity")[0]).toMatchObject({ severity: "fail", message: 'active-identity names "pool:nope", which does not exist.' });
+    expect(findingsFor(bad, "directory-rules").find((finding) => finding.subject === "/work")?.message).toContain('pool "nope"');
+  });
+});
