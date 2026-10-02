@@ -1,3 +1,13 @@
+## [6.0.0](https://github.com/ExaDev/claude-use/compare/v5.5.0...v6.0.0) (2026-10-02)
+
+### ⚠ BREAKING CHANGES
+
+* the npm package requires Node 22.18 or later, or 24 and above.
+
+### Build System
+
+* require Node 22.18 or later, and take cosmiconfig 10 ([cd739d0](https://github.com/ExaDev/claude-use/commit/cd739d0a8a1b97709d7089a2aa78be2c229fd631))
+
 ## [5.5.0](https://github.com/ExaDev/claude-use/compare/v5.4.1...v5.5.0) (2026-10-02)
 
 ### Features
