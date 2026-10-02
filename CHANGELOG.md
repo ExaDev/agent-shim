@@ -1,3 +1,9 @@
+## [5.3.0](https://github.com/ExaDev/claude-use/compare/v5.2.0...v5.3.0) (2026-10-02)
+
+### Features
+
+* **usage:** publish the usage snapshot schema and export its reader ([2761436](https://github.com/ExaDev/claude-use/commit/2761436bb0c6e73e9ed15a550be29bcd980557a7))
+
 ## [5.2.0](https://github.com/ExaDev/claude-use/compare/v5.1.1...v5.2.0) (2026-10-02)
 
 ### Features
