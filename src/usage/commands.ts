@@ -105,7 +105,7 @@ function snapshotLines(snapshot: UsageSnapshot | undefined, provider: string): s
 }
 
 /** Formats `claude-use usage`, one block per identity and provider. */
-export function formatUsageReport(report: UsageReport): string[] {
+function formatUsageReport(report: UsageReport): string[] {
   const lines = [`usage ${report.since === undefined ? "over the retained log" : `since ${report.since}`} (${report.logDir})`];
   const snapshotFor = (identity: string | undefined): UsageSnapshot | undefined => report.snapshots.find((snapshot) => snapshot.identity === identity);
   const reported = new Set<string>();
@@ -163,7 +163,7 @@ export function collectAccounts(fs: ReportFs, paths: LayoutPaths, identity: stri
 }
 
 /** Formats `claude-use account show`, one block per identity. */
-export function formatAccounts(views: readonly AccountView[]): string[] {
+function formatAccounts(views: readonly AccountView[]): string[] {
   if (views.length === 0) {
     return ["no identities"];
   }
