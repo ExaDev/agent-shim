@@ -12,6 +12,8 @@ export interface ParsedLauncherArgv {
   readonly headroom?: boolean;
   /** The last `--track-usage`/`--no-track-usage` occurrence, when either was given. */
   readonly trackUsage?: boolean;
+  /** The last `--wait`/`--no-wait` occurrence, when either was given: with a pool selected and every member refused, sleep until the earliest returns instead of refusing the launch. */
+  readonly wait?: boolean;
   /** The last `--skip-permissions`/`--no-skip-permissions` occurrence, when either was given. */
   readonly skipPermissions?: boolean;
   /** The last `--remote-control`/`--no-remote-control` occurrence, when either was given. */
@@ -43,6 +45,7 @@ const BOOLEAN_FLAGS = [
   { flag: "--track-usage", key: "trackUsage" },
   { flag: "--skip-permissions", key: "skipPermissions" },
   { flag: "--remote-control", key: "remoteControl" },
+  { flag: "--wait", key: "wait" },
 ] as const;
 type BooleanFlagKey = (typeof BOOLEAN_FLAGS)[number]["key"];
 
@@ -81,9 +84,9 @@ function matchBooleanFlag(token: string): { key: BooleanFlagKey; value: boolean 
 }
 
 /**
- * Parses the launcher's own argv for its identity selection and the one-off `claude-use` launch flags (`--identity`, `--config-profile`, `--provider`/`--no-provider`, `--category`, `--share`, `--hide`, and the `--[no-]headroom`, `--[no-]track-usage`, `--[no-]skip-permissions`, `--[no-]remote-control` booleans). None of these are real Claude Code flags, so all are consumed here and never forwarded.
+ * Parses the launcher's own argv for its identity selection and the one-off `claude-use` launch flags (`--identity`, `--config-profile`, `--provider`/`--no-provider`, `--category`, `--share`, `--hide`, and the `--[no-]headroom`, `--[no-]track-usage`, `--[no-]skip-permissions`, `--[no-]remote-control`, `--[no-]wait` booleans). None of these are real Claude Code flags, so all are consumed here and never forwarded.
  *
- * The `@name` form is consumed ONLY at argv[0], never mid-argument-list; `--identity <name>` is its explicit form, and naming two different identities through both throws `ConflictingIdentityError`. The flags are recognised only before a `--` terminator: from `--` onwards every token is forwarded verbatim, so `claude mcp add n -- cmd --provider x` keeps `--provider x` for `cmd`. Valued flags accept both `--flag value` and `--flag=value` and take exactly one value per occurrence; `--category`, `--share` and `--hide` repeat to supply several, and every other flag's later occurrence wins. A valued flag with no value after it (the last token, or directly before `--`) is left in place, untouched, since there is nothing to pair it with.
+ * `name` in `@name` and `--identity <name>` may also be `pool:<pool>`, which the launcher resolves to a member of that pool. The `@name` form is consumed ONLY at argv[0], never mid-argument-list; `--identity <name>` is its explicit form, and naming two different identities through both throws `ConflictingIdentityError`. The flags are recognised only before a `--` terminator: from `--` onwards every token is forwarded verbatim, so `claude mcp add n -- cmd --provider x` keeps `--provider x` for `cmd`. Valued flags accept both `--flag value` and `--flag=value` and take exactly one value per occurrence; `--category`, `--share` and `--hide` repeat to supply several, and every other flag's later occurrence wins. A valued flag with no value after it (the last token, or directly before `--`) is left in place, untouched, since there is nothing to pair it with.
  */
 export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
   const first = argv[0];

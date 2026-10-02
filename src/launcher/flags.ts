@@ -32,10 +32,12 @@ export interface ResolveLaunchFlagsParams {
   /** The launch's own `--[no-]skip-permissions`, `--[no-]remote-control`, `--[no-]headroom` and `--[no-]track-usage` flags. */
   readonly flags?: LaunchFlagOverrides;
   readonly env: Readonly<Record<string, string | undefined>>;
+  /** What `trackUsage` is when no flag, environment variable or cascade setting says: off, except for a pool launch, whose pick reads the usage the front door records. */
+  readonly trackUsageDefault?: boolean;
 }
 
 /**
- * Resolves `skipPermissions`/`remoteControl`/`headroom`/`trackUsage` for one launch. Each setting has the same three forms, decided in the same order: an explicit command-line flag outright, then its environment variable (`CLAUDE_USE_SKIP_PERMISSIONS`, `CLAUDE_USE_REMOTE_CONTROL`, `CLAUDE_USE_HEADROOM`, `CLAUDE_USE_TRACK_USAGE`), then the cascade, and OFF when none of them says otherwise. The flag outranks the environment variable because it is the more deliberate of the two one-off forms (typed on this very command line, not inherited from a shell profile), and both outrank the cascade because they are one-off overrides of it.
+ * Resolves `skipPermissions`/`remoteControl`/`headroom`/`trackUsage` for one launch. Each setting has the same three forms, decided in the same order: an explicit command-line flag outright, then its environment variable (`CLAUDE_USE_SKIP_PERMISSIONS`, `CLAUDE_USE_REMOTE_CONTROL`, `CLAUDE_USE_HEADROOM`, `CLAUDE_USE_TRACK_USAGE`), then the cascade, and OFF when none of them says otherwise (`trackUsageDefault` changes that one fallback). The flag outranks the environment variable because it is the more deliberate of the two one-off forms (typed on this very command line, not inherited from a shell profile), and both outrank the cascade because they are one-off overrides of it.
  *
  * Environment variables read with the shared boolean vocabulary (`true`/`1`, `false`/`0`), so `CLAUDE_USE_SKIP_PERMISSIONS=0` switches off a cascade's `skipPermissions: true` for one launch; any other value throws `InvalidEnvBoolError`.
  *
@@ -59,6 +61,7 @@ export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLa
       params.flags?.trackUsage ??
       parseEnvBool("CLAUDE_USE_TRACK_USAGE", params.env.CLAUDE_USE_TRACK_USAGE) ??
       params.cascade?.trackUsage ??
+      params.trackUsageDefault ??
       false,
   };
 }

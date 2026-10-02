@@ -3,13 +3,14 @@ import path from "node:path";
 
 import { parseEnvBool } from "./cli/parsers";
 import type { LayoutPaths } from "./paths";
-import { parseLauncherArgv } from "./launcher/argv";
+import { parseLauncherArgv, type ParsedLauncherArgv } from "./launcher/argv";
 import { buildCliOverride, type CliOverride } from "./launcher/cliOverride";
 import { recoverFarm, recoveryDiagnostics, resyncFarm } from "./launcher/farm";
 import { evaluateAmbientCredentialGuard } from "./launcher/guard";
-import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/identity";
+import { decideConfigProfile, decideIdentity, loadIdentity, type IdentityDecision } from "./launcher/identity";
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider, type RoutedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
+import { resolvePoolLaunch } from "./launcher/pool";
 import { IdentityLockBusyError } from "./launcher/lock";
 import type { FarmFs, FsPort, FrontDoorPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
 import { spawnClaude } from "./launcher/spawn";
@@ -17,7 +18,7 @@ import { resolveProvider } from "./providers";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
 import { providerBaseUrl } from "./frontdoor/route";
-import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags } from "./config/schema";
+import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, describeSource, resolveCredential, type CredentialPort, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
 import { ANTHROPIC_PROVIDER } from "./usage/middleware";
@@ -72,6 +73,8 @@ export interface RunLauncherParams {
   readonly cliFlagConfigProfile?: string;
   /** The user-global `~/.claude-use/config.json` default configuration profile, when one is configured. */
   readonly globalDefaultConfigProfile?: string;
+  /** The user-global `pools`, which a `pool:<name>` selector picks a member of. */
+  readonly pools?: Readonly<Record<string, Pool>>;
   /** Wires the farm resync. Omitted only by a caller that has no farm to manage. */
   readonly farm?: FarmRuntime;
   /** Wires headroom routing. Omitted by a caller that cannot route through the daemon; a launch that resolves `headroom` on with no port wired is refused loudly rather than silently bypassing it. */
@@ -103,6 +106,42 @@ function resolveIdentityCredential(
   return resolution.ok ? resolution : { ok: false, status: CREDENTIAL_UNAVAILABLE_EXIT, message: resolution.message };
 }
 
+/** The identity decision after any pool selector has been resolved to one of the pool's members, and the pick's explanation for the decision log line. Exits the launch when no member can be picked. */
+function pickFromPool(
+  decided: IdentityDecision,
+  params: RunLauncherParams,
+  parsedArgv: ParsedLauncherArgv,
+): { readonly identityDecision: IdentityDecision; readonly poolExplanation?: string } {
+  const { paths, fs, proc, log } = params;
+  if (decided.pool === undefined) {
+    return { identityDecision: decided };
+  }
+  const farmRuntime = params.farm;
+  if (farmRuntime === undefined) {
+    log.error(`claude-use: pool "${decided.pool}" was selected, but this launcher has no farm wired to read usage and pick a member with.`);
+    return proc.exit(1);
+  }
+  const resolution = resolvePoolLaunch({
+    poolName: decided.pool,
+    selectedVia: decided.source,
+    pools: params.pools,
+    paths,
+    fs,
+    usageFs: farmRuntime.fs,
+    cwd: farmRuntime.cwd,
+    now: farmRuntime.now,
+    sleep: farmRuntime.lock.sleep,
+    passthrough: parsedArgv.rest,
+    wait: parsedArgv.wait === true,
+    log,
+  });
+  if (!resolution.ok) {
+    log.error(resolution.message);
+    return proc.exit(1);
+  }
+  return { identityDecision: { ...decided, name: resolution.identity }, poolExplanation: resolution.explanation };
+}
+
 /**
  * Orchestrates one `claude` launch, in order:
  *
@@ -125,7 +164,7 @@ export function runLauncher(params: RunLauncherParams): void {
   });
   const configDirEscapeHatchApplies = env.CLAUDE_CONFIG_DIR !== undefined && env.CLAUDE_CONFIG_DIR !== "";
 
-  const identityDecision = decideIdentity({
+  const decidedIdentity = decideIdentity({
     env,
     argv0Identity: parsedArgv.identity,
     directoryPinnedIdentity: params.directoryPinnedIdentity,
@@ -138,6 +177,9 @@ export function runLauncher(params: RunLauncherParams): void {
       return trimmed === "" ? undefined : trimmed;
     },
   });
+
+  // A pool selector is resolved to one member here, ahead of everything that reads the identity: farm recovery, loading, the credential and the resync all work on the chosen name exactly as if it had been typed.
+  const { identityDecision, poolExplanation } = pickFromPool(decidedIdentity, params, parsedArgv);
 
   // There is a farm to manage only when an identity resolved and the caller did not name a configuration directory itself.
   const farmIdentity = configDirEscapeHatchApplies ? undefined : identityDecision.name;
@@ -271,7 +313,7 @@ export function runLauncher(params: RunLauncherParams): void {
   }
 
   log.info(
-    `claude-use: identity ${identityDecision.name ?? "(none)"} (${identityDecision.source}), ` +
+    `claude-use: identity ${identityDecision.name ?? "(none)"} (${identityDecision.source}${poolExplanation === undefined ? "" : `, ${poolExplanation}`}), ` +
       `config profile ${configProfileDecision.name ?? "(none)"} (${configProfileDecision.source})` +
       (resolvedProvider === undefined
         ? ""
@@ -335,6 +377,8 @@ export function runLauncher(params: RunLauncherParams): void {
 
   const resolvedFlags = resolveLaunchFlags({
     env,
+    // A pool pick reads the usage the front door records, so a pool launch records its own unless something says otherwise.
+    ...(poolExplanation === undefined ? {} : { trackUsageDefault: true }),
     ...(cascadeLaunch === undefined ? {} : { cascade: cascadeLaunch }),
     flags: {
       ...(parsedArgv.skipPermissions === undefined ? {} : { skipPermissions: parsedArgv.skipPermissions }),
