@@ -6,10 +6,12 @@ import { IdentityNotFoundError, listIdentities } from "../identityManager";
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs } from "../realPorts";
-import { readAccountMetadata } from "./account";
+import { createAccountReader, readAccountMetadata } from "./account";
 import { listUsageSnapshots, readUsageLog, readUsageSnapshot, summariseUsage, type UsageSummary } from "./read";
-import type { AccountMetadata, LimitEvent, QuotaWindow, RateLimitState, UsageSnapshot } from "./schema";
-import { USAGE_RETENTION_MS } from "./store";
+import { ANTHROPIC_PROVIDER } from "./middleware";
+import type { AccountMetadata, LimitEvent, ProviderQuota, ProviderQuotaWindow, QuotaWindow, RateLimitState, UsageSnapshot } from "./schema";
+import { createRealQuotaRefresher } from "./realQuotaRefresher";
+import { createUsageStore, USAGE_RETENTION_MS } from "./store";
 
 const DAY_MS = 86_400_000;
 
@@ -95,13 +97,39 @@ function formatLimit(limit: LimitEvent): string {
   return `last limit: ${limit.kind} (${String(limit.status)}) at ${limit.observedAt}${limit.window === undefined ? "" : ` on the ${limit.window} window`}${wait.length === 0 ? "" : `, ${wait.join(", ")}`}`;
 }
 
+const MS_PER_HOUR = 3_600_000;
+const HOURS_PER_DAY = 24;
+
+/** A window's length as its largest whole unit, `5h` or `30d`, or the provider's own wording when the unit was not recognised. */
+function formatPeriod(window: Readonly<ProviderQuotaWindow>): string {
+  if (window.periodMs === undefined) {
+    return window.period ?? "unknown period";
+  }
+  const hours = window.periodMs / MS_PER_HOUR;
+  return hours >= HOURS_PER_DAY && Number.isInteger(hours / HOURS_PER_DAY) ? `${String(hours / HOURS_PER_DAY)}d` : `${String(hours)}h`;
+}
+
+/** The lines for a provider's pulled quota: one per window, with the age of the observation on the first. */
+function formatQuota(quota: ProviderQuota): string[] {
+  return quota.windows.map((window, index) => {
+    const counts = window.used !== undefined && window.limit !== undefined ? `, ${String(window.used)} of ${String(window.limit)}` : "";
+    const resets = window.resetsAt === undefined ? "" : `, resets ${window.resetsAt}`;
+    const head = index === 0 ? `quota via ${quota.source}${quota.level === undefined ? "" : ` (${quota.level})`}, observed ${quota.observedAt}: ` : "                                           ";
+    return `  ${head}${window.measures} ${formatPeriod(window)} ${String(Math.round(window.utilization * PERCENT))}% used${counts}${resets}`;
+  });
+}
+
 /** The latest-state lines for one identity's provider. */
 function snapshotLines(snapshot: UsageSnapshot | undefined, provider: string): string[] {
   const state = snapshot?.providers[provider];
   if (state === undefined) {
     return [];
   }
-  return [...(state.rateLimit === undefined ? [] : [`  ${formatRateLimit(state.rateLimit)}`]), ...(state.lastLimit === undefined ? [] : [`  ${formatLimit(state.lastLimit)}`])];
+  return [
+    ...(state.rateLimit === undefined ? [] : [`  ${formatRateLimit(state.rateLimit)}`]),
+    ...(state.quota === undefined ? [] : formatQuota(state.quota)),
+    ...(state.lastLimit === undefined ? [] : [`  ${formatLimit(state.lastLimit)}`]),
+  ];
 }
 
 /** Formats `claude-use usage`, one block per identity and provider. */
@@ -192,6 +220,37 @@ function formatAccounts(views: readonly AccountView[]): string[] {
   });
 }
 
+/**
+ * Refreshes the pulled quota of every provider an identity has recorded requests for (narrowed by `--identity` and `--provider`), regardless of how fresh the stored one is: asking is the reason to fetch. Returns the warnings for what could not be refreshed; providers without a usage endpoint are skipped silently.
+ */
+async function refreshQuotas(paths: LayoutPaths, filters: Readonly<{ identity?: string; provider?: string }>): Promise<string[]> {
+  if (filters.identity !== undefined) {
+    requireIdentity(paths, filters.identity);
+  }
+  const store = createUsageStore({
+    fs: realFarmFs,
+    paths,
+    pid: process.pid,
+    now: () => Date.now(),
+    readAccount: createAccountReader(realFarmFs, paths.identitiesDir),
+    log: (line) => {
+      console.error(line);
+    },
+  });
+  const refresher = createRealQuotaRefresher({ paths, store, log: () => undefined });
+  const pairs = listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir)
+    .filter((snapshot) => filters.identity === undefined || snapshot.identity === filters.identity)
+    .flatMap((snapshot) => Object.keys(snapshot.providers).filter((provider) => provider !== ANTHROPIC_PROVIDER && (filters.provider === undefined || provider === filters.provider)).map((provider) => ({ identity: snapshot.identity, provider })));
+  const warnings: string[] = [];
+  for (const { identity, provider } of pairs) {
+    const outcome = await refresher.refresh(identity, provider, { force: true });
+    if (outcome.status === "failed") {
+      warnings.push(`warning: could not refresh ${identity} via ${provider}: ${outcome.message}`);
+    }
+  }
+  return warnings;
+}
+
 /** Registers `claude-use usage` and `claude-use account show`. */
 export function registerUsageCommands(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
@@ -204,8 +263,14 @@ export function registerUsageCommands(program: Command, deps: CommandDeps): void
       .option("--identity <name>", "Only this identity's requests and snapshot.")
       .option("--provider <name>", "Only this provider's requests (anthropic for OAuth sessions).")
       .option("--since <duration>", "Only requests from this long ago on: a count followed by m, h, d or w, such as 5h or 7d.", parseDurationOption)
+      .option("--refresh", "First fetch the quota of providers that report it through their own usage endpoint (z.ai), regardless of how fresh the stored one is.")
       .option("--json", "Print the report as JSON.")
-      .action((options: Readonly<{ identity?: string; provider?: string; since?: number; json?: boolean }>) => {
+      .action(async (options: Readonly<{ identity?: string; provider?: string; since?: number; refresh?: boolean; json?: boolean }>) => {
+        if (options.refresh === true) {
+          for (const warning of await refreshQuotas(paths, { ...(options.identity === undefined ? {} : { identity: options.identity }), ...(options.provider === undefined ? {} : { provider: options.provider }) })) {
+            console.error(warning);
+          }
+        }
         const report = collectUsageReport(realFarmFs, paths, {
           ...(options.identity === undefined ? {} : { identity: options.identity }),
           ...(options.provider === undefined ? {} : { provider: options.provider }),
@@ -219,7 +284,7 @@ export function registerUsageCommands(program: Command, deps: CommandDeps): void
           console.log(line);
         }
       }),
-    ["claude-use usage", "claude-use usage --identity work --since 5h", "claude-use usage --provider z --json"],
+    ["claude-use usage", "claude-use usage --identity work --since 5h", "claude-use usage --provider z --refresh --json"],
   );
 
   const account = withExamples(program.command("account").description("Inspect the Claude account behind each identity: plan, tier and latest quota."), [
@@ -229,8 +294,14 @@ export function registerUsageCommands(program: Command, deps: CommandDeps): void
     account
       .command("show [identity]")
       .description("Show an identity's account metadata (read live from its stored login) and its latest recorded quota; every identity when none is named. Read-only.")
+      .option("--refresh", "First fetch the quota of providers that report it through their own usage endpoint (z.ai), regardless of how fresh the stored one is.")
       .option("--json", "Print the accounts as JSON.")
-      .action((identity: string | undefined, options: Readonly<{ json?: boolean }>) => {
+      .action(async (identity: string | undefined, options: Readonly<{ refresh?: boolean; json?: boolean }>) => {
+        if (options.refresh === true) {
+          for (const warning of await refreshQuotas(paths, identity === undefined ? {} : { identity })) {
+            console.error(warning);
+          }
+        }
         const views = collectAccounts(realFarmFs, paths, identity);
         if (options.json === true) {
           printJson(identity === undefined ? views : views[0]);

@@ -38,6 +38,8 @@ import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, removeFro
 import { runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
 import { createAccountReader } from "../usage/account";
 import { createUsageMiddleware } from "../usage/middleware";
+import { withQuotaRefresh } from "../usage/quotaRefresh";
+import { createRealQuotaRefresher } from "../usage/realQuotaRefresher";
 import { createUsageStore } from "../usage/store";
 
 function appendLog(paths: LayoutPaths, line: string): void {
@@ -75,8 +77,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     readAccount: createAccountReader(realFarmFs, paths.identitiesDir),
     log,
   });
+  // A provider whose quota only its own usage endpoint reports is refreshed after its requests are recorded, throttled by the quota's own resolution; the refresh runs detached from the request.
+  const quotaRefresher = createRealQuotaRefresher({ paths, store: usageStore, log });
   const usageMiddleware = createUsageMiddleware({
-    record: usageStore.record,
+    record: withQuotaRefresh(usageStore.record, quotaRefresher),
     defer: (task) => {
       setImmediate(task);
     },

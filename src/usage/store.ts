@@ -5,7 +5,7 @@ import type { LayoutPaths } from "../paths";
 import { AccountMetadataError, isIdentityName } from "./account";
 import { parseUnifiedRateLimit } from "./rateLimit";
 import { listLogSegments, readUsageSnapshot, segmentDay, segmentName, snapshotPath, UsageSnapshotError } from "./read";
-import { USAGE_SCHEMA_VERSION, UsageRecordSchema, UsageSnapshotSchema, type AccountMetadata, type ProviderUsageState, type UsageRecord, type UsageSnapshot } from "./schema";
+import { USAGE_SCHEMA_VERSION, UsageRecordSchema, UsageSnapshotSchema, type AccountMetadata, type ProviderQuota, type ProviderUsageState, type UsageRecord, type UsageSnapshot } from "./schema";
 
 /** The filesystem effects the usage store's writer performs, all owner-only. */
 export type UsageFs = Pick<FarmFs, "mkdirPrivate" | "writeFilePrivate" | "appendFilePrivate" | "readFileUtf8" | "readdir" | "removeRecursive">;
@@ -44,6 +44,8 @@ export interface UsageStoreDeps {
 export interface UsageStore {
   /** Validates and appends one record, then refreshes its identity's snapshot. Throws on a write failure; the caller (the usage middleware) catches. */
   readonly record: (record: UsageRecord) => void;
+  /** Attaches a provider's pulled quota to the identity's existing state for that provider, keeping the newer observation when one is already there. Returns false when the identity has no state for the provider (a quota is only ever attached to usage that was seen). Throws on a write failure. */
+  readonly recordQuota: (identity: string, provider: string, quota: ProviderQuota) => boolean;
 }
 
 /** The later of two ISO instants. */
@@ -80,6 +82,7 @@ export function foldProviderState(current: ProviderUsageState | undefined, recor
     ...(lastModel === undefined ? {} : { lastModel }),
     ...(rateLimit === undefined ? {} : { rateLimit }),
     ...(lastLimit === undefined ? {} : { lastLimit }),
+    ...(current?.quota === undefined ? {} : { quota: current.quota }),
   };
 }
 
@@ -96,11 +99,12 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
   const { fs, paths } = deps;
   let prunedDay: string | undefined;
 
-  const updateSnapshot = (record: UsageRecord, identity: string): void => {
+  /** Reads the identity's snapshot (replacing an unreadable one), lets `fold` produce its provider states, and writes the result atomically. `fold` returning undefined writes nothing. */
+  const rewriteSnapshot = (identity: string, fold: (current: UsageSnapshot | undefined) => Record<string, ProviderUsageState> | undefined): boolean => {
     if (!isIdentityName(identity)) {
       // The identity header came from a launch whose name cannot be a file name here: the log keeps the record, and no snapshot is named after it.
       deps.log(`usage: no snapshot for identity "${identity}", which is not a valid identity name`);
-      return;
+      return false;
     }
     let current: UsageSnapshot | undefined;
     try {
@@ -110,6 +114,10 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
         throw error;
       }
       deps.log(`usage: replacing an unreadable snapshot: ${error.message}`);
+    }
+    const providers = fold(current);
+    if (providers === undefined) {
+      return false;
     }
     let account: AccountMetadata | undefined;
     try {
@@ -126,10 +134,11 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
       identity,
       updatedAt: new Date(deps.now()).toISOString(),
       ...(account === undefined ? {} : { account }),
-      providers: { ...current?.providers, [record.provider]: foldProviderState(current?.providers[record.provider], record) },
+      providers,
     } satisfies UsageSnapshot);
     fs.mkdirPrivate(paths.usageSnapshotsDir);
     fs.writeFilePrivate(snapshotPath(paths.usageSnapshotsDir, identity), `${JSON.stringify(snapshot, null, 2)}\n`);
+    return true;
   };
 
   return {
@@ -146,8 +155,17 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
       }
       fs.appendFilePrivate(path.join(paths.usageLogDir, segmentName(day, deps.pid)), `${JSON.stringify(record)}\n`);
       if (record.identity !== undefined) {
-        updateSnapshot(record, record.identity);
+        rewriteSnapshot(record.identity, (current) => ({ ...current?.providers, [record.provider]: foldProviderState(current?.providers[record.provider], record) }));
       }
     },
+    recordQuota: (identity, provider, quota) =>
+      rewriteSnapshot(identity, (current) => {
+        const state = current?.providers[provider];
+        if (current === undefined || state === undefined) {
+          return undefined;
+        }
+        const keep = state.quota !== undefined && state.quota.observedAt.localeCompare(quota.observedAt) > 0;
+        return { ...current.providers, [provider]: { ...state, quota: keep ? state.quota : quota } };
+      }),
   };
 }

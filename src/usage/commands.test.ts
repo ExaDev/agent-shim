@@ -18,6 +18,9 @@ import { segmentDay, segmentName, snapshotPath } from "./read";
 import { USAGE_SCHEMA_VERSION, type UsageRecord, type UsageSnapshot } from "./schema";
 
 const HOUR_MS = 3_600_000;
+const FIVE_HOURS = 5;
+const THIRTY_DAYS = 30;
+const HOURS_PER_DAY = 24;
 const MS_PER_SECOND = 1000;
 const STALE_HOURS_AGO = 10;
 const SINCE_HOURS = 5;
@@ -233,6 +236,39 @@ describe("claude-use usage", () => {
 
     expect(result.stdout).toContain("5h 25% used");
     expect(result.stdout).toContain("status allowed");
+  });
+
+  it("shows a provider's pulled quota: each window's length, use, counts and reset, with where and when it was observed", async () => {
+    const at = new Date(startedAt).toISOString();
+    const resetsAt = new Date(startedAt + HOUR_MS).toISOString();
+    writeLog([recordAgo(HOUR_MS, { provider: "z" })]);
+    writeSnapshot({
+      schemaVersion: USAGE_SCHEMA_VERSION,
+      identity: "work",
+      updatedAt: at,
+      providers: {
+        z: {
+          lastRequestAt: at,
+          lastStatus: OK_STATUS,
+          quota: {
+            observedAt: at,
+            source: "z.ai",
+            level: "max",
+            windows: [
+              { measures: "tokens", periodMs: FIVE_HOURS * HOUR_MS, utilization: 0.13, resetsAt },
+              { measures: "tool-calls", periodMs: THIRTY_DAYS * HOURS_PER_DAY * HOUR_MS, utilization: 0.01, limit: 4000, used: 61, resetsAt },
+              { measures: "tokens", period: "unit 9 x 2", utilization: 0.5 },
+            ],
+          },
+        },
+      },
+    });
+
+    const result = await cli(["usage"]);
+
+    expect(result.stdout).toContain(`quota via z.ai (max), observed ${at}: tokens 5h 13% used, resets ${resetsAt}`);
+    expect(result.stdout).toContain(`tool-calls 30d 1% used, 61 of 4000, resets ${resetsAt}`);
+    expect(result.stdout).toContain("tokens unit 9 x 2 50% used");
   });
 
   it("still shows a snapshot's quota for a provider with no request in the period", async () => {

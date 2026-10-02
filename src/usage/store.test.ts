@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createFakeFarmFs, DAY_MS, FAKE_NOW_MS, paths, type FakeFarmFs } from "../test-helpers";
 import { AccountMetadataError } from "./account";
 import { listLogSegments, readUsageLog, readUsageSnapshot, segmentDay, segmentName, snapshotPath } from "./read";
-import { USAGE_SCHEMA_VERSION, type AccountMetadata, type LimitClassification, type UsageRecord } from "./schema";
+import { USAGE_SCHEMA_VERSION, type AccountMetadata, type LimitClassification, type ProviderQuota, type UsageRecord } from "./schema";
 import { createUsageStore, foldProviderState, pruneUsageLog, USAGE_RETENTION_MS, type UsageStoreDeps } from "./store";
 
 const PID = 4242;
@@ -344,5 +344,73 @@ describe("createUsageStore", () => {
       }).toThrow();
       expect(fs.writes).toEqual([]);
     });
+  });
+});
+
+describe("recordQuota", () => {
+  const HOUR_MS = 3_600_000;
+  const FIVE_HOURS = 5;
+  const FIVE_HOUR_MS = FIVE_HOURS * HOUR_MS;
+  const FIVE_HOUR_UTILISATION = 0.13;
+  const HALF_USED = 0.5;
+
+  function quotaObservedAt(offsetMs: number, utilization = FIVE_HOUR_UTILISATION): ProviderQuota {
+    return { observedAt: atOffset(offsetMs), source: "z.ai", level: "max", windows: [{ measures: "tokens", periodMs: FIVE_HOUR_MS, utilization, resetsAt: atOffset(FIVE_HOUR_MS) }] };
+  }
+
+  it("attaches the quota to the provider's existing state and leaves the rest of it alone", () => {
+    const { fs, store } = harness();
+    store.record(makeRecord({ provider: "z", model: "glm-5.1" }));
+    const quota = quotaObservedAt(0);
+
+    expect(store.recordQuota("work", "z", quota)).toBe(true);
+
+    expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.z).toEqual({ lastRequestAt: NOW_ISO, lastStatus: OK_STATUS, lastModel: "glm-5.1", quota });
+  });
+
+  it("keeps the quota when a later request for the provider is recorded", () => {
+    const { fs, store } = harness();
+    store.record(makeRecord({ provider: "z" }));
+    const quota = quotaObservedAt(0);
+    store.recordQuota("work", "z", quota);
+
+    store.record(makeRecord({ provider: "z", at: atOffset(SECOND_MS), status: RATE_LIMITED_STATUS }));
+
+    const state = readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.z;
+    expect(state?.quota).toEqual(quota);
+    expect(state?.lastStatus).toBe(RATE_LIMITED_STATUS);
+  });
+
+  it("keeps an already stored quota that was observed later", () => {
+    const { fs, store } = harness();
+    store.record(makeRecord({ provider: "z" }));
+    const newer = quotaObservedAt(SECOND_MS, HALF_USED);
+    store.recordQuota("work", "z", newer);
+
+    store.recordQuota("work", "z", quotaObservedAt(0));
+
+    expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.z?.quota).toEqual(newer);
+  });
+
+  it("replaces a quota with a newer observation", () => {
+    const { fs, store } = harness();
+    store.record(makeRecord({ provider: "z" }));
+    store.recordQuota("work", "z", quotaObservedAt(0));
+    const newer = quotaObservedAt(SECOND_MS, HALF_USED);
+
+    store.recordQuota("work", "z", newer);
+
+    expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.z?.quota).toEqual(newer);
+  });
+
+  it("attaches nothing, and writes nothing, for an identity or provider with no recorded usage", () => {
+    const { fs, store } = harness();
+    store.record(makeRecord({ provider: "anthropic" }));
+    const before = fs.snapshot();
+
+    expect(store.recordQuota("work", "z", quotaObservedAt(0))).toBe(false);
+    expect(store.recordQuota("other", "z", quotaObservedAt(0))).toBe(false);
+
+    expect(fs.snapshot()).toEqual(before);
   });
 });
