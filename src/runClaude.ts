@@ -1,4 +1,5 @@
 import os from "node:os";
+import type { Pool } from "./config/schema";
 import { randomUUID } from "node:crypto";
 
 import { loadClassification } from "./config/classify";
@@ -37,6 +38,7 @@ function buildFarmRuntime(paths: LayoutPaths): {
   directoryIdentity?: string;
   directoryConfigProfile?: string;
   globalDefaultConfigProfile?: string;
+  pools?: Readonly<Record<string, Pool>>;
 } {
   const home = os.homedir();
   const cwd = process.cwd();
@@ -74,6 +76,7 @@ function buildFarmRuntime(paths: LayoutPaths): {
     ...(loaded.globalConfig?.defaultConfigProfile === undefined
       ? {}
       : { globalDefaultConfigProfile: loaded.globalConfig.defaultConfigProfile }),
+    ...(loaded.globalConfig?.pools === undefined ? {} : { pools: loaded.globalConfig.pools }),
   };
 }
 
@@ -157,6 +160,7 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
     ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
     ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
     ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),
+    ...(farm.pools === undefined ? {} : { pools: farm.pools }),
     allowMissingConfigProfile,
   });
 }
