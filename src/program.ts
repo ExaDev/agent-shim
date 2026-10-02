@@ -13,6 +13,7 @@ import { registerDoctorCommand } from "./doctor";
 import { registerHeadroomCommand } from "./headroom/commands";
 import { registerIdentityCommand } from "./identityManager";
 import { registerProfileCommand } from "./configProfiles";
+import { registerPoolCommand } from "./pools";
 import { registerProviderCommand } from "./providers";
 import { registerRuleCommand } from "./directoryRules";
 import { registerRunCommand } from "./runCommand";
@@ -44,6 +45,7 @@ Launching:
     --category <category=bool>   share or hide a category (repeatable)
     --share <path>, --hide <path>  share or hide one <category>/<path> entry (repeatable)
     --[no-]skip-permissions, --[no-]remote-control, --[no-]headroom, --[no-]track-usage
+    --[no-]wait                  with @pool:<name>, sleep until the earliest member returns when all are refused
 
 Environment:
   CLAUDE_USE_IDENTITY, CLAUDE_USE_CONFIG_PROFILE, CLAUDE_USE_SKIP_PERMISSIONS,
@@ -61,7 +63,7 @@ Examples:
   $ claude-use run --identity work --provider z -p "hello"`;
 
 /**
- * Builds the complete `claude-use` Commander tree: the `identity`, `profile`, `provider` and `rule` nouns (each with the same `add`/`set`/`list`/`show`/`remove`/`use` verbs where they apply), `credential`, `check`, `configure`, `doctor`, `shim`, `headroom`, `codex`, `frontdoor`, `usage`, `account`, `run`, and `completion`, each registered by its own module as a thin adapter over `src/config/store.ts` and the Zod schemas in `src/config/schema.ts`.
+ * Builds the complete `claude-use` Commander tree: the `identity`, `profile`, `pool`, `provider` and `rule` nouns (each with the same `add`/`set`/`list`/`show`/`remove`/`use` verbs where they apply), `credential`, `check`, `configure`, `doctor`, `shim`, `headroom`, `codex`, `frontdoor`, `usage`, `account`, `run`, and `completion`, each registered by its own module as a thin adapter over `src/config/store.ts` and the Zod schemas in `src/config/schema.ts`.
  *
  * Construction has no side effects: nothing is parsed, read or launched until the caller invokes `parseAsync` on the result. That is what lets the whole command surface be unit-tested against a throwaway `LayoutPaths`, scripted prompts and a fake `runClaude`, while `src/cli.ts` stays the one module that runs on import.
  *
@@ -80,6 +82,7 @@ export function buildProgram(deps: ProgramDeps): Command {
 
   registerIdentityCommand(program, deps);
   registerProfileCommand(program, deps);
+  registerPoolCommand(program, deps);
   registerProviderCommand(program, deps);
   registerRuleCommand(program, deps);
   registerCredentialCommand(program, deps, deps.credentialPorts);

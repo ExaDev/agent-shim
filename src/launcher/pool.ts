@@ -44,6 +44,12 @@ export type PoolResolution =
     }
   | { readonly ok: false; readonly message: string };
 
+/** A pool's members split by whether each is an identity that exists: a pool may outlive an identity it names, since removing an identity does not rewrite the pools that list it. */
+export function splitMembers(pool: Pool, paths: Pick<LayoutPaths, "identitiesDir">, fs: FsPort): { readonly present: readonly string[]; readonly missing: readonly string[] } {
+  const exists = (name: string): boolean => loadIdentity(paths.identitiesDir, name, fs) !== undefined;
+  return { present: pool.identities.filter(exists), missing: pool.identities.filter((name) => !exists(name)) };
+}
+
 /** Whether the arguments claude will receive continue or resume a conversation. Only tokens before a `--` terminator count: after it they belong to a command claude runs. */
 function isResuming(passthrough: readonly string[]): boolean {
   const end = passthrough.indexOf(TERMINATOR);
@@ -61,13 +67,10 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
   if (pool === undefined) {
     return { ok: false, message: `claude-use: no pool named "${poolName}" (selected via ${params.selectedVia}). Run \`claude-use pool add ${poolName} --identity <name>...\` first.` };
   }
-  const identities = pool.identities.filter((name) => {
-    const present = loadIdentity(params.paths.identitiesDir, name, params.fs) !== undefined;
-    if (!present) {
-      log.warn(`claude-use: pool "${poolName}" names identity "${name}", which does not exist; skipping it`);
-    }
-    return present;
-  });
+  const { present: identities, missing } = splitMembers(pool, params.paths, params.fs);
+  for (const name of missing) {
+    log.warn(`claude-use: pool "${poolName}" names identity "${name}", which does not exist; skipping it`);
+  }
   if (identities.length === 0) {
     return { ok: false, message: `claude-use: no member of pool "${poolName}" is an existing identity.` };
   }
