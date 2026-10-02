@@ -1,3 +1,11 @@
+## [5.2.0](https://github.com/ExaDev/claude-use/compare/v5.1.1...v5.2.0) (2026-10-02)
+
+### Features
+
+* **frontdoor:** let response middleware follow the body and see the request ([28066cc](https://github.com/ExaDev/claude-use/commit/28066cc144c7297b686be020f52e618591d35609))
+* **fs:** append to an owner-only file without ever widening its mode ([85fe839](https://github.com/ExaDev/claude-use/commit/85fe8395e17a07549a682921c79d1f983e1bb158))
+* **usage:** record per-identity usage and quota in the front door ([cf83ceb](https://github.com/ExaDev/claude-use/commit/cf83ceb3a93a46f9b054307d18ee20efce649ba1)), references [#53](https://github.com/ExaDev/claude-use/issues/53)
+
 ## [5.1.1](https://github.com/ExaDev/claude-use/compare/v5.1.0...v5.1.1) (2026-10-02)
 
 ### Bug Fixes
