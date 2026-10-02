@@ -146,7 +146,7 @@ type FakeNode =
 
 /** One mutating operation the fake filesystem performed, recorded so a test can assert that a resync wrote nothing at all. */
 interface FakeFsWrite {
-  readonly op: "mkdirp" | "symlink" | "rename" | "remove" | "copy" | "write";
+  readonly op: "mkdirp" | "symlink" | "rename" | "remove" | "copy" | "write" | "append";
   readonly path: string;
 }
 
@@ -276,6 +276,19 @@ export function createFakeFarmFs(initial: Readonly<Record<string, FakeFsSeed>> =
         throw new Error(`Cannot write ${resolved}: its parent directory does not exist.`);
       }
       nodes.set(resolved, { kind: "file", mtimeMs: nextMtime(), content: contents });
+      modes.set(resolved, OWNER_ONLY_FILE_MODE);
+    },
+    appendFilePrivate: (filePath: string, contents: string) => {
+      const resolved = path.resolve(filePath);
+      writes.push({ op: "append", path: resolved });
+      if (nodes.get(path.dirname(resolved))?.kind !== "dir") {
+        throw new Error(`Cannot append to ${resolved}: its parent directory does not exist.`);
+      }
+      const existing = nodes.get(resolved);
+      if (existing !== undefined && existing.kind !== "file") {
+        throw new Error(`Cannot append to ${resolved}: it is a ${existing.kind}.`);
+      }
+      nodes.set(resolved, { kind: "file", mtimeMs: nextMtime(), content: `${existing?.content ?? ""}${contents}` });
       modes.set(resolved, OWNER_ONLY_FILE_MODE);
     },
     symlink: (target: string, linkPath: string) => {

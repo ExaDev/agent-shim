@@ -50,6 +50,8 @@ export interface FarmFs {
   readonly mkdirPrivate: (path: string) => void;
   /** Writes a file's full contents as UTF-8 text readable only by its owner (mode 0600), atomically: a temporary sibling is written at that mode and renamed into place, so no reader ever sees a partial file or a wider mode. */
   readonly writeFilePrivate: (path: string, contents: string) => void;
+  /** Appends UTF-8 text to a file readable only by its owner (mode 0600), creating it at that mode when it is missing and narrowing an existing wider mode. The file is opened in append mode, so the text always lands at the end however the file grew; a reader running at the same moment can still see a trailing partial write. It is the primitive an append-only log with one writer per file is built on. */
+  readonly appendFilePrivate: (path: string, contents: string) => void;
   /** Creates a file only if it does not already exist, returning false when it does. This is the exclusive-create the identity lock depends on for its mutual exclusion — a read-then-write pair would race. */
   readonly writeFileExclusive: (path: string, contents: string) => boolean;
   /** A stable content hash of one file, or undefined when it is missing or is not a regular file. Used only to recognise farm data that has already been adopted into the canonical tree. */
