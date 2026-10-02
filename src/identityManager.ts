@@ -13,6 +13,8 @@ import { runProfileWizard, type PromptsPort } from "./configure";
 import { CliError, PromptCancelledError, UsageError } from "./cliError";
 import { resolveFarmConflicts, type FarmConflictChoice } from "./launcher/farmResolve";
 import { ensureProfileExists } from "./configProfiles";
+import { poolNameOf } from "./launcher/identity";
+import { requirePool } from "./poolStore";
 import type { LayoutPaths } from "./paths";
 import { identityLockPath } from "./launcher/lock";
 import { realFarmFs } from "./realPorts";
@@ -76,10 +78,13 @@ export function addIdentity(paths: LayoutPaths, name: string): Identity {
 /**
  * Persists `name` as the active identity, written atomically as plain text (not JSON — this file is read by `decideIdentity` in `src/launcher/identity.ts` via a simple UTF-8 read-and-trim, matching the README's documented `~/.claude-use/active-identity` file).
  *
- * Throws `IdentityNotFoundError` when no identity with this name exists yet — selecting an identity that hasn't been created would silently persist a name nothing else can ever load.
+ * `name` may be a `pool:<name>` selector, which makes launches pick a member of that pool. Throws `IdentityNotFoundError` when no identity with this name exists yet, and `PoolNotFoundError` for a pool that is not defined: selecting either would silently persist a name nothing else can ever load.
  */
 export function useIdentity(paths: LayoutPaths, name: string): void {
-  if (!identityExists(paths, name)) {
+  const pool = poolNameOf(name);
+  if (pool !== undefined) {
+    requirePool(paths, pool);
+  } else if (!identityExists(paths, name)) {
     throw new IdentityNotFoundError(name);
   }
   writeTextAtomic(paths.activeIdentityFile, `${name}\n`);
@@ -145,7 +150,7 @@ export async function runIdentityWizard(
  * Makes `name` the active identity, the one behaviour `identity use <name>` and the `@<name>` shortcut share. An existing identity is selected directly. A missing one is offered to `runIdentityWizard` when standard input is a terminal (declining raises `PromptCancelledError`); with no terminal it raises `IdentityNotFoundError`, since there is nothing to prompt on.
  */
 async function selectIdentity(deps: CommandDeps, name: string): Promise<void> {
-  if (identityExists(deps.paths, name)) {
+  if (poolNameOf(name) !== undefined || identityExists(deps.paths, name)) {
     useIdentity(deps.paths, name);
   } else if (deps.isInteractive()) {
     if (!(await runIdentityWizard(deps.prompts, deps.paths, name))) {

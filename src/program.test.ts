@@ -96,7 +96,7 @@ describe("buildProgram", () => {
     const built = program(runClaude);
 
     expect(built.commands.map((command) => command.name()).sort()).toEqual(
-      ["__frontdoor-supervisor", "__headroom-supervisor", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "profile", "provider", "rule", "run", "shim", "usage"].sort(),
+      ["__frontdoor-supervisor", "__headroom-supervisor", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "pool", "profile", "provider", "rule", "run", "shim", "usage"].sort(),
     );
     expect(runClaude).not.toHaveBeenCalled();
     expect(fs.readdirSync(root)).toEqual([]);
@@ -105,6 +105,7 @@ describe("buildProgram", () => {
   it("gives every noun the same verb vocabulary", () => {
     const built = program();
     expect(subcommandNames(built, "identity")).toEqual(["add", "list", "remove", "resolve-conflicts", "set", "show", "use"]);
+    expect(subcommandNames(built, "pool")).toEqual(["add", "list", "pick", "remove", "set", "show", "use"]);
     expect(subcommandNames(built, "profile")).toEqual(["add", "list", "remove", "set", "show", "use"]);
     expect(subcommandNames(built, "provider")).toEqual(["add", "list", "remove", "set", "show"]);
     expect(subcommandNames(built, "rule")).toEqual(["add", "list", "remove", "set", "show"]);
