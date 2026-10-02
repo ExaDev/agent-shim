@@ -44,7 +44,7 @@ src/
     rateLimit.ts, scan.ts   # the unified rate-limit header parser and limit classifier, and the streaming SSE and JSON body scanners that read a response's `usage` and error type
     schema.ts               # the Zod definitions of the log record, the per-identity snapshot and the account metadata, versioned
     store.ts, read.ts       # the writer (one log segment per writing process per UTC day, so concurrent writers need no lock; snapshots folded newest-observation-wins; whole-day pruning to the retention window) and the readers
-    providerQuota.ts        # the adapters for providers that report quota only through their own usage endpoint (z.ai), and the freshness a pulled quota keeps
+    providerQuota.ts        # the adapters for providers that report quota only through their own usage endpoint (z.ai, OpenRouter), and the freshness a pulled quota keeps
     quotaRefresh.ts        # the refresher (throttled, one fetch in flight per identity and provider, failures contained), the provider and credential lookup it fetches with, and the wrapper that triggers it after a recorded request
     preflight.ts            # the launch-time quota warnings derived from an identity's snapshot, by the API's own window statuses rather than a typed threshold
     account.ts, commands.ts # the plan and tier read from an identity's stored login, and the `usage` and `account show` commands
