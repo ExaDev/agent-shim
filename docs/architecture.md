@@ -35,8 +35,8 @@ src/
   credential.ts           # the shared credential block's resolver: sources tried in order behind an injected CredentialPort, presets compiled to argv, target variables, summaries that never carry a value
   headroom/                # the headroom routing daemon: coordination state, the launcher-side ensure step, the supervisor loop, and the `headroom status` / hidden `__headroom-supervisor` commands
     state.ts               # state.json, the session registry, the start lock, allowlist computation — pure over an injected HeadroomFs
-    ensure.ts               # the launcher's lock-and-poll bring-up: start at most one supervisor, wait for ready state (daemon port AND MITM port), register the session
-    supervisor.ts           # install/start/restart/drift/idle decision loop for the daemon plus the in-process MITM proxy, pure over injected SupervisorPorts
+    ensure.ts               # the launcher's lock-and-poll bring-up: start at most one supervisor, wait for ready state (the daemon's port), register the session
+    supervisor.ts           # install/start/restart/drift/idle decision loop for the daemon, pure over injected SupervisorPorts
     headers.ts              # ANTHROPIC_CUSTOM_HEADERS merge (Name: Value lines, later block wins per name)
     commands.ts             # real ports for the supervisor, `headroom status`, command registration
   usage/                    # usage and quota tracking: the front door's response middleware, the append-only store it writes, and the `usage` and `account` readers

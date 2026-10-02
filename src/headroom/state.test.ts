@@ -84,14 +84,6 @@ describe("headroom state files", () => {
     expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ lastPort: 8123 });
   });
 
-  it("round-trips the MITM proxy's ready-signal and sticky ports the same way", () => {
-    const fs = createFakeFarmFs({});
-    writeHeadroomState(fs, paths.headroomStateFile, { port: 8123, lastPort: 8123 });
-    expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ port: 8123, lastPort: 8123 });
-    writeHeadroomState(fs, paths.headroomStateFile, { lastPort: 8123 });
-    expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ lastPort: 8123 });
-  });
-
   it("treats a missing or malformed state file as absent rather than throwing", () => {
     const fs = createFakeFarmFs({});
     expect(readHeadroomState(fs, paths.headroomStateFile)).toBeUndefined();
