@@ -3,7 +3,7 @@ import * as https from "node:https";
 import * as net from "node:net";
 import * as tls from "node:tls";
 import { beforeAll, describe, expect, it } from "vitest";
-import forge from "node-forge";
+import { X509Certificate, createPrivateKey } from "node:crypto";
 
 import { connectProxyUrl, isLiveCapability } from "./capability";
 import {
@@ -106,22 +106,52 @@ describe("CONNECT routing decisions", () => {
 
 describe("certificate authority", () => {
   const now = new Date("2026-01-01T00:00:00Z");
+  const ONE_DAY_MS = 86_400_000;
+  /** The CA/Browser Forum ceiling on a publicly trusted leaf's lifetime, which Apple platforms also enforce. */
+  const MAX_LEAF_LIFETIME_DAYS = 398;
 
   it("generates a CA whose subject is stable, and signs leaves issued by that CA with the host in their SAN", () => {
     const ca = generateCa(now);
     const again = generateCa(now);
-    const commonNameOf = (attributes: readonly forge.pki.CertificateField[]): string | undefined => {
-      const field = attributes.find((attribute) => attribute.name === "commonName");
-      return typeof field?.value === "string" ? field.value : undefined;
-    };
-    const caCert = forge.pki.certificateFromPem(ca.certPem);
-    expect(commonNameOf(caCert.subject.attributes)).toBe("claude-use front door CA");
-    expect(commonNameOf(forge.pki.certificateFromPem(again.certPem).subject.attributes)).toBe("claude-use front door CA");
+    const caCert = new X509Certificate(ca.certPem);
+    expect(caCert.subject).toBe("CN=claude-use front door CA");
+    expect(new X509Certificate(again.certPem).subject).toBe("CN=claude-use front door CA");
+    expect(caCert.ca).toBe(true);
+    expect(caCert.verify(caCert.publicKey)).toBe(true);
 
     const leaf = mintLeaf(ca, [CONNECT_INTERCEPT_HOST], now);
-    const cert = forge.pki.certificateFromPem(leaf.certPem);
-    expect(commonNameOf(cert.issuer.attributes)).toBe("claude-use front door CA");
-    expect(JSON.stringify(cert.getExtension("subjectAltName"))).toContain(CONNECT_INTERCEPT_HOST);
+    const cert = new X509Certificate(leaf.certPem);
+    expect(cert.issuer).toBe("CN=claude-use front door CA");
+    expect(cert.ca).toBe(false);
+    expect(cert.verify(caCert.publicKey)).toBe(true);
+    expect(cert.checkIssued(caCert)).toBe(true);
+    expect(cert.checkHost(CONNECT_INTERCEPT_HOST)).toBe(CONNECT_INTERCEPT_HOST);
+    expect(cert.keyUsage).toEqual(["1.3.6.1.5.5.7.3.1"]);
+    expect(cert.checkPrivateKey(createPrivateKey(leaf.keyPem))).toBe(true);
+    expect(caCert.checkPrivateKey(createPrivateKey(ca.keyPem))).toBe(true);
+  });
+
+  it("puts an IP name in the SAN as an IP address and a hostname as a DNS name", () => {
+    const leaf = new X509Certificate(mintLeaf(generateCa(now), ["127.0.0.1", "localhost", "::1"], now).certPem);
+    expect(leaf.checkIP("127.0.0.1")).toBe("127.0.0.1");
+    expect(leaf.checkIP("::1")).toBe("::1");
+    expect(leaf.checkHost("localhost")).toBe("localhost");
+    expect(leaf.checkHost("127.0.0.1")).toBeUndefined();
+    expect(leaf.checkIP("127.0.0.2")).toBeUndefined();
+  });
+
+  it("dates a leaf to cover now and to stay inside the 398-day ceiling clients enforce on leaf lifetimes", () => {
+    const leaf = new X509Certificate(mintLeaf(generateCa(now), ["a.example"], now).certPem);
+    expect(new Date(leaf.validFrom).getTime()).toBeLessThan(now.getTime());
+    expect(new Date(leaf.validTo).getTime() - new Date(leaf.validFrom).getTime()).toBeLessThanOrEqual(MAX_LEAF_LIFETIME_DAYS * ONE_DAY_MS);
+    expect(new Date(leaf.validTo).getTime()).toBeGreaterThan(now.getTime());
+  });
+
+  it("issues a leaf under a CA whose key is stored as PKCS#1, the form earlier releases persisted", () => {
+    const ca = generateCa(now);
+    const pkcs1 = createPrivateKey(ca.keyPem).export({ type: "pkcs1", format: "pem" });
+    const leaf = new X509Certificate(mintLeaf({ certPem: ca.certPem, keyPem: pkcs1 }, ["a.example"], now).certPem);
+    expect(leaf.verify(new X509Certificate(ca.certPem).publicKey)).toBe(true);
   });
 
   it("mints each host's leaf once and reuses it", () => {
@@ -240,7 +270,7 @@ async function requestTimingOn(secure: tls.TLSSocket, request: string): Promise<
 }
 
 /**
- * The real-socket world the round-trip tests run against: a node-forge CA, a fake routed backend on plain HTTP (standing in for whatever the pipeline would serve), a fake upstream presenting TLS signed by its own CA, and the real connect surface with only its tunnel target redirected.
+ * The real-socket world the round-trip tests run against: a CA issued by `x509.ts`, a fake routed backend on plain HTTP (standing in for whatever the pipeline would serve), a fake upstream presenting TLS signed by its own CA, and the real connect surface with only its tunnel target redirected.
  */
 function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { readonly limits?: Partial<ConnectLimits>; readonly isLiveCapability?: (token: string) => boolean } = {}) {
   /** Every tunnel target the surface dialled, so a refusal can be shown never to have reached one. */
