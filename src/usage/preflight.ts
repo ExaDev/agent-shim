@@ -1,4 +1,4 @@
-import type { UsageSnapshot } from "./schema";
+import type { QuotaWindow, UsageSnapshot } from "./schema";
 
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
@@ -9,13 +9,39 @@ const HOURS_PER_DAY = 24;
 const WARNING_STATUSES: ReadonlySet<string> = new Set(["allowed_warning", "rejected"]);
 
 /** A duration as its largest whole unit, such as `3h` or `2d`. */
-function formatAge(ms: number): string {
+export function formatAge(ms: number): string {
   const minutes = Math.floor(ms / (MS_PER_SECOND * SECONDS_PER_MINUTE));
   if (minutes < MINUTES_PER_HOUR) {
     return `${String(Math.max(minutes, 0))}m`;
   }
   const hours = Math.floor(minutes / MINUTES_PER_HOUR);
   return hours < HOURS_PER_DAY ? `${String(hours)}h` : `${String(Math.floor(hours / HOURS_PER_DAY))}d`;
+}
+
+/** A quota window as it stands at a given instant. */
+export interface EffectiveWindow {
+  /** True when the window's reset time has passed, so the recorded observation describes a window that no longer exists. */
+  readonly reset: boolean;
+  /** The fraction used: 0 for a reset window, otherwise what was last observed (a lower bound, since utilisation only rises within a window), or undefined when none was reported. */
+  readonly utilization?: number;
+  /** The reset instant, for a window that has not reset yet and reported one. */
+  readonly resetsAtMs?: number;
+  /** The window's own status, for a window that has not reset yet. */
+  readonly status?: string;
+}
+
+/** Reads a recorded window at `nowMs`: a window whose reset has passed is empty and carries no status, so every consumer agrees on what an old observation still means. */
+export function effectiveWindow(window: Readonly<QuotaWindow>, nowMs: number): EffectiveWindow {
+  const resetsAtMs = window.resetsAt === undefined ? undefined : Date.parse(window.resetsAt);
+  if (resetsAtMs !== undefined && resetsAtMs <= nowMs) {
+    return { reset: true, utilization: 0 };
+  }
+  return {
+    reset: false,
+    ...(window.utilization === undefined ? {} : { utilization: window.utilization }),
+    ...(resetsAtMs === undefined ? {} : { resetsAtMs }),
+    ...(window.status === undefined ? {} : { status: window.status }),
+  };
 }
 
 /**
@@ -33,14 +59,12 @@ export function quotaWarnings(snapshot: UsageSnapshot | undefined, provider: str
     { name: "seven-day", window: unified.sevenDay },
   ];
   return windows.flatMap(({ name, window }) => {
-    if (window?.status === undefined || !WARNING_STATUSES.has(window.status)) {
-      return [];
-    }
-    if (window.resetsAt !== undefined && Date.parse(window.resetsAt) <= nowMs) {
+    const effective = window === undefined ? undefined : effectiveWindow(window, nowMs);
+    if (window === undefined || effective?.status === undefined || !WARNING_STATUSES.has(effective.status)) {
       return [];
     }
     const reset = window.resetsAt === undefined ? "" : `, resets ${window.resetsAt}`;
-    const verdict = window.status === "rejected" ? "exhausted" : "nearly used";
+    const verdict = effective.status === "rejected" ? "exhausted" : "nearly used";
     return [`claude-use: identity ${snapshot.identity}: the ${name} quota is ${verdict}${reset} (last seen ${age} ago)`];
   });
 }
