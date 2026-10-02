@@ -1,3 +1,9 @@
+## [5.4.0](https://github.com/ExaDev/claude-use/compare/v5.3.0...v5.4.0) (2026-10-02)
+
+### Features
+
+* **launcher:** warn at launch when the identity's recorded quota window is nearly used ([9172891](https://github.com/ExaDev/claude-use/commit/9172891884cdbfd2ef6252e44d452d99d2f6fd06))
+
 ## [5.3.0](https://github.com/ExaDev/claude-use/compare/v5.2.0...v5.3.0) (2026-10-02)
 
 ### Features
