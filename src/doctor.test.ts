@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  formatDoctorReport,
-  refinePathShadow,
-  runDoctor,
-  type DoctorConfigProfileInput,
-  type DoctorIdentityInput,
-  type DoctorProviderInput,
-  type RunDoctorParams,
-} from "./doctor";
+import { formatDoctorReport, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type DoctorIdentityInput, type DoctorProviderInput, type RunDoctorParams } from "./doctorReport";
 import type { RunPort } from "./launcher/ports";
 
 const DISCOVERED_BINARY = { ok: true, binary: { path: "/opt/claude/2.1.0", source: "versions-dir", version: "2.1.0" } } as const;
