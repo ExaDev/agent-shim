@@ -9,10 +9,10 @@ import { upstreamChunks } from "./server";
 
 /** Everything one pass-through forwards to. */
 export interface PassthroughTarget {
-  /** The upstream's base URL, without a trailing slash. */
+  /** The upstream's base URL, without a trailing slash. Its path, when it has one (`https://api.z.ai/api/anthropic`), is part of what every forwarded request is addressed to. */
   readonly baseUrl: string;
   /**
-   * The path prefix the front door added that the upstream must not see: `/providers/<name>` for a provider-scoped request, absent for a bare `/v1/` request from the connect surface. The upstream receives the request exactly as it would have arrived had the child pointed at it directly.
+   * The path prefix the front door added that the upstream must not see: `/providers/<name>` for a provider-scoped request, absent for a bare `/v1/` request from the connect surface. The upstream receives the request exactly as it would have arrived had the child pointed at its base URL directly, base path included.
    */
   readonly stripPrefix: string | undefined;
   /** What a headroom hop in front of this route is told to forward to: the door's direct listener, whose re-resolution of the path is what strips the provider prefix the upstream must not see. */
@@ -39,6 +39,7 @@ function responseHeaders(headers: Readonly<http.IncomingHttpHeaders>): Record<st
 export function createPassthroughRoute(name: string, target: PassthroughTarget): FrontDoorRoute {
   const base = new URL(target.baseUrl);
   const tls = base.protocol === "https:";
+  const basePath = base.pathname.replace(/\/+$/, "");
   // Keep-alive so a session reusing its connection gets its forwarded requests served over reused upstream connections too, the way a direct connection would.
   const agent = tls ? new https.Agent({ keepAlive: true }) : new http.Agent({ keepAlive: true });
   return {
@@ -56,7 +57,7 @@ export function createPassthroughRoute(name: string, target: PassthroughTarget):
           host: base.hostname,
           port: base.port === "" ? undefined : Number(base.port),
           method: request.method,
-          path: `${path}${incoming.search}`,
+          path: `${basePath}${path}${incoming.search}`,
           headers,
           agent,
         };
