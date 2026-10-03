@@ -1,3 +1,10 @@
+## [7.7.0](https://github.com/ExaDev/agent-shim/compare/v7.6.1...v7.7.0) (2026-10-03)
+
+### Features
+
+* **frontdoor:** admit a routed request by its tunnel's capability ([a59f72c](https://github.com/ExaDev/agent-shim/commit/a59f72cd2f6fefa9f1efa527b436bce0e2782b29))
+* **frontdoor:** relay websocket upgrades on terminated sessions ([9d0f68b](https://github.com/ExaDev/agent-shim/commit/9d0f68bde2a302fad21be9a3bda16562ddbd0f0a))
+
 ## [7.6.1](https://github.com/ExaDev/agent-shim/compare/v7.6.0...v7.6.1) (2026-10-03)
 
 ### Bug Fixes
