@@ -1,3 +1,13 @@
+## [7.2.0](https://github.com/ExaDev/agent-shim/compare/v7.1.3...v7.2.0) (2026-10-03)
+
+### Features
+
+* **frontdoor:** capture the CONNECT surface's targets and piped exchanges ([fc1ae12](https://github.com/ExaDev/agent-shim/commit/fc1ae124eefd6867e96e303312f9db7b1849c45b))
+
+### Continuous Integration
+
+* keep the Scoop claude-use manifest tracking releases ([bdd8c59](https://github.com/ExaDev/agent-shim/commit/bdd8c592b78a6fd3a644a500a03e916afb6d7120))
+
 ## [7.1.3](https://github.com/ExaDev/agent-shim/compare/v7.1.2...v7.1.3) (2026-10-03)
 
 ### Documentation
