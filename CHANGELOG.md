@@ -1,3 +1,14 @@
+## [7.1.2](https://github.com/ExaDev/agent-shim/compare/v7.1.1...v7.1.2) (2026-10-03)
+
+### Bug Fixes
+
+* **frontdoor:** accept the former x-claude-use-* wire headers ([43cbf2d](https://github.com/ExaDev/agent-shim/commit/43cbf2d6a6b06e5ebe0ff0bb777672df9a97640c))
+* keep the wire header prefixes module-private ([b77a9f5](https://github.com/ExaDev/agent-shim/commit/b77a9f5fad52804773d9db7d1cbe01e0ca93fb6f))
+
+### Continuous Integration
+
+* release on more commit types and list them in the changelog ([d96f218](https://github.com/ExaDev/agent-shim/commit/d96f2184b693197112fdefa3ccc759dcbeca7cd7))
+
 ## [7.1.1](https://github.com/ExaDev/agent-shim/compare/v7.1.0...v7.1.1) (2026-10-03)
 
 ### Bug Fixes
