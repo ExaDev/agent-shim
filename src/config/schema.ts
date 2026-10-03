@@ -302,7 +302,7 @@ export const PoolNameSchema = z.string().min(1).regex(new RegExp(`^${POOL_NAME_P
 const IdentitySelectorSchema = z.string().min(1).regex(new RegExp(`^(${POOL_SELECTOR_PREFIX}${POOL_NAME_PATTERN}|${IDENTITY_NAME_PATTERN})$`));
 
 /** A named, explicit set of identities to choose among at launch. Never implicit: a pool lists its members, so an identity that bills a client is only ever picked when someone put it there. */
-const PoolSchema = z.strictObject({
+export const PoolSchema = z.strictObject({
   identities: z
     .array(z.string().min(1).regex(new RegExp(`^${IDENTITY_NAME_PATTERN}$`)))
     .min(1)

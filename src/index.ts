@@ -4,7 +4,8 @@
  * - identity and configuration-profile resolution and farm sync (`resolveDecisions`, `resyncFarm`, `buildEntryFacts`, ...), pure over facts and ports passed in;
  * - routing: the front door's Remote-Control-preserving, capability-authenticated CONNECT surface and its certificate authority, the front-door supervisor and ensure lifecycle, and the headroom supervisor and ensure lifecycle, each pure over its injected ports;
  * - the ambient-credential guard;
- * - the per-identity usage snapshot a statusline or launcher reads: its schema and the reader over an injected filesystem.
+ * - the per-identity usage snapshot a statusline or launcher reads: its schema and the reader over an injected filesystem;
+ * - the state root's layout (`resolveAgentShimHome`, `resolveLayoutPaths`, `buildLayoutPaths`), which includes adopting an existing `~/.claude-use` in place, and the Zod schema and inferred type of every configuration file (identity, configuration profile, provider, pool, directory rules, global config, credential), so a tool can validate or generate them with the same definitions the CLI uses.
  *
  * Everything the CLI alone needs (commander wiring, prompts, `doctor`, `check`) is deliberately not exported here.
  */
@@ -71,3 +72,38 @@ export {
   type EvaluateAmbientCredentialGuardParams,
   type InjectedCredential,
 } from "./launcher/guard";
+
+export { buildLayoutPaths, resolveAgentShimHome, resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
+export { CliError, EXIT_FAILURE, EXIT_USAGE, UsageError } from "./cliError";
+export {
+  CategoryClassificationOverlaySchema,
+  CategoryClassificationSchema,
+  CategoryMapSchema,
+  ConfigProfileSchema,
+  CredentialCacheSchema,
+  CredentialSchema,
+  CredentialSourceSchema,
+  DirectoryRuleSchema,
+  DirectoryRulesSchema,
+  EntryValueSchema,
+  GlobalConfigSchema,
+  IdentitySchema,
+  PoolNameSchema,
+  PoolSchema,
+  PortableConfigSchema,
+  ProviderSchema,
+  WhenSchema,
+  type CategoryMap,
+  type ConfigProfile,
+  type Credential,
+  type CredentialSource,
+  type DirectoryRule,
+  type DirectoryRules,
+  type EntryValue,
+  type GlobalConfig,
+  type Identity,
+  type Pool,
+  type PortableConfig,
+  type Provider,
+  type WhenCondition,
+} from "./config/schema";

@@ -13,11 +13,102 @@ describe("library surface", () => {
     expect(typeof library.readUsageSnapshot).toBe("function");
   });
 
+  it("exposes exactly the documented entry points, so adding or removing one is a deliberate change to this list and to docs/library.md", () => {
+    expect(Object.keys(library).sort()).toEqual([
+    "AMBIENT_CREDENTIAL_VARS",
+    "CONNECT_INTERCEPT_HOST",
+    "CONNECT_INTERCEPT_HOSTS",
+    "CONNECT_LIMITS",
+    "CategoryClassificationOverlaySchema",
+    "CategoryClassificationSchema",
+    "CategoryMapSchema",
+    "CliError",
+    "ConfigProfileSchema",
+    "CredentialCacheSchema",
+    "CredentialSchema",
+    "CredentialSourceSchema",
+    "DirectoryRuleSchema",
+    "DirectoryRulesSchema",
+    "EXIT_FAILURE",
+    "EXIT_USAGE",
+    "EntryValueSchema",
+    "FARM_MANIFEST_FILENAME",
+    "FrontDoorStartError",
+    "GlobalConfigSchema",
+    "HeadroomStartError",
+    "IdentitySchema",
+    "PoolNameSchema",
+    "PoolSchema",
+    "PortableConfigSchema",
+    "ProviderSchema",
+    "ROUTED_PATH_PREFIX",
+    "UsageError",
+    "UsageSnapshotError",
+    "UsageSnapshotSchema",
+    "WhenSchema",
+    "buildEntryFacts",
+    "buildLayoutPaths",
+    "carryOver",
+    "createLeafCache",
+    "detectAmbientCredential",
+    "ensureCa",
+    "ensureFrontDoor",
+    "ensureHeadroom",
+    "evaluateAmbientCredentialGuard",
+    "formatAmbientCredentialGuardMessage",
+    "forwardableHeaders",
+    "generateCa",
+    "isInterceptedHost",
+    "listUsageSnapshots",
+    "mintLeaf",
+    "parseConnectTarget",
+    "readFarmManifest",
+    "readUsageSnapshot",
+    "realConnectCertStore",
+    "realConnectEffects",
+    "recoverFarm",
+    "recoveryDiagnostics",
+    "resolveAgentShimHome",
+    "resolveClaudeHome",
+    "resolveDecisions",
+    "resolveLayoutPaths",
+    "resolveSupervisorConfig",
+    "resyncFarm",
+    "runFrontDoorSupervisor",
+    "runSupervisor",
+    "servedByPipeline",
+    "snapshotPath",
+    "startConnectServer",
+    "topLevelNames",
+    ]);
+  });
+
   it("exposes nothing that exists for the command line alone", () => {
     const names = Object.keys(library);
     for (const cliOnly of ["buildProgram", "registerCheckCommand", "registerDoctorCommand", "reportFatalError", "runDoctor"]) {
       expect(names).not.toContain(cliOnly);
     }
+  });
+
+  it("locates the state root through the same resolution the CLI uses, adopting a former ~/.claude-use in place", () => {
+    const legacy = "/home/u/.claude-use";
+    expect(library.resolveAgentShimHome({}, "/home/u", (candidate) => candidate === legacy)).toBe(legacy);
+    expect(library.resolveAgentShimHome({}, "/home/u", () => false)).toBe("/home/u/.agent-shim");
+    expect(library.buildLayoutPaths("/root").identitiesDir).toBe("/root/identities");
+  });
+
+  it("validates configuration files with the exported schemas and types them from the same definitions", () => {
+    const identity: library.Identity = library.IdentitySchema.parse({ name: "work" });
+    expect(identity.name).toBe("work");
+    expect(library.ProviderSchema.safeParse({ displayName: "z", baseUrl: "https://api.example.com/api", credential: { sources: [{ env: "TOKEN" }] } }).success).toBe(true);
+    expect(library.ProviderSchema.safeParse({ displayName: "z" }).success).toBe(false);
+    expect(library.CategoryMapSchema.parse({ all: true })).toEqual({ history: true, knowledge: true, settings: true });
+  });
+
+  it("raises typed errors a caller can tell from a crash", () => {
+    const error = new library.UsageError("bad input");
+    expect(error).toBeInstanceOf(library.CliError);
+    expect(error.exitCode).toBe(library.EXIT_USAGE);
   });
 
   it("runs the ambient-credential guard in process", () => {

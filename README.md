@@ -226,6 +226,7 @@ Issues and pull requests are welcome. Please keep the tool itself free of assump
 - [docs/architecture.md](docs/architecture.md): the source layout file by file, error reporting design, schema rationale, and resolver mechanics.
 - [docs/release-process.md](docs/release-process.md): the semantic-release pipeline, the Node SEA build, its macOS x64 limitation, and npm/GitHub Packages publishing.
 - [docs/testing.md](docs/testing.md): the full list of cases the test suites cover.
+- [docs/library.md](docs/library.md): using agent-shim in process: what the library exposes, and what stays CLI-only.
 - [docs/installation.md](docs/installation.md): every install channel in full, with the platform support matrix.
 - [docs/development.md](docs/development.md): test isolation, commit hooks, and the secret-redaction filter rationale.
 
