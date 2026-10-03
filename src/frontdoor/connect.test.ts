@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { X509Certificate, createPrivateKey } from "node:crypto";
 
 import { connectProxyUrl, isLiveCapability } from "./capability";
+import type { ConnectCapture, PassthroughObserver } from "./capture";
 import {
   CONNECT_LIMITS,
   createLeafCache,
@@ -40,6 +41,9 @@ const KEYGEN_TIMEOUT_MS = 120_000;
 const STREAM_HOLD_BACK_MS = 300;
 /** The gap the client must observe between its first and last body arrivals, comfortably under the hold-back so scheduling noise cannot flip the verdict. */
 const MIN_STREAM_GAP_MS = 150;
+
+/** How long the capture test waits for a finished response's close event, which the capture's end record rides and which can trail the parsed response by a tick. */
+const RESPONSE_CLOSE_SETTLE_MS = 50;
 
 /** The statuses this file asserts on, named so a status literal never reads as a magic number: the healthy answer, the unauthenticated fake upstream's answer, and the proxy's own cannot-serve answer. */
 const HTTP_OK = 200;
@@ -272,7 +276,7 @@ async function requestTimingOn(secure: tls.TLSSocket, request: string): Promise<
 /**
  * The real-socket world the round-trip tests run against: a CA issued by `x509.ts`, a fake routed backend on plain HTTP (standing in for whatever the pipeline would serve), a fake upstream presenting TLS signed by its own CA, and the real connect surface with only its tunnel target redirected.
  */
-function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { readonly limits?: Partial<ConnectLimits>; readonly isLiveCapability?: (token: string) => boolean } = {}) {
+function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { readonly limits?: Partial<ConnectLimits>; readonly isLiveCapability?: (token: string) => boolean; readonly capture?: ConnectCapture } = {}) {
   /** Every tunnel target the surface dialled, so a refusal can be shown never to have reached one. */
   const dials: { host: string; port: number }[] = [];
   const routedRequests: { method: string; url: string; headers: http.IncomingHttpHeaders }[] = [];
@@ -349,6 +353,7 @@ function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { readonl
           },
           isLiveCapability: options.isLiveCapability ?? ((token) => token === TEST_CAPABILITY),
           limits: { ...CONNECT_LIMITS, ...options.limits },
+          ...(options.capture === undefined ? {} : { capture: options.capture }),
         },
         effects,
         undefined,
@@ -456,6 +461,95 @@ describe("MITM proxy over real sockets", () => {
         expect(world.routedRequests.map((seen) => seen.url)).toEqual(["/v1/messages"]);
         expect(world.upstreamRequests.map((seen) => seen.url)).toEqual(["/api/oauth/token"]);
         secure.destroy();
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "records the connect target and the piped exchange's head, body, response and chunks through the capture",
+    async () => {
+      const events: { kind: string; [field: string]: unknown }[] = [];
+      const capture: ConnectCapture = {
+        connect: (target, intercepted) => {
+          events.push({ kind: "connect", host: target.host, port: target.port, intercepted });
+        },
+        upgrade: (request) => {
+          events.push({ kind: "upgrade", url: request.url });
+        },
+        observePassthrough: (request) => {
+          events.push({ kind: "request", method: request.method, url: request.url, authorization: request.headers.authorization });
+          const observer: PassthroughObserver = {
+            onRequestChunk: (chunk) => {
+              events.push({ kind: "request-chunk", body: chunk.toString("utf8") });
+            },
+            onResponse: (status, headers) => {
+              events.push({ kind: "response", status, contentType: headers["content-type"] });
+            },
+            onResponseChunk: (chunk) => {
+              events.push({ kind: "response-chunk", body: chunk.toString("utf8") });
+            },
+            onEnd: () => {
+              events.push({ kind: "end" });
+            },
+          };
+          return observer;
+        },
+      };
+      const world = makeTlsWorld(ca, upstreamCa, { capture });
+      const { connectPort, close } = await world.start();
+      try {
+        const secure = await connectThroughProxy(connectPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+        const pipedRequestBody = '{"grant_type":"code"}';
+        const piped = await requestOn(
+          secure,
+          `POST /api/oauth/token HTTP/1.1\r\nHost: ${CONNECT_INTERCEPT_HOST}\r\nAuthorization: Bearer oauth-token\r\ncontent-type: application/json\r\ncontent-length: ${String(pipedRequestBody.length)}\r\n\r\n${pipedRequestBody}`,
+        );
+        expect(piped.statusLine).toContain(String(HTTP_UNAUTHORIZED));
+        // The response's close event, which drives the capture's end record, can trail the parsed response by a tick.
+        await new Promise((resolve) => {
+          setTimeout(resolve, RESPONSE_CLOSE_SETTLE_MS);
+        });
+        expect(events.map((event) => event.kind)).toEqual(["connect", "request", "request-chunk", "response", "response-chunk", "end"]);
+        expect(events[0]).toMatchObject({ kind: "connect", host: CONNECT_INTERCEPT_HOST, port: HTTPS_PORT, intercepted: true });
+        expect(events[1]).toMatchObject({ kind: "request", method: "POST", url: "/api/oauth/token", authorization: "Bearer oauth-token" });
+        expect(events[2]).toMatchObject({ kind: "request-chunk", body: '{"grant_type":"code"}' });
+        expect(events[3]).toMatchObject({ kind: "response", status: HTTP_UNAUTHORIZED, contentType: "text/plain" });
+        expect(events[4]).toMatchObject({ kind: "response-chunk", body: "upstream-says-no" });
+        secure.destroy();
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "records a blind-tunnel target as unintercepted, never seeing its bytes",
+    async () => {
+      const connects: { host: string; port: number; intercepted: boolean }[] = [];
+      const capture: ConnectCapture = {
+        connect: (target, intercepted) => {
+          connects.push({ host: target.host, port: target.port, intercepted });
+        },
+        upgrade: () => {
+          throw new Error("no upgrade reaches a blind tunnel");
+        },
+        observePassthrough: () => {
+          throw new Error("no piped exchange reaches a blind tunnel");
+        },
+      };
+      const world = makeTlsWorld(ca, upstreamCa, { capture });
+      const { connectPort, close } = await world.start();
+      try {
+        const attempt = rawAttempt(connectPort, connectHead("mcp-proxy.anthropic.com", [proxyAuthorizationFor(TEST_CAPABILITY)]));
+        expect((await attempt.answer).split("\r\n")[0]).toContain(String(HTTP_OK));
+        expect(connects).toEqual([{ host: "mcp-proxy.anthropic.com", port: HTTPS_PORT, intercepted: false }]);
+        attempt.socket.destroy();
       } finally {
         await close();
         await world.stop();

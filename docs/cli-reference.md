@@ -40,7 +40,7 @@ Prompts appear only when standard input is a terminal and input the command need
 | 2 | A usage error: an unknown command or option, a malformed flag or environment value, or required input missing with no terminal to prompt on |
 | 64 | A selected provider's or the launching identity's credential block yields no token, including when every remaining source needs a person and there is no terminal or desktop session (`EX_USAGE`) |
 
-Every failure prints as `agent-shim: <message>` on standard error. An unexpected error (a bug, not a known failure) prints its message the same way; set `AGENT_SHIM_DEBUG=1` to add its stack trace.
+Every failure prints as `agent-shim: <message>` on standard error. An unexpected error (a bug, not a known failure) prints its message the same way; set `AGENT_SHIM_DEBUG=1` to add its stack trace. `AGENT_SHIM_FRONTDOOR_CAPTURE=1`, set on a launch that starts or restarts the front door, records the door's CONNECT targets and piped exchanges (redacted, byte-capped) to `~/.agent-shim/logs/frontdoor-capture.jsonl`; see [Headroom routing](configuration-model.md#headroom-routing).
 
 `agent-shim completion <bash|zsh|fish>` prints a completion script generated from the command tree itself, so it covers exactly the commands and options that exist: `source <(agent-shim completion bash)` in `~/.bashrc`, `source <(agent-shim completion zsh)` in `~/.zshrc` after `compinit`, or `agent-shim completion fish | source` in fish's config. It completes subcommands and long options at every level, and the launch flags after `run`.
 
