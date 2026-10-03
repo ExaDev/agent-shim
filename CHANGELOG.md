@@ -1,3 +1,9 @@
+## [7.5.0](https://github.com/ExaDev/agent-shim/compare/v7.4.0...v7.5.0) (2026-10-03)
+
+### Features
+
+* export the state root layout, configuration schemas and typed errors from the library ([4ab500e](https://github.com/ExaDev/agent-shim/commit/4ab500ed85c41506f9aacb5094847f4cdfe55f14))
+
 ## [7.4.0](https://github.com/ExaDev/agent-shim/compare/v7.3.0...v7.4.0) (2026-10-03)
 
 ### Features
