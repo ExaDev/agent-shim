@@ -18,7 +18,7 @@ import {
 import { applyPatch, readJson } from "./config/store";
 import { withExamples, type CommandDeps } from "./cli/commandDeps";
 import { CliError, UsageError } from "./cliError";
-import { IdentityNotFoundError, readActiveIdentity, readIdentity } from "./identityManager";
+import { IdentityNotFoundError, readActiveIdentity, readIdentity } from "./identityStore";
 import { readGlobalConfig, listProfiles, readProfile, setProfileCategories, setProfileEntries, createProfile } from "./configProfilesStore";
 import { readDirectoryRules, writeDirectoryRules } from "./directoryRulesStore";
 import { LEGACY_PORTABLE_CONFIG_FILENAME, LEGACY_PORTABLE_LOCAL_CONFIG_FILENAME } from "./legacy";

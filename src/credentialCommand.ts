@@ -7,7 +7,7 @@ import { CliError, EXIT_FAILURE, UsageError } from "./cliError";
 import type { Credential } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, describeCredential, resolveCredential, type CredentialPort } from "./credential";
 import { effectiveStore, ttlMs, type CredentialCachePort } from "./credentialCache";
-import { IdentityNotFoundError, readIdentity, setIdentityCredential } from "./identityManager";
+import { IdentityNotFoundError, readIdentity, setIdentityCredential } from "./identityStore";
 import { storeIdentityToken } from "./identityToken";
 import { ProviderNotFoundError, readProvider } from "./providersStore";
 import { realCredentialPort } from "./realPorts";

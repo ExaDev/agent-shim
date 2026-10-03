@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { EXIT_FAILURE, EXIT_USAGE } from "../cliError";
 import { reportFatalError } from "../cliReport";
-import { addIdentity, IdentityNotFoundError } from "../identityManager";
+import { addIdentity, IdentityNotFoundError } from "../identityStore";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { buildProgram } from "../program";
 import { realFarmFs } from "../realPorts";

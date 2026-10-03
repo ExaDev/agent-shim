@@ -6,21 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import type { PromptsPort, SelectParams } from "./configure";
 import { fakeCommandDeps, scriptedPrompts as scriptedIdentityPrompts } from "./test-helpers";
-import {
-  IdentityAlreadyExistsError,
-  IdentityNotFoundError,
-  InvalidIdentityNameError,
-  addIdentity,
-  isIdentityDirectoryName,
-  listIdentities,
-  readActiveIdentity,
-  readIdentity,
-  runIdentityWizard,
-  setAllowAmbientCredential,
-  setDefaultConfigProfile,
-  tryRunAtIdentityShortcut,
-  useIdentity,
-} from "./identityManager";
+import { runIdentityWizard, tryRunAtIdentityShortcut } from "./identityManager";
+import { IdentityAlreadyExistsError, IdentityNotFoundError, InvalidIdentityNameError, addIdentity, isIdentityDirectoryName, listIdentities, readActiveIdentity, readIdentity, setAllowAmbientCredential, setDefaultConfigProfile, useIdentity } from "./identityStore";
 
 describe("identityManager", () => {
   let root: string;

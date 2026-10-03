@@ -4,7 +4,7 @@ import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli
 import { UsageError } from "./cliError";
 import { collectRepeated } from "./cli/parsers";
 import type { Pool } from "./config/schema";
-import { listIdentities, readActiveIdentity, useIdentity, IdentityNotFoundError } from "./identityManager";
+import { listIdentities, readActiveIdentity, useIdentity, IdentityNotFoundError } from "./identityStore";
 import { splitMembers } from "./launcher/pool";
 import { POOL_SELECTOR_PREFIX } from "./config/schema";
 import type { FarmFs, FsPort } from "./launcher/ports";

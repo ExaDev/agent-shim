@@ -2,7 +2,7 @@ import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { parseDurationOption } from "../cli/parsers";
-import { IdentityNotFoundError, listIdentities } from "../identityManager";
+import { IdentityNotFoundError, listIdentities } from "../identityStore";
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs } from "../realPorts";
