@@ -56,11 +56,10 @@ export interface FarmRuntime {
   };
 }
 
-/** Inputs to `runLauncher`. */
-export interface RunLauncherParams {
+/** Inputs to `prepareLaunch`: everything a launch needs except the means of spawning the child. */
+export interface PrepareLaunchParams {
   readonly paths: LayoutPaths;
   readonly fs: FsPort;
-  readonly spawn: SpawnPort;
   readonly proc: ProcPort;
   readonly log: LogPort;
   /** Discovers the real `claude` binary to spawn. Injected so `runLauncher` never depends on `src/versionDiscovery.ts`'s own filesystem/PATH inputs directly — the caller (`src/cli.ts`) wires the real discovery, tests wire a fake that returns a fixed path. */
@@ -87,6 +86,22 @@ export interface RunLauncherParams {
   readonly allowMissingConfigProfile?: boolean;
 }
 
+/** Inputs to `runLauncher`: a launch's inputs plus the port that spawns the child. */
+export interface RunLauncherParams extends PrepareLaunchParams {
+  readonly spawn: SpawnPort;
+}
+
+/**
+ * What one launch resolved to, once every effect its child depends on is in place (the identity's farm resynced, the front door and headroom up and this launch registered with them): the real binary, its arguments and its environment.
+ */
+export interface LaunchPlan {
+  readonly bin: string;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string | undefined>>;
+  /** Releases the daemon session registrations this launch holds. Call it when the child has exited; it is safe to call more than once. */
+  readonly release: () => void;
+}
+
 /** The outcome of resolving the launching identity's own credential block: the credential, or a refusal with its exit status. */
 type IdentityCredentialResolution =
   | { readonly ok: true; readonly credential: ResolvedCredential }
@@ -109,7 +124,7 @@ function resolveIdentityCredential(
 /** The identity decision after any pool selector has been resolved to one of the pool's members, and the pick's explanation for the decision log line. Exits the launch when no member can be picked. */
 function pickFromPool(
   decided: IdentityDecision,
-  params: RunLauncherParams,
+  params: PrepareLaunchParams,
   parsedArgv: ParsedLauncherArgv,
 ): { readonly identityDecision: IdentityDecision; readonly poolExplanation?: string } {
   const { paths, fs, proc, log } = params;
@@ -143,16 +158,16 @@ function pickFromPool(
 }
 
 /**
- * Orchestrates one `claude` launch, in order:
+ * Prepares one `claude` launch, in order:
  *
- * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and finally spawn.
+ * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and the final argument list and environment, returned as a `LaunchPlan` for the caller to spawn. It refuses through `params.proc.exit`, so a caller that is not a command line process passes a `proc` whose `exit` throws.
  *
  * A launch that resolves an identity with no `identity.json`, or a configuration profile with no file, is refused with exit 1 naming the missing name and how it was selected: silently proceeding would create a brand-new login for a mistyped `@name`, or launch with a whole cascade layer missing. On a terminal, `src/runClaude.ts` offers to create either before this runs.
  *
  * The farm resync is skipped when `CLAUDE_CONFIG_DIR` was already set (the escape hatch means the user has named a configuration directory explicitly, and agent-shim manages neither its contents nor its lifetime) and when no identity resolved at all (a bare launch against plain `~/.claude`, matching the legacy tool's own behaviour). In both cases there is no agent-shim-managed farm for a resync to act on.
  */
-export function runLauncher(params: RunLauncherParams): void {
-  const { paths, fs, spawn, proc, log } = params;
+export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
+  const { paths, fs, proc, log } = params;
   const { env, argv } = proc;
 
   const parsedArgv = parseLauncherArgv(argv);
@@ -437,25 +452,24 @@ export function runLauncher(params: RunLauncherParams): void {
 
   // Every daemon session registration this launch holds, released when the child exits.
   const releases = [...(headroom === undefined || headroomPort === undefined ? [] : [headroomPort.release]), ...(frontDoorRelease === undefined ? [] : [frontDoorRelease])];
-  if (releases.length === 0) {
-    spawnClaude({ bin: discovered.path, args: finalArgv, env: finalEnv, spawn, proc });
-  }
-  const releaseAll = (): void => {
-    for (const release of releases) {
-      release();
+  const release = (): void => {
+    for (const registered of releases) {
+      registered();
     }
   };
-  // The session registrations are released twice by design: `beforeExit` covers the real success path (where `process.exit` never unwinds a `finally`), and the `finally` below covers a thrown spawn error, where it does. Each `release` is idempotent, so the double call in a test fake (whose `exit` throws rather than terminates) is harmless.
+  return { bin: discovered.path, args: finalArgv, env: finalEnv, release };
+}
+
+/**
+ * Runs one `claude` launch: `prepareLaunch`, then the child under `params.spawn`, whose exit code becomes this process's.
+ *
+ * The session registrations are released twice by design: `beforeExit` covers the real success path (where `process.exit` never unwinds a `finally`), and the `finally` below covers a thrown spawn error, where it does.
+ */
+export function runLauncher(params: RunLauncherParams): void {
+  const plan = prepareLaunch(params);
   try {
-    spawnClaude({
-      bin: discovered.path,
-      args: finalArgv,
-      env: finalEnv,
-      spawn,
-      proc,
-      beforeExit: releaseAll,
-    });
+    spawnClaude({ bin: plan.bin, args: plan.args, env: plan.env, spawn: params.spawn, proc: params.proc, beforeExit: plan.release });
   } finally {
-    releaseAll();
+    plan.release();
   }
 }

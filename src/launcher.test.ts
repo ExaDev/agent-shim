@@ -4,13 +4,44 @@ import type { FarmRuntime } from "./launcher";
 import { ConflictingIdentityError } from "./launcher/argv";
 import { identityLockPath } from "./launcher/lock";
 import type { FsPort, HeadroomPort } from "./launcher/ports";
-import { runLauncher } from "./launcher";
+import { prepareLaunch, runLauncher } from "./launcher";
 import { FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, createFakeFarmFs, discovered, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
 /** The loopback port the fake headroom daemon pretends to listen on. */
 const HEADROOM_PORT = 8123;
 /** A second port, so one test can prove the daemon in use is the one ensure() reported. */
 const OTHER_HEADROOM_PORT = 9999;
+
+describe("prepareLaunch", () => {
+  it("returns the binary, arguments and environment to spawn without spawning anything", () => {
+    const spawn = fakeSpawn();
+    const plan = prepareLaunch({
+      paths,
+      fs: fakeFs({}),
+      proc: fakeProc({ HOME: "/home/testuser" }, ["--print", "hello"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+    });
+    expect(plan.bin).toBe(discovered.path);
+    expect(plan.args).toEqual(["--print", "hello"]);
+    expect(plan.env).toMatchObject({ HOME: "/home/testuser" });
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it("returns a release that is safe to call more than once, including when the launch registered with no daemon", () => {
+    const plan = prepareLaunch({
+      paths,
+      fs: fakeFs({}),
+      proc: fakeProc({}, ["--print"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+    });
+    plan.release();
+    expect(() => {
+      plan.release();
+    }).not.toThrow();
+  });
+});
 
 describe("runLauncher", () => {
   it("refuses to launch and never spawns when the ambient-credential guard fails", () => {
