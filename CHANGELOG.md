@@ -1,3 +1,20 @@
+## [7.0.0](https://github.com/ExaDev/agent-shim/compare/v6.2.3...v7.0.0) (2026-10-03)
+
+### ⚠ BREAKING CHANGES
+
+* a configuration that relied on all: true opening runtime must now set
+  runtime: true as well.
+* the npm package is now agent-shim, and release assets, the Homebrew formula and
+  the Scoop manifest are named agent-shim-*.
+
+### Features
+
+* rename claude-use to agent-shim ([3d6df09](https://github.com/ExaDev/agent-shim/commit/3d6df091620e5272c7f517dce1d284f50cd601ac))
+
+### Bug Fixes
+
+* keep runtime closed under the all category shorthand ([af43da1](https://github.com/ExaDev/agent-shim/commit/af43da11787fef659268cd400af6b11a3917fe73))
+
 ## [6.2.3](https://github.com/ExaDev/claude-use/compare/v6.2.2...v6.2.3) (2026-10-03)
 
 ### Bug Fixes
