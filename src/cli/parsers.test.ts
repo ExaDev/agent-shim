@@ -2,7 +2,8 @@ import { InvalidArgumentError } from "commander";
 import { describe, expect, it } from "vitest";
 
 import { EXIT_USAGE } from "../cliError";
-import { collectBoolPair, collectRepeated, collectStringPair, parseBool, parseBoolPairList, parsePair } from "./parsers";
+import { collectBoolPair, collectRepeated, collectStringPair } from "./parsers";
+import { parseBool, parseBoolPairList, parsePair } from "./pairs";
 import { InvalidEnvBoolError, parseEnvBool } from "./envBool";
 
 describe("parsePair", () => {
