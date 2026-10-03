@@ -149,7 +149,7 @@ beforeAll(() => {
 /**
  * The whole door assembly over a fake headroom, built from the production `createDoorPipelines`: the TLS provider listener (with the hop and launch admission) and the plain-HTTP direct listener (without the hop, admitting only the hop's own requests), sharing one resolver whose in-process routes name the direct address and one credential custody.
  */
-async function startDoor(options: { readonly files: Record<string, unknown>; readonly headroomPort: () => number | undefined }): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly directPort: () => number }> {
+async function startDoor(options: { readonly files: Record<string, unknown>; readonly headroomPort: () => number | undefined; readonly log?: (line: string) => void }): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly directPort: () => number }> {
   const upstream = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const ports: Omit<CodexRoutePorts, "loadProvider"> = {
     upstream: { fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" },
@@ -159,7 +159,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
   };
   let directPort = 0;
   const resolveRoute = createProviderRouteResolver({ fs: fakeFs(options.files), providersDir: PROVIDERS_DIR, codexPorts: ports, directPort: () => directPort });
-  const log = (): void => undefined;
+  const log = options.log ?? ((): void => undefined);
   const pipelines = createDoorPipelines({
     resolveRoute,
     isLiveToken: (token) => token === LAUNCH_TOKEN,
@@ -306,6 +306,101 @@ describe("the headroom hop", () => {
     } finally {
       await door.close();
       await closeServer(server);
+    }
+  });
+
+  it("does not log the hop's own cancellation as a failure when the client disconnects", async () => {
+    const server = http.createServer(() => undefined);
+    await listen(server);
+    const logged: string[] = [];
+    const door = await startDoor({
+      files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider },
+      headroomPort: () => portOf(server),
+      log: (line) => {
+        logged.push(line);
+      },
+    });
+    try {
+      const abort = new AbortController();
+      const pending = fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY, signal: abort.signal });
+      await new Promise((resolve) => {
+        setTimeout(resolve, SETTLE_MS);
+      });
+      abort.abort();
+      await pending.then(
+        () => undefined,
+        () => undefined,
+      );
+      await new Promise((resolve) => {
+        setTimeout(resolve, SETTLE_MS);
+      });
+      expect(logged.filter((line) => line.includes("headroom hop"))).toEqual([]);
+    } finally {
+      await door.close();
+      await closeServer(server);
+    }
+  });
+
+  it("logs a hop that fails while the client is still waiting, naming the request and that no response had started", async () => {
+    const dead = http.createServer();
+    await listen(dead);
+    const deadPort = portOf(dead);
+    await closeServer(dead);
+    const logged: string[] = [];
+    const door = await startDoor({
+      files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider },
+      headroomPort: () => deadPort,
+      log: (line) => {
+        logged.push(line);
+      },
+    });
+    try {
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
+      expect(response.status).toBe(HTTP_STATUS.badGateway);
+      const failures = logged.filter((line) => line.includes("headroom hop"));
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toContain("POST /providers/codex/v1/messages");
+      expect(failures[0]).toContain("before the response started");
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("logs a daemon that drops the connection after it started answering, but not a client that went away", async () => {
+    const dropping = http.createServer((_request, response) => {
+      response.writeHead(HTTP_STATUS.ok, { "content-type": "text/event-stream", "transfer-encoding": "chunked" });
+      response.write("event: ping\n\n");
+      setTimeout(() => {
+        response.destroy();
+      }, SETTLE_MS);
+    });
+    await listen(dropping);
+    const logged: string[] = [];
+    const door = await startDoor({
+      files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider },
+      headroomPort: () => portOf(dropping),
+      log: (line) => {
+        logged.push(line);
+      },
+    });
+    try {
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
+      await response.text().then(
+        () => undefined,
+        () => undefined,
+      );
+      await new Promise((resolve) => {
+        setTimeout(resolve, SETTLE_MS);
+      });
+      const failures = logged.filter((line) => line.includes("ended mid-stream"));
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toContain("POST /providers/codex/v1/messages");
+    } finally {
+      await door.close();
+      await closeServer(dropping);
     }
   });
 
