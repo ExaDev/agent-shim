@@ -2,7 +2,7 @@ import * as net from "node:net";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { ConnectCapture, PassthroughObserver } from "./capture";
-import { CONNECT_INTERCEPT_HOST, generateCa, HTTPS_PORT, type CaMaterial } from "./connect";
+import { CONNECT_INTERCEPT_HOST, CONNECT_TAP_HOSTS, generateCa, HTTPS_PORT, type CaMaterial } from "./connect";
 import {
   connectHead,
   connectThroughProxy,
@@ -157,6 +157,62 @@ describe("MITM proxy over real sockets", () => {
         expect(world.upstreamRequests.map((seen) => seen.url)).toEqual(["/v1/messages"]);
         expect(world.upstreamRequests[0]?.headers.host).toBe("platform.claude.com");
         expect(world.routedRequests).toEqual([]);
+        secure.destroy();
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "pumps a tap host's stream byte for byte to its real host and records both directions, parsing nothing",
+    async () => {
+      const streams: string[] = [];
+      const chunks: { dir: string; text: string }[] = [];
+      const capture: ConnectCapture = {
+        connect: () => undefined,
+        upgrade: () => {
+          throw new Error("no upgrade reaches a tap host");
+        },
+        observePassthrough: () => {
+          throw new Error("no HTTP parsing reaches a tap host");
+        },
+        tapStream: (host) => {
+          streams.push(host);
+          return {
+            onChunk: (dir, chunk) => {
+              chunks.push({ dir, text: chunk.toString("utf8") });
+            },
+            onEnd: () => undefined,
+          };
+        },
+      };
+      const world = makeTlsWorld(ca, upstreamCa, { capture, tapHosts: CONNECT_TAP_HOSTS });
+      const { connectPort, close } = await world.start();
+      try {
+        const secure = await connectThroughProxy(connectPort, "platform.claude.com", ca.certPem);
+        const echoed = await new Promise<string>((resolve, reject) => {
+          function onData(chunk: Buffer): void {
+            if (chunk.toString("utf8").includes("tap-payload")) {
+              secure.off("data", onData);
+              secure.off("error", onError);
+              resolve(chunk.toString("utf8"));
+            }
+          }
+          function onError(error: Error): void {
+            secure.off("data", onData);
+            reject(error);
+          }
+          secure.on("data", onData);
+          secure.on("error", onError);
+          secure.write("tap-payload");
+        });
+        expect(echoed).toContain("tap-payload");
+        expect(streams).toEqual(["platform.claude.com"]);
+        expect(chunks).toContainEqual({ dir: "client-to-server", text: "tap-payload" });
+        expect(chunks).toContainEqual({ dir: "server-to-client", text: "tap-payload" });
         secure.destroy();
       } finally {
         await close();

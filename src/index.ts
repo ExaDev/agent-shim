@@ -41,7 +41,7 @@ export {
   mintLeaf,
   parseConnectTarget,
   realConnectCertStore,
-  realConnectEffects,
+
   ROUTED_PATH_PREFIX,
   servedByPipeline,
   startConnectServer,
@@ -54,6 +54,7 @@ export {
   type ConnectTarget,
   type LeafCert,
 } from "./frontdoor/connect";
+export { realConnectEffects } from "./frontdoor/connectEffects";
 export { ensureFrontDoor, FrontDoorStartError, type EnsureFrontDoorPorts } from "./frontdoor/ensure";
 export { runFrontDoorSupervisor, type FrontDoorSupervisorPorts, type RunFrontDoorSupervisorOptions } from "./frontdoor/supervisor";
 export { listUsageSnapshots, readUsageSnapshot, snapshotPath, UsageSnapshotError, type UsageReadFs } from "./usage/read";

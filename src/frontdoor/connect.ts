@@ -1,13 +1,11 @@
 import { X509Certificate, createPrivateKey } from "node:crypto";
 import * as fs from "node:fs";
-import * as http from "node:http";
-import * as https from "node:https";
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
-import * as net from "node:net";
-import * as tls from "node:tls";
+import type * as net from "node:net";
 
 import { issueCaCertificate, issueLeafCertificate } from "./x509";
 import type { ConnectCapture, PassthroughObserver } from "./capture";
+import { pumpTapSession } from "./tap";
 import { CONNECT_PROXY_REALM, capabilityFromProxyAuthorization } from "./capability";
 import { FRONTDOOR_POLL_MS } from "./supervisor";
 
@@ -27,6 +25,11 @@ export const CONNECT_INTERCEPT_HOST = "api.anthropic.com";
  */
 export const CONNECT_INTERCEPT_HOSTS: readonly string[] = [CONNECT_INTERCEPT_HOST, "platform.claude.com"];
 
+/**
+ * The intercept hosts the surface never parses as HTTP: terminated with ALPN for HTTP/2 offered (the claude.ai control plane's channel offers no HTTP/1.1 byte to parse), pumped byte for byte to the real host over TLS, and teed into the capture's stream tap when capturing is on. Routing them through the HTTP/1.1 machinery instead would destroy the session at the first h2 frame; tapping preserves the channel exactly as a blind tunnel served it while making its bytes observable.
+ */
+export const CONNECT_TAP_HOSTS: readonly string[] = ["platform.claude.com"];
+
 /** Paths under this prefix are what the routed pipeline serves; everything else on the terminated session goes to the real upstream. */
 export const ROUTED_PATH_PREFIX = "/v1/";
 
@@ -37,7 +40,7 @@ export const HTTPS_PORT = 443;
 const MAX_PORT = 65535;
 
 /** What the forwarding effect answers with when the upstream is unreachable. */
-const HTTP_BAD_GATEWAY = 502;
+export const HTTP_BAD_GATEWAY = 502;
 
 /** The file mode of the CA private key: readable and writable by its owner, invisible to everyone else. */
 const CA_KEY_FILE_MODE = 0o600;
@@ -270,7 +273,7 @@ interface ConnectForwardTarget {
 type ConnectRequestHandler = (request: IncomingMessage, response: ServerResponse) => void;
 
 /** A bound loopback listener and how to stop it. */
-interface ConnectListenerHandle {
+export interface ConnectListenerHandle {
   readonly port: number;
   /** Stops accepting, ends every live connection, and resolves once the port is released. */
   readonly close: () => Promise<void>;
@@ -296,8 +299,10 @@ interface HttpParserSession {
 export interface ConnectEffects {
   /** Binds a loopback TCP listener; `preferredPort` is tried first and any free port used when it is taken (bind, do not probe: check-then-bind races). Resolves with the bound port and a close handle. */
   readonly listenLoopback: (preferredPort: number | undefined, onSocket: (socket: net.Socket) => void) => Promise<ConnectListenerHandle>;
-  /** Builds the TLS terminator for one leaf, handing each successfully handshaked session to `onSecure`. */
-  readonly createTlsAcceptor: (leaf: LeafCert, onSecure: (secure: net.Socket) => void) => TlsAcceptor;
+  /** Builds the TLS terminator for one leaf, handing each successfully handshaked session to `onSecure`. `alpnProtocols`, when given, is advertised during the handshake, which is how a tap host's session can offer HTTP/2 the way its real server does. */
+  readonly createTlsAcceptor: (leaf: LeafCert, onSecure: (secure: net.Socket) => void, alpnProtocols?: readonly string[]) => TlsAcceptor;
+  /** Opens a TLS connection to a real host, presenting its name as SNI, for a tap session's upstream half. */
+  readonly connectTlsUpstream: (host: string, port: number) => Promise<net.Socket>;
   /** Builds the HTTP parser bound to one request handler. `onUpgrade`, when given, sees every HTTP upgrade request arriving on a terminated session; the session destroys the socket afterwards either way, with or without one, matching Node's own no-listener behaviour. */
   readonly createHttpSession: (handler: ConnectRequestHandler, onUpgrade?: (request: IncomingMessage) => void) => HttpParserSession;
   /** Opens a raw TCP connection for a blind tunnel. */
@@ -324,6 +329,8 @@ export interface ConnectServerConfig {
   readonly upstreamFor: (host: string) => ConnectForwardTarget;
   /** Whether a capability presented as a CONNECT request's proxy credential belongs to a live launch: the same constant-time check against the same registry the routed pipeline's admission makes, read fresh on every call because launches come and go. */
   readonly isLiveCapability: (token: string) => boolean;
+  /** The intercept hosts that are never HTTP-parsed: terminated, tapped at the byte level, and pumped to their real host. */
+  readonly tapHosts: readonly string[];
   /** The connection deadlines and caps; production passes `CONNECT_LIMITS`. */
   readonly limits: ConnectLimits;
   /** The diagnostic tap, when capturing is enabled; absent means nothing is recorded. */
@@ -337,6 +344,9 @@ export interface ConnectServerHandle {
   readonly close: () => Promise<void>;
 }
 
+/** The ALPN protocols a tap host's TLS offers: HTTP/2 first, because that is what its real server negotiates and what the channel has proved to be, with HTTP/1.1 still allowed so a client that speaks it is served rather than refused. */
+export const TAP_ALPN_PROTOCOLS: readonly string[] = ["h2", "http/1.1"];
+
 /**
  * Starts the connect surface: binds the listener, mints the intercept host's leaf, and wires the per-connection routing. Resolves once the listener is bound.
  *
@@ -346,6 +356,16 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   // One HTTP parser per intercept host, so each handler knows by closure which host's session it serves and therefore which upstream a non-routed path is piped to. No socket-to-host bookkeeping to get wrong: the only path into a session's handler is that host's acceptor.
   const onUpgrade = config.capture === undefined ? undefined : (request: IncomingMessage) => config.capture?.upgrade(request);
   const sessions = config.interceptHosts.map((host) => {
+    if (config.tapHosts.includes(host)) {
+      const tlsAcceptor = effects.createTlsAcceptor(
+        config.leafFor(host),
+        (secure) => {
+          pumpTapSession(secure, async () => await effects.connectTlsUpstream(host, HTTPS_PORT), config.capture?.tapStream?.(host));
+        },
+        TAP_ALPN_PROTOCOLS,
+      );
+      return { host, tlsAcceptor };
+    }
     const handler: ConnectRequestHandler = (request, response) => {
       if (host === config.routedHost && servedByPipeline(request.url)) {
         config.serveRouted(request, response);
@@ -373,23 +393,24 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
       await listener.close();
       for (const { httpSession, tlsAcceptor } of sessions) {
         tlsAcceptor.close();
-        httpSession.close();
+        httpSession?.close();
       }
     },
   };
 }
 
-/** One intercept host's terminated-session machinery. */
+/** One intercept host's terminated-session machinery: an HTTP-parsed session (the API host), or a byte-tapped pump (a tap host) with no HTTP session at all. */
 interface InterceptSession {
   readonly host: string;
   readonly tlsAcceptor: TlsAcceptor;
+  readonly httpSession?: HttpParserSession;
 }
 
 /** Everything one connection's handling needs from the running surface. */
 interface ConnectionContext {
   readonly config: ConnectServerConfig;
   readonly effects: ConnectEffects;
-  readonly sessions: readonly (InterceptSession & { readonly httpSession: HttpParserSession })[];
+  readonly sessions: readonly InterceptSession[];
   readonly ledger: ConnectionLedger;
 }
 
@@ -601,166 +622,6 @@ async function blindTunnel(socket: net.Socket, target: ConnectTarget, effects: C
   });
 }
 
-/** The real `ConnectEffects` over node's own net, tls, and http. `connectTcp` opens real connections to the CONNECTed host, so tests that want a blind tunnel redirect it. */
-export function realConnectEffects(): ConnectEffects {
-  // Keep-alive on both agents so a client reusing its TLS session gets its forwarded requests served over reused upstream connections too, the way a direct connection would.
-  const plainAgent = new http.Agent({ keepAlive: true });
-  const tlsAgent = new https.Agent({ keepAlive: true });
-
-  const listenOnce = async (port: number, onSocket: (socket: net.Socket) => void): Promise<ConnectListenerHandle> =>
-    await new Promise((resolve, reject) => {
-      const accepted = new Set<net.Socket>();
-      const server = net.createServer((socket) => {
-        accepted.add(socket);
-        socket.on("close", () => {
-          accepted.delete(socket);
-        });
-        onSocket(socket);
-      });
-      server.once("error", reject);
-      server.listen(port, "127.0.0.1", () => {
-        const address = server.address();
-        // A listening TCP server's address is always the object form; the string form is for pipes and unix sockets only.
-        const bound = typeof address === "object" && address !== null ? address.port : 0;
-        if (bound === 0) {
-          reject(new Error("could not bind a loopback port"));
-          return;
-        }
-        resolve({
-          port: bound,
-          close: async () => {
-            await new Promise<void>((closeResolve) => {
-              // Stop accepting first (synchronous in the closing flag it sets, so no further connection callback can run and grow `accepted` afterwards), then end everything this listener handed out, which is what lets close's own callback fire.
-              server.close(() => {
-                closeResolve(undefined);
-              });
-              for (const socket of accepted) {
-                socket.destroy();
-              }
-            });
-          },
-        });
-      });
-    });
-
-  return {
-    listenLoopback: async (preferredPort, onSocket) => {
-      if (preferredPort !== undefined) {
-        try {
-          return await listenOnce(preferredPort, onSocket);
-        } catch {
-          // The sticky port was taken between generations; any free port will do, and the supervisor logs the move.
-        }
-      }
-      return await listenOnce(0, onSocket);
-    },
-    createTlsAcceptor: (leaf, onSecure) => {
-      const server = tls.createServer({ key: leaf.keyPem, cert: leaf.certPem }, (secure) => {
-        onSecure(secure);
-      });
-      // A failed handshake (a client that does not trust the CA, or speaks no TLS) surfaces here; the only honest response is to drop the connection.
-      server.on("clientError", (_error: Error, socket: net.Socket) => {
-        socket.destroy();
-      });
-      return {
-        // tls.Server is a net.Server whose connection listener wraps the raw socket in the TLS handshake, and emitting the event by hand is what runs that listener on a socket this process already owns (the CONNECT half of the connection) rather than one the server accepted itself.
-        accept: (socket) => {
-          server.emit("connection", socket);
-        },
-        close: () => {
-          server.close();
-        },
-      };
-    },
-    createHttpSession: (handler, onUpgrade) => {
-      const server = http.createServer(handler);
-      server.on("clientError", (_error, socket) => {
-        socket.destroy();
-      });
-      if (onUpgrade !== undefined) {
-        // A server with no 'upgrade' listener has Node destroy the connection itself; this handler sees the request through the capture and then destroys it, preserving that outcome exactly whether or not anything is being recorded.
-        server.on("upgrade", (request, socket) => {
-          onUpgrade(request);
-          socket.destroy();
-        });
-      }
-      return {
-        serve: (socket) => {
-          server.emit("connection", socket);
-        },
-        close: () => {
-          server.close();
-          server.closeAllConnections();
-        },
-      };
-    },
-    connectTcp: async (host, port) =>
-      await new Promise((resolve, reject) => {
-        const socket = net.connect({ host, port });
-        socket.once("connect", () => {
-          resolve(socket);
-        });
-        socket.once("error", reject);
-      }),
-    forwardHttp: (target, request, response, observer) => {
-      const headers = forwardableHeaders(request.headers);
-      const options: https.RequestOptions = {
-        host: target.host,
-        port: target.port,
-        method: request.method,
-        path: request.url,
-        headers,
-        agent: target.tls ? tlsAgent : plainAgent,
-      };
-      if (target.tls) {
-        options.servername = target.servername ?? target.host;
-        if (target.ca !== undefined) {
-          options.ca = [...target.ca];
-        }
-        if (target.rejectUnauthorized !== undefined) {
-          options.rejectUnauthorized = target.rejectUnauthorized;
-        }
-      }
-      const onUpstreamResponse = (upstreamResponse: http.IncomingMessage): void => {
-        observer?.onResponse(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, upstreamResponse.headers);
-        response.writeHead(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, forwardableHeaders(upstreamResponse.headers));
-        // Headers go out before the first body byte: a streaming (SSE) response must reach the client as its chunks arrive, not when it completes.
-        response.flushHeaders();
-        // Additive listeners, not a tee: the pipe keeps sole control of flow control, and the observer simply sees the same chunk deliveries the client does.
-        if (observer !== undefined) {
-          upstreamResponse.on("data", (chunk: Buffer) => {
-            observer.onResponseChunk(chunk);
-          });
-        }
-        upstreamResponse.pipe(response);
-      };
-      // Branching rather than selecting the namespace, because a union of the two module objects types `request` as `any` and loses every check on it.
-      const upstream = target.tls ? https.request(options, onUpstreamResponse) : http.request(options, onUpstreamResponse);
-      upstream.on("error", (error: Error) => {
-        if (response.headersSent) {
-          response.destroy(error);
-          return;
-        }
-        const body = `agent-shim headroom: upstream unreachable (${error.message})`;
-        response.writeHead(HTTP_BAD_GATEWAY, { "content-type": "text/plain", "content-length": String(body.length) });
-        response.end(body);
-      });
-      if (observer !== undefined) {
-        request.on("data", (chunk: Buffer) => {
-          observer.onRequestChunk(chunk);
-        });
-        response.on("close", () => {
-          observer.onEnd();
-        });
-      }
-      request.pipe(upstream);
-      request.socket.setNoDelay(true);
-      upstream.on("socket", (socket) => {
-        socket.setNoDelay(true);
-      });
-    },
-  };
-}
 
 /** Whether an fs error is "the file is not there", the only failure a missing CA read treats as absence. */
 function isEnoent(error: unknown): boolean {

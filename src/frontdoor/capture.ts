@@ -49,8 +49,19 @@ export interface PassthroughObserver {
   readonly onEnd: () => void;
 }
 
+/** The direction one tapped byte chunk flowed, named from the session's point of view. */
+type StreamDirection = "client-to-server" | "server-to-client";
+
+/** The byte-level tap for one terminated stream whose protocol the surface does not parse: every chunk both directions, then the end. */
+export interface StreamTap {
+  readonly onChunk: (direction: StreamDirection, chunk: Readonly<Buffer>) => void;
+  readonly onEnd: () => void;
+}
+
 /** The tap the connect surface drives. `undefined` everywhere means "not capturing"; one object covers the whole door process. */
 export interface ConnectCapture {
+  /** Opens the byte-level tap for one host's terminated stream, whose chunks are recorded verbatim (text, or base64 when not valid UTF-8) under the same caps as piped bodies. Optional because a capture can be stream-silent by construction. */
+  readonly tapStream?: (host: string) => StreamTap;
   /** Records one authenticated CONNECT target: the host and port only, since a blind tunnel's bytes are unreadable by construction. */
   readonly connect: (target: { readonly host: string; readonly port: number }, intercepted: boolean) => void;
   /** Records one non-routed request's head and returns the observer its forwarding drives, so the capture correlates every later chunk with the request it belongs to. */
@@ -126,6 +137,40 @@ export function createFileCapture(file: string, now: () => Date = () => new Date
     },
     upgrade: (request) => {
       append({ kind: "upgrade", method: request.method ?? "?", url: request.url ?? "?", headers: redactHeaders(request.headers) });
+    },
+    tapStream: (host) => {
+      nextId += 1;
+      const id = nextId;
+      append({ kind: "stream", id, host });
+      const stored: Record<StreamDirection, number> = { "client-to-server": 0, "server-to-client": 0 };
+      const sequences: Record<StreamDirection, number> = { "client-to-server": 0, "server-to-client": 0 };
+      return {
+        onChunk: (direction, chunk) => {
+          sequences[direction] += 1;
+          const budget = STREAM_LOG_CAP_BYTES - stored[direction];
+          if (budget <= 0) {
+            return;
+          }
+          const excerpt = chunk.subarray(0, Math.min(CHUNK_LOG_CAP_BYTES, budget));
+          stored[direction] += excerpt.length;
+          // A chunk that survives a UTF-8 round trip is stored as text, readable straight from the file; anything else (HTTP/2's binary framing, HPACK blocks) is stored as base64 so the bytes can be decoded offline without loss.
+          const text = excerpt.toString("utf8");
+          const faithful = Buffer.from(text, "utf8").equals(excerpt);
+          append({
+            kind: "stream-chunk",
+            id,
+            dir: direction,
+            seq: sequences[direction],
+            bytes: chunk.length,
+            stored: excerpt.length,
+            truncated: excerpt.length < chunk.length,
+            ...(faithful ? { body: redactText(text) } : { b64: excerpt.toString("base64") }),
+          });
+        },
+        onEnd: () => {
+          append({ kind: "stream-end", id, clientToServerCapped: stored["client-to-server"] >= STREAM_LOG_CAP_BYTES, serverToClientCapped: stored["server-to-client"] >= STREAM_LOG_CAP_BYTES });
+        },
+      };
     },
     observePassthrough: (request) => {
       nextId += 1;

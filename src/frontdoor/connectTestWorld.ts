@@ -12,12 +12,12 @@ import {
   CONNECT_LIMITS,
   createLeafCache,
   mintLeaf,
-  realConnectEffects,
   startConnectServer,
   type CaMaterial,
   type ConnectEffects,
   type ConnectLimits,
 } from "./connect";
+import { realConnectEffects } from "./connectEffects";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates in `beforeAll`. */
 export const KEYGEN_TIMEOUT_MS = 120_000;
@@ -138,7 +138,7 @@ export async function requestTimingOn(secure: tls.TLSSocket, request: string): P
 /**
  * The real-socket world the round-trip tests run against: a CA issued by `x509.ts`, a fake routed backend on plain HTTP (standing in for whatever the pipeline would serve), a fake upstream presenting TLS signed by its own CA, and the real connect surface with only its tunnel target redirected.
  */
-export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { readonly limits?: Partial<ConnectLimits>; readonly isLiveCapability?: (token: string) => boolean; readonly capture?: ConnectCapture } = {}) {
+export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { readonly limits?: Partial<ConnectLimits>; readonly isLiveCapability?: (token: string) => boolean; readonly capture?: ConnectCapture; readonly tapHosts?: readonly string[] } = {}) {
   /** Every tunnel target the surface dialled, so a refusal can be shown never to have reached one. */
   const dials: { host: string; port: number }[] = [];
   const routedRequests: { method: string; url: string; headers: http.IncomingHttpHeaders }[] = [];
@@ -173,9 +173,24 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
     socket.pipe(socket);
   });
 
+  // A TLS echo server standing in for a tap host's real upstream: it carries the same leaf as the fake HTTP upstream (both intercept hosts' names are in its SANs), so a tap session's upstream half can present the host's name and still be trusted by the test CA.
+  const tapEcho = tls.createServer({ key: upstreamLeaf.keyPem, cert: upstreamLeaf.certPem }, (socket) => {
+    socket.pipe(socket);
+  });
+
   let echoPort = 0;
+  let tapEchoPort = 0;
   const effects: ConnectEffects = {
     ...realConnectEffects(),
+    connectTlsUpstream: async (host) =>
+      await new Promise((resolve, reject) => {
+        // The real implementation dials the tap host's real server; a test always dials the local TLS echo standing in for it, presenting the host's name so the certificate matches.
+        const socket = tls.connect({ port: tapEchoPort, host: "127.0.0.1", servername: host, ca: [upstreamCa.certPem], rejectUnauthorized: true });
+        socket.once("secureConnect", () => {
+          resolve(socket);
+        });
+        socket.once("error", reject);
+      }),
     connectTcp: async (host, port) =>
       await new Promise((resolve, reject) => {
         dials.push({ host, port });
@@ -197,10 +212,13 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
       await listen(fakeUpstream);
       await listen(echoServer);
       echoPort = portOf(echoServer);
+      await listen(tapEcho);
+      tapEchoPort = portOf(tapEcho);
       routedPort = portOf(fakeRouted);
       const server = await startConnectServer(
         {
           interceptHosts: [...CONNECT_INTERCEPT_HOSTS],
+          tapHosts: options.tapHosts ?? [],
           routedHost: CONNECT_INTERCEPT_HOST,
           serveRouted: (request, response) => {
             realConnectEffects().forwardHttp({ host: "127.0.0.1", port: routedPort, tls: false }, request, response);
@@ -228,6 +246,7 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
       await closeServer(fakeRouted);
       await closeServer(fakeUpstream);
       await closeServer(echoServer);
+      await closeServer(tapEcho);
     },
   };
 }
