@@ -588,7 +588,6 @@ function routeConnect(socket: net.Socket, head: string, context: ConnectionConte
   const credential = proxyAuthorizationOf(head);
   const capability = credential === undefined ? undefined : capabilityFromProxyAuthorization(credential);
   if (capability === undefined || !config.isLiveCapability(capability)) {
-    console.error(`[upg-dbg] refused CONNECT to ${head.split("\r\n", 1)[0]?.split(" ")[1] ?? "?"} (credential ${credential === undefined ? "absent" : "present but dead"})`);
     refuse(socket, REFUSAL.proxyAuthenticationRequired, [`Proxy-Authenticate: Basic realm="${CONNECT_PROXY_REALM}"`]);
     return;
   }
