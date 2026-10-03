@@ -6,22 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigValidationError } from "./config/load";
 import type { FsPort } from "./launcher/ports";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import {
-  addProvider,
-  InvalidProviderNameError,
-  LEGACY_LITERAL_PLACEHOLDER,
-  legacyProviderConversion,
-  LegacyProviderFileError,
-  listProviders,
-  loadProvider,
-  ProviderAlreadyExistsError,
-  providerExists,
-  ProviderKindMismatchError,
-  ProviderNotFoundError,
-  readProvider,
-  removeProvider,
-  resolveProvider,
-} from "./providers";
+import { addProvider, InvalidProviderNameError, LEGACY_LITERAL_PLACEHOLDER, legacyProviderConversion, LegacyProviderFileError, listProviders, loadProvider, ProviderAlreadyExistsError, providerExists, ProviderKindMismatchError, ProviderNotFoundError, readProvider, removeProvider, resolveProvider } from "./providersStore";
 import { fakeCredentials } from "./test-helpers";
 
 /** A minimal real-filesystem `FsPort` over the temp root, so `resolveProvider` is exercised against files `addProvider` actually wrote, the same way the real launcher reads them. */

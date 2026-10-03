@@ -10,7 +10,7 @@ import { InvalidEnvBoolError } from "./cli/parsers";
 import { ConflictingIdentityError } from "./launcher/argv";
 import { ConfigureNeedsTerminalError, NoConfigProfileResolvedError, NoIdentityResolvedError } from "./configure";
 import { UnsupportedShellError } from "./completion";
-import { InvalidProviderNameError, ProviderAlreadyExistsError, ProviderNotFoundError } from "./providers";
+import { InvalidProviderNameError, ProviderAlreadyExistsError, ProviderNotFoundError } from "./providersStore";
 import { ForeignClaudeEntryError, UnsupportedShimSourceError } from "./claudeShim";
 import { ConfigValidationError } from "./config/load";
 import { InvalidCliCategoryError, InvalidCliEntryKeyError } from "./launcher/cliOverride";

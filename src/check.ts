@@ -23,7 +23,7 @@ import type { FarmFs, RunPort } from "./launcher/ports";
 import { resolveClaudeHome, type LayoutPaths } from "./paths";
 import { collectPoolPick, type PoolPickReport } from "./pools";
 import { PoolNotFoundError } from "./poolStore";
-import { cascadeProviderName, LegacyProviderFileError, readProvider } from "./providers";
+import { cascadeProviderName, LegacyProviderFileError, readProvider } from "./providersStore";
 import {
   realFarmFs,
   realFsPort,

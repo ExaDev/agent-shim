@@ -28,7 +28,7 @@ import { isMovingGitSource } from "./headroom/source";
 import { HeadroomStateSchema } from "./headroom/state";
 import { isIdentityDirectoryName } from "./identityManager";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
-import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providers";
+import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providersStore";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
 import { poolNameOf } from "./launcher/identity";
 import type { RunPort } from "./launcher/ports";
