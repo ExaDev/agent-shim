@@ -146,7 +146,6 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
   let routedPort = 0;
 
   const fakeRouted = http.createServer((req, res) => {
-    routedRequests.push({ method: req.method ?? "", url: req.url ?? "", headers: { ...req.headers } });
     void handleFakeRouted(req, res);
   });
   async function handleFakeRouted(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -234,6 +233,7 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
           tapHosts: options.tapHosts ?? [],
           routedHost: CONNECT_INTERCEPT_HOST,
           serveRouted: (request, response) => {
+            routedRequests.push({ method: request.method ?? "", url: request.url ?? "", headers: { ...request.headers } });
             realConnectEffects().forwardHttp({ host: "127.0.0.1", port: routedPort, tls: false }, request, response);
           },
           leafFor: createLeafCache(ca, () => new Date()),

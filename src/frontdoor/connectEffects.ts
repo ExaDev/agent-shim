@@ -59,10 +59,12 @@ export function realConnectEffects(): ConnectEffects {
       return await listenOnce(0, onSocket);
     },
     createTlsAcceptor: (leaf, onSecure, alpnProtocols) => {
+      // The context `accept` was last called with, read inside the same synchronous stack as the handshake's connection event, so each session receives exactly its own connection's context with no interleaving.
+      let pendingContext = "";
       const server = tls.createServer(
         { key: leaf.keyPem, cert: leaf.certPem, ...(alpnProtocols === undefined ? {} : { ALPNProtocols: [...alpnProtocols] }) },
         (secure) => {
-          onSecure(secure);
+          onSecure(secure, pendingContext);
         },
       );
       // A failed handshake (a client that does not trust the CA, or speaks no TLS) surfaces here; the only honest response is to drop the connection.
@@ -71,7 +73,8 @@ export function realConnectEffects(): ConnectEffects {
       });
       return {
         // tls.Server is a net.Server whose connection listener wraps the raw socket in the TLS handshake, and emitting the event by hand is what runs that listener on a socket this process already owns (the CONNECT half of the connection) rather than one the server accepted itself.
-        accept: (socket) => {
+        accept: (socket, context) => {
+          pendingContext = context;
           server.emit("connection", socket);
         },
         close: () => {

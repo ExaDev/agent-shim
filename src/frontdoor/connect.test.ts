@@ -146,6 +146,28 @@ describe("MITM proxy over real sockets", () => {
   );
 
   it(
+    "admits a routed request by its tunnel's capability when the client sent no session headers, and keeps the client's own when it did",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa);
+      const { connectPort, close } = await world.start();
+      try {
+        const secure = await connectThroughProxy(connectPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+        const bare = await requestOn(secure, `POST /v1/messages HTTP/1.1\r\nHost: ${CONNECT_INTERCEPT_HOST}\r\ncontent-length: 2\r\n\r\n{}`);
+        expect(bare.statusLine).toContain(String(HTTP_OK));
+        expect(world.routedRequests[0]?.headers["x-agent-shim-auth"]).toBe(TEST_CAPABILITY);
+        const ownHeaders = await requestOn(secure, `POST /v1/messages/count_tokens HTTP/1.1\r\nHost: ${CONNECT_INTERCEPT_HOST}\r\nx-agent-shim-auth: the-clients-own\r\ncontent-length: 2\r\n\r\n{}`);
+        expect(ownHeaders.statusLine).toContain(String(HTTP_OK));
+        expect(world.routedRequests[1]?.headers["x-agent-shim-auth"]).toBe("the-clients-own");
+        secure.destroy();
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
     "relays a websocket upgrade on the API host's session byte for byte, carrying the 101 handshake and the frames after it",
     async () => {
       const world = makeTlsWorld(ca, upstreamCa);
