@@ -1,3 +1,17 @@
+## [7.3.0](https://github.com/ExaDev/agent-shim/compare/v7.2.0...v7.3.0) (2026-10-03)
+
+### Features
+
+* **frontdoor:** decide capture from the environment in one testable place ([ce0323b](https://github.com/ExaDev/agent-shim/commit/ce0323b9797cd2fc0a44356b56a491d542517120))
+
+### Bug Fixes
+
+* **frontdoor:** keep the capture env constant module-private ([8688cc7](https://github.com/ExaDev/agent-shim/commit/8688cc735cd2a424faf7519f01488ffb82d016c1))
+
+### Documentation
+
+* name the Keychain credential hash's derivation from the farm path ([9c3ae92](https://github.com/ExaDev/agent-shim/commit/9c3ae927303683babeb18818acfaed763416ae16))
+
 ## [7.2.0](https://github.com/ExaDev/agent-shim/compare/v7.1.3...v7.2.0) (2026-10-03)
 
 ### Features
