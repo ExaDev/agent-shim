@@ -152,11 +152,13 @@ function headroomPidRunning(pid: number): boolean {
 /**
  * Environment for the supervised headroom proxy. `HEADROOM_HTTP2` defaults to `0`: headroom's HTTP/2 upstream pool multiplexes every request over shared keep-alive connections, and when a provider retires one (GOAWAY is routine load-balancer behaviour, not an error) every in-flight request on it dies at once; headroom retries exactly once, and that retry regularly lands on another dying connection from the same co-aged pool, which surfaces to Claude Code as "No response from API" after its full timeout budget. HTTP/1.1 gives each request its own connection, so a retirement can only kill the one request already being retried. An explicit `HEADROOM_HTTP2` in the parent environment wins, so the default can be overridden without editing agent-shim once headroom fixes its pool management.
  */
-export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readonly string[], settings: Readonly<HeadroomSettings>): NodeJS.ProcessEnv {
+export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readonly string[], settings: Readonly<HeadroomSettings>, caBundle?: string): NodeJS.ProcessEnv {
   return {
     ...parentEnv,
     HEADROOM_ALLOWED_BASE_URLS: allowlist.join(","),
     HEADROOM_HTTP2: parentEnv.HEADROOM_HTTP2 ?? "0",
+    // A transparent-interception deployment redirects the API host's address machine-wide, so headroom's own Python dials reach the front door's leaf instead of the origin's public certificate, and Python trusts only the system store: point its two trust variables (urllib3/httpx read both) at the door's combined bundle, which carries the system-equivalent anchors alongside the door's CA. An explicit value in the parent environment always wins, exactly like HEADROOM_HTTP2.
+    ...(caBundle === undefined || parentEnv.REQUESTS_CA_BUNDLE !== undefined || parentEnv.SSL_CERT_FILE !== undefined ? {} : { REQUESTS_CA_BUNDLE: caBundle, SSL_CERT_FILE: caBundle }),
     ...settingsEnv(settings),
   };
 }
@@ -203,13 +205,15 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
     isPortFree: realIsPortFree,
     readConfig: () => resolveSupervisorConfig(readGlobalConfig(paths)?.headroom ?? {}),
     spawnHeadroom: (port, allowlist, settings) => {
+      // The door's combined CA bundle, when a door has ever run on this root: under transparent interception headroom needs the door's CA trusted, and on a normal root the bundle simply also holds the system-equivalent anchors, so passing it is never wrong.
+      const caBundle = fs.existsSync(paths.frontdoorCaCertFile) ? fs.readFileSync(paths.frontdoorCaCertFile, "utf8") : undefined;
       fs.mkdirSync(paths.logsDir, { recursive: true });
       const logFd = fs.openSync(paths.headroomLogPath, "a");
       try {
         const child = spawn("headroom", ["proxy", "--host", "127.0.0.1", "--port", String(port), ...settingsArgs(settings)], {
           detached: true,
           stdio: ["ignore", logFd, logFd],
-          env: headroomSpawnEnv(process.env, allowlist, settings),
+          env: headroomSpawnEnv(process.env, allowlist, settings, caBundle),
         });
         if (child.pid === undefined) {
           throw new Error("spawning headroom returned no pid");

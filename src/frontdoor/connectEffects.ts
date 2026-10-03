@@ -1,15 +1,93 @@
+import * as dns from "node:dns";
 import * as http from "node:http";
 import * as https from "node:https";
+import type { LookupFunction } from "node:net";
 import * as net from "node:net";
 import * as tls from "node:tls";
 
-import { HTTP_BAD_GATEWAY, forwardableHeaders, type ConnectEffects, type ConnectListenerHandle } from "./connect";
+import { HTTPS_PORT, HTTP_BAD_GATEWAY, forwardableHeaders, type ConnectEffects, type ConnectListenerHandle } from "./connect";
 
 /** The real `ConnectEffects` over node's own net, tls, and http. `connectTcp` opens real connections to the CONNECTed host, so tests that want a blind tunnel redirect it. */
+/**
+ * A DNS lookup for the door's own upstream dials that bypasses the hosts file, because a transparent-interception deployment points the intercept hosts' names at this machine in /etc/hosts: getaddrinfo (Node's default lookup) would send the door's own upstream connections straight back into the intercept port, a loop, while `dns.resolve4` asks the resolver directly and returns the real address. The SNI and Host stay the real name; only the dial address comes from DNS.
+ */
+
+/**
+ * The local source-port range the door's own upstream sockets bind, matching the pf exemption an interception deployment loads alongside the redirect: without it, the door's dial to the real address would be redirected straight back into its own transparent surface, an endless loop. Node binds one port per socket with no range option, so this hands them out in rotation and a dial that loses the race to a still-closing socket retries on the next port.
+ */
+const UPSTREAM_LOCAL_PORT_START = 47900;
+const UPSTREAM_LOCAL_PORT_END = 47919;
+let nextUpstreamLocalPort = UPSTREAM_LOCAL_PORT_START;
+
+/** The next source port for one of the door's own upstream dials, in rotation. */
+function upstreamLocalPort(): number {
+  const port = nextUpstreamLocalPort;
+  nextUpstreamLocalPort = nextUpstreamLocalPort === UPSTREAM_LOCAL_PORT_END ? UPSTREAM_LOCAL_PORT_START : nextUpstreamLocalPort + 1;
+  return port;
+}
+
+const realAddressLookup: LookupFunction = (host, _options, callback) => {
+  // An address literal is not a name to resolve; resolve4 would query DNS for it as a hostname and fail. Hand it straight back, so a loopback or otherwise-literal upstream (every test's local fake, and any loopback provider) keeps working under this lookup.
+  if (net.isIP(host) !== 0) {
+    callback(null, [{ address: host, family: net.isIP(host) }]);
+    return;
+  }
+  dns.resolve4(host, (error, addresses) => {
+    const first = addresses[0];
+    if (error !== null || first === undefined) {
+      callback(error ?? new Error(`no A record for ${host}`), [{ address: "", family: 4 }]);
+      return;
+    }
+    callback(null, [{ address: first, family: 4 }]);
+  });
+};
+
+/** The default port a plain-HTTP dial lands on when the request names none. */
+const HTTP_PORT = 80;
+
+/**
+ * Builds one raw socket for the door's own upstream dials: bound into the reserved source-port range and resolved through real DNS for a real name (the pf-exemption counterparts, keeping a redirected address's traffic from looping into the door's own transparent surface), and dialled exactly as node's own agents would for an address literal, which no redirect can name.
+ */
+function exemptDial(options: http.ClientRequestArgs, defaultPort: number): net.Socket {
+  const host = typeof options.host === "string" ? options.host : "";
+  const port = typeof options.port === "number" ? options.port : defaultPort;
+  return net.connect(net.isIP(host) === 0 ? { host, port, localPort: upstreamLocalPort(), lookup: realAddressLookup } : { host, port });
+}
+
+/**
+ * The request's own servername (which a forwarding target may set to the real host it stands in for) outranks the dial address: presenting the dial address instead would fail the handshake against a stand-in whose certificate names the real host.
+ */
+function requestServername(options: http.ClientRequestArgs, fallback: string): string {
+  return "servername" in options && typeof options.servername === "string" && options.servername !== "" ? options.servername : fallback;
+}
+
+/** The plain-HTTP sibling; http.Agent and https.Agent each carry their protocol, and one cannot serve the other's requests. */
+export class ExemptHttpAgent extends http.Agent {
+  createConnection(options: http.ClientRequestArgs): net.Socket {
+    return exemptDial(options, HTTP_PORT);
+  }
+}
+
+/** The TLS sibling: the door's keep-alive agent for https upstreams, every real-name socket in the pf-exempt source-port range. */
+export class ExemptTlsAgent extends https.Agent {
+  createConnection(options: http.ClientRequestArgs): net.Socket {
+    const host = typeof options.host === "string" ? options.host : "";
+    // The request's own TLS facts ride in the options (a forwarding target's servername, its trust anchors for a stand-in upstream, its verification stance): node's own agent consumes them, so this one must too.
+    const tlsOptions: tls.ConnectionOptions = { socket: exemptDial(options, HTTPS_PORT), servername: requestServername(options, host) };
+    if ("ca" in options && Array.isArray(options.ca)) {
+      tlsOptions.ca = options.ca;
+    }
+    if ("rejectUnauthorized" in options && typeof options.rejectUnauthorized === "boolean") {
+      tlsOptions.rejectUnauthorized = options.rejectUnauthorized;
+    }
+    return tls.connect(tlsOptions);
+  }
+}
+
 export function realConnectEffects(): ConnectEffects {
-  // Keep-alive on both agents so a client reusing its TLS session gets its forwarded requests served over reused upstream connections too, the way a direct connection would.
-  const plainAgent = new http.Agent({ keepAlive: true });
-  const tlsAgent = new https.Agent({ keepAlive: true });
+  // Keep-alive on both agents so a client reusing its TLS session gets its forwarded requests served over reused upstream connections too, the way a direct connection would, with every socket in the door's pf-exempt source-port range.
+  const plainAgent = new ExemptHttpAgent();
+  const tlsAgent = new ExemptTlsAgent();
 
   const listenOnce = async (port: number, onSocket: (socket: net.Socket) => void): Promise<ConnectListenerHandle> =>
     await new Promise((resolve, reject) => {
@@ -105,12 +183,25 @@ export function realConnectEffects(): ConnectEffects {
     },
     connectTlsUpstream: async (host, port, clientAlpn) =>
       await new Promise((resolve, reject) => {
-        // The upstream half of a tap session speaks TLS to the real host, offering exactly the protocol the client negotiated with the tap's front (and nothing when the client negotiated nothing), so the channel's protocol is the client's choice, never ours.
-        const socket = tls.connect({ host, port, servername: host, ...(clientAlpn === undefined ? {} : { ALPNProtocols: [clientAlpn] }) });
-        socket.once("secureConnect", () => {
-          resolve(socket);
-        });
-        socket.once("error", reject);
+        // The upstream half of a tap session speaks TLS to the real host, offering exactly the protocol the client negotiated with the tap's front (and nothing when the client negotiated nothing), so the channel's protocol is the client's choice, never ours. The raw socket is bound into the door's reserved source-port range (the pf exemption an interception deployment loads) before TLS wraps it, because tls.connect's own options carry no localPort.
+        const dial = (localPort: number): tls.TLSSocket => {
+          const raw = net.connect({ host, port, localPort, lookup: realAddressLookup });
+          return tls.connect({ socket: raw, servername: host, ...(clientAlpn === undefined ? {} : { ALPNProtocols: [clientAlpn] }) });
+        };
+        const settle = (candidate: tls.TLSSocket): void => {
+          candidate.once("secureConnect", () => {
+            resolve(candidate);
+          });
+          candidate.once("error", (error: Error) => {
+            if ("code" in error && error.code === "EADDRINUSE") {
+              // A rotation sibling still holds this port; the next one is free by construction of the range's width.
+              settle(dial(upstreamLocalPort()));
+              return;
+            }
+            reject(error);
+          });
+        };
+        settle(dial(upstreamLocalPort()));
       }),
     connectTcp: async (host, port) =>
       await new Promise((resolve, reject) => {
@@ -125,6 +216,7 @@ export function realConnectEffects(): ConnectEffects {
       const options: https.RequestOptions = {
         host: target.host,
         port: target.port,
+        lookup: realAddressLookup,
         method: request.method,
         path: request.url,
         headers,
