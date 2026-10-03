@@ -1,3 +1,9 @@
+## [7.1.3](https://github.com/ExaDev/agent-shim/compare/v7.1.2...v7.1.3) (2026-10-03)
+
+### Documentation
+
+* note that sessions launched under the former name still reach the front door ([24dcd4c](https://github.com/ExaDev/agent-shim/commit/24dcd4ce115469360e574fbdd1cb299f81b4be9c))
+
 ## [7.1.2](https://github.com/ExaDev/agent-shim/compare/v7.1.1...v7.1.2) (2026-10-03)
 
 ### Bug Fixes
