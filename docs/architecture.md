@@ -30,10 +30,14 @@ src/
     farm.ts               # farm resync: plan -> build scratch -> reconcile/carry-over -> atomic swap -> crash recovery
     pool.ts               # resolves a `pool:<name>` selector to one member at launch (skips members that are not identities, refuses or waits when every member is refused, records the pick)
     spawn.ts              # spawnClaude — spawns the real binary, propagates its exit code
-  identityManager.ts      # the `identity` noun: add/list/show/set/remove/use/resolve-conflicts
-  configProfiles.ts       # the `profile` noun: add/set/list/show/remove/use
+  identityManager.ts      # the `identity` noun's commands: add/list/show/set/remove/use/resolve-conflicts, and the interactive wizard
+  identityStore.ts        # the identity data layer: read/add/list/change identities and their errors, with no command-line dependencies, exported by the library
+  configProfiles.ts       # the `profile` noun's commands: add/set/list/show/remove/use, and the interactive wizard
+  configProfilesStore.ts  # the configuration profile and global config data layer, with no command-line dependencies, exported by the library
   pools.ts, poolStore.ts  # the `pool` noun (add/set/list/show/remove/use/pick) and the global-config `pools` map it edits, plus `collectPoolPick`, the read-only ranking `pool pick` and `check` print
-  providers.ts            # the `provider` noun (add/set/list/show/remove) + the launch-time provider resolution the launcher calls, and the old-format provider file conversion `doctor` reports
+  providers.ts            # the `provider` noun's commands (add/set/list/show/remove)
+  providersStore.ts       # the provider data layer: read/validate/add/update/remove, the launch-time provider resolution the launcher calls, and the old-format provider file conversion `doctor` reports; no command-line dependencies, exported by the library
+  directoryRules.ts, directoryRulesStore.ts  # the `rule` noun's commands, and the directory-rules.json data layer (no command-line dependencies, exported by the library)
   credential.ts           # the shared credential block's resolver: sources tried in order behind an injected CredentialPort, presets compiled to argv, target variables, summaries that never carry a value
   headroom/                # the headroom routing daemon: coordination state, the launcher-side ensure step, the supervisor loop, and the `headroom status` / hidden `__headroom-supervisor` commands
     state.ts               # state.json, the session registry, the start lock, allowlist computation — pure over an injected HeadroomFs

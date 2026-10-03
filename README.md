@@ -159,7 +159,8 @@ src/
   cli.ts                 # entrypoint: dispatches on invoked name to launcher vs identity/profile-manager subcommands
   launcher.ts             # runLauncher: thin orchestration over launcher/*
   launcher/               # argv parsing, the ambient-credential guard, identity/profile resolution, farm resync
-  identityManager.ts, configProfiles.ts, providers.ts, directoryRules.ts   # the `identity`/`profile`/`provider`/`rule` nouns
+  identityManager.ts, configProfiles.ts, providers.ts, directoryRules.ts   # the `identity`/`profile`/`provider`/`rule` nouns' commands
+  identityStore.ts, configProfilesStore.ts, providersStore.ts, directoryRulesStore.ts, poolStore.ts   # their data layers, free of command-line dependencies and exported by the library
   program.ts, completion.ts # buildProgram (the whole command tree, side-effect free) and generated shell completion
   configure.ts, check.ts, doctor.ts, claudeShim.ts           # interactive picker, dry-run inspector, whole-tree audit, `claude` shim
   resolve/                # the pure cascade resolver: flatten, decide, extends, walk, plan, reconcile

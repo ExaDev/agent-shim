@@ -99,7 +99,7 @@ export function isIdentityDirectoryName(name: string): boolean {
 }
 
 /** One identity as reported by `listIdentities`, whose `identity.json` parsed and validated cleanly. */
-interface IdentityListEntry {
+export interface IdentityListEntry {
   readonly name: string;
   readonly identity: Identity;
   readonly isActive: boolean;
@@ -107,7 +107,7 @@ interface IdentityListEntry {
 }
 
 /** One identity whose `identity.json` is present but unreadable — malformed JSON, or valid JSON this version's `IdentitySchema` rejects. `problem` carries the reason, already flattened onto a single line. */
-interface UnreadableIdentityListEntry {
+export interface UnreadableIdentityListEntry {
   readonly name: string;
   readonly identity?: never;
   readonly isActive: boolean;
@@ -188,7 +188,7 @@ export function setAllowAmbientCredential(paths: LayoutPaths, identityName: stri
 }
 
 /** The change `setIdentityCredential` makes: new sources and/or a new target for the credential block, or `false` to remove the block and return the identity to its stored login. */
-type IdentityCredentialChange = { readonly sources?: readonly CredentialSource[]; readonly target?: CredentialTarget; readonly cache?: CredentialCache | false } | false;
+export type IdentityCredentialChange = { readonly sources?: readonly CredentialSource[]; readonly target?: CredentialTarget; readonly cache?: CredentialCache | false } | false;
 
 /**
  * Sets, changes or removes `identityName`'s credential block. New `sources` replace the whole ordered list (the order is the meaning); a `target` alone keeps the existing sources, and so needs a credential block to exist already. Throws `IdentityNotFoundError` when the identity does not exist, and `UsageError` when only a target is given for an identity with no credential yet.

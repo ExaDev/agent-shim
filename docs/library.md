@@ -12,6 +12,7 @@
 | Routing | `startConnectServer`, `ensureFrontDoor`, `runFrontDoorSupervisor`, `ensureHeadroom`, `runSupervisor` | Run or attach to the front door and the headroom daemon |
 | Usage | `readUsageSnapshot`, `listUsageSnapshots`, `UsageSnapshotSchema` | Read the per-identity usage snapshot a statusline shows |
 | Guard | `detectAmbientCredential`, `evaluateAmbientCredentialGuard` | Check whether an environment variable would override an identity's login |
+| Configuration management | `addIdentity`, `listIdentities`, `setIdentityCredential`, `createProfile`, `setProfileCategories`, `addProvider`, `readProvider`, `addPool`, `addDirectoryRule`, and the rest of the `*Store` modules | Create, read, list and change identities, configuration profiles, providers, pools and directory rules under a state root, exactly as the CLI does; each takes the `LayoutPaths` root and throws a typed error such as `IdentityNotFoundError` |
 | Errors | `CliError`, `UsageError`, `EXIT_FAILURE`, `EXIT_USAGE` | Tell an expected, user-facing failure from a crash |
 
 ## Example
@@ -27,6 +28,6 @@ const identity = IdentitySchema.parse(JSON.parse(readFileSync(path.join(paths.id
 
 ## What is not in the library
 
-Creating and changing identities, configuration profiles, providers, pools and directory rules, inspecting a directory (`check`), auditing the whole tree (`doctor`) and launching `claude` are CLI operations today. Scripts should call the CLI for those; every `list`, `show`, `check` and `doctor` command accepts `--json`.
+Inspecting a directory (`check`), auditing the whole tree (`doctor`) and launching `claude` are CLI operations today, and so is anything interactive (the setup wizards and prompts). Scripts should call the CLI for those; every `list`, `show`, `check` and `doctor` command accepts `--json`.
 
 The export list is guarded by `src/index.test.ts`, so removing or renaming an entry point is a deliberate, visible change.
