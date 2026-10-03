@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aliasLegacyEnv } from "./legacy";
+import { aliasLegacyEnv, aliasLegacyWireHeaders } from "./legacy";
 
 describe("aliasLegacyEnv", () => {
   it("copies a legacy variable to its current name and reports it", () => {
@@ -20,5 +20,23 @@ describe("aliasLegacyEnv", () => {
     const env: NodeJS.ProcessEnv = { PATH: "/bin" };
     expect(aliasLegacyEnv(env)).toEqual([]);
     expect(env).toEqual({ PATH: "/bin" });
+  });
+});
+
+describe("aliasLegacyWireHeaders", () => {
+  it("renames a legacy header to its current name and leaves no legacy name behind", () => {
+    expect(aliasLegacyWireHeaders({ "x-claude-use-auth": "tok", "x-claude-use-session": "s1", authorization: "Bearer t" })).toEqual({
+      "x-agent-shim-auth": "tok",
+      "x-agent-shim-session": "s1",
+      authorization: "Bearer t",
+    });
+  });
+
+  it("lets a present current header win over its legacy copy", () => {
+    expect(aliasLegacyWireHeaders({ "x-claude-use-auth": "old", "x-agent-shim-auth": "new" })).toEqual({ "x-agent-shim-auth": "new" });
+  });
+
+  it("keeps a repeated legacy header's values so admission can refuse it as malformed", () => {
+    expect(aliasLegacyWireHeaders({ "x-claude-use-auth": ["a", "b"] })).toEqual({ "x-agent-shim-auth": ["a", "b"] });
   });
 });

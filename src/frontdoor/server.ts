@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import https from "node:https";
 
 import { HTTP_STATUS } from "../codex/http";
+import { aliasLegacyWireHeaders } from "../legacy";
 import type { LeafCert } from "./connect";
 import type { PipelineRequest } from "./pipeline";
 
@@ -37,7 +38,7 @@ export function createFrontDoorServer(pipeline: (request: PipelineRequest) => Pr
       }
     });
     const handle = async (): Promise<void> => {
-      await pipeline({ method: request.method ?? "GET", url: request.url ?? "/", headers: request.headers, body: request, signal: abort.signal, response });
+      await pipeline({ method: request.method ?? "GET", url: request.url ?? "/", headers: aliasLegacyWireHeaders(request.headers), body: request, signal: abort.signal, response });
       // A request the route never read (an unrouted target answered by the pipeline's own error) must still be drained, or a client mid-body waits on a response it cannot see.
       if (!request.readableEnded) {
         request.resume();

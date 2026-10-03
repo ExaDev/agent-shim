@@ -1,3 +1,5 @@
+import type { IncomingHttpHeaders } from "node:http";
+
 /**
  * Everything agent-shim still honours from its former name, `claude-use`, so an installation, a committed project config or an exported environment written for the old name keeps working. Nothing here is consulted when the current name's equivalent is present: a current name always wins, and the legacy form is only a fallback that `agent-shim doctor` reports so it can be retired.
  */
@@ -42,4 +44,30 @@ export function aliasLegacyEnv(env: NodeJS.ProcessEnv): string[] {
     aliased.push(name);
   }
   return aliased;
+}
+
+/** Prefix of the internal `x-agent-shim-*` headers a launch's child sends to the front door. */
+export const WIRE_HEADER_PREFIX = "x-agent-shim-";
+/**
+ * The former prefix. A child launched by a release that used the old name carries its capability and identity under these names in its frozen environment for the life of the session, so a front door of a newer release must keep recognising them.
+ */
+export const LEGACY_WIRE_HEADER_PREFIX = "x-claude-use-";
+
+/**
+ * Returns `headers` with every `x-claude-use-*` header renamed to its `x-agent-shim-*` name, and no legacy name left in the result, so everything downstream (admission, the identity strip that keeps internal headers from reaching an upstream) sees only the current names. A current-name header that is also present wins and the legacy copy is dropped. Header names arrive lowercased from Node's HTTP parser.
+ */
+export function aliasLegacyWireHeaders(headers: Readonly<IncomingHttpHeaders>): IncomingHttpHeaders {
+  const result: IncomingHttpHeaders = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (!name.startsWith(LEGACY_WIRE_HEADER_PREFIX)) {
+      result[name] = value;
+    }
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.startsWith(LEGACY_WIRE_HEADER_PREFIX)) {
+      const current = `${WIRE_HEADER_PREFIX}${name.slice(LEGACY_WIRE_HEADER_PREFIX.length)}`;
+      result[current] ??= value;
+    }
+  }
+  return result;
 }
