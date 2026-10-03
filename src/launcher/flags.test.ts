@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { InvalidEnvBoolError } from "../cli/parsers";
+import { InvalidEnvBoolError } from "../cli/envBool";
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type RoutedProvider } from "./flags";
 
 describe("resolveLaunchFlags", () => {
