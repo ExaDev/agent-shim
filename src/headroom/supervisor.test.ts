@@ -21,6 +21,7 @@ import {
   type SupervisorPorts,
 } from "./supervisor";
 import type { HeadroomSettings } from "./settings";
+import { pinnedGitCommit } from "./source";
 import { hashAllowlist, headroomAllowlist, writeHeadroomState, writeSession } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.claude-use");
@@ -34,6 +35,8 @@ const OWN_PID = 4242;
 const OTHER_SUPERVISOR_PID = 5151;
 const OTHER_DAEMON_PID = 5152;
 const OTHER_DAEMON_PORT = 5100;
+/** A full commit SHA that is not the default source's pinned commit. */
+const OTHER_COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const TICKS_INSTALL_TEST = 3;
 const TICKS_SHORT = 2;
 const TICKS_CRASH_RESTART = 6;
@@ -71,6 +74,7 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
   let autoReady = true;
   let version: string | undefined = "headroom 0.39.1";
   let installOk = true;
+  let installedCommit: string | undefined = pinnedGitCommit(HEADROOM_DEFAULT_SOURCE);
   const alive = new Set<number>([process.pid]);
   const zombies = new Set<number>();
   const occupied = new Set<number>();
@@ -125,6 +129,10 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
     },
     set installOk(value: boolean) {
       installOk = value;
+    },
+    /** The commit the installed binary was built from, as its direct_url.json records it. Defaults to the default source's pinned commit, so a test that does not care sees a matching install. */
+    set installedCommit(value: string | undefined) {
+      installedCommit = value;
     },
     /** The ChildProcess exit event arriving: death observed, child reaped, no zombie remains. */
     kill(pid: number): void {
@@ -194,6 +202,7 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
       install: (spec: string) => {
         installs.push(spec);
         if (installOk) {
+          installedCommit = pinnedGitCommit(spec);
           // A successful install puts the binary on PATH, like the real one does.
           version ??= "headroom 0.39.1";
           return { ok: true };
@@ -201,6 +210,7 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
         return { ok: false, error: "uv is not installed or not on PATH (spawn ENOENT)" };
       },
       headroomVersion: () => version,
+      installedCommit: () => installedCommit,
       log: (line: string) => {
         logLines.push(line);
       },
@@ -614,6 +624,26 @@ describe("runSupervisor", () => {
     await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_INSTALL_TEST });
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/${String(SESSION_PID)}.json`)).toBeUndefined();
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/${String(ZOMBIE_SESSION_PID)}.json`)).toBeUndefined();
+  });
+
+  it("reinstalls a pinned source whose commit differs from the installed build even when no install is recorded and the version satisfies it", async () => {
+    const world = makeWorld();
+    world.installedCommit = OTHER_COMMIT;
+    await supervise(world, config, { tickLimit: TICKS_SHORT });
+    expect(world.installs).toEqual([HEADROOM_DEFAULT_SOURCE]);
+  });
+
+  it("does not reinstall a pinned source whose commit matches the installed build", async () => {
+    const world = makeWorld();
+    await supervise(world, config, { tickLimit: TICKS_SHORT });
+    expect(world.installs).toEqual([]);
+  });
+
+  it("does not compare commits for a source that follows a moving ref", async () => {
+    const world = makeWorld();
+    world.installedCommit = undefined;
+    await supervise(world, { ...config, source: "headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@main" }, { tickLimit: TICKS_SHORT });
+    expect(world.installs).toEqual([]);
   });
 
   it("reinstalls when the configured source changed since the last install", async () => {
