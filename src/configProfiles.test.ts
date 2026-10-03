@@ -5,19 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ConfigValidationError } from "./config/load";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import {
-  InvalidCategoryNameError,
-  ProfileAlreadyExistsError,
-  ProfileNotFoundError,
-  createProfile,
-  listProfiles,
-  readGlobalConfig,
-  readProfile,
-  setGlobalDefaultProfile,
-  setProfileCategories,
-  setProfileEntries,
-  setProfileLaunchFlags,
-} from "./configProfiles";
+import { InvalidCategoryNameError, ProfileAlreadyExistsError, ProfileNotFoundError, createProfile, listProfiles, readGlobalConfig, readProfile, setGlobalDefaultProfile, setProfileCategories, setProfileEntries, setProfileLaunchFlags } from "./configProfilesStore";
 
 describe("configProfiles", () => {
   let root: string;

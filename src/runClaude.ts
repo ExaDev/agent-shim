@@ -8,7 +8,7 @@ import { realPromptsPort, runProfileWizard } from "./configure";
 import { PromptCancelledError } from "./cliError";
 import { resolveOwnInstallDirs } from "./claudeShim";
 import { realFrontDoorPort } from "./frontdoor/commands";
-import { profileExists } from "./configProfiles";
+import { profileExists } from "./configProfilesStore";
 import { runIdentityWizard } from "./identityManager";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";

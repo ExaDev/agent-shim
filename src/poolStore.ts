@@ -1,5 +1,5 @@
 import { CliError } from "./cliError";
-import { readGlobalConfig } from "./configProfiles";
+import { readGlobalConfig } from "./configProfilesStore";
 import { applyPatch } from "./config/store";
 import { GlobalConfigSchema, PoolNameSchema, type Pool } from "./config/schema";
 import type { LayoutPaths } from "./paths";

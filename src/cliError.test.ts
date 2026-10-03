@@ -4,7 +4,7 @@ import { CommanderError } from "commander";
 import { CliError, EXIT_FAILURE, EXIT_USAGE, MissingInputError, PromptCancelledError, UsageError } from "./cliError";
 import { reportFatalError } from "./cliReport";
 import { IdentityAlreadyExistsError, IdentityNotFoundError, InvalidIdentityNameError } from "./identityManager";
-import { InvalidCategoryNameError, ProfileAlreadyExistsError, ProfileNotFoundError } from "./configProfiles";
+import { InvalidCategoryNameError, ProfileAlreadyExistsError, ProfileNotFoundError } from "./configProfilesStore";
 import { DirectoryRuleAlreadyExistsError, DirectoryRuleMissingTargetError, DirectoryRuleNotFoundError } from "./directoryRulesStore";
 import { InvalidEnvBoolError } from "./cli/parsers";
 import { ConflictingIdentityError } from "./launcher/argv";

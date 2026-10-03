@@ -5,7 +5,7 @@ import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { HTTP_STATUS } from "../codex/http";
-import { readGlobalConfig } from "../configProfiles";
+import { readGlobalConfig } from "../configProfilesStore";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
 import { createCodexRoutePorts } from "../codex/commands";
 import { readHeadroomState, type HeadroomFs } from "../headroom/state";
