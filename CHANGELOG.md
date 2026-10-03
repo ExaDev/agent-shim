@@ -1,3 +1,9 @@
+## [7.13.1](https://github.com/ExaDev/agent-shim/compare/v7.13.0...v7.13.1) (2026-10-03)
+
+### Bug Fixes
+
+* walk only the directories of ~/.claude that a rule can tell apart ([e388b74](https://github.com/ExaDev/agent-shim/commit/e388b7480079b7f76d059e5658e55d3d817873e8))
+
 ## [7.13.0](https://github.com/ExaDev/agent-shim/compare/v7.12.1...v7.13.0) (2026-10-03)
 
 ### Features
