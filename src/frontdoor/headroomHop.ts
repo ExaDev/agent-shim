@@ -110,8 +110,11 @@ async function forwardThroughHeadroom(
           if (!request.signal.aborted) {
             response.end();
           }
-        } catch {
-          // The client went away mid-stream, or the daemon dropped the connection: either way the response is no longer salvageable.
+        } catch (error) {
+          // The client went away mid-stream, or the daemon dropped the connection: either way the response is no longer salvageable. Only the second is a fault worth a log line, and the client having gone is told apart by its own abort signal.
+          if (!request.signal.aborted) {
+            target.log(`front door: headroom hop to 127.0.0.1:${String(port)} ended mid-stream (${request.method} ${new URL(request.url, "http://127.0.0.1").pathname}): ${error instanceof Error ? error.message : String(error)}`);
+          }
           response.destroy();
         }
         resolve(undefined);
@@ -120,7 +123,10 @@ async function forwardThroughHeadroom(
     };
     const hop = http.request({ host: "127.0.0.1", port, method: request.method, path: request.url, headers, agent: HOP_AGENT }, onUpstreamResponse);
     hop.on("error", (error: Error) => {
-      target.log(`front door: headroom hop to 127.0.0.1:${String(port)} failed: ${error.message}`);
+      // Which request and which phase decide whether this is a daemon that closed on a request it had accepted (mid-stream), one that was never reachable (before the response started), or neither: the line carries both, with the error's own code, so a recurring failure can be told apart without reproducing it.
+      const phase = response.headersSent ? "mid-stream" : "before the response started";
+      const code = "code" in error && typeof error.code === "string" ? ` ${error.code}` : "";
+      target.log(`front door: headroom hop to 127.0.0.1:${String(port)} failed (${request.method} ${new URL(request.url, "http://127.0.0.1").pathname}, ${phase}): ${error.message}${code}`);
       if (!response.headersSent) {
         response.start(HTTP_BAD_GATEWAY, { "Content-Type": "application/json" });
         void response
