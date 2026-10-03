@@ -7,6 +7,8 @@
  * - the per-identity usage snapshot a statusline or launcher reads: its schema and the reader over an injected filesystem;
  * - the state root's layout (`resolveAgentShimHome`, `resolveLayoutPaths`, `buildLayoutPaths`), which includes adopting an existing `~/.claude-use` in place, and the Zod schema and inferred type of every configuration file (identity, configuration profile, provider, pool, directory rules, global config, credential), so a tool can validate or generate them with the same definitions the CLI uses.
  *
+ * Creating and changing identities, configuration profiles, providers, pools and directory rules: the `*Store` modules, which take the state root's `LayoutPaths`, return typed values and throw `CliError` subclasses.
+ *
  * Everything the CLI alone needs (commander wiring, prompts, `doctor`, `check`) is deliberately not exported here.
  */
 
@@ -108,3 +110,72 @@ export {
   type Provider,
   type WhenCondition,
 } from "./config/schema";
+
+export {
+  addIdentity,
+  IdentityAlreadyExistsError,
+  IdentityNotFoundError,
+  identityExists,
+  InvalidIdentityNameError,
+  isIdentityDirectoryName,
+  listIdentities,
+  readActiveIdentity,
+  readIdentity,
+  removeIdentity,
+  setAllowAmbientCredential,
+  setDefaultConfigProfile,
+  setIdentityCredential,
+  useIdentity,
+  type IdentityCredentialChange,
+  type IdentityListEntry,
+  type IdentityListing,
+  type UnreadableIdentityListEntry,
+} from "./identityStore";
+export {
+  createProfile,
+  InvalidCategoryNameError,
+  listProfiles,
+  ProfileAlreadyExistsError,
+  ProfileNotFoundError,
+  profileExists,
+  readGlobalConfig,
+  readProfile,
+  removeProfile,
+  setGlobalDefaultProfile,
+  setProfileCategories,
+  setProfileEntries,
+  setProfileLaunchFlags,
+  setProfileMetadata,
+  type ProfileListEntry,
+} from "./configProfilesStore";
+export {
+  addProvider,
+  describeProviderEndpoint,
+  InvalidProviderNameError,
+  LegacyProviderFileError,
+  listProviders,
+  ProviderAlreadyExistsError,
+  ProviderKindMismatchError,
+  ProviderNotFoundError,
+  providerExists,
+  readProvider,
+  removeProvider,
+  updateProvider,
+  type AddProviderInput,
+  type ProviderListEntry,
+  type UpdateProviderInput,
+} from "./providersStore";
+export { addPool, PoolNotFoundError, readPools, removePool, requirePool, setPool } from "./poolStore";
+export {
+  addDirectoryRule,
+  DirectoryRuleAlreadyExistsError,
+  DirectoryRuleMissingTargetError,
+  DirectoryRuleNotFoundError,
+  listDirectoryRules,
+  readDirectoryRules,
+  removeDirectoryRule,
+  updateDirectoryRule,
+  writeDirectoryRules,
+  type AddDirectoryRuleOptions,
+  type UpdateDirectoryRuleOptions,
+} from "./directoryRulesStore";

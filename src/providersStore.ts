@@ -272,7 +272,7 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
 /**
  * The fields `updateProvider` changes. `sources` replaces the whole ordered source list (a list is set, not patched, since its order is its meaning); `target` changes where the token goes and keeps the sources. `env` entries merge over the existing ones and `unsetEnv` keys are then deleted.
  */
-interface UpdateProviderInput {
+export interface UpdateProviderInput {
   readonly displayName?: string;
   readonly baseUrl?: string;
   readonly sources?: readonly CredentialSource[];
