@@ -4,10 +4,11 @@ import { z } from "zod";
 import { classifyEntries } from "../config/classify";
 import type { CategoryClassification, CategoryClassificationOverlay } from "../config/schema";
 import { planReconciliation, type FarmManifest, type ListingEntry, type ReconcileAction } from "../resolve/reconcile";
-import { resolveDecisions, type ResolvedState } from "../resolve/pipeline";
+import { descendPolicyFor, resolveDecisions, type ResolvedState } from "../resolve/pipeline";
 import type { CascadeInput } from "../resolve/walk";
 import type { Diagnostic, EntryFact, EntryFacts } from "../resolve/types";
 import type { FarmPlan } from "../resolve/plan";
+import type { DescendPolicy } from "../resolve/walkPolicy";
 import { LEGACY_FARM_MANIFEST_FILENAME } from "../legacy";
 import { acquireIdentityLock, type IdentityLock } from "./lock";
 import type { FarmFs } from "./ports";
@@ -57,6 +58,8 @@ export interface BuildEntryFactsParams {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly branch?: string;
   readonly branchDetached?: boolean;
+  /** Which directories the walk enters; see `descendPolicy`. A directory not entered is recorded as one entry with its own size and mtime only, so a caller that needs subtree aggregates passes a policy that enters everything. */
+  readonly descend: DescendPolicy;
 }
 
 /**
@@ -77,7 +80,7 @@ export function buildEntryFacts(params: BuildEntryFactsParams): EntryFacts {
     let latestMtimeMs = stat.mtimeMs;
     let totalSizeBytes = stat.sizeBytes;
 
-    if (isDirectory) {
+    if (isDirectory && params.descend(rel)) {
       for (const name of [...params.fs.readdir(absolute)].sort()) {
         const child = visit(`${rel}/${name}`);
         if (child !== undefined) {
@@ -710,6 +713,7 @@ export function resyncFarm(params: ResyncFarmParams): ResyncFarmResult {
       env: params.env,
       ...(params.branch === undefined ? {} : { branch: params.branch }),
       ...(params.branchDetached === undefined ? {} : { branchDetached: params.branchDetached }),
+      descend: descendPolicyFor(params.cascade, params.home),
     });
 
     const resolved = resolveDecisions({ facts, cascade: params.cascade, classification: params.classification });

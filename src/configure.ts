@@ -29,7 +29,8 @@ import type { LogPort } from "./launcher/ports";
 import { expandTilde, isAncestorOrSelf, normaliseRulePath } from "./pathNorm";
 import { resolveClaudeHome, type LayoutPaths } from "./paths";
 import { realFarmFs, realRunPort, resolveGitBranch } from "./realPorts";
-import { resolveDecisions } from "./resolve/pipeline";
+import { descendPolicyFor, resolveDecisions } from "./resolve/pipeline";
+import { enterRulesAnd } from "./resolve/walkPolicy";
 import { walkDirectoryAncestors } from "./resolve/walk";
 import type { Decision } from "./resolve/types";
 
@@ -439,6 +440,8 @@ function buildConfigureContext(deps: RunConfigureDeps, params: RunConfigureParam
     env: process.env,
     ...(git.branch === undefined ? {} : { branch: git.branch }),
     ...(git.branchDetached === undefined ? {} : { branchDetached: git.branchDetached }),
+    // The picker lists the direct children of the path it was asked about, so the walk also enters that path and the directories on the way to it.
+    descend: enterRulesAnd(descendPolicyFor(cascade, params.home), params.path),
   });
 
   const resolved = resolveDecisions({ facts, cascade, classification });

@@ -22,7 +22,7 @@ import type { LayoutPaths } from "./paths";
 import type { PoolPickReport } from "./poolPickReport";
 import { LegacyProviderFileError, readProvider } from "./providersStore";
 import { detectEncodingAmbiguity, type EncodingAmbiguity } from "./resolve/projects";
-import { resolveDecisions, type ResolvedState } from "./resolve/pipeline";
+import { descendPolicyFor, resolveDecisions, type ResolvedState } from "./resolve/pipeline";
 import type { CascadeInput } from "./resolve/walk";
 import type { Decision, EntryFacts, FlattenedCascade } from "./resolve/types";
 
@@ -319,6 +319,7 @@ export function runCheck(params: RunCheckParams): CheckReport {
     env: params.env,
     ...(params.branch === undefined ? {} : { branch: params.branch }),
     ...(params.branchDetached === undefined ? {} : { branchDetached: params.branchDetached }),
+    descend: descendPolicyFor(params.cascade, params.home),
   });
 
   const resolved = resolveDecisions({ facts, cascade: params.cascade, classification: params.classification });
