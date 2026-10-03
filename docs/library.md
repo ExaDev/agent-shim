@@ -13,6 +13,7 @@
 | Usage | `readUsageSnapshot`, `listUsageSnapshots`, `UsageSnapshotSchema` | Read the per-identity usage snapshot a statusline shows |
 | Guard | `detectAmbientCredential`, `evaluateAmbientCredentialGuard` | Check whether an environment variable would override an identity's login |
 | Configuration management | `addIdentity`, `listIdentities`, `setIdentityCredential`, `createProfile`, `setProfileCategories`, `addProvider`, `readProvider`, `addPool`, `addDirectoryRule`, and the rest of the `*Store` modules | Create, read, list and change identities, configuration profiles, providers, pools and directory rules under a state root, exactly as the CLI does; each takes the `LayoutPaths` root and throws a typed error such as `IdentityNotFoundError` |
+| Reports | `collectCheckReport`, `collectDoctorReport`, `runCheck`, `runDoctor`, `formatCheckReport`, `formatDoctorReport`, `checkReportToJson` | Ask what a launch in a directory would share or hide (`check`), or audit the whole state root (`doctor`), and get a report object back. The `collect…` functions read this machine; `runCheck` and `runDoctor` take the facts as parameters, so they run over fakes |
 | Errors | `CliError`, `UsageError`, `EXIT_FAILURE`, `EXIT_USAGE` | Tell an expected, user-facing failure from a crash |
 
 ## Example
@@ -28,6 +29,6 @@ const identity = IdentitySchema.parse(JSON.parse(readFileSync(path.join(paths.id
 
 ## What is not in the library
 
-Inspecting a directory (`check`), auditing the whole tree (`doctor`) and launching `claude` are CLI operations today, and so is anything interactive (the setup wizards and prompts). Scripts should call the CLI for those; every `list`, `show`, `check` and `doctor` command accepts `--json`.
+Launching `claude` is a CLI operation today, and so is anything interactive (the setup wizards and prompts). Scripts should call the CLI for those; every `list`, `show`, `check` and `doctor` command accepts `--json`.
 
 The export list is guarded by `src/index.test.ts`, so removing or renaming an entry point is a deliberate, visible change.

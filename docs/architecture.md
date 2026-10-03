@@ -80,8 +80,11 @@ src/
     commands.ts               # the real translation ports (auth store, upstream fetch, usage snapshot) the front door mounts, and `codex status` reporting through it
   directoryRules.ts       # the `rule` noun: add/set/list/show/remove
   configure.ts            # `agent-shim configure` interactive picker (@clack/prompts)
-  check.ts                # `agent-shim check` dry-run inspector — cascade resolution, credential/ambient-credential/Keychain/settings-secrets diagnostics — no farm writes, no spawn
-  doctor.ts                # `agent-shim doctor` whole-tree audit — every identity/profile/extends-chain/provider/directory-rules/config.json/categories.local.json/active-identity, plus which `agent-shim` PATH actually resolves to, aggregating rather than throwing on a broken file
+  check.ts                # the `agent-shim check` command: parses options and prints the report `collectCheckReport` returns
+  checkReport.ts          # the dry-run inspector (cascade resolution, credential/ambient-credential/Keychain/settings-secrets diagnostics, no farm writes): the pure `runCheck`, its formatters and `collectCheckReport`, which reads this machine; no command-line dependencies, exported by the library
+  doctor.ts                # the `agent-shim doctor` command: parses options and prints the report `collectDoctorReport` returns
+  doctorReport.ts          # the whole-tree audit (every identity, profile, extends chain, provider, directory rule, config file, binary discoverability and PATH resolution): the pure `runDoctor`, its formatter and `collectDoctorReport`, which reads this machine; no command-line dependencies, exported by the library
+  poolPickReport.ts        # the read-only pool ranking `pool pick` and `check` print, with no command-line dependencies
   claudeShim.ts            # `agent-shim shim enable`/`disable` — the one explicit action that creates/removes a `claude`-named hardlink of the running executable; records claude-shim.json
   cli/
     bool.ts               # the one boolean vocabulary (true/1, false/0) flags and environment variables share
