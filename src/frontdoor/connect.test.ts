@@ -170,7 +170,27 @@ describe("MITM proxy over real sockets", () => {
   it(
     "relays a websocket upgrade on the API host's session byte for byte, carrying the 101 handshake and the frames after it",
     async () => {
-      const world = makeTlsWorld(ca, upstreamCa);
+      const streams: string[] = [];
+      const streamChunks: { dir: string; text: string }[] = [];
+      const capture: ConnectCapture = {
+        connect: () => undefined,
+        upgrade: (request) => {
+          streams.push(`upgrade ${request.url ?? "?"}`);
+        },
+        observePassthrough: () => {
+          throw new Error("a relayed upgrade is not piped as a request");
+        },
+        tapStream: (host) => {
+          streams.push(`stream ${host}`);
+          return {
+            onChunk: (dir, chunk) => {
+              streamChunks.push({ dir, text: chunk.toString("utf8") });
+            },
+            onEnd: () => undefined,
+          };
+        },
+      };
+      const world = makeTlsWorld(ca, upstreamCa, { capture });
       const { connectPort, close } = await world.start();
       try {
         const secure = await connectThroughProxy(connectPort, CONNECT_INTERCEPT_HOST, ca.certPem);
@@ -195,6 +215,10 @@ describe("MITM proxy over real sockets", () => {
         expect(echoed).toContain("101 Switching Protocols");
         expect(world.upstreamUpgrades).toEqual(["/wss/remote"]);
         expect(world.routedRequests).toEqual([]);
+        // The tee saw the upgrade's head and the frames after it in both directions, while the door itself parsed nothing.
+        expect(streams).toEqual([`upgrade /wss/remote`, `stream ${CONNECT_INTERCEPT_HOST}`]);
+        expect(streamChunks).toContainEqual({ dir: "client-to-server", text: "upgrade-echo" });
+        expect(streamChunks.some((chunk) => chunk.dir === "server-to-client" && chunk.text.includes("101 Switching Protocols"))).toBe(true);
         secure.destroy();
       } finally {
         await close();
