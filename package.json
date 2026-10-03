@@ -74,6 +74,8 @@
     "jiti": "^2.7.0",
     "knip": "^6.35.1",
     "lint-staged": "^17.5.0",
+    "rollup": "4.64.0",
+    "rollup-plugin-dts": "6.5.1",
     "semantic-release": "^25.0.9",
     "turbo": "^2.10.12",
     "typescript": "^6.0.3",
