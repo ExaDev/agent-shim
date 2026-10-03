@@ -1,3 +1,18 @@
+## [7.13.0](https://github.com/ExaDev/agent-shim/compare/v7.12.1...v7.13.0) (2026-10-03)
+
+### Features
+
+* prepare a launch from the library with prepareClaudeLaunch ([a63fff9](https://github.com/ExaDev/agent-shim/commit/a63fff93ab356bb320eda6729df56ad48f405493))
+
+### Code Refactoring
+
+* move the commander-free pair parsers out of the commander module ([50710b3](https://github.com/ExaDev/agent-shim/commit/50710b3d3e2a7cfb0778bc22bcc714bbeca9a113))
+* split preparing a launch from spawning the child ([c78215c](https://github.com/ExaDev/agent-shim/commit/c78215c7bfff3a78c100d24c0dd5c8c280e54ecf))
+
+### Continuous Integration
+
+* publish the former name to GitHub Packages as well ([e277936](https://github.com/ExaDev/agent-shim/commit/e2779360b29dd5c8058055069a34c0e8e9b85e56))
+
 ## [7.12.1](https://github.com/ExaDev/agent-shim/compare/v7.12.0...v7.12.1) (2026-10-03)
 
 ### Bug Fixes
