@@ -48,6 +48,7 @@ describe("library surface", () => {
       "InvalidCategoryNameError",
       "InvalidIdentityNameError",
       "InvalidProviderNameError",
+      "LaunchRefusedError",
       "LegacyProviderFileError",
       "PoolNameSchema",
       "PoolNotFoundError",
@@ -98,6 +99,8 @@ describe("library surface", () => {
       "listUsageSnapshots",
       "mintLeaf",
       "parseConnectTarget",
+      "prepareClaudeLaunch",
+      "prepareLaunch",
       "profileExists",
       "providerExists",
       "readActiveIdentity",
@@ -200,6 +203,23 @@ describe("library surface", () => {
       const check = library.collectCheckReport({ paths, cwd: root, identity: "work", env: {} });
       expect(check.identityName).toBe("work");
       expect(library.checkReportToJson(check)).toHaveProperty("identity.name", "work");
+    } finally {
+      vi.unstubAllEnvs();
+      nodeFs.rmSync(root, { recursive: true, force: true });
+      nodeFs.rmSync(claudeHome, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a launch for an identity that does not exist with a typed error carrying the launcher's own message, rather than exiting", () => {
+    const root = nodeFs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-library-"));
+    const claudeHome = nodeFs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-claude-"));
+    vi.stubEnv("AGENT_SHIM_CLAUDE_HOME", claudeHome);
+    try {
+      const attempt = (): void => {
+        library.prepareClaudeLaunch({ argv: ["@nobody"], cwd: root, env: {}, paths: library.buildLayoutPaths(root) });
+      };
+      expect(attempt).toThrow(library.LaunchRefusedError);
+      expect(attempt).toThrow(/nobody/);
     } finally {
       vi.unstubAllEnvs();
       nodeFs.rmSync(root, { recursive: true, force: true });

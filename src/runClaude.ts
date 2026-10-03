@@ -1,89 +1,18 @@
-import os from "node:os";
-import type { Pool } from "./config/schema";
-import { randomUUID } from "node:crypto";
-
-import { loadClassification } from "./config/classify";
-import { cosmiconfigReader } from "./config/load";
 import { realPromptsPort, runProfileWizard } from "./configure";
 import { PromptCancelledError } from "./cliError";
-import { resolveOwnInstallDirs } from "./claudeShim";
-import { realFrontDoorPort } from "./frontdoor/commands";
 import { profileExists } from "./configProfilesStore";
 import { runIdentityWizard } from "./identityManager";
-import { realCredentialCacheEnv } from "./realCredentialCache";
-import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
-import { runLauncher, type FarmRuntime } from "./launcher";
+import { buildFarmRuntime, realPrepareLaunchParams } from "./launchWiring";
+import { resolveLayoutPaths } from "./paths";
+import { runLauncher } from "./launcher";
 import { parseLauncherArgv } from "./launcher/argv";
 import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/identity";
-import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
-import {
-  realCredentialPort,
-  realFarmFs,
-  realFsPort,
-  realHeadroomPort,
-  realIsProcessRunning,
-  realLogPort,
-  realOwnExecutablePath,
-  realProcPort,
-  realResolveClaudeBinary,
-  realRunPort,
-  realSleepSync,
-  realSpawnPort,
-  resolveGitBranch,
-} from "./realPorts";
-
-/** Builds the farm runtime the launcher's resync step needs, wired to real filesystem, clock, git, and process facilities, plus the directory-scoped selections the launcher needs before it can resync anything. */
-function buildFarmRuntime(paths: LayoutPaths): {
-  runtime: FarmRuntime;
-  directoryIdentity?: string;
-  directoryConfigProfile?: string;
-  globalDefaultConfigProfile?: string;
-  pools?: Readonly<Record<string, Pool>>;
-} {
-  const home = os.homedir();
-  const cwd = process.cwd();
-  const read = cosmiconfigReader();
-  const classification = loadClassification(paths);
-  const loaded = loadCascadeInput({ paths, home, cwd, read });
-  const selections = readDirectorySelections(loaded);
-  const git = resolveGitBranch(realRunPort, cwd);
-
-  return {
-    runtime: {
-      fs: realFarmFs,
-      claudeHome: resolveClaudeHome(),
-      home,
-      cwd,
-      ...(git.branch === undefined ? {} : { branch: git.branch }),
-      ...(git.branchDetached === undefined ? {} : { branchDetached: git.branchDetached }),
-      classification,
-      loadCascade: (baseConfigProfile, cliOverride) =>
-        loadCascadeInput({
-          paths,
-          home,
-          cwd,
-          read,
-          ...(baseConfigProfile === undefined ? {} : { baseConfigProfile }),
-          ...(cliOverride === undefined ? {} : { cliOverride }),
-        }).input,
-      now: () => Date.now(),
-      uniqueSuffix: `${String(process.pid)}.${randomUUID()}`,
-      // Zombie-aware on purpose: a previous launcher that crashed out of a resync without releasing the lock may sit unreaped, still answering signal 0 as alive, and must read as a dead holder so this launch takes the lock over instead of timing out.
-      lock: { pid: process.pid, isRunning: realIsProcessRunning, sleep: realSleepSync },
-    },
-    ...(selections.identity === undefined ? {} : { directoryIdentity: selections.identity }),
-    ...(selections.configProfile === undefined ? {} : { directoryConfigProfile: selections.configProfile }),
-    ...(loaded.globalConfig?.defaultConfigProfile === undefined
-      ? {}
-      : { globalDefaultConfigProfile: loaded.globalConfig.defaultConfigProfile }),
-    ...(loaded.globalConfig?.pools === undefined ? {} : { pools: loaded.globalConfig.pools }),
-  };
-}
+import { realFsPort, realLogPort, realProcPort, realSpawnPort, spawnDetachedSupervisor } from "./realPorts";
 
 /** Runs the launcher pipeline. `argvOverride`, when given, replaces `realProcPort`'s own `process.argv.slice(2)`; this is what lets `agent-shim run [args...]` reach the identical pipeline the `claude` binary name uses, fed the args Commander collected instead of the real argv. */
 export async function runClaude(argvOverride?: readonly string[]): Promise<void> {
   const paths = resolveLayoutPaths();
-  const farm = buildFarmRuntime(paths);
+  const farm = buildFarmRuntime(paths, process.cwd());
 
   // On a real terminal, a launch that selects an identity or configuration profile that doesn't exist yet is offered the matching wizard before launching, so the first reference to a new name sets it up instead of failing. With no terminal (a script, CI) there is nothing to prompt on, and runLauncher refuses the missing name itself.
   let allowMissingConfigProfile = false;
@@ -147,20 +76,13 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
   }
 
   runLauncher({
-    paths,
-    fs: realFsPort,
+    ...realPrepareLaunchParams(paths, {
+      proc: argvOverride === undefined ? realProcPort : { ...realProcPort, argv: argvOverride },
+      log: realLogPort,
+      spawnDaemon: spawnDetachedSupervisor,
+      farm,
+      allowMissingConfigProfile,
+    }),
     spawn: realSpawnPort,
-    proc: argvOverride === undefined ? realProcPort : { ...realProcPort, argv: argvOverride },
-    log: realLogPort,
-    resolveClaudeBinary: realResolveClaudeBinary(resolveOwnInstallDirs(paths, realOwnExecutablePath())),
-    farm: farm.runtime,
-    headroom: realHeadroomPort(paths),
-    frontdoor: realFrontDoorPort(paths),
-    credentials: { ...realCredentialPort, cache: realCredentialCacheEnv(paths) },
-    ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
-    ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
-    ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),
-    ...(farm.pools === undefined ? {} : { pools: farm.pools }),
-    allowMissingConfigProfile,
   });
 }
