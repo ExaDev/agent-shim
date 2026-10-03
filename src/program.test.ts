@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EXIT_FAILURE, EXIT_USAGE } from "./cliError";
 import { reportFatalError } from "./cliReport";
 import { addIdentity, readActiveIdentity, readIdentity, useIdentity } from "./identityManager";
-import { createProfile, readGlobalConfig, readProfile } from "./configProfiles";
+import { createProfile, readGlobalConfig, readProfile } from "./configProfilesStore";
 import { readProvider } from "./providersStore";
 import { listDirectoryRules } from "./directoryRulesStore";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";

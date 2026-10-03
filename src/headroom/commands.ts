@@ -5,7 +5,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
-import { readGlobalConfig } from "../configProfiles";
+import { readGlobalConfig } from "../configProfilesStore";
 import { hashSettings, settingsArgs, settingsEnv, settingsOf, type HeadroomSettings } from "./settings";
 import { parseInstalledCommit } from "./source";
 import type { LayoutPaths } from "../paths";
