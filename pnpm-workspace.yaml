@@ -11,4 +11,9 @@ overrides:
   js-yaml: ^4.3.1
   nanoid: ^3.3.18
 
+# braces <=3.0.3 (GHSA-vfj7-8cjw-p6xm, stack exhaustion on deeply nested patterns) has no patched release, and it is reachable only through the dev-only semantic-release chain (micromatch), never at runtime. Remove this entry once braces, micromatch or semantic-release ships a fix; tracked in https://github.com/ExaDev/claude-use/issues/92
+auditConfig:
+  ignoreGhsas:
+    - GHSA-vfj7-8cjw-p6xm
+
 saveExact: true
