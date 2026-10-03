@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { CHUNK_LOG_CAP_BYTES, STREAM_LOG_CAP_BYTES, createFileCapture, redactBody, redactHeaders } from "./capture";
+import { CHUNK_LOG_CAP_BYTES, STREAM_LOG_CAP_BYTES, captureFromEnv, createFileCapture, redactBody, redactHeaders } from "./capture";
 
 /** The status the fake upstream answers with, named so a status literal never reads as a magic number. */
 const HTTP_UNAUTHORIZED = 401;
@@ -55,6 +55,19 @@ describe("redactBody", () => {
 
   it("leaves a body carrying no credential shapes untouched", () => {
     expect(redactBody(Buffer.from("plain bytes"))).toBe("plain bytes");
+  });
+});
+
+describe("captureFromEnv", () => {
+  it("builds a capture writing under the logs directory only for the exact value 1", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-"));
+    const on = captureFromEnv({ AGENT_SHIM_FRONTDOOR_CAPTURE: "1" }, dir);
+    expect(on).toBeDefined();
+    on?.connect({ host: "api.anthropic.com", port: 443 }, true);
+    expect(fs.readFileSync(path.join(dir, "frontdoor-capture.jsonl"), "utf8")).toContain("\"api.anthropic.com\"");
+    expect(captureFromEnv({ AGENT_SHIM_FRONTDOOR_CAPTURE: "true" }, dir)).toBeUndefined();
+    expect(captureFromEnv({ AGENT_SHIM_FRONTDOOR_CAPTURE: "" }, dir)).toBeUndefined();
+    expect(captureFromEnv({}, dir)).toBeUndefined();
   });
 });
 
