@@ -1,3 +1,16 @@
+## [7.8.0](https://github.com/ExaDev/agent-shim/compare/v7.7.0...v7.8.0) (2026-10-03)
+
+### Features
+
+* export the identity, profile, provider, pool and directory rule data layers from the library ([85c90ec](https://github.com/ExaDev/agent-shim/commit/85c90ecb609f15c18279c2325cb910e312c27a8b))
+
+### Code Refactoring
+
+* move the configuration profile data functions into configProfilesStore ([3d16088](https://github.com/ExaDev/agent-shim/commit/3d16088dc820a13ff922dcd2b1bf38173d706ba9))
+* move the directory rule data functions into directoryRulesStore ([bb80e5e](https://github.com/ExaDev/agent-shim/commit/bb80e5e68026728ca5a33490273ac28e44a43d4c))
+* move the identity data functions into identityStore ([714773d](https://github.com/ExaDev/agent-shim/commit/714773d06994eb03e85eb69d8c25ab6c9df68de7))
+* move the provider data functions into providersStore ([68c34e6](https://github.com/ExaDev/agent-shim/commit/68c34e648ade2e37fd143e1174e0470885de4b76))
+
 ## [7.7.0](https://github.com/ExaDev/agent-shim/compare/v7.6.1...v7.7.0) (2026-10-03)
 
 ### Features
