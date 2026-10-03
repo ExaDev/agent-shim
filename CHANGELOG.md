@@ -1,3 +1,9 @@
+## [7.10.0](https://github.com/ExaDev/agent-shim/compare/v7.9.0...v7.10.0) (2026-10-03)
+
+### Features
+
+* **frontdoor:** tee the relayed websocket into the capture and decode it offline ([9ba5ebd](https://github.com/ExaDev/agent-shim/commit/9ba5ebd03938206abd47cebc2ad5cd8d394bcddc))
+
 ## [7.9.0](https://github.com/ExaDev/agent-shim/compare/v7.8.0...v7.9.0) (2026-10-03)
 
 ### Features
