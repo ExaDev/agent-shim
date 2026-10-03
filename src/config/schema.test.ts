@@ -54,9 +54,8 @@ describe("CategoryMapSchema", () => {
     expect(CategoryMapSchema.safeParse({ nonsense: true }).success).toBe(false);
   });
 
-  it("expands `all` into every overridable category set to that value", () => {
+  it("expands `all: true` into every shareable category, leaving runtime closed, and `all: false` into every category", () => {
     expect(CategoryMapSchema.parse({ all: true })).toEqual({
-      runtime: true,
       history: true,
       knowledge: true,
       settings: true,
@@ -70,14 +69,21 @@ describe("CategoryMapSchema", () => {
   });
 
   it("lets an explicit named category win over `all`, regardless of key order", () => {
-    expect(CategoryMapSchema.parse({ all: true, runtime: false })).toEqual({
-      runtime: false,
-      history: true,
+    expect(CategoryMapSchema.parse({ all: true, history: false })).toEqual({
+      history: false,
       knowledge: true,
       settings: true,
     });
-    expect(CategoryMapSchema.parse({ runtime: false, all: true })).toEqual({
-      runtime: false,
+    expect(CategoryMapSchema.parse({ history: false, all: true })).toEqual({
+      history: false,
+      knowledge: true,
+      settings: true,
+    });
+  });
+
+  it("opens runtime under `all: true` only when it is named explicitly", () => {
+    expect(CategoryMapSchema.parse({ all: true, runtime: true })).toEqual({
+      runtime: true,
       history: true,
       knowledge: true,
       settings: true,

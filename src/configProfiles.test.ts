@@ -135,16 +135,16 @@ describe("configProfiles", () => {
       expect(readProfile(paths, "base")).toEqual({});
     });
 
-    it("expands all=true into every overridable category via --category", () => {
+    it("expands all=true into every shareable category, leaving runtime closed", () => {
       createProfile(paths, "base");
       const updated = setProfileCategories(paths, "base", { all: true });
-      expect(updated.categories).toEqual({ runtime: true, history: true, knowledge: true, settings: true });
+      expect(updated.categories).toEqual({ history: true, knowledge: true, settings: true });
     });
 
     it("lets an explicit category value narrow what all=true opened", () => {
       createProfile(paths, "base");
-      const updated = setProfileCategories(paths, "base", { all: true, runtime: false });
-      expect(updated.categories).toEqual({ runtime: false, history: true, knowledge: true, settings: true });
+      const updated = setProfileCategories(paths, "base", { all: true, history: false });
+      expect(updated.categories).toEqual({ history: false, knowledge: true, settings: true });
     });
   });
 

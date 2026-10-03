@@ -28,21 +28,21 @@ export function isCategoryName(name: string): name is CategoryName {
 export type CategoryMap = Partial<Record<OverridableCategory, boolean>>;
 
 /**
- * Expands the `all` pseudo-category key into every overridable category set to that same value, dropping `all` itself from the result. An explicit named category always wins over the `all` expansion regardless of where it appears relative to `all` in the input — `{ all: true, runtime: false }` means "share everything except runtime", not "runtime is false, then immediately overwritten back to true by all's own expansion". Built from `OVERRIDABLE_CATEGORIES` rather than the four names spelled out again, so a future addition to that list is covered by `all` with no change needed here.
+ * Expands the `all` pseudo-category key, dropping `all` itself from the result. `all: true` opens every category meant to be shared across identities, which is every overridable category except `runtime`: `runtime` holds live per-process and per-machine state (daemon locks and auth status, PIDs, IDE and shell snapshots) that must never be pooled across running identities, so it opens only when named explicitly. `all: false` closes every overridable category, `runtime` included, so it also closes a `runtime` an earlier layer opened. An explicit named category always wins over the `all` expansion regardless of where it appears relative to `all` in the input: `{ all: true, runtime: true }` opens `runtime` too, and `{ all: true, history: false }` means "share everything except history", not "history is false, then immediately overwritten back to true".
  *
- * This is the one shared implementation `CategoryMapSchema`'s own transform, `launcher/cliOverride.ts`'s `--category`/`AGENT_SHIM_CATEGORY_OVERRIDE` handling, and `configProfiles.ts`'s `agent-shim profile set --category` all call — so `all` means the same thing regardless of which of those three input paths it arrived through.
+ * This is the one shared implementation `CategoryMapSchema`'s own transform, `launcher/cliOverride.ts`'s `--category`/`AGENT_SHIM_CATEGORY_OVERRIDE` handling, and `configProfiles.ts`'s `agent-shim profile set --category` all call, so `all` means the same thing regardless of which of those three input paths it arrived through.
  */
 export function expandAllCategoryKey(pairs: Readonly<Record<string, boolean>>): Record<string, boolean> {
   const { all, ...rest } = pairs;
   if (all === undefined) {
     return { ...rest };
   }
-  const expanded = Object.fromEntries(OVERRIDABLE_CATEGORIES.map((category) => [category, all]));
+  const expanded = Object.fromEntries(OVERRIDABLE_CATEGORIES.filter((category) => !all || category !== "runtime").map((category) => [category, all]));
   return { ...expanded, ...rest };
 }
 
 /**
- * The category toggle map as written by hand: the four overridable categories, plus `all` as shorthand for "every overridable category at once" (expanded by `expandAllCategoryKey` above). `secret` is omitted from the shape entirely, so `{ "categories": { "secret": true } }` is rejected at parse time rather than relying solely on the resolver's runtime floor check. The closed shape is also what lets the published JSON Schema offer real key-name autocomplete, which an open record type cannot.
+ * The category toggle map as written by hand: the four overridable categories, plus `all` as shorthand for "every shareable category at once" (expanded by `expandAllCategoryKey` above). `secret` is omitted from the shape entirely, so `{ "categories": { "secret": true } }` is rejected at parse time rather than relying solely on the resolver's runtime floor check. The closed shape is also what lets the published JSON Schema offer real key-name autocomplete, which an open record type cannot.
  */
 export const CategoryMapSchema = z
   .strictObject({
