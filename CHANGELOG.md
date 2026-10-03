@@ -1,3 +1,9 @@
+## [7.6.1](https://github.com/ExaDev/agent-shim/compare/v7.6.0...v7.6.1) (2026-10-03)
+
+### Bug Fixes
+
+* **frontdoor:** replace a door older than the launcher instead of joining it ([2c3cba6](https://github.com/ExaDev/agent-shim/commit/2c3cba615799b379f4a3993ff6e35ce401676908))
+
 ## [7.6.0](https://github.com/ExaDev/agent-shim/compare/v7.5.0...v7.6.0) (2026-10-03)
 
 ### Features
