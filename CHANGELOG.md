@@ -1,3 +1,9 @@
+## [7.1.0](https://github.com/ExaDev/agent-shim/compare/v7.0.0...v7.1.0) (2026-10-03)
+
+### Features
+
+* publish the build to npm under the former claude-use name too ([573a137](https://github.com/ExaDev/agent-shim/commit/573a137c497bd75c56d71911ee6d8a42e287e9d2))
+
 ## [7.0.0](https://github.com/ExaDev/agent-shim/compare/v6.2.3...v7.0.0) (2026-10-03)
 
 ### ⚠ BREAKING CHANGES
