@@ -47,11 +47,11 @@ export function aliasLegacyEnv(env: NodeJS.ProcessEnv): string[] {
 }
 
 /** Prefix of the internal `x-agent-shim-*` headers a launch's child sends to the front door. */
-export const WIRE_HEADER_PREFIX = "x-agent-shim-";
+const WIRE_HEADER_PREFIX = "x-agent-shim-";
 /**
  * The former prefix. A child launched by a release that used the old name carries its capability and identity under these names in its frozen environment for the life of the session, so a front door of a newer release must keep recognising them.
  */
-export const LEGACY_WIRE_HEADER_PREFIX = "x-claude-use-";
+const LEGACY_WIRE_HEADER_PREFIX = "x-claude-use-";
 
 /**
  * Returns `headers` with every `x-claude-use-*` header renamed to its `x-agent-shim-*` name, and no legacy name left in the result, so everything downstream (admission, the identity strip that keeps internal headers from reaching an upstream) sees only the current names. A current-name header that is also present wins and the legacy copy is dropped. Header names arrive lowercased from Node's HTTP parser.
