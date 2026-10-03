@@ -2,6 +2,7 @@ import { HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES, HEADROOM_DEFAULT_SOURCE, type H
 import type { LayoutPaths } from "../paths";
 import { frontDoorOrigin, readFrontDoorState } from "../frontdoor/state";
 import { hashSettings, settingsOf, type HeadroomSettings } from "./settings";
+import { pinnedGitCommit } from "./source";
 import {
   hashAllowlist,
   headroomAllowlist,
@@ -68,6 +69,8 @@ export interface SupervisorPorts {
   readonly install: (spec: string) => { readonly ok: boolean; readonly error?: string };
   /** The installed `headroom --version` output, or undefined when the binary is not on PATH. */
   readonly headroomVersion: () => string | undefined;
+  /** The commit the installed headroom was built from, as the install itself records it (`direct_url.json`), or undefined when it was not installed from a git source. */
+  readonly installedCommit: () => string | undefined;
   readonly log: (line: string) => void;
 }
 
@@ -274,12 +277,15 @@ export async function runSupervisor(
   };
 
   /**
-   * Installs headroom when the binary is missing, its version fails the configured source's specifier, or the configured source changed since the last install this supervisor performed. An absent `installedSource` with a satisfying binary does NOT install: a user's own `uv tool install headroom` is a legitimate install to respect.
+   * Installs headroom when the binary is missing, its version fails the configured source's specifier, or the configured source changed since the last install this supervisor performed. An absent `installedSource` with a satisfying binary does NOT install: a user's own `uv tool install headroom` is a legitimate install to respect. A source that pins a commit is the exception: the install must have been built from exactly that commit, whatever the record says.
    */
   const ensureInstalled = (): boolean => {
     const version = ports.headroomVersion();
     const versionOk = version !== undefined && versionSatisfies(version, config.source);
-    if (versionOk && (installedSource === undefined || installedSource === config.source)) {
+    // A source that pins a commit is checked against the install itself, never against this supervisor's own record of what it installed: a record that was lost or rewritten would otherwise adopt whatever build happens to be present as the pinned one.
+    const pinned = pinnedGitCommit(config.source);
+    const commitOk = pinned === undefined || ports.installedCommit() === pinned;
+    if (versionOk && commitOk && (installedSource === undefined || installedSource === config.source)) {
       // Adopting the satisfying install as this source's: an absent record with a healthy binary is a user's own install to respect, and recording it here is what stops every later tick reading as source drift.
       installedSource = config.source;
       return true;

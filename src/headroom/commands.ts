@@ -1,11 +1,13 @@
 import fs from "node:fs";
 import net from "node:net";
+import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { readGlobalConfig } from "../configProfiles";
 import { hashSettings, settingsArgs, settingsEnv, settingsOf, type HeadroomSettings } from "./settings";
+import { parseInstalledCommit } from "./source";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realIsPortFree, realIsProcessRunning, realSleepSync } from "../realPorts";
 import {
@@ -159,6 +161,30 @@ export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readon
   };
 }
 
+/** The `uv tool` name headroom installs under, which is its distribution name. */
+const HEADROOM_TOOL_NAME = "headroom-ai";
+
+/**
+ * The commit the `uv tool` install of headroom was built from, read from the `direct_url.json` in its dist-info, or undefined when `uv` cannot say, the tool is absent, or it was not installed from a git source.
+ */
+function readInstalledHeadroomCommit(): string | undefined {
+  const toolDir = spawnSync("uv", ["tool", "dir"], { encoding: "utf8" });
+  if (toolDir.status !== 0) {
+    return undefined;
+  }
+  const libDir = path.join(toolDir.stdout.trim(), HEADROOM_TOOL_NAME, "lib");
+  for (const python of realFarmFs.readdir(libDir)) {
+    const sitePackages = path.join(libDir, python, "site-packages");
+    for (const entry of realFarmFs.readdir(sitePackages)) {
+      if (entry.startsWith("headroom_ai-") && entry.endsWith(".dist-info")) {
+        const directUrl = realFarmFs.readFileUtf8(path.join(sitePackages, entry, "direct_url.json"));
+        return directUrl === undefined ? undefined : parseInstalledCommit(directUrl);
+      }
+    }
+  }
+  return undefined;
+}
+
 /** The real `SupervisorPorts`: real processes, ports, clock, filesystem, and network. */
 function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
   return {
@@ -242,6 +268,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
       const result = spawnSync("headroom", ["--version"], { encoding: "utf8" });
       return result.status === 0 ? result.stdout.trim() : undefined;
     },
+    installedCommit: readInstalledHeadroomCommit,
     log: (line) => {
       fs.mkdirSync(paths.logsDir, { recursive: true });
       fs.appendFileSync(paths.headroomLogPath, `${new Date().toISOString()} ${line}\n`);
