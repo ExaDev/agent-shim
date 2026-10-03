@@ -94,7 +94,11 @@ export function formatHeadroomStatus(status: HeadroomStatus): string[] {
   if (status.sessions.length === 0) {
     lines.push("sessions: none");
   } else {
-    const pids = status.sessions.map((session) => `${String(session.pid)}${session.alive ? "" : " (dead)"}`);
+    const pids = status.sessions.map(
+      (session) =>
+        `${String(session.pid)}${session.alive ? "" : " (dead)"}` +
+        (session.supervisorPid === status.state.supervisorPid ? "" : ` on superseded supervisor ${String(session.supervisorPid)}`),
+    );
     lines.push(`sessions: ${String(status.sessions.length)} registered (${pids.join(", ")})`);
   }
   if (status.state.lastError !== undefined) {

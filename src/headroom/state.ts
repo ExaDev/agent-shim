@@ -41,8 +41,10 @@ export type HeadroomFs = Pick<
   "mkdirp" | "mkdirPrivate" | "readFileUtf8" | "writeFileUtf8" | "writeFilePrivate" | "writeFileExclusive" | "readdir" | "removeRecursive"
 >;
 
-/** The record held in one session-registry file. */
-const HeadroomSessionSchema = z.strictObject({ pid: z.number().int().positive(), startedAt: z.number() });
+/**
+ * The record held in one session-registry file. `supervisorPid` names the supervisor whose daemon the launch connected to: several supervisors can be alive at once (a superseded one keeps serving the sessions it already has), and each must judge idle shutdown and drift restarts by its own sessions only, or none would ever retire.
+ */
+const HeadroomSessionSchema = z.strictObject({ pid: z.number().int().positive(), startedAt: z.number(), supervisorPid: z.number().int().positive() });
 export type HeadroomSession = z.infer<typeof HeadroomSessionSchema>;
 
 /** The exclusive-create start lock's recorded holder. */
@@ -155,6 +157,11 @@ export function listSessions(fs: HeadroomFs, sessionsDir: string): readonly Head
     }
   }
   return sessions.sort((a, b) => a.pid - b.pid);
+}
+
+/** The registry entries recorded against one supervisor: the sessions whose daemon that supervisor is responsible for keeping up. */
+export function sessionsForSupervisor(fs: HeadroomFs, sessionsDir: string, supervisorPid: number): readonly HeadroomSession[] {
+  return listSessions(fs, sessionsDir).filter((session) => session.supervisorPid === supervisorPid);
 }
 
 /**

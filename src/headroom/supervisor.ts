@@ -6,10 +6,10 @@ import {
   hashAllowlist,
   headroomAllowlist,
   headroomUpstreams,
-  listSessions,
   pruneDeadSessions,
   readAllProviders,
   readHeadroomState,
+  sessionsForSupervisor,
   writeHeadroomState,
   type HeadroomFs,
   type HeadroomState,
@@ -230,6 +230,15 @@ export async function runSupervisor(
   let config = initialConfig;
 
   const previousState = readHeadroomState(fs, paths.headroomStateFile);
+  if (
+    previousState?.supervisorPid !== undefined &&
+    previousState.supervisorPid !== ports.ownPid &&
+    ports.isRunning(previousState.supervisorPid)
+  ) {
+    // Another live supervisor already keeps headroom up for every launch: a second daemon would only split the sessions, and "taking over" the state file would repoint new launches while the first supervisor keeps serving (and later rewriting) its own.
+    ports.log(`claude-use headroom supervisor ${String(ports.ownPid)}: supervisor ${String(previousState.supervisorPid)} already owns the daemon; exiting`);
+    return 0;
+  }
   let installedSource = previousState?.installedSource;
   // The sticky address, inherited from the previous generation and updated on every successful start: even a fatal give-up keeps it, so the next generation starts where this one served.
   let lastPort = previousState?.lastPort;
@@ -237,12 +246,29 @@ export async function runSupervisor(
   /** The sticky address, attached to every state write so the next generation inherits it whatever else the write says. */
   const sticky = (): Pick<HeadroomState, "lastPort"> => (lastPort === undefined ? {} : { lastPort });
 
+  /**
+   * Whether this supervisor may write state.json: no other live supervisor is recorded there. An absent file or a dead owner is claimable, so a deleted or stale file heals itself, and the loser of two simultaneous claims finds the winner's pid at its next write and stands down.
+   */
+  const ownsState = (): boolean => {
+    const owner = readHeadroomState(fs, paths.headroomStateFile)?.supervisorPid;
+    return owner === undefined || owner === ports.ownPid || !ports.isRunning(owner);
+  };
+
+  /**
+   * Writes state.json unless another live supervisor owns it, returning whether it wrote. A superseded supervisor keeps serving the sessions it already has but must not overwrite the owner's record: state.json names the daemon new launches connect to, and a crash-restart here would repoint them at a daemon being drained.
+   */
+  const writeOwnState = (state: Readonly<HeadroomState>): boolean => {
+    if (!ownsState()) {
+      return false;
+    }
+    writeHeadroomState(fs, paths.headroomStateFile, state);
+    return true;
+  };
+
   const fail = (message: string): number => {
-    writeHeadroomState(fs, paths.headroomStateFile, {
-      lastError: message,
-      ...sticky(),
-    });
-    fs.removeRecursive(paths.headroomLockFile);
+    if (writeOwnState({ lastError: message, ...sticky() })) {
+      fs.removeRecursive(paths.headroomLockFile);
+    }
     ports.log(`claude-use headroom supervisor: ${message}`);
     return 1;
   };
@@ -273,7 +299,7 @@ export async function runSupervisor(
   const version = ports.headroomVersion() ?? "unknown";
 
   // Fresh ownership: whatever came before, this supervisor is now the one keeping headroom alive. The sticky address is carried over so a new generation starts where the last one served.
-  writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: ports.ownPid, version, installedSource, ...sticky() });
+  writeOwnState({ supervisorPid: ports.ownPid, version, installedSource, ...sticky() });
   ports.log(`claude-use headroom supervisor ${String(ports.ownPid)}: managing headroom on allowlist [${allowlistOf(ports).join(", ")}]`);
 
   const orphanPid = previousState?.headroomPid;
@@ -288,6 +314,7 @@ export async function runSupervisor(
   let runningSettingsHash: string | undefined;
   let consecutiveFailures = 0;
   let idleSince: number | undefined;
+  let superseded = false;
   let ticks = 0;
 
   for (;;) {
@@ -301,6 +328,11 @@ export async function runSupervisor(
     const allowlist = allowlistOf(ports);
     const allowlistHash = hashAllowlist(allowlist);
     pruneDeadSessions(fs, paths.headroomSessionsDir, ports.isRunning);
+    const ownsNow = ownsState();
+    if (!ownsNow && !superseded) {
+      ports.log("claude-use headroom supervisor: another supervisor now owns state.json; serving this daemon's own sessions until they end");
+    }
+    superseded = !ownsNow;
 
     const crashed = headroomPid !== undefined && !ports.isRunning(headroomPid);
     if (headroomPid === undefined || crashed) {
@@ -310,7 +342,7 @@ export async function runSupervisor(
         runningHash = undefined;
         runningSettingsHash = undefined;
         // Clear the daemon fields immediately: until the replacement is ready, state must not claim a serving port for a process that just died, or `headroom status` and waiting launchers read a healthy daemon that no longer exists. The front door reads the port live and its headroom hop answers 502 until the daemon is back. `lastPort` stays, so the replacement restarts on the same address.
-        writeHeadroomState(fs, paths.headroomStateFile, {
+        writeOwnState({
           supervisorPid: ports.ownPid,
           version,
           installedSource,
@@ -341,7 +373,7 @@ export async function runSupervisor(
             `claude-use headroom supervisor: sticky port ${String(previousSticky)} was occupied; moving to ${String(port)} (sessions launched against the old port are stale until they relaunch)`,
           );
         }
-        writeHeadroomState(fs, paths.headroomStateFile, {
+        const recorded = writeOwnState({
           supervisorPid: ports.ownPid,
           headroomPid: pid,
           port,
@@ -351,8 +383,10 @@ export async function runSupervisor(
           installedSource: config.source,
           ...sticky(),
         });
-        // The start lock has done its job: state now names a live supervisor, so every future launcher finds it there instead.
-        fs.removeRecursive(paths.headroomLockFile);
+        if (recorded) {
+          // The start lock has done its job: state now names a live supervisor, so every future launcher finds it there instead.
+          fs.removeRecursive(paths.headroomLockFile);
+        }
         idleSince = undefined;
         ports.log(`claude-use headroom supervisor: headroom pid ${String(pid)} ready on 127.0.0.1:${String(port)}`);
       } else {
@@ -366,9 +400,9 @@ export async function runSupervisor(
         continue;
       }
     } else {
-      // Running: drift first. A changed allowlist, install spec or setting means the daemon would run differently from what the configuration asks for, but restarting would cut off live sessions, so it waits for a quiet registry.
+      // Running: drift first. A changed allowlist, install spec or setting means the daemon would run differently from what the configuration asks for, but restarting would cut off live sessions, so it waits until none is registered against this supervisor.
       if (runningHash !== allowlistHash || runningSettingsHash !== settingsHash || installedSource !== config.source) {
-        if (listSessions(fs, paths.headroomSessionsDir).length === 0) {
+        if (sessionsForSupervisor(fs, paths.headroomSessionsDir, ports.ownPid).length === 0) {
           ports.log("claude-use headroom supervisor: configuration drifted and no sessions are live; restarting headroom");
           ports.stopProcess(headroomPid);
           headroomPid = undefined;
@@ -378,7 +412,7 @@ export async function runSupervisor(
         }
       }
 
-      const sessions = listSessions(fs, paths.headroomSessionsDir);
+      const sessions = sessionsForSupervisor(fs, paths.headroomSessionsDir, ports.ownPid);
       if (sessions.length === 0) {
         idleSince ??= ports.now();
         const idleMs = ports.now() - idleSince;
@@ -387,8 +421,8 @@ export async function runSupervisor(
             `claude-use headroom supervisor: no sessions for ${String(config.idleShutdownMinutes)} minute(s); stopping headroom and exiting`,
           );
           ports.stopProcess(headroomPid);
-          // The sticky address survives the shutdown so the next generation starts where this one served.
-          writeHeadroomState(fs, paths.headroomStateFile, {
+          // The sticky address survives the shutdown so the next generation starts where this one served. A superseded supervisor leaves the new owner's record alone.
+          writeOwnState({
             version,
             ...sticky(),
           });

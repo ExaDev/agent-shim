@@ -26,7 +26,7 @@ function aliveWorld() {
     version: "headroom 0.39.1",
     allowlistHash: hashAllowlist(headroomAllowlist([{ baseUrl: "https://api.z.ai/api/anthropic" }])),
   });
-  writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_PID, startedAt: 1000 });
+  writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_PID, startedAt: 1000, supervisorPid: SUPERVISOR_PID });
   const alive = new Set([SUPERVISOR_PID, HEADROOM_PID, SESSION_PID]);
   return { fs, alive };
 }
@@ -40,7 +40,7 @@ describe("collectHeadroomStatus", () => {
     expect(status.state.port).toBe(PORT);
     expect(status.allowlist).toEqual(["https://api.anthropic.com", "https://api.z.ai/api/anthropic"]);
     expect(status.allowlistDrifted).toBe(false);
-    expect(status.sessions).toEqual([{ pid: SESSION_PID, startedAt: 1000, alive: true }]);
+    expect(status.sessions).toEqual([{ pid: SESSION_PID, startedAt: 1000, supervisorPid: SUPERVISOR_PID, alive: true }]);
   });
 
   it("marks dead pids and allowlist drift without touching anything", () => {
@@ -76,6 +76,15 @@ describe("formatHeadroomStatus", () => {
     expect(lines[3]).toBe("settings: headroom defaults");
     expect(lines[4]).toBe(`sessions: 1 registered (${String(SESSION_PID)})`);
     expect(lines.at(-1)).toBe(`daemon log: ${paths.headroomLogPath} (not created yet)`);
+  });
+
+  it("marks a session registered against a supervisor other than the one state.json names", () => {
+    const { fs, alive } = aliveWorld();
+    const superseded = 77;
+    writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_PID + 1, startedAt: 1000, supervisorPid: superseded });
+    alive.add(SESSION_PID + 1);
+    const lines = formatHeadroomStatus(collectHeadroomStatus(fs, paths, (pid) => alive.has(pid)));
+    expect(lines[4]).toBe(`sessions: 2 registered (${String(SESSION_PID)}, ${String(SESSION_PID + 1)} on superseded supervisor ${String(superseded)})`);
   });
 
   it("says plainly when nothing is running", () => {

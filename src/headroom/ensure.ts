@@ -56,7 +56,7 @@ export function ensureHeadroom(params: {
     if (state?.supervisorPid !== undefined && ports.isRunning(state.supervisorPid)) {
       const daemonUp = state.port !== undefined && state.headroomPid !== undefined && ports.isRunning(state.headroomPid);
       if (daemonUp && state.port !== undefined) {
-        writeSession(ports.fs, paths.headroomSessionsDir, { pid: params.launcherPid, startedAt: ports.now() });
+        writeSession(ports.fs, paths.headroomSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), supervisorPid: state.supervisorPid });
         return { port: state.port };
       }
       if (state.lastError !== undefined) {
