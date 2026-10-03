@@ -61,5 +61,7 @@ scoop bucket add agent-shim https://github.com/ExaDev/scoop-agent-shim
 scoop install agent-shim
 ```
 
+Scoop cannot rename a package, so the bucket also keeps a `claude-use` manifest that mirrors every release (the release workflow generates it from `agent-shim.json`). An existing `scoop install claude-use` keeps updating to the same files; new installs should use `agent-shim`.
+
 Every channel installs `agent-shim` alone — none of them install a `claude` command; `agent-shim shim enable` is the one explicit action that does, on any of them. The GitHub Release binary and Scoop ship the self-contained Node SEA build (no Node.js installation required) — macOS arm64, both Linux architectures, and both Windows architectures are all targets Node core itself tests and verifies `--build-sea` against upstream; the raw GitHub Release binary for macOS x64 is published best-effort, since Node core does not test or verify single-executable-application support on that target and the resulting binary genuinely crashes there (see [Build (Node SEA)](release-process.md#build-node-sea) below). **Homebrew and `install.sh` both work around this on macOS x64 specifically**: rather than installing that broken binary, they depend on (or check for) Node and install the same plain bundle the npm channel publishes — a real, working `agent-shim`, not a best-effort one. npm ships the plain bundle everywhere, running under whatever Node (22.18 or later, or 24 and above) you already have.
 
