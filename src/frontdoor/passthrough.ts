@@ -4,6 +4,7 @@ import type { IncomingMessage } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
 import { forwardableHeaders } from "./connect";
+import { ExemptHttpAgent, ExemptTlsAgent } from "./connectEffects";
 import type { FrontDoorRoute } from "./route";
 import { upstreamChunks } from "./server";
 
@@ -41,7 +42,7 @@ export function createPassthroughRoute(name: string, target: PassthroughTarget):
   const tls = base.protocol === "https:";
   const basePath = base.pathname.replace(/\/+$/, "");
   // Keep-alive so a session reusing its connection gets its forwarded requests served over reused upstream connections too, the way a direct connection would.
-  const agent = tls ? new https.Agent({ keepAlive: true }) : new http.Agent({ keepAlive: true });
+  const agent = tls ? new ExemptTlsAgent() : new ExemptHttpAgent();
   return {
     name,
     headroomEligible: true,
