@@ -11,7 +11,7 @@ describe("isMovingGitSource", () => {
   });
 
   it("treats a full commit SHA as fixed", () => {
-    expect(isMovingGitSource("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@eb02fa4126450c9905a49394fdec19ae2e7c9c30")).toBe(false);
+    expect(isMovingGitSource("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@ecd1c351fcfed97499721e86852e148436ff2ee6")).toBe(false);
   });
 
   it("treats a git spec with no ref as moving, since it follows the remote's default branch", () => {
