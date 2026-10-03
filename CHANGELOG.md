@@ -1,3 +1,9 @@
+## [7.12.0](https://github.com/ExaDev/agent-shim/compare/v7.11.0...v7.12.0) (2026-10-03)
+
+### Features
+
+* print JSON from the mutating commands with --json ([628527b](https://github.com/ExaDev/agent-shim/commit/628527b19847233520229cde1eda7532069508fc))
+
 ## [7.11.0](https://github.com/ExaDev/agent-shim/compare/v7.10.2...v7.11.0) (2026-10-03)
 
 ### Features
