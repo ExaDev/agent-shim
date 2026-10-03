@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { HeadroomFs } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { listFrontDoorSessions, readFrontDoorState, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, writeFrontDoorSession, writeFrontDoorState } from "./state";
 import { FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
@@ -140,6 +140,12 @@ describe("runFrontDoorSupervisor", () => {
     expect(world.directBinds).toEqual([STICKY_DIRECT_PORT]);
     expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)).toMatchObject({ supervisorPid: OWN_PID, port: STICKY_PORT, lastPort: STICKY_PORT, connectPort: STICKY_CONNECT_PORT, lastConnectPort: STICKY_CONNECT_PORT, directPort: STICKY_DIRECT_PORT, lastDirectPort: STICKY_DIRECT_PORT });
     expect(world.logs.some((line) => line.includes(`front door on 127.0.0.1:${String(STICKY_PORT)}`))).toBe(true);
+  });
+
+  it("records the wire protocol it speaks once it is serving, so a launcher can tell an older door from its own", async () => {
+    const world = makeWorld();
+    await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: 1 });
+    expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)?.protocol).toBe(FRONT_DOOR_PROTOCOL);
   });
 
   it("moves the plain listener off an occupied sticky port, logs the move, and keeps the new address as the sticky one", async () => {

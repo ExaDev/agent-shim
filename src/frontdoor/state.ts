@@ -3,6 +3,13 @@ import { z } from "zod";
 
 import type { HeadroomFs } from "../headroom/state";
 
+/**
+ * The launcher-to-door wire protocol this release speaks: the headers a launch's child presents, the capability registry's record format, and the routes. Bump it when a change would stop a door of this release serving launches made by an older one, or an older door serving this release's launches.
+ *
+ * The rule that makes a bump safe: a door accepts every lower protocol's launches (protocol 1 accepts the former `x-claude-use-*` header names), and a launcher replaces a door whose protocol is lower than its own, never one that is higher. Replacing is safe because restarts are what the door is designed for: the capability registry is on disk and the listeners keep their sticky ports, so launches already running reach the replacement on the addresses they froze at launch.
+ */
+export const FRONT_DOOR_PROTOCOL = 1;
+
 /** The record held in one front-door session-registry file: the launcher's pid plus the per-launch capability token its child presents on every request. */
 const FrontDoorSessionSchema = z.strictObject({ pid: z.number().int().positive(), startedAt: z.number(), token: z.string().min(1) });
 export type FrontDoorSession = z.infer<typeof FrontDoorSessionSchema>;
@@ -11,6 +18,10 @@ export type FrontDoorSession = z.infer<typeof FrontDoorSessionSchema>;
  * The front-door supervisor's state.json under `<home>/frontdoor/`. Every field is optional because the file exists in stages, exactly like headroom's and the old codex daemon's: a fresh supervisor writes its own pid before the listener is up, and a shut-down front door leaves only the sticky `lastPort` and any `lastError` worth surfacing.
  */
 const FrontDoorStateSchema = z.strictObject({
+  /**
+   * The launcher-to-door wire protocol this supervisor speaks, written once it is serving; absent in state written by a release that predates the field, which `ensureFrontDoor` reads as protocol 0. A launcher replaces a door whose protocol is lower than its own (see `FRONT_DOOR_PROTOCOL`).
+   */
+  protocol: z.number().int().nonnegative().optional(),
   /** The supervisor process serving the front door. Alive means both listeners are up in that process. */
   supervisorPid: z.number().int().positive().optional(),
   /** The loopback port the HTTPS provider listener serves on. Absent until the listener has bound and answered its health probe, so "port is set" is itself the ready signal a launcher polls for. */

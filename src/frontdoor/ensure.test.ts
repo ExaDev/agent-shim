@@ -4,7 +4,7 @@ import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { ensureFrontDoor, FrontDoorStartError } from "./ensure";
 import type { ListenerVerdict } from "./probe";
-import { writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { FRONT_DOOR_PROTOCOL, writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -38,6 +38,7 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
   let onSleep: (() => void) | undefined;
   const alive = new Set<number>([SUPERVISOR_PID, process.pid, OTHER_LAUNCHER_PID]);
   const spawns: number[] = [];
+  const stops: number[] = [];
   /** Ports whose listener authenticates; every other port fails the probe, the way a listener without a leaf from agent-shim's CA does. */
   const authentic = new Set<number>([PORT]);
   const probed: number[] = [];
@@ -48,14 +49,23 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
     fs,
     alive,
     spawns,
+    stops,
     authentic,
     probed,
     clock: () => clock,
     set onSleep(hook: (() => void) | undefined) {
       onSleep = hook;
     },
-    writeReadyState(port = PORT, pid = SUPERVISOR_PID): void {
-      writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: pid, port, lastPort: port, connectPort: CONNECT_PORT, lastConnectPort: CONNECT_PORT });
+    /** The state a serving supervisor records; `protocol` is the current one unless a test names another, with `null` meaning the field is absent, as in state written before it existed. */
+    writeReadyState(port = PORT, pid = SUPERVISOR_PID, protocol: number | null = FRONT_DOOR_PROTOCOL): void {
+      writeFrontDoorState(fs, paths.frontdoorStateFile, {
+        ...(protocol === null ? {} : { protocol }),
+        supervisorPid: pid,
+        port,
+        lastPort: port,
+        connectPort: CONNECT_PORT,
+        lastConnectPort: CONNECT_PORT,
+      });
     },
     /** What the recorded session file for a launcher holds, so a test can read the launch's token back. */
     sessionToken(pid: number): string | undefined {
@@ -83,6 +93,10 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
           world.writeReadyState(spawnedPort, spawnedPid);
         }
         return spawnedPid;
+      },
+      stopSupervisor: (pid: number) => {
+        stops.push(pid);
+        alive.delete(pid);
       },
       verifyListener: (port: number): ListenerVerdict => {
         probed.push(port);
@@ -130,6 +144,52 @@ describe("ensureFrontDoor", () => {
     expect(ensured.token).toMatch(/^[0-9a-f-]{36}$/);
     expect(world.sessionToken(LAUNCHER_PID)).toBe(ensured.token);
     expect(world.spawns).toHaveLength(0);
+  });
+
+  it("replaces a door from before the protocol field, stopping it only after its listener authenticated, and the replacement comes up on the same port", () => {
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT });
+    world.writeReadyState(PORT, SUPERVISOR_PID, null);
+    const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(world.stops).toEqual([SUPERVISOR_PID]);
+    expect(world.spawns).toEqual([REPLACEMENT_PID]);
+    expect(world.probed[0]).toBe(PORT);
+    expect(ensured.port).toBe(PORT);
+    expect(world.sessionToken(LAUNCHER_PID)).toBe(ensured.token);
+  });
+
+  it("replaces a door whose recorded protocol is lower than the launcher's", () => {
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID });
+    world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL - 1);
+    ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(world.stops).toEqual([SUPERVISOR_PID]);
+    expect(world.spawns).toEqual([REPLACEMENT_PID]);
+  });
+
+  it("joins a door of the same or a newer protocol without stopping it, so an older launcher never downgrades a newer door", () => {
+    for (const protocol of [FRONT_DOOR_PROTOCOL, FRONT_DOOR_PROTOCOL + 1]) {
+      const world = makeWorld();
+      world.writeReadyState(PORT, SUPERVISOR_PID, protocol);
+      ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+      expect(world.stops).toEqual([]);
+      expect(world.spawns).toEqual([]);
+    }
+  });
+
+  it("never stops a process whose listener did not authenticate, however old its recorded protocol", () => {
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: REPLACEMENT_PORT });
+    world.authentic.add(REPLACEMENT_PORT);
+    world.writeReadyState(HOSTILE_PORT, SUPERVISOR_PID, null);
+    ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(world.stops).toEqual([]);
+  });
+
+  it("fails loudly when an older door does not exit when asked", () => {
+    const world = makeWorld();
+    world.writeReadyState(PORT, SUPERVISOR_PID, null);
+    world.ports.stopSupervisor = (pid: number) => {
+      world.stops.push(pid);
+    };
+    expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(/older than this launcher/);
   });
 
   it("spawns a replacement supervisor when the recorded one is dead, the crash-recovery path every frozen base URL depends on", () => {
