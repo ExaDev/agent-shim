@@ -1,3 +1,9 @@
+## [6.2.1](https://github.com/ExaDev/claude-use/compare/v6.2.0...v6.2.1) (2026-10-03)
+
+### Bug Fixes
+
+* **headroom:** scope sessions and state writes to the owning supervisor ([db32d8a](https://github.com/ExaDev/claude-use/commit/db32d8a69a71a9abf454fbdcf6e17d2b994c467c))
+
 ## [6.2.0](https://github.com/ExaDev/claude-use/compare/v6.1.0...v6.2.0) (2026-10-02)
 
 ### Features
