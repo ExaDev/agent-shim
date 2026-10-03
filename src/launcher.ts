@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { parseEnvBool } from "./cli/parsers";
+import { parseEnvBool } from "./cli/envBool";
 import type { LayoutPaths } from "./paths";
 import { parseLauncherArgv, type ParsedLauncherArgv } from "./launcher/argv";
 import { buildCliOverride, type CliOverride } from "./launcher/cliOverride";

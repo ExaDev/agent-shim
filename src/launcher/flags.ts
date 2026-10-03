@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { parseEnvBool } from "../cli/parsers";
+import { parseEnvBool } from "../cli/envBool";
 import type { LaunchFlags, Provider } from "../config/schema";
 import { credentialVariables, type ResolvedCredential } from "../credential";
 import { mergeAnthropicCustomHeaders } from "../headroom/headers";

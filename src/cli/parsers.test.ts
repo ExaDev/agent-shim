@@ -2,16 +2,8 @@ import { InvalidArgumentError } from "commander";
 import { describe, expect, it } from "vitest";
 
 import { EXIT_USAGE } from "../cliError";
-import {
-  collectBoolPair,
-  collectRepeated,
-  collectStringPair,
-  InvalidEnvBoolError,
-  parseBool,
-  parseBoolPairList,
-  parseEnvBool,
-  parsePair,
-} from "./parsers";
+import { collectBoolPair, collectRepeated, collectStringPair, parseBool, parseBoolPairList, parsePair } from "./parsers";
+import { InvalidEnvBoolError, parseEnvBool } from "./envBool";
 
 describe("parsePair", () => {
   it("splits a simple key=value", () => {

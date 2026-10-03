@@ -6,7 +6,7 @@ import { reportFatalError } from "./cliReport";
 import { IdentityAlreadyExistsError, IdentityNotFoundError, InvalidIdentityNameError } from "./identityStore";
 import { InvalidCategoryNameError, ProfileAlreadyExistsError, ProfileNotFoundError } from "./configProfilesStore";
 import { DirectoryRuleAlreadyExistsError, DirectoryRuleMissingTargetError, DirectoryRuleNotFoundError } from "./directoryRulesStore";
-import { InvalidEnvBoolError } from "./cli/parsers";
+import { InvalidEnvBoolError } from "./cli/envBool";
 import { ConflictingIdentityError } from "./launcher/argv";
 import { ConfigureNeedsTerminalError, NoConfigProfileResolvedError, NoIdentityResolvedError } from "./configure";
 import { UnsupportedShellError } from "./completion";
