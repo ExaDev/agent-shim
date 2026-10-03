@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import type { ConfigProfile, LaunchFlags } from "./config/schema";
-import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
+import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { collectBoolPair, collectRepeated } from "./cli/parsers";
 import { PromptCancelledError, UsageError } from "./cliError";
 import { runProfileWizard } from "./configure";
@@ -41,10 +41,12 @@ function toProfileView(name: string, profile: ConfigProfile, globalDefault: stri
 interface ProfileAddOptions {
   readonly extends?: readonly string[];
   readonly description?: string;
+  readonly json?: boolean;
 }
 
 /** Options `profile set` accepts. Each `launch*` value is `false` for its `--no-` form. */
 interface ProfileSetOptions {
+  readonly json?: boolean;
   readonly category?: Record<string, boolean>;
   readonly entry?: Record<string, boolean>;
   readonly extends?: readonly string[] | false;
@@ -115,21 +117,27 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
       )
       .option("--extends <profile>", "A profile this one extends (repeatable, in order).", collectRepeated)
       .option("--description <text>", "A free-text description stored in the profile.")
-      .action(async (name: string | undefined, options: ProfileAddOptions) => {
+      .option("--json", "Print the result as JSON.")
+      .action(async (name: string | undefined, allOptions: ProfileAddOptions) => {
+        const { json, ...options } = allOptions;
         const hasOptions = options.extends !== undefined || options.description !== undefined;
         if (!hasOptions && deps.isInteractive()) {
           const result = await runProfileWizard(deps.prompts, name === undefined ? { paths } : { paths, createName: name });
           if (result === undefined) {
             throw new PromptCancelledError();
           }
-          console.log(`Created configuration profile "${result.name}".`);
+          reportMutation(json, { action: "created", kind: "profile", name: result.name, value: readProfile(paths, result.name) }, () => {
+            console.log(`Created configuration profile "${result.name}".`);
+          });
           return;
         }
         if (name === undefined) {
           throw new UsageError("missing required argument 'name' (standard input is not a terminal, so there is nothing to prompt on).");
         }
-        createProfile(paths, name, options.extends, options.description);
-        console.log(`Created configuration profile "${name}".`);
+        const created = createProfile(paths, name, options.extends, options.description);
+        reportMutation(json, { action: "created", kind: "profile", name, value: created }, () => {
+          console.log(`Created configuration profile "${name}".`);
+        });
       }),
     ["agent-shim profile add client-acme", "agent-shim profile add client-acme --extends work-default --extends strict"],
   );
@@ -156,9 +164,11 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
       .option("--no-launch-track-usage", "Launches under this profile are not recorded unless a provider or headroom routes them anyway.")
       .option("--launch-provider <provider>", "Launches under this profile route through this provider.")
       .option("--no-launch-provider", "Clear this profile's provider selection.")
-      .action(async (name: string, options: ProfileSetOptions) => {
+      .option("--json", "Print the result as JSON.")
+      .action(async (name: string, allOptions: ProfileSetOptions) => {
+        const { json, ...options } = allOptions;
         requireProfileExists(paths, name);
-        if (Object.values(options).every((value) => value === undefined)) {
+        if (Object.entries(allOptions).every(([key, value]) => key === "json" || value === undefined)) {
           if (!deps.isInteractive()) {
             throw new UsageError(
               "Nothing to change: pass --category, --entry, --extends, --description or a --launch-* option (standard input is not a terminal, so there is nothing to prompt on).",
@@ -170,7 +180,9 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
         } else {
           applyProfileSet(paths, name, options);
         }
-        console.log(`Updated configuration profile "${name}".`);
+        reportMutation(json, { action: "updated", kind: "profile", name, value: readProfile(paths, name) }, () => {
+          console.log(`Updated configuration profile "${name}".`);
+        });
       }),
     [
       "agent-shim profile set client-acme --category history=false --category knowledge=true",
@@ -244,11 +256,14 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
       .command("remove <name>")
       .description("Delete a configuration profile's file. References to it by name are left for `agent-shim doctor` to report.")
       .option("--yes", "Remove without asking for confirmation (required when standard input is not a terminal).")
-      .action(async (name: string, options: Readonly<{ yes?: boolean }>) => {
+      .option("--json", "Print the result as JSON.")
+      .action(async (name: string, options: Readonly<{ yes?: boolean; json?: boolean }>) => {
         requireProfileExists(paths, name);
         await confirmRemoval(deps, options.yes, `configuration profile "${name}"`);
         removeProfile(paths, name);
-        console.log(`Removed configuration profile "${name}".`);
+        reportMutation(options.json, { action: "removed", kind: "profile", name }, () => {
+          console.log(`Removed configuration profile "${name}".`);
+        });
       }),
     ["agent-shim profile remove client-acme --yes"],
   );
@@ -257,10 +272,13 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
     profile
       .command("use <name>")
       .description("Make a configuration profile the global default, used when no directory rule or identity selects one.")
-      .action(async (name: string) => {
+      .option("--json", "Print the result as JSON.")
+      .action(async (name: string, options: Readonly<{ json?: boolean }>) => {
         await ensureProfileExists(deps, name);
         setGlobalDefaultProfile(paths, name);
-        console.log(`Global default configuration profile is now "${name}".`);
+        reportMutation(options.json, { action: "selected", kind: "profile", name }, () => {
+          console.log(`Global default configuration profile is now "${name}".`);
+        });
       }),
     ["agent-shim profile use work-default"],
   );

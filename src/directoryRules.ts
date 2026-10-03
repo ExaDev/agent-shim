@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
+import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import type { DirectoryRule } from "./config/schema";
 import { UsageError } from "./cliError";
 import { ensureProfileExists } from "./configProfiles";
@@ -40,10 +40,14 @@ export function registerRuleCommand(program: Command, deps: CommandDeps): void {
       .description("Add a directory rule for a path. Fails if a rule for that exact path already exists.")
       .option("--config-profile <profile>", "Configuration profile to select under this path.")
       .option("--identity <identity>", "Identity to pin under this path.")
-      .action(async (rulePath: string, options: Readonly<{ configProfile?: string; identity?: string }>) => {
+      .option("--json", "Print the result as JSON.")
+      .action(async (rulePath: string, allOptions: Readonly<{ configProfile?: string; identity?: string; json?: boolean }>) => {
+        const { json, ...options } = allOptions;
         await checkRuleTargets(deps, options);
-        addDirectoryRule(paths, rulePath, options);
-        console.log(`Added directory rule for "${rulePath}".`);
+        const created = addDirectoryRule(paths, rulePath, options);
+        reportMutation(json, { action: "created", kind: "rule", name: rulePath, value: created }, () => {
+          console.log(`Added directory rule for "${rulePath}".`);
+        });
       }),
     ["agent-shim rule add ~/work/acme --config-profile client-acme", "agent-shim rule add ~/personal --identity personal"],
   );
@@ -56,13 +60,17 @@ export function registerRuleCommand(program: Command, deps: CommandDeps): void {
       .option("--no-config-profile", "Stop selecting a configuration profile under this path.")
       .option("--identity <identity>", "Identity to pin under this path.")
       .option("--no-identity", "Stop pinning an identity under this path.")
-      .action(async (rulePath: string, options: Readonly<{ configProfile?: string | false; identity?: string | false }>) => {
+      .option("--json", "Print the result as JSON.")
+      .action(async (rulePath: string, allOptions: Readonly<{ configProfile?: string | false; identity?: string | false; json?: boolean }>) => {
+        const { json, ...options } = allOptions;
         if (options.configProfile === undefined && options.identity === undefined) {
           throw new UsageError("Nothing to change: pass --config-profile, --no-config-profile, --identity or --no-identity.");
         }
         await checkRuleTargets(deps, options);
-        updateDirectoryRule(paths, rulePath, options);
-        console.log(`Updated directory rule for "${rulePath}".`);
+        const updated = updateDirectoryRule(paths, rulePath, options);
+        reportMutation(json, { action: "updated", kind: "rule", name: rulePath, value: updated }, () => {
+          console.log(`Updated directory rule for "${rulePath}".`);
+        });
       }),
     ["agent-shim rule set ~/work/acme --identity work", "agent-shim rule set ~/work/acme --no-config-profile"],
   );
@@ -114,13 +122,16 @@ export function registerRuleCommand(program: Command, deps: CommandDeps): void {
       .command("remove <path>")
       .description("Remove the directory rule for a path.")
       .option("--yes", "Remove without asking for confirmation (required when standard input is not a terminal).")
-      .action(async (rulePath: string, options: Readonly<{ yes?: boolean }>) => {
+      .option("--json", "Print the result as JSON.")
+      .action(async (rulePath: string, options: Readonly<{ yes?: boolean; json?: boolean }>) => {
         if (!listDirectoryRules(paths).some((entry) => entry.path === rulePath)) {
           throw new DirectoryRuleNotFoundError(rulePath);
         }
         await confirmRemoval(deps, options.yes, `the directory rule for "${rulePath}"`);
         removeDirectoryRule(paths, rulePath);
-        console.log(`Removed directory rule for "${rulePath}".`);
+        reportMutation(options.json, { action: "removed", kind: "rule", name: rulePath }, () => {
+          console.log(`Removed directory rule for "${rulePath}".`);
+        });
       }),
     ["agent-shim rule remove ~/work/acme --yes"],
   );

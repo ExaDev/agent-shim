@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
+import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { UsageError } from "./cliError";
 import { collectRepeated } from "./cli/parsers";
 import { POOL_SELECTOR_PREFIX } from "./config/schema";
@@ -35,6 +35,7 @@ function requireIdentities(paths: LayoutPaths, names: readonly string[]): void {
 
 interface PoolMembersOptions {
   readonly identity?: readonly string[];
+  readonly json?: boolean;
 }
 
 function membersOf(options: Readonly<PoolMembersOptions>): readonly string[] {
@@ -57,11 +58,14 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .command("add <name>")
       .description("Define a pool. Fails if one with this name already exists.")
       .option("--identity <name>", "A member identity (repeatable).", collectRepeated)
+      .option("--json", "Print the result as JSON.")
       .action((name: string, options: Readonly<PoolMembersOptions>) => {
         const members = membersOf(options);
         requireIdentities(paths, members);
-        addPool(paths, name, members);
-        console.log(`Created pool "${name}" with ${members.join(", ")}.`);
+        const created = addPool(paths, name, members);
+        reportMutation(options.json, { action: "created", kind: "pool", name, value: created }, () => {
+          console.log(`Created pool "${name}" with ${members.join(", ")}.`);
+        });
       }),
     ["agent-shim pool add subs --identity work --identity personal"],
   );
@@ -71,11 +75,14 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .command("set <name>")
       .description("Replace a pool's members.")
       .option("--identity <name>", "A member identity (repeatable); the full new list.", collectRepeated)
+      .option("--json", "Print the result as JSON.")
       .action((name: string, options: Readonly<PoolMembersOptions>) => {
         const members = membersOf(options);
         requireIdentities(paths, members);
-        setPool(paths, name, members);
-        console.log(`Pool "${name}" now has ${members.join(", ")}.`);
+        const updated = setPool(paths, name, members);
+        reportMutation(options.json, { action: "updated", kind: "pool", name, value: updated }, () => {
+          console.log(`Pool "${name}" now has ${members.join(", ")}.`);
+        });
       }),
     ["agent-shim pool set subs --identity work --identity personal --identity spare"],
   );
@@ -126,11 +133,14 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .command("remove <name>")
       .description("Delete a pool. Its member identities are untouched.")
       .option("--yes", "Skip the confirmation prompt.")
-      .action(async (name: string, options: Readonly<{ yes?: boolean }>) => {
+      .option("--json", "Print the result as JSON.")
+      .action(async (name: string, options: Readonly<{ yes?: boolean; json?: boolean }>) => {
         requirePool(paths, name);
         await confirmRemoval(deps, options.yes, `pool "${name}"`);
         removePool(paths, name);
-        console.log(`Removed pool "${name}".`);
+        reportMutation(options.json, { action: "removed", kind: "pool", name }, () => {
+          console.log(`Removed pool "${name}".`);
+        });
       }),
     ["agent-shim pool remove subs --yes"],
   );
@@ -139,9 +149,12 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
     pool
       .command("use <name>")
       .description("Make launches with no other selection pick a member of this pool.")
-      .action((name: string) => {
+      .option("--json", "Print the result as JSON.")
+      .action((name: string, options: Readonly<{ json?: boolean }>) => {
         useIdentity(paths, `${POOL_SELECTOR_PREFIX}${name}`);
-        console.log(`Active selection is now pool "${name}".`);
+        reportMutation(options.json, { action: "selected", kind: "pool", name }, () => {
+          console.log(`Active selection is now pool "${name}".`);
+        });
       }),
     ["agent-shim pool use subs"],
   );

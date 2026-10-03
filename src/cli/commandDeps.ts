@@ -22,6 +22,25 @@ export function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
 
+/** What a mutating command did, as the one object `--json` prints in place of its text output. */
+export interface MutationReport {
+  readonly action: "created" | "updated" | "removed" | "selected";
+  /** The noun the command works on: `identity`, `profile`, `provider`, `pool` or `rule`. */
+  readonly kind: string;
+  readonly name: string;
+  /** The stored object after the change; absent for a removal and for a selection. */
+  readonly value?: unknown;
+}
+
+/** Reports a mutating command's outcome: the `MutationReport` as JSON under `--json`, otherwise whatever `printText` prints. */
+export function reportMutation(json: boolean | undefined, report: MutationReport, printText: () => void): void {
+  if (json === true) {
+    printJson(report);
+  } else {
+    printText();
+  }
+}
+
 /**
  * Appends an `Examples:` block to `command`'s help output, one `$ agent-shim ...` line per entry. Every command registers at least one, so `--help` on any of them shows a runnable invocation, not just its option list.
  */

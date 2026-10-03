@@ -509,6 +509,66 @@ describe("rule commands", () => {
   });
 });
 
+describe("mutating commands with --json", () => {
+  async function json(argv: readonly string[]): Promise<Record<string, unknown>> {
+    const result = await cli(argv);
+    expect(result.code, result.stderr).toBe(0);
+    const parsed: unknown = JSON.parse(result.stdout);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error(`expected one JSON object, got ${result.stdout}`);
+    }
+    return Object.fromEntries(Object.entries(parsed));
+  }
+
+  it("prints one report object per command, naming the action, the noun and the name, with the stored value for a creation or an update", async () => {
+    expect(await json(["identity", "add", "work", "--json"])).toMatchObject({ action: "created", kind: "identity", name: "work", value: { name: "work" } });
+    expect(await json(["identity", "set", "work", "--allow-ambient-credential", "--json"])).toMatchObject({
+      action: "updated",
+      kind: "identity",
+      name: "work",
+      value: { allowAmbientCredential: true },
+    });
+    expect(await json(["identity", "use", "work", "--json"])).toEqual({ action: "selected", kind: "identity", name: "work" });
+
+    expect(await json(["profile", "add", "base", "--description", "d", "--json"])).toMatchObject({ action: "created", kind: "profile", name: "base", value: { description: "d" } });
+    expect(await json(["profile", "set", "base", "--description", "e", "--json"])).toMatchObject({ action: "updated", kind: "profile", name: "base", value: { description: "e" } });
+    expect(await json(["profile", "use", "base", "--json"])).toEqual({ action: "selected", kind: "profile", name: "base" });
+
+    expect(await json(["provider", "add", "p", "--display-name", "P", "--base-url", "https://example.com/api", "--credential", "env:TOKEN", "--json"])).toMatchObject({
+      action: "created",
+      kind: "provider",
+      name: "p",
+      value: { displayName: "P" },
+    });
+    expect(await json(["provider", "set", "p", "--display-name", "Q", "--json"])).toMatchObject({ action: "updated", kind: "provider", name: "p", value: { displayName: "Q" } });
+
+    expect(await json(["pool", "add", "subs", "--identity", "work", "--json"])).toMatchObject({ action: "created", kind: "pool", name: "subs", value: { identities: ["work"] } });
+    expect(await json(["pool", "set", "subs", "--identity", "work", "--json"])).toMatchObject({ action: "updated", kind: "pool", name: "subs" });
+    expect(await json(["pool", "use", "subs", "--json"])).toEqual({ action: "selected", kind: "pool", name: "subs" });
+
+    expect(await json(["rule", "add", "/tmp/acme", "--identity", "work", "--json"])).toMatchObject({ action: "created", kind: "rule", name: "/tmp/acme", value: { identity: "work" } });
+    expect(await json(["rule", "set", "/tmp/acme", "--config-profile", "base", "--json"])).toMatchObject({ action: "updated", kind: "rule", name: "/tmp/acme", value: { configProfile: "base" } });
+
+    expect(await json(["rule", "remove", "/tmp/acme", "--yes", "--json"])).toEqual({ action: "removed", kind: "rule", name: "/tmp/acme" });
+    expect(await json(["pool", "remove", "subs", "--yes", "--json"])).toEqual({ action: "removed", kind: "pool", name: "subs" });
+    expect(await json(["provider", "remove", "p", "--yes", "--json"])).toEqual({ action: "removed", kind: "provider", name: "p" });
+    expect(await json(["profile", "remove", "base", "--yes", "--json"])).toEqual({ action: "removed", kind: "profile", name: "base" });
+    expect(await json(["identity", "remove", "work", "--yes", "--json"])).toEqual({ action: "removed", kind: "identity", name: "work" });
+  });
+
+  it("still prints the usual text without --json", async () => {
+    const result = await cli(["identity", "add", "work"]);
+    expect(result.stdout).toBe('Created identity "work".\n');
+  });
+
+  it("does not let --json alone satisfy a set command that changes nothing", async () => {
+    addIdentity(paths, "work");
+    const result = await cli(["identity", "set", "work", "--json"]);
+    expect(result.code).toBe(EXIT_USAGE);
+    expect(result.stderr).toContain("Nothing to change");
+  });
+});
+
 describe("configure", () => {
   it("refuses to run without a terminal, since every step is a prompt", async () => {
     addIdentity(paths, "work");
