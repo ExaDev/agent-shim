@@ -104,6 +104,29 @@ describe("headroom state files", () => {
   });
 });
 
+describe("writeHeadroomState", () => {
+  it("writes through the atomic write, so a reader never sees a torn file", () => {
+    const fs = createFakeFarmFs({});
+    const atomicWrites: string[] = [];
+    const plainWrites: string[] = [];
+    const tracked = {
+      ...fs,
+      writeFilePrivate: (file: string, contents: string) => {
+        atomicWrites.push(file);
+        fs.writeFilePrivate(file, contents);
+      },
+      writeFileUtf8: (file: string, contents: string) => {
+        plainWrites.push(file);
+        fs.writeFileUtf8(file, contents);
+      },
+    };
+    writeHeadroomState(tracked, paths.headroomStateFile, { supervisorPid: SUPERVISOR_A_PID });
+    expect(atomicWrites).toEqual([paths.headroomStateFile]);
+    expect(plainWrites).toEqual([]);
+    expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ supervisorPid: SUPERVISOR_A_PID });
+  });
+});
+
 describe("session registry", () => {
   it("writes, reads, lists, and removes session entries", () => {
     const fs = createFakeFarmFs({});

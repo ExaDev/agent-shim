@@ -69,11 +69,11 @@ export function readHeadroomState(fs: HeadroomFs, stateFile: string): HeadroomSt
 }
 
 /**
- * Writes state.json. A plain write rather than the write-then-rename most config files get: state.json is advisory coordination, read tolerantly (`readHeadroomState` treats a malformed file as absent) and rewritten constantly by the supervisor, and the exclusive-create start lock below, not this file, is the actual mutual exclusion.
+ * Writes state.json atomically (a temporary sibling renamed into place), so a concurrent reader never sees a partial file. A reader treats a malformed file as absent, and a launcher that finds no supervisor in state spawns one, so a torn write read mid-flight started a redundant supervisor and daemon.
  */
 export function writeHeadroomState(fs: HeadroomFs, stateFile: string, state: Readonly<HeadroomState>): void {
   fs.mkdirp(path.dirname(stateFile));
-  fs.writeFileUtf8(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+  fs.writeFilePrivate(stateFile, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 /** The allowlist the daemon is started with: every provider's base URL plus Claude Code's own API, so a session with no provider selected reaches the real Anthropic upstream through the same proxy. */
