@@ -1,3 +1,9 @@
+## [7.11.0](https://github.com/ExaDev/agent-shim/compare/v7.10.2...v7.11.0) (2026-10-03)
+
+### Features
+
+* **frontdoor:** serve a transparent surface for redirect-arriving traffic ([cb2b3a6](https://github.com/ExaDev/agent-shim/commit/cb2b3a67f53d07595be4434d28f8ae4bb2e2b2d5))
+
 ## [7.10.2](https://github.com/ExaDev/agent-shim/compare/v7.10.1...v7.10.2) (2026-10-03)
 
 ### Documentation
