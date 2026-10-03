@@ -162,7 +162,8 @@ src/
   identityManager.ts, configProfiles.ts, providers.ts, directoryRules.ts   # the `identity`/`profile`/`provider`/`rule` nouns' commands
   identityStore.ts, configProfilesStore.ts, providersStore.ts, directoryRulesStore.ts, poolStore.ts   # their data layers, free of command-line dependencies and exported by the library
   program.ts, completion.ts # buildProgram (the whole command tree, side-effect free) and generated shell completion
-  configure.ts, check.ts, doctor.ts, claudeShim.ts           # interactive picker, dry-run inspector, whole-tree audit, `claude` shim
+  configure.ts, check.ts, doctor.ts, claudeShim.ts           # interactive picker, the check and doctor commands, `claude` shim
+  checkReport.ts, doctorReport.ts, poolPickReport.ts          # the dry-run inspector, the whole-tree audit and the pool ranking as data, free of command-line dependencies and exported by the library
   resolve/                # the pure cascade resolver: flatten, decide, extends, walk, plan, reconcile
   config/                 # Zod schemas, cosmiconfig loading, category classification, atomic JSON store
   index.ts                # the library surface (see below): resolver, farm sync, headroom routing, the ambient-credential guard

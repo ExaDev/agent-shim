@@ -9,7 +9,9 @@
  *
  * Creating and changing identities, configuration profiles, providers, pools and directory rules: the `*Store` modules, which take the state root's `LayoutPaths`, return typed values and throw `CliError` subclasses.
  *
- * Everything the CLI alone needs (commander wiring, prompts, `doctor`, `check`) is deliberately not exported here.
+ * - `check` and `doctor` as data: `collectCheckReport` and `collectDoctorReport` read this machine and return the report, and the pure `runCheck` and `runDoctor` take the facts as parameters.
+ *
+ * Everything the CLI alone needs (commander wiring and prompts) is deliberately not exported here.
  */
 
 export { resolveDecisions, topLevelNames, type ResolveDecisionsInput, type ResolvedState } from "./resolve/pipeline";
@@ -179,3 +181,22 @@ export {
   type AddDirectoryRuleOptions,
   type UpdateDirectoryRuleOptions,
 } from "./directoryRulesStore";
+export {
+  checkReportHasWarnings,
+  checkReportToJson,
+  collectCheckReport,
+  formatCheckReport,
+  runCheck,
+  type CheckReport,
+  type CollectCheckReportParams,
+  type RunCheckParams,
+} from "./checkReport";
+export {
+  collectDoctorReport,
+  formatDoctorReport,
+  runDoctor,
+  type CollectDoctorReportParams,
+  type DoctorReport,
+  type RunDoctorParams,
+} from "./doctorReport";
+

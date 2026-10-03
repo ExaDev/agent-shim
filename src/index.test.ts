@@ -1,7 +1,7 @@
 import nodeFs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import * as library from "./index";
 
@@ -71,6 +71,10 @@ describe("library surface", () => {
       "buildEntryFacts",
       "buildLayoutPaths",
       "carryOver",
+      "checkReportHasWarnings",
+      "checkReportToJson",
+      "collectCheckReport",
+      "collectDoctorReport",
       "createLeafCache",
       "createProfile",
       "describeProviderEndpoint",
@@ -80,6 +84,8 @@ describe("library surface", () => {
       "ensureHeadroom",
       "evaluateAmbientCredentialGuard",
       "formatAmbientCredentialGuardMessage",
+      "formatCheckReport",
+      "formatDoctorReport",
       "forwardableHeaders",
       "generateCa",
       "identityExists",
@@ -119,6 +125,8 @@ describe("library surface", () => {
       "resolveLayoutPaths",
       "resolveSupervisorConfig",
       "resyncFarm",
+      "runCheck",
+      "runDoctor",
       "runFrontDoorSupervisor",
       "runSupervisor",
       "servedByPipeline",
@@ -143,7 +151,7 @@ describe("library surface", () => {
 
   it("exposes nothing that exists for the command line alone", () => {
     const names = Object.keys(library);
-    for (const cliOnly of ["buildProgram", "registerCheckCommand", "registerDoctorCommand", "reportFatalError", "runDoctor"]) {
+    for (const cliOnly of ["buildProgram", "registerCheckCommand", "registerDoctorCommand", "reportFatalError"]) {
       expect(names).not.toContain(cliOnly);
     }
   });
@@ -176,6 +184,26 @@ describe("library surface", () => {
       expect(() => library.readPools(paths)).not.toThrow();
     } finally {
       nodeFs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("audits a state root and reports on a directory, returning data a caller can read without the command line", () => {
+    const root = nodeFs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-library-"));
+    const claudeHome = nodeFs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-claude-"));
+    vi.stubEnv("AGENT_SHIM_CLAUDE_HOME", claudeHome);
+    try {
+      const paths = library.buildLayoutPaths(root);
+      library.addIdentity(paths, "work");
+      const doctor = library.collectDoctorReport({ paths, env: {} });
+      expect(doctor.findings.some((finding) => finding.section === "identity" && finding.severity === "pass")).toBe(true);
+      expect(library.formatDoctorReport(doctor).length).toBeGreaterThan(0);
+      const check = library.collectCheckReport({ paths, cwd: root, identity: "work", env: {} });
+      expect(check.identityName).toBe("work");
+      expect(library.checkReportToJson(check)).toHaveProperty("identity.name", "work");
+    } finally {
+      vi.unstubAllEnvs();
+      nodeFs.rmSync(root, { recursive: true, force: true });
+      nodeFs.rmSync(claudeHome, { recursive: true, force: true });
     }
   });
 
