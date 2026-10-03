@@ -101,7 +101,7 @@ export function redactBody(chunk: Readonly<Buffer>): string {
 }
 
 /** The environment variable that turns the capture on, read once at front-door start: the door is one process serving every launch, so capture is a property of the door's own environment, not of any one launch after it. */
-export const CAPTURE_ENV = "AGENT_SHIM_FRONTDOOR_CAPTURE";
+const CAPTURE_ENV = "AGENT_SHIM_FRONTDOOR_CAPTURE";
 
 /**
  * The capture the door runs with, or undefined when the environment did not ask for one. Anything but `1` means off, the same exact-value vocabulary the other `AGENT_SHIM_*` diagnostics use, so a stray value never silently records traffic.
