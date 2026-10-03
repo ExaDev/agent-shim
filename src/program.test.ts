@@ -10,7 +10,7 @@ import { reportFatalError } from "./cliReport";
 import { addIdentity, readActiveIdentity, readIdentity, useIdentity } from "./identityManager";
 import { createProfile, readGlobalConfig, readProfile } from "./configProfiles";
 import { readProvider } from "./providers";
-import { listDirectoryRules } from "./directoryRules";
+import { listDirectoryRules } from "./directoryRulesStore";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { buildProgram } from "./program";
 import { fakeCommandDeps } from "./test-helpers";

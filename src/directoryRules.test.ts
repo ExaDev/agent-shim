@@ -5,17 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { ConfigValidationError } from "./config/load";
-import {
-  DirectoryRuleAlreadyExistsError,
-  DirectoryRuleMissingTargetError,
-  DirectoryRuleNotFoundError,
-  addDirectoryRule,
-  listDirectoryRules,
-  readDirectoryRules,
-  removeDirectoryRule,
-  updateDirectoryRule,
-  writeDirectoryRules,
-} from "./directoryRules";
+import { DirectoryRuleAlreadyExistsError, DirectoryRuleMissingTargetError, DirectoryRuleNotFoundError, addDirectoryRule, listDirectoryRules, readDirectoryRules, removeDirectoryRule, updateDirectoryRule, writeDirectoryRules } from "./directoryRulesStore";
 
 describe("directoryRules", () => {
   let root: string;

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { addDirectoryRule, readDirectoryRules } from "./directoryRules";
+import { addDirectoryRule, readDirectoryRules } from "./directoryRulesStore";
 import { readGlobalConfig, createProfile, readProfile } from "./configProfiles";
 import { addIdentity, setDefaultConfigProfile } from "./identityManager";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";

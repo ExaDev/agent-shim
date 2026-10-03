@@ -5,7 +5,7 @@ import { CliError, EXIT_FAILURE, EXIT_USAGE, MissingInputError, PromptCancelledE
 import { reportFatalError } from "./cliReport";
 import { IdentityAlreadyExistsError, IdentityNotFoundError, InvalidIdentityNameError } from "./identityManager";
 import { InvalidCategoryNameError, ProfileAlreadyExistsError, ProfileNotFoundError } from "./configProfiles";
-import { DirectoryRuleAlreadyExistsError, DirectoryRuleMissingTargetError, DirectoryRuleNotFoundError } from "./directoryRules";
+import { DirectoryRuleAlreadyExistsError, DirectoryRuleMissingTargetError, DirectoryRuleNotFoundError } from "./directoryRulesStore";
 import { InvalidEnvBoolError } from "./cli/parsers";
 import { ConflictingIdentityError } from "./launcher/argv";
 import { ConfigureNeedsTerminalError, NoConfigProfileResolvedError, NoIdentityResolvedError } from "./configure";
