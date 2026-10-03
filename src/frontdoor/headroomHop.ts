@@ -81,6 +81,12 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
   }
 }
 
+
+/**
+ * The hop's own agent, with keep-alive off: the headroom daemon closes idle keep-alive connections well inside any pooling window (observed against the live daemon, which dropped a connection inside a fifteen-second idle), and Node's global agent keeps such sockets pooled, so the first hop after an idle gap rode a dead socket and the door answered it "socket hang up", one sporadic 502 at a time. A fresh loopback connection per hop costs nothing, and a streaming response holds its socket for the stream's own life regardless of pooling.
+ */
+const HOP_AGENT = new http.Agent({ keepAlive: false });
+
 /** Streams one request to headroom and its response back to the client, resolving once the response has ended, failed, or been abandoned. */
 async function forwardThroughHeadroom(
   request: RoutedRequest,
@@ -112,7 +118,7 @@ async function forwardThroughHeadroom(
       };
       void stream();
     };
-    const hop = http.request({ host: "127.0.0.1", port, method: request.method, path: request.url, headers }, onUpstreamResponse);
+    const hop = http.request({ host: "127.0.0.1", port, method: request.method, path: request.url, headers, agent: HOP_AGENT }, onUpstreamResponse);
     hop.on("error", (error: Error) => {
       target.log(`front door: headroom hop to 127.0.0.1:${String(port)} failed: ${error.message}`);
       if (!response.headersSent) {
