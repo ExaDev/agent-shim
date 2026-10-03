@@ -1,3 +1,9 @@
+## [7.1.1](https://github.com/ExaDev/agent-shim/compare/v7.1.0...v7.1.1) (2026-10-03)
+
+### Bug Fixes
+
+* **frontdoor:** keep the provider base URL's path when forwarding ([c88b3ce](https://github.com/ExaDev/agent-shim/commit/c88b3ce2297281424e894e5132249d2e411d8dc4))
+
 ## [7.1.0](https://github.com/ExaDev/agent-shim/compare/v7.0.0...v7.1.0) (2026-10-03)
 
 ### Features
