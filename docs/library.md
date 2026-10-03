@@ -29,6 +29,6 @@ const identity = IdentitySchema.parse(JSON.parse(readFileSync(path.join(paths.id
 
 ## What is not in the library
 
-Launching `claude` is a CLI operation today, and so is anything interactive (the setup wizards and prompts). Scripts should call the CLI for those; every `list`, `show`, `check` and `doctor` command accepts `--json`.
+Launching `claude` is a CLI operation today, and so is anything interactive (the setup wizards and prompts). Scripts should call the CLI for those; every `list`, `show`, `check`, `doctor` and mutating (`add`, `set`, `remove`, `use`) command accepts `--json`.
 
 The export list is guarded by `src/index.test.ts`, so removing or renaming an entry point is a deliberate, visible change.

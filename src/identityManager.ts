@@ -1,6 +1,6 @@
 import path from "node:path";
 import { Option, type Command } from "commander";
-import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
+import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { addCredentialCacheOptions, cacheChange, collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX, type CredentialCacheOptions } from "./cli/credentialOption";
 import { loadClassification } from "./config/classify";
 import { CREDENTIAL_TARGETS, IdentitySchema, type CredentialSource, type CredentialTarget } from "./config/schema";
@@ -73,7 +73,7 @@ export async function runIdentityWizard(
 /**
  * Makes `name` the active identity, the one behaviour `identity use <name>` and the `@<name>` shortcut share. An existing identity is selected directly. A missing one is offered to `runIdentityWizard` when standard input is a terminal (declining raises `PromptCancelledError`); with no terminal it raises `IdentityNotFoundError`, since there is nothing to prompt on.
  */
-async function selectIdentity(deps: CommandDeps, name: string): Promise<void> {
+async function selectIdentity(deps: CommandDeps, name: string, json?: boolean): Promise<void> {
   if (poolNameOf(name) !== undefined || identityExists(deps.paths, name)) {
     useIdentity(deps.paths, name);
   } else if (deps.isInteractive()) {
@@ -83,7 +83,9 @@ async function selectIdentity(deps: CommandDeps, name: string): Promise<void> {
   } else {
     throw new IdentityNotFoundError(name);
   }
-  console.log(`Active identity is now "${name}".`);
+  reportMutation(json, { action: "selected", kind: "identity", name }, () => {
+    console.log(`Active identity is now "${name}".`);
+  });
 }
 
 /**
@@ -151,6 +153,7 @@ interface IdentitySetOptions extends CredentialCacheOptions {
   readonly allowAmbientCredential?: boolean;
   readonly credential?: CredentialSource[] | false;
   readonly credentialTarget?: CredentialTarget;
+  readonly json?: boolean;
 }
 
 /** Registers the `agent-shim identity` subcommand tree onto `program`. */
@@ -165,9 +168,12 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
     identity
       .command("add <name>")
       .description("Create a new identity. Fails if one with this name already exists.")
-      .action((name: string) => {
-        addIdentity(paths, name);
-        console.log(`Created identity "${name}".`);
+      .option("--json", "Print the result as JSON.")
+      .action((name: string, options: Readonly<{ json?: boolean }>) => {
+        const created = addIdentity(paths, name);
+        reportMutation(options.json, { action: "created", kind: "identity", name, value: created }, () => {
+          console.log(`Created identity "${name}".`);
+        });
       }),
     ["agent-shim identity add work"],
   );
@@ -228,6 +234,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
   const identitySet = identity
       .command("set <name>")
       .description("Update an identity's settings.")
+      .option("--json", "Print the result as JSON.")
       .option("--default-profile <profile>", "Configuration profile this identity uses when nothing more specific selects one.")
       .option("--no-default-profile", "Clear this identity's default configuration profile.")
       .option("--allow-ambient-credential", "Allow this identity to launch even with an ambient credential env var set.")
@@ -247,8 +254,9 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
   addCredentialCacheOptions(identitySet);
   withExamples(
     identitySet
-      .action(async (name: string, options: IdentitySetOptions) => {
-        if (Object.values(options).every((value) => value === undefined)) {
+      .action(async (name: string, allOptions: IdentitySetOptions) => {
+        const { json, ...options } = allOptions;
+        if (Object.entries(allOptions).every(([key, value]) => key === "json" || value === undefined)) {
           throw new UsageError(
             "Nothing to change: pass --default-profile, --no-default-profile, --allow-ambient-credential, --no-allow-ambient-credential, --credential, --no-credential, --credential-target or a --credential-cache option.",
           );
@@ -256,13 +264,14 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         if (!identityExists(paths, name)) {
           throw new IdentityNotFoundError(name);
         }
+        const messages: string[] = [];
         if (options.defaultProfile !== undefined) {
           const profileName = options.defaultProfile === false ? undefined : options.defaultProfile;
           if (profileName !== undefined) {
             await ensureProfileExists(deps, profileName);
           }
           setDefaultConfigProfile(paths, name, profileName);
-          console.log(
+          messages.push(
             profileName === undefined
               ? `Identity "${name}" no longer has a default configuration profile.`
               : `Identity "${name}" now defaults to configuration profile "${profileName}".`,
@@ -270,13 +279,11 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         }
         if (options.allowAmbientCredential !== undefined) {
           setAllowAmbientCredential(paths, name, options.allowAmbientCredential);
-          console.log(
-            `Identity "${name}" ${options.allowAmbientCredential ? "now allows" : "no longer allows"} an ambient credential.`,
-          );
+          messages.push(`Identity "${name}" ${options.allowAmbientCredential ? "now allows" : "no longer allows"} an ambient credential.`);
         }
         if (options.credential === false) {
           setIdentityCredential(paths, name, false);
-          console.log(`Identity "${name}" no longer has a credential and uses its stored login.`);
+          messages.push(`Identity "${name}" no longer has a credential and uses its stored login.`);
         } else if (options.credential !== undefined || options.credentialTarget !== undefined || cacheChange(options, undefined) !== undefined) {
           const cache = cacheChange(options, readIdentity(paths, name)?.credential?.cache);
           const updated = setIdentityCredential(paths, name, {
@@ -285,9 +292,14 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
             ...(cache === undefined ? {} : { cache }),
           });
           if (updated.credential !== undefined) {
-            console.log(`Identity "${name}" now authenticates with credential ${describeCredential(updated.credential)}.`);
+            messages.push(`Identity "${name}" now authenticates with credential ${describeCredential(updated.credential)}.`);
           }
         }
+        reportMutation(json, { action: "updated", kind: "identity", name, value: readIdentity(paths, name) }, () => {
+          for (const message of messages) {
+            console.log(message);
+          }
+        });
       }),
     [
       "agent-shim identity set work --default-profile client-acme",
@@ -304,13 +316,16 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         "Delete an identity and its directory, including its credentials and anything it does not share with ~/.claude. Shared data in ~/.claude is kept.",
       )
       .option("--yes", "Remove without asking for confirmation (required when standard input is not a terminal).")
-      .action(async (name: string, options: Readonly<{ yes?: boolean }>) => {
+      .option("--json", "Print the result as JSON.")
+      .action(async (name: string, options: Readonly<{ yes?: boolean; json?: boolean }>) => {
         if (!identityExists(paths, name)) {
           throw new IdentityNotFoundError(name);
         }
         await confirmRemoval(deps, options.yes, `identity "${name}" and its directory ${path.join(paths.identitiesDir, name)}`);
         removeIdentity(paths, name);
-        console.log(`Removed identity "${name}".`);
+        reportMutation(options.json, { action: "removed", kind: "identity", name }, () => {
+          console.log(`Removed identity "${name}".`);
+        });
       }),
     ["agent-shim identity remove old-client --yes"],
   );
@@ -319,8 +334,9 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
     identity
       .command("use <name>")
       .description("Select the active identity, used by every launch that names none. Offers to create it on a terminal if it does not exist.")
-      .action(async (name: string) => {
-        await selectIdentity(deps, name);
+      .option("--json", "Print the result as JSON.")
+      .action(async (name: string, options: Readonly<{ json?: boolean }>) => {
+        await selectIdentity(deps, name, options.json);
       }),
     ["agent-shim identity use work", "agent-shim @work"],
   );

@@ -82,47 +82,47 @@ The full mechanics, including the credential block, the merge algorithm, conditi
 ```
 agent-shim <noun> <verb> [name] [options]      # nouns: identity, profile, pool, provider, rule
 
-agent-shim identity add <name>
+agent-shim identity add <name> [--json]
 agent-shim identity list [--json]
 agent-shim identity show <name> [--json]
-agent-shim identity set <name> [--default-profile <profile> | --no-default-profile] [--[no-]allow-ambient-credential]
-agent-shim identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential]
-agent-shim identity remove <name> [--yes]
-agent-shim identity use <name>
+agent-shim identity set <name> [--default-profile <profile> | --no-default-profile] [--[no-]allow-ambient-credential] [--json]
+agent-shim identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential] [--json]
+agent-shim identity remove <name> [--yes] [--json]
+agent-shim identity use <name> [--json]
 agent-shim @<name>                          # shorthand for `identity use <name>`
 agent-shim identity resolve-conflicts <name>  # interactively resolve a retained superseded farm's conflicts
 
-agent-shim profile add [name] [--extends <profile>]... [--description <text>]   # interactive with no options on a terminal
-agent-shim profile set <name> [--category <category>=<bool>]... [--entry <category>/<path>=<bool>]...
-agent-shim profile set <name> [--extends <profile>]... [--no-extends] [--description <text> | --no-description]
-agent-shim profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage]
-agent-shim profile set <name> [--launch-provider <provider> | --no-launch-provider]
+agent-shim profile add [name] [--extends <profile>]... [--description <text>]   # interactive with no options on a terminal [--json]
+agent-shim profile set <name> [--category <category>=<bool>]... [--entry <category>/<path>=<bool>]... [--json]
+agent-shim profile set <name> [--extends <profile>]... [--no-extends] [--description <text> | --no-description] [--json]
+agent-shim profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage] [--json]
+agent-shim profile set <name> [--launch-provider <provider> | --no-launch-provider] [--json]
 agent-shim profile list [--json]
 agent-shim profile show <name> [--json]
-agent-shim profile remove <name> [--yes]
-agent-shim profile use <name>               # the global default configuration profile
+agent-shim profile remove <name> [--yes] [--json]
+agent-shim profile use <name>               # the global default configuration profile [--json]
 
-agent-shim pool add <name> --identity <identity>...
-agent-shim pool set <name> --identity <identity>...
+agent-shim pool add <name> --identity <identity>... [--json]
+agent-shim pool set <name> --identity <identity>... [--json]
 agent-shim pool list [--json]
 agent-shim pool show <name> [--json]
-agent-shim pool remove <name> [--yes]
-agent-shim pool use <name>
+agent-shim pool remove <name> [--yes] [--json]
+agent-shim pool use <name> [--json]
 agent-shim pool pick <name> [--json]
 
-agent-shim provider add <name> --display-name <name> (--base-url <url> | --kind codex) (--credential <source>)... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]...
+agent-shim provider add <name> --display-name <name> (--base-url <url> | --kind codex) (--credential <source>)... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]... [--json]
                                               [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>]
-agent-shim provider set <name> [--display-name <name>] ([--base-url <url>] | --kind codex) [--credential <source>]... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]...
+agent-shim provider set <name> [--display-name <name>] ([--base-url <url>] | --kind codex) [--credential <source>]... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]... [--json]
                                               [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>]
 agent-shim provider list [--json]
 agent-shim provider show <name> [--json]
-agent-shim provider remove <name> [--yes]
+agent-shim provider remove <name> [--yes] [--json]
 
-agent-shim rule add <path> [--config-profile <profile>] [--identity <identity>]
-agent-shim rule set <path> [--config-profile <profile> | --no-config-profile] [--identity <identity> | --no-identity]
+agent-shim rule add <path> [--config-profile <profile>] [--identity <identity>] [--json]
+agent-shim rule set <path> [--config-profile <profile> | --no-config-profile] [--identity <identity> | --no-identity] [--json]
 agent-shim rule list [--json]
 agent-shim rule show <path> [--json]
-agent-shim rule remove <path> [--yes]
+agent-shim rule remove <path> [--yes] [--json]
 
 agent-shim configure [path] [--identity <identity>]
 agent-shim check [path] [--identity <identity>] [--json] [--strict]
@@ -144,7 +144,7 @@ agent-shim run [@<identity>] [launch flags] [claude arguments]
 claude @<identity> ...                      # the same, once `agent-shim shim enable` has run
 ```
 
-Every `list`, `show`, `check`, `doctor` and `headroom status` prints text by default and JSON with `--json`. Prompts appear only when standard input is a terminal; without one, a command that needs input fails with the option that supplies it (a `remove` needs `--yes`). Failures print as `agent-shim: <message>` and exit 1, usage errors exit 2, a selected provider or identity whose credential block yields no token exits 64, and `AGENT_SHIM_DEBUG=1` adds stack traces to unexpected errors. `agent-shim completion <bash|zsh|fish>` prints a shell completion script.
+Every `list`, `show`, `check`, `doctor` and `headroom status` prints text by default and JSON with `--json`, and so do the mutating commands (`add`, `set`, `remove` and `use` on identities, profiles, providers, pools and rules), which print one object naming the `action`, the `kind`, the `name` and, for a creation or update, the stored `value`. Prompts appear only when standard input is a terminal; without one, a command that needs input fails with the option that supplies it (a `remove` needs `--yes`). Failures print as `agent-shim: <message>` and exit 1, usage errors exit 2, a selected provider or identity whose credential block yields no token exits 64, and `AGENT_SHIM_DEBUG=1` adds stack traces to unexpected errors. `agent-shim completion <bash|zsh|fish>` prints a shell completion script.
 
 `agent-shim check [path]` resolves the full cascade for a directory without touching the farm, and is the primary way to answer "why is X shared or hidden here". `agent-shim doctor` audits the whole `~/.agent-shim` config graph at once: every identity, profile, `extends` chain, provider (naming the exact replacement for a file still in the format before the credential block) and directory rule, plus whether the right `agent-shim` is the one actually on `PATH`.
 

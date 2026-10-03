@@ -1,5 +1,5 @@
 import { Option, type Command } from "commander";
-import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
+import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { addCredentialCacheOptions, cacheChange, collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX, type CredentialCacheOptions } from "./cli/credentialOption";
 import { collectRepeated, collectStringPair } from "./cli/parsers";
 import { resolveCodexConfig } from "./codex/translate";
@@ -22,6 +22,7 @@ function toProviderView(name: string, provider: Provider): Record<string, unknow
 
 /** Options `provider add` accepts. */
 interface ProviderAddOptions extends CodexOptions {
+  readonly json?: boolean;
   readonly kind?: ProviderKind;
   readonly displayName: string;
   readonly baseUrl?: string;
@@ -56,6 +57,7 @@ function codexConfigFromOptions(options: CodexOptions): CodexProviderConfig | un
 
 /** Options `provider set` accepts. */
 interface ProviderSetOptions extends CodexOptions, CredentialCacheOptions {
+  readonly json?: boolean;
   readonly displayName?: string;
   readonly baseUrl?: string;
   readonly credential?: CredentialSource[];
@@ -93,6 +95,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--codex-default-model <model>", "Codex providers: the codex model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: the codex model one tier (fable, opus, sonnet or haiku) maps to (repeatable).", collectStringPair)
       .addOption(new Option("--codex-effort <effort>", "Codex providers: the reasoning effort when a request asks for none the backend accepts.").choices(CODEX_EFFORTS))
+      .option("--json", "Print the result as JSON.")
       .action((name: string, options: ProviderAddOptions) => {
         const codex = codexConfigFromOptions(options);
         const created = addProvider(paths, name, {
@@ -104,7 +107,9 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(options.env === undefined ? {} : { env: options.env }),
           ...(codex === undefined ? {} : { codex }),
         });
-        console.log(`Created provider "${name}" (${describeProviderEndpoint(created)}, credential ${describeCredential(created.credential)}).`);
+        reportMutation(options.json, { action: "created", kind: "provider", name, value: created }, () => {
+          console.log(`Created provider "${name}" (${describeProviderEndpoint(created)}, credential ${describeCredential(created.credential)}).`);
+        });
       }),
     [
       "agent-shim provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --credential env:Z_API_TOKEN",
@@ -139,8 +144,10 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
   addCredentialCacheOptions(providerSet);
   withExamples(
     providerSet
-      .action((name: string, options: ProviderSetOptions) => {
-        if (Object.values(options).every((value) => value === undefined)) {
+      .option("--json", "Print the result as JSON.")
+      .action((name: string, allOptions: ProviderSetOptions) => {
+        const { json, ...options } = allOptions;
+        if (Object.entries(allOptions).every(([key, value]) => key === "json" || value === undefined)) {
           throw new UsageError(
             "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, a --credential-cache option, --env, --unset-env, --codex-default-model, --codex-model or --codex-effort.",
           );
@@ -157,7 +164,9 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(options.env === undefined ? {} : { env: options.env }),
           ...(options.unsetEnv === undefined ? {} : { unsetEnv: options.unsetEnv }),
         });
-        console.log(`Updated provider "${name}" (${describeProviderEndpoint(updated)}, credential ${describeCredential(updated.credential)}).`);
+        reportMutation(json, { action: "updated", kind: "provider", name, value: updated }, () => {
+          console.log(`Updated provider "${name}" (${describeProviderEndpoint(updated)}, credential ${describeCredential(updated.credential)}).`);
+        });
       }),
     [
       "agent-shim provider set z --base-url https://api.z.ai/api/anthropic",
@@ -226,13 +235,16 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .command("remove <name>")
       .description("Delete a provider definition.")
       .option("--yes", "Remove without asking for confirmation (required when standard input is not a terminal).")
-      .action(async (name: string, options: Readonly<{ yes?: boolean }>) => {
+      .option("--json", "Print the result as JSON.")
+      .action(async (name: string, options: Readonly<{ yes?: boolean; json?: boolean }>) => {
         if (!providerExists(paths, name)) {
           throw new ProviderNotFoundError(name);
         }
         await confirmRemoval(deps, options.yes, `provider "${name}"`);
         removeProvider(paths, name);
-        console.log(`Removed provider "${name}".`);
+        reportMutation(options.json, { action: "removed", kind: "provider", name }, () => {
+          console.log(`Removed provider "${name}".`);
+        });
       }),
     ["agent-shim provider remove z --yes"],
   );
