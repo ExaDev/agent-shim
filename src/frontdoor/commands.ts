@@ -19,6 +19,7 @@ import {
   CONNECT_INTERCEPT_HOST,
   CONNECT_INTERCEPT_HOSTS,
   CONNECT_LIMITS,
+  CONNECT_TAP_HOSTS,
   HTTPS_PORT,
   LOOPBACK_LEAF_NAMES,
   createLeafCache,
@@ -26,10 +27,11 @@ import {
   generateCa,
   mintLeaf,
   realConnectCertStore,
-  realConnectEffects,
+
   startConnectServer,
   type CaMaterial,
 } from "./connect";
+import { realConnectEffects } from "./connectEffects";
 import { createCredentialCustody } from "./custody";
 import { ensureFrontDoor } from "./ensure";
 import { serveRouted } from "./pipeline";
@@ -148,6 +150,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       const server = await startConnectServer(
         {
           interceptHosts: CONNECT_INTERCEPT_HOSTS,
+          tapHosts: CONNECT_TAP_HOSTS,
           routedHost: CONNECT_INTERCEPT_HOST,
           serveRouted: (request, response) => {
             // The connect surface hands the pipeline the same request shape the provider listener builds: identified, admitted, middleware-run, routed, with the abort wired to the client going away.

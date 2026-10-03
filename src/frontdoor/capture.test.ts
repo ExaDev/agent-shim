@@ -117,6 +117,31 @@ describe("createFileCapture", () => {
     expect(lines[lines.length - 1]).toMatchObject({ kind: "end", responseBytesCapped: true, requestBytesCapped: false });
   });
 
+  it("records a tapped stream: text chunks as bodies, binary chunks as base64, capped per direction", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-"));
+    const file = path.join(dir, "frontdoor-capture.jsonl");
+    const capture = createFileCapture(file, () => new Date("2026-10-03T12:00:00.000Z"));
+    const tap = capture.tapStream?.("platform.claude.com");
+    expect(tap).toBeDefined();
+    tap?.onChunk("client-to-server", Buffer.from("PRI * HTTP/2.0 plain-text"));
+    // A frame carrying a byte no UTF-8 text can preserve losslessly, which is what forces the base64 branch; all-ASCII frames round-trip as text and stay readable. The bytes are an HTTP/2 SETTINGS frame's shape followed by one 0xff, the first byte that has no lossless UTF-8 encoding.
+    const H2_FRAME_PREFIX_LENGTH = 8;
+    const ASCII_FILLER_BYTE = 0x7f;
+    const NON_UTF8_BYTE = 0xff;
+    const h2Frame = Buffer.concat([Buffer.alloc(H2_FRAME_PREFIX_LENGTH), Buffer.from([NON_UTF8_BYTE])]);
+    tap?.onChunk("server-to-client", h2Frame);
+    const oversized = Buffer.concat([Buffer.alloc(CHUNK_LOG_CAP_BYTES, ASCII_FILLER_BYTE), Buffer.from([NON_UTF8_BYTE])]);
+    tap?.onChunk("client-to-server", oversized);
+    tap?.onEnd();
+    const lines = fs.readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines.map((line) => line.kind)).toEqual(["stream", "stream-chunk", "stream-chunk", "stream-chunk", "stream-end"]);
+    expect(lines[0]).toMatchObject({ host: "platform.claude.com" });
+    expect(lines[1]).toMatchObject({ dir: "client-to-server", body: "PRI * HTTP/2.0 plain-text" });
+    expect(lines[2]).toMatchObject({ dir: "server-to-client", b64: h2Frame.toString("base64") });
+    expect(lines[3]).toMatchObject({ dir: "client-to-server", stored: CHUNK_LOG_CAP_BYTES, truncated: true });
+    expect(lines[4]).toMatchObject({ kind: "stream-end", clientToServerCapped: false, serverToClientCapped: false });
+  });
+
   it("records an upgrade request separately from piped exchanges", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-"));
     const file = path.join(dir, "frontdoor-capture.jsonl");
