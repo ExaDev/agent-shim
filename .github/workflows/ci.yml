@@ -836,7 +836,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add bucket/agent-shim.json
+          # Scoop cannot rename a package, so the manifest under the project's former name stays and mirrors every release: an existing `scoop install claude-use` keeps updating to the same files.
+          jq '.description = "Renamed to agent-shim; this manifest is kept so existing claude-use installs keep updating. " + .description' bucket/agent-shim.json > bucket/claude-use.json
+          git add bucket/agent-shim.json bucket/claude-use.json
           git diff --cached --quiet || git commit -m "chore: update manifest to ${{ needs.semantic-release.outputs.tag }}"
           git push
 
