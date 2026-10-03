@@ -345,7 +345,7 @@ export interface ConnectServerHandle {
 }
 
 /** The ALPN protocols a tap host's TLS offers: HTTP/2 first, because that is what its real server negotiates and what the channel has proved to be, with HTTP/1.1 still allowed so a client that speaks it is served rather than refused. */
-export const TAP_ALPN_PROTOCOLS: readonly string[] = ["h2", "http/1.1"];
+const TAP_ALPN_PROTOCOLS: readonly string[] = ["h2", "http/1.1"];
 
 /**
  * Starts the connect surface: binds the listener, mints the intercept host's leaf, and wires the per-connection routing. Resolves once the listener is bound.
