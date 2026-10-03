@@ -1,4 +1,5 @@
 import type * as net from "node:net";
+import type { Duplex } from "node:stream";
 
 import type { StreamTap } from "./capture";
 
@@ -7,7 +8,7 @@ import type { StreamTap } from "./capture";
  *
  * Lifecycle mirrors `blindTunnel`: whoever goes away first takes the other side with it, so neither half of a tap session ever outlives its peer. The tap's listeners ride beside the pipes, additive like every other observer in this surface, so a recording failure fails loudly rather than silently stopping a diagnostic.
  */
-export function pumpTapSession(secure: net.Socket, openUpstream: (clientAlpn: string | undefined) => Promise<net.Socket>, tap: StreamTap | undefined): void {
+export function pumpTapSession(secure: Duplex, openUpstream: (clientAlpn: string | undefined) => Promise<net.Socket>, tap: StreamTap | undefined, prefix: Readonly<Buffer> = Buffer.alloc(0)): void {
   let upstream: net.Socket | undefined;
   let ended = false;
   const end = (): void => {
@@ -41,6 +42,10 @@ export function pumpTapSession(secure: net.Socket, openUpstream: (clientAlpn: st
       end();
       upstream.destroy();
       return;
+    }
+    if (prefix.length > 0) {
+      // Bytes that must reach the upstream before anything piped from the client: a relayed upgrade's reconstructed request head, whose original the client's own HTTP parser consumed and will never re-send.
+      upstream.write(prefix);
     }
     if (tap !== undefined) {
       secure.on("data", (chunk: Buffer) => {

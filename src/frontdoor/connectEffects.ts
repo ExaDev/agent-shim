@@ -85,10 +85,9 @@ export function realConnectEffects(): ConnectEffects {
         socket.destroy();
       });
       if (onUpgrade !== undefined) {
-        // A server with no 'upgrade' listener has Node destroy the connection itself; this handler sees the request through the capture and then destroys it, preserving that outcome exactly whether or not anything is being recorded.
-        server.on("upgrade", (request, socket) => {
-          onUpgrade(request);
-          socket.destroy();
+        // A server with no 'upgrade' listener has Node destroy the connection itself; with one, the handler owns the socket outright, head bytes included, which is what the byte-level relay needs.
+        server.on("upgrade", (request, socket, head) => {
+          onUpgrade(request, socket, head);
         });
       }
       return {

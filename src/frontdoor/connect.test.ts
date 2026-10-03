@@ -146,6 +146,43 @@ describe("MITM proxy over real sockets", () => {
   );
 
   it(
+    "relays a websocket upgrade on the API host's session byte for byte, carrying the 101 handshake and the frames after it",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa);
+      const { connectPort, close } = await world.start();
+      try {
+        const secure = await connectThroughProxy(connectPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+        const echoed = await new Promise<string>((resolve, reject) => {
+          let received = "";
+          function onData(chunk: Buffer): void {
+            received += chunk.toString("utf8");
+            if (received.includes("101 Switching Protocols") && received.includes("upgrade-echo")) {
+              secure.off("data", onData);
+              secure.off("error", onError);
+              resolve(received);
+            }
+          }
+          function onError(error: Error): void {
+            secure.off("data", onData);
+            reject(error);
+          }
+          secure.on("data", onData);
+          secure.on("error", onError);
+          secure.write(`GET /wss/remote HTTP/1.1\r\nHost: ${CONNECT_INTERCEPT_HOST}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\nupgrade-echo`);
+        });
+        expect(echoed).toContain("101 Switching Protocols");
+        expect(world.upstreamUpgrades).toEqual(["/wss/remote"]);
+        expect(world.routedRequests).toEqual([]);
+        secure.destroy();
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
     "terminates platform.claude.com TLS, pipes even its /v1/ paths to that host's upstream, and never hands them to the routed pipeline",
     async () => {
       const world = makeTlsWorld(ca, upstreamCa);
