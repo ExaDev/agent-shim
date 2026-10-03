@@ -31,13 +31,13 @@ describe("buildCliOverride", () => {
     expect(() => buildCliOverride({ env: {}, ...noFlags, categoryFlags: ["history=true,knowledge=false"] })).toThrow(UsageError);
   });
 
-  it("names the variable when CLAUDE_USE_CATEGORY_OVERRIDE is malformed", () => {
-    expect(() => buildCliOverride({ env: { CLAUDE_USE_CATEGORY_OVERRIDE: "history" }, ...noFlags })).toThrow(/CLAUDE_USE_CATEGORY_OVERRIDE/);
+  it("names the variable when AGENT_SHIM_CATEGORY_OVERRIDE is malformed", () => {
+    expect(() => buildCliOverride({ env: { AGENT_SHIM_CATEGORY_OVERRIDE: "history" }, ...noFlags })).toThrow(/AGENT_SHIM_CATEGORY_OVERRIDE/);
   });
 
-  it("merges CLAUDE_USE_CATEGORY_OVERRIDE as a base with --category flags winning on key collision", () => {
+  it("merges AGENT_SHIM_CATEGORY_OVERRIDE as a base with --category flags winning on key collision", () => {
     const result = buildCliOverride({
-      env: { CLAUDE_USE_CATEGORY_OVERRIDE: "history=false,knowledge=true" },
+      env: { AGENT_SHIM_CATEGORY_OVERRIDE: "history=false,knowledge=true" },
       ...noFlags,
       categoryFlags: ["history=true"],
     });
@@ -62,8 +62,8 @@ describe("buildCliOverride", () => {
     expect(result?.categories).toEqual({ runtime: false, history: true, knowledge: true, settings: true });
   });
 
-  it("expands all=true from CLAUDE_USE_CATEGORY_OVERRIDE the same way as --category", () => {
-    const result = buildCliOverride({ env: { CLAUDE_USE_CATEGORY_OVERRIDE: "all=true" }, ...noFlags });
+  it("expands all=true from AGENT_SHIM_CATEGORY_OVERRIDE the same way as --category", () => {
+    const result = buildCliOverride({ env: { AGENT_SHIM_CATEGORY_OVERRIDE: "all=true" }, ...noFlags });
     expect(result?.categories).toEqual({ runtime: true, history: true, knowledge: true, settings: true });
   });
 
@@ -83,9 +83,9 @@ describe("buildCliOverride", () => {
     expect(result?.entries).toEqual({ "knowledge/skills/a": true, "knowledge/skills/b": true });
   });
 
-  it("merges CLAUDE_USE_ENTRY_OVERRIDE as a base with --share/--hide winning on key collision", () => {
+  it("merges AGENT_SHIM_ENTRY_OVERRIDE as a base with --share/--hide winning on key collision", () => {
     const result = buildCliOverride({
-      env: { CLAUDE_USE_ENTRY_OVERRIDE: "knowledge/skills/commit=false" },
+      env: { AGENT_SHIM_ENTRY_OVERRIDE: "knowledge/skills/commit=false" },
       ...noFlags,
       shareFlags: ["knowledge/skills/commit"],
     });

@@ -306,7 +306,7 @@ describe("directory rules", () => {
   });
 });
 
-describe("portable .claude-use.json files", () => {
+describe("portable .agent-shim.json files", () => {
   it("folds committed files at different depths shallowest-to-deepest", () => {
     const levels: DirectoryLevelSources[] = [
       { dir: `${FAKE_HOME}/work`, portable: { config: { categories: { history: true } }, filepath: "shallow" } },
@@ -339,7 +339,7 @@ describe("portable .claude-use.json files", () => {
             categories: { history: false },
             entries: { "knowledge/skills/commit": true, "knowledge/skills/pr-feedback": true },
           },
-          filepath: `${FAKE_HOME}/work/repo/.claude-use.json`,
+          filepath: `${FAKE_HOME}/work/repo/.agent-shim.json`,
         },
       },
     ];
@@ -490,8 +490,8 @@ describe("conditional entries end to end", () => {
   });
 
   it("applies an env condition only when the injected environment snapshot carries the right value", () => {
-    const rule = { categories: { knowledge: false }, entries: { "knowledge/skills/commit": { value: true, when: { env: { CLAUDE_USE_MODE: "open" } } } } };
-    const on = resolve({ baseConfigProfile: "p", loadProfile: loader({ p: rule }) }, realisticFacts({ env: { CLAUDE_USE_MODE: "open" } }));
+    const rule = { categories: { knowledge: false }, entries: { "knowledge/skills/commit": { value: true, when: { env: { AGENT_SHIM_MODE: "open" } } } } };
+    const on = resolve({ baseConfigProfile: "p", loadProfile: loader({ p: rule }) }, realisticFacts({ env: { AGENT_SHIM_MODE: "open" } }));
     const off = resolve({ baseConfigProfile: "p", loadProfile: loader({ p: rule }) }, realisticFacts({ env: {} }));
     expect(shared(on, "skills/commit")).toBe(true);
     expect(shared(off, "skills/commit")).toBe(false);

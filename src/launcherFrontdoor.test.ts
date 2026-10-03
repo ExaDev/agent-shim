@@ -35,7 +35,7 @@ describe("runLauncher with a provider", () => {
     const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
     runAndCaptureExit({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/codex.json`]: codexProvider }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/codex.json`]: codexProvider }),
       spawn,
       proc: fakeProc({}, ["--provider", "codex", "--print"]),
       log: fakeLog(),
@@ -47,8 +47,8 @@ describe("runLauncher with a provider", () => {
     expect(order).toEqual([]);
     expect(env.ANTHROPIC_BASE_URL).toBe(`https://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("codex-placeholder");
-    expect(env.CLAUDE_USE_PROVIDER).toBe("Codex");
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-claude-use-session: [0-9a-f-]{36}\nx-claude-use-auth: launch-token-for-tests$/);
+    expect(env.AGENT_SHIM_PROVIDER).toBe("Codex");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-agent-shim-session: [0-9a-f-]{36}\nx-agent-shim-auth: launch-token-for-tests$/);
     expect(frontdoor.releases()).toBeGreaterThan(0);
   });
 
@@ -57,7 +57,7 @@ describe("runLauncher with a provider", () => {
     const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
     runAndCaptureExit({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } } }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } } }),
       spawn,
       proc: fakeProc({ Z: "tok" }, ["--provider", "z"]),
       log: fakeLog(),
@@ -67,17 +67,17 @@ describe("runLauncher with a provider", () => {
     });
     expect(frontdoor.ensures()).toBe(1);
     expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBe(`https://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/z`);
-    // The base URL is HTTPS with a leaf from claude-use's CA, so the child must trust that CA.
+    // The base URL is HTTPS with a leaf from agent-shim's CA, so the child must trust that CA.
     expect(spawnedEnv(spawn).NODE_EXTRA_CA_CERTS).toBe(FAKE_TRUST_BUNDLE);
   });
 
   it("hands the door the parent's own NODE_EXTRA_CA_CERTS and logs why the trust bundle dropped it, when it did", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
-    const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT, undefined, { path: "/bundle.pem", warning: "claude-use: NODE_EXTRA_CA_CERTS names /corp.pem, which could not be read" });
+    const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT, undefined, { path: "/bundle.pem", warning: "agent-shim: NODE_EXTRA_CA_CERTS names /corp.pem, which could not be read" });
     runAndCaptureExit({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } } }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } } }),
       spawn,
       proc: fakeProc({ Z: "tok", NODE_EXTRA_CA_CERTS: "/corp.pem" }, ["--provider", "z"]),
       log,
@@ -87,7 +87,7 @@ describe("runLauncher with a provider", () => {
     });
     expect(frontdoor.inherited()).toEqual(["/corp.pem"]);
     expect(spawnedEnv(spawn).NODE_EXTRA_CA_CERTS).toBe("/bundle.pem");
-    expect(log.warns).toContain("claude-use: NODE_EXTRA_CA_CERTS names /corp.pem, which could not be read");
+    expect(log.warns).toContain("agent-shim: NODE_EXTRA_CA_CERTS names /corp.pem, which could not be read");
   });
 
   it("starts the front door before headroom, whose allowlist must already admit the door's address", () => {
@@ -97,9 +97,9 @@ describe("runLauncher with a provider", () => {
     const recordingDoor = { ensure: (inherited: string | undefined) => { order.push("frontdoor"); return plainDoor.ensure(inherited); }, release: () => { plainDoor.release(); } };
     runAndCaptureExit({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/codex.json`]: codexProvider }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/codex.json`]: codexProvider }),
       spawn,
-      proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--provider", "codex"]),
+      proc: fakeProc({ AGENT_SHIM_HEADROOM: "1" }, ["--provider", "codex"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       frontdoor: recordingDoor,
@@ -112,7 +112,7 @@ describe("runLauncher with a provider", () => {
     expect(env.HEADROOM_PROXY_URL).toBe(`http://127.0.0.1:${String(HEADROOM_PORT)}`);
     // The child names no upstream for headroom: the door's hop decides where headroom forwards, so no x-headroom-base-url exists any more.
     expect(env.ANTHROPIC_CUSTOM_HEADERS).not.toContain("x-headroom-base-url");
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain("x-claude-use-headroom: 1");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain("x-agent-shim-headroom: 1");
   });
 
   it("refuses a provider launch when no front-door port is wired", () => {
@@ -120,7 +120,7 @@ describe("runLauncher with a provider", () => {
     const log = fakeLog();
     const code = runAndCaptureExit({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/codex.json`]: codexProvider }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/codex.json`]: codexProvider }),
       spawn,
       proc: fakeProc({}, ["--provider", "codex"]),
       log,
@@ -150,7 +150,7 @@ describe("runLauncher with a provider", () => {
 
   it.each([
     ["the --track-usage flag", ["--track-usage", "--print"], {}],
-    ["CLAUDE_USE_TRACK_USAGE", ["--print"], { CLAUDE_USE_TRACK_USAGE: "1" }],
+    ["AGENT_SHIM_TRACK_USAGE", ["--print"], { AGENT_SHIM_TRACK_USAGE: "1" }],
   ] as const)("routes a plain OAuth launch through the door's CONNECT surface, with no headroom and no provider, for %s", (_name, argv, env) => {
     const spawn = fakeSpawn();
     const log = fakeLog();
@@ -180,7 +180,7 @@ describe("runLauncher with a provider", () => {
       paths,
       fs: fakeFs({}),
       spawn,
-      proc: fakeProc({ CLAUDE_USE_TRACK_USAGE: "1" }, ["--no-track-usage", "--print"]),
+      proc: fakeProc({ AGENT_SHIM_TRACK_USAGE: "1" }, ["--no-track-usage", "--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       frontdoor,

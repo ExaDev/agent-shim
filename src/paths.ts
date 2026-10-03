@@ -1,13 +1,16 @@
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { HOME_DIRNAME, LEGACY_HOME_DIRNAME } from "./legacy";
+
 /**
- * The resolved set of paths claude-use reads and writes under its own root.
+ * The resolved set of paths agent-shim reads and writes under its own root.
  *
- * `root` is always CLAUDE_USE_HOME when that environment variable is set (used by every test in this project, and by any real installation that wants to relocate its state), falling back to `~/.claude-use` only when the variable is unset. Every other field is derived from `root` so there is exactly one place a path can go wrong.
+ * `root` is always AGENT_SHIM_HOME when that environment variable is set (used by every test in this project, and by any real installation that wants to relocate its state), falling back to `~/.agent-shim` (or the former `~/.claude-use`, see `resolveAgentShimHome`) only when the variable is unset. Every other field is derived from `root` so there is exactly one place a path can go wrong.
  */
 export interface LayoutPaths {
-  /** The resolved root directory — CLAUDE_USE_HOME, or ~/.claude-use when unset. */
+  /** The resolved root directory, see `resolveAgentShimHome`. */
   readonly root: string;
   /** Directory holding one subdirectory per identity (symlink farm + local credentials/daemon state). */
   readonly identitiesDir: string;
@@ -17,13 +20,13 @@ export interface LayoutPaths {
   readonly providersDir: string;
   /** Path to the directory-rules.json file describing directory-scoped identity/profile pins. */
   readonly directoryRulesFile: string;
-  /** Path to the persisted active-identity file (the identity `claude-use identity use` selected). */
+  /** Path to the persisted active-identity file (the identity `agent-shim identity use` selected). */
   readonly activeIdentityFile: string;
   /** Path to the global config.json (user-global override layer, and default profile/walk-limit settings). */
   readonly globalConfigFile: string;
   /** Path to the categories.local.json overlay recording answers to "unclassified entry" prompts. */
   readonly categoriesLocalFile: string;
-  /** Path to the claude-shim.json marker recording where `claude-use shim enable` last placed a `claude`-named copy of this executable, and how. */
+  /** Path to the claude-shim.json marker recording where `agent-shim shim enable` last placed a `claude`-named copy of this executable, and how. */
   readonly claudeShimFile: string;
   /** Directory holding the headroom daemon's coordination state: state.json, the start lock, and the session registry. */
   readonly headroomDir: string;
@@ -66,23 +69,31 @@ export interface LayoutPaths {
 }
 
 /**
- * Resolves the current CLAUDE_USE_HOME root: the environment variable when set to a non-empty string, otherwise `~/.claude-use`. An empty string counts as unset, consistent with how this project treats empty-string environment variables elsewhere (see the ambient-credential guard).
+ * Resolves the state root: `AGENT_SHIM_HOME` when set to a non-empty string (an empty string counts as unset, consistent with how this project treats empty-string environment variables elsewhere, see the ambient-credential guard), otherwise `~/.agent-shim`, or the former `~/.claude-use` when only that exists.
+ *
+ * The former root is used where it stands, never moved: macOS Claude Code names each identity's Keychain entry after a hash of its exact `CLAUDE_CONFIG_DIR`, so any relocation would sign every identity out. A fresh installation, or one that already has `~/.agent-shim`, uses the current name.
  */
-export function resolveClaudeUseHome(): string {
-  const fromEnv = process.env.CLAUDE_USE_HOME;
+export function resolveAgentShimHome(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir(), isDirectory: (candidate: string) => boolean = isExistingDirectory): string {
+  const fromEnv = env.AGENT_SHIM_HOME;
   if (fromEnv !== undefined && fromEnv !== "") {
     return fromEnv;
   }
-  return path.join(os.homedir(), ".claude-use");
+  const current = path.join(home, HOME_DIRNAME);
+  const legacy = path.join(home, LEGACY_HOME_DIRNAME);
+  return !isDirectory(current) && isDirectory(legacy) ? legacy : current;
+}
+
+function isExistingDirectory(candidate: string): boolean {
+  return fs.statSync(candidate, { throwIfNoEntry: false })?.isDirectory() ?? false;
 }
 
 /**
- * Resolves the canonical `~/.claude` directory every farm symlink points back into: `CLAUDE_USE_CLAUDE_HOME` when set to a non-empty string, otherwise `~/.claude`.
+ * Resolves the canonical `~/.claude` directory every farm symlink points back into: `AGENT_SHIM_CLAUDE_HOME` when set to a non-empty string, otherwise `~/.claude`.
  *
- * The override exists for the same reason `CLAUDE_USE_HOME` does. Exercising a real resync end to end means building and swapping real directories, and doing that against a real, in-use `~/.claude` to find out whether the code is correct is not an acceptable way to find out. Pointing both variables at throwaway directories makes a full end-to-end run safe.
+ * The override exists for the same reason `AGENT_SHIM_HOME` does. Exercising a real resync end to end means building and swapping real directories, and doing that against a real, in-use `~/.claude` to find out whether the code is correct is not an acceptable way to find out. Pointing both variables at throwaway directories makes a full end-to-end run safe.
  */
 export function resolveClaudeHome(): string {
-  const fromEnv = process.env.CLAUDE_USE_CLAUDE_HOME;
+  const fromEnv = process.env.AGENT_SHIM_CLAUDE_HOME;
   if (fromEnv !== undefined && fromEnv !== "") {
     return fromEnv;
   }
@@ -123,7 +134,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
   };
 }
 
-/** Resolves CLAUDE_USE_HOME and builds the full LayoutPaths structure in one call. */
+/** Resolves AGENT_SHIM_HOME and builds the full LayoutPaths structure in one call. */
 export function resolveLayoutPaths(): LayoutPaths {
-  return buildLayoutPaths(resolveClaudeUseHome());
+  return buildLayoutPaths(resolveAgentShimHome());
 }

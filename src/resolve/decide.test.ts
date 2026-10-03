@@ -108,7 +108,7 @@ describe("the corrected comparator in practice", () => {
 
   it("lets a later personal glob beat an earlier committed exact key, closing the trust hole", () => {
     const layers: Layer[] = [
-      { id: 1, kind: "portable" as const, source: "committed .claude-use.json", entries: { "knowledge/skills/commit": true } },
+      { id: 1, kind: "portable" as const, source: "committed .agent-shim.json", entries: { "knowledge/skills/commit": true } },
       { id: 2, kind: "directory-rule" as const, source: "personal rules", entries: { "knowledge/skills/*": false } },
     ];
     const result = decide("skills/commit", layers, facts);
@@ -190,10 +190,10 @@ describe("failing conditions", () => {
   });
 
   it("evaluates an env condition against the injected environment snapshot", () => {
-    const withVar = makeFacts({ "skills/commit/SKILL.md": true }, { env: { CLAUDE_USE_TEST: "on" } });
+    const withVar = makeFacts({ "skills/commit/SKILL.md": true }, { env: { AGENT_SHIM_TEST: "on" } });
     const withoutVar = makeFacts({ "skills/commit/SKILL.md": true }, { env: {} });
     const layers = [
-      layer(0, { entries: { "knowledge/skills/commit": { value: false, when: { env: { CLAUDE_USE_TEST: "on" } } } } }),
+      layer(0, { entries: { "knowledge/skills/commit": { value: false, when: { env: { AGENT_SHIM_TEST: "on" } } } } }),
     ];
     expect(decide("skills/commit", layers, withVar).decision.shared).toBe(false);
     expect(decide("skills/commit", layers, withoutVar).decision.shared).toBe(true);

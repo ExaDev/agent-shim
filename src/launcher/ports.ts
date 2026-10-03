@@ -23,7 +23,7 @@ export interface FarmStat {
 }
 
 /**
- * Every filesystem operation the farm resync performs, injected so the whole of `src/launcher/farm.ts` — symlink creation, materialisation, adoption copies, and the atomic swap itself — runs against an in-memory fake in tests and never against a real `~/.claude` or `~/.claude-use`.
+ * Every filesystem operation the farm resync performs, injected so the whole of `src/launcher/farm.ts` — symlink creation, materialisation, adoption copies, and the atomic swap itself — runs against an in-memory fake in tests and never against a real `~/.claude` or `~/.agent-shim`.
  *
  * `lstat` never follows symlinks: a `~/.claude` that contains a directory symlink escaping the tree (a skills directory linked out to a separate dotfiles repository, say) must be recorded as one symlink entry rather than recursed into, both to keep the fact manifest finite and because the farm links such an entry at `<claudeHome>/<rel>` and lets the OS resolve the remaining hops.
  */
@@ -92,7 +92,7 @@ export interface RunPort {
 /**
  * The running process itself: its environment, its logical argv, and the ability to terminate with an exit code.
  *
- * `argv` is the *logical* CLI arguments only — whatever the user typed after `claude`/`claude-use`, already stripped of the Node executable path and the script path (`process.argv.slice(2)` in the real implementation). `exit` mirrors `process.exit`'s own `never` return type: a real process never returns from it, and a test fake enforces the same shape by throwing a marker so control flow unwinds the same way in both cases.
+ * `argv` is the *logical* CLI arguments only — whatever the user typed after `claude`/`agent-shim`, already stripped of the Node executable path and the script path (`process.argv.slice(2)` in the real implementation). `exit` mirrors `process.exit`'s own `never` return type: a real process never returns from it, and a test fake enforces the same shape by throwing a marker so control flow unwinds the same way in both cases.
  */
 export interface ProcPort {
   readonly env: Readonly<Record<string, string | undefined>>;
@@ -140,7 +140,7 @@ export interface FrontDoorUp {
   readonly port: number;
   /** The loopback port the CONNECT surface listens on: what an OAuth launch points HTTPS_PROXY at. */
   readonly connectPort: number;
-  /** The CA bundle every routed child points NODE_EXTRA_CA_CERTS at: claude-use's CA (which signs both the provider listener's leaf and the CONNECT surface's), plus whatever the parent environment already trusted that way. */
+  /** The CA bundle every routed child points NODE_EXTRA_CA_CERTS at: agent-shim's CA (which signs both the provider listener's leaf and the CONNECT surface's), plus whatever the parent environment already trusted that way. */
   readonly trustBundlePath: string;
   /** Why the trust bundle dropped something the parent environment named, when it did; the launcher logs it. */
   readonly trustWarning?: string;

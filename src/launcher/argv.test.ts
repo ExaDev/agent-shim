@@ -117,7 +117,7 @@ describe("parseLauncherArgv", () => {
     expect(result.rest).toEqual(["--print", "--category"]);
   });
 
-  it("consumes claude-use flags positioned after a leading @name", () => {
+  it("consumes agent-shim flags positioned after a leading @name", () => {
     const result = parseLauncherArgv(["@work", "--category", "history=true", "--print"]);
     expect(result.identity).toBe("work");
     expect(result.categoryFlags).toEqual(["history=true"]);

@@ -5,9 +5,9 @@ import { parseDuration } from "../resolve/conditions";
 import { parseBoolWord } from "./bool";
 
 /**
- * Parsing helpers shared by every claude-use flag and environment variable.
+ * Parsing helpers shared by every agent-shim flag and environment variable.
  *
- * Flags that take a list are repeated, one value per occurrence (`--category history=true --category knowledge=false`); no flag splits its value on commas. Environment variables cannot be repeated, so the two list-valued ones (`CLAUDE_USE_CATEGORY_OVERRIDE`, `CLAUDE_USE_ENTRY_OVERRIDE`) are the one place a comma-separated list is parsed, via `parseBoolPairList`. No escaping syntax is defined for a comma inside one of their values.
+ * Flags that take a list are repeated, one value per occurrence (`--category history=true --category knowledge=false`); no flag splits its value on commas. Environment variables cannot be repeated, so the two list-valued ones (`AGENT_SHIM_CATEGORY_OVERRIDE`, `AGENT_SHIM_ENTRY_OVERRIDE`) are the one place a comma-separated list is parsed, via `parseBoolPairList`. No escaping syntax is defined for a comma inside one of their values.
  */
 
 /** Splits `input` on commas. An empty string yields an empty array, not `[""]`. */
@@ -60,7 +60,7 @@ export class InvalidEnvBoolError extends UsageError {
 }
 
 /**
- * Reads a boolean environment variable with the same vocabulary a CLI flag value uses. Unset and the empty string both mean "not given" (undefined), consistent with how every other claude-use environment variable treats the empty string; anything outside the vocabulary throws `InvalidEnvBoolError` rather than silently reading as false.
+ * Reads a boolean environment variable with the same vocabulary a CLI flag value uses. Unset and the empty string both mean "not given" (undefined), consistent with how every other agent-shim environment variable treats the empty string; anything outside the vocabulary throws `InvalidEnvBoolError` rather than silently reading as false.
  */
 export function parseEnvBool(variable: string, value: string | undefined): boolean | undefined {
   if (value === undefined || value === "") {

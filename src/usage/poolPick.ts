@@ -10,7 +10,7 @@ import { ANTHROPIC_PROVIDER } from "./middleware";
 import { USAGE_RETENTION_MS } from "./store";
 
 /**
- * The store-backed side of pool picking: loads each member's recorded state and ranks it with `rankPool`, and keeps the per-directory record of the last pick. The launcher and `claude-use pool pick` both go through `rankPoolFromStore`, so the command shows exactly what a launch would choose.
+ * The store-backed side of pool picking: loads each member's recorded state and ranks it with `rankPool`, and keeps the per-directory record of the last pick. The launcher and `agent-shim pool pick` both go through `rankPoolFromStore`, so the command shows exactly what a launch would choose.
  */
 
 /** The reads a pool ranking needs: snapshots, the log and each member's login file. */
@@ -82,7 +82,7 @@ function readPicksFile(fs: Pick<FarmFs, "readFileUtf8">, file: string): PicksRea
     return { file: empty, problem: `${file} is not valid JSON` };
   }
   const result = PicksFileSchema.safeParse(parsed);
-  return result.success ? { file: result.data } : { file: empty, problem: `${file} is not a picks file this claude-use can read` };
+  return result.success ? { file: result.data } : { file: empty, problem: `${file} is not a picks file this agent-shim can read` };
 }
 
 /** The identity last picked from a pool for `directory`, with a note when the picks file was unreadable (a hint lost, never a launch blocked). */

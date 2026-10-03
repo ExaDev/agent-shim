@@ -56,7 +56,7 @@ export interface PipelineDeps {
   readonly now: () => number;
   readonly log: (line: string) => void;
   /**
-   * The listener's admission step, run after identification and before anything is routed: it decides whether the request may be routed at all and with which headers. A client-facing listener admits a request carrying the per-launch capability of a live registered session, unchanged; the direct listener admits only what this process's own headroom hop sent back (the generation's hop secret plus a live custody id for the provider the path names) and swaps the hop's placeholder credentials for the real ones. A refused request is answered 401 without ever reaching a route, so a loopback process that never launched through claude-use cannot spend a session's credentials or quota.
+   * The listener's admission step, run after identification and before anything is routed: it decides whether the request may be routed at all and with which headers. A client-facing listener admits a request carrying the per-launch capability of a live registered session, unchanged; the direct listener admits only what this process's own headroom hop sent back (the generation's hop secret plus a live custody id for the provider the path names) and swaps the hop's placeholder credentials for the real ones. A refused request is answered 401 without ever reaching a route, so a loopback process that never launched through agent-shim cannot spend a session's credentials or quota.
    */
   readonly admit: (request: AdmissionRequest) => Admission;
 }
@@ -273,7 +273,7 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
     deps.log(`front door: route ${resolution.route.name} failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
     if (!response.headersSent) {
       response.start(HTTP_STATUS.internalServerError, { "Content-Type": "application/json" });
-      await response.write(errorBody(HTTP_STATUS.internalServerError, "internal error in the claude-use front door"));
+      await response.write(errorBody(HTTP_STATUS.internalServerError, "internal error in the agent-shim front door"));
       response.end();
       return;
     }

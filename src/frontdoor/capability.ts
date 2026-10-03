@@ -1,14 +1,14 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 
 /**
- * How a launch's capability token is presented and checked. The token reaches the child twice: as the `x-claude-use-auth` header on every request it sends (see `AUTH_HEADER`), and as the password in the `HTTPS_PROXY` URL an OAuth launch gets, which every proxy-aware client turns into `Proxy-Authorization: Basic ...` on its CONNECT request. Both are checked against the same live registry with the same constant-time comparison.
+ * How a launch's capability token is presented and checked. The token reaches the child twice: as the `x-agent-shim-auth` header on every request it sends (see `AUTH_HEADER`), and as the password in the `HTTPS_PROXY` URL an OAuth launch gets, which every proxy-aware client turns into `Proxy-Authorization: Basic ...` on its CONNECT request. Both are checked against the same live registry with the same constant-time comparison.
  */
 
 /** The user name in the proxy URL. A label only: the surface checks the password, which is the capability, and ignores the user name, so nothing depends on how a client spells it. */
-export const CONNECT_PROXY_USER = "claude-use";
+export const CONNECT_PROXY_USER = "agent-shim";
 
 /** The realm the CONNECT surface's 407 challenge names, so a client that waits for a challenge before sending credentials knows which ones to send. */
-export const CONNECT_PROXY_REALM = "claude-use front door";
+export const CONNECT_PROXY_REALM = "agent-shim front door";
 
 /** The one authentication scheme the surface accepts, compared case-insensitively as RFC 9110 section 11.1 requires. */
 const BASIC_SCHEME = "basic";

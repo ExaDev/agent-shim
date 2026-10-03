@@ -71,7 +71,7 @@ describe("runLauncher", () => {
     expect(spawn.spawnSync).toHaveBeenCalledWith(
       discovered.path,
       ["--print"],
-      { stdio: "inherit", env: { CLAUDE_CONFIG_DIR: "/home/testuser/.claude-use/identities/work" } },
+      { stdio: "inherit", env: { CLAUDE_CONFIG_DIR: "/home/testuser/.agent-shim/identities/work" } },
     );
   });
 
@@ -125,7 +125,7 @@ describe("runLauncher", () => {
     const code = runAndCaptureExit({
       paths,
       fs: fakeFs({
-        "/home/testuser/.claude-use/identities/work/identity.json": {
+        "/home/testuser/.agent-shim/identities/work/identity.json": {
           name: "work",
           allowAmbientCredential: true,
         },
@@ -143,7 +143,7 @@ describe("runLauncher", () => {
   it.each([
     ["a leading @name", {}, ["@ghost", "--print"]],
     ["--identity", {}, ["--identity", "ghost", "--print"]],
-    ["CLAUDE_USE_IDENTITY", { CLAUDE_USE_IDENTITY: "ghost" }, ["--print"]],
+    ["AGENT_SHIM_IDENTITY", { AGENT_SHIM_IDENTITY: "ghost" }, ["--print"]],
   ])("refuses, naming it, an identity selected by %s that has no identity.json, rather than creating a new login", (_how, env, argv) => {
     const log = fakeLog();
     const spawn = fakeSpawn();
@@ -153,7 +153,7 @@ describe("runLauncher", () => {
     expect(code).toBe(1);
     expect(log.errors).toHaveLength(1);
     expect(log.errors[0]).toContain('no identity named "ghost"');
-    expect(log.errors[0]).toContain("claude-use identity add ghost");
+    expect(log.errors[0]).toContain("agent-shim identity add ghost");
     expect(spawn.spawnSync).not.toHaveBeenCalled();
   });
 
@@ -181,7 +181,7 @@ describe("runLauncher", () => {
   it("takes --identity as the explicit form of @name, and refuses two different names", () => {
     const spawn = fakeSpawn();
     runAndCaptureExit({ paths, fs: fakeFs({}), spawn, proc: fakeProc({}, ["--identity", "work", "--print"]), log: fakeLog(), resolveClaudeBinary: () => discovered });
-    expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe("/home/testuser/.claude-use/identities/work");
+    expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe("/home/testuser/.agent-shim/identities/work");
 
     expect(() => {
       runLauncher({ paths, fs: fakeFs({}), spawn: fakeSpawn(), proc: fakeProc({}, ["@work", "--identity", "personal"]), log: fakeLog(), resolveClaudeBinary: () => discovered });
@@ -207,7 +207,7 @@ describe("runLauncher", () => {
       paths,
       fs: fakeFs({}),
       spawn,
-      proc: fakeProc({ CLAUDE_USE_SKIP_PERMISSIONS: "0" }, ["--skip-permissions", "--remote-control", "--print"]),
+      proc: fakeProc({ AGENT_SHIM_SKIP_PERMISSIONS: "0" }, ["--skip-permissions", "--remote-control", "--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
     });
@@ -221,7 +221,7 @@ describe("runLauncher", () => {
 
     runAndCaptureExit({
       paths,
-      fs: fakeFs({ "/home/testuser/.claude-use/active-identity": "personal\n" }),
+      fs: fakeFs({ "/home/testuser/.agent-shim/active-identity": "personal\n" }),
       spawn,
       proc,
       log,
@@ -230,13 +230,13 @@ describe("runLauncher", () => {
 
     expect(spawn.spawnSync).toHaveBeenCalledWith(discovered.path, ["--print"], {
       stdio: "inherit",
-      env: { CLAUDE_CONFIG_DIR: "/home/testuser/.claude-use/identities/personal" },
+      env: { CLAUDE_CONFIG_DIR: "/home/testuser/.agent-shim/identities/personal" },
     });
   });
 
   it("builds the final argv as toolFlags, then extraFlags, then passthrough, honouring both env-var flag escape hatches", () => {
     const proc = fakeProc(
-      { CLAUDE_USE_SKIP_PERMISSIONS: "1", CLAUDE_USE_REMOTE_CONTROL: "1", CLAUDE_EXTRA_FLAGS: "--continue continue" },
+      { AGENT_SHIM_SKIP_PERMISSIONS: "1", AGENT_SHIM_REMOTE_CONTROL: "1", CLAUDE_EXTRA_FLAGS: "--continue continue" },
       ["--verbose"],
     );
     const log = fakeLog();
@@ -304,11 +304,11 @@ describe("runLauncher headroom routing", () => {
   /** The session headers a headroom launch injects, with the random session id matched rather than known: identity-less here, so the session line leads. */
   function injectedSessionHeaders(env: Readonly<Record<string, string | undefined>>): string[] {
     const lines = env.ANTHROPIC_CUSTOM_HEADERS?.split("\n") ?? [];
-    expect(lines[0]).toMatch(/^x-claude-use-session: [0-9a-f-]{36}$/);
+    expect(lines[0]).toMatch(/^x-agent-shim-session: [0-9a-f-]{36}$/);
     return lines.slice(1);
   }
 
-  it("brings the door and the daemon up via their injected ports and wires an OAuth launch to the door's CONNECT surface when CLAUDE_USE_HEADROOM=1", () => {
+  it("brings the door and the daemon up via their injected ports and wires an OAuth launch to the door's CONNECT surface when AGENT_SHIM_HEADROOM=1", () => {
     const spawn = fakeSpawn();
     const headroom = fakeHeadroomPort();
     const frontdoor = fakeFrontDoorPort();
@@ -317,7 +317,7 @@ describe("runLauncher headroom routing", () => {
       paths,
       fs: fakeFs({}),
       spawn,
-      proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--print"]),
+      proc: fakeProc({ AGENT_SHIM_HEADROOM: "1" }, ["--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       frontdoor,
@@ -328,10 +328,10 @@ describe("runLauncher headroom routing", () => {
     const env = spawnedEnv(spawn);
     // No provider resolved, so this is an OAuth launch: the base URL stays unset (Remote Control requires the real API) and routing happens at the HTTPS_PROXY layer, pointing at the door's CONNECT surface.
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.HTTPS_PROXY).toBe("http://claude-use:launch-token-for-tests@127.0.0.1:4200");
-    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/frontdoor/ca/ca.pem");
+    expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
+    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.agent-shim/frontdoor/ca/ca.pem");
     expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
-    expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-auth: launch-token-for-tests", "x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
+    expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
     expect(headroom.releases).toBeGreaterThan(0);
     expect(frontdoor.releases()).toBeGreaterThan(0);
   });
@@ -377,7 +377,7 @@ describe("runLauncher headroom routing", () => {
     // No identity resolved under the escape hatch, so no farm resync happens; the launch flags still come from the cascade, the same way provider selection does. With no provider selected this is an OAuth launch, so routing shows up as HTTPS_PROXY rather than a base-URL override.
     expect(headroom.ensures).toBe(1);
     expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://claude-use:launch-token-for-tests@127.0.0.1:4200");
+    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
     expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe("/somewhere/explicit");
   });
 
@@ -388,14 +388,14 @@ describe("runLauncher headroom routing", () => {
     runAndCaptureExit({
       paths,
       fs: fakeFs({
-        [`${FAKE_HOME}/.claude-use/providers/z.json`]: {
+        [`${FAKE_HOME}/.agent-shim/providers/z.json`]: {
           displayName: "GLM",
           baseUrl: "https://api.z.ai/api/anthropic",
           credential: { sources: [{ env: "Z_API_TOKEN" }] },
         },
       }),
       spawn,
-      proc: fakeProc({ Z_API_TOKEN: "tok-z", CLAUDE_USE_HEADROOM: "1" }, ["--provider", "z"]),
+      proc: fakeProc({ Z_API_TOKEN: "tok-z", AGENT_SHIM_HEADROOM: "1" }, ["--provider", "z"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       frontdoor: fakeFrontDoorPort(),
@@ -407,7 +407,7 @@ describe("runLauncher headroom routing", () => {
     expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/z");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
     expect(env.HTTPS_PROXY).toBeUndefined();
-    expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-auth: launch-token-for-tests", "x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
+    expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
   });
 
   it("routes an apiKey provider on api.anthropic.com through the door with headroom: the token becomes the API key and the door is the base URL", () => {
@@ -417,14 +417,14 @@ describe("runLauncher headroom routing", () => {
     runAndCaptureExit({
       paths,
       fs: fakeFs({
-        [`${FAKE_HOME}/.claude-use/providers/anthropic-api.json`]: {
+        [`${FAKE_HOME}/.agent-shim/providers/anthropic-api.json`]: {
           displayName: "Anthropic API",
           baseUrl: "https://api.anthropic.com",
           credential: { sources: [{ command: ["pass", "show", "anthropic"] }], target: "apiKey" },
         },
       }),
       spawn,
-      proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--provider", "anthropic-api"]),
+      proc: fakeProc({ AGENT_SHIM_HEADROOM: "1" }, ["--provider", "anthropic-api"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       frontdoor: fakeFrontDoorPort(),
@@ -437,7 +437,7 @@ describe("runLauncher headroom routing", () => {
     expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
-    expect(injectedSessionHeaders(env)).toEqual(["x-claude-use-auth: launch-token-for-tests", "x-claude-use-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
+    expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
   });
 
   it("refuses loudly when headroom resolved on but no front-door port was wired", () => {
@@ -448,7 +448,7 @@ describe("runLauncher headroom routing", () => {
       paths,
       fs: fakeFs({}),
       spawn,
-      proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--print"]),
+      proc: fakeProc({ AGENT_SHIM_HEADROOM: "1" }, ["--print"]),
       log,
       resolveClaudeBinary: () => discovered,
     });
@@ -466,7 +466,7 @@ describe("runLauncher headroom routing", () => {
       paths,
       fs: fakeFs({}),
       spawn,
-      proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--print"]),
+      proc: fakeProc({ AGENT_SHIM_HEADROOM: "1" }, ["--print"]),
       log,
       resolveClaudeBinary: () => discovered,
       frontdoor: fakeFrontDoorPort(),
@@ -504,7 +504,7 @@ describe("runLauncher headroom routing", () => {
       paths,
       fs: fakeFs({}),
       spawn,
-      proc: fakeProc({ CLAUDE_USE_HEADROOM: "1" }, ["--no-headroom", "--print"]),
+      proc: fakeProc({ AGENT_SHIM_HEADROOM: "1" }, ["--no-headroom", "--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       headroom,
@@ -530,7 +530,7 @@ describe("runLauncher headroom routing", () => {
     });
 
     expect(headroom.ensures).toBe(1);
-    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://claude-use:launch-token-for-tests@127.0.0.1:4200");
+    expect(spawnedEnv(spawn).HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
   });
 });
 
@@ -552,11 +552,11 @@ describe("runLauncher farm resync", () => {
       farm: fakeFarm(fs, { launch: { skipPermissions: true } }),
     });
 
-    expect(fs.linkTarget(`${FAKE_HOME}/.claude-use/identities/work/skills`)).toBe(`${FAKE_CLAUDE_HOME}/skills`);
-    expect(fs.lstat(`${FAKE_HOME}/.claude-use/identities/work/.credentials.json`)).toBeUndefined();
+    expect(fs.linkTarget(`${FAKE_HOME}/.agent-shim/identities/work/skills`)).toBe(`${FAKE_CLAUDE_HOME}/skills`);
+    expect(fs.lstat(`${FAKE_HOME}/.agent-shim/identities/work/.credentials.json`)).toBeUndefined();
     expect(spawn.spawnSync).toHaveBeenCalledWith(discovered.path, ["--dangerously-skip-permissions"], {
       stdio: "inherit",
-      env: { CLAUDE_CONFIG_DIR: `${FAKE_HOME}/.claude-use/identities/work` },
+      env: { CLAUDE_CONFIG_DIR: `${FAKE_HOME}/.agent-shim/identities/work` },
     });
   });
 
@@ -601,7 +601,7 @@ describe("runLauncher farm resync", () => {
     });
   });
 
-  it("merges CLAUDE_USE_CATEGORY_OVERRIDE/CLAUDE_USE_ENTRY_OVERRIDE env vars with any --category/--share/--hide flags, flags winning", () => {
+  it("merges AGENT_SHIM_CATEGORY_OVERRIDE/AGENT_SHIM_ENTRY_OVERRIDE env vars with any --category/--share/--hide flags, flags winning", () => {
     const fs = createFakeFarmFs({});
     const loadCascade = vi.fn((baseConfigProfile: string | undefined) => ({
       home: FAKE_HOME,
@@ -616,7 +616,7 @@ describe("runLauncher farm resync", () => {
       fs: fakeFs({}),
       spawn: fakeSpawn(),
       proc: fakeProc(
-        { CLAUDE_USE_CATEGORY_OVERRIDE: "history=false", CLAUDE_USE_ENTRY_OVERRIDE: "knowledge/skills/commit=false" },
+        { AGENT_SHIM_CATEGORY_OVERRIDE: "history=false", AGENT_SHIM_ENTRY_OVERRIDE: "knowledge/skills/commit=false" },
         ["@work", "--category", "history=true"],
       ),
       log: fakeLog(),
@@ -666,9 +666,9 @@ describe("runLauncher farm resync", () => {
 
   it("refuses to launch rather than racing a concurrent resync of the same identity", () => {
     const fs = createFakeFarmFs({ [`${FAKE_CLAUDE_HOME}/skills/commit/SKILL.md`]: "commit" });
-    fs.mkdirp(`${FAKE_HOME}/.claude-use/identities`);
+    fs.mkdirp(`${FAKE_HOME}/.agent-shim/identities`);
     fs.writeFileUtf8(
-      identityLockPath(`${FAKE_HOME}/.claude-use/identities`, "work"),
+      identityLockPath(`${FAKE_HOME}/.agent-shim/identities`, "work"),
       JSON.stringify({ identity: "work", pid: 99, token: "sibling", acquiredAtMs: FAKE_NOW_MS }),
     );
     const spawn = fakeSpawn();
@@ -692,7 +692,7 @@ describe("runLauncher farm resync", () => {
 
 describe("runLauncher crash recovery ordering", () => {
   it("restores a farm left mid-swap before reading the identity.json that lives inside it", () => {
-    const identitiesDir = `${FAKE_HOME}/.claude-use/identities`;
+    const identitiesDir = `${FAKE_HOME}/.agent-shim/identities`;
     const fs = createFakeFarmFs({
       [`${FAKE_CLAUDE_HOME}/skills/commit/SKILL.md`]: "commit",
       // Exactly what a crash between the swap's two renames leaves: no farm, and everything in a superseded copy.
@@ -772,7 +772,7 @@ describe("runLauncher quota warning", () => {
   it("reports an unreadable snapshot instead of treating it as no usage, and still launches", () => {
     const { log, code } = launch({ [snapshotPath]: "{ not json" });
     expect(code).toBe(0);
-    expect(log.warns.join("\n")).toContain("not a usage snapshot this claude-use can read");
+    expect(log.warns.join("\n")).toContain("not a usage snapshot this agent-shim can read");
   });
 });
 

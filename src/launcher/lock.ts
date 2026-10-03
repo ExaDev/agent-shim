@@ -34,7 +34,7 @@ export class IdentityLockBusyError extends CliError {
     readonly holderPid: number | undefined,
   ) {
     super(
-      `Another claude-use resync is already running for identity "${identity}"` +
+      `Another agent-shim resync is already running for identity "${identity}"` +
         (holderPid === undefined ? "" : ` (pid ${String(holderPid)})`) +
         `. Its lock at ${lockPath} was still held after the full retry budget; nothing was changed.`,
     );
@@ -45,7 +45,7 @@ export class IdentityLockBusyError extends CliError {
 /** Everything `acquireIdentityLock` needs, all of it injected so a test never sleeps for real, never reads a real pid table, and never writes outside its own fake filesystem. */
 export interface AcquireIdentityLockParams {
   readonly identity: string;
-  /** The directory the lock file lives in — `~/.claude-use/identities`, alongside (never inside) the farm the lock protects, so a farm swap can rename the farm root out from under itself without disturbing the lock. */
+  /** The directory the lock file lives in — `~/.agent-shim/identities`, alongside (never inside) the farm the lock protects, so a farm swap can rename the farm root out from under itself without disturbing the lock. */
   readonly dir: string;
   readonly fs: FarmFs;
   readonly nowMs: () => number;

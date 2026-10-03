@@ -5,7 +5,7 @@ import { realQuotaHttpGet } from "./quotaHttp";
 import { readUsageSnapshot, UsageSnapshotError } from "./read";
 import type { UsageStore } from "./store";
 
-/** The refresher wired to the real filesystem, credential sources and network: what the front door and `claude-use usage --refresh` both run, so a manual refresh and an automatic one authenticate and record identically. */
+/** The refresher wired to the real filesystem, credential sources and network: what the front door and `agent-shim usage --refresh` both run, so a manual refresh and an automatic one authenticate and record identically. */
 export function createRealQuotaRefresher(params: { readonly paths: LayoutPaths; readonly store: UsageStore; readonly log: (line: string) => void }): QuotaRefresher {
   const { paths, store, log } = params;
   return createQuotaRefresher({

@@ -17,7 +17,7 @@ describe("identifyRequest", () => {
   });
 
   it("reads internal header names case-insensitively, as the transport normalises them", () => {
-    const identified = identifyRequest({ "X-Claude-Use-Identity": "work", "X-CLAUDE-USE-SESSION": "session-2" });
+    const identified = identifyRequest({ "X-Agent-Shim-Identity": "work", "X-AGENT-SHIM-SESSION": "session-2" });
     expect(identified.session).toEqual({ identity: "work", sessionId: "session-2", headroom: false, projectId: undefined });
     expect(identified.forwardableHeaders).toEqual({});
   });
@@ -33,7 +33,7 @@ describe("identifyRequest", () => {
   });
 
   it("names exactly the internal headers, so a new one cannot be added without widening the strip", () => {
-    expect(INTERNAL_HEADER_NAMES).toEqual(["x-claude-use-identity", "x-claude-use-session", "x-claude-use-headroom", "x-claude-use-auth", "x-claude-use-hop", "x-claude-use-hop-id", "x-headroom-project-id", "x-headroom-base-url"]);
+    expect(INTERNAL_HEADER_NAMES).toEqual(["x-agent-shim-identity", "x-agent-shim-session", "x-agent-shim-headroom", "x-agent-shim-auth", "x-agent-shim-hop", "x-agent-shim-hop-id", "x-headroom-project-id", "x-headroom-base-url"]);
   });
 });
 

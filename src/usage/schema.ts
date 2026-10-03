@@ -186,7 +186,7 @@ export const AccountMetadataSchema = z.strictObject({
 export type AccountMetadata = z.infer<typeof AccountMetadataSchema>;
 
 /**
- * The latest state for one identity, rewritten atomically after each recorded response: the snapshot file other tools read (`~/.claude-use/usage/snapshots/<identity>.json`) without shelling out to `claude-use`.
+ * The latest state for one identity, rewritten atomically after each recorded response: the snapshot file other tools read (`~/.agent-shim/usage/snapshots/<identity>.json`) without shelling out to `agent-shim`.
  */
 export const UsageSnapshotSchema = z.strictObject({
   schemaVersion: VersionSchema,
@@ -200,7 +200,7 @@ export const UsageSnapshotSchema = z.strictObject({
 export type UsageSnapshot = z.infer<typeof UsageSnapshotSchema>;
 
 /**
- * Whether a response header is one the store keeps: the quota and rate-limit families the upstreams claude-use routes to send (Anthropic's `anthropic-ratelimit-*`, the IETF draft's `ratelimit*`, the common `x-ratelimit-*`, the Codex backend's `x-codex-*` quota headers, which the Codex route forwards) and `retry-after`. Every one of these carries a number, a time or a status word; none carries a credential or content.
+ * Whether a response header is one the store keeps: the quota and rate-limit families the upstreams agent-shim routes to send (Anthropic's `anthropic-ratelimit-*`, the IETF draft's `ratelimit*`, the common `x-ratelimit-*`, the Codex backend's `x-codex-*` quota headers, which the Codex route forwards) and `retry-after`. Every one of these carries a number, a time or a status word; none carries a credential or content.
  */
 export function isRateLimitHeader(name: string): boolean {
   const lower = name.toLowerCase();

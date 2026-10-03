@@ -13,7 +13,7 @@ import { createProviderRouteResolver } from "./providerRoute";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial } from "./connect";
 import { createFrontDoorServer, frontDoorHealthy, listenFrontDoor } from "./server";
 
-const PROVIDERS_DIR = `${FAKE_HOME}/.claude-use/providers`;
+const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const POLL_MS = 10;
 const SETTLE_MS = 30;
 const STREAM_GAP_MS = 30;
@@ -387,7 +387,7 @@ describe("the TLS provider listener", () => {
   }
 
   it(
-    "completes a handshake with a client that trusts only claude-use's CA, and answers its health probe only over that trust",
+    "completes a handshake with a client that trusts only agent-shim's CA, and answers its health probe only over that trust",
     async () => {
       const seen: (string | undefined)[] = [];
       const door = await startTlsDoor(mintLeaf(ca, LOOPBACK_LEAF_NAMES, new Date()), (authorization) => {
@@ -406,7 +406,7 @@ describe("the TLS provider listener", () => {
   );
 
   it(
-    "leaves a client trusting claude-use's CA unable to talk to a server holding a certificate from any other CA, so its credential is never sent",
+    "leaves a client trusting agent-shim's CA unable to talk to a server holding a certificate from any other CA, so its credential is never sent",
     async () => {
       const seen: (string | undefined)[] = [];
       // The hostile server is a complete front door in every respect but its certificate, which chains to a CA whose key it does hold.

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createFakeFarmFs, FAKE_HOME, shippedClassification } from "../test-helpers";
 import { resolveFarmConflicts, type FarmConflict, type FarmConflictChoice } from "./farmResolve";
 
-const IDENTITIES_DIR = `${FAKE_HOME}/.claude-use/identities`;
+const IDENTITIES_DIR = `${FAKE_HOME}/.agent-shim/identities`;
 const FARM = `${IDENTITIES_DIR}/work`;
 const PREVIOUS = `${IDENTITIES_DIR}/.work.previous.crashed`;
 
@@ -225,7 +225,7 @@ describe("resolveFarmConflicts", () => {
     const fs = createFakeFarmFs({
       [`${FARM}/projects`]: { dir: true },
       [`${PREVIOUS}/projects`]: { dir: true },
-      [`${PREVIOUS}/.claude-use-farm.json`]: JSON.stringify({
+      [`${PREVIOUS}/.agent-shim-farm.json`]: JSON.stringify({
         version: 1,
         builtAtMs: 1_000,
         identity: "work",

@@ -5,7 +5,7 @@ import { createFakeFarmFs } from "../test-helpers";
 import { ensureHeadroom, HeadroomStartError } from "./ensure";
 import { writeHeadroomState, writeSession } from "./state";
 
-const paths = buildLayoutPaths("/home/testuser/.claude-use");
+const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
 const SUPERVISOR_PID = 500;
 const OTHER_LAUNCHER_PID = 777;

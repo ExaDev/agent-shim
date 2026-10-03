@@ -53,7 +53,7 @@ export function listLogSegments(fs: Pick<FarmFs, "readdir">, logDir: string): re
 export interface UsageLogRead {
   /** Every valid record at or after the cut-off, oldest first. */
   readonly records: readonly UsageRecord[];
-  /** Complete lines that did not parse as a record of this schema version: a corrupted line, or one a newer claude-use wrote. Reported, never silently dropped. */
+  /** Complete lines that did not parse as a record of this schema version: a corrupted line, or one a newer agent-shim wrote. Reported, never silently dropped. */
   readonly invalidLines: number;
 }
 
@@ -104,7 +104,7 @@ export function readUsageLog(fs: UsageReadFs, logDir: string, options: { readonl
 /** Raised for a snapshot file that exists but does not hold a snapshot of this schema version. */
 export class UsageSnapshotError extends Error {
   constructor(readonly file: string, detail: string) {
-    super(`${file} is not a usage snapshot this claude-use can read (schema version ${String(USAGE_SCHEMA_VERSION)}): ${detail}`);
+    super(`${file} is not a usage snapshot this agent-shim can read (schema version ${String(USAGE_SCHEMA_VERSION)}): ${detail}`);
     this.name = "UsageSnapshotError";
   }
 }

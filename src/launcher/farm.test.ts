@@ -6,7 +6,7 @@ import type { CascadeInput } from "../resolve/walk";
 import { FARM_MANIFEST_FILENAME, readFarmManifest, recoveryDiagnostics, resyncFarm, type RecoveryResult, type ResyncFarmParams } from "./farm";
 import { IdentityLockBusyError, identityLockPath } from "./lock";
 
-const IDENTITIES_DIR = `${FAKE_HOME}/.claude-use/identities`;
+const IDENTITIES_DIR = `${FAKE_HOME}/.agent-shim/identities`;
 const FARM = `${IDENTITIES_DIR}/work`;
 
 /** A canonical `~/.claude` covering one entry from each category that matters: shared knowledge, shared settings, shared history, and an unshareable secret. */
@@ -163,6 +163,22 @@ describe("resyncFarm", () => {
     expect(fs.readFileUtf8(`${FAKE_CLAUDE_HOME}/skills/review/SKILL.md`)).toBe("review skill");
     expect(fs.readFileUtf8(`${FAKE_CLAUDE_HOME}/skills/review/SKILL.md.farm-conflict-${String(FAKE_NOW_MS)}`)).toBe("diverged in the farm");
     expect(result.diagnostics.some((diagnostic) => diagnostic.code === "RECONCILE_CONFLICT")).toBe(true);
+  });
+
+  it("reads a manifest written under the former name, writes the current name on resync, and does not carry the former file forward", () => {
+    const fs = createFakeFarmFs(CANONICAL);
+    resyncFarm(params(fs));
+    const current = fs.readFileUtf8(`${FARM}/${FARM_MANIFEST_FILENAME}`);
+    fs.removeRecursive(`${FARM}/${FARM_MANIFEST_FILENAME}`);
+    fs.seed({ [`${FARM}/.claude-use-farm.json`]: current ?? "" });
+    expect(readFarmManifest(fs, FARM)?.identity).toBe("work");
+
+    const result = resyncFarm(params(fs, { uniqueSuffix: "second", cascade: cascade({ categories: { history: false } }) }));
+
+    expect(result.noOp).toBe(false);
+    expect(result.diagnostics.some((diagnostic) => diagnostic.code === "FARM_MANIFEST_MISSING")).toBe(false);
+    expect(fs.readFileUtf8(`${FARM}/${FARM_MANIFEST_FILENAME}`)).toBeDefined();
+    expect(fs.lstat(`${FARM}/.claude-use-farm.json`)).toBeUndefined();
   });
 
   it("refuses to adopt a path classified secret, even in conservative mode with no manifest to go on", () => {
@@ -344,6 +360,6 @@ describe("recoveryDiagnostics", () => {
       "work",
     );
     expect(diagnostic?.message).toContain("discarded 1 superseded runtime entry");
-    expect(diagnostic?.message).toContain("claude-use identity resolve-conflicts work");
+    expect(diagnostic?.message).toContain("agent-shim identity resolve-conflicts work");
   });
 });

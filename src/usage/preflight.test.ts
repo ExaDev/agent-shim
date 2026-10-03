@@ -42,7 +42,7 @@ describe("quotaWarnings", () => {
     const resetsAt = future(DAY_MS);
     const [warning, ...rest] = quotaWarnings(snapshotWith({ sevenDay: { status: "allowed_warning", resetsAt } }), "anthropic", NOW_MS);
     expect(rest).toEqual([]);
-    expect(warning).toBe(`claude-use: identity work: the seven-day quota is nearly used, resets ${resetsAt} (last seen ${String(LAST_SEEN_HOURS_AGO)}h ago)`);
+    expect(warning).toBe(`agent-shim: identity work: the seven-day quota is nearly used, resets ${resetsAt} (last seen ${String(LAST_SEEN_HOURS_AGO)}h ago)`);
   });
 
   it("calls a rejected window exhausted, and reports both windows when both are over", () => {

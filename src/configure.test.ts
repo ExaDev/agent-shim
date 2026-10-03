@@ -80,17 +80,23 @@ describe("chooseWriteTarget", () => {
 
   function levelsFor(overrides: Readonly<Record<string, Partial<DirectoryLevelPresence>>>): DirectoryLevelPresence[] {
     const dirs = [home, `${home}/work`, `${home}/work/clients`, cwd];
-    return dirs.map((dir) => ({ dir, hasPortable: false, hasPortableLocal: false, ...overrides[dir] }));
+    return dirs.map((dir) => ({ dir, hasPortable: false, hasPortableLocal: false, portableLocalFilename: ".agent-shim.local.json", ...overrides[dir] }));
   }
 
-  it("tier 1: writes into .claude-use.local.json in the deepest ancestor with a committed .claude-use.json", () => {
+  it("tier 1: writes into .agent-shim.local.json in the deepest ancestor with a committed .agent-shim.json", () => {
     const levels = levelsFor({ [`${home}/work/clients`]: { hasPortable: true }, [cwd]: { hasPortable: true } });
     const target = chooseWriteTarget({ cwd, home, levels, directoryRulePaths: [], activeConfigProfile: "base" });
-    expect(target).toEqual({ tier: "portable-local", localConfigPath: path.join(cwd, ".claude-use.local.json") });
+    expect(target).toEqual({ tier: "portable-local", localConfigPath: path.join(cwd, ".agent-shim.local.json") });
   });
 
-  it("tier 1 edge case: a .claude-use.local.json already exists with no committed sibling", () => {
+  it("tier 1 edge case: a .agent-shim.local.json already exists with no committed sibling", () => {
     const levels = levelsFor({ [cwd]: { hasPortableLocal: true } });
+    const target = chooseWriteTarget({ cwd, home, levels, directoryRulePaths: [], activeConfigProfile: "base" });
+    expect(target).toEqual({ tier: "portable-local", localConfigPath: path.join(cwd, ".agent-shim.local.json") });
+  });
+
+  it("tier 1 writes into a former .claude-use.local.json that is the only local file, rather than shadowing it", () => {
+    const levels = levelsFor({ [cwd]: { hasPortableLocal: true, portableLocalFilename: ".claude-use.local.json" } });
     const target = chooseWriteTarget({ cwd, home, levels, directoryRulePaths: [], activeConfigProfile: "base" });
     expect(target).toEqual({ tier: "portable-local", localConfigPath: path.join(cwd, ".claude-use.local.json") });
   });
@@ -98,7 +104,7 @@ describe("chooseWriteTarget", () => {
   it("tier 1 picks the deepest qualifying ancestor, not the shallowest", () => {
     const levels = levelsFor({ [`${home}/work`]: { hasPortable: true }, [`${home}/work/clients`]: { hasPortableLocal: true } });
     const target = chooseWriteTarget({ cwd, home, levels, directoryRulePaths: [], activeConfigProfile: "base" });
-    expect(target).toEqual({ tier: "portable-local", localConfigPath: path.join(`${home}/work/clients`, ".claude-use.local.json") });
+    expect(target).toEqual({ tier: "portable-local", localConfigPath: path.join(`${home}/work/clients`, ".agent-shim.local.json") });
   });
 
   it("tier 2: writes into an existing directory rule that already applies to cwd, when tier 1 does not apply", () => {
@@ -156,8 +162,8 @@ describe("chooseWriteTarget", () => {
   });
 
   it("describeWriteTarget renders a short description for each tier", () => {
-    expect(describeWriteTarget({ tier: "portable-local", localConfigPath: "/a/.claude-use.local.json" })).toContain(
-      "/a/.claude-use.local.json",
+    expect(describeWriteTarget({ tier: "portable-local", localConfigPath: "/a/.agent-shim.local.json" })).toContain(
+      "/a/.agent-shim.local.json",
     );
     expect(describeWriteTarget({ tier: "directory-rule", rulePath: "/a" })).toContain("/a");
     expect(describeWriteTarget({ tier: "config-profile", profileName: "base" })).toContain("base");
@@ -165,17 +171,17 @@ describe("chooseWriteTarget", () => {
 });
 
 describe("runConfigure", () => {
-  let claudeUseRoot: string;
+  let agentShimRoot: string;
   let homeRoot: string;
   let claudeHome: string;
   let cwd: string;
   let paths: LayoutPaths;
 
   beforeEach(() => {
-    claudeUseRoot = fs.mkdtempSync(path.join(os.tmpdir(), "configure-test-root-"));
+    agentShimRoot = fs.mkdtempSync(path.join(os.tmpdir(), "configure-test-root-"));
     homeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "configure-test-home-"));
     claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), "configure-test-claude-"));
-    paths = buildLayoutPaths(claudeUseRoot);
+    paths = buildLayoutPaths(agentShimRoot);
 
     cwd = path.join(homeRoot, "work", "clients", "acme");
     fs.mkdirSync(cwd, { recursive: true });
@@ -193,7 +199,7 @@ describe("runConfigure", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(claudeUseRoot, { recursive: true, force: true });
+    fs.rmSync(agentShimRoot, { recursive: true, force: true });
     fs.rmSync(homeRoot, { recursive: true, force: true });
     fs.rmSync(claudeHome, { recursive: true, force: true });
   });
@@ -237,15 +243,15 @@ describe("runConfigure", () => {
       expect(readProfile(paths, "base")?.categories).toBeUndefined();
     });
 
-    it("writes into a committed directory's .claude-use.local.json instead of the profile, when one covers cwd (tier 1)", async () => {
-      fs.writeFileSync(path.join(cwd, ".claude-use.json"), "{}\n");
+    it("writes into a committed directory's .agent-shim.local.json instead of the profile, when one covers cwd (tier 1)", async () => {
+      fs.writeFileSync(path.join(cwd, ".agent-shim.json"), "{}\n");
 
       const { port } = scriptedPrompts(["toggle", ["knowledge", "settings", "history", "runtime"]]);
       const { log } = makeLog();
 
       await runConfigure({ paths, prompts: port, log }, { identityName: "testid", cwd, home: homeRoot, claudeHome });
 
-      const localPath = path.join(cwd, ".claude-use.local.json");
+      const localPath = path.join(cwd, ".agent-shim.local.json");
       expect(fs.existsSync(localPath)).toBe(true);
       const written: unknown = JSON.parse(fs.readFileSync(localPath, "utf8"));
       expect(written).toMatchObject({ categories: { runtime: true } });

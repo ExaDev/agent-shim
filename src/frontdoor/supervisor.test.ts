@@ -6,7 +6,7 @@ import { createFakeFarmFs } from "../test-helpers";
 import { listFrontDoorSessions, readFrontDoorState, writeFrontDoorSession, writeFrontDoorState } from "./state";
 import { FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
 
-const paths = buildLayoutPaths("/home/testuser/.claude-use");
+const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
 /** A stand-in capability: the registry records one per launch, and the supervisor must see a record that carries it. */
 const SESSION_TOKEN = "test-capability";

@@ -51,18 +51,18 @@ export function walkDirectoryAncestors(cwd: string, options: WalkOptions): strin
 /** The up-to-three configuration sources that can apply at one directory level. */
 export interface DirectoryLevelSources {
   readonly dir: string;
-  /** The committed, team-shared `.claude-use.json` at this level. */
+  /** The committed, team-shared `.agent-shim.json` at this level. */
   readonly portable?: { readonly config: PortableConfig; readonly entryOrder?: readonly string[]; readonly filepath: string };
-  /** Every rule in this user's own `~/.claude-use/directory-rules.json` whose path is exactly this level, in file order. */
+  /** Every rule in this user's own `~/.agent-shim/directory-rules.json` whose path is exactly this level, in file order. */
   readonly rules?: readonly { readonly rule: DirectoryRule; readonly entryOrder?: readonly string[]; readonly filepath: string }[];
-  /** The gitignored `.claude-use.local.json` at this level. */
+  /** The gitignored `.agent-shim.local.json` at this level. */
   readonly portableLocal?: { readonly config: PortableConfig; readonly entryOrder?: readonly string[]; readonly filepath: string };
 }
 
 /** Everything needed to assemble the full ordered layer sequence, all of it already loaded by the caller. */
 export interface CascadeInput {
   readonly home: string;
-  /** The user-global `~/.claude-use/config.json`, the least-specific layer above the shipped defaults. */
+  /** The user-global `~/.agent-shim/config.json`, the least-specific layer above the shipped defaults. */
   readonly globalConfig?: { readonly config: GlobalConfig; readonly entryOrder?: readonly string[]; readonly filepath: string };
   /** The configuration profile chosen by the caller's own precedence rules: explicit flag, then the active identity's default, then the global default. */
   readonly baseConfigProfile?: string;
@@ -84,7 +84,7 @@ export interface AssembledCascade {
   readonly diagnostics: readonly Diagnostic[];
   /** The deepest directory-level `identity` pin encountered, which the launcher uses as a safety net beneath an explicit `@name`. */
   readonly identityPin?: string;
-  /** The deepest directory-level `configProfile` selection encountered, which is what `claude-use configure` treats as the active profile for a path. */
+  /** The deepest directory-level `configProfile` selection encountered, which is what `agent-shim configure` treats as the active profile for a path. */
   readonly directoryConfigProfile?: string;
 }
 
@@ -93,7 +93,7 @@ export interface AssembledCascade {
  *
  * Order is: the user-global config, then the base configuration profile's own `extends` chain, then every directory level shallowest-to-deepest, then one-off command-line overrides.
  *
- * Within one directory level, up to three sources fold most-personal-last: the committed `.claude-use.json` (team-shared), then this user's own `directory-rules.json` entries for that exact path, then `.claude-use.local.json` (this clone, this user, never committed). That three-source fold happens once per level, and the whole shallowest-to-deepest walk is one continuous sequence through those folded levels — a deeper level's three-source result composes on top of a shallower level's, never gathered per-source across the whole tree first.
+ * Within one directory level, up to three sources fold most-personal-last: the committed `.agent-shim.json` (team-shared), then this user's own `directory-rules.json` entries for that exact path, then `.agent-shim.local.json` (this clone, this user, never committed). That three-source fold happens once per level, and the whole shallowest-to-deepest walk is one continuous sequence through those folded levels — a deeper level's three-source result composes on top of a shallower level's, never gathered per-source across the whole tree first.
  *
  * A level source that names a `configProfile` composes that profile's whole chain in *before* its own inline overrides, so the source reads as "everything that profile says, plus what is additionally true this far down the tree" rather than swapping the base profile out wholesale.
  */

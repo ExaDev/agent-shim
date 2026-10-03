@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { resolveTrustBundle, type TrustBundleFs } from "./trust";
 
-const CA_FILE = "/home/testuser/.claude-use/frontdoor/ca/ca.pem";
-const BUNDLES_DIR = "/home/testuser/.claude-use/frontdoor/ca/bundles";
+const CA_FILE = "/home/testuser/.agent-shim/frontdoor/ca/ca.pem";
+const BUNDLES_DIR = "/home/testuser/.agent-shim/frontdoor/ca/bundles";
 /** Made-up PEM bodies: the resolver treats certificates as opaque text. */
-const CA_PEM = "-----BEGIN CERTIFICATE-----\nclaude-use-ca\n-----END CERTIFICATE-----\n";
+const CA_PEM = "-----BEGIN CERTIFICATE-----\nagent-shim-ca\n-----END CERTIFICATE-----\n";
 const CORPORATE_PEM = "-----BEGIN CERTIFICATE-----\ncorporate-proxy-ca\n-----END CERTIFICATE-----\n";
 
 /** An in-memory filesystem holding the given files, recording every write. */

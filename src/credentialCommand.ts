@@ -54,6 +54,12 @@ function realCommandPorts(deps: CommandDeps): CredentialCommandPorts {
 }
 
 /** A host as `ssh` takes it: letters, digits and `.`, `_`, `@`, `:`, `-`, never leading with `-` (which `ssh` would read as an option). */
+/**
+ * POSIX shell that sets `root` to the remote host's state root exactly as `resolveAgentShimHome` would: `AGENT_SHIM_HOME`, else the former `CLAUDE_USE_HOME`, else `~/.agent-shim`, else an existing former `~/.claude-use`.
+ */
+const REMOTE_ROOT_SCRIPT =
+  'root="${AGENT_SHIM_HOME:-${CLAUDE_USE_HOME:-}}"; if [ -z "$root" ]; then if [ ! -d "$HOME/.agent-shim" ] && [ -d "$HOME/.claude-use" ]; then root="$HOME/.claude-use"; else root="$HOME/.agent-shim"; fi; fi';
+
 const SSH_HOST_RE = /^[A-Za-z0-9._@:][A-Za-z0-9._@:-]*$/;
 
 interface Subject {
@@ -76,7 +82,7 @@ function credentialSubject(deps: CommandDeps, name: string, asProvider: boolean)
     throw new IdentityNotFoundError(name);
   }
   if (identity.credential === undefined) {
-    throw new CredentialCommandError(`Identity "${name}" has no credential block to cache; it uses its stored login. Give it one with \`claude-use identity set ${name} --credential ...\`.`);
+    throw new CredentialCommandError(`Identity "${name}" has no credential block to cache; it uses its stored login. Give it one with \`agent-shim identity set ${name} --credential ...\`.`);
   }
   return { name, subject: `identity ${name}`, credential: identity.credential };
 }
@@ -85,18 +91,18 @@ function requireCaching(subject: Subject): NonNullable<Credential["cache"]> {
   const cache = subject.credential.cache;
   if (cache === undefined) {
     const flag = subject.subject.startsWith("provider") ? `provider set ${subject.name}` : `identity set ${subject.name}`;
-    throw new CredentialCommandError(`The credential for ${subject.subject} is not cached. Turn caching on with \`claude-use ${flag} --credential-cache-ttl 12h\` (or --credential-cache for no expiry).`);
+    throw new CredentialCommandError(`The credential for ${subject.subject} is not cached. Turn caching on with \`agent-shim ${flag} --credential-cache-ttl 12h\` (or --credential-cache for no expiry).`);
   }
   return cache;
 }
 
 /**
- * Registers `claude-use credential`: operations on the credentials identities authenticate with, as opposed to the `identity` noun's configuration of them. `store <identity>` reads a `claude setup-token` token from standard input (never an argument, which would land in shell history and the process list), keeps it at mode 0600 outside every identity's farm, and makes it the identity's `oauthToken` credential.
+ * Registers `agent-shim credential`: operations on the credentials identities authenticate with, as opposed to the `identity` noun's configuration of them. `store <identity>` reads a `claude setup-token` token from standard input (never an argument, which would land in shell history and the process list), keeps it at mode 0600 outside every identity's farm, and makes it the identity's `oauthToken` credential.
  */
 export function registerCredentialCommand(program: Command, deps: CommandDeps, ports: CredentialCommandPorts = realCommandPorts(deps)): void {
   const credential = withExamples(program.command("credential").description("Manage the credentials identities authenticate with."), [
-    "claude-use credential store work < token.txt",
-    "claude-use credential warm work",
+    "agent-shim credential store work < token.txt",
+    "agent-shim credential warm work",
   ]);
 
   withExamples(
@@ -116,7 +122,7 @@ export function registerCredentialCommand(program: Command, deps: CommandDeps, p
           console.log(`Identity "${name}" now authenticates with credential ${describeCredential(updated.credential)}.`);
         }
       }),
-    ["pbpaste | claude-use credential store work", "claude-use credential store work < token.txt"],
+    ["pbpaste | agent-shim credential store work", "agent-shim credential store work < token.txt"],
   );
 
   withExamples(
@@ -136,7 +142,7 @@ export function registerCredentialCommand(program: Command, deps: CommandDeps, p
           `Cached the credential for ${subject.subject} in the ${effectiveStore(block, ports.platform)} store (${limit === undefined ? "no expiry" : `expires after ${block.ttl ?? ""}`}).`,
         );
       }),
-    ["claude-use credential warm work", "claude-use credential warm --provider z"],
+    ["agent-shim credential warm work", "agent-shim credential warm --provider z"],
   );
 
   withExamples(
@@ -152,7 +158,7 @@ export function registerCredentialCommand(program: Command, deps: CommandDeps, p
         }
         console.log(`Removed the cached credential for ${subject.subject}.`);
       }),
-    ["claude-use credential forget work", "claude-use credential forget --provider z"],
+    ["agent-shim credential forget work", "agent-shim credential forget --provider z"],
   );
 
   withExamples(
@@ -171,15 +177,15 @@ export function registerCredentialCommand(program: Command, deps: CommandDeps, p
           throw new CredentialCommandError(resolution.message, CREDENTIAL_UNAVAILABLE_EXIT);
         }
         const entry = JSON.stringify({ token: resolution.credential.token, fetchedAt: resolution.credential.cachedAt ?? ports.now(), source: resolution.credential.source });
-        const remoteFile = `"\${CLAUDE_USE_HOME:-$HOME/.claude-use}/credential-cache/${cacheFileNameFor(subject.subject)}"`;
-        const remoteDir = `"\${CLAUDE_USE_HOME:-$HOME/.claude-use}/credential-cache"`;
-        const status = ports.ssh(host, `umask 077 && mkdir -p ${remoteDir} && cat > ${remoteFile}`, entry);
+        const remoteFile = `"$root/credential-cache/${cacheFileNameFor(subject.subject)}"`;
+        const remoteDir = '"$root/credential-cache"';
+        const status = ports.ssh(host, `${REMOTE_ROOT_SCRIPT} && umask 077 && mkdir -p ${remoteDir} && cat > ${remoteFile}`, entry);
         if (status !== 0) {
           throw new CredentialCommandError(`Could not write the credential cache for ${subject.subject} on ${host} (ssh exited ${status === null ? "without a status" : String(status)}).`);
         }
-        console.log(`Wrote the credential for ${subject.subject} to ${host}. There, set the credential's cache store to file: \`claude-use ${subject.subject.startsWith("provider") ? "provider" : "identity"} set ${subject.name} --credential-cache-store file\`.`);
+        console.log(`Wrote the credential for ${subject.subject} to ${host}. There, set the credential's cache store to file: \`agent-shim ${subject.subject.startsWith("provider") ? "provider" : "identity"} set ${subject.name} --credential-cache-store file\`.`);
       }),
-    ["claude-use credential push work build-host", "claude-use credential push x build-host --provider z"],
+    ["agent-shim credential push work build-host", "agent-shim credential push x build-host --provider z"],
   );
 }
 

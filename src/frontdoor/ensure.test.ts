@@ -6,7 +6,7 @@ import { ensureFrontDoor, FrontDoorStartError } from "./ensure";
 import type { ListenerVerdict } from "./probe";
 import { writeFrontDoorSession, writeFrontDoorState } from "./state";
 
-const paths = buildLayoutPaths("/home/testuser/.claude-use");
+const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
 const SUPERVISOR_PID = 500;
 /** A stand-in capability: front-door registry records carry one per launch. */
@@ -21,7 +21,7 @@ const DEAD_SUPERVISOR_PID = 999;
 const SLEEPS_BEFORE_READY = 2;
 /** A launcher pid holding a start lock in the dead-holder test, distinct from every live fake. */
 const DEAD_LOCK_HOLDER = 12345;
-/** A port held by something that cannot present claude-use's certificate. */
+/** A port held by something that cannot present agent-shim's certificate. */
 const HOSTILE_PORT = 4666;
 /** The pid and port a replacement supervisor comes up on after the recorded one was distrusted. */
 const REPLACEMENT_PID = 501;
@@ -38,7 +38,7 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
   let onSleep: (() => void) | undefined;
   const alive = new Set<number>([SUPERVISOR_PID, process.pid, OTHER_LAUNCHER_PID]);
   const spawns: number[] = [];
-  /** Ports whose listener authenticates; every other port fails the probe, the way a listener without a leaf from claude-use's CA does. */
+  /** Ports whose listener authenticates; every other port fails the probe, the way a listener without a leaf from agent-shim's CA does. */
   const authentic = new Set<number>([PORT]);
   const probed: number[] = [];
   const spawnedPid = options.spawnedPid ?? SUPERVISOR_PID;
@@ -224,7 +224,7 @@ describe("ensureFrontDoor", () => {
   });
 
   it("distrusts a recorded live pid whose listener fails authentication and brings up a verified replacement instead", () => {
-    // A reused pid (or a hostile process) holds the state's port: the pid is alive, but nothing on that port presents claude-use's certificate.
+    // A reused pid (or a hostile process) holds the state's port: the pid is alive, but nothing on that port presents agent-shim's certificate.
     const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: REPLACEMENT_PORT });
     world.authentic.delete(PORT);
     world.authentic.add(REPLACEMENT_PORT);

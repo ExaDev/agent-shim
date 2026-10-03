@@ -37,9 +37,9 @@ export interface ResolveLaunchFlagsParams {
 }
 
 /**
- * Resolves `skipPermissions`/`remoteControl`/`headroom`/`trackUsage` for one launch. Each setting has the same three forms, decided in the same order: an explicit command-line flag outright, then its environment variable (`CLAUDE_USE_SKIP_PERMISSIONS`, `CLAUDE_USE_REMOTE_CONTROL`, `CLAUDE_USE_HEADROOM`, `CLAUDE_USE_TRACK_USAGE`), then the cascade, and OFF when none of them says otherwise (`trackUsageDefault` changes that one fallback). The flag outranks the environment variable because it is the more deliberate of the two one-off forms (typed on this very command line, not inherited from a shell profile), and both outrank the cascade because they are one-off overrides of it.
+ * Resolves `skipPermissions`/`remoteControl`/`headroom`/`trackUsage` for one launch. Each setting has the same three forms, decided in the same order: an explicit command-line flag outright, then its environment variable (`AGENT_SHIM_SKIP_PERMISSIONS`, `AGENT_SHIM_REMOTE_CONTROL`, `AGENT_SHIM_HEADROOM`, `AGENT_SHIM_TRACK_USAGE`), then the cascade, and OFF when none of them says otherwise (`trackUsageDefault` changes that one fallback). The flag outranks the environment variable because it is the more deliberate of the two one-off forms (typed on this very command line, not inherited from a shell profile), and both outrank the cascade because they are one-off overrides of it.
  *
- * Environment variables read with the shared boolean vocabulary (`true`/`1`, `false`/`0`), so `CLAUDE_USE_SKIP_PERMISSIONS=0` switches off a cascade's `skipPermissions: true` for one launch; any other value throws `InvalidEnvBoolError`.
+ * Environment variables read with the shared boolean vocabulary (`true`/`1`, `false`/`0`), so `AGENT_SHIM_SKIP_PERMISSIONS=0` switches off a cascade's `skipPermissions: true` for one launch; any other value throws `InvalidEnvBoolError`.
  *
  * This default-off posture is a deliberate change from the legacy bash tool, which passed `--dangerously-skip-permissions` unconditionally on every launch.
  */
@@ -47,19 +47,19 @@ export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLa
   return {
     skipPermissions:
       params.flags?.skipPermissions ??
-      parseEnvBool("CLAUDE_USE_SKIP_PERMISSIONS", params.env.CLAUDE_USE_SKIP_PERMISSIONS) ??
+      parseEnvBool("AGENT_SHIM_SKIP_PERMISSIONS", params.env.AGENT_SHIM_SKIP_PERMISSIONS) ??
       params.cascade?.skipPermissions ??
       false,
     remoteControl:
       params.flags?.remoteControl ??
-      parseEnvBool("CLAUDE_USE_REMOTE_CONTROL", params.env.CLAUDE_USE_REMOTE_CONTROL) ??
+      parseEnvBool("AGENT_SHIM_REMOTE_CONTROL", params.env.AGENT_SHIM_REMOTE_CONTROL) ??
       params.cascade?.remoteControl ??
       false,
     headroom:
-      params.flags?.headroom ?? parseEnvBool("CLAUDE_USE_HEADROOM", params.env.CLAUDE_USE_HEADROOM) ?? params.cascade?.headroom ?? false,
+      params.flags?.headroom ?? parseEnvBool("AGENT_SHIM_HEADROOM", params.env.AGENT_SHIM_HEADROOM) ?? params.cascade?.headroom ?? false,
     trackUsage:
       params.flags?.trackUsage ??
-      parseEnvBool("CLAUDE_USE_TRACK_USAGE", params.env.CLAUDE_USE_TRACK_USAGE) ??
+      parseEnvBool("AGENT_SHIM_TRACK_USAGE", params.env.AGENT_SHIM_TRACK_USAGE) ??
       params.cascade?.trackUsage ??
       params.trackUsageDefault ??
       false,
@@ -150,9 +150,9 @@ export interface BuildEnvParams {
  *
  * When the `CLAUDE_CONFIG_DIR`-already-set escape hatch applied, or no identity was resolved at all (a bare launch with no active identity, matching the legacy script's own "no profile means plain `~/.claude`" behaviour), `CLAUDE_CONFIG_DIR` is left untouched. Otherwise `CLAUDE_CONFIG_DIR` is set to the resolved identity's own directory under `identitiesDir` — farm population into that directory is Phase 5's job, not this function's.
  *
- * A resolved provider is applied regardless of the identity outcome, because it selects which API endpoint the child talks to, not which login's data it sees: `ANTHROPIC_BASE_URL` points at the provider's routed base URL (always the front door's provider-scoped address), `CLAUDE_USE_PROVIDER` names the provider for the statusline, the provider's own `env` entries land verbatim, and its resolved credential is exported as its target's variable (`credentialVariables`), with the other credential variables removed so an ambient one inherited from the parent cannot outrank it. Without a provider, an identity's own resolved credential is exported the same way. The token only ever reaches this environment, never the child's argv or a log line.
+ * A resolved provider is applied regardless of the identity outcome, because it selects which API endpoint the child talks to, not which login's data it sees: `ANTHROPIC_BASE_URL` points at the provider's routed base URL (always the front door's provider-scoped address), `AGENT_SHIM_PROVIDER` names the provider for the statusline, the provider's own `env` entries land verbatim, and its resolved credential is exported as its target's variable (`credentialVariables`), with the other credential variables removed so an ambient one inherited from the parent cannot outrank it. Without a provider, an identity's own resolved credential is exported the same way. The token only ever reaches this environment, never the child's argv or a log line.
  *
- * A resolved front door is the whole of the child's routing, on top of the provider: `ANTHROPIC_CUSTOM_HEADERS` gains the launcher-injected session headers (identity, session id, the launch's capability token, and, when headroom resolved on, the headroom flag and the project identity headroom scopes memory to), merged with any headers the provider's own `env` or the parent environment already set. The door strips every one of them before anything leaves the machine; the token is what authorises the session's requests at the door in the first place. `NODE_EXTRA_CA_CERTS` points at the door's trust bundle in both modes, because the child reaches the door over TLS signed by claude-use's CA either way. With a provider, the child's HTTPS base URL already names the door's provider listener, so a process that merely binds that port cannot present a certificate the child accepts. Without one (an OAuth launch), the base URL is left exactly as the parent environment had it, because Claude Code enables Remote Control and connectors only against the real `api.anthropic.com`; routing happens one layer down instead, with `HTTPS_PROXY` pointing the child at the door's CONNECT surface and carrying the launch's capability as its proxy credential (the surface refuses any CONNECT without a live one), so the child still believes it is talking to the real `api.anthropic.com` while the surface's terminated TLS feeds the routed paths to the same pipeline. `HEADROOM_PROXY_URL` names the headroom daemon for anything else that wants it; the child never talks to that daemon directly, the door's hop does.
+ * A resolved front door is the whole of the child's routing, on top of the provider: `ANTHROPIC_CUSTOM_HEADERS` gains the launcher-injected session headers (identity, session id, the launch's capability token, and, when headroom resolved on, the headroom flag and the project identity headroom scopes memory to), merged with any headers the provider's own `env` or the parent environment already set. The door strips every one of them before anything leaves the machine; the token is what authorises the session's requests at the door in the first place. `NODE_EXTRA_CA_CERTS` points at the door's trust bundle in both modes, because the child reaches the door over TLS signed by agent-shim's CA either way. With a provider, the child's HTTPS base URL already names the door's provider listener, so a process that merely binds that port cannot present a certificate the child accepts. Without one (an OAuth launch), the base URL is left exactly as the parent environment had it, because Claude Code enables Remote Control and connectors only against the real `api.anthropic.com`; routing happens one layer down instead, with `HTTPS_PROXY` pointing the child at the door's CONNECT surface and carrying the launch's capability as its proxy credential (the surface refuses any CONNECT without a live one), so the child still believes it is talking to the real `api.anthropic.com` while the surface's terminated TLS feeds the routed paths to the same pipeline. `HEADROOM_PROXY_URL` names the headroom daemon for anything else that wants it; the child never talks to that daemon directly, the door's hop does.
  *
  * `$CLAUDE_EXTRA_FLAGS` is never stripped from the child's environment: some wrappers set it two process-levels up and rely on inheritance through a `claude` invoked from inside a running session.
  */
@@ -175,7 +175,7 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
       env.NO_PROXY = withLoopbackHosts(params.baseEnv.NO_PROXY);
       env.no_proxy = withLoopbackHosts(params.baseEnv.no_proxy);
     }
-    env.CLAUDE_USE_PROVIDER = params.provider.definition.displayName;
+    env.AGENT_SHIM_PROVIDER = params.provider.definition.displayName;
     for (const [key, value] of Object.entries(providerEnv)) {
       env[key] = value;
     }
@@ -211,7 +211,7 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
             ]),
       ],
     );
-    // Both routing modes reach the door over TLS whose leaf claude-use's CA signed: the provider listener's for a provider session, the CONNECT surface's intercept leaf for an OAuth one. The bundle keeps whatever the parent environment already trusted this way.
+    // Both routing modes reach the door over TLS whose leaf agent-shim's CA signed: the provider listener's for a provider session, the CONNECT surface's intercept leaf for an OAuth one. The bundle keeps whatever the parent environment already trusted this way.
     env.NODE_EXTRA_CA_CERTS = params.frontdoor.trustBundlePath;
     if (params.provider === undefined) {
       // OAuth routing: ANTHROPIC_BASE_URL is left exactly as the parent environment had it (unset for a normal OAuth launch), because Claude Code enables Remote Control and connectors only against the real api.anthropic.com. The door's CONNECT surface terminates that host's TLS instead and feeds the routed paths to the same pipeline the provider sessions use.

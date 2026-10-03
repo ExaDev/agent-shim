@@ -5,7 +5,7 @@ export const EXIT_FAILURE = 1;
 export const EXIT_USAGE = 2;
 
 /**
- * Base class for every error this CLI throws to represent an expected, user-facing failure: bad input, a missing identity/profile/rule, a malformed config file. `reportFatalError` prints this class as `claude-use: <message>` with no stack trace and exits with `exitCode`; anything that does not extend it is an unexpected bug, reported by message alone unless `CLAUDE_USE_DEBUG` asks for the stack.
+ * Base class for every error this CLI throws to represent an expected, user-facing failure: bad input, a missing identity/profile/rule, a malformed config file. `reportFatalError` prints this class as `agent-shim: <message>` with no stack trace and exits with `exitCode`; anything that does not extend it is an unexpected bug, reported by message alone unless `AGENT_SHIM_DEBUG` asks for the stack.
  */
 export abstract class CliError extends Error {
   /** The process exit status this failure maps to. `EXIT_FAILURE` unless a subclass says otherwise. */

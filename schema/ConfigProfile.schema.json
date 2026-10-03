@@ -1,5 +1,5 @@
 {
-  "$id": "https://github.com/ExaDev/claude-use/schema/ConfigProfile.schema.json",
+  "$id": "https://github.com/ExaDev/agent-shim/schema/ConfigProfile.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {

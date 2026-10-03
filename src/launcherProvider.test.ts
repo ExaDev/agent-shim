@@ -29,7 +29,7 @@ describe("runLauncher provider selection", () => {
 
     launch({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ }),
       spawn,
       proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "z", "--print"]),
       log: fakeLog(),
@@ -47,11 +47,11 @@ describe("runLauncher provider selection", () => {
       ANTHROPIC_BASE_URL: "https://127.0.0.1:4100/providers/z",
       ANTHROPIC_AUTH_TOKEN: "tok-z",
       ANTHROPIC_MODEL: "glm-4.6",
-      CLAUDE_USE_PROVIDER: "GLM",
+      AGENT_SHIM_PROVIDER: "GLM",
     });
     expect(env?.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(env?.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-claude-use-session: [0-9a-f-]{36}\nx-claude-use-auth: launch-token-for-tests$/);
+    expect(env?.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-agent-shim-session: [0-9a-f-]{36}\nx-agent-shim-auth: launch-token-for-tests$/);
   });
 
   it("refuses with exit 1 and names the known providers when the provider is unknown", () => {
@@ -61,8 +61,8 @@ describe("runLauncher provider selection", () => {
     const code = launch({
       paths,
       fs: fakeFs({
-        [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ,
-        [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO,
+        [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ,
+        [`${FAKE_HOME}/.agent-shim/providers/o.json`]: providerO,
       }),
       spawn,
       proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--provider", "missing", "--print"]),
@@ -82,7 +82,7 @@ describe("runLauncher provider selection", () => {
 
     const code = launch({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ }),
       spawn,
       proc: fakeProc({ Z_API_TOKEN: "" }, ["--provider", "z"]),
       log,
@@ -91,7 +91,7 @@ describe("runLauncher provider selection", () => {
 
     expect(code).toBe(CREDENTIAL_UNAVAILABLE_EXIT);
     expect(spawn.spawnSync).not.toHaveBeenCalled();
-    expect(log.errors).toEqual(["claude-use: provider z has no usable credential: env Z_API_TOKEN is unset or empty"]);
+    expect(log.errors).toEqual(["agent-shim: provider z has no usable credential: env Z_API_TOKEN is unset or empty"]);
   });
 
   it("launches a local-proxy provider with a literal placeholder credential and nothing in the environment", () => {
@@ -100,7 +100,7 @@ describe("runLauncher provider selection", () => {
     launch({
       paths,
       fs: fakeFs({
-        [`${FAKE_HOME}/.claude-use/providers/codex.json`]: {
+        [`${FAKE_HOME}/.agent-shim/providers/codex.json`]: {
           displayName: "Codex",
           baseUrl: "http://127.0.0.1:18789",
           credential: { sources: [{ literal: "codex-subscription-local" }] },
@@ -115,7 +115,7 @@ describe("runLauncher provider selection", () => {
     const env = spawnedEnv(spawn);
     expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/codex");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("codex-subscription-local");
-    expect(env.CLAUDE_USE_PROVIDER).toBe("Codex");
+    expect(env.AGENT_SHIM_PROVIDER).toBe("Codex");
   });
 
   it("resolves a provider pinned by a cascade layer when no flag was given", () => {
@@ -124,7 +124,7 @@ describe("runLauncher provider selection", () => {
 
     launch({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/o.json`]: providerO }),
       spawn,
       proc: fakeProc({ OPENROUTER_API_KEY: "tok-o" }, ["@work"]),
       log: fakeLog(),
@@ -133,10 +133,10 @@ describe("runLauncher provider selection", () => {
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.claude-use/identities/work`);
+    expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.agent-shim/identities/work`);
     expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/o");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-o");
-    expect(env.CLAUDE_USE_PROVIDER).toBe("OpenRouter");
+    expect(env.AGENT_SHIM_PROVIDER).toBe("OpenRouter");
   });
 
   it("launches --identity plus --provider: the identity's own farm directory, the provider's endpoint and token", () => {
@@ -144,7 +144,7 @@ describe("runLauncher provider selection", () => {
 
     launch({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ }),
       spawn,
       proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--identity", "work", "--provider", "z", "-p", "say hi"]),
       log: fakeLog(),
@@ -153,7 +153,7 @@ describe("runLauncher provider selection", () => {
 
     expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["-p", "say hi"]);
     const env = spawnedEnv(spawn);
-    expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.claude-use/identities/work`);
+    expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.agent-shim/identities/work`);
     expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/z");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
   });
@@ -164,7 +164,7 @@ describe("runLauncher provider selection", () => {
 
     launch({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/o.json`]: providerO }),
       spawn,
       proc: fakeProc({}, ["@work", "--no-provider"]),
       log: fakeLog(),
@@ -174,7 +174,7 @@ describe("runLauncher provider selection", () => {
 
     const env = spawnedEnv(spawn);
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.CLAUDE_USE_PROVIDER).toBeUndefined();
+    expect(env.AGENT_SHIM_PROVIDER).toBeUndefined();
   });
 
   it("lets a --provider flag beat the cascade's own provider selection", () => {
@@ -184,8 +184,8 @@ describe("runLauncher provider selection", () => {
     launch({
       paths,
       fs: fakeFs({
-        [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ,
-        [`${FAKE_HOME}/.claude-use/providers/o.json`]: providerO,
+        [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ,
+        [`${FAKE_HOME}/.agent-shim/providers/o.json`]: providerO,
       }),
       spawn,
       proc: fakeProc({ Z_API_TOKEN: "tok-z", OPENROUTER_API_KEY: "tok-o" }, ["@work", "--provider", "z"]),
@@ -204,7 +204,7 @@ describe("runLauncher provider selection", () => {
 
     const code = launch({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/z.json`]: providerZ }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ }),
       spawn,
       proc: fakeProc({ Z_API_TOKEN: "tok-z", ANTHROPIC_AUTH_TOKEN: "sk-leftover-from-old-wrapper" }, ["--provider", "z"]),
       log: fakeLog(),
@@ -231,7 +231,7 @@ describe("runLauncher provider selection", () => {
 
       const code = launch({
         paths,
-        fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/anthropic-api.json`]: providerAnthropic }),
+        fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/anthropic-api.json`]: providerAnthropic }),
         spawn,
         proc: fakeProc({ ANTHROPIC_API_KEY: "sk-ambient-key", ANTHROPIC_AUTH_TOKEN: "sk-ambient-bearer" }, ["--provider", "anthropic-api", "--print"]),
         log,
@@ -257,7 +257,7 @@ describe("runLauncher provider selection", () => {
       launch({
         paths,
         fs: fakeFs({
-          [`${FAKE_HOME}/.claude-use/providers/z.json`]: {
+          [`${FAKE_HOME}/.agent-shim/providers/z.json`]: {
             displayName: "GLM",
             baseUrl: "https://api.z.ai/api/anthropic",
             credential: { sources: [{ command: ["pass", "show", "z"] }] },
@@ -281,7 +281,7 @@ describe("runLauncher provider selection", () => {
 
       const code = launch({
         paths,
-        fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/anthropic-api.json`]: providerAnthropic }),
+        fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/anthropic-api.json`]: providerAnthropic }),
         spawn,
         proc: fakeProc({}, ["--provider", "anthropic-api"]),
         log,
@@ -291,7 +291,7 @@ describe("runLauncher provider selection", () => {
 
       expect(code).toBe(CREDENTIAL_UNAVAILABLE_EXIT);
       expect(spawn.spawnSync).not.toHaveBeenCalled();
-      expect(log.errors).toEqual(["claude-use: provider anthropic-api has no usable credential: op op://vault/item/field exited with status 1"]);
+      expect(log.errors).toEqual(["agent-shim: provider anthropic-api has no usable credential: op op://vault/item/field exited with status 1"]);
     });
 
     it("refuses with exit 64, naming the source, when an interactive source is left and nobody is present to approve it", () => {
@@ -301,7 +301,7 @@ describe("runLauncher provider selection", () => {
 
       const code = launch({
         paths,
-        fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/anthropic-api.json`]: providerAnthropic }),
+        fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/anthropic-api.json`]: providerAnthropic }),
         spawn,
         proc: fakeProc({}, ["--provider", "anthropic-api"]),
         log,
@@ -319,7 +319,7 @@ describe("runLauncher provider selection", () => {
 
       const code = runAndCaptureExit({
         paths,
-        fs: fakeFs({ [`${FAKE_HOME}/.claude-use/providers/anthropic-api.json`]: providerAnthropic }),
+        fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/anthropic-api.json`]: providerAnthropic }),
         spawn,
         proc: fakeProc({}, ["--provider", "anthropic-api"]),
         log: fakeLog(),

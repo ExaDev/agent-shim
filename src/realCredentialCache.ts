@@ -8,7 +8,7 @@ import type { LayoutPaths } from "./paths";
 import { CachedCredentialSchema, type CachedCredential, type CredentialCachePort } from "./credentialCache";
 
 /** The Keychain service every cached credential is filed under; the owner (`identity work`) is the account. */
-const KEYCHAIN_CACHE_SERVICE = "claude-use-credential-cache";
+const KEYCHAIN_CACHE_SERVICE = "agent-shim-credential-cache";
 
 /** Owner-only permissions for the cache directory and its files. */
 const CACHE_DIR_MODE = 0o700;

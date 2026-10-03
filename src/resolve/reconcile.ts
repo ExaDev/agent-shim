@@ -28,7 +28,7 @@ export type ReconcileAction =
   | { readonly kind: "adopt"; readonly rel: string; readonly reason: "absent-from-canonical" }
   /** New data whose canonical counterpart exists but differs. The canonical copy is authoritative; the farm copy is preserved alongside it for the user to reconcile. */
   | { readonly kind: "adopt-conflict"; readonly rel: string }
-  /** Nothing to do, with the reason recorded so `claude-use check` can explain a no-op. */
+  /** Nothing to do, with the reason recorded so `agent-shim check` can explain a no-op. */
   | { readonly kind: "skip"; readonly rel: string; readonly reason: SkipReason };
 
 /** Why a path in the old farm needs no action. */

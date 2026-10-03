@@ -41,7 +41,7 @@ describe("claudeShim", () => {
     paths = buildLayoutPaths(root);
     // realpathSync immediately: enableClaudeShim/disableClaudeShim resolve the running executable's own realpath before deriving a target path (so a package manager's symlink indirection never produces a symlink-of-a- symlink), and macOS's os.tmpdir() itself resolves through a symlink (/var -> /private/var) -- without this, targetPath assertions below would compare a symlinked path against its own dereferenced form and fail.
     binDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "claude-shim-bin-test-")));
-    sourcePath = path.join(binDir, "claude-use");
+    sourcePath = path.join(binDir, "agent-shim");
     fs.writeFileSync(sourcePath, "fake-binary-v1", { mode: 0o755 });
   });
 
@@ -52,25 +52,25 @@ describe("claudeShim", () => {
 
   describe("claudeTargetFilename", () => {
     it("names the target `claude` for an extensionless source", () => {
-      expect(claudeTargetFilename("/usr/local/bin/claude-use")).toBe("claude");
+      expect(claudeTargetFilename("/usr/local/bin/agent-shim")).toBe("claude");
     });
 
     it("names the target `claude.exe` for a .exe source", () => {
-      expect(claudeTargetFilename("C:\\bin\\claude-use.exe")).toBe("claude.exe");
+      expect(claudeTargetFilename("C:\\bin\\agent-shim.exe")).toBe("claude.exe");
     });
 
     it("names the target bare `claude`, not `claude.cjs`, for an npm install's dist/cli.cjs", () => {
-      expect(claudeTargetFilename("/usr/local/lib/node_modules/claude-use/dist/cli.cjs")).toBe("claude");
+      expect(claudeTargetFilename("/usr/local/lib/node_modules/agent-shim/dist/cli.cjs")).toBe("claude");
     });
   });
 
   describe("commandFilename", () => {
     it("adds no extension for an extensionless source, whatever the command name", () => {
-      expect(commandFilename("/usr/local/bin/claude-use", "claude-use")).toBe("claude-use");
+      expect(commandFilename("/usr/local/bin/agent-shim", "agent-shim")).toBe("agent-shim");
     });
 
     it("adds .exe for a .exe source, so doctor looks for the filename PATH would actually hold on Windows", () => {
-      expect(commandFilename("C:\\bin\\claude-use.exe", "claude-use")).toBe("claude-use.exe");
+      expect(commandFilename("C:\\bin\\agent-shim.exe", "agent-shim")).toBe("agent-shim.exe");
     });
   });
 
@@ -79,7 +79,7 @@ describe("claudeShim", () => {
       expect(isInvokedAsClaude("claude")).toBe(true);
     });
 
-    it("matches the Windows .exe name -- the confirmed real bug: path.basename includes the extension, so a bare === \"claude\" comparison never matched here, silently falling through to claude-use's own CLI instead of the launcher", () => {
+    it("matches the Windows .exe name -- the confirmed real bug: path.basename includes the extension, so a bare === \"claude\" comparison never matched here, silently falling through to agent-shim's own CLI instead of the launcher", () => {
       expect(isInvokedAsClaude("claude.exe")).toBe(true);
     });
 
@@ -87,12 +87,12 @@ describe("claudeShim", () => {
       expect(isInvokedAsClaude("Claude.EXE")).toBe(true);
     });
 
-    it("does not match claude-use itself", () => {
-      expect(isInvokedAsClaude("claude-use")).toBe(false);
+    it("does not match agent-shim itself", () => {
+      expect(isInvokedAsClaude("agent-shim")).toBe(false);
     });
 
-    it("does not match claude-use.exe", () => {
-      expect(isInvokedAsClaude("claude-use.exe")).toBe(false);
+    it("does not match agent-shim.exe", () => {
+      expect(isInvokedAsClaude("agent-shim.exe")).toBe(false);
     });
   });
 
@@ -107,11 +107,11 @@ describe("claudeShim", () => {
     });
 
     it("places the shim next to a PATH-visible symlink, not next to its realpath target (Homebrew's Cellar layout)", () => {
-      // Mirrors Homebrew's real layout: /opt/homebrew/bin/claude-use -> ../Cellar/claude-use/<version>/bin/claude-use.
+      // Mirrors Homebrew's real layout: /opt/homebrew/bin/agent-shim -> ../Cellar/agent-shim/<version>/bin/agent-shim.
       const cellarDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-shim-cellar-test-"));
-      const cellarFile = path.join(cellarDir, "claude-use");
+      const cellarFile = path.join(cellarDir, "agent-shim");
       fs.writeFileSync(cellarFile, "fake-binary-v1", { mode: 0o755 });
-      const symlinkPath = path.join(binDir, "claude-use-symlinked");
+      const symlinkPath = path.join(binDir, "agent-shim-symlinked");
       fs.symlinkSync(cellarFile, symlinkPath);
 
       try {
@@ -124,11 +124,11 @@ describe("claudeShim", () => {
     });
 
     it("hardlinks the real content, never a proxy binary that merely lives at the placement location (Scoop's own shim)", () => {
-      // Confirmed against a real Scoop install: ownExecutablePath (where `claude` should be placed -- PATH-visible) can differ entirely from contentSourcePath (what this process actually is). Scoop's own shim.exe, a generic compiled proxy, sits at the PATH-visible location while the real claude-use binary lives in a separate, off-PATH versioned app directory -- fs.realpathSync can't see through Scoop's own paired-.shim-file indirection (it isn't a filesystem symlink), so using ownExecutablePath as the link source hardlinks Scoop's proxy itself, producing a `claude.exe` that fails with Scoop's own "Cannot open shim file for read" the moment it's invoked (it's missing its own paired claude.shim).
+      // Confirmed against a real Scoop install: ownExecutablePath (where `claude` should be placed -- PATH-visible) can differ entirely from contentSourcePath (what this process actually is). Scoop's own shim.exe, a generic compiled proxy, sits at the PATH-visible location while the real agent-shim binary lives in a separate, off-PATH versioned app directory -- fs.realpathSync can't see through Scoop's own paired-.shim-file indirection (it isn't a filesystem symlink), so using ownExecutablePath as the link source hardlinks Scoop's proxy itself, producing a `claude.exe` that fails with Scoop's own "Cannot open shim file for read" the moment it's invoked (it's missing its own paired claude.shim).
       const placementDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-shim-placement-test-"));
-      const scoopProxyPath = path.join(placementDir, "claude-use.exe");
+      const scoopProxyPath = path.join(placementDir, "agent-shim.exe");
       fs.writeFileSync(scoopProxyPath, "scoop-generic-shim-proxy", { mode: 0o755 });
-      const realContentPath = path.join(binDir, "claude-use-real.exe");
+      const realContentPath = path.join(binDir, "agent-shim-real.exe");
       fs.writeFileSync(realContentPath, "fake-binary-v1", { mode: 0o755 });
 
       try {
@@ -192,7 +192,7 @@ describe("claudeShim", () => {
     });
 
     it("succeeds on Windows when the source is a real .exe", () => {
-      const exeSource = path.join(binDir, "claude-use.exe");
+      const exeSource = path.join(binDir, "agent-shim.exe");
       fs.writeFileSync(exeSource, "fake-binary-v1", { mode: 0o755 });
       const result = enableClaudeShim({ paths, ownExecutablePath: exeSource, contentSourcePath: exeSource,platform: "win32", force: false });
       expect(result.targetPath).toBe(path.join(binDir, "claude.exe"));

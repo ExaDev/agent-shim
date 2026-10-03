@@ -23,12 +23,12 @@ export interface TrustBundle {
 }
 
 /**
- * Decides the `NODE_EXTRA_CA_CERTS` a routed child gets. Node reads exactly one file from that variable, so a user who already set it (a corporate proxy's CA, say) would lose that trust if the launcher simply pointed it at claude-use's CA. Instead:
+ * Decides the `NODE_EXTRA_CA_CERTS` a routed child gets. Node reads exactly one file from that variable, so a user who already set it (a corporate proxy's CA, say) would lose that trust if the launcher simply pointed it at agent-shim's CA. Instead:
  *
- * - nothing inherited: claude-use's CA file itself;
- * - an inherited file that already contains claude-use's CA (a launch from inside a routed session): that file, unchanged;
- * - any other readable inherited file: a combined bundle (the inherited certificates, then claude-use's CA) written once under `bundlesDir`, named by its content hash so concurrent launches agree on it and a live child's file is never rewritten under it;
- * - an inherited file that cannot be read: claude-use's CA alone, with a warning naming the file. Node itself would have ignored that file with a warning, so the child loses no trust it would otherwise have had.
+ * - nothing inherited: agent-shim's CA file itself;
+ * - an inherited file that already contains agent-shim's CA (a launch from inside a routed session): that file, unchanged;
+ * - any other readable inherited file: a combined bundle (the inherited certificates, then agent-shim's CA) written once under `bundlesDir`, named by its content hash so concurrent launches agree on it and a live child's file is never rewritten under it;
+ * - an inherited file that cannot be read: agent-shim's CA alone, with a warning naming the file. Node itself would have ignored that file with a warning, so the child loses no trust it would otherwise have had.
  */
 export function resolveTrustBundle(params: { readonly caCertFile: string; readonly bundlesDir: string; readonly inherited: string | undefined; readonly fs: TrustBundleFs }): TrustBundle {
   const { caCertFile, bundlesDir, inherited, fs } = params;
@@ -42,7 +42,7 @@ export function resolveTrustBundle(params: { readonly caCertFile: string; readon
   } catch (error) {
     return {
       path: caCertFile,
-      warning: `claude-use: NODE_EXTRA_CA_CERTS names ${inherited}, which could not be read (${error instanceof Error ? error.message : String(error)}); the child trusts claude-use's front-door CA on top of the system store, and nothing from that file`,
+      warning: `agent-shim: NODE_EXTRA_CA_CERTS names ${inherited}, which could not be read (${error instanceof Error ? error.message : String(error)}); the child trusts agent-shim's front-door CA on top of the system store, and nothing from that file`,
     };
   }
   if (inheritedPem.includes(caPem.trim())) {

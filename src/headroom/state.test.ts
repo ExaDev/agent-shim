@@ -20,7 +20,7 @@ import {
   type HeadroomFs,
 } from "./state";
 
-const paths = buildLayoutPaths("/home/testuser/.claude-use");
+const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
 const SESSION_EARLY_PID = 42;
 const SESSION_LATE_PID = 101;

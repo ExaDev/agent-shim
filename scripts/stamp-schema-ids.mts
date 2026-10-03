@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Rewrites the `$id` of every generated schema in `schema/*.schema.json` to the real, version-pinned GitHub Release asset URL for the given tag: `https://github.com/ExaDev/claude-use/releases/download/<tag>/<file>`.
+ * Rewrites the `$id` of every generated schema in `schema/*.schema.json` to the real, version-pinned GitHub Release asset URL for the given tag: `https://github.com/ExaDev/agent-shim/releases/download/<tag>/<file>`.
  *
  * This is deliberately different from install.sh's own `releases/latest/download/...` URL: the installer always wants the newest release, but a schema an editor references from a config file's own `$schema` field must stay stable at whatever version that config was written against — it must never shift underfoot on a later release the way `latest` would.
  *
@@ -49,7 +49,7 @@ function main(): void {
     if (!isRecord(parsed)) {
       throw new Error(`${filePath} does not contain a JSON object at its top level.`);
     }
-    const id = `https://github.com/ExaDev/claude-use/releases/download/${tag}/${file}`;
+    const id = `https://github.com/ExaDev/agent-shim/releases/download/${tag}/${file}`;
     const stamped = { ...parsed, $id: id };
     fs.writeFileSync(filePath, `${JSON.stringify(stamped, null, 2)}\n`);
     console.log(`Stamped ${file} -> ${id}`);

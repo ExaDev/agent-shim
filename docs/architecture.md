@@ -4,16 +4,16 @@ The source layout file-by-file, error-reporting design (`CliError`), the Zod sch
 
 ## Architecture
 
-One compiled binary backs both `claude` and `claude-use` — the entrypoint dispatches on `path.basename(process.argv[1])`, so installation just needs two differently-named copies (or hardlinks) of the same executable on `PATH`.
+One compiled binary backs both `claude` and `agent-shim` — the entrypoint dispatches on `path.basename(process.argv[1])`, so installation just needs two differently-named copies (or hardlinks) of the same executable on `PATH`.
 
 ```
 src/
-  cli.ts                 # entrypoint and the only module with import-time side effects; dispatches on invoked name -> launcher vs the claude-use command tree
-  program.ts              # buildProgram: constructs the whole claude-use Commander tree with no side effects, so the command surface is unit-testable
-  runClaude.ts            # the launch pipeline wired to real ports, shared by the `claude` binary name and `claude-use run`
+  cli.ts                 # entrypoint and the only module with import-time side effects; dispatches on invoked name -> launcher vs the agent-shim command tree
+  program.ts              # buildProgram: constructs the whole agent-shim Commander tree with no side effects, so the command surface is unit-testable
+  runClaude.ts            # the launch pipeline wired to real ports, shared by the `claude` binary name and `agent-shim run`
   cliError.ts             # CliError (and UsageError, MissingInputError, PromptCancelledError), the documented exit statuses, and reportFatalError, the one place a failure becomes output and an exit status
-  completion.ts           # `claude-use completion <shell>`: bash, zsh and fish scripts generated from the built command tree
-  paths.ts               # CLAUDE_USE_HOME-aware layout paths — every other module resolves ~/.claude-use/... paths through this, never inline
+  completion.ts           # `agent-shim completion <shell>`: bash, zsh and fish scripts generated from the built command tree
+  paths.ts               # AGENT_SHIM_HOME-aware layout paths — every other module resolves ~/.agent-shim/... paths through this, never inline
   pathNorm.ts            # rule-path normalisation/ancestor helpers shared across the resolver and directory rules
   versionDiscovery.ts     # portable "find the real claude binary" logic
   realPorts.ts            # the real filesystem/spawn/proc/clock/git/credential ports wired into runLauncher by runClaude.ts (tests wire fakes instead)
@@ -25,7 +25,7 @@ src/
     identity.ts           # decideIdentity, decideConfigProfile, loadIdentity
     flags.ts              # resolveLaunchFlags, buildFlagArgs, buildArgv, buildEnv
     extraFlags.ts         # splitExtraFlags for $CLAUDE_EXTRA_FLAGS
-    cascade.ts            # loads and assembles the CascadeInput a real launch needs (profiles, directory rules, .claude-use.json)
+    cascade.ts            # loads and assembles the CascadeInput a real launch needs (profiles, directory rules, .agent-shim.json)
     lock.ts               # per-identity resync lock
     farm.ts               # farm resync: plan -> build scratch -> reconcile/carry-over -> atomic swap -> crash recovery
     pool.ts               # resolves a `pool:<name>` selector to one member at launch (skips members that are not identities, refuses or waits when every member is refused, records the pick)
@@ -52,7 +52,7 @@ src/
     plan.ts, pick.ts        # the account plan class (subscription capacity from the rate-limit tier, or pay-per-use) and `rankPool`, the pure ranking of a pool's members: refused members out, remaining quota weighted by plan size per hour to reset, five-hour feasibility, last-pick stickiness
     poolPick.ts             # the store-backed side of picking: loads each member's snapshot, login metadata and recent log records for `rankPool`, and keeps the per-directory last-pick record
     account.ts, commands.ts # the plan and tier read from an identity's stored login, and the `usage` and `account show` commands
-  frontdoor/                # the front-door daemon: one claude-use listener routing every session claude-use routes (a provider's, or headroom's)
+  frontdoor/                # the front-door daemon: one agent-shim listener routing every session agent-shim routes (a provider's, or headroom's)
     route.ts                # the URL space (/providers/<name>), the identity step that strips the launcher-injected session headers, and the route interface a destination implements (including whether a headroom hop may sit in front)
     pipeline.ts             # the ordered pipeline (identify, admit, response middleware at each response head, headroom hop then route) and the typed hook point where the usage-tracking middleware registers
     assembly.ts             # builds both listeners' pipelines from one place: launch-capability admission for the client-facing ones, hop-secret and custody admission for the direct one
@@ -75,10 +75,10 @@ src/
     http.ts, quota.ts         # named HTTP statuses, and upstream quota/limit responses forwarded as Anthropic-shaped errors
     commands.ts               # the real translation ports (auth store, upstream fetch, usage snapshot) the front door mounts, and `codex status` reporting through it
   directoryRules.ts       # the `rule` noun: add/set/list/show/remove
-  configure.ts            # `claude-use configure` interactive picker (@clack/prompts)
-  check.ts                # `claude-use check` dry-run inspector — cascade resolution, credential/ambient-credential/Keychain/settings-secrets diagnostics — no farm writes, no spawn
-  doctor.ts                # `claude-use doctor` whole-tree audit — every identity/profile/extends-chain/provider/directory-rules/config.json/categories.local.json/active-identity, plus which `claude-use` PATH actually resolves to, aggregating rather than throwing on a broken file
-  claudeShim.ts            # `claude-use shim enable`/`disable` — the one explicit action that creates/removes a `claude`-named hardlink of the running executable; records claude-shim.json
+  configure.ts            # `agent-shim configure` interactive picker (@clack/prompts)
+  check.ts                # `agent-shim check` dry-run inspector — cascade resolution, credential/ambient-credential/Keychain/settings-secrets diagnostics — no farm writes, no spawn
+  doctor.ts                # `agent-shim doctor` whole-tree audit — every identity/profile/extends-chain/provider/directory-rules/config.json/categories.local.json/active-identity, plus which `agent-shim` PATH actually resolves to, aggregating rather than throwing on a broken file
+  claudeShim.ts            # `agent-shim shim enable`/`disable` — the one explicit action that creates/removes a `claude`-named hardlink of the running executable; records claude-shim.json
   cli/
     bool.ts               # the one boolean vocabulary (true/1, false/0) flags and environment variables share
     parsers.ts            # parsePair, parseBool, parseEnvBool, and the one-value-per-occurrence repeatable-flag collectors
@@ -93,7 +93,7 @@ src/
     flatten.ts             # phase one: shallow overwrite per identical canonical key
     decide.ts              # phase two: selectRule, resolveEntry, resolveAll
     extends.ts             # profile extends-chain linearisation (cycle guard + diamond de-dup, post-order emission)
-    walk.ts                # directory-ancestor walk + three-source (.claude-use.json / directory-rules.json / .claude-use.local.json) fold
+    walk.ts                # directory-ancestor walk + three-source (.agent-shim.json / directory-rules.json / .agent-shim.local.json) fold
     plan.ts                # materialise-vs-symlink planning
     reconcile.ts           # pure write-through reconciliation planning
   config/
@@ -116,12 +116,12 @@ scripts/
                              # tag pushes only — five platform builds, npm publish, GitHub Release, and the
                              # Homebrew/Scoop tap updates below
 install.sh                 # downloads the latest release's binary for the running OS/arch, verifies its
-                             # checksum, and installs it as both `claude` and `claude-use` in ~/.local/bin
+                             # checksum, and installs it as both `claude` and `agent-shim` in ~/.local/bin
 ```
 
 ### Error reporting: `CliError` vs. everything else
 
-Every custom error this project throws to represent an expected, user-facing failure (a missing identity/profile/rule, a malformed config file, an invalid `--category`/`--share`/`--hide` flag) extends `CliError` (`src/cliError.ts`), which carries the exit status it maps to: 1 by default, 2 for a `UsageError` (a malformed flag or environment value, or a `MissingInputError` when a command needs input and standard input is not a terminal). `main()` in `src/cli.ts` hands whatever it rejects with to `reportFatalError`, the single error path for every command, the `@name` shortcut and the `claude`-named launcher alike: a `CliError` prints as `claude-use: <message>` with no stack trace; a `CommanderError` (the program is built with `exitOverride`, so an unknown command or option throws after Commander has printed its own message) maps to its own 0 for `--help`/`--version` and to 2 otherwise; anything else is an unanticipated bug, printed as `claude-use: <message>` with its stack trace added only when `CLAUDE_USE_DEBUG` is true. Nothing calls `process.exit` directly: commands that report findings (`doctor`, `check --strict`) set `process.exitCode`, and the long-running hidden `__headroom-supervisor` ends the process through the injected `CommandDeps.exit`. `main()` calls `buildProgram(...).parseAsync(process.argv)`, not `.parse()`, so an `async` action's rejection (any command that awaits an interactive prompt) reaches the same path rather than surfacing as an unhandled promise rejection Commander's synchronous `.parse()` never awaits.
+Every custom error this project throws to represent an expected, user-facing failure (a missing identity/profile/rule, a malformed config file, an invalid `--category`/`--share`/`--hide` flag) extends `CliError` (`src/cliError.ts`), which carries the exit status it maps to: 1 by default, 2 for a `UsageError` (a malformed flag or environment value, or a `MissingInputError` when a command needs input and standard input is not a terminal). `main()` in `src/cli.ts` hands whatever it rejects with to `reportFatalError`, the single error path for every command, the `@name` shortcut and the `claude`-named launcher alike: a `CliError` prints as `agent-shim: <message>` with no stack trace; a `CommanderError` (the program is built with `exitOverride`, so an unknown command or option throws after Commander has printed its own message) maps to its own 0 for `--help`/`--version` and to 2 otherwise; anything else is an unanticipated bug, printed as `agent-shim: <message>` with its stack trace added only when `AGENT_SHIM_DEBUG` is true. Nothing calls `process.exit` directly: commands that report findings (`doctor`, `check --strict`) set `process.exitCode`, and the long-running hidden `__headroom-supervisor` ends the process through the injected `CommandDeps.exit`. `main()` calls `buildProgram(...).parseAsync(process.argv)`, not `.parse()`, so an `async` action's rejection (any command that awaits an interactive prompt) reaches the same path rather than surfacing as an unhandled promise rejection Commander's synchronous `.parse()` never awaits.
 
 Commands never read `process.stdin.isTTY` or call `@clack/prompts` themselves: `buildProgram` hands every registration a `CommandDeps` with the prompt port and an `isInteractive` check, so each command's terminal and non-terminal behaviour (prompt, or fail naming the option that supplies the input) is unit-tested end to end through the built program with scripted answers.
 
@@ -135,7 +135,7 @@ The `when` condition object's `env` field is `z.record(z.string().min(1), z.stri
 
 ### Why config file loading uses cosmiconfig's `load()`, never its `search()`
 
-Every config file this tool reads — the global config, named configuration profiles, and each `.claude-use.json`/`.claude-use.local.json` found while walking the directory tree — is loaded with [cosmiconfig](https://github.com/cosmiconfig/cosmiconfig)'s `load(filepath)`. Its `search()` method stops at the first config file found while walking upward; this design needs the opposite — every ancestor collected, shallowest-first — so `launcher/cascade.ts` does its own directory walk and calls `load()` at each level it visits, getting cosmiconfig's format flexibility without fighting its traversal semantics. JSON and YAML work with zero extra setup (`js-yaml` is a bundled dependency); JS config files work via native dynamic `import`/`require`. TS config files are real too, but cosmiconfig lists `typescript` as an *optional peer dependency*, not a bundled one — since every config file this tool actually defines is `.json`, that's moot in practice, but it means `.ts` config support isn't something this codebase gets "for free" the way JSON/YAML/JS are, and shipping the compiled Node SEA binary with no `node_modules` at runtime (per [Install](../README.md#install)) means a `.ts` config file would fail to load unless `typescript` were bundled into the SEA blob specifically for that purpose — not planned, since nothing this tool ships needs it.
+Every config file this tool reads — the global config, named configuration profiles, and each `.agent-shim.json`/`.agent-shim.local.json` found while walking the directory tree — is loaded with [cosmiconfig](https://github.com/cosmiconfig/cosmiconfig)'s `load(filepath)`. Its `search()` method stops at the first config file found while walking upward; this design needs the opposite — every ancestor collected, shallowest-first — so `launcher/cascade.ts` does its own directory walk and calls `load()` at each level it visits, getting cosmiconfig's format flexibility without fighting its traversal semantics. JSON and YAML work with zero extra setup (`js-yaml` is a bundled dependency); JS config files work via native dynamic `import`/`require`. TS config files are real too, but cosmiconfig lists `typescript` as an *optional peer dependency*, not a bundled one — since every config file this tool actually defines is `.json`, that's moot in practice, but it means `.ts` config support isn't something this codebase gets "for free" the way JSON/YAML/JS are, and shipping the compiled Node SEA binary with no `node_modules` at runtime (per [Install](../README.md#install)) means a `.ts` config file would fail to load unless `typescript` were bundled into the SEA blob specifically for that purpose — not planned, since nothing this tool ships needs it.
 
 ### Why `extends` isn't cosmiconfig's `$import`
 
@@ -143,7 +143,7 @@ cosmiconfig also supports an `$import` directive that deep-merges imported files
 
 ### The headroom daemon
 
-When a launch resolves `headroom` on, the launcher (synchronous end to end, right through to `spawnSync`) never talks to the daemon process directly and never starts `headroom` itself. It goes through an injected `HeadroomPort` whose real implementation does exactly three things synchronously: take an exclusive-create start lock under `<home>/headroom/` (so concurrent launches spawn at most one supervisor), re-exec this very binary detached as `claude-use __headroom-supervisor` (a hidden subcommand; a SEA binary re-execs itself, the npm bundle re-execs Node against its script path), and poll `state.json` until it names a live supervisor, a live daemon pid, and a port, then register the launching pid in `sessions/`. The port number in state is written only after the supervisor's own `/readyz` probe has passed, so "state has a port" is by construction "the proxy answers".
+When a launch resolves `headroom` on, the launcher (synchronous end to end, right through to `spawnSync`) never talks to the daemon process directly and never starts `headroom` itself. It goes through an injected `HeadroomPort` whose real implementation does exactly three things synchronously: take an exclusive-create start lock under `<home>/headroom/` (so concurrent launches spawn at most one supervisor), re-exec this very binary detached as `agent-shim __headroom-supervisor` (a hidden subcommand; a SEA binary re-execs itself, the npm bundle re-execs Node against its script path), and poll `state.json` until it names a live supervisor, a live daemon pid, and a port, then register the launching pid in `sessions/`. The port number in state is written only after the supervisor's own `/readyz` probe has passed, so "state has a port" is by construction "the proxy answers".
 
 The front door, not the headroom supervisor, hosts the second server: the CONNECT surface OAuth launches point `HTTPS_PROXY` at. It terminates TLS for `api.anthropic.com` alone (with a leaf signed by a local CA persisted under `<home>/frontdoor/ca/`, the key mode 0600), runs that host's `/v1/` paths through the same ordered pipeline the provider listener serves, and pipes every other path, and every other host, untouched. None of that happens for a client that has not authenticated: the CONNECT request must carry a live launch's capability as its `Proxy-Authorization` credential (the launcher puts it in the `HTTPS_PROXY` URL, from which clients derive that header), checked against the session registry with the same constant-time comparison the pipeline's admission uses, or it is answered 407 before the target is parsed or dialled. A connection ledger inside the surface enforces `ConnectLimits`: a head deadline, a pending-head cap that evicts the oldest waiting connection, a cap on authenticated connections, and a periodic revalidation that closes every connection whose launch's capability has since been pruned. Authenticated tunnels deliberately have no idle timeout, since Remote Control streams may sit silent indefinitely. That shape is what keeps Claude Code's Remote Control and connectors working under compression: they refuse any `ANTHROPIC_BASE_URL` the child can be given, but honour the proxy layer, so the base URL stays pointing at the real API. All of the surface's effects (TCP listening, TLS termination, HTTP parsing, forwarding) sit behind a `ConnectEffects` port in the same style as `SupervisorPorts`, and its routing decisions are pure functions over strings; the TLS round-trip tests run the real server against certificates this module issues with only the upstream target redirected.
 

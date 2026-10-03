@@ -25,7 +25,7 @@ const distDir = path.join(rootDir, "dist");
 const bundleFileName = "cli.cjs";
 const seaConfigFileName = "sea-config.json";
 const EXECUTABLE_FILE_MODE = 0o755;
-const outputBinaryName = process.platform === "win32" ? "claude-use-sea.exe" : "claude-use-sea";
+const outputBinaryName = process.platform === "win32" ? "agent-shim-sea.exe" : "agent-shim-sea";
 
 // node --build-sea's stable single-command form shipped in this release.
 const MIN_BUILD_SEA_NODE_MAJOR = 25;

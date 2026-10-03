@@ -11,7 +11,7 @@ import { CONNECT_PROXY_REALM, capabilityFromProxyAuthorization } from "./capabil
 import { FRONTDOOR_POLL_MS } from "./supervisor";
 
 /**
- * The front door's CONNECT surface, so an OAuth session can have claude-use's routing AND Claude Code's Remote Control at once: Remote Control refuses any `ANTHROPIC_BASE_URL` other than the real API, but happily honours `HTTPS_PROXY`, so OAuth launches route at the proxy layer instead.
+ * The front door's CONNECT surface, so an OAuth session can have agent-shim's routing AND Claude Code's Remote Control at once: Remote Control refuses any `ANTHROPIC_BASE_URL` other than the real API, but happily honours `HTTPS_PROXY`, so OAuth launches route at the proxy layer instead.
  *
  * Nothing is tunnelled or intercepted for a client that has not authenticated: every CONNECT request must present a live launch's capability as its proxy credential (`Proxy-Authorization: Basic`, which clients derive from the credential in the `HTTPS_PROXY` URL the launcher sets), or it is answered 407 before any target is dialled, so the port is no open proxy for other local processes. Pending and authenticated connections are bounded by `ConnectLimits`.
  *
@@ -99,7 +99,7 @@ const CA_VALIDITY_DAYS = 3650;
 const LEAF_VALIDITY_DAYS = 397;
 
 /** The CA's fixed subject: stable across regenerations so anything that pinned the old subject fails loudly rather than trusting a silently renamed authority. */
-const CA_SUBJECT_COMMON_NAME = "claude-use front door CA";
+const CA_SUBJECT_COMMON_NAME = "agent-shim front door CA";
 
 /** Milliseconds per day, so the validity windows above read as the days they are. */
 const MS_PER_DAY = 86_400_000;
@@ -184,7 +184,7 @@ export interface LeafCert {
   readonly keyPem: string;
 }
 
-/** Generates the local CA: one RSA keypair, self-signed, CA-only by basicConstraints and keyUsage, with a random serial. Built on `node:crypto` alone (see `x509.ts`), no openssl, so the same code works on every platform claude-use ships to. */
+/** Generates the local CA: one RSA keypair, self-signed, CA-only by basicConstraints and keyUsage, with a random serial. Built on `node:crypto` alone (see `x509.ts`), no openssl, so the same code works on every platform agent-shim ships to. */
 export function generateCa(now: Readonly<Date>): CaMaterial {
   return issueCaCertificate(CA_SUBJECT_COMMON_NAME, new Date(now.getTime() - MS_PER_DAY), new Date(now.getTime() + CA_VALIDITY_DAYS * MS_PER_DAY));
 }
@@ -701,7 +701,7 @@ export function realConnectEffects(): ConnectEffects {
           response.destroy(error);
           return;
         }
-        const body = `claude-use headroom: upstream unreachable (${error.message})`;
+        const body = `agent-shim headroom: upstream unreachable (${error.message})`;
         response.writeHead(HTTP_BAD_GATEWAY, { "content-type": "text/plain", "content-length": String(body.length) });
         response.end(body);
       });

@@ -1,5 +1,5 @@
 /**
- * The one boolean vocabulary every claude-use input shares, CLI flag values and environment variables alike: `true` and `1` mean true, `false` and `0` mean false, and nothing else is a boolean (no case folding, no `yes`/`no`).
+ * The one boolean vocabulary every agent-shim input shares, CLI flag values and environment variables alike: `true` and `1` mean true, `false` and `0` mean false, and nothing else is a boolean (no case folding, no `yes`/`no`).
  *
  * Lives in a module with no imports so both `src/cli/parsers.ts` (which raises on anything else) and `src/cliError.ts` (which must never raise while reporting another failure) can share it without an import cycle.
  * @param input - The raw text.

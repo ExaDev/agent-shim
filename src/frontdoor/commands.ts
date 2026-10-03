@@ -153,7 +153,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
                 log(`connect request ${request.method ?? "?"} ${request.url ?? "?"} failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
                 if (!response.headersSent) {
                   response.writeHead(HTTP_STATUS.badGateway, { "Content-Type": "application/json" });
-                  response.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "internal error in the claude-use front door" } }));
+                  response.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "internal error in the agent-shim front door" } }));
                   return;
                 }
                 response.destroy();
@@ -238,7 +238,7 @@ interface FrontDoorSessionStatus extends FrontDoorSessionSummary {
   readonly alive: boolean;
 }
 
-/** Everything `claude-use frontdoor status` reports, collected read-only: no process is started or stopped. */
+/** Everything `agent-shim frontdoor status` reports, collected read-only: no process is started or stopped. */
 export interface FrontDoorStatus {
   readonly state: FrontDoorState;
   readonly supervisorAlive: boolean;
@@ -262,7 +262,7 @@ export function collectFrontDoorStatus(fsPort: HeadroomFs, paths: LayoutPaths, i
   };
 }
 
-/** Formats `claude-use frontdoor status`, one line per entry. */
+/** Formats `agent-shim frontdoor status`, one line per entry. */
 export function formatFrontDoorStatus(status: FrontDoorStatus, caCertPath: string): string[] {
   const lines: string[] = [];
   if (status.state.supervisorPid === undefined) {
@@ -298,11 +298,11 @@ export function formatFrontDoorStatus(status: FrontDoorStatus, caCertPath: strin
   return lines;
 }
 
-/** Registers `claude-use frontdoor status` and the hidden `__frontdoor-supervisor` internal subcommand. */
+/** Registers `agent-shim frontdoor status` and the hidden `__frontdoor-supervisor` internal subcommand. */
 export function registerFrontDoorCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
-  const frontdoor = withExamples(program.command("frontdoor").description("Inspect the front-door daemon that routes every claude-use session."), [
-    "claude-use frontdoor status",
+  const frontdoor = withExamples(program.command("frontdoor").description("Inspect the front-door daemon that routes every agent-shim session."), [
+    "agent-shim frontdoor status",
   ]);
 
   withExamples(
@@ -320,7 +320,7 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
           console.log(line);
         }
       }),
-    ["claude-use frontdoor status", "claude-use frontdoor status --json"],
+    ["agent-shim frontdoor status", "agent-shim frontdoor status --json"],
   );
 
   program

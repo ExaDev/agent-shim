@@ -27,17 +27,17 @@ export interface ProgramDeps extends CommandDeps {
   readonly credentialPorts?: CredentialCommandPorts;
 }
 
-/** The root help's closing section: the launch command whose own help belongs to claude, the flags only claude-use reads, and the exit statuses every command shares. */
+/** The root help's closing section: the launch command whose own help belongs to claude, the flags only agent-shim reads, and the exit statuses every command shares. */
 const ROOT_HELP_AFTER = `
 Grammar:
-  claude-use <noun> <verb> [name] [options], where the nouns are identity, profile,
+  agent-shim <noun> <verb> [name] [options], where the nouns are identity, profile,
   provider and rule, and the verbs are add, set, list, show, remove and use.
   credential is the exception: it acts on the credentials identities use (store).
 
 Launching:
-  claude-use run [@<identity>] [launch flags] [claude arguments]
-  Everything after run is forwarded to Claude Code, so \`claude-use run --help\` shows
-  claude's own help. claude-use consumes these launch flags first, and only before a
+  agent-shim run [@<identity>] [launch flags] [claude arguments]
+  Everything after run is forwarded to Claude Code, so \`agent-shim run --help\` shows
+  claude's own help. agent-shim consumes these launch flags first, and only before a
   \`--\` terminator (everything from \`--\` on is forwarded untouched):
     --identity <name>            the identity (same as a leading @<name>)
     --config-profile <name>      the configuration profile for this launch
@@ -48,22 +48,22 @@ Launching:
     --[no-]wait                  with @pool:<name>, sleep until the earliest member returns when all are refused
 
 Environment:
-  CLAUDE_USE_IDENTITY, CLAUDE_USE_CONFIG_PROFILE, CLAUDE_USE_SKIP_PERMISSIONS,
-  CLAUDE_USE_REMOTE_CONTROL, CLAUDE_USE_HEADROOM, CLAUDE_USE_TRACK_USAGE, CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL,
-  CLAUDE_USE_CATEGORY_OVERRIDE, CLAUDE_USE_ENTRY_OVERRIDE, CLAUDE_USE_HOME,
-  CLAUDE_USE_DEBUG (print stack traces), NO_COLOR. Booleans are true, false, 1 or 0.
+  AGENT_SHIM_IDENTITY, AGENT_SHIM_CONFIG_PROFILE, AGENT_SHIM_SKIP_PERMISSIONS,
+  AGENT_SHIM_REMOTE_CONTROL, AGENT_SHIM_HEADROOM, AGENT_SHIM_TRACK_USAGE, AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL,
+  AGENT_SHIM_CATEGORY_OVERRIDE, AGENT_SHIM_ENTRY_OVERRIDE, AGENT_SHIM_HOME,
+  AGENT_SHIM_DEBUG (print stack traces), NO_COLOR. Booleans are true, false, 1 or 0.
 
 Exit status:
   0 success, 1 failure, 2 usage error, 64 a selected provider's or identity's credential
   yields no token.
 
 Examples:
-  $ claude-use identity add work
-  $ claude-use run @work
-  $ claude-use run --identity work --provider z -p "hello"`;
+  $ agent-shim identity add work
+  $ agent-shim run @work
+  $ agent-shim run --identity work --provider z -p "hello"`;
 
 /**
- * Builds the complete `claude-use` Commander tree: the `identity`, `profile`, `pool`, `provider` and `rule` nouns (each with the same `add`/`set`/`list`/`show`/`remove`/`use` verbs where they apply), `credential`, `check`, `configure`, `doctor`, `shim`, `headroom`, `codex`, `frontdoor`, `usage`, `account`, `run`, and `completion`, each registered by its own module as a thin adapter over `src/config/store.ts` and the Zod schemas in `src/config/schema.ts`.
+ * Builds the complete `agent-shim` Commander tree: the `identity`, `profile`, `pool`, `provider` and `rule` nouns (each with the same `add`/`set`/`list`/`show`/`remove`/`use` verbs where they apply), `credential`, `check`, `configure`, `doctor`, `shim`, `headroom`, `codex`, `frontdoor`, `usage`, `account`, `run`, and `completion`, each registered by its own module as a thin adapter over `src/config/store.ts` and the Zod schemas in `src/config/schema.ts`.
  *
  * Construction has no side effects: nothing is parsed, read or launched until the caller invokes `parseAsync` on the result. That is what lets the whole command surface be unit-tested against a throwaway `LayoutPaths`, scripted prompts and a fake `runClaude`, while `src/cli.ts` stays the one module that runs on import.
  *
@@ -72,11 +72,11 @@ Examples:
 export function buildProgram(deps: ProgramDeps): Command {
   const program = new Command();
   program
-    .name("claude-use")
+    .name("agent-shim")
     .description("Run Claude Code under several logins from one machine, controlling what each one shares with ~/.claude.")
     .version(packageJson.version)
     .exitOverride()
-    // Required so `-V`/`--version`/`-h`/`--help` are only recognised before the first subcommand token, not scanned for anywhere in argv; otherwise `claude-use run @name --version` would be silently intercepted by claude-use's own version handling before ever reaching `run`'s forwarded args.
+    // Required so `-V`/`--version`/`-h`/`--help` are only recognised before the first subcommand token, not scanned for anywhere in argv; otherwise `agent-shim run @name --version` would be silently intercepted by agent-shim's own version handling before ever reaching `run`'s forwarded args.
     .enablePositionalOptions()
     .addHelpText("after", ROOT_HELP_AFTER);
 

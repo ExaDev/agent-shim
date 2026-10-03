@@ -174,7 +174,7 @@ describe("usage snapshots", () => {
     const fs = createFakeFarmFs({ [file]: "{broken" });
 
     expect(() => readUsageSnapshot(fs, SNAPSHOTS_DIR, "work")).toThrow(UsageSnapshotError);
-    expect(() => readUsageSnapshot(fs, SNAPSHOTS_DIR, "work")).toThrow(`${file} is not a usage snapshot this claude-use can read`);
+    expect(() => readUsageSnapshot(fs, SNAPSHOTS_DIR, "work")).toThrow(`${file} is not a usage snapshot this agent-shim can read`);
   });
 
   it("reports a snapshot of another schema version as unreadable, naming the field", () => {

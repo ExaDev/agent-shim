@@ -20,7 +20,7 @@ export interface FrontDoorSupervisorPorts {
   /** Zombie-aware liveness, the notion every coordination decision in this project uses. */
   readonly isRunning: (pid: number) => boolean;
   /**
-   * Starts the provider listener in this process on `preferredPort` (falling back to any free port when the sticky one is taken, decided at bind time rather than by a racy check-then-bind probe) and resolves once it has bound and answered its own health probe over TLS. This is the HTTPS listener every provider session's base URL points at, serving a loopback leaf signed by claude-use's CA.
+   * Starts the provider listener in this process on `preferredPort` (falling back to any free port when the sticky one is taken, decided at bind time rather than by a racy check-then-bind probe) and resolves once it has bound and answered its own health probe over TLS. This is the HTTPS listener every provider session's base URL points at, serving a loopback leaf signed by agent-shim's CA.
    */
   readonly startProviderListener: (preferredPort: number | undefined) => Promise<FrontDoorListenerHandle>;
   /**
@@ -69,7 +69,7 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
   const fail = (message: string): number => {
     writeFrontDoorState(fs, paths.frontdoorStateFile, { lastError: message, ...sticky() });
     fs.removeRecursive(paths.frontdoorLockFile);
-    ports.log(`claude-use frontdoor supervisor: ${message}`);
+    ports.log(`agent-shim frontdoor supervisor: ${message}`);
     return 1;
   };
 
@@ -83,7 +83,7 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
     return fail(`could not start the provider listener: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (previousSticky !== undefined && http.port !== previousSticky) {
-    ports.log(`claude-use frontdoor supervisor: sticky port ${String(previousSticky)} was occupied; moving to ${String(http.port)} (sessions launched against the old port are stale until they relaunch)`);
+    ports.log(`agent-shim frontdoor supervisor: sticky port ${String(previousSticky)} was occupied; moving to ${String(http.port)} (sessions launched against the old port are stale until they relaunch)`);
   }
   lastPort = http.port;
 
@@ -96,7 +96,7 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
     return fail(`could not start the CONNECT surface: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (previousStickyConnect !== undefined && connect.port !== previousStickyConnect) {
-    ports.log(`claude-use frontdoor supervisor: sticky CONNECT port ${String(previousStickyConnect)} was occupied; moving to ${String(connect.port)} (OAuth sessions launched against the old port are stale until they relaunch)`);
+    ports.log(`agent-shim frontdoor supervisor: sticky CONNECT port ${String(previousStickyConnect)} was occupied; moving to ${String(connect.port)} (OAuth sessions launched against the old port are stale until they relaunch)`);
   }
   lastConnectPort = connect.port;
 
@@ -110,14 +110,14 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
     return fail(`could not start the direct listener: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (previousStickyDirect !== undefined && direct.port !== previousStickyDirect) {
-    ports.log(`claude-use frontdoor supervisor: sticky direct port ${String(previousStickyDirect)} was occupied; moving to ${String(direct.port)} (headroom must be restarted to admit the new address)`);
+    ports.log(`agent-shim frontdoor supervisor: sticky direct port ${String(previousStickyDirect)} was occupied; moving to ${String(direct.port)} (headroom must be restarted to admit the new address)`);
   }
   lastDirectPort = direct.port;
 
   writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: ports.ownPid, port: http.port, connectPort: connect.port, directPort: direct.port, ...sticky() });
   // The start lock has done its job: state now names a live supervisor, so every future launcher finds it there instead.
   fs.removeRecursive(paths.frontdoorLockFile);
-  ports.log(`claude-use frontdoor supervisor ${String(ports.ownPid)}: front door on 127.0.0.1:${String(http.port)}, CONNECT surface on 127.0.0.1:${String(connect.port)}`);
+  ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: front door on 127.0.0.1:${String(http.port)}, CONNECT surface on 127.0.0.1:${String(connect.port)}`);
 
   let idleSince: number | undefined;
   let ticks = 0;
@@ -130,7 +130,7 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
     if (listFrontDoorSessions(fs, paths.frontdoorSessionsDir).length === 0) {
       idleSince ??= ports.now();
       if (ports.now() - idleSince >= idleShutdownMinutes * MS_PER_MINUTE) {
-        ports.log(`claude-use frontdoor supervisor: no sessions for ${String(idleShutdownMinutes)} minute(s); closing the front door and exiting`);
+        ports.log(`agent-shim frontdoor supervisor: no sessions for ${String(idleShutdownMinutes)} minute(s); closing the front door and exiting`);
         await direct.close();
         await connect.close();
         await http.close();

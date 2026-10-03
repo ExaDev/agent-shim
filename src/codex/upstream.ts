@@ -68,7 +68,7 @@ export function sessionIdFor(userId: string | undefined, randomId: () => string)
   if (userId === undefined || userId === "") {
     return randomId();
   }
-  const hex = createHash("sha256").update(`claude-use codex session\n${userId}`).digest("hex");
+  const hex = createHash("sha256").update(`agent-shim codex session\n${userId}`).digest("hex");
   let next = 0;
   return UUID_TEMPLATE.replace(/x/g, () => hex.charAt(next++));
 }

@@ -8,7 +8,7 @@ import { FAKE_HOME, fakeFs } from "../test-helpers";
 import { createProviderRouteResolver } from "./providerRoute";
 import type { RoutedRequest } from "./route";
 
-const PROVIDERS_DIR = `${FAKE_HOME}/.claude-use/providers`;
+const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const OWN_PORT = 4100;
 
 const codexProvider = { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } };

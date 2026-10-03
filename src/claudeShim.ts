@@ -20,28 +20,28 @@ export const ClaudeShimStateSchema = z.strictObject({
 });
 export type ClaudeShimState = z.infer<typeof ClaudeShimStateSchema>;
 
-/** Raised by enableClaudeShim/disableClaudeShim when the target path exists but doesn't look like claude-use's own doing (no matching claude-shim.json marker, and not a hardlink of the currently-running executable) — refuses rather than silently clobbering or deleting something an installer never created. Bypassed by --force. */
+/** Raised by enableClaudeShim/disableClaudeShim when the target path exists but doesn't look like agent-shim's own doing (no matching claude-shim.json marker, and not a hardlink of the currently-running executable) — refuses rather than silently clobbering or deleting something an installer never created. Bypassed by --force. */
 export class ForeignClaudeEntryError extends CliError {
   constructor(
     readonly targetPath: string,
     readonly action: "enable" | "disable",
   ) {
     super(
-      `${targetPath} already exists and does not look like something claude-use created. Refusing to ` +
+      `${targetPath} already exists and does not look like something agent-shim created. Refusing to ` +
         `${action === "enable" ? "overwrite" : "remove"} it automatically — inspect it yourself, or pass --force if you're sure.`,
     );
     this.name = "ForeignClaudeEntryError";
   }
 }
 
-/** Raised by enableClaudeShim when the running executable cannot possibly be turned into a directly-runnable `claude` command: an npm/Node install of claude-use on Windows, which has no bundled .exe and no shebang-based dispatch the way POSIX does. Not bypassed by --force — this isn't a safety refusal, it's "this would produce a broken file." */
+/** Raised by enableClaudeShim when the running executable cannot possibly be turned into a directly-runnable `claude` command: an npm/Node install of agent-shim on Windows, which has no bundled .exe and no shebang-based dispatch the way POSIX does. Not bypassed by --force — this isn't a safety refusal, it's "this would produce a broken file." */
 export class UnsupportedShimSourceError extends CliError {
   constructor(readonly contentSourcePath: string) {
     super(
       `Cannot create a working \`claude\` command from ${contentSourcePath} on Windows: an npm-installed ` +
-        "claude-use running under Node.js has no .exe to hardlink/copy, and Windows has no shebang-based " +
-        "dispatch the way POSIX does. Install claude-use via Scoop instead (see README), which ships a real " +
-        "claude-use.exe this command can link from.",
+        "agent-shim running under Node.js has no .exe to hardlink/copy, and Windows has no shebang-based " +
+        "dispatch the way POSIX does. Install agent-shim via Scoop instead (see README), which ships a real " +
+        "agent-shim.exe this command can link from.",
     );
     this.name = "UnsupportedShimSourceError";
   }
@@ -56,7 +56,7 @@ export function claudeTargetFilename(ownExecutablePath: string): string {
   return commandFilename(ownExecutablePath, "claude");
 }
 
-/** The same rule generalised to any command name this tool owns, so `doctor`'s PATH-resolution check can ask "what filename would a bare `claude-use` be" without restating the Windows `.exe` condition and letting the two drift apart. */
+/** The same rule generalised to any command name this tool owns, so `doctor`'s PATH-resolution check can ask "what filename would a bare `agent-shim` be" without restating the Windows `.exe` condition and letting the two drift apart. */
 export function commandFilename(ownExecutablePath: string, commandName: string): string {
   return ownExecutablePath.toLowerCase().endsWith(".exe") ? `${commandName}.exe` : commandName;
 }
@@ -64,14 +64,14 @@ export function commandFilename(ownExecutablePath: string, commandName: string):
 /**
  * `cli.ts`'s own name-dispatch check: is `invokedName` (the basename of however this binary was invoked) one of the two names `shim enable` ever creates, per `claudeTargetFilename` above? `path.basename` includes the file extension, so a bare `=== "claude"` comparison never matches the Windows case, where the file must be named `claude.exe` to be directly invocable at all.
  *
- * Confirmed as a real, previously-undetected bug against an actual Scoop install: the shim-placement and hardlink-source bugs fixed in prior releases had never let a Windows `claude.exe` invocation reach this far before, so this exact mismatch never surfaced until the shim itself finally worked end-to-end — invoking the newly-created `claude.exe` fell through to claude-use's own CLI (printing its own `--version`) instead of the launcher.
+ * Confirmed as a real, previously-undetected bug against an actual Scoop install: the shim-placement and hardlink-source bugs fixed in prior releases had never let a Windows `claude.exe` invocation reach this far before, so this exact mismatch never surfaced until the shim itself finally worked end-to-end — invoking the newly-created `claude.exe` fell through to agent-shim's own CLI (printing its own `--version`) instead of the launcher.
  */
 export function isInvokedAsClaude(invokedName: string): boolean {
   return invokedName === "claude" || invokedName.toLowerCase() === "claude.exe";
 }
 
 /**
- * The directories `discoverClaudeBinary`'s PATH-fallback search must exclude to avoid recursively discovering/spawning this very tool: wherever the running executable itself lives, plus wherever `shim enable` last placed a `claude`-named copy, when that's a *different* directory (i.e. `--dir` was used). Without folding the recorded shim directory in here too, `claude-use run`/`claude-use doctor` would only exclude their own directory, not a `--dir`-placed shim living elsewhere on PATH.
+ * The directories `discoverClaudeBinary`'s PATH-fallback search must exclude to avoid recursively discovering/spawning this very tool: wherever the running executable itself lives, plus wherever `shim enable` last placed a `claude`-named copy, when that's a *different* directory (i.e. `--dir` was used). Without folding the recorded shim directory in here too, `agent-shim run`/`agent-shim doctor` would only exclude their own directory, not a `--dir`-placed shim living elsewhere on PATH.
  */
 export function resolveOwnInstallDirs(paths: LayoutPaths, ownExecutablePath: string): string[] {
   const dirs = [path.dirname(ownExecutablePath)];
@@ -117,7 +117,7 @@ const nodeLinkFs: LinkFs = { link: fs.linkSync, copyFile: fs.copyFileSync, chmod
 /** Inputs to `enableClaudeShim`. */
 export interface EnableShimParams {
   readonly paths: LayoutPaths;
-  /** `realOwnExecutablePath()` (see realPorts.ts) — the PATH-visible location `claude` should be placed alongside, supplied by the wiring layer. Deliberately separate from `contentSourcePath` below: for a Scoop install, this is `~/scoop/shims/claude-use.exe` (Scoop's own proxy binary, not claude-use's real content), and using it as the link/copy source would hardlink that proxy instead of the genuine executable. */
+  /** `realOwnExecutablePath()` (see realPorts.ts) — the PATH-visible location `claude` should be placed alongside, supplied by the wiring layer. Deliberately separate from `contentSourcePath` below: for a Scoop install, this is `~/scoop/shims/agent-shim.exe` (Scoop's own proxy binary, not agent-shim's real content), and using it as the link/copy source would hardlink that proxy instead of the genuine executable. */
   readonly ownExecutablePath: string;
   /** `realContentSourcePath()` (see realPorts.ts) — the actual file whose content is this running process, used as the hardlink/copy source and for "is the existing target mine" inode comparisons. */
   readonly contentSourcePath: string;
@@ -135,9 +135,9 @@ export interface EnableShimResult {
 }
 
 /**
- * Creates a `claude`-named hardlink (falling back to a copy on a cross-device filesystem) of the currently running `claude-use` executable, so `claude @<name>` works directly instead of needing `claude-use run`.
+ * Creates a `claude`-named hardlink (falling back to a copy on a cross-device filesystem) of the currently running `agent-shim` executable, so `claude @<name>` works directly instead of needing `agent-shim run`.
  *
- * A target that already exists is only ever overwritten when it's provably claude-use's own doing — either it shares an inode with the currently-running executable (covers a pre-existing install from before this feature existed, where no marker could possibly exist yet), or claude-shim.json records this exact target path (covers refreshing after a claude-use upgrade, when the old target's inode no longer matches the new binary's content). Anything else is refused unless `force` is set — this could otherwise silently delete or overwrite someone's genuine, unrelated `claude` binary.
+ * A target that already exists is only ever overwritten when it's provably agent-shim's own doing — either it shares an inode with the currently-running executable (covers a pre-existing install from before this feature existed, where no marker could possibly exist yet), or claude-shim.json records this exact target path (covers refreshing after a agent-shim upgrade, when the old target's inode no longer matches the new binary's content). Anything else is refused unless `force` is set — this could otherwise silently delete or overwrite someone's genuine, unrelated `claude` binary.
  */
 export function enableClaudeShim(params: EnableShimParams, linkFs: LinkFs = nodeLinkFs): EnableShimResult {
   const realContentPath = fs.realpathSync(params.contentSourcePath);
@@ -146,7 +146,7 @@ export function enableClaudeShim(params: EnableShimParams, linkFs: LinkFs = node
     throw new UnsupportedShimSourceError(realContentPath);
   }
 
-  // Deliberately targets alongside the executable *as invoked* (params.ownExecutablePath), not its realpath: a package manager's own PATH-visible entry is very often a symlink into some other directory entirely (e.g. Homebrew's `/opt/homebrew/bin/claude-use` -> `../Cellar/claude-use/<version>/bin/claude-use`), and the new `claude` shim needs to land next to that PATH-visible symlink, not buried in the Cellar keg alongside the dereferenced target where nothing on PATH would ever find it. The link *source* below uses realContentPath instead, so the hardlink/copy is always of claude-use's genuine content — never a symlink-of-a-symlink, and never a different PATH-visible proxy binary (Scoop's own shim) that merely happens to live at the placement location.
+  // Deliberately targets alongside the executable *as invoked* (params.ownExecutablePath), not its realpath: a package manager's own PATH-visible entry is very often a symlink into some other directory entirely (e.g. Homebrew's `/opt/homebrew/bin/agent-shim` -> `../Cellar/agent-shim/<version>/bin/agent-shim`), and the new `claude` shim needs to land next to that PATH-visible symlink, not buried in the Cellar keg alongside the dereferenced target where nothing on PATH would ever find it. The link *source* below uses realContentPath instead, so the hardlink/copy is always of agent-shim's genuine content — never a symlink-of-a-symlink, and never a different PATH-visible proxy binary (Scoop's own shim) that merely happens to live at the placement location.
   const targetPath = resolveClaudeTargetPath(params.ownExecutablePath, params.dir);
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 
@@ -252,7 +252,7 @@ export function findPathShadow(params: FindPathShadowParams): PathShadowStatus {
 }
 
 /**
- * Registers `claude-use shim enable`/`claude-use shim disable` onto `program`.
+ * Registers `agent-shim shim enable`/`agent-shim shim disable` onto `program`.
  *
  * `shim` is a deliberate noun-group, matching `identity`/`profile`/`rule`: it names the actual mechanism (a PATH-level executable that dispatches by invoked name, the same concept Scoop itself calls a "shim"), so `enable`/`disable` read as toggling one clearly-scoped thing rather than "installing"/"uninstalling" software, which could be misread as installing Claude Code itself.
  */
@@ -263,16 +263,16 @@ export function registerShimCommand(program: Command, deps: CommandDeps): void {
       .command("shim")
       .description(
         "Manage the `claude` command shim: an optional, explicit way to also invoke this launcher as `claude` " +
-          "instead of `claude-use run`. Off by default; every installer ships only `claude-use`.",
+          "instead of `agent-shim run`. Off by default; every installer ships only `agent-shim`.",
       ),
-    ["claude-use shim enable", "claude-use shim disable"],
+    ["agent-shim shim enable", "agent-shim shim disable"],
   );
 
   const enable = shim
     .command("enable")
-    .description("Create a `claude`-named copy of this same executable, alongside claude-use by default.")
-    .option("--dir <path>", "Enable into this directory instead of alongside the running claude-use executable.")
-    .option("--force", "Overwrite the target even if it doesn't look like claude-use's own doing.")
+    .description("Create a `claude`-named copy of this same executable, alongside agent-shim by default.")
+    .option("--dir <path>", "Enable into this directory instead of alongside the running agent-shim executable.")
+    .option("--force", "Overwrite the target even if it doesn't look like agent-shim's own doing.")
     .action((options: Readonly<{ dir?: string; force?: boolean }>) => {
       const ownExecutablePath = realOwnExecutablePath();
       const contentSourcePath = realContentSourcePath();
@@ -293,7 +293,7 @@ export function registerShimCommand(program: Command, deps: CommandDeps): void {
         findExecutableInDir,
       });
       if (shadow.status === "not-on-path") {
-        console.warn(`warning: ${path.dirname(result.targetPath)} is not on PATH — add it, or use \`claude-use run\` instead.`);
+        console.warn(`warning: ${path.dirname(result.targetPath)} is not on PATH — add it, or use \`agent-shim run\` instead.`);
       } else if (shadow.status === "shadowed") {
         console.warn(
           `warning: 'claude' on PATH currently resolves to ${shadow.by}, not ${result.targetPath}. ` +
@@ -302,13 +302,13 @@ export function registerShimCommand(program: Command, deps: CommandDeps): void {
       }
     });
 
-  withExamples(enable, ["claude-use shim enable", "claude-use shim enable --dir ~/bin"]);
+  withExamples(enable, ["agent-shim shim enable", "agent-shim shim enable --dir ~/bin"]);
 
   const disable = shim
     .command("disable")
     .description("Remove the `claude` command shim `shim enable` previously created. A no-op, not an error, if none is enabled.")
     .option("--dir <path>", "Look in this directory instead of trusting the recorded location.")
-    .option("--force", "Remove the target even if it doesn't look like claude-use's own doing.")
+    .option("--force", "Remove the target even if it doesn't look like agent-shim's own doing.")
     .action((options: Readonly<{ dir?: string; force?: boolean }>) => {
       const ownExecutablePath = realOwnExecutablePath();
       const contentSourcePath = realContentSourcePath();
@@ -325,5 +325,5 @@ export function registerShimCommand(program: Command, deps: CommandDeps): void {
           : `No \`claude\` command enabled at ${result.targetPath}; nothing to do.`,
       );
     });
-  withExamples(disable, ["claude-use shim disable"]);
+  withExamples(disable, ["agent-shim shim disable"]);
 }

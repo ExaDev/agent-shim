@@ -71,7 +71,7 @@ export function addCredentialCacheOptions(command: Command): Command {
   return command
     .option("--credential-cache-ttl <ttl>", "Keep the resolved credential for this long (a whole number and s, m, h or d, for example 12h) so a launch need not re-run a source that needs a person. Enables caching.")
     .addOption(
-      new Option("--credential-cache-store <store>", "Where the cached credential is kept: keychain (macOS login Keychain, the default there) or file (mode 0600 under the claude-use home, the default elsewhere). Enables caching.").choices(
+      new Option("--credential-cache-store <store>", "Where the cached credential is kept: keychain (macOS login Keychain, the default there) or file (mode 0600 under the agent-shim home, the default elsewhere). Enables caching.").choices(
         CREDENTIAL_CACHE_STORES,
       ),
     )

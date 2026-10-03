@@ -46,13 +46,13 @@ describe("formatAmbientCredentialGuardMessage", () => {
   it("names the offending variable and a generic <name> placeholder when no identity is known", () => {
     const message = formatAmbientCredentialGuardMessage("ANTHROPIC_API_KEY");
     expect(message).toContain("ANTHROPIC_API_KEY is set in the environment");
-    expect(message).toContain("CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1");
-    expect(message).toContain("claude-use identity set <name> --allow-ambient-credential");
+    expect(message).toContain("AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL=1");
+    expect(message).toContain("agent-shim identity set <name> --allow-ambient-credential");
   });
 
   it("names the real identity in the persistent opt-in command when one is known", () => {
     const message = formatAmbientCredentialGuardMessage("ANTHROPIC_AUTH_TOKEN", "work");
-    expect(message).toContain("claude-use identity set work --allow-ambient-credential");
+    expect(message).toContain("agent-shim identity set work --allow-ambient-credential");
   });
 });
 
@@ -88,7 +88,7 @@ describe("evaluateAmbientCredentialGuard", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("allows launch when CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1 opts in for this one invocation", () => {
+  it("allows launch when AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL=1 opts in for this one invocation", () => {
     const result = evaluateAmbientCredentialGuard({
       env: { ANTHROPIC_API_KEY: "sk-real-key" },
       allowAmbientCredential: false,

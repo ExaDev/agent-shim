@@ -25,15 +25,16 @@ function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorParams {
     identities: [],
     configProfiles: [],
     providers: [],
-    directoryRules: { path: "/claude-use/directory-rules.json", raw: undefined },
-    globalConfig: { path: "/claude-use/config.json", raw: undefined },
-    categoriesLocal: { path: "/claude-use/categories.local.json", raw: undefined },
-    activeIdentity: { path: "/claude-use/active-identity", raw: undefined },
+    directoryRules: { path: "/agent-shim/directory-rules.json", raw: undefined },
+    globalConfig: { path: "/agent-shim/config.json", raw: undefined },
+    categoriesLocal: { path: "/agent-shim/categories.local.json", raw: undefined },
+    activeIdentity: { path: "/agent-shim/active-identity", raw: undefined },
     binaryDiscovery: DISCOVERED_BINARY,
     claudeShim: { state: undefined, targetExists: false },
-    pathResolution: { ownExecutablePath: "/home/u/.local/bin/claude-use", claudeUse: { status: "ok" } },
+    rootPath: "/home/u/.agent-shim",
+    pathResolution: { ownExecutablePath: "/home/u/.local/bin/agent-shim", agentShim: { status: "ok" } },
     platform: "linux",
-    headroom: { state: { path: "/claude-use/headroom/state.json", raw: undefined }, isRunning: () => false },
+    headroom: { state: { path: "/agent-shim/headroom/state.json", raw: undefined }, isRunning: () => false },
     ...overrides,
   };
 }
@@ -41,9 +42,9 @@ function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorParams {
 function identity(name: string, overrides: Partial<DoctorIdentityInput> = {}): DoctorIdentityInput {
   return {
     name,
-    path: `/claude-use/identities/${name}/identity.json`,
+    path: `/agent-shim/identities/${name}/identity.json`,
     raw: JSON.stringify({ name, allowAmbientCredential: false }),
-    farmRoot: `/claude-use/identities/${name}`,
+    farmRoot: `/agent-shim/identities/${name}`,
     ...overrides,
   };
 }
@@ -51,7 +52,7 @@ function identity(name: string, overrides: Partial<DoctorIdentityInput> = {}): D
 function profile(name: string, body: Record<string, unknown> = {}, overrides: Partial<DoctorConfigProfileInput> = {}): DoctorConfigProfileInput {
   return {
     name,
-    path: `/claude-use/config-profiles/${name}.json`,
+    path: `/agent-shim/config-profiles/${name}.json`,
     raw: JSON.stringify(body),
     ...overrides,
   };
@@ -71,7 +72,7 @@ describe("runDoctor: headroom", () => {
   });
 
   it("fails on a malformed state.json instead of guessing", () => {
-    const report = runDoctor(baseParams({ headroom: { state: { path: "/claude-use/headroom/state.json", raw: "{bad" }, isRunning: () => false } }));
+    const report = runDoctor(baseParams({ headroom: { state: { path: "/agent-shim/headroom/state.json", raw: "{bad" }, isRunning: () => false } }));
     expect(findingsFor(report, "headroom").some((finding) => finding.severity === "fail")).toBe(true);
   });
 
@@ -80,7 +81,7 @@ describe("runDoctor: headroom", () => {
     const report = runDoctor(
       baseParams({
         headroom: {
-          state: { path: "/claude-use/headroom/state.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT, version: "headroom 0.39.1" }) },
+          state: { path: "/agent-shim/headroom/state.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT, version: "headroom 0.39.1" }) },
           isRunning: (pid: number) => alive.has(pid),
         },
       }),
@@ -94,7 +95,7 @@ describe("runDoctor: headroom", () => {
     const report = runDoctor(
       baseParams({
         headroom: {
-          state: { path: "/claude-use/headroom/state.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT }) },
+          state: { path: "/agent-shim/headroom/state.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT }) },
           isRunning: () => false,
         },
       }),
@@ -110,7 +111,7 @@ describe("runDoctor: headroom", () => {
       baseParams({
         headroom: {
           state: {
-            path: "/claude-use/headroom/state.json",
+            path: "/agent-shim/headroom/state.json",
             raw: JSON.stringify({ supervisorPid: REPLACEMENT_SUPERVISOR_PID, headroomPid: REPLACEMENT_DAEMON_PID, port: HEADROOM_PORT, lastError: "previous crash" }),
           },
           isRunning: (pid: number) => alive.has(pid),
@@ -126,7 +127,7 @@ describe("runDoctor: headroom", () => {
       baseParams({
         headroom: {
           state: {
-            path: "/claude-use/headroom/state.json",
+            path: "/agent-shim/headroom/state.json",
             raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT, installedSource }),
           },
           isRunning: (pid: number) => alive.has(pid),
@@ -202,11 +203,11 @@ describe("runDoctor: claude-shim", () => {
 });
 
 describe("runDoctor: path-resolution", () => {
-  it("passes when a bare `claude-use` reaches this running executable", () => {
+  it("passes when a bare `agent-shim` reaches this running executable", () => {
     const report = runDoctor(baseParams());
     const [finding] = findingsFor(report, "path-resolution");
     expect(finding?.severity).toBe("pass");
-    expect(finding?.message).toContain("/home/u/.local/bin/claude-use");
+    expect(finding?.message).toContain("/home/u/.local/bin/agent-shim");
     expect(report.ok).toBe(true);
   });
 
@@ -214,15 +215,15 @@ describe("runDoctor: path-resolution", () => {
     const report = runDoctor(
       baseParams({
         pathResolution: {
-          ownExecutablePath: "/home/u/.local/bin/claude-use",
-          claudeUse: { status: "shadowed", by: "/home/u/.dotfiles/bin/claude-use" },
+          ownExecutablePath: "/home/u/.local/bin/agent-shim",
+          agentShim: { status: "shadowed", by: "/home/u/.dotfiles/bin/agent-shim" },
         },
       }),
     );
     const [finding] = findingsFor(report, "path-resolution");
     expect(finding?.severity).toBe("fail");
-    expect(finding?.message).toContain("/home/u/.dotfiles/bin/claude-use");
-    expect(finding?.message).toContain("/home/u/.local/bin/claude-use");
+    expect(finding?.message).toContain("/home/u/.dotfiles/bin/agent-shim");
+    expect(finding?.message).toContain("/home/u/.local/bin/agent-shim");
     expect(finding?.message).toContain("/home/u/.local/bin ahead of it on PATH");
     expect(report.ok).toBe(false);
   });
@@ -230,7 +231,7 @@ describe("runDoctor: path-resolution", () => {
   it("warns, not fails, when the running executable's own directory is not on PATH at all", () => {
     const report = runDoctor(
       baseParams({
-        pathResolution: { ownExecutablePath: "/tmp/npx-cache/claude-use", claudeUse: { status: "not-on-path" } },
+        pathResolution: { ownExecutablePath: "/tmp/npx-cache/agent-shim", agentShim: { status: "not-on-path" } },
       }),
     );
     const [finding] = findingsFor(report, "path-resolution");
@@ -240,15 +241,15 @@ describe("runDoctor: path-resolution", () => {
 
   it("reports nothing about `claude` when no shim is enabled, since a `claude` on PATH is then Claude Code's own binary", () => {
     const report = runDoctor(baseParams());
-    expect(findingsFor(report, "path-resolution").map((finding) => finding.subject)).toEqual(["claude-use"]);
+    expect(findingsFor(report, "path-resolution").map((finding) => finding.subject)).toEqual(["agent-shim"]);
   });
 
-  it("warns, not fails, when an enabled `claude` shim is shadowed — the launcher is still reachable as `claude-use run`", () => {
+  it("warns, not fails, when an enabled `claude` shim is shadowed — the launcher is still reachable as `agent-shim run`", () => {
     const report = runDoctor(
       baseParams({
         pathResolution: {
-          ownExecutablePath: "/home/u/.local/bin/claude-use",
-          claudeUse: { status: "ok" },
+          ownExecutablePath: "/home/u/.local/bin/agent-shim",
+          agentShim: { status: "ok" },
           claude: { status: "shadowed", by: "/opt/homebrew/bin/claude" },
         },
       }),
@@ -262,15 +263,15 @@ describe("runDoctor: path-resolution", () => {
 
 describe("refinePathShadow", () => {
   it("leaves a genuine shadow alone", () => {
-    const status = refinePathShadow({ status: "shadowed", by: "/a/claude-use" }, "/b/claude-use", (target) => target);
-    expect(status).toEqual({ status: "shadowed", by: "/a/claude-use" });
+    const status = refinePathShadow({ status: "shadowed", by: "/a/agent-shim" }, "/b/agent-shim", (target) => target);
+    expect(status).toEqual({ status: "shadowed", by: "/a/agent-shim" });
   });
 
   it("collapses to ok when both names resolve to the same real file", () => {
-    const realpaths: Record<string, string> = { "/a/claude-use": "/real/claude-use", "/b/claude-use": "/real/claude-use" };
+    const realpaths: Record<string, string> = { "/a/agent-shim": "/real/agent-shim", "/b/agent-shim": "/real/agent-shim" };
     const status = refinePathShadow(
-      { status: "shadowed", by: "/a/claude-use" },
-      "/b/claude-use",
+      { status: "shadowed", by: "/a/agent-shim" },
+      "/b/agent-shim",
       (target) => realpaths[target] ?? target,
     );
     expect(status).toEqual({ status: "ok" });
@@ -278,8 +279,8 @@ describe("refinePathShadow", () => {
 
   it("passes through every non-shadowed status untouched", () => {
     const realpath = (target: string): string => target;
-    expect(refinePathShadow({ status: "ok" }, "/b/claude-use", realpath)).toEqual({ status: "ok" });
-    expect(refinePathShadow({ status: "not-on-path" }, "/b/claude-use", realpath)).toEqual({ status: "not-on-path" });
+    expect(refinePathShadow({ status: "ok" }, "/b/agent-shim", realpath)).toEqual({ status: "ok" });
+    expect(refinePathShadow({ status: "not-on-path" }, "/b/agent-shim", realpath)).toEqual({ status: "not-on-path" });
   });
 });
 
@@ -346,7 +347,7 @@ describe("runDoctor: identity", () => {
 });
 
 function provider(name: string, body: unknown): DoctorProviderInput {
-  return { name, path: `/claude-use/providers/${name}.json`, raw: JSON.stringify(body) };
+  return { name, path: `/agent-shim/providers/${name}.json`, raw: JSON.stringify(body) };
 }
 
 describe("runDoctor: provider", () => {
@@ -389,7 +390,7 @@ describe("runDoctor: provider", () => {
   it("fails an invalid provider with its validation errors, and invalid JSON", () => {
     const report = runDoctor(
       baseParams({
-        providers: [provider("x", { displayName: "x", baseUrl: "https://a.example" }), { name: "y", path: "/claude-use/providers/y.json", raw: "{bad" }],
+        providers: [provider("x", { displayName: "x", baseUrl: "https://a.example" }), { name: "y", path: "/agent-shim/providers/y.json", raw: "{bad" }],
       }),
     );
     const findings = findingsFor(report, "provider");
@@ -634,7 +635,7 @@ describe("formatDoctorReport", () => {
 });
 
 describe("runDoctor: pools", () => {
-  const poolConfig = (pools: Record<string, { identities: string[] }>): RunDoctorParams["globalConfig"] => ({ path: "/claude-use/config.json", raw: JSON.stringify({ pools }) });
+  const poolConfig = (pools: Record<string, { identities: string[] }>): RunDoctorParams["globalConfig"] => ({ path: "/agent-shim/config.json", raw: JSON.stringify({ pools }) });
 
   it("passes a pool whose members are all identities", () => {
     const report = runDoctor(baseParams({ identities: [identity("work"), identity("personal")], globalConfig: poolConfig({ subs: { identities: ["work", "personal"] } }) }));
@@ -656,5 +657,26 @@ describe("runDoctor: pools", () => {
     const bad = runDoctor(baseParams({ identities: [identity("work")], globalConfig, activeIdentity: { path: "/a", raw: "pool:nope\n" }, directoryRules: rules("pool:nope") }));
     expect(findingsFor(bad, "active-identity")[0]).toMatchObject({ severity: "fail", message: 'active-identity names "pool:nope", which does not exist.' });
     expect(findingsFor(bad, "directory-rules").find((finding) => finding.subject === "/work")?.message).toContain('pool "nope"');
+  });
+});
+
+describe("runDoctor legacy name", () => {
+  it("passes when nothing uses the former name", () => {
+    const finding = runDoctor(baseParams()).findings.find((entry) => entry.section === "legacy-name");
+    expect(finding?.severity).toBe("pass");
+  });
+
+  it("warns for a CLAUDE_USE_ variable, naming its replacement", () => {
+    const findings = runDoctor(baseParams({ env: { CLAUDE_USE_IDENTITY: "work", AGENT_SHIM_IDENTITY: "work" } })).findings.filter((entry) => entry.section === "legacy-name");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.severity).toBe("warn");
+    expect(findings[0]?.message).toContain("AGENT_SHIM_IDENTITY");
+  });
+
+  it("warns that a state root under the former name is used in place and must not be moved", () => {
+    const findings = runDoctor(baseParams({ rootPath: "/home/u/.claude-use" })).findings.filter((entry) => entry.section === "legacy-name");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.severity).toBe("warn");
+    expect(findings[0]?.message).toContain("Keychain");
   });
 });

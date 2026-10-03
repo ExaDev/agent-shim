@@ -65,6 +65,6 @@ export function quotaWarnings(snapshot: UsageSnapshot | undefined, provider: str
     }
     const reset = window.resetsAt === undefined ? "" : `, resets ${window.resetsAt}`;
     const verdict = effective.status === "rejected" ? "exhausted" : "nearly used";
-    return [`claude-use: identity ${snapshot.identity}: the ${name} quota is ${verdict}${reset} (last seen ${age} ago)`];
+    return [`agent-shim: identity ${snapshot.identity}: the ${name} quota is ${verdict}${reset} (last seen ${age} ago)`];
   });
 }

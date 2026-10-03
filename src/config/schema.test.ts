@@ -251,7 +251,7 @@ describe("ProviderSchema", () => {
     expect(ProviderSchema.safeParse({ ...base, credential, authScheme: "apiKey" }).success).toBe(false);
   });
 
-  it("rejects any credential variable in env, even an empty one, since claude-use sets and clears them itself", () => {
+  it("rejects any credential variable in env, even an empty one, since agent-shim sets and clears them itself", () => {
     for (const key of ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) {
       expect(ProviderSchema.safeParse({ ...base, credential, env: { [key]: "" } }).success).toBe(false);
       expect(ProviderSchema.safeParse({ ...base, credential, env: { [key]: "value" } }).success).toBe(false);
@@ -317,7 +317,7 @@ describe("CredentialSourceSchema", () => {
     for (const source of [
       { env: "Z_API_TOKEN" },
       { file: "~/.config/z.token" },
-      { file: "/etc/claude-use/z.token" },
+      { file: "/etc/agent-shim/z.token" },
       { command: ["pass", "show", "z"], interactive: true, timeoutMs: 5000 },
       { op: "op://vault/item/field" },
       { keychain: { service: "claude-work", account: "joe" }, interactive: false },

@@ -48,7 +48,7 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
   const port = deps.headroomPort();
   if (port === undefined) {
     response.start(HTTP_BAD_GATEWAY, { "Content-Type": "application/json" });
-    await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message: "claude-use front door: the headroom daemon is restarting" } }));
+    await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message: "agent-shim front door: the headroom daemon is restarting" } }));
     response.end();
     return;
   }
@@ -118,7 +118,7 @@ async function forwardThroughHeadroom(
       if (!response.headersSent) {
         response.start(HTTP_BAD_GATEWAY, { "Content-Type": "application/json" });
         void response
-          .write(JSON.stringify({ type: "error", error: { type: "api_error", message: `claude-use front door: the headroom daemon is unreachable (${error.message})` } }))
+          .write(JSON.stringify({ type: "error", error: { type: "api_error", message: `agent-shim front door: the headroom daemon is unreachable (${error.message})` } }))
           .then(() => {
             response.end();
           });

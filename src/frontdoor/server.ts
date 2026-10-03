@@ -19,7 +19,7 @@ export type FrontDoorServer = http.Server | https.Server;
 /**
  * A front-door listener: the transport a routed session's requests arrive on. It turns each Node request into a `PipelineRequest` (the raw request plus an abort signal that fires the moment the client goes away before the response finished) and hands it to the pipeline; the pipeline owns identification, admission, middleware and routing.
  *
- * With `tls`, the listener serves HTTPS with that leaf, which is how the provider listener authenticates itself to the child: the leaf is signed by claude-use's CA, whose key only the owning user can read, and the only CA the child trusts for a 127.0.0.1 certificate is that one (no public CA issues certificates for a loopback address), so a process that merely binds the port cannot complete a handshake the child accepts and never receives the request (credentials and capability included). Without `tls` it serves plain HTTP, which only the direct listener does: nothing that reaches it carries a real credential (see the credential custody).
+ * With `tls`, the listener serves HTTPS with that leaf, which is how the provider listener authenticates itself to the child: the leaf is signed by agent-shim's CA, whose key only the owning user can read, and the only CA the child trusts for a 127.0.0.1 certificate is that one (no public CA issues certificates for a loopback address), so a process that merely binds the port cannot complete a handshake the child accepts and never receives the request (credentials and capability included). Without `tls` it serves plain HTTP, which only the direct listener does: nothing that reaches it carries a real credential (see the credential custody).
  *
  * The disconnect is read from the response's `close` event, not the request's: the request emits `close` as soon as its body has been read, long before the response ends. `GET /healthz` is answered here, before the pipeline, because a readiness probe is not a routed session and carries no session headers or capability.
  */
@@ -47,7 +47,7 @@ export function createFrontDoorServer(pipeline: (request: PipelineRequest) => Pr
       log(`request ${request.method ?? "?"} ${request.url ?? "?"} failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
       if (!response.headersSent) {
         response.writeHead(HTTP_STATUS.internalServerError, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "internal error in the claude-use front door" } }));
+        response.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "internal error in the agent-shim front door" } }));
       } else {
         response.destroy();
       }

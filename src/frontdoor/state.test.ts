@@ -4,7 +4,7 @@ import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { listFrontDoorSessions, liveSessionTokens, pruneDeadFrontDoorSessions, removeFrontDoorSession, writeFrontDoorSession } from "./state";
 
-const paths = buildLayoutPaths("/home/testuser/.claude-use");
+const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
 const LIVE = 301;
 const DEAD = 302;

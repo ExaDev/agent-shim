@@ -16,7 +16,7 @@ describe("store.ts", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-use-store-test-"));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-store-test-"));
   });
 
   afterEach(() => {

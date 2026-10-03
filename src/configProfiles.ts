@@ -24,7 +24,7 @@ import type { LayoutPaths } from "./paths";
 /** Raised by any operation that requires a configuration profile to already exist, when it does not. */
 export class ProfileNotFoundError extends CliError {
   constructor(readonly profileName: string) {
-    super(`No configuration profile named "${profileName}". Run \`claude-use profile add ${profileName}\` first.`);
+    super(`No configuration profile named "${profileName}". Run \`agent-shim profile add ${profileName}\` first.`);
     this.name = "ProfileNotFoundError";
   }
 }
@@ -120,12 +120,12 @@ function globalConfigPath(paths: LayoutPaths): string {
   return paths.globalConfigFile;
 }
 
-/** Reads the user-global `~/.claude-use/config.json`, or undefined when it does not exist. */
+/** Reads the user-global `~/.agent-shim/config.json`, or undefined when it does not exist. */
 export function readGlobalConfig(paths: LayoutPaths): GlobalConfig | undefined {
   return readJson(globalConfigPath(paths), GlobalConfigSchema);
 }
 
-/** Sets the user-global default configuration profile in `~/.claude-use/config.json`, creating the file if it doesn't exist yet. Whether the profile exists is the caller's concern: `profile use` checks it first. */
+/** Sets the user-global default configuration profile in `~/.agent-shim/config.json`, creating the file if it doesn't exist yet. Whether the profile exists is the caller's concern: `profile use` checks it first. */
 export function setGlobalDefaultProfile(paths: LayoutPaths, name: string): GlobalConfig {
   return applyPatch(
     globalConfigPath(paths),
@@ -199,7 +199,7 @@ function setProfileMetadata(
   });
 }
 
-/** Deletes a configuration profile's file. Throws `ProfileNotFoundError` when it does not exist. Nothing that references it by name is rewritten; `claude-use doctor` reports any identity default, directory rule or `extends` left pointing at it. */
+/** Deletes a configuration profile's file. Throws `ProfileNotFoundError` when it does not exist. Nothing that references it by name is rewritten; `agent-shim doctor` reports any identity default, directory rule or `extends` left pointing at it. */
 function removeProfile(paths: LayoutPaths, name: string): void {
   requireProfileExists(paths, name);
   fs.rmSync(profileJsonPath(paths, name));
@@ -295,14 +295,14 @@ function applyProfileSet(paths: LayoutPaths, name: string, options: ProfileSetOp
   return touched;
 }
 
-/** Registers the `claude-use profile` subcommand tree onto `program`. */
+/** Registers the `agent-shim profile` subcommand tree onto `program`. */
 export function registerProfileCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
   const profile = withExamples(
     program
       .command("profile")
       .description("Manage configuration profiles: named, reusable rules for what an identity shares with ~/.claude."),
-    ["claude-use profile add client-acme", "claude-use profile list"],
+    ["agent-shim profile add client-acme", "agent-shim profile list"],
   );
 
   withExamples(
@@ -329,7 +329,7 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
         createProfile(paths, name, options.extends, options.description);
         console.log(`Created configuration profile "${name}".`);
       }),
-    ["claude-use profile add client-acme", "claude-use profile add client-acme --extends work-default --extends strict"],
+    ["agent-shim profile add client-acme", "agent-shim profile add client-acme --extends work-default --extends strict"],
   );
 
   withExamples(
@@ -371,9 +371,9 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
         console.log(`Updated configuration profile "${name}".`);
       }),
     [
-      "claude-use profile set client-acme --category history=false --category knowledge=true",
-      'claude-use profile set client-acme --entry "knowledge/skills/commit=false"',
-      "claude-use profile set client-acme --launch-headroom --launch-provider z",
+      "agent-shim profile set client-acme --category history=false --category knowledge=true",
+      'agent-shim profile set client-acme --entry "knowledge/skills/commit=false"',
+      "agent-shim profile set client-acme --launch-headroom --launch-provider z",
     ],
   );
 
@@ -390,7 +390,7 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
           return;
         }
         if (entries.length === 0) {
-          console.log("No configuration profiles yet. Run `claude-use profile add <name>` to create one.");
+          console.log("No configuration profiles yet. Run `agent-shim profile add <name>` to create one.");
           return;
         }
         for (const entry of entries) {
@@ -402,7 +402,7 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
           console.log(`${marker}${entry.name}${extendsSuffix}`);
         }
       }),
-    ["claude-use profile list", "claude-use profile list --json"],
+    ["agent-shim profile list", "agent-shim profile list --json"],
   );
 
   withExamples(
@@ -434,13 +434,13 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
           console.log(`${label}: ${pairs.length === 0 ? "(none)" : pairs.map(([key, setting]) => `${key}=${JSON.stringify(setting)}`).join(", ")}`);
         }
       }),
-    ["claude-use profile show client-acme", "claude-use profile show client-acme --json"],
+    ["agent-shim profile show client-acme", "agent-shim profile show client-acme --json"],
   );
 
   withExamples(
     profile
       .command("remove <name>")
-      .description("Delete a configuration profile's file. References to it by name are left for `claude-use doctor` to report.")
+      .description("Delete a configuration profile's file. References to it by name are left for `agent-shim doctor` to report.")
       .option("--yes", "Remove without asking for confirmation (required when standard input is not a terminal).")
       .action(async (name: string, options: Readonly<{ yes?: boolean }>) => {
         requireProfileExists(paths, name);
@@ -448,7 +448,7 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
         removeProfile(paths, name);
         console.log(`Removed configuration profile "${name}".`);
       }),
-    ["claude-use profile remove client-acme --yes"],
+    ["agent-shim profile remove client-acme --yes"],
   );
 
   withExamples(
@@ -460,6 +460,6 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
         setGlobalDefaultProfile(paths, name);
         console.log(`Global default configuration profile is now "${name}".`);
       }),
-    ["claude-use profile use work-default"],
+    ["agent-shim profile use work-default"],
   );
 }
