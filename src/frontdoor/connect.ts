@@ -16,11 +16,16 @@ import { FRONTDOOR_POLL_MS } from "./supervisor";
  *
  * Nothing is tunnelled or intercepted for a client that has not authenticated: every CONNECT request must present a live launch's capability as its proxy credential (`Proxy-Authorization: Basic`, which clients derive from the credential in the `HTTPS_PROXY` URL the launcher sets), or it is answered 407 before any target is dialled, so the port is no open proxy for other local processes. Pending and authenticated connections are bounded by `ConnectLimits`.
  *
- * Every authenticated CONNECT target is blind-tunnelled byte for byte EXCEPT the intercept host (Claude Code's own API), whose TLS this surface terminates with a leaf certificate signed by a locally generated CA. On the terminated session, the paths the front door routes (`/v1/`) are handed to the same ordered pipeline the provider listener serves (the client's Authorization header passes through untouched), and every other path is piped by this surface to the real upstream over TLS, so Remote Control's streaming, OAuth refreshes, and unknown endpoints bypass the pipeline entirely. When a `capture` is configured, those piped exchanges and every CONNECT target are recorded through it (see `./capture.ts`); the forwarding itself is identical either way.
+ * Every authenticated CONNECT target is blind-tunnelled byte for byte EXCEPT the intercept hosts (Claude Code's own API and the claude.ai control plane), whose TLS this surface terminates with leaf certificates signed by a locally generated CA. On the API host's terminated session, the paths the front door routes (`/v1/`) are handed to the same ordered pipeline the provider listener serves (the client's Authorization header passes through untouched), and every other path there, and every path on the control plane's session, is piped by this surface to that session's own real upstream over TLS, so Remote Control's streaming, OAuth refreshes, and unknown endpoints bypass the pipeline entirely. When a `capture` is configured, those piped exchanges and every CONNECT target are recorded through it (see `./capture.ts`); the forwarding itself is identical either way.
  */
 
-/** The one CONNECT host whose TLS gets terminated: Claude Code's own API, the upstream every OAuth session is really talking to. */
+/** The API host: Claude Code's own upstream, the one host whose `/v1/` paths the routed pipeline serves. */
 export const CONNECT_INTERCEPT_HOST = "api.anthropic.com";
+
+/**
+ * Every CONNECT host whose TLS this surface terminates, each with its own leaf and its own HTTP parser: the API host above, and `platform.claude.com`, the claude.ai control plane where Remote Control's long-lived channel and its handshake live. Terminating the second one is what makes a Remote Control login rejection observable at all: its bytes cross this surface either way, and blind-tunnelling them hides exactly the exchange that failed. Only the API host's `/v1/` paths ever reach the routed pipeline; everything else on either session is piped to that session's own real upstream, so the pipeline's identification and authorisation are never asked to serve another host's traffic.
+ */
+export const CONNECT_INTERCEPT_HOSTS: readonly string[] = [CONNECT_INTERCEPT_HOST, "platform.claude.com"];
 
 /** Paths under this prefix are what the routed pipeline serves; everything else on the terminated session goes to the real upstream. */
 export const ROUTED_PATH_PREFIX = "/v1/";
@@ -126,9 +131,9 @@ export function parseConnectTarget(authority: string): ConnectTarget | undefined
   return { host, port };
 }
 
-/** Whether a CONNECT target's host (port already stripped) is the one whose TLS this proxy terminates. */
-export function isInterceptedHost(host: string, interceptHost: string): boolean {
-  return host === interceptHost;
+/** Whether a CONNECT target's host (port already stripped) is one whose TLS this proxy terminates. */
+export function isInterceptedHost(host: string, interceptHosts: readonly string[]): boolean {
+  return interceptHosts.includes(host);
 }
 
 /** Whether a request path on the terminated session is one the routed pipeline serves. The query string stays part of the path: `/v1/messages?beta=true` is still the pipeline's. */
@@ -303,16 +308,20 @@ export interface ConnectEffects {
 
 /** Everything the connect surface needs to route, resolved before it starts. */
 export interface ConnectServerConfig {
-  /** The CONNECT host whose TLS gets terminated. */
-  readonly interceptHost: string;
+  /** The CONNECT hosts whose TLS get terminated, each with its own leaf, its own HTTP parser and its own upstream. */
+  readonly interceptHosts: readonly string[];
+  /**
+   * The one intercept host whose `/v1/` paths `serveRouted` handles: the API host, whose pipeline identification, authorisation and headroom hop are about Anthropic sessions and no other host's traffic.
+   */
+  readonly routedHost: string;
   /**
    * Serves one routed path (`/v1/...`) from the terminated session: the same ordered pipeline the provider listener hands requests to, so an OAuth session and a provider session run identical identification, middleware and routing.
    */
   readonly serveRouted: ConnectRequestHandler;
-  /** The leaf to terminate `interceptHost` with, minted and cached per host. */
+  /** The leaf to terminate each intercept host with, minted and cached per host. */
   readonly leafFor: (host: string) => LeafCert;
-  /** Where non-routed paths on the terminated session are piped: the real upstream over TLS. */
-  readonly upstream: ConnectForwardTarget;
+  /** Where non-routed paths on one host's terminated session are piped: that host's own real upstream over TLS. */
+  readonly upstreamFor: (host: string) => ConnectForwardTarget;
   /** Whether a capability presented as a CONNECT request's proxy credential belongs to a live launch: the same constant-time check against the same registry the routed pipeline's admission makes, read fresh on every call because launches come and go. */
   readonly isLiveCapability: (token: string) => boolean;
   /** The connection deadlines and caps; production passes `CONNECT_LIMITS`. */
@@ -334,23 +343,27 @@ export interface ConnectServerHandle {
  * The connection flow: read the CONNECT head within the deadline (never more of the stream than that, so an early ClientHello glued to the head is pushed back with `unshift` and still seen by whatever consumes the socket next), authenticate it, then either blind-tunnel the target or terminate its TLS and parse HTTP on the session. Every network effect flows through `effects`; nothing here touches the network or filesystem itself.
  */
 export async function startConnectServer(config: ConnectServerConfig, effects: ConnectEffects, preferredPort: number | undefined): Promise<ConnectServerHandle> {
-  const handler: ConnectRequestHandler = (request, response) => {
-    if (servedByPipeline(request.url)) {
-      config.serveRouted(request, response);
-      return;
-    }
-    effects.forwardHttp(config.upstream, request, response, config.capture?.observePassthrough(request));
-  };
-
-  const httpSession = effects.createHttpSession(handler, config.capture === undefined ? undefined : (request) => config.capture?.upgrade(request));
-  const tlsAcceptor = effects.createTlsAcceptor(config.leafFor(config.interceptHost), (secure) => {
-    httpSession.serve(secure);
+  // One HTTP parser per intercept host, so each handler knows by closure which host's session it serves and therefore which upstream a non-routed path is piped to. No socket-to-host bookkeeping to get wrong: the only path into a session's handler is that host's acceptor.
+  const onUpgrade = config.capture === undefined ? undefined : (request: IncomingMessage) => config.capture?.upgrade(request);
+  const sessions = config.interceptHosts.map((host) => {
+    const handler: ConnectRequestHandler = (request, response) => {
+      if (host === config.routedHost && servedByPipeline(request.url)) {
+        config.serveRouted(request, response);
+        return;
+      }
+      effects.forwardHttp(config.upstreamFor(host), request, response, config.capture?.observePassthrough(request));
+    };
+    const httpSession = effects.createHttpSession(handler, onUpgrade);
+    const tlsAcceptor = effects.createTlsAcceptor(config.leafFor(host), (secure) => {
+      httpSession.serve(secure);
+    });
+    return { host, httpSession, tlsAcceptor };
   });
   const ledger = createConnectionLedger(config.limits, config.isLiveCapability);
 
   // The listener owns teardown of everything it accepted: destroying the raw CONNECT socket ends both the blind tunnels and the TLS sessions layered on top of them.
   const listener = await effects.listenLoopback(preferredPort, (socket) => {
-    handleConnect(socket, { config, effects, tlsAcceptor, ledger });
+    handleConnect(socket, { config, effects, sessions, ledger });
   });
 
   return {
@@ -358,17 +371,25 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
     close: async () => {
       ledger.close();
       await listener.close();
-      tlsAcceptor.close();
-      httpSession.close();
+      for (const { httpSession, tlsAcceptor } of sessions) {
+        tlsAcceptor.close();
+        httpSession.close();
+      }
     },
   };
+}
+
+/** One intercept host's terminated-session machinery. */
+interface InterceptSession {
+  readonly host: string;
+  readonly tlsAcceptor: TlsAcceptor;
 }
 
 /** Everything one connection's handling needs from the running surface. */
 interface ConnectionContext {
   readonly config: ConnectServerConfig;
   readonly effects: ConnectEffects;
-  readonly tlsAcceptor: TlsAcceptor;
+  readonly sessions: readonly (InterceptSession & { readonly httpSession: HttpParserSession })[];
   readonly ledger: ConnectionLedger;
 }
 
@@ -520,7 +541,7 @@ function proxyAuthorizationOf(head: string): string | undefined {
  * Applies the decision for one received CONNECT head: authenticate it, then route it. Authentication comes before anything else the head says is acted on, so a client without a live capability learns nothing and causes nothing: no target is parsed for it, dialled or intercepted, and its only answer is 407 with the challenge naming the scheme the surface accepts.
  */
 function routeConnect(socket: net.Socket, head: string, context: ConnectionContext): void {
-  const { config, effects, tlsAcceptor, ledger } = context;
+  const { config, effects, sessions, ledger } = context;
   const credential = proxyAuthorizationOf(head);
   const capability = credential === undefined ? undefined : capabilityFromProxyAuthorization(credential);
   if (capability === undefined || !config.isLiveCapability(capability)) {
@@ -539,10 +560,11 @@ function routeConnect(socket: net.Socket, head: string, context: ConnectionConte
     refuse(socket, REFUSAL.serviceUnavailable);
     return;
   }
-  config.capture?.connect(target, isInterceptedHost(target.host, config.interceptHost));
+  const session = sessions.find((entry) => entry.host === target.host);
+  config.capture?.connect(target, session !== undefined);
   socket.write(CONNECT_ESTABLISHED);
-  if (isInterceptedHost(target.host, config.interceptHost)) {
-    tlsAcceptor.accept(socket);
+  if (session !== undefined) {
+    session.tlsAcceptor.accept(socket);
     return;
   }
   void blindTunnel(socket, target, effects);

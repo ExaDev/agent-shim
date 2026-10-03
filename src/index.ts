@@ -30,6 +30,7 @@ export {
 
 export {
   CONNECT_INTERCEPT_HOST,
+  CONNECT_INTERCEPT_HOSTS,
   CONNECT_LIMITS,
   createLeafCache,
   ensureCa,

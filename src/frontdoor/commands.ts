@@ -17,6 +17,7 @@ import { isLiveCapability } from "./capability";
 import { captureFromEnv } from "./capture";
 import {
   CONNECT_INTERCEPT_HOST,
+  CONNECT_INTERCEPT_HOSTS,
   CONNECT_LIMITS,
   HTTPS_PORT,
   LOOPBACK_LEAF_NAMES,
@@ -146,7 +147,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       }
       const server = await startConnectServer(
         {
-          interceptHost: CONNECT_INTERCEPT_HOST,
+          interceptHosts: CONNECT_INTERCEPT_HOSTS,
+          routedHost: CONNECT_INTERCEPT_HOST,
           serveRouted: (request, response) => {
             // The connect surface hands the pipeline the same request shape the provider listener builds: identified, admitted, middleware-run, routed, with the abort wired to the client going away.
             const abort = new AbortController();
@@ -168,7 +170,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
             );
           },
           leafFor,
-          upstream: { host: CONNECT_INTERCEPT_HOST, port: HTTPS_PORT, tls: true },
+          upstreamFor: (host) => ({ host, port: HTTPS_PORT, tls: true }),
           isLiveCapability: isLiveToken,
           limits: CONNECT_LIMITS,
           ...(capture === undefined ? {} : { capture }),
