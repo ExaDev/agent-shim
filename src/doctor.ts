@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Command } from "commander";
 import type { z } from "zod";
 
-import { lookupKeychainService } from "./check";
+import { lookupKeychainService } from "./checkReport";
 import { printJson, withExamples, type CommandDeps } from "./cli/commandDeps";
 import {
   ClaudeShimStateSchema,

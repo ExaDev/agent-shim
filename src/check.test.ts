@@ -3,17 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Credential } from "./config/schema";
 import type { Decision } from "./resolve/types";
 import { shippedClassification, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, createFakeFarmFs } from "./test-helpers";
-import {
-  checkReportHasWarnings,
-  checkReportToJson,
-  flagAmbiguousEncodings,
-  formatCheckReport,
-  formatDecision,
-  inspectSettingsExposure,
-  lookupKeychainService,
-  runCheck,
-  type RunCheckParams,
-} from "./check";
+import { checkReportHasWarnings, checkReportToJson, flagAmbiguousEncodings, formatCheckReport, formatDecision, inspectSettingsExposure, lookupKeychainService, runCheck, type RunCheckParams } from "./checkReport";
 import type { RunPort } from "./launcher/ports";
 import type { CascadeInput } from "./resolve/walk";
 import type { FlattenedCascade } from "./resolve/types";
