@@ -1,3 +1,19 @@
+## [7.6.0](https://github.com/ExaDev/agent-shim/compare/v7.5.0...v7.6.0) (2026-10-03)
+
+### Features
+
+* **frontdoor:** tap the control plane's stream at the byte level ([d06db3e](https://github.com/ExaDev/agent-shim/commit/d06db3eb56432a8c2b029f13edca09c0d811d1c7))
+
+### Bug Fixes
+
+* classify codex-quota.json, file-transfers and settings backups in the default map ([d9977a2](https://github.com/ExaDev/agent-shim/commit/d9977a280a77cfd3786bc16808e83e6aa6a7af4a))
+* **frontdoor:** keep the tap ALPN list module-private ([3cb62ca](https://github.com/ExaDev/agent-shim/commit/3cb62ca6a4c9483f173519c5e42a2f95edb6d6bf))
+* **frontdoor:** mirror the client's ALPN choice on a tap session's upstream ([8451039](https://github.com/ExaDev/agent-shim/commit/8451039c6462b415742fea636467d8e9d9837b4d))
+
+### Documentation
+
+* **frontdoor:** state the stream tap's compressed-frame caveat plainly ([1838a92](https://github.com/ExaDev/agent-shim/commit/1838a923d32060c528cfcb83c272ee5de9f74f3f))
+
 ## [7.5.0](https://github.com/ExaDev/agent-shim/compare/v7.4.0...v7.5.0) (2026-10-03)
 
 ### Features
