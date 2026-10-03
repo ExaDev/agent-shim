@@ -1,3 +1,10 @@
+## [6.2.3](https://github.com/ExaDev/claude-use/compare/v6.2.2...v6.2.3) (2026-10-03)
+
+### Bug Fixes
+
+* **headroom:** verify the installed commit against a pinned source ([f0535da](https://github.com/ExaDev/claude-use/commit/f0535da5280026b826229e588f4deb544fed708a))
+* **headroom:** write state.json atomically ([79601fb](https://github.com/ExaDev/claude-use/commit/79601fbf26cfc09e798b99df54542522ceacef5b))
+
 ## [6.2.2](https://github.com/ExaDev/claude-use/compare/v6.2.1...v6.2.2) (2026-10-03)
 
 ### Bug Fixes
