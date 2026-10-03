@@ -22,6 +22,10 @@ describe("classifyEntries against the shipped map", () => {
     ["settings.local.json", "settings"],
     ["shell-snapshots", "runtime"],
     ["ide", "runtime"],
+    ["codex-quota.json", "runtime"],
+    ["file-transfers", "runtime"],
+    ["settings.json.bak-20260930103659", "secret"],
+    ["settings.json.bak.20260529-214321", "secret"],
   ])("classifies %s as %s", (name, category) => {
     expect(classifyEntries([name], { defaults }).classification.get(name)).toBe(category);
   });

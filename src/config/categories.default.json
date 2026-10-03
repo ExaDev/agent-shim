@@ -1,10 +1,12 @@
 {
-  "secret": [".credentials.json", "backups"],
+  "secret": [".credentials.json", "backups", "settings.json.bak*"],
   "runtime": [
     "daemon*",
     ".git*",
     ".DS_Store",
     "mcp-needs-auth-cache.json",
+    "codex-quota.json",
+    "file-transfers",
     "shell-snapshots",
     "statsig",
     "telemetry",
