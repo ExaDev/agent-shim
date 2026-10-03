@@ -1,3 +1,16 @@
+## [7.9.0](https://github.com/ExaDev/agent-shim/compare/v7.8.0...v7.9.0) (2026-10-03)
+
+### Features
+
+* export check and doctor from the library as functions that return a report ([2b56892](https://github.com/ExaDev/agent-shim/commit/2b56892a2e7d4ffad278e300372b9c049a5bf116))
+
+### Code Refactoring
+
+* move the boolean environment variable parsing out of the commander module ([df60ba5](https://github.com/ExaDev/agent-shim/commit/df60ba551bbd50464c19f487c67d46197788e838))
+* move the pool pick ranking report out of the pool command module ([99224a2](https://github.com/ExaDev/agent-shim/commit/99224a2fb062c458cc58691ede962897dd13782d))
+* split the check report from the check command and collect it in one call ([748b4da](https://github.com/ExaDev/agent-shim/commit/748b4dac3a34b2f8335455af8a360caa33a10809))
+* split the doctor report from the doctor command and collect it in one call ([430eebe](https://github.com/ExaDev/agent-shim/commit/430eebe8665748889ab1a089e17c06ffa949c45c))
+
 ## [7.8.0](https://github.com/ExaDev/agent-shim/compare/v7.7.0...v7.8.0) (2026-10-03)
 
 ### Features
