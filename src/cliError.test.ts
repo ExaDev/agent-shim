@@ -43,7 +43,7 @@ describe("every CLI-facing error class extends CliError", () => {
     ["UnrootedProjectPathError", () => new UnrootedProjectPathError("relative/path")],
     ["EntryKeyError", () => new EntryKeyError("bad-key", "bad", "malformed")],
     ["DirectoryRuleAlreadyExistsError", () => new DirectoryRuleAlreadyExistsError("/some/path")],
-    ["InvalidEnvBoolError", () => new InvalidEnvBoolError("CLAUDE_USE_HEADROOM", "yes")],
+    ["InvalidEnvBoolError", () => new InvalidEnvBoolError("AGENT_SHIM_HEADROOM", "yes")],
     ["ConflictingIdentityError", () => new ConflictingIdentityError("work", "personal")],
     ["ConfigureNeedsTerminalError", () => new ConfigureNeedsTerminalError()],
     ["NoConfigProfileResolvedError", () => new NoConfigProfileResolvedError("work", "/some/dir")],
@@ -74,8 +74,8 @@ function capture(error: unknown, env: Readonly<Record<string, string | undefined
 }
 
 describe("reportFatalError", () => {
-  it("prints an expected failure as claude-use: <message> and exits 1", () => {
-    expect(capture(new ExampleCliError('No identity named "work".'))).toEqual({ code: EXIT_FAILURE, lines: ['claude-use: No identity named "work".'] });
+  it("prints an expected failure as agent-shim: <message> and exits 1", () => {
+    expect(capture(new ExampleCliError('No identity named "work".'))).toEqual({ code: EXIT_FAILURE, lines: ['agent-shim: No identity named "work".'] });
   });
 
   it("exits 2 for a usage error, including missing input with no terminal", () => {
@@ -87,20 +87,20 @@ describe("reportFatalError", () => {
 
   it("prints an unexpected error by message alone, with no stack, by default", () => {
     const error = new Error("boom");
-    expect(capture(error)).toEqual({ code: EXIT_FAILURE, lines: ["claude-use: boom"] });
+    expect(capture(error)).toEqual({ code: EXIT_FAILURE, lines: ["agent-shim: boom"] });
   });
 
-  it.each(["1", "true"])("adds the stack trace when CLAUDE_USE_DEBUG=%s", (value) => {
+  it.each(["1", "true"])("adds the stack trace when AGENT_SHIM_DEBUG=%s", (value) => {
     const error = new Error("boom");
-    expect(capture(error, { CLAUDE_USE_DEBUG: value }).lines).toEqual(["claude-use: boom", error.stack]);
+    expect(capture(error, { AGENT_SHIM_DEBUG: value }).lines).toEqual(["agent-shim: boom", error.stack]);
   });
 
-  it.each(["0", "false", "", "nonsense"])("keeps the stack hidden when CLAUDE_USE_DEBUG=%j", (value) => {
-    expect(capture(new Error("boom"), { CLAUDE_USE_DEBUG: value }).lines).toEqual(["claude-use: boom"]);
+  it.each(["0", "false", "", "nonsense"])("keeps the stack hidden when AGENT_SHIM_DEBUG=%j", (value) => {
+    expect(capture(new Error("boom"), { AGENT_SHIM_DEBUG: value }).lines).toEqual(["agent-shim: boom"]);
   });
 
   it("prints a thrown non-Error value as text", () => {
-    expect(capture("plain")).toEqual({ code: EXIT_FAILURE, lines: ["claude-use: plain"] });
+    expect(capture("plain")).toEqual({ code: EXIT_FAILURE, lines: ["agent-shim: plain"] });
   });
 
   it("maps a Commander error to its own zero for help and version, and to the usage status otherwise, printing nothing itself", () => {

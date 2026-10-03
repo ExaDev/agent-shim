@@ -22,7 +22,7 @@ export interface LoadedFile<T> {
  *
  * Only `load(filepath)` is ever called on it — never `search()`. `search()` stops at the first config file found while walking upward, and this design needs the exact opposite: every ancestor collected, shallowest-first. `src/resolve/walk.ts` does its own directory walk and this module loads each level it visits, so cosmiconfig contributes its format flexibility (JSON, YAML, JS) without its traversal semantics.
  */
-export function createExplorer(moduleName = "claude-use"): PublicExplorerSync {
+export function createExplorer(moduleName = "agent-shim"): PublicExplorerSync {
   return cosmiconfigSync(moduleName, { searchPlaces: [] });
 }
 

@@ -33,7 +33,7 @@ import type { LayoutPaths } from "./paths";
 /** Raised by any operation that requires a provider to already exist, when it does not. */
 export class ProviderNotFoundError extends CliError {
   constructor(readonly name: string) {
-    super(`No provider named "${name}". Run \`claude-use provider add ${name}\` first.`);
+    super(`No provider named "${name}". Run \`agent-shim provider add ${name}\` first.`);
     this.name = "ProviderNotFoundError";
   }
 }
@@ -193,7 +193,7 @@ export function listProviders(paths: LayoutPaths): readonly ProviderListEntry[] 
       if (!(error instanceof ConfigValidationError || error instanceof LegacyProviderFileError)) {
         throw error;
       }
-      console.error(`claude-use: providers/${name}.json is invalid and was skipped: ${error.message}`);
+      console.error(`agent-shim: providers/${name}.json is invalid and was skipped: ${error.message}`);
       continue;
     }
     if (provider !== undefined) {
@@ -413,13 +413,13 @@ export function resolveProvider(params: ResolveProviderParams): ProviderResoluti
       ok: false,
       status: 1,
       message:
-        `claude-use: no provider named "${name}". ` +
-        (known.length > 0 ? `Known providers: ${known.join(", ")}.` : "No providers are defined yet; run `claude-use provider add`."),
+        `agent-shim: no provider named "${name}". ` +
+        (known.length > 0 ? `Known providers: ${known.join(", ")}.` : "No providers are defined yet; run `agent-shim provider add`."),
     };
   }
 
   if (params.credentials === undefined) {
-    return { ok: false, status: 1, message: `claude-use: provider ${name} needs its credential resolved, but this launcher has no credential port wired` };
+    return { ok: false, status: 1, message: `agent-shim: provider ${name} needs its credential resolved, but this launcher has no credential port wired` };
   }
   const resolution = resolveCredential({ credential: definition.credential, env: params.env, port: params.credentials, subject: `provider ${name}` });
   if (!resolution.ok) {
@@ -484,12 +484,12 @@ interface ProviderSetOptions extends CodexOptions, CredentialCacheOptions {
   readonly unsetEnv?: readonly string[];
 }
 
-/** Registers the `claude-use provider` subcommand tree onto `program`. */
+/** Registers the `agent-shim provider` subcommand tree onto `program`. */
 export function registerProviderCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
   const provider = withExamples(
     program.command("provider").description("Manage API providers: Anthropic-compatible endpoints a launch can route through with --provider."),
-    ["claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --credential env:Z_API_TOKEN", "claude-use provider list"],
+    ["agent-shim provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --credential env:Z_API_TOKEN", "agent-shim provider list"],
   );
 
   withExamples(
@@ -497,7 +497,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .command("add <name>")
       .description("Create a new API provider definition. Fails if one with this name already exists.")
       .addOption(new Option("--kind <kind>", "http (default): an Anthropic-compatible endpoint at --base-url; codex: ChatGPT's Codex backend through the front-door daemon.").choices(PROVIDER_KINDS))
-      .requiredOption("--display-name <name>", "Human-readable name, exported to the child as CLAUDE_USE_PROVIDER.")
+      .requiredOption("--display-name <name>", "Human-readable name, exported to the child as AGENT_SHIM_PROVIDER.")
       .option("--base-url <url>", "Anthropic-compatible base URL the child's requests are sent to (http providers only, and required for them).")
       .requiredOption(
         "--credential <source>",
@@ -527,12 +527,12 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         console.log(`Created provider "${name}" (${describeProviderEndpoint(created)}, credential ${describeCredential(created.credential)}).`);
       }),
     [
-      "claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --credential env:Z_API_TOKEN",
-      "claude-use provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --credential env:Z_API_TOKEN --credential op:op://vault/z/credential",
-      "claude-use provider add anthropic-api --display-name Anthropic --base-url https://api.anthropic.com --credential-target apiKey --credential keychain:anthropic-api-key",
-      "claude-use provider add local --display-name Local --base-url http://127.0.0.1:4000 --credential literal:dummy",
-      "claude-use provider add codex --kind codex --display-name Codex --credential literal:codex",
-      "claude-use provider add codex --kind codex --display-name Codex --credential literal:codex --codex-model sonnet=gpt-5.6-sol --codex-effort medium",
+      "agent-shim provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --credential env:Z_API_TOKEN",
+      "agent-shim provider add z --display-name z.ai --base-url https://api.z.ai/api/anthropic --credential env:Z_API_TOKEN --credential op:op://vault/z/credential",
+      "agent-shim provider add anthropic-api --display-name Anthropic --base-url https://api.anthropic.com --credential-target apiKey --credential keychain:anthropic-api-key",
+      "agent-shim provider add local --display-name Local --base-url http://127.0.0.1:4000 --credential literal:dummy",
+      "agent-shim provider add codex --kind codex --display-name Codex --credential literal:codex",
+      "agent-shim provider add codex --kind codex --display-name Codex --credential literal:codex --codex-model sonnet=gpt-5.6-sol --codex-effort medium",
     ],
   );
 
@@ -580,11 +580,11 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         console.log(`Updated provider "${name}" (${describeProviderEndpoint(updated)}, credential ${describeCredential(updated.credential)}).`);
       }),
     [
-      "claude-use provider set z --base-url https://api.z.ai/api/anthropic",
-      "claude-use provider set z --env API_TIMEOUT_MS=600000",
-      "claude-use provider set z --credential op:op://vault/z/credential --credential-cache-ttl 12h",
-      "claude-use provider set anthropic-api --credential-target apiKey",
-      "claude-use provider set codex --codex-model haiku=gpt-5.6-terra",
+      "agent-shim provider set z --base-url https://api.z.ai/api/anthropic",
+      "agent-shim provider set z --env API_TIMEOUT_MS=600000",
+      "agent-shim provider set z --credential op:op://vault/z/credential --credential-cache-ttl 12h",
+      "agent-shim provider set anthropic-api --credential-target apiKey",
+      "agent-shim provider set codex --codex-model haiku=gpt-5.6-terra",
     ],
   );
 
@@ -600,14 +600,14 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           return;
         }
         if (entries.length === 0) {
-          console.log("No providers yet. Run `claude-use provider add <name>` to create one.");
+          console.log("No providers yet. Run `agent-shim provider add <name>` to create one.");
           return;
         }
         for (const entry of entries) {
           console.log(`  ${entry.name} (${entry.provider.displayName}, ${describeProviderEndpoint(entry.provider)})`);
         }
       }),
-    ["claude-use provider list", "claude-use provider list --json"],
+    ["agent-shim provider list", "agent-shim provider list --json"],
   );
 
   withExamples(
@@ -638,7 +638,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         const env = Object.entries(found.env ?? {});
         console.log(`Environment: ${env.length === 0 ? "(none)" : env.map(([key, value]) => `${key}=${value}`).join(", ")}`);
       }),
-    ["claude-use provider show z", "claude-use provider show z --json"],
+    ["agent-shim provider show z", "agent-shim provider show z --json"],
   );
 
   withExamples(
@@ -654,6 +654,6 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         removeProvider(paths, name);
         console.log(`Removed provider "${name}".`);
       }),
-    ["claude-use provider remove z --yes"],
+    ["agent-shim provider remove z --yes"],
   );
 }

@@ -1,6 +1,6 @@
 import { UsageError } from "../cliError";
 
-/** The result of parsing the launcher's own argv: the identity selection, any one-off `claude-use` flags, and everything left to forward. */
+/** The result of parsing the launcher's own argv: the identity selection, any one-off `agent-shim` flags, and everything left to forward. */
 export interface ParsedLauncherArgv {
   /** The identity named by a leading `@name` positional at argv[0] or by `--identity <name>`, when either was present. */
   readonly identity?: string;
@@ -49,14 +49,14 @@ const BOOLEAN_FLAGS = [
 ] as const;
 type BooleanFlagKey = (typeof BOOLEAN_FLAGS)[number]["key"];
 
-/** Every flag `parseLauncherArgv` consumes, both forms of each boolean included: what `claude-use completion` offers after `run`. */
+/** Every flag `parseLauncherArgv` consumes, both forms of each boolean included: what `agent-shim completion` offers after `run`. */
 export const LAUNCHER_FLAG_NAMES: readonly string[] = [
   ...VALUED_FLAGS,
   "--no-provider",
   ...BOOLEAN_FLAGS.flatMap(({ flag }) => [flag, `--no-${flag.slice(2)}`]),
 ];
 
-/** The token that ends claude-use's own flag recognition: everything from it onwards belongs to claude, or to a command claude runs. */
+/** The token that ends agent-shim's own flag recognition: everything from it onwards belongs to claude, or to a command claude runs. */
 const TERMINATOR = "--";
 
 function matchValuedFlag(token: string): { flag: ValuedFlag; inlineValue?: string } | undefined {
@@ -84,7 +84,7 @@ function matchBooleanFlag(token: string): { key: BooleanFlagKey; value: boolean 
 }
 
 /**
- * Parses the launcher's own argv for its identity selection and the one-off `claude-use` launch flags (`--identity`, `--config-profile`, `--provider`/`--no-provider`, `--category`, `--share`, `--hide`, and the `--[no-]headroom`, `--[no-]track-usage`, `--[no-]skip-permissions`, `--[no-]remote-control`, `--[no-]wait` booleans). None of these are real Claude Code flags, so all are consumed here and never forwarded.
+ * Parses the launcher's own argv for its identity selection and the one-off `agent-shim` launch flags (`--identity`, `--config-profile`, `--provider`/`--no-provider`, `--category`, `--share`, `--hide`, and the `--[no-]headroom`, `--[no-]track-usage`, `--[no-]skip-permissions`, `--[no-]remote-control`, `--[no-]wait` booleans). None of these are real Claude Code flags, so all are consumed here and never forwarded.
  *
  * `name` in `@name` and `--identity <name>` may also be `pool:<pool>`, which the launcher resolves to a member of that pool. The `@name` form is consumed ONLY at argv[0], never mid-argument-list; `--identity <name>` is its explicit form, and naming two different identities through both throws `ConflictingIdentityError`. The flags are recognised only before a `--` terminator: from `--` onwards every token is forwarded verbatim, so `claude mcp add n -- cmd --provider x` keeps `--provider x` for `cmd`. Valued flags accept both `--flag value` and `--flag=value` and take exactly one value per occurrence; `--category`, `--share` and `--hide` repeat to supply several, and every other flag's later occurrence wins. A valued flag with no value after it (the last token, or directly before `--`) is left in place, untouched, since there is nothing to pair it with.
  */

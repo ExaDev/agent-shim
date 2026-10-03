@@ -24,7 +24,7 @@ import type { HeadroomSettings } from "./settings";
 import { pinnedGitCommit } from "./source";
 import { hashAllowlist, headroomAllowlist, writeHeadroomState, writeSession } from "./state";
 
-const paths = buildLayoutPaths("/home/testuser/.claude-use");
+const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
 const SESSION_PID = 321;
 const ZOMBIE_SESSION_PID = 322;

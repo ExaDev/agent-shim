@@ -2,7 +2,7 @@ import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, sign, X
 import net from "node:net";
 
 /**
- * X.509 certificate issuance for the front door's local CA and its leaf certificates. The cryptography (key generation, the signature, key and certificate parsing) is all `node:crypto`; this module only assembles the DER bytes of a TBSCertificate (RFC 5280, section 4.1) from the handful of fields claude-use needs. Whether the result is well formed is decided by Node's own certificate parser and TLS stack, which is what the tests check it against.
+ * X.509 certificate issuance for the front door's local CA and its leaf certificates. The cryptography (key generation, the signature, key and certificate parsing) is all `node:crypto`; this module only assembles the DER bytes of a TBSCertificate (RFC 5280, section 4.1) from the handful of fields agent-shim needs. Whether the result is well formed is decided by Node's own certificate parser and TLS stack, which is what the tests check it against.
  */
 
 const TAG_BOOLEAN = 0x01;
@@ -56,7 +56,7 @@ const TWO_DIGIT_YEAR_DIGITS = 2;
 /** `YYYYMMDDHHMMSS`: the digits of a time before its `Z`. */
 const COMPACT_TIME_DIGITS = 14;
 
-/** The key-usage bit positions (RFC 5280, section 4.2.1.3) claude-use sets. */
+/** The key-usage bit positions (RFC 5280, section 4.2.1.3) agent-shim sets. */
 const KEY_USAGE = { digitalSignature: 0, keyEncipherment: 2, keyCertSign: 5, cRLSign: 6 } as const;
 type KeyUsageBit = (typeof KEY_USAGE)[keyof typeof KEY_USAGE];
 
@@ -248,7 +248,7 @@ function subjectNameOf(certificateDer: Uint8Array): Buffer {
   return Buffer.from(certificateDer.subarray(subject.start, subject.end));
 }
 
-/** A key pair in the PEM forms claude-use persists. */
+/** A key pair in the PEM forms agent-shim persists. */
 export interface PemKeyPair {
   readonly certPem: string;
   readonly keyPem: string;

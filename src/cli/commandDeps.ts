@@ -5,7 +5,7 @@ import type { PromptsPort } from "../configure";
 import type { LayoutPaths } from "../paths";
 
 /**
- * What every `claude-use` command's registration needs from `buildProgram`: where the config tree lives, the prompt surface, whether standard input is a terminal those prompts can run on, and how to end the process.
+ * What every `agent-shim` command's registration needs from `buildProgram`: where the config tree lives, the prompt surface, whether standard input is a terminal those prompts can run on, and how to end the process.
  *
  * `isInteractive` is a function rather than a snapshot so the real wiring reads `process.stdin.isTTY` at the moment a command runs, and a test can script both answers against the same program.
  */
@@ -23,7 +23,7 @@ export function printJson(value: unknown): void {
 }
 
 /**
- * Appends an `Examples:` block to `command`'s help output, one `$ claude-use ...` line per entry. Every command registers at least one, so `--help` on any of them shows a runnable invocation, not just its option list.
+ * Appends an `Examples:` block to `command`'s help output, one `$ agent-shim ...` line per entry. Every command registers at least one, so `--help` on any of them shows a runnable invocation, not just its option list.
  */
 export function withExamples(command: Command, examples: readonly string[]): Command {
   return command.addHelpText("after", `\nExamples:\n${examples.map((example) => `  $ ${example}`).join("\n")}`);

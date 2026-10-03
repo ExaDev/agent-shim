@@ -37,7 +37,7 @@ let paths: LayoutPaths;
 let startedAt: number;
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "claude-use-usage-commands-"));
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-usage-commands-"));
   paths = buildLayoutPaths(root);
   startedAt = Date.now();
   process.exitCode = undefined;
@@ -55,7 +55,7 @@ interface CliResult {
   readonly stderr: string;
 }
 
-/** Runs one `claude-use` invocation against the throwaway layout the way `src/cli.ts` does, capturing both streams and the exit status. */
+/** Runs one `agent-shim` invocation against the throwaway layout the way `src/cli.ts` does, capturing both streams and the exit status. */
 async function cli(argv: readonly string[]): Promise<CliResult> {
   const out: string[] = [];
   const err: string[] = [];
@@ -167,7 +167,7 @@ const AccountJsonSchema = z.object({
   usage: z.object({ identity: z.string() }).optional(),
 });
 
-describe("claude-use usage", () => {
+describe("agent-shim usage", () => {
   beforeEach(() => {
     addIdentity(paths, "work");
     addIdentity(paths, "personal");
@@ -310,7 +310,7 @@ describe("claude-use usage", () => {
   });
 });
 
-describe("claude-use account show", () => {
+describe("agent-shim account show", () => {
   beforeEach(() => {
     addIdentity(paths, "work");
     addIdentity(paths, "personal");

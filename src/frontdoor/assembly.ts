@@ -30,7 +30,7 @@ function admitLaunch(isLiveToken: (token: string) => boolean): PipelineDeps["adm
     const token = singleValue(request.headers[AUTH_HEADER]);
     return token !== undefined && isLiveToken(token)
       ? { ok: true, headers: { ...request.forwardable } }
-      : { ok: false, message: "claude-use front door: this request carries no capability from a live claude-use launch" };
+      : { ok: false, message: "agent-shim front door: this request carries no capability from a live agent-shim launch" };
   };
 }
 
@@ -40,13 +40,13 @@ function admitLaunch(isLiveToken: (token: string) => boolean): PipelineDeps["adm
 function admitHop(hopSecret: string, custody: CredentialCustody): PipelineDeps["admit"] {
   return (request) => {
     if (singleValue(request.headers[HOP_SECRET_HEADER]) !== hopSecret) {
-      return { ok: false, message: "claude-use front door: the direct listener serves only this door's own headroom hop" };
+      return { ok: false, message: "agent-shim front door: the direct listener serves only this door's own headroom hop" };
     }
     const hopId = singleValue(request.headers[HOP_ID_HEADER]);
     const provider = parseProviderPath(new URL(request.url, "http://127.0.0.1").pathname)?.provider;
     const credentials = hopId === undefined || provider === undefined ? undefined : custody.redeem(hopId, provider);
     if (credentials === undefined) {
-      return { ok: false, message: "claude-use front door: this request names no live headroom hop for its provider" };
+      return { ok: false, message: "agent-shim front door: this request names no live headroom hop for its provider" };
     }
     return { ok: true, headers: restoreCredentials(request.forwardable, credentials) };
   };

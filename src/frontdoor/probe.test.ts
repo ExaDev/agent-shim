@@ -72,7 +72,7 @@ describe("probeFrontDoorSync", () => {
   }, KEYGEN_TIMEOUT_MS);
 
   it(
-    "accepts a listener whose loopback leaf chains to claude-use's CA",
+    "accepts a listener whose loopback leaf chains to agent-shim's CA",
     async () => {
       const port = await listenerThread(mintLeaf(ca, LOOPBACK_LEAF_NAMES, new Date()));
       expect(probeFrontDoorSync(port, ca.certPem)).toEqual({ ok: true });
@@ -92,7 +92,7 @@ describe("probeFrontDoorSync", () => {
   );
 
   it(
-    "rejects a leaf from claude-use's CA that does not name 127.0.0.1",
+    "rejects a leaf from agent-shim's CA that does not name 127.0.0.1",
     async () => {
       const port = await listenerThread(mintLeaf(ca, ["api.anthropic.com"], new Date()));
       const verdict = probeFrontDoorSync(port, ca.certPem);

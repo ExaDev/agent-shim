@@ -1,13 +1,13 @@
 # Examples
 
-Worked configuration examples and a permutation reference, from the simplest single-identity setup through a portable committed `.claude-use.json`. Verbatim from an earlier README.md.
+Worked configuration examples and a permutation reference, from the simplest single-identity setup through a portable committed `.agent-shim.json`. Verbatim from an earlier README.md.
 
 ## Examples
 
 ### The core example: one login, two isolated clients, a few shared skills
 
 ```json
-// ~/.claude-use/config-profiles/client-base.json
+// ~/.agent-shim/config-profiles/client-base.json
 {
   "categories": { "knowledge": false, "history": false },
   "entries": {
@@ -19,17 +19,17 @@ Worked configuration examples and a permutation reference, from the simplest sin
 ```
 
 ```json
-// ~/.claude-use/config-profiles/client-acme.json
+// ~/.agent-shim/config-profiles/client-acme.json
 { "extends": ["client-base"] }
 ```
 
 ```json
-// ~/.claude-use/config-profiles/client-widget.json
+// ~/.agent-shim/config-profiles/client-widget.json
 { "extends": ["client-base"] }
 ```
 
 ```json
-// ~/.claude-use/directory-rules.json
+// ~/.agent-shim/directory-rules.json
 {
   "rules": [
     { "path": "~/work/clients/acme",   "configProfile": "client-acme" },
@@ -50,13 +50,13 @@ One login serves both clients. History is fully isolated between them; `commit`,
 
 If `claude @personal` is ever run from inside that same directory — intentionally or by habit — the rule still applies, because rules aren't tied to identity. History stays off no matter which login is active.
 
-**A team repo ships its own config; a new teammate needs zero setup.** A project commits `.claude-use.json` at its root:
+**A team repo ships its own config; a new teammate needs zero setup.** A project commits `.agent-shim.json` at its root:
 
 ```json
 { "categories": { "history": false }, "entries": { "knowledge/skills/commit": true, "knowledge/skills/pr-feedback": true } }
 ```
 
-A new teammate installs `claude-use`, creates their own identity, clones the repo, and runs `claude` from inside it — they get the isolation-plus-shared-skills behaviour immediately, with no local configuration. If they want to see their own past sessions there too, that's a personal, local addition that composes on top of the committed file.
+A new teammate installs `agent-shim`, creates their own identity, clones the repo, and runs `claude` from inside it — they get the isolation-plus-shared-skills behaviour immediately, with no local configuration. If they want to see their own past sessions there too, that's a personal, local addition that composes on top of the committed file.
 
 **Share-by-default, with narrow exceptions.** The inverse posture — broad sharing, a couple of carve-outs:
 
@@ -83,6 +83,6 @@ A minimal progression, each adding one mechanism on top of the last:
 6. **A path-level override with the parent category closed** — one skill shared without opening the whole category.
 7. **A directory rule adding an inline override deeper than the profile it selected** — a shared `client-strict` profile for `~/work/clients`, one extra skill for `~/work/clients/acme` specifically, no new profile needed.
 8. **A glob entry override against `~/.claude/projects/`** — sharing history for every project matching a pattern, without listing each one.
-9. **A portable `.claude-use.json`** — works identically for every clone location.
+9. **A portable `.agent-shim.json`** — works identically for every clone location.
 10. **Two identities sharing one configuration profile** — both declare the same `defaultConfigProfile`; nothing else needs to stay in sync between them.
 

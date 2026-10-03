@@ -250,7 +250,7 @@ describe("identityManager", () => {
 
     it("reports an identity.json this version's schema rejects as its own unreadable entry instead of aborting the whole listing", () => {
       addIdentity(paths, "work");
-      const rejectedDir = path.join(paths.identitiesDir, "written-by-a-newer-claude-use");
+      const rejectedDir = path.join(paths.identitiesDir, "written-by-a-newer-agent-shim");
       fs.mkdirSync(rejectedDir, { recursive: true });
       fs.writeFileSync(
         path.join(rejectedDir, "identity.json"),
@@ -259,9 +259,9 @@ describe("identityManager", () => {
       );
 
       const entries = listIdentities(paths);
-      expect(entries.map((entry) => entry.name)).toEqual(["work", "written-by-a-newer-claude-use"]);
+      expect(entries.map((entry) => entry.name)).toEqual(["work", "written-by-a-newer-agent-shim"]);
 
-      const rejected = entries.find((entry) => entry.name === "written-by-a-newer-claude-use");
+      const rejected = entries.find((entry) => entry.name === "written-by-a-newer-agent-shim");
       expect(rejected?.identity).toBeUndefined();
       expect(rejected?.problem).toContain("must match pattern");
       expect(rejected?.problem).not.toContain("\n");

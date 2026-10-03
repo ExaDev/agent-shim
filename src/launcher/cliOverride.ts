@@ -2,7 +2,7 @@ import { parseBool, parseBoolPairList, parsePair } from "../cli/parsers";
 import { ENTRY_KEY_RE, expandAllCategoryKey, isOverridableCategory, type CategoryMap, type Entries } from "../config/schema";
 import { CliError, UsageError } from "../cliError";
 
-/** Raised when a `--category`/`CLAUDE_USE_CATEGORY_OVERRIDE` key names something other than one of the four overridable categories. */
+/** Raised when a `--category`/`AGENT_SHIM_CATEGORY_OVERRIDE` key names something other than one of the four overridable categories. */
 export class InvalidCliCategoryError extends CliError {
   constructor(readonly categoryName: string) {
     super(`"${categoryName}" is not a category this launch may toggle (runtime, history, knowledge, settings).`);
@@ -10,7 +10,7 @@ export class InvalidCliCategoryError extends CliError {
   }
 }
 
-/** Raised when a `--share`/`--hide`/`CLAUDE_USE_ENTRY_OVERRIDE` path is missing its required `<category>/` prefix. */
+/** Raised when a `--share`/`--hide`/`AGENT_SHIM_ENTRY_OVERRIDE` path is missing its required `<category>/` prefix. */
 export class InvalidCliEntryKeyError extends CliError {
   constructor(readonly key: string) {
     super(`"${key}" is not a valid entries key — it must start with "<category>/", e.g. "knowledge/skills/commit".`);
@@ -39,7 +39,7 @@ function toEntries(pairs: Readonly<Record<string, boolean>>): Entries {
   return pairs;
 }
 
-/** Inputs to `buildCliOverride`: the raw, still-unparsed flag values `parseLauncherArgv` collected (one value per flag occurrence), plus the environment for their `CLAUDE_USE_*_OVERRIDE` alternatives. */
+/** Inputs to `buildCliOverride`: the raw, still-unparsed flag values `parseLauncherArgv` collected (one value per flag occurrence), plus the environment for their `AGENT_SHIM_*_OVERRIDE` alternatives. */
 export interface BuildCliOverrideParams {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly providerFlag?: string;
@@ -68,18 +68,18 @@ function parseOverride<T>(source: string, raw: string, parse: (raw: string) => T
 }
 
 /**
- * Builds this launch's one-off category/entry overrides from `--category`/`--share`/`--hide` flags and their `CLAUDE_USE_CATEGORY_OVERRIDE`/`CLAUDE_USE_ENTRY_OVERRIDE` environment-variable alternatives.
+ * Builds this launch's one-off category/entry overrides from `--category`/`--share`/`--hide` flags and their `AGENT_SHIM_CATEGORY_OVERRIDE`/`AGENT_SHIM_ENTRY_OVERRIDE` environment-variable alternatives.
  *
  * Each flag occurrence carries exactly one value (`--category history=true`, `--share knowledge/skills/commit`); the flags repeat rather than taking comma lists. The environment variables cannot repeat, so each holds a comma-separated list of `<key>=<bool>` pairs instead.
  *
- * The environment variable provides a base and the flags merge on top, later flag winning on key collision: the same "later occurrence wins" convention `claude-use profile set --category`/`--entry` use, applied here because the flag and the environment variable are documented as equally-weighted alternatives for the same one-off override, not two different precedence tiers.
+ * The environment variable provides a base and the flags merge on top, later flag winning on key collision: the same "later occurrence wins" convention `agent-shim profile set --category`/`--entry` use, applied here because the flag and the environment variable are documented as equally-weighted alternatives for the same one-off override, not two different precedence tiers.
  *
  * Returns `undefined` when nothing at all was supplied, so a launch with no overrides adds no `cliOverride` layer rather than an empty no-op one. A malformed flag or environment value throws `UsageError`.
  */
 export function buildCliOverride(params: BuildCliOverrideParams): CliOverride | undefined {
   let categoryPairs: Record<string, boolean> = {};
-  if (params.env.CLAUDE_USE_CATEGORY_OVERRIDE !== undefined && params.env.CLAUDE_USE_CATEGORY_OVERRIDE !== "") {
-    categoryPairs = parseOverride("CLAUDE_USE_CATEGORY_OVERRIDE", params.env.CLAUDE_USE_CATEGORY_OVERRIDE, parseBoolPairList);
+  if (params.env.AGENT_SHIM_CATEGORY_OVERRIDE !== undefined && params.env.AGENT_SHIM_CATEGORY_OVERRIDE !== "") {
+    categoryPairs = parseOverride("AGENT_SHIM_CATEGORY_OVERRIDE", params.env.AGENT_SHIM_CATEGORY_OVERRIDE, parseBoolPairList);
   }
   for (const flagValue of params.categoryFlags) {
     const pair = parseOverride("--category", flagValue, (raw) => {
@@ -90,8 +90,8 @@ export function buildCliOverride(params: BuildCliOverrideParams): CliOverride | 
   }
 
   let entryPairs: Record<string, boolean> = {};
-  if (params.env.CLAUDE_USE_ENTRY_OVERRIDE !== undefined && params.env.CLAUDE_USE_ENTRY_OVERRIDE !== "") {
-    entryPairs = parseOverride("CLAUDE_USE_ENTRY_OVERRIDE", params.env.CLAUDE_USE_ENTRY_OVERRIDE, parseBoolPairList);
+  if (params.env.AGENT_SHIM_ENTRY_OVERRIDE !== undefined && params.env.AGENT_SHIM_ENTRY_OVERRIDE !== "") {
+    entryPairs = parseOverride("AGENT_SHIM_ENTRY_OVERRIDE", params.env.AGENT_SHIM_ENTRY_OVERRIDE, parseBoolPairList);
   }
   for (const entryPath of params.shareFlags) {
     entryPairs[entryPath] = true;

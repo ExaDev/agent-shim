@@ -19,7 +19,7 @@ let root: string;
 let paths: LayoutPaths;
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "claude-use-program-"));
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-program-"));
   paths = buildLayoutPaths(root);
   process.exitCode = undefined;
 });
@@ -42,7 +42,7 @@ function program(runClaude: RunClaude = vi.fn<RunClaude>(), options: Parameters<
   return buildProgram({ ...fakeCommandDeps(paths, options), runClaude });
 }
 
-/** Runs one `claude-use` invocation against the throwaway layout the way `src/cli.ts` does, capturing both streams and the exit status `reportFatalError` or the command itself decided. */
+/** Runs one `agent-shim` invocation against the throwaway layout the way `src/cli.ts` does, capturing both streams and the exit status `reportFatalError` or the command itself decided. */
 async function cli(argv: readonly string[], options: Parameters<typeof fakeCommandDeps>[1] = {}): Promise<CliResult> {
   const out: string[] = [];
   const err: string[] = [];
@@ -176,7 +176,7 @@ describe("buildProgram", () => {
   it("documents run, the launch flags, the exit statuses and the double-dash terminator in the root help", async () => {
     const result = await cli(["--help"]);
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain("claude-use run [@<identity>]");
+    expect(result.stdout).toContain("agent-shim run [@<identity>]");
     expect(result.stdout).toContain("--identity <name>");
     expect(result.stdout).toContain("--no-provider");
     expect(result.stdout).toContain("2 usage error");
@@ -209,7 +209,7 @@ describe("identity commands", () => {
     addIdentity(paths, "work");
     const missing = await cli(["identity", "set", "work", "--default-profile", "ghost"]);
     expect(missing.code).toBe(EXIT_FAILURE);
-    expect(missing.stderr).toContain('claude-use: No configuration profile named "ghost"');
+    expect(missing.stderr).toContain('agent-shim: No configuration profile named "ghost"');
 
     createProfile(paths, "acme");
     expect((await cli(["identity", "set", "work", "--default-profile", "acme"])).code).toBe(0);
@@ -239,17 +239,17 @@ describe("identity commands", () => {
     addIdentity(paths, "work");
     expect((await cli(["identity", "set", "work", "--credential-target", "oauthToken"])).code).toBe(EXIT_USAGE);
 
-    const set = await cli(["identity", "set", "work", "--credential-target", "oauthToken", "--credential", "op:op://vault/claude-work/token", "--credential", "file:~/.config/claude-use/work.token"]);
+    const set = await cli(["identity", "set", "work", "--credential-target", "oauthToken", "--credential", "op:op://vault/claude-work/token", "--credential", "file:~/.config/agent-shim/work.token"]);
     expect(set.code).toBe(0);
     expect(readIdentity(paths, "work")?.credential).toEqual({
       target: "oauthToken",
-      sources: [{ op: "op://vault/claude-work/token" }, { file: "~/.config/claude-use/work.token" }],
+      sources: [{ op: "op://vault/claude-work/token" }, { file: "~/.config/agent-shim/work.token" }],
     });
     expect((await cli(["identity", "show", "work"])).stdout).toContain(
-      "Credential: oauthToken from op op://vault/claude-work/token, then file ~/.config/claude-use/work.token",
+      "Credential: oauthToken from op op://vault/claude-work/token, then file ~/.config/agent-shim/work.token",
     );
     expect(parseJson((await cli(["identity", "show", "work", "--json"])).stdout)).toMatchObject({
-      credential: { target: "oauthToken", sources: [{ kind: "op", reference: "op://vault/claude-work/token" }, { kind: "file", path: "~/.config/claude-use/work.token" }] },
+      credential: { target: "oauthToken", sources: [{ kind: "op", reference: "op://vault/claude-work/token" }, { kind: "file", path: "~/.config/agent-shim/work.token" }] },
     });
 
     expect((await cli(["identity", "set", "work", "--credential", "env:WORK_TOKEN"])).code).toBe(0);
@@ -285,7 +285,7 @@ describe("identity commands", () => {
   it("fails use for a missing identity without a terminal, and offers the wizard on one", async () => {
     const refused = await cli(["identity", "use", "ghost"]);
     expect(refused.code).toBe(EXIT_FAILURE);
-    expect(refused.stderr).toContain('claude-use: No identity named "ghost"');
+    expect(refused.stderr).toContain('agent-shim: No identity named "ghost"');
 
     const created = await cli(["identity", "use", "fresh"], { interactive: true, answers: ["create", "skip"] });
     expect(created.code).toBe(0);

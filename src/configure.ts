@@ -21,6 +21,7 @@ import { CliError, UsageError } from "./cliError";
 import { IdentityNotFoundError, readActiveIdentity, readIdentity } from "./identityManager";
 import { readGlobalConfig, listProfiles, readProfile, setProfileCategories, setProfileEntries, createProfile } from "./configProfiles";
 import { readDirectoryRules, writeDirectoryRules } from "./directoryRules";
+import { LEGACY_PORTABLE_CONFIG_FILENAME, LEGACY_PORTABLE_LOCAL_CONFIG_FILENAME } from "./legacy";
 import { loadCascadeInput, readDirectorySelections, PORTABLE_CONFIG_FILENAME, PORTABLE_LOCAL_CONFIG_FILENAME } from "./launcher/cascade";
 import { buildEntryFacts } from "./launcher/farm";
 import { decideConfigProfile, decideIdentity } from "./launcher/identity";
@@ -37,8 +38,8 @@ export class NoConfigProfileResolvedError extends CliError {
   constructor(readonly identityName: string, readonly cwd: string) {
     super(
       `No configuration profile resolves for identity "${identityName}" at "${cwd}". Create one with ` +
-        `\`claude-use profile add <name>\` and make it this identity's default with ` +
-        `\`claude-use identity set ${identityName} --default-profile <name>\` before running \`configure\`.`,
+        `\`agent-shim profile add <name>\` and make it this identity's default with ` +
+        `\`agent-shim identity set ${identityName} --default-profile <name>\` before running \`configure\`.`,
     );
     this.name = "NoConfigProfileResolvedError";
   }
@@ -47,7 +48,7 @@ export class NoConfigProfileResolvedError extends CliError {
 /** Raised by `configure` when standard input is not a terminal: every step of it is a prompt, so there is no non-interactive form to fall back to. */
 export class ConfigureNeedsTerminalError extends UsageError {
   constructor() {
-    super("`claude-use configure` is interactive and needs a terminal. From a script, use `claude-use profile set` or edit the files it writes.");
+    super("`agent-shim configure` is interactive and needs a terminal. From a script, use `agent-shim profile set` or edit the files it writes.");
     this.name = "ConfigureNeedsTerminalError";
   }
 }
@@ -55,7 +56,7 @@ export class ConfigureNeedsTerminalError extends UsageError {
 /** Raised by `configure` when no `--identity` was given and nothing else (the environment, a directory pin, the active identity) resolves one. */
 export class NoIdentityResolvedError extends UsageError {
   constructor(readonly cwd: string) {
-    super(`No identity resolves in "${cwd}": pass --identity <name>, or select one with \`claude-use identity use <name>\`.`);
+    super(`No identity resolves in "${cwd}": pass --identity <name>, or select one with \`agent-shim identity use <name>\`.`);
     this.name = "NoIdentityResolvedError";
   }
 }
@@ -176,7 +177,7 @@ export const realPromptsPort: PromptsPort = {
 /* chooseWriteTarget: the 3-tier write-target precedence, pure and directly testable.                 */
 /* -------------------------------------------------------------------------------------------------- */
 
-/** Where one toggle should be written, per the README's "claude-use configure: which file it writes to" precedence. */
+/** Where one toggle should be written, per the README's "agent-shim configure: which file it writes to" precedence. */
 export type WriteTarget =
   | { readonly tier: "portable-local"; readonly localConfigPath: string }
   | { readonly tier: "directory-rule"; readonly rulePath: string }
@@ -185,10 +186,12 @@ export type WriteTarget =
 /** One directory level's portable-config presence, shallowest-first — as produced by `walkDirectoryAncestors` plus a filesystem existence check at each level. */
 export interface DirectoryLevelPresence {
   readonly dir: string;
-  /** Whether a committed `.claude-use.json` already exists at this level. */
+  /** Whether a committed `.agent-shim.json` already exists at this level. */
   readonly hasPortable: boolean;
-  /** Whether a gitignored `.claude-use.local.json` already exists at this level, independent of whether a committed sibling does — this is what makes tier one apply even when only a personal local override was ever created, with no committed file alongside it. */
+  /** Whether a gitignored `.agent-shim.local.json` already exists at this level, independent of whether a committed sibling does — this is what makes tier one apply even when only a personal local override was ever created, with no committed file alongside it. */
   readonly hasPortableLocal: boolean;
+  /** The personal local file a toggle at this level is written into: the former `.claude-use.local.json` when that is the only one that exists, so its settings are not shadowed by a new file, otherwise `.agent-shim.local.json`. */
+  readonly portableLocalFilename: string;
 }
 
 /** Inputs to `chooseWriteTarget`. */
@@ -197,7 +200,7 @@ export interface ChooseWriteTargetParams {
   readonly home: string;
   /** `cwd`'s ancestor levels, shallowest-first, each flagged with whether a portable/portable-local file already exists there. */
   readonly levels: readonly DirectoryLevelPresence[];
-  /** Every directory rule's own `path` field, exactly as written in `~/.claude-use/directory-rules.json` (not yet normalised). */
+  /** Every directory rule's own `path` field, exactly as written in `~/.agent-shim/directory-rules.json` (not yet normalised). */
   readonly directoryRulePaths: readonly string[];
   /** The identity's resolved active configuration profile — the tier-three fallback. */
   readonly activeConfigProfile: string;
@@ -206,7 +209,7 @@ export interface ChooseWriteTargetParams {
 /**
  * Decides which file a `configure` toggle should be written into, in the exact three-tier precedence the README documents:
  *
- * 1. If `$PWD` is inside a directory covered by a committed `.claude-use.json`, or a `.claude-use.local.json` already exists there (even without a committed sibling), the toggle goes into `.claude-use.local.json` in that same directory — the deepest such directory, when more than one ancestor qualifies.
+ * 1. If `$PWD` is inside a directory covered by a committed `.agent-shim.json`, or a `.agent-shim.local.json` already exists there (even without a committed sibling), the toggle goes into `.agent-shim.local.json` in that same directory — the deepest such directory, when more than one ancestor qualifies.
  * 2. Otherwise, if an existing directory rule in the user's own `directory-rules.json` already applies to `$PWD` (its `path`, once resolved, is an ancestor of or equal to `$PWD`), the toggle is written into that rule — the most specific (longest-resolved-path) matching rule, when more than one applies.
  * 3. Otherwise, the toggle is written into the identity's own active configuration profile.
  *
@@ -216,7 +219,7 @@ export function chooseWriteTarget(params: ChooseWriteTargetParams): WriteTarget 
   for (let index = params.levels.length - 1; index >= 0; index -= 1) {
     const level = params.levels[index];
     if (level !== undefined && (level.hasPortable || level.hasPortableLocal)) {
-      return { tier: "portable-local", localConfigPath: path.join(level.dir, PORTABLE_LOCAL_CONFIG_FILENAME) };
+      return { tier: "portable-local", localConfigPath: path.join(level.dir, level.portableLocalFilename) };
     }
   }
 
@@ -341,11 +344,16 @@ function parentOf(relPath: string): string {
 function buildWriteTargetLevels(cwd: string, home: string, walkUpLimit: string | undefined): readonly DirectoryLevelPresence[] {
   const limit = walkUpLimit === undefined ? undefined : expandTilde(walkUpLimit, home);
   const dirs = walkDirectoryAncestors(cwd, { home, ...(limit === undefined ? {} : { limit }) });
-  return dirs.map((dir) => ({
-    dir,
-    hasPortable: fs.existsSync(path.join(dir, PORTABLE_CONFIG_FILENAME)),
-    hasPortableLocal: fs.existsSync(path.join(dir, PORTABLE_LOCAL_CONFIG_FILENAME)),
-  }));
+  return dirs.map((dir) => {
+    const hasLocal = fs.existsSync(path.join(dir, PORTABLE_LOCAL_CONFIG_FILENAME));
+    const hasLegacyLocal = fs.existsSync(path.join(dir, LEGACY_PORTABLE_LOCAL_CONFIG_FILENAME));
+    return {
+      dir,
+      hasPortable: fs.existsSync(path.join(dir, PORTABLE_CONFIG_FILENAME)) || fs.existsSync(path.join(dir, LEGACY_PORTABLE_CONFIG_FILENAME)),
+      hasPortableLocal: hasLocal || hasLegacyLocal,
+      portableLocalFilename: !hasLocal && hasLegacyLocal ? LEGACY_PORTABLE_LOCAL_CONFIG_FILENAME : PORTABLE_LOCAL_CONFIG_FILENAME,
+    };
+  });
 }
 
 /** Everything real-world resolution needs to drive either of `runConfigure`'s two modes — assembled once so both modes share the same resolved cascade and write-target computation. */
@@ -592,7 +600,7 @@ async function runProfileDirectMode(context: ConfigureContext): Promise<void> {
   const { deps } = context;
   const profiles = listProfiles(deps.paths);
   if (profiles.length === 0) {
-    deps.log.info("No configuration profiles exist yet. Run `claude-use profile add <name>` first.");
+    deps.log.info("No configuration profiles exist yet. Run `agent-shim profile add <name>` first.");
     return;
   }
 
@@ -731,9 +739,9 @@ async function runEntriesMode(context: ConfigureContext, entriesPath: string): P
 }
 
 /**
- * Runs `claude-use configure [path] --identity <name>`'s interactive flow.
+ * Runs `agent-shim configure [path] --identity <name>`'s interactive flow.
  *
- * Two modes, exactly per the README's "claude-use configure: which file it writes to" section:
+ * Two modes, exactly per the README's "agent-shim configure: which file it writes to" section:
  *
  * - No `path`: shows the identity's resolved top-level categories (the only mode that ever touches categories), plus an option to edit a named configuration profile's own stored values directly instead.
  * - Given a `path` (a real `~/.claude`-relative path, never category-prefixed): shows that path's direct children with their resolved sharing state, for fine-grained entries overrides. Never shows or edits categories.
@@ -749,7 +757,7 @@ export async function runConfigure(deps: RunConfigureDeps, params: RunConfigureP
   }
 }
 
-/** Registers `claude-use configure [path] [--identity <name>]` onto `program`. */
+/** Registers `agent-shim configure [path] [--identity <name>]` onto `program`. */
 export function registerConfigureCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
   const command = program
@@ -778,11 +786,11 @@ export function registerConfigureCommand(program: Command, deps: CommandDeps): v
         },
       );
     });
-  withExamples(command, ["claude-use configure", "claude-use configure --identity work", "claude-use configure projects --identity work"]);
+  withExamples(command, ["agent-shim configure", "agent-shim configure --identity work", "agent-shim configure projects --identity work"]);
 }
 
 /**
- * The identity a launch in `cwd` would resolve with no `@name` or `--identity`: `CLAUDE_USE_IDENTITY`, then a directory pin, then the active identity. Undefined when none applies, or when `CLAUDE_CONFIG_DIR` bypasses identity resolution.
+ * The identity a launch in `cwd` would resolve with no `@name` or `--identity`: `AGENT_SHIM_IDENTITY`, then a directory pin, then the active identity. Undefined when none applies, or when `CLAUDE_CONFIG_DIR` bypasses identity resolution.
  *
  * A pool selection has no single identity: which member a launch runs as depends on the quota at launch time, so what to configure is ambiguous. That throws a `UsageError` asking for `--identity`, rather than configuring whichever member happens to rank first today.
  */

@@ -30,7 +30,7 @@ export interface InjectedCredential {
  *
  * An empty string counts as unset, not set — confirmed load-bearing: one of Joe's real wrapper scripts (`o`, running Claude Code against OpenRouter) does `export ANTHROPIC_API_KEY=""` specifically to *clear* it so `ANTHROPIC_AUTH_TOKEN` takes effect instead, and this must never trip the guard.
  *
- * `injected`, when given, is the credential this launch exports for its own identity. Its variable holding exactly that value is not ambient: it is what a claude-use launch of the same identity left in the environment of the session this one starts from (a `claude @work` run inside a `claude @work` session). The same variable holding any other value still counts.
+ * `injected`, when given, is the credential this launch exports for its own identity. Its variable holding exactly that value is not ambient: it is what a agent-shim launch of the same identity left in the environment of the session this one starts from (a `claude @work` run inside a `claude @work` session). The same variable holding any other value still counts.
  */
 export function detectAmbientCredential(
   env: Readonly<Record<string, string | undefined>>,
@@ -55,13 +55,13 @@ export function detectAmbientCredential(
 export function formatAmbientCredentialGuardMessage(variable: AmbientCredentialVar, identityName?: string): string {
   const identitySetCommand =
     identityName === undefined
-      ? "claude-use identity set <name> --allow-ambient-credential"
-      : `claude-use identity set ${identityName} --allow-ambient-credential`;
+      ? "agent-shim identity set <name> --allow-ambient-credential"
+      : `agent-shim identity set ${identityName} --allow-ambient-credential`;
   return [
     `error: ${variable} is set in the environment. This identity's isolated`,
     "credential would be bypassed — every identity authenticates as this same key",
     "while it's set. Unset it, or if this is deliberate, opt in per-launch with",
-    "CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1, or persistently for this identity with",
+    "AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL=1, or persistently for this identity with",
     `\`${identitySetCommand}\`.`,
   ].join("\n");
 }
@@ -71,7 +71,7 @@ export interface EvaluateAmbientCredentialGuardParams {
   readonly env: Readonly<Record<string, string | undefined>>;
   /** The active identity's own `allowAmbientCredential` setting from its `identity.json`, or false when no identity is known. */
   readonly allowAmbientCredential: boolean;
-  /** True when `CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1` is set for this one invocation. */
+  /** True when `AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL=1` is set for this one invocation. */
   readonly allowAmbientCredentialOverride: boolean;
   /** The active identity's name, for the message's persistent-opt-in command. Undefined when no identity is known. */
   readonly identityName?: string;
@@ -89,7 +89,7 @@ export type AmbientCredentialGuardResult =
   | { readonly ok: false; readonly variable: AmbientCredentialVar; readonly message: string };
 
 /**
- * Evaluates the ambient-credential guard: refuses unless no guarded variable is set, or the active identity opted in (`allowAmbientCredential: true`), or this one invocation opted in (`CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1`), or a provider takes over the child's credential (see `providerSelected`).
+ * Evaluates the ambient-credential guard: refuses unless no guarded variable is set, or the active identity opted in (`allowAmbientCredential: true`), or this one invocation opted in (`AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL=1`), or a provider takes over the child's credential (see `providerSelected`).
  *
  * This guard is about credential isolation, not identity/config-dir selection — it must still run even when the `CLAUDE_CONFIG_DIR`-already-set escape hatch applies (callers pass `allowAmbientCredential: false` and no `identityName` in that case, since there is no active identity to consult).
  */

@@ -16,7 +16,7 @@ import { serveRouted } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 
-const PROVIDERS_DIR = `${FAKE_HOME}/.claude-use/providers`;
+const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 /** Enough time for the pure-JS 2048-bit keypairs this file generates once. */
 const KEYGEN_TIMEOUT_MS = 120_000;
 /** This door generation's hop secret in these tests. */
@@ -135,7 +135,7 @@ afterEach(async () => {
   );
 });
 
-/** The trust every request to the door's TLS provider listener is made with: claude-use's CA alone, as a routed child's NODE_EXTRA_CA_CERTS gives it. */
+/** The trust every request to the door's TLS provider listener is made with: agent-shim's CA alone, as a routed child's NODE_EXTRA_CA_CERTS gives it. */
 let ca: CaMaterial;
 let leaf: LeafCert;
 let trusting: Agent;

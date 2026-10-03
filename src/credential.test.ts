@@ -68,7 +68,7 @@ describe("resolveCredential", () => {
     const result = resolve({ sources: [{ op: "op://vault/z/credential" }] }, {}, port);
     expect(result).toEqual({
       ok: false,
-      message: "claude-use: provider z has no usable credential: op op://vault/z/credential needs a person to approve it, but there is no terminal or desktop session",
+      message: "agent-shim: provider z has no usable credential: op op://vault/z/credential needs a person to approve it, but there is no terminal or desktop session",
     });
     expect(port.runCommand).not.toHaveBeenCalled();
   });
@@ -91,7 +91,7 @@ describe("resolveCredential", () => {
     const result = resolve({ sources: [{ env: "Z_API_TOKEN" }, { command: ["op", "read", "ref"] }] }, {}, port);
     expect(result).toEqual({
       ok: false,
-      message: "claude-use: provider z has no usable credential: env Z_API_TOKEN is unset or empty; command op exited with status 1: item not found",
+      message: "agent-shim: provider z has no usable credential: env Z_API_TOKEN is unset or empty; command op exited with status 1: item not found",
     });
     expect(JSON.stringify(result)).not.toContain("sk-leaked");
   });
@@ -111,7 +111,7 @@ describe("resolveCredential", () => {
     const result = resolve({ sources: [{ file: "/secrets/z.token" }, { op: "op://v/i/f" }] }, {}, loose);
     expect(result).toMatchObject({ ok: true, credential: { token: "from-op" } });
     expect(result.ok && result.credential.warnings).toEqual([
-      "claude-use: provider z: skipped file /secrets/z.token is readable or writable by group or others (mode 644); run `chmod 600 /secrets/z.token`",
+      "agent-shim: provider z: skipped file /secrets/z.token is readable or writable by group or others (mode 644); run `chmod 600 /secrets/z.token`",
     ]);
   });
 
@@ -227,13 +227,13 @@ describe("resolveCredential with a cache", () => {
     const cache = memoryCache();
     const result = resolveCredential({ credential: block, env: {}, port: portWith(cache, { stdout: "" }), subject: "identity work" });
     expect(result.ok).toBe(false);
-    expect(messageOf(result)).toContain("claude-use credential warm work");
+    expect(messageOf(result)).toContain("agent-shim credential warm work");
     expect(cache.entries.size).toBe(0);
   });
 
   it("names the provider flag in the warm command for a provider", () => {
     const result = resolveCredential({ credential: block, env: {}, port: portWith(memoryCache(), { stdout: "" }), subject: "provider z" });
-    expect(messageOf(result)).toContain("claude-use credential warm --provider z");
+    expect(messageOf(result)).toContain("agent-shim credential warm --provider z");
   });
 });
 

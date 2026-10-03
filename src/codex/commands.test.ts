@@ -5,7 +5,7 @@ import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { codexHome, codexUsageSnapshotPath, collectCodexStatus, formatCodexStatus } from "./commands";
 
-const paths = buildLayoutPaths("/home/testuser/.claude-use");
+const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 const SUPERVISOR = 10;
 /** A stand-in capability: front-door registry records carry one per launch. */
 const SESSION_TOKEN = "test-capability";

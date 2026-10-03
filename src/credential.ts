@@ -248,10 +248,10 @@ function trySource(source: CredentialSource, params: ResolveCredentialParams): S
   return token === "" ? none("printed no token") : { ok: true, token };
 }
 
-/** The `claude-use credential warm` invocation that refills the cache for a subject such as `identity work` or `provider z`. */
+/** The `agent-shim credential warm` invocation that refills the cache for a subject such as `identity work` or `provider z`. */
 function warmCommandFor(subject: string): string {
   const [kind, name] = subject.split(" ");
-  return kind === "provider" ? `claude-use credential warm --provider ${name ?? ""}` : `claude-use credential warm ${name ?? ""}`;
+  return kind === "provider" ? `agent-shim credential warm --provider ${name ?? ""}` : `agent-shim credential warm ${name ?? ""}`;
 }
 
 /**
@@ -281,15 +281,15 @@ export function resolveCredential(params: ResolveCredentialParams): CredentialRe
     const line = `${describeSource(source)} ${outcome.reason}`;
     attempts.push(line);
     if (outcome.warn) {
-      warnings.push(`claude-use: ${params.subject}: skipped ${line}`);
+      warnings.push(`agent-shim: ${params.subject}: skipped ${line}`);
     }
   }
   const hint = cacheBlock === undefined ? "" : `; fill the cache from a terminal with \`${warmCommandFor(params.subject)}\``;
-  return { ok: false, message: `claude-use: ${params.subject} has no usable credential: ${attempts.join("; ")}${hint}` };
+  return { ok: false, message: `agent-shim: ${params.subject} has no usable credential: ${attempts.join("; ")}${hint}` };
 }
 
 /**
- * The credential variables a child environment gets for a resolved token: the target's variable set to the token, and the other two set to undefined so that merging this over an environment removes them, and an ambient one inherited from the parent can neither outrank nor sit alongside the credential claude-use chose. Removing a variable (rather than setting it to the empty string) leaves nothing for Claude Code to interpret.
+ * The credential variables a child environment gets for a resolved token: the target's variable set to the token, and the other two set to undefined so that merging this over an environment removes them, and an ambient one inherited from the parent can neither outrank nor sit alongside the credential agent-shim chose. Removing a variable (rather than setting it to the empty string) leaves nothing for Claude Code to interpret.
  */
 export function credentialVariables(target: CredentialTarget, token: string): Record<CredentialTargetVar, string | undefined> {
   return {

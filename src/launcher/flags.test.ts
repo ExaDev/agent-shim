@@ -8,8 +8,8 @@ describe("resolveLaunchFlags", () => {
     expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: false });
   });
 
-  it("turns skipPermissions on via the CLAUDE_USE_SKIP_PERMISSIONS=1 escape hatch", () => {
-    expect(resolveLaunchFlags({ env: { CLAUDE_USE_SKIP_PERMISSIONS: "1" } })).toEqual({
+  it("turns skipPermissions on via the AGENT_SHIM_SKIP_PERMISSIONS=1 escape hatch", () => {
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_SKIP_PERMISSIONS: "1" } })).toEqual({
       skipPermissions: true,
       remoteControl: false,
       headroom: false,
@@ -17,8 +17,8 @@ describe("resolveLaunchFlags", () => {
     });
   });
 
-  it("turns remoteControl on via the CLAUDE_USE_REMOTE_CONTROL=1 escape hatch", () => {
-    expect(resolveLaunchFlags({ env: { CLAUDE_USE_REMOTE_CONTROL: "1" } })).toEqual({
+  it("turns remoteControl on via the AGENT_SHIM_REMOTE_CONTROL=1 escape hatch", () => {
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_REMOTE_CONTROL: "1" } })).toEqual({
       skipPermissions: false,
       remoteControl: true,
       headroom: false,
@@ -28,7 +28,7 @@ describe("resolveLaunchFlags", () => {
 
   it("treats an empty env value as unset", () => {
     expect(
-      resolveLaunchFlags({ env: { CLAUDE_USE_SKIP_PERMISSIONS: "", CLAUDE_USE_REMOTE_CONTROL: "0" } }),
+      resolveLaunchFlags({ env: { AGENT_SHIM_SKIP_PERMISSIONS: "", AGENT_SHIM_REMOTE_CONTROL: "0" } }),
     ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: false });
   });
 
@@ -43,14 +43,14 @@ describe("resolveLaunchFlags", () => {
 
   it("combines settings from different sources independently, each setting decided on its own", () => {
     expect(
-      resolveLaunchFlags({ env: { CLAUDE_USE_REMOTE_CONTROL: "1" }, cascade: { skipPermissions: true } }),
+      resolveLaunchFlags({ env: { AGENT_SHIM_REMOTE_CONTROL: "1" }, cascade: { skipPermissions: true } }),
     ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false, trackUsage: false });
   });
 
   it.each(["skipPermissions", "remoteControl", "headroom", "trackUsage"] as const)(
     "lets the %s flag outrank both its env variable and the cascade",
     (key) => {
-      const variable = { skipPermissions: "CLAUDE_USE_SKIP_PERMISSIONS", remoteControl: "CLAUDE_USE_REMOTE_CONTROL", headroom: "CLAUDE_USE_HEADROOM", trackUsage: "CLAUDE_USE_TRACK_USAGE" }[key];
+      const variable = { skipPermissions: "AGENT_SHIM_SKIP_PERMISSIONS", remoteControl: "AGENT_SHIM_REMOTE_CONTROL", headroom: "AGENT_SHIM_HEADROOM", trackUsage: "AGENT_SHIM_TRACK_USAGE" }[key];
       expect(resolveLaunchFlags({ env: { [variable]: "1" }, flags: { [key]: false } })[key]).toBe(false);
       expect(resolveLaunchFlags({ env: {}, cascade: { [key]: true }, flags: { [key]: false } })[key]).toBe(false);
       expect(resolveLaunchFlags({ env: {}, cascade: { [key]: false }, flags: { [key]: true } })[key]).toBe(true);
@@ -61,7 +61,7 @@ describe("resolveLaunchFlags", () => {
   it.each(["skipPermissions", "remoteControl", "headroom", "trackUsage"] as const)(
     "lets the %s env variable outrank the cascade in both directions",
     (key) => {
-      const variable = { skipPermissions: "CLAUDE_USE_SKIP_PERMISSIONS", remoteControl: "CLAUDE_USE_REMOTE_CONTROL", headroom: "CLAUDE_USE_HEADROOM", trackUsage: "CLAUDE_USE_TRACK_USAGE" }[key];
+      const variable = { skipPermissions: "AGENT_SHIM_SKIP_PERMISSIONS", remoteControl: "AGENT_SHIM_REMOTE_CONTROL", headroom: "AGENT_SHIM_HEADROOM", trackUsage: "AGENT_SHIM_TRACK_USAGE" }[key];
       expect(resolveLaunchFlags({ env: { [variable]: "0" }, cascade: { [key]: true } })[key]).toBe(false);
       expect(resolveLaunchFlags({ env: { [variable]: "false" }, cascade: { [key]: true } })[key]).toBe(false);
       expect(resolveLaunchFlags({ env: { [variable]: "true" }, cascade: { [key]: false } })[key]).toBe(true);
@@ -69,18 +69,18 @@ describe("resolveLaunchFlags", () => {
   );
 
   it("parses env booleans like CLI booleans and refuses anything else", () => {
-    expect(resolveLaunchFlags({ env: { CLAUDE_USE_SKIP_PERMISSIONS: "true" } }).skipPermissions).toBe(true);
-    expect(() => resolveLaunchFlags({ env: { CLAUDE_USE_SKIP_PERMISSIONS: "yes" } })).toThrow(InvalidEnvBoolError);
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_SKIP_PERMISSIONS: "true" } }).skipPermissions).toBe(true);
+    expect(() => resolveLaunchFlags({ env: { AGENT_SHIM_SKIP_PERMISSIONS: "yes" } })).toThrow(InvalidEnvBoolError);
   });
 
   it("keeps the env escape hatch over the cascade for headroom when no flag was given", () => {
-    expect(resolveLaunchFlags({ env: { CLAUDE_USE_HEADROOM: "1" }, cascade: { headroom: false } }).headroom).toBe(true);
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "1" }, cascade: { headroom: false } }).headroom).toBe(true);
     expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true } }).headroom).toBe(true);
     expect(resolveLaunchFlags({ env: {}, cascade: { headroom: false } }).headroom).toBe(false);
   });
 
-  it("turns headroom on via the CLAUDE_USE_HEADROOM=1 escape hatch", () => {
-    expect(resolveLaunchFlags({ env: { CLAUDE_USE_HEADROOM: "1" } })).toEqual({
+  it("turns headroom on via the AGENT_SHIM_HEADROOM=1 escape hatch", () => {
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "1" } })).toEqual({
       skipPermissions: false,
       remoteControl: false,
       headroom: true,
@@ -91,14 +91,14 @@ describe("resolveLaunchFlags", () => {
   it("leaves trackUsage off unless a flag, its env variable or the cascade turns it on, each independent of headroom", () => {
     expect(resolveLaunchFlags({ env: {} }).trackUsage).toBe(false);
     expect(resolveLaunchFlags({ env: {}, cascade: { trackUsage: true } })).toMatchObject({ trackUsage: true, headroom: false });
-    expect(resolveLaunchFlags({ env: { CLAUDE_USE_TRACK_USAGE: "1" } })).toMatchObject({ trackUsage: true, headroom: false });
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_TRACK_USAGE: "1" } })).toMatchObject({ trackUsage: true, headroom: false });
     expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true } }).trackUsage).toBe(false);
   });
 
   it("resolves headroom from a cascade value and ORs it with the escape hatch", () => {
     expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true } }).headroom).toBe(true);
-    expect(resolveLaunchFlags({ env: { CLAUDE_USE_HEADROOM: "0" }, cascade: { headroom: false } }).headroom).toBe(false);
-    expect(resolveLaunchFlags({ env: { CLAUDE_USE_HEADROOM: "1" }, cascade: { headroom: false } }).headroom).toBe(true);
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "0" }, cascade: { headroom: false } }).headroom).toBe(false);
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "1" }, cascade: { headroom: false } }).headroom).toBe(true);
   });
 });
 
@@ -157,7 +157,7 @@ describe("buildEnv", () => {
       baseEnv: { ...baseEnv, CLAUDE_CONFIG_DIR: "/somewhere/else" },
       configDirEscapeHatch: true,
       resolvedIdentityName: "work",
-      identitiesDir: "/home/testuser/.claude-use/identities",
+      identitiesDir: "/home/testuser/.agent-shim/identities",
     });
     expect(env.CLAUDE_CONFIG_DIR).toBe("/somewhere/else");
   });
@@ -166,7 +166,7 @@ describe("buildEnv", () => {
     const env = buildEnv({ sessionId: "session-test",
       baseEnv,
       configDirEscapeHatch: false,
-      identitiesDir: "/home/testuser/.claude-use/identities",
+      identitiesDir: "/home/testuser/.agent-shim/identities",
     });
     expect(env).toEqual(baseEnv);
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
@@ -177,9 +177,9 @@ describe("buildEnv", () => {
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
-      identitiesDir: "/home/testuser/.claude-use/identities",
+      identitiesDir: "/home/testuser/.agent-shim/identities",
     });
-    expect(env.CLAUDE_CONFIG_DIR).toBe("/home/testuser/.claude-use/identities/work");
+    expect(env.CLAUDE_CONFIG_DIR).toBe("/home/testuser/.agent-shim/identities/work");
     expect(env.PATH).toBe("/usr/bin");
   });
 
@@ -188,12 +188,12 @@ describe("buildEnv", () => {
       baseEnv: { ...baseEnv, CLAUDE_EXTRA_FLAGS: "--continue continue" },
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
-      identitiesDir: "/home/testuser/.claude-use/identities",
+      identitiesDir: "/home/testuser/.agent-shim/identities",
     });
     expect(env.CLAUDE_EXTRA_FLAGS).toBe("--continue continue");
   });
 
-  const identitiesDir = "/home/testuser/.claude-use/identities";
+  const identitiesDir = "/home/testuser/.agent-shim/identities";
 
   /** A resolved provider as the launcher hands it to buildEnv: its definition, the base URL it routes to, and a credential resolved to `token` under `target`. */
   function resolvedProvider(
@@ -216,10 +216,10 @@ describe("buildEnv", () => {
 
   it("applies a resolved provider on top of the identity's CLAUDE_CONFIG_DIR", () => {
     const env = buildEnv({ sessionId: "session-test", baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider() });
-    expect(env.CLAUDE_CONFIG_DIR).toBe("/home/testuser/.claude-use/identities/work");
+    expect(env.CLAUDE_CONFIG_DIR).toBe("/home/testuser/.agent-shim/identities/work");
     expect(env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
-    expect(env.CLAUDE_USE_PROVIDER).toBe("GLM");
+    expect(env.AGENT_SHIM_PROVIDER).toBe("GLM");
   });
 
   it("applies a resolved provider even when no identity was resolved, since it selects an endpoint, not a login", () => {
@@ -295,32 +295,32 @@ describe("buildEnv", () => {
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
-      identitiesDir: "/home/testuser/.claude-use/identities",
+      identitiesDir: "/home/testuser/.agent-shim/identities",
       provider: resolvedProvider({ baseUrl: "https://127.0.0.1:4100/providers/z" }),
-      frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/home/testuser/.claude-use/frontdoor/ca/bundles/0123abcd.pem", sessionToken: "launch-token-for-tests" },
+      frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/home/testuser/.agent-shim/frontdoor/ca/bundles/0123abcd.pem", sessionToken: "launch-token-for-tests" },
       headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
     });
     expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/z");
     expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
     expect(env.HTTPS_PROXY).toBeUndefined();
-    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/frontdoor/ca/bundles/0123abcd.pem");
+    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.agent-shim/frontdoor/ca/bundles/0123abcd.pem");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-claude-use-identity: work\nx-claude-use-session: session-test\nx-claude-use-auth: launch-token-for-tests\nx-claude-use-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
   });
 
   it("exempts loopback from an inherited proxy for a provider session, keeping what the parent already exempted", () => {
     const launch = (parent: Readonly<Record<string, string>>) =>
       buildEnv({
         sessionId: "session-test",
-        baseEnv: { ...baseEnv, HTTPS_PROXY: "http://claude-use:parent-token@127.0.0.1:4200", ...parent },
+        baseEnv: { ...baseEnv, HTTPS_PROXY: "http://agent-shim:parent-token@127.0.0.1:4200", ...parent },
         configDirEscapeHatch: false,
         resolvedIdentityName: "work",
-        identitiesDir: "/home/testuser/.claude-use/identities",
+        identitiesDir: "/home/testuser/.agent-shim/identities",
         provider: resolvedProvider({ baseUrl: "https://127.0.0.1:4100/providers/z" }),
         frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/bundle.pem", sessionToken: "launch-token-for-tests" },
       });
     const inherited = launch({});
-    expect(inherited.HTTPS_PROXY).toBe("http://claude-use:parent-token@127.0.0.1:4200");
+    expect(inherited.HTTPS_PROXY).toBe("http://agent-shim:parent-token@127.0.0.1:4200");
     expect(inherited.NO_PROXY).toBe("127.0.0.1,localhost,::1");
     expect(inherited.no_proxy).toBe("127.0.0.1,localhost,::1");
     const merged = launch({ NO_PROXY: "corp.example,localhost", no_proxy: ".internal" });
@@ -334,7 +334,7 @@ describe("buildEnv", () => {
       baseEnv: { ...baseEnv, NO_PROXY: "corp.example" },
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
-      identitiesDir: "/home/testuser/.claude-use/identities",
+      identitiesDir: "/home/testuser/.agent-shim/identities",
       provider: resolvedProvider({ baseUrl: "https://api.z.ai/api/anthropic" }),
     });
     expect(env.NO_PROXY).toBe("corp.example");
@@ -351,7 +351,7 @@ describe("buildEnv", () => {
       provider: resolvedProvider({ baseUrl: "https://127.0.0.1:4100/providers/z" }),
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" },
     });
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-claude-use-identity: work\nx-claude-use-session: session-test\nx-claude-use-auth: launch-token-for-tests");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests");
     expect(env.HEADROOM_PROXY_URL).toBeUndefined();
   });
 
@@ -361,15 +361,15 @@ describe("buildEnv", () => {
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
-      identitiesDir: "/home/testuser/.claude-use/identities",
-      frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/home/testuser/.claude-use/frontdoor/ca/ca.pem", sessionToken: "launch-token-for-tests" },
+      identitiesDir: "/home/testuser/.agent-shim/identities",
+      frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/home/testuser/.agent-shim/frontdoor/ca/ca.pem", sessionToken: "launch-token-for-tests" },
       headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
     });
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.HTTPS_PROXY).toBe("http://claude-use:launch-token-for-tests@127.0.0.1:4200");
-    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.claude-use/frontdoor/ca/ca.pem");
+    expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
+    expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.agent-shim/frontdoor/ca/ca.pem");
     expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-claude-use-identity: work\nx-claude-use-session: session-test\nx-claude-use-auth: launch-token-for-tests\nx-claude-use-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
   });
 
   it("leaves a parent-set ANTHROPIC_BASE_URL untouched in the OAuth shape rather than clearing it", () => {
@@ -377,7 +377,7 @@ describe("buildEnv", () => {
       sessionId: "session-test",
       baseEnv: { ...baseEnv, ANTHROPIC_BASE_URL: "https://custom-gateway.example" },
       configDirEscapeHatch: false,
-      identitiesDir: "/home/testuser/.claude-use/identities",
+      identitiesDir: "/home/testuser/.agent-shim/identities",
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" },
       headroom: { port: 8123, projectId: "/repo" },
     });
@@ -389,11 +389,11 @@ describe("buildEnv", () => {
       sessionId: "session-test",
       baseEnv: { ...baseEnv, ANTHROPIC_CUSTOM_HEADERS: "x-from-parent: yes" },
       configDirEscapeHatch: false,
-      identitiesDir: "/home/testuser/.claude-use/identities",
+      identitiesDir: "/home/testuser/.agent-shim/identities",
       provider: resolvedProvider({ name: "o", displayName: "OpenRouter", baseUrl: "https://127.0.0.1:4100/providers/o", env: { ANTHROPIC_CUSTOM_HEADERS: "x-from-provider: indeed" } }),
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" },
     });
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-from-parent: yes\nx-from-provider: indeed\nx-claude-use-session: session-test\nx-claude-use-auth: launch-token-for-tests");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-from-parent: yes\nx-from-provider: indeed\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests");
   });
 
   it("sets no session headers and no proxy when no front door is engaged", () => {

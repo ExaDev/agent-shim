@@ -6,7 +6,7 @@ import type { IncomingHttpHeaders } from "node:http";
 const CREDENTIAL_HEADERS: readonly string[] = ["authorization", "x-api-key"];
 
 /** What stands in for a credential while its request crosses headroom: an opaque word that authenticates nothing anywhere. */
-export const SEQUESTERED_CREDENTIAL = "claude-use-sequestered";
+export const SEQUESTERED_CREDENTIAL = "agent-shim-sequestered";
 
 /** The credential headers one custody record holds, exactly as the client sent them. */
 type HeldCredentials = Readonly<Record<string, string | readonly string[]>>;

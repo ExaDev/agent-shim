@@ -18,7 +18,7 @@ const DAY_MS = 86_400_000;
 /** The reads the `usage` and `account` commands make. */
 type ReportFs = Pick<FarmFs, "readFileUtf8" | "readdir">;
 
-/** What `claude-use usage` reports. */
+/** What `agent-shim usage` reports. */
 export interface UsageReport {
   /** The start of the reported period, when `--since` narrowed it; otherwise the whole retained log. */
   readonly since: string | undefined;
@@ -31,7 +31,7 @@ export interface UsageReport {
   readonly invalidLines: number;
 }
 
-/** Filters for `claude-use usage`. */
+/** Filters for `agent-shim usage`. */
 export interface UsageFilters {
   readonly identity?: string;
   readonly provider?: string;
@@ -45,7 +45,7 @@ function requireIdentity(paths: LayoutPaths, name: string): void {
   }
 }
 
-/** Collects `claude-use usage`, read-only. */
+/** Collects `agent-shim usage`, read-only. */
 export function collectUsageReport(fs: ReportFs, paths: LayoutPaths, filters: UsageFilters): UsageReport {
   const { identity, provider, sinceMs } = filters;
   if (identity !== undefined) {
@@ -138,7 +138,7 @@ function snapshotLines(snapshot: UsageSnapshot | undefined, provider: string): s
   ];
 }
 
-/** Formats `claude-use usage`, one block per identity and provider. */
+/** Formats `agent-shim usage`, one block per identity and provider. */
 function formatUsageReport(report: UsageReport): string[] {
   const lines = [`usage ${report.since === undefined ? "over the retained log" : `since ${report.since}`} (${report.logDir})`];
   const snapshotFor = (identity: string | undefined): UsageSnapshot | undefined => report.snapshots.find((snapshot) => snapshot.identity === identity);
@@ -174,7 +174,7 @@ function formatUsageReport(report: UsageReport): string[] {
   return lines;
 }
 
-/** One identity's `claude-use account show` view. */
+/** One identity's `agent-shim account show` view. */
 export interface AccountView {
   readonly identity: string;
   /** Read live from the identity's stored login. */
@@ -183,7 +183,7 @@ export interface AccountView {
   readonly usage: UsageSnapshot | undefined;
 }
 
-/** Collects `claude-use account show`, read-only: one identity, or every identity when none is named. Throws `IdentityNotFoundError` for a named identity that does not exist. */
+/** Collects `agent-shim account show`, read-only: one identity, or every identity when none is named. Throws `IdentityNotFoundError` for a named identity that does not exist. */
 export function collectAccounts(fs: ReportFs, paths: LayoutPaths, identity: string | undefined): readonly AccountView[] {
   if (identity !== undefined) {
     requireIdentity(paths, identity);
@@ -196,7 +196,7 @@ export function collectAccounts(fs: ReportFs, paths: LayoutPaths, identity: stri
   }));
 }
 
-/** Formats `claude-use account show`, one block per identity. */
+/** Formats `agent-shim account show`, one block per identity. */
 function formatAccounts(views: readonly AccountView[]): string[] {
   if (views.length === 0) {
     return ["no identities"];
@@ -257,7 +257,7 @@ async function refreshQuotas(paths: LayoutPaths, filters: Readonly<{ identity?: 
   return warnings;
 }
 
-/** Registers `claude-use usage` and `claude-use account show`. */
+/** Registers `agent-shim usage` and `agent-shim account show`. */
 export function registerUsageCommands(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
   withExamples(
@@ -290,11 +290,11 @@ export function registerUsageCommands(program: Command, deps: CommandDeps): void
           console.log(line);
         }
       }),
-    ["claude-use usage", "claude-use usage --identity work --since 5h", "claude-use usage --provider z --refresh --json"],
+    ["agent-shim usage", "agent-shim usage --identity work --since 5h", "agent-shim usage --provider z --refresh --json"],
   );
 
   const account = withExamples(program.command("account").description("Inspect the Claude account behind each identity: plan, tier and latest quota."), [
-    "claude-use account show work",
+    "agent-shim account show work",
   ]);
   withExamples(
     account
@@ -317,6 +317,6 @@ export function registerUsageCommands(program: Command, deps: CommandDeps): void
           console.log(line);
         }
       }),
-    ["claude-use account show", "claude-use account show work", "claude-use account show work --json"],
+    ["agent-shim account show", "agent-shim account show work", "agent-shim account show work --json"],
   );
 }

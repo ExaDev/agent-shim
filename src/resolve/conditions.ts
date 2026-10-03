@@ -68,7 +68,7 @@ export function matchBranch(pattern: string, branch: string | undefined, detache
 /**
  * Evaluates a `when` object. Every present field must hold — conditions AND together within one object.
  *
- * An absent condition is vacuously true, so `when: {}` passes; `claude-use check` warns about that rather than erroring, since an empty object is more likely a half-finished edit than an intentional statement.
+ * An absent condition is vacuously true, so `when: {}` passes; `agent-shim check` warns about that rather than erroring, since an empty object is more likely a half-finished edit than an intentional statement.
  *
  * `newerThan`, `olderThan`, and `maxSizeBytes` read the subtree-aggregated facts (`latestMtimeMs`, `totalSizeBytes`), never the entry's own inode stat: a directory's own mtime does not change when a file three levels beneath it is rewritten, and its own size is a ~4KB inode figure that says nothing about what it contains.
  */

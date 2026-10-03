@@ -96,13 +96,13 @@ interface CodexSessionStatus extends FrontDoorSessionSummary {
   readonly alive: boolean;
 }
 
-/** Everything `claude-use codex status` reports, collected read-only. */
+/** Everything `agent-shim codex status` reports, collected read-only. */
 export interface CodexStatus {
   /** The front door's state: the codex translation is one route inside the front-door daemon, so its availability is the front door's. */
   readonly frontDoor: FrontDoorState;
   readonly supervisorAlive: boolean;
   readonly sessions: readonly CodexSessionStatus[];
-  /** The codex provider files this CLAUDE_USE_HOME defines. */
+  /** The codex provider files this AGENT_SHIM_HOME defines. */
   readonly codexProviders: readonly string[];
   /** Where the statusline usage snapshot lives. */
   readonly usageSnapshotPath: string;
@@ -134,7 +134,7 @@ export function collectCodexStatus(fsPort: HeadroomFs, paths: LayoutPaths, isRun
   };
 }
 
-/** Formats `claude-use codex status`, one line per entry. */
+/** Formats `agent-shim codex status`, one line per entry. */
 export function formatCodexStatus(status: CodexStatus): string[] {
   const lines: string[] = [];
   lines.push(
@@ -162,10 +162,10 @@ export function formatCodexStatus(status: CodexStatus): string[] {
   return lines;
 }
 
-/** Registers `claude-use codex status`: the codex translation's read-only status through the front door that serves it. */
+/** Registers `agent-shim codex status`: the codex translation's read-only status through the front door that serves it. */
 export function registerCodexCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
-  const codex = withExamples(program.command("codex").description("Inspect the codex translation the front-door daemon serves for codex providers."), ["claude-use codex status"]);
+  const codex = withExamples(program.command("codex").description("Inspect the codex translation the front-door daemon serves for codex providers."), ["agent-shim codex status"]);
 
   withExamples(
     codex
@@ -182,6 +182,6 @@ export function registerCodexCommand(program: Command, deps: CommandDeps): void 
           console.log(line);
         }
       }),
-    ["claude-use codex status", "claude-use codex status --json"],
+    ["agent-shim codex status", "agent-shim codex status --json"],
   );
 }

@@ -80,7 +80,7 @@ function buildFarmRuntime(paths: LayoutPaths): {
   };
 }
 
-/** Runs the launcher pipeline. `argvOverride`, when given, replaces `realProcPort`'s own `process.argv.slice(2)`; this is what lets `claude-use run [args...]` reach the identical pipeline the `claude` binary name uses, fed the args Commander collected instead of the real argv. */
+/** Runs the launcher pipeline. `argvOverride`, when given, replaces `realProcPort`'s own `process.argv.slice(2)`; this is what lets `agent-shim run [args...]` reach the identical pipeline the `claude` binary name uses, fed the args Commander collected instead of the real argv. */
 export async function runClaude(argvOverride?: readonly string[]): Promise<void> {
   const paths = resolveLayoutPaths();
   const farm = buildFarmRuntime(paths);

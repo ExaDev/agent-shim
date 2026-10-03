@@ -257,7 +257,7 @@ describe("providers", () => {
       expect(result).toEqual({
         ok: false,
         status: 1,
-        message: 'claude-use: no provider named "missing". Known providers: z.',
+        message: 'agent-shim: no provider named "missing". Known providers: z.',
       });
     });
 
@@ -268,7 +268,7 @@ describe("providers", () => {
       expect(result).toEqual({
         ok: false,
         status: 64,
-        message: "claude-use: provider z has no usable credential: env Z_API_TOKEN is unset or empty; command pass exited with status 1: not in store",
+        message: "agent-shim: provider z has no usable credential: env Z_API_TOKEN is unset or empty; command pass exited with status 1: not in store",
       });
     });
 

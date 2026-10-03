@@ -5,7 +5,7 @@ import { assembleCascade } from "../resolve/walk";
 import { FAKE_HOME } from "../test-helpers";
 import { loadCascadeInput, readDirectorySelections } from "./cascade";
 
-const paths = buildLayoutPaths(`${FAKE_HOME}/.claude-use`);
+const paths = buildLayoutPaths(`${FAKE_HOME}/.agent-shim`);
 
 function fakeReader(files: Readonly<Record<string, unknown>>) {
   return (filepath: string): unknown => files[filepath];
@@ -14,9 +14,9 @@ function fakeReader(files: Readonly<Record<string, unknown>>) {
 describe("loadCascadeInput", () => {
   it("collects one level per ancestor holding a config, shallowest-first, folding the three sources most-personal-last", () => {
     const read = fakeReader({
-      [`${FAKE_HOME}/work/.claude-use.json`]: { categories: { history: false } },
-      [`${FAKE_HOME}/work/acme/.claude-use.json`]: { entries: { "knowledge/skills/commit": true } },
-      [`${FAKE_HOME}/work/acme/.claude-use.local.json`]: { categories: { history: true } },
+      [`${FAKE_HOME}/work/.agent-shim.json`]: { categories: { history: false } },
+      [`${FAKE_HOME}/work/acme/.agent-shim.json`]: { entries: { "knowledge/skills/commit": true } },
+      [`${FAKE_HOME}/work/acme/.agent-shim.local.json`]: { categories: { history: true } },
       [paths.directoryRulesFile]: { rules: [{ path: "~/work/acme", categories: { knowledge: false } }] },
     });
 
@@ -24,10 +24,10 @@ describe("loadCascadeInput", () => {
     const assembled = assembleCascade(loaded.input);
 
     expect(assembled.layers.map((layer) => `${layer.kind}:${layer.source}`)).toEqual([
-      `portable:${FAKE_HOME}/work/.claude-use.json`,
-      `portable:${FAKE_HOME}/work/acme/.claude-use.json`,
+      `portable:${FAKE_HOME}/work/.agent-shim.json`,
+      `portable:${FAKE_HOME}/work/acme/.agent-shim.json`,
       `directory-rule:${paths.directoryRulesFile}`,
-      `portable-local:${FAKE_HOME}/work/acme/.claude-use.local.json`,
+      `portable-local:${FAKE_HOME}/work/acme/.agent-shim.local.json`,
     ]);
   });
 
@@ -44,7 +44,7 @@ describe("loadCascadeInput", () => {
 
   it("loads a named configuration profile from the profiles directory", () => {
     const read = fakeReader({
-      [`${FAKE_HOME}/.claude-use/config-profiles/client-base.json`]: { categories: { history: false } },
+      [`${FAKE_HOME}/.agent-shim/config-profiles/client-base.json`]: { categories: { history: false } },
     });
 
     const loaded = loadCascadeInput({
@@ -63,7 +63,7 @@ describe("loadCascadeInput", () => {
   it("honours walkUpLimit from the global config so the walk can reach above home", () => {
     const read = fakeReader({
       [paths.globalConfigFile]: { walkUpLimit: "/" },
-      ["/srv/.claude-use.json"]: { categories: { history: false } },
+      ["/srv/.agent-shim.json"]: { categories: { history: false } },
     });
 
     const loaded = loadCascadeInput({ paths, home: FAKE_HOME, cwd: "/srv/project", read });
@@ -74,8 +74,8 @@ describe("loadCascadeInput", () => {
 
   it("stops the walk at an unreadable ancestor rather than failing the launch", () => {
     const read = fakeReader({
-      [`${FAKE_HOME}/work/.claude-use.json`]: { categories: { history: false } },
-      [`${FAKE_HOME}/work/acme/.claude-use.json`]: { categories: { history: true } },
+      [`${FAKE_HOME}/work/.agent-shim.json`]: { categories: { history: false } },
+      [`${FAKE_HOME}/work/acme/.agent-shim.json`]: { categories: { history: true } },
     });
 
     const loaded = loadCascadeInput({

@@ -27,6 +27,7 @@ import { describeCredential } from "./credential";
 import { isMovingGitSource } from "./headroom/source";
 import { HeadroomStateSchema } from "./headroom/state";
 import { isIdentityDirectoryName } from "./identityManager";
+import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providers";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
 import { poolNameOf } from "./launcher/identity";
@@ -42,6 +43,7 @@ type DoctorSection =
   | "binary-discovery"
   | "claude-shim"
   | "path-resolution"
+  | "legacy-name"
   | "config-profile"
   | "identity"
   | "pool"
@@ -53,7 +55,7 @@ type DoctorSection =
   | "active-identity"
   | "headroom";
 
-/** One line of `claude-use doctor`'s report. `subject` names the identity/profile/rule the finding is about, when the section has more than one of those. */
+/** One line of `agent-shim doctor`'s report. `subject` names the identity/profile/rule the finding is about, when the section has more than one of those. */
 interface DoctorFinding {
   readonly section: DoctorSection;
   readonly subject?: string;
@@ -104,11 +106,11 @@ type DoctorBinaryDiscovery =
 /**
  * Where a bare command name resolves for the two names this tool owns.
  *
- * `ownExecutablePath` is this process's own PATH-visible location (`realOwnExecutablePath()`); `claudeUse` is `findPathShadow`'s verdict for a bare `claude-use` against the directory that executable lives in. `claude` is only populated when a shim is actually enabled — without one, a `claude` on PATH is Claude Code's own binary, which is not a shadow of anything.
+ * `ownExecutablePath` is this process's own PATH-visible location (`realOwnExecutablePath()`); `agentShim` is `findPathShadow`'s verdict for a bare `agent-shim` against the directory that executable lives in. `claude` is only populated when a shim is actually enabled — without one, a `claude` on PATH is Claude Code's own binary, which is not a shadow of anything.
  */
 interface DoctorPathResolution {
   readonly ownExecutablePath: string;
-  readonly claudeUse: PathShadowStatus;
+  readonly agentShim: PathShadowStatus;
   readonly claude?: PathShadowStatus;
 }
 
@@ -139,10 +141,12 @@ export interface RunDoctorParams {
   readonly categoriesLocal: DoctorFileInput;
   readonly activeIdentity: DoctorFileInput;
   readonly binaryDiscovery: DoctorBinaryDiscovery;
-  /** Whether `claude-use shim enable` has been run, and whether its recorded target still exists on disk — pre-resolved by the wiring layer, since checking a file's existence is real I/O, not a parse-shaped pure operation. */
+  /** Whether `agent-shim shim enable` has been run, and whether its recorded target still exists on disk — pre-resolved by the wiring layer, since checking a file's existence is real I/O, not a parse-shaped pure operation. */
   readonly claudeShim: { readonly state: ClaudeShimState | undefined; readonly targetExists: boolean };
-  /** Which executables a bare `claude-use` (and, when the shim is enabled, a bare `claude`) would actually run — pre-resolved by the wiring layer, since scanning PATH is real I/O. */
+  /** Which executables a bare `agent-shim` (and, when the shim is enabled, a bare `claude`) would actually run — pre-resolved by the wiring layer, since scanning PATH is real I/O. */
   readonly pathResolution: DoctorPathResolution;
+  /** The resolved state root (`paths.root`), whose directory name says whether this installation still lives under the former `.claude-use` name. */
+  readonly rootPath: string;
   /** Runs `security find-generic-password` for the per-identity Keychain check. Omit to skip that check entirely (e.g. off macOS). */
   readonly run?: RunPort;
   /** `process.platform` in real use; the Keychain check only ever runs when this is `"darwin"`. */
@@ -176,9 +180,9 @@ function validateJson<S extends z.ZodType>(
 }
 
 /**
- * Reports which `claude-use` a bare command name actually runs, and — when a `claude` shim is enabled — the same for `claude`.
+ * Reports which `agent-shim` a bare command name actually runs, and — when a `claude` shim is enabled — the same for `claude`.
  *
- * A shadowed `claude-use` is a `fail`, not a `warn`, because it invalidates the rest of the report rather than merely sitting alongside it: every other finding here describes the binary that produced them, which by definition is not the binary the user's own commands reach. It is also a silent failure in every other respect, since the shadowing install keeps working, just at whatever version it was frozen at. Confirmed in the wild: a hand-written wrapper script from an earlier install channel sat ahead of `~/.local/bin` on PATH and kept re-execing a month-old binary, so a naming rule that had since widened kept rejecting an `identity.json` a current claude-use had written — with nothing anywhere reporting that the running binary was not the installed one.
+ * A shadowed `agent-shim` is a `fail`, not a `warn`, because it invalidates the rest of the report rather than merely sitting alongside it: every other finding here describes the binary that produced them, which by definition is not the binary the user's own commands reach. It is also a silent failure in every other respect, since the shadowing install keeps working, just at whatever version it was frozen at. Confirmed in the wild: a hand-written wrapper script from an earlier install channel sat ahead of `~/.local/bin` on PATH and kept re-execing a month-old binary, so a naming rule that had since widened kept rejecting an `identity.json` a current agent-shim had written — with nothing anywhere reporting that the running binary was not the installed one.
  *
  * `not-on-path` is a `warn` rather than a `fail`: invoking this tool by an absolute path, or through `npx`, is a legitimate one-off, and nothing about it is inconsistent.
  */
@@ -187,27 +191,27 @@ function pushPathResolution(
   resolution: DoctorPathResolution,
 ): void {
   const ownDir = path.dirname(resolution.ownExecutablePath);
-  switch (resolution.claudeUse.status) {
+  switch (resolution.agentShim.status) {
     case "ok":
-      push("path-resolution", "pass", `\`claude-use\` on PATH resolves to this running executable, ${resolution.ownExecutablePath}.`, "claude-use");
+      push("path-resolution", "pass", `\`agent-shim\` on PATH resolves to this running executable, ${resolution.ownExecutablePath}.`, "agent-shim");
       break;
     case "not-on-path":
       push(
         "path-resolution",
         "warn",
-        `${ownDir} is not on PATH, so a bare \`claude-use\` does not reach ${resolution.ownExecutablePath}. ` +
+        `${ownDir} is not on PATH, so a bare \`agent-shim\` does not reach ${resolution.ownExecutablePath}. ` +
           "Add it to PATH, or keep invoking this executable by its full path.",
-        "claude-use",
+        "agent-shim",
       );
       break;
     case "shadowed":
       push(
         "path-resolution",
         "fail",
-        `\`claude-use\` on PATH resolves to ${resolution.claudeUse.by}, not this running executable, ${resolution.ownExecutablePath}. ` +
+        `\`agent-shim\` on PATH resolves to ${resolution.agentShim.by}, not this running executable, ${resolution.ownExecutablePath}. ` +
           "Every command you type runs that one instead, at whatever version it happens to be — including the checks in this report, which describe this executable. " +
-          `Remove ${resolution.claudeUse.by}, repoint it at ${resolution.ownExecutablePath}, or put ${ownDir} ahead of it on PATH.`,
-        "claude-use",
+          `Remove ${resolution.agentShim.by}, repoint it at ${resolution.ownExecutablePath}, or put ${ownDir} ahead of it on PATH.`,
+        "agent-shim",
       );
       break;
   }
@@ -220,14 +224,14 @@ function pushPathResolution(
       push("path-resolution", "pass", "`claude` on PATH resolves to the enabled shim.", "claude");
       break;
     case "not-on-path":
-      push("path-resolution", "warn", "The enabled `claude` shim's directory is not on PATH — add it, or use `claude-use run` instead.", "claude");
+      push("path-resolution", "warn", "The enabled `claude` shim's directory is not on PATH — add it, or use `agent-shim run` instead.", "claude");
       break;
     case "shadowed":
       push(
         "path-resolution",
         "warn",
         `\`claude\` on PATH resolves to ${resolution.claude.by}, not the enabled shim. ` +
-          "Put the shim's directory ahead of it on PATH, or run `claude-use shim disable` if you meant to launch that one directly.",
+          "Put the shim's directory ahead of it on PATH, or run `agent-shim shim disable` if you meant to launch that one directly.",
         "claude",
       );
       break;
@@ -263,7 +267,33 @@ function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, m
 }
 
 /**
- * Audits the whole `~/.claude-use` config graph for internal consistency: every identity, every configuration profile's own `extends` chain, every provider, `directory-rules.json`, `config.json`, `categories.local.json`, `active-identity`, plus real Claude Code binary discoverability and ambient-credential exposure.
+ * Reports what an installation still takes from the former `claude-use` name, each as a `warn` naming its replacement: a `CLAUDE_USE_*` variable (the process environment has already had it aliased to `AGENT_SHIM_*` by the time this runs, so the legacy name is still present beside it), and a state root still living at `~/.claude-use`.
+ *
+ * The root is a note, not something to move: macOS Claude Code names each identity's Keychain login after a hash of its exact `CLAUDE_CONFIG_DIR`, so relocating `~/.claude-use/identities/<name>` would sign that identity out.
+ */
+function pushLegacyName(
+  push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void,
+  params: Pick<RunDoctorParams, "env" | "rootPath">,
+): void {
+  const legacyVariables = Object.keys(params.env).filter((name) => name.startsWith(LEGACY_ENV_PREFIX) && params.env[name] !== undefined).sort();
+  if (legacyVariables.length === 0 && path.basename(params.rootPath) !== LEGACY_HOME_DIRNAME) {
+    push("legacy-name", "pass", "Nothing here still uses the former `claude-use` name.");
+    return;
+  }
+  for (const name of legacyVariables) {
+    push("legacy-name", "warn", `${name} is the former name of ${name.replace(LEGACY_ENV_PREFIX, ENV_PREFIX)}. Rename it; the old name still works but is only a fallback.`, name);
+  }
+  if (path.basename(params.rootPath) === LEGACY_HOME_DIRNAME) {
+    push(
+      "legacy-name",
+      "warn",
+      `The state root is the former ${params.rootPath}, used in place. Leave it where it is: macOS Claude Code keys each identity's Keychain login on its exact configuration directory path, so moving it signs every identity out.`,
+    );
+  }
+}
+
+/**
+ * Audits the whole `~/.agent-shim` config graph for internal consistency: every identity, every configuration profile's own `extends` chain, every provider, `directory-rules.json`, `config.json`, `categories.local.json`, `active-identity`, plus real Claude Code binary discoverability and ambient-credential exposure.
  *
  * Deliberately identity/directory-agnostic, unlike `runCheck` — there is no single cascade to resolve `doctor` against, so it never touches settings-exposure (which only means anything relative to one resolved cascade).
  *
@@ -291,24 +321,25 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   }
 
   if (params.claudeShim.state === undefined) {
-    push("claude-shim", "pass", "No `claude` command shim enabled (the default). Run `claude-use shim enable` to add one.");
+    push("claude-shim", "pass", "No `claude` command shim enabled (the default). Run `agent-shim shim enable` to add one.");
   } else if (!params.claudeShim.targetExists) {
     push(
       "claude-shim",
       "warn",
       `claude-shim.json records a \`claude\` shim at ${params.claudeShim.state.targetPath}, but nothing is there. ` +
-        "Run `claude-use shim enable` again, or `claude-use shim disable` to clear the stale record.",
+        "Run `agent-shim shim enable` again, or `agent-shim shim disable` to clear the stale record.",
     );
   } else {
     push(
       "claude-shim",
       "pass",
       `\`claude\` is enabled at ${params.claudeShim.state.targetPath} (${params.claudeShim.state.method}). ` +
-        "If you've upgraded claude-use since, re-run `claude-use shim enable` to refresh it.",
+        "If you've upgraded agent-shim since, re-run `agent-shim shim enable` to refresh it.",
     );
   }
 
   pushPathResolution(push, params.pathResolution);
+  pushLegacyName(push, params);
 
   const profileSources = new Map<string, ProfileSource>();
   for (const entry of params.configProfiles) {
@@ -521,6 +552,7 @@ const SECTION_TITLES: Readonly<Record<DoctorSection, string>> = {
   "binary-discovery": "Claude Code binary discovery",
   "claude-shim": "`claude` command shim",
   "path-resolution": "PATH resolution",
+  "legacy-name": "Former `claude-use` name",
   "config-profile": "Configuration profiles",
   identity: "Identities",
   pool: "Pools",
@@ -563,7 +595,7 @@ function severityPrefix(severity: DoctorSeverity): string {
   }
 }
 
-/** Renders a full `DoctorReport` as plain text lines, one section header at a time, in the order `claude-use doctor` prints them. */
+/** Renders a full `DoctorReport` as plain text lines, one section header at a time, in the order `agent-shim doctor` prints them. */
 export function formatDoctorReport(report: DoctorReport): string[] {
   const lines: string[] = [];
   for (const section of SECTION_ORDER) {
@@ -592,7 +624,7 @@ function realpathOrSelf(target: string): string {
 }
 
 /**
- * Registers `claude-use doctor` onto `program`.
+ * Registers `agent-shim doctor` onto `program`.
  *
  * This is the one place in `src/doctor.ts` that performs real I/O: it enumerates every identity and configuration profile on disk, reads every top-level config file as raw text (never pre-parsing; see `runDoctor`'s own doc comment for why), resolves the real Claude Code binary the same way `runClaude` does, and hands everything already-loaded to `runDoctor`. A report containing failures is not a thrown error: `doctor` succeeds at producing a full report (text, or JSON under `--json`) even when it finds problems, so it sets `process.exitCode` to 1 rather than throwing or calling `process.exit()` (which would truncate the report already printed).
  */
@@ -601,7 +633,7 @@ export function registerDoctorCommand(program: Command, deps: CommandDeps): void
   const command = program
     .command("doctor")
     .description(
-      "Audit the whole ~/.claude-use config graph: every identity, every configuration profile's extends " +
+      "Audit the whole ~/.agent-shim config graph: every identity, every configuration profile's extends " +
         "chain, every provider, directory-rules.json, config.json, categories.local.json, active-identity, and real Claude " +
         "Code binary discoverability. Identity/directory-agnostic, unlike `check`. Exits 1 when any check fails.",
     )
@@ -682,13 +714,14 @@ export function registerDoctorCommand(program: Command, deps: CommandDeps): void
         activeIdentity: { path: paths.activeIdentityFile, raw: realFsPort.readFileUtf8(paths.activeIdentityFile) },
         binaryDiscovery,
         claudeShim: { state: shimState, targetExists: shimState !== undefined && fs.existsSync(shimState.targetPath) },
+        rootPath: paths.root,
         pathResolution: {
           ownExecutablePath,
-          claudeUse: refinePathShadow(
+          agentShim: refinePathShadow(
             findPathShadow({
               pathDirs,
               targetDir: path.dirname(ownExecutablePath),
-              targetFilename: commandFilename(ownExecutablePath, "claude-use"),
+              targetFilename: commandFilename(ownExecutablePath, "agent-shim"),
               findExecutableInDir,
             }),
             ownExecutablePath,
@@ -715,5 +748,5 @@ export function registerDoctorCommand(program: Command, deps: CommandDeps): void
         process.exitCode = 1;
       }
     });
-  withExamples(command, ["claude-use doctor", "claude-use doctor --json"]);
+  withExamples(command, ["agent-shim doctor", "agent-shim doctor --json"]);
 }

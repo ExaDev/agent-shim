@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createFakeFarmFs } from "../test-helpers";
 import { acquireIdentityLock, identityLockPath, IdentityLockBusyError } from "./lock";
 
-const IDENTITIES_DIR = "/home/testuser/.claude-use/identities";
+const IDENTITIES_DIR = "/home/testuser/.agent-shim/identities";
 
 // A fixed sequence of fixture timestamps (ms), each test picking whichever of these represents "when this call happens" relative to the others.
 const T0 = 1_000;

@@ -10,11 +10,11 @@ export type IdentityDecisionSource =
   | "config-dir-escape-hatch"
   /** A leading `@name` argv[0] positional, or its explicit form `--identity <name>`. */
   | "argv"
-  /** The `CLAUDE_USE_IDENTITY` environment variable. */
+  /** The `AGENT_SHIM_IDENTITY` environment variable. */
   | "env"
   /** A directory rule pinning an identity to the current path. */
   | "directory-pin"
-  /** The persisted `~/.claude-use/active-identity` file. */
+  /** The persisted `~/.agent-shim/active-identity` file. */
   | "active-identity-file"
   /** Nothing resolved an identity at all — a bare launch with no active identity. */
   | "none";
@@ -60,13 +60,13 @@ function selected(selector: string, source: IdentityDecisionSource): IdentityDec
  *
  * 1. If `CLAUDE_CONFIG_DIR` is already set, skip identity/cascade resolution entirely: a deliberate carry-forward of the legacy script's own "don't override an explicit launcher" escape hatch.
  * 2. A leading `@name` argv[0] positional, or `--identity <name>`.
- * 3. The `CLAUDE_USE_IDENTITY` environment variable.
+ * 3. The `AGENT_SHIM_IDENTITY` environment variable.
  * 4. A directory-pinned identity from a directory rule.
- * 5. The persisted `~/.claude-use/active-identity` file.
+ * 5. The persisted `~/.agent-shim/active-identity` file.
  *
  * Each of steps 2 to 5 may name `pool:<name>` instead of an identity; the decision then carries `pool` and no `name`, and the launcher picks the member.
  *
- * An empty string counts as unset for `CLAUDE_CONFIG_DIR` and `CLAUDE_USE_IDENTITY`, consistent with how this project treats empty-string environment variables everywhere else (see `src/paths.ts` and the ambient-credential guard).
+ * An empty string counts as unset for `CLAUDE_CONFIG_DIR` and `AGENT_SHIM_IDENTITY`, consistent with how this project treats empty-string environment variables everywhere else (see `src/paths.ts` and the ambient-credential guard).
  */
 export function decideIdentity(params: DecideIdentityParams): IdentityDecision {
   if (isNonEmpty(params.env.CLAUDE_CONFIG_DIR)) {
@@ -75,8 +75,8 @@ export function decideIdentity(params: DecideIdentityParams): IdentityDecision {
   if (isNonEmpty(params.argv0Identity)) {
     return selected(params.argv0Identity, "argv");
   }
-  if (isNonEmpty(params.env.CLAUDE_USE_IDENTITY)) {
-    return selected(params.env.CLAUDE_USE_IDENTITY, "env");
+  if (isNonEmpty(params.env.AGENT_SHIM_IDENTITY)) {
+    return selected(params.env.AGENT_SHIM_IDENTITY, "env");
   }
   if (isNonEmpty(params.directoryPinnedIdentity)) {
     return selected(params.directoryPinnedIdentity, "directory-pin");
@@ -92,13 +92,13 @@ export function decideIdentity(params: DecideIdentityParams): IdentityDecision {
 export type ConfigProfileDecisionSource =
   /** An explicit `--config-profile` CLI flag. */
   | "cli-flag"
-  /** The `CLAUDE_USE_CONFIG_PROFILE` environment variable. */
+  /** The `AGENT_SHIM_CONFIG_PROFILE` environment variable. */
   | "env"
   /** A directory rule's `configProfile` selection for `$PWD`. */
   | "directory-rule"
   /** The active identity's own declared `defaultConfigProfile`. */
   | "identity-default"
-  /** The user-global `~/.claude-use/config.json` default. */
+  /** The user-global `~/.agent-shim/config.json` default. */
   | "global-default"
   /** Nothing resolved a configuration profile at all. */
   | "none";
@@ -121,17 +121,17 @@ export interface DecideConfigProfileParams {
 /**
  * Decides which configuration profile applies to this launch, in precedence order:
  *
- * 1. An explicit `--config-profile` flag or `CLAUDE_USE_CONFIG_PROFILE` environment variable (this run only).
+ * 1. An explicit `--config-profile` flag or `AGENT_SHIM_CONFIG_PROFILE` environment variable (this run only).
  * 2. A directory rule's `configProfile` selection for `$PWD`.
  * 3. The active identity's own declared default (`defaultConfigProfile` in its `identity.json`).
- * 4. A global default (`~/.claude-use/config.json`).
+ * 4. A global default (`~/.agent-shim/config.json`).
  */
 export function decideConfigProfile(params: DecideConfigProfileParams): ConfigProfileDecision {
   if (isNonEmpty(params.cliFlagConfigProfile)) {
     return { name: params.cliFlagConfigProfile, source: "cli-flag" };
   }
-  if (isNonEmpty(params.env.CLAUDE_USE_CONFIG_PROFILE)) {
-    return { name: params.env.CLAUDE_USE_CONFIG_PROFILE, source: "env" };
+  if (isNonEmpty(params.env.AGENT_SHIM_CONFIG_PROFILE)) {
+    return { name: params.env.AGENT_SHIM_CONFIG_PROFILE, source: "env" };
   }
   if (isNonEmpty(params.directoryRuleConfigProfile)) {
     return { name: params.directoryRuleConfigProfile, source: "directory-rule" };
@@ -148,7 +148,7 @@ export function decideConfigProfile(params: DecideConfigProfileParams): ConfigPr
 /**
  * Reads and validates one identity's `identity.json` from `<identitiesDir>/<name>/identity.json`, via `IdentitySchema`.
  *
- * Returns undefined when the file does not exist (e.g. the identity was resolved by name but never actually created — `claude-use identity add` is Phase 4's job, not this one's). Throws `ConfigValidationError` when the file exists but fails validation, the same as any other config file in this project.
+ * Returns undefined when the file does not exist (e.g. the identity was resolved by name but never actually created — `agent-shim identity add` is Phase 4's job, not this one's). Throws `ConfigValidationError` when the file exists but fails validation, the same as any other config file in this project.
  */
 export function loadIdentity(identitiesDir: string, name: string, fs: FsPort): LoadedFile<Identity> | undefined {
   return loadConfigFile(path.join(identitiesDir, name, "identity.json"), IdentitySchema, fs.readConfigFile);

@@ -11,12 +11,13 @@ import {
 import { expandTilde, normaliseRulePath } from "../pathNorm";
 import { walkDirectoryAncestors, type CascadeInput, type DirectoryLevelSources, type ReadablePredicate } from "../resolve/walk";
 import type { ProfileSource } from "../resolve/extends";
+import { LEGACY_PORTABLE_CONFIG_FILENAME, LEGACY_PORTABLE_LOCAL_CONFIG_FILENAME } from "../legacy";
 import type { LayoutPaths } from "../paths";
 
-/** The committed, team-shared portable config file name. */
-export const PORTABLE_CONFIG_FILENAME = ".claude-use.json";
+/** The committed, team-shared portable config file name. A level with none falls back to the former `.claude-use.json`, and likewise for the local file, see `src/legacy.ts`. */
+export const PORTABLE_CONFIG_FILENAME = ".agent-shim.json";
 /** Its gitignored, per-clone personal sibling. */
-export const PORTABLE_LOCAL_CONFIG_FILENAME = ".claude-use.local.json";
+export const PORTABLE_LOCAL_CONFIG_FILENAME = ".agent-shim.local.json";
 
 /** Inputs to `loadCascadeInput`. */
 export interface LoadCascadeInputParams {
@@ -66,8 +67,8 @@ export function loadCascadeInput(params: LoadCascadeInputParams): LoadedCascade 
 
   const levels: DirectoryLevelSources[] = [];
   for (const dir of dirs) {
-    const portable = loadConfigFile(path.join(dir, PORTABLE_CONFIG_FILENAME), PortableConfigSchema, params.read);
-    const portableLocal = loadConfigFile(path.join(dir, PORTABLE_LOCAL_CONFIG_FILENAME), PortableConfigSchema, params.read);
+    const portable = loadConfigFile(path.join(dir, PORTABLE_CONFIG_FILENAME), PortableConfigSchema, params.read) ?? loadConfigFile(path.join(dir, LEGACY_PORTABLE_CONFIG_FILENAME), PortableConfigSchema, params.read);
+    const portableLocal = loadConfigFile(path.join(dir, PORTABLE_LOCAL_CONFIG_FILENAME), PortableConfigSchema, params.read) ?? loadConfigFile(path.join(dir, LEGACY_PORTABLE_LOCAL_CONFIG_FILENAME), PortableConfigSchema, params.read);
     const rules = (directoryRules?.config.rules ?? [])
       .map((rule, index) => ({ rule, index }))
       .filter(({ rule }) => normaliseRulePath(rule.path, params.home) === dir)

@@ -25,7 +25,7 @@ interface HeadroomSessionStatus extends HeadroomSession {
   readonly alive: boolean;
 }
 
-/** Everything `claude-use headroom status` reports, collected read-only: no process is started or stopped. */
+/** Everything `agent-shim headroom status` reports, collected read-only: no process is started or stopped. */
 export interface HeadroomStatus {
   readonly state: HeadroomState;
   readonly supervisorAlive: boolean;
@@ -69,7 +69,7 @@ export function collectHeadroomStatus(
   };
 }
 
-/** Formats `claude-use headroom status`'s output, one line per array entry. */
+/** Formats `agent-shim headroom status`'s output, one line per array entry. */
 export function formatHeadroomStatus(status: HeadroomStatus): string[] {
   const lines: string[] = [];
   if (status.state.supervisorPid === undefined) {
@@ -150,7 +150,7 @@ function headroomPidRunning(pid: number): boolean {
 }
 
 /**
- * Environment for the supervised headroom proxy. `HEADROOM_HTTP2` defaults to `0`: headroom's HTTP/2 upstream pool multiplexes every request over shared keep-alive connections, and when a provider retires one (GOAWAY is routine load-balancer behaviour, not an error) every in-flight request on it dies at once; headroom retries exactly once, and that retry regularly lands on another dying connection from the same co-aged pool, which surfaces to Claude Code as "No response from API" after its full timeout budget. HTTP/1.1 gives each request its own connection, so a retirement can only kill the one request already being retried. An explicit `HEADROOM_HTTP2` in the parent environment wins, so the default can be overridden without editing claude-use once headroom fixes its pool management.
+ * Environment for the supervised headroom proxy. `HEADROOM_HTTP2` defaults to `0`: headroom's HTTP/2 upstream pool multiplexes every request over shared keep-alive connections, and when a provider retires one (GOAWAY is routine load-balancer behaviour, not an error) every in-flight request on it dies at once; headroom retries exactly once, and that retry regularly lands on another dying connection from the same co-aged pool, which surfaces to Claude Code as "No response from API" after its full timeout budget. HTTP/1.1 gives each request its own connection, so a retirement can only kill the one request already being retried. An explicit `HEADROOM_HTTP2` in the parent environment wins, so the default can be overridden without editing agent-shim once headroom fixes its pool management.
  */
 export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readonly string[], settings: Readonly<HeadroomSettings>): NodeJS.ProcessEnv {
   return {
@@ -220,7 +220,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
         child.once("exit", (code, signal) => {
           ownedHeadroom.delete(pid);
           exitedHeadroom.add(pid);
-          fs.appendFileSync(paths.headroomLogPath, `${new Date().toISOString()} claude-use headroom supervisor: headroom exited (${signal ?? `code ${String(code)}`})\n`);
+          fs.appendFileSync(paths.headroomLogPath, `${new Date().toISOString()} agent-shim headroom supervisor: headroom exited (${signal ?? `code ${String(code)}`})\n`);
         });
         return pid;
       } finally {
@@ -239,7 +239,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
       if (outcome === "still-running") {
         fs.appendFileSync(
           paths.headroomLogPath,
-          `${new Date().toISOString()} claude-use headroom supervisor: pid ${String(pid)} survived SIGKILL within its grace; it is stuck uninterruptibly\n`,
+          `${new Date().toISOString()} agent-shim headroom supervisor: pid ${String(pid)} survived SIGKILL within its grace; it is stuck uninterruptibly\n`,
         );
       }
     },
@@ -276,11 +276,11 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
   };
 }
 
-/** Registers the `claude-use headroom` command tree and the hidden `__headroom-supervisor` internal subcommand. */
+/** Registers the `agent-shim headroom` command tree and the hidden `__headroom-supervisor` internal subcommand. */
 export function registerHeadroomCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
   const headroom = withExamples(program.command("headroom").description("Inspect the headroom routing daemon."), [
-    "claude-use headroom status",
+    "agent-shim headroom status",
   ]);
 
   withExamples(
@@ -298,7 +298,7 @@ export function registerHeadroomCommand(program: Command, deps: CommandDeps): vo
           console.log(line);
         }
       }),
-    ["claude-use headroom status", "claude-use headroom status --json"],
+    ["agent-shim headroom status", "agent-shim headroom status --json"],
   );
 
   program

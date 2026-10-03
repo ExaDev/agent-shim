@@ -1,15 +1,15 @@
 {
-  "name": "claude-use",
+  "name": "agent-shim",
   "version": "6.2.3",
   "description": "A profile manager and launcher for Claude Code that lets one person run multiple logins from one machine while controlling what gets shared between them.",
   "license": "Apache-2.0",
   "author": "Joseph Mearman <joseph@mearman.co.uk>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ExaDev/claude-use.git"
+    "url": "git+https://github.com/ExaDev/agent-shim.git"
   },
-  "homepage": "https://github.com/ExaDev/claude-use#readme",
-  "bugs": "https://github.com/ExaDev/claude-use/issues",
+  "homepage": "https://github.com/ExaDev/agent-shim#readme",
+  "bugs": "https://github.com/ExaDev/agent-shim/issues",
   "keywords": [
     "claude-code",
     "claude",
@@ -21,6 +21,7 @@
     "node": "^22.18 || >=24"
   },
   "bin": {
+    "agent-shim": "dist/cli.cjs",
     "claude-use": "dist/cli.cjs"
   },
   "files": [

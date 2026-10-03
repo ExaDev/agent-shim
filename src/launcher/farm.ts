@@ -8,11 +8,12 @@ import { resolveDecisions, type ResolvedState } from "../resolve/pipeline";
 import type { CascadeInput } from "../resolve/walk";
 import type { Diagnostic, EntryFact, EntryFacts } from "../resolve/types";
 import type { FarmPlan } from "../resolve/plan";
+import { LEGACY_FARM_MANIFEST_FILENAME } from "../legacy";
 import { acquireIdentityLock, type IdentityLock } from "./lock";
 import type { FarmFs } from "./ports";
 
-/** The manifest file each farm carries at its own root, recording what that resync built. Named distinctly from anything Claude Code itself writes into a config directory. */
-export const FARM_MANIFEST_FILENAME = ".claude-use-farm.json";
+/** The manifest file each farm carries at its own root, recording what that resync built. Named distinctly from anything Claude Code itself writes into a config directory. A farm built under the former name carries `LEGACY_FARM_MANIFEST_FILENAME` instead, which is read as a fallback and never carried into the next farm, whose resync writes this name. */
+export const FARM_MANIFEST_FILENAME = ".agent-shim-farm.json";
 
 /**
  * The manifest as it is validated coming back off disk.
@@ -32,7 +33,7 @@ const FarmManifestSchema = z.strictObject({
 
 /** Reads and validates the manifest at a farm root, or undefined when it is missing, unparseable, or does not validate. */
 export function readFarmManifest(fs: FarmFs, farmRoot: string): FarmManifest | undefined {
-  const raw = fs.readFileUtf8(path.join(farmRoot, FARM_MANIFEST_FILENAME));
+  const raw = fs.readFileUtf8(path.join(farmRoot, FARM_MANIFEST_FILENAME)) ?? fs.readFileUtf8(path.join(farmRoot, LEGACY_FARM_MANIFEST_FILENAME));
   if (raw === undefined) {
     return undefined;
   }
@@ -157,7 +158,7 @@ function reconciliationScope(fs: FarmFs, farmRoot: string, manifest: FarmManifes
     return topLevelScopeRoots(manifest.materialised);
   }
   return [...fs.readdir(farmRoot)]
-    .filter((name) => name !== FARM_MANIFEST_FILENAME && fs.lstat(path.join(farmRoot, name))?.kind === "dir")
+    .filter((name) => name !== FARM_MANIFEST_FILENAME && name !== LEGACY_FARM_MANIFEST_FILENAME && fs.lstat(path.join(farmRoot, name))?.kind === "dir")
     .sort();
 }
 
@@ -223,11 +224,11 @@ export interface CarryOverResult {
  *
  * One category is not ambiguous, though: `runtime`'s own definition (see `config/categories.default.json`'s category table in the README) is specifically "live per-process or per-machine artifacts" — daemon locks, an MCP auth-needed cache, an update-check result — that make no sense being preserved across a swap at all, let alone fought over. When `classification` is given, a colliding name whose category resolves to `runtime` is discarded from the superseded copy and left exactly as the new farm already has it, with no data ever moved: `keep-new` is not a judgement call for this category, it is what the category already means. This needs only the name's *static* classification, never the resolved shared/not-shared decision for the current directory — a `runtime` entry is disposable whether or not this identity currently chooses to share it, so no cascade resolution is needed to make the call.
  *
- * Exported so `launcher/farmResolve.ts` can reuse this exact collision detection (and the same `runtime` auto-resolution) for `claude-use identity resolve-conflicts`'s interactive pass, rather than a second implementation that could drift from this one.
+ * Exported so `launcher/farmResolve.ts` can reuse this exact collision detection (and the same `runtime` auto-resolution) for `agent-shim identity resolve-conflicts`'s interactive pass, rather than a second implementation that could drift from this one.
  */
 export function carryOver(params: CarryOverParams): CarryOverResult {
   const manifest = readFarmManifest(params.fs, params.previousRoot);
-  const accounted = new Set<string>([FARM_MANIFEST_FILENAME]);
+  const accounted = new Set<string>([FARM_MANIFEST_FILENAME, LEGACY_FARM_MANIFEST_FILENAME]);
   for (const rel of manifest?.materialised ?? []) {
     const head = rel.split("/")[0];
     if (head !== undefined && head !== "") {
@@ -563,10 +564,10 @@ function executeReconciliation(params: ExecuteReconciliationParams): Reconciliat
 /** Inputs to `resyncFarm`. */
 export interface ResyncFarmParams {
   readonly fs: FarmFs;
-  /** `~/.claude-use/identities` — the farm root's parent, and where the lock, scratch trees, and superseded farms all live. */
+  /** `~/.agent-shim/identities` — the farm root's parent, and where the lock, scratch trees, and superseded farms all live. */
   readonly identitiesDir: string;
   readonly identity: string;
-  /** The configuration profile this launch resolved to, recorded in the manifest for `claude-use check`. */
+  /** The configuration profile this launch resolved to, recorded in the manifest for `agent-shim check`. */
   readonly configProfile?: string;
   /** The canonical `~/.claude` every farm symlink points back into. */
   readonly claudeHome: string;
@@ -626,7 +627,7 @@ function sameStrings(a: readonly string[], b: readonly string[]): boolean {
 /**
  * Whether the farm already reflects the decision that was just resolved.
  *
- * The comparison is over the decision only — which paths are linked where, and which directories are built rather than linked. The manifest's `cwd` and `configProfile` are provenance, recorded for `claude-use check` to explain a farm, and a launch from a sibling directory that resolves to an identical layout is genuinely a no-op even though those fields differ. The cost is that after such a launch those two fields describe the last resync that actually changed something, which is exactly what they mean.
+ * The comparison is over the decision only — which paths are linked where, and which directories are built rather than linked. The manifest's `cwd` and `configProfile` are provenance, recorded for `agent-shim check` to explain a farm, and a launch from a sibling directory that resolves to an identical layout is genuinely a no-op even though those fields differ. The cost is that after such a launch those two fields describe the last resync that actually changed something, which is exactly what they mean.
  */
 function farmAlreadyMatches(existing: FarmManifest, next: FarmManifest): boolean {
   return (
@@ -763,7 +764,7 @@ export function resyncFarm(params: ResyncFarmParams): ResyncFarmResult {
         message:
           `The superseded farm was left at ${swap.retainedPrevious} because it still holds ` +
           `${swap.collided.join(", ")}, which the new farm has its own entry for. Nothing was overwritten in either ` +
-          `direction; run \`claude-use identity resolve-conflicts ${params.identity}\` to resolve it interactively.`,
+          `direction; run \`agent-shim identity resolve-conflicts ${params.identity}\` to resolve it interactively.`,
         subject: swap.retainedPrevious,
       });
     }
@@ -804,7 +805,7 @@ export function recoveryDiagnostics(recovery: RecoveryResult, identity: string):
   if (recovery.retained.length > 0) {
     parts.push(
       `kept ${recovery.retained.join(", ")}, which still holds data the current farm also has an entry for — ` +
-        `run \`claude-use identity resolve-conflicts ${identity}\` to resolve it interactively`,
+        `run \`agent-shim identity resolve-conflicts ${identity}\` to resolve it interactively`,
     );
   }
   return [

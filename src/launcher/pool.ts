@@ -8,7 +8,7 @@ import { loadIdentity } from "./identity";
 /** The flags that continue or resume an earlier conversation, which belongs on the account it started on. */
 const RESUME_FLAGS: ReadonlySet<string> = new Set(["--continue", "-c", "--resume", "-r"]);
 
-/** The token that ends claude-use's own flag recognition and begins what claude (or a command it runs) receives. */
+/** The token that ends agent-shim's own flag recognition and begins what claude (or a command it runs) receives. */
 const TERMINATOR = "--";
 
 /** How many of the chosen member's reasons the launch's log line carries. */
@@ -65,20 +65,20 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
   const { poolName, log } = params;
   const pool = params.pools?.[poolName];
   if (pool === undefined) {
-    return { ok: false, message: `claude-use: no pool named "${poolName}" (selected via ${params.selectedVia}). Run \`claude-use pool add ${poolName} --identity <name>...\` first.` };
+    return { ok: false, message: `agent-shim: no pool named "${poolName}" (selected via ${params.selectedVia}). Run \`agent-shim pool add ${poolName} --identity <name>...\` first.` };
   }
   const { present: identities, missing } = splitMembers(pool, params.paths, params.fs);
   for (const name of missing) {
-    log.warn(`claude-use: pool "${poolName}" names identity "${name}", which does not exist; skipping it`);
+    log.warn(`agent-shim: pool "${poolName}" names identity "${name}", which does not exist; skipping it`);
   }
   if (identities.length === 0) {
-    return { ok: false, message: `claude-use: no member of pool "${poolName}" is an existing identity.` };
+    return { ok: false, message: `agent-shim: no member of pool "${poolName}" is an existing identity.` };
   }
 
   const resuming = isResuming(params.passthrough);
   const stickyRead = readStickyPick(params.usageFs, params.paths.usagePicksFile, params.cwd);
   if (stickyRead.problem !== undefined) {
-    log.warn(`claude-use: ${stickyRead.problem}; ignoring the last-pick record`);
+    log.warn(`agent-shim: ${stickyRead.problem}; ignoring the last-pick record`);
   }
 
   for (;;) {
@@ -90,16 +90,16 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
       return { ok: true, identity: pick.identity, explanation: `pool ${poolName}: ${pick.reasons.slice(0, REASONS_LOGGED).join("; ")}` };
     }
     if (earliestReturn === undefined) {
-      return { ok: false, message: `claude-use: no member of pool "${poolName}" can be picked.` };
+      return { ok: false, message: `agent-shim: no member of pool "${poolName}" can be picked.` };
     }
     const until = new Date(earliestReturn.atMs).toISOString();
     if (!params.wait) {
       return {
         ok: false,
-        message: `claude-use: every member of pool "${poolName}" is refused right now; the earliest, ${earliestReturn.identity}, returns at ${until} (in ${formatAge(earliestReturn.atMs - nowMs)}). Pass --wait to sleep until then.`,
+        message: `agent-shim: every member of pool "${poolName}" is refused right now; the earliest, ${earliestReturn.identity}, returns at ${until} (in ${formatAge(earliestReturn.atMs - nowMs)}). Pass --wait to sleep until then.`,
       };
     }
-    log.info(`claude-use: every member of pool "${poolName}" is refused; waiting until ${until} for ${earliestReturn.identity}`);
+    log.info(`agent-shim: every member of pool "${poolName}" is refused; waiting until ${until} for ${earliestReturn.identity}`);
     params.sleep(Math.max(earliestReturn.atMs - nowMs, 0));
   }
 }

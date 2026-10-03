@@ -114,14 +114,14 @@ describe("certificate authority", () => {
     const ca = generateCa(now);
     const again = generateCa(now);
     const caCert = new X509Certificate(ca.certPem);
-    expect(caCert.subject).toBe("CN=claude-use front door CA");
-    expect(new X509Certificate(again.certPem).subject).toBe("CN=claude-use front door CA");
+    expect(caCert.subject).toBe("CN=agent-shim front door CA");
+    expect(new X509Certificate(again.certPem).subject).toBe("CN=agent-shim front door CA");
     expect(caCert.ca).toBe(true);
     expect(caCert.verify(caCert.publicKey)).toBe(true);
 
     const leaf = mintLeaf(ca, [CONNECT_INTERCEPT_HOST], now);
     const cert = new X509Certificate(leaf.certPem);
-    expect(cert.issuer).toBe("CN=claude-use front door CA");
+    expect(cert.issuer).toBe("CN=agent-shim front door CA");
     expect(cert.ca).toBe(false);
     expect(cert.verify(caCert.publicKey)).toBe(true);
     expect(cert.checkIssued(caCert)).toBe(true);
@@ -645,7 +645,7 @@ describe("CONNECT authentication and limits over real sockets", () => {
             const attempt = rawAttempt(connectPort, connectHead(host, headerLines));
             const answer = await attempt.answer;
             expect(answer.split("\r\n")[0]).toBe(`HTTP/1.1 ${String(HTTP_PROXY_AUTH_REQUIRED)} Proxy Authentication Required`);
-            expect(answer).toContain('Proxy-Authenticate: Basic realm="claude-use front door"');
+            expect(answer).toContain('Proxy-Authenticate: Basic realm="agent-shim front door"');
             await attempt.closed;
           }
         }
@@ -775,7 +775,7 @@ describe("CONNECT authentication and limits over real sockets", () => {
   it(
     "closes a launch's tunnels once its registry entry is pruned, and refuses its capability 407 afterwards",
     async () => {
-      const paths = buildLayoutPaths("/home/testuser/.claude-use");
+      const paths = buildLayoutPaths("/home/testuser/.agent-shim");
       const registry = createFakeFarmFs({});
       const launcherPid = 4242;
       writeFrontDoorSession(registry, paths.frontdoorSessionsDir, { pid: launcherPid, startedAt: 0, token: TEST_CAPABILITY });

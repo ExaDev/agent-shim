@@ -20,7 +20,7 @@ const VERDICT_OK = 1;
 const VERDICT_FAILED = 2;
 
 /**
- * The probe itself, run on a worker thread so the synchronous launcher can wait on it with `Atomics.wait`: one HTTPS GET of `/healthz` on 127.0.0.1 that trusts only the claude-use CA (`ca` replaces the default trust store) and checks the leaf names 127.0.0.1. No capability or credential is sent. Kept as plain CommonJS source because the worker evaluates it standalone, outside the bundle.
+ * The probe itself, run on a worker thread so the synchronous launcher can wait on it with `Atomics.wait`: one HTTPS GET of `/healthz` on 127.0.0.1 that trusts only the agent-shim CA (`ca` replaces the default trust store) and checks the leaf names 127.0.0.1. No capability or credential is sent. Kept as plain CommonJS source because the worker evaluates it standalone, outside the bundle.
  */
 const PROBE_SOURCE = `
 const { workerData } = require("node:worker_threads");
@@ -54,7 +54,7 @@ request.on("error", (error) => finish(failed, (error.code ? error.code + ": " : 
 `;
 
 /**
- * Authenticates the front door's provider listener before a launch trusts it: a TLS handshake that must chain to claude-use's CA (whose key only this user can read) for 127.0.0.1, then a healthy answer. A process that merely holds the port (a stale state file's port re-bound by someone else, or a reused pid's listener) cannot complete that handshake, so it fails here and the launch never hands its child that address.
+ * Authenticates the front door's provider listener before a launch trusts it: a TLS handshake that must chain to agent-shim's CA (whose key only this user can read) for 127.0.0.1, then a healthy answer. A process that merely holds the port (a stale state file's port re-bound by someone else, or a reused pid's listener) cannot complete that handshake, so it fails here and the launch never hands its child that address.
  *
  * Synchronous because the launcher is synchronous right through to `spawnSync`: the HTTPS request runs on a worker thread and this thread blocks on a shared buffer until the worker posts its verdict.
  */

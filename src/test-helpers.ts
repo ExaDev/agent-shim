@@ -383,7 +383,7 @@ class ExitCalled extends Error {
   }
 }
 
-export const paths = buildLayoutPaths("/home/testuser/.claude-use");
+export const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
 export function fakeProc(env: Readonly<Record<string, string | undefined>>, argv: readonly string[]): ProcPort {
   return {
@@ -421,7 +421,7 @@ export function fakeFs(ownFiles: Record<string, unknown>): FsPort {
 }
 
 /** The trust bundle path every fake front door hands its launches. */
-export const FAKE_TRUST_BUNDLE = "/home/testuser/.claude-use/frontdoor/ca/ca.pem";
+export const FAKE_TRUST_BUNDLE = "/home/testuser/.agent-shim/frontdoor/ca/ca.pem";
 
 /** A fake `FrontDoorPort` that counts its bring-ups and releases and records the inherited CA bundle each bring-up was given, so a test can assert both that the door came up and that the launcher released its session. */
 export function fakeFrontDoorPort(

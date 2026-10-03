@@ -4,7 +4,7 @@ Full detail behind the Development section's test isolation, commit hooks and se
 
 ## Test isolation
 
-Every test run gets `CLAUDE_USE_HOME` set to a throwaway directory by `vitest.config.ts`, and a Vitest setup file (`src/test-setup.ts`) refuses to let any test run at all if that variable is unset or resolves to the real `~/.claude-use` — there is no path by which the test suite can touch a real identity. A farm test that also needs a canonical `~/.claude` to resync against injects its own fake filesystem port rather than touching a real path. Manual, non-test exploration of a locally built binary should follow the same discipline: export `CLAUDE_USE_HOME` (and, if exercising a real farm resync, `CLAUDE_USE_CLAUDE_HOME`) to point at scratch directories, never at your own real identities.
+Every test run gets `AGENT_SHIM_HOME` set to a throwaway directory by `vitest.config.ts`, and a Vitest setup file (`src/test-setup.ts`) refuses to let any test run at all if that variable is unset or resolves to the real `~/.agent-shim` — there is no path by which the test suite can touch a real identity. A farm test that also needs a canonical `~/.claude` to resync against injects its own fake filesystem port rather than touching a real path. Manual, non-test exploration of a locally built binary should follow the same discipline: export `AGENT_SHIM_HOME` (and, if exercising a real farm resync, `AGENT_SHIM_CLAUDE_HOME`) to point at scratch directories, never at your own real identities.
 
 ## Commit hooks
 

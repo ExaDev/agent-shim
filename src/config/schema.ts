@@ -30,7 +30,7 @@ export type CategoryMap = Partial<Record<OverridableCategory, boolean>>;
 /**
  * Expands the `all` pseudo-category key into every overridable category set to that same value, dropping `all` itself from the result. An explicit named category always wins over the `all` expansion regardless of where it appears relative to `all` in the input — `{ all: true, runtime: false }` means "share everything except runtime", not "runtime is false, then immediately overwritten back to true by all's own expansion". Built from `OVERRIDABLE_CATEGORIES` rather than the four names spelled out again, so a future addition to that list is covered by `all` with no change needed here.
  *
- * This is the one shared implementation `CategoryMapSchema`'s own transform, `launcher/cliOverride.ts`'s `--category`/`CLAUDE_USE_CATEGORY_OVERRIDE` handling, and `configProfiles.ts`'s `claude-use profile set --category` all call — so `all` means the same thing regardless of which of those three input paths it arrived through.
+ * This is the one shared implementation `CategoryMapSchema`'s own transform, `launcher/cliOverride.ts`'s `--category`/`AGENT_SHIM_CATEGORY_OVERRIDE` handling, and `configProfiles.ts`'s `agent-shim profile set --category` all call — so `all` means the same thing regardless of which of those three input paths it arrived through.
  */
 export function expandAllCategoryKey(pairs: Readonly<Record<string, boolean>>): Record<string, boolean> {
   const { all, ...rest } = pairs;
@@ -59,7 +59,7 @@ export const DURATION_RE = /^(?:0|[1-9][0-9]*)(?:ms|s|m|h|d|w)$/;
 const DurationSchema = z.string().regex(DURATION_RE);
 
 /**
- * A conditional guard on an entries value or a whole directory rule. Every field present within one `when` object must hold (AND logic). An empty object is vacuously true — `claude-use check` warns about it, it is never an error.
+ * A conditional guard on an entries value or a whole directory rule. Every field present within one `when` object must hold (AND logic). An empty object is vacuously true — `agent-shim check` warns about it, it is never an error.
  */
 export const WhenSchema = z.strictObject({
   newerThan: DurationSchema.optional(),
@@ -103,7 +103,7 @@ export type CredentialTarget = (typeof CREDENTIAL_TARGETS)[number];
 /** The targets a provider's credential may use: every target except `oauthToken`, which only an identity can carry. */
 export const PROVIDER_CREDENTIAL_TARGETS = ["bearer", "apiKey"] as const;
 
-/** The environment variable each credential target exports the token as. These are also the variables no provider `env` block may set, since claude-use sets and clears them itself. */
+/** The environment variable each credential target exports the token as. These are also the variables no provider `env` block may set, since agent-shim sets and clears them itself. */
 export const CREDENTIAL_TARGET_VARS = {
   bearer: "ANTHROPIC_AUTH_TOKEN",
   apiKey: "ANTHROPIC_API_KEY",
@@ -152,7 +152,7 @@ export const CredentialSourceSchema = z.union([
 ]);
 export type CredentialSource = z.infer<typeof CredentialSourceSchema>;
 
-/** Where a cached credential is kept: the macOS login Keychain, or a mode-0600 file under the claude-use home. */
+/** Where a cached credential is kept: the macOS login Keychain, or a mode-0600 file under the agent-shim home. */
 export const CREDENTIAL_CACHE_STORES = ["keychain", "file"] as const;
 export type CredentialCacheStore = (typeof CREDENTIAL_CACHE_STORES)[number];
 
@@ -181,17 +181,17 @@ export type Credential = z.infer<typeof CredentialSchema>;
 /** A provider's credential block: `CredentialSchema` with `target` narrowed to `PROVIDER_CREDENTIAL_TARGETS`. */
 const ProviderCredentialSchema = CredentialSchema.extend({ target: z.enum(PROVIDER_CREDENTIAL_TARGETS).optional() });
 
-/** The variables a provider's `env` block may not name, because the credential target sets one of them and claude-use removes the others from the child's environment. */
+/** The variables a provider's `env` block may not name, because the credential target sets one of them and agent-shim removes the others from the child's environment. */
 const RESERVED_PROVIDER_ENV_KEYS: readonly string[] = Object.values(CREDENTIAL_TARGET_VARS);
 
 /** A provider's extra environment entries: any variable except the credential variables, which the credential block owns. */
 const ProviderEnvSchema = z
   .record(z.string().min(1), z.string())
   .refine((env) => !Object.keys(env).some((key) => RESERVED_PROVIDER_ENV_KEYS.includes(key)), {
-    message: `env may not set ${RESERVED_PROVIDER_ENV_KEYS.join(", ")}: the credential block's target sets one and claude-use removes the others`,
+    message: `env may not set ${RESERVED_PROVIDER_ENV_KEYS.join(", ")}: the credential block's target sets one and agent-shim removes the others`,
   });
 
-/** The kinds of provider: `http` is an Anthropic Messages endpoint at a fixed `baseUrl` (the default when `kind` is absent), and `codex` is ChatGPT's Codex backend reached through claude-use's own supervised translation daemon. */
+/** The kinds of provider: `http` is an Anthropic Messages endpoint at a fixed `baseUrl` (the default when `kind` is absent), and `codex` is ChatGPT's Codex backend reached through agent-shim's own supervised translation daemon. */
 export const PROVIDER_KINDS = ["http", "codex"] as const;
 
 /**
@@ -239,9 +239,9 @@ export const CodexProviderConfigSchema = z.strictObject({
 export type CodexProviderConfig = z.infer<typeof CodexProviderConfigSchema>;
 
 /**
- * A named API provider at `~/.claude-use/providers/<name>.json`: which endpoint the child Claude Code talks to, where its token comes from, and any static extra environment entries the child needs to use that endpoint.
+ * A named API provider at `~/.agent-shim/providers/<name>.json`: which endpoint the child Claude Code talks to, where its token comes from, and any static extra environment entries the child needs to use that endpoint.
  *
- * Two kinds, told apart by `kind`. An `http` provider (the default, so `kind` may be omitted) names a fixed Anthropic-compatible `baseUrl`. A `codex` provider has no `baseUrl` at all: the launcher starts claude-use's supervised codex translation daemon and points the child at the daemon's address, which only exists at launch time, and the provider's optional `codex` block configures the translation.
+ * Two kinds, told apart by `kind`. An `http` provider (the default, so `kind` may be omitted) names a fixed Anthropic-compatible `baseUrl`. A `codex` provider has no `baseUrl` at all: the launcher starts agent-shim's supervised codex translation daemon and points the child at the daemon's address, which only exists at launch time, and the provider's optional `codex` block configures the translation.
  *
  * `credential` is required for both kinds, since a provider launch has to give Claude Code a token to send. A provider file is ordinary committed config, so none of its sources holds a secret (a `literal` source is by definition a non-secret placeholder, which is exactly what a codex provider needs: the daemon authenticates upstream with the Codex CLI's own login and ignores the token Claude Code sends it). `env` may not name a credential variable (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`) at all: the credential target sets one and the launcher removes the other two, so a value there would either be overwritten or be a second credential hiding outside the block.
  */
@@ -275,7 +275,7 @@ export function isCodexProvider(provider: Provider): provider is CodexProvider {
 }
 
 /**
- * A named, reusable configuration profile at `~/.claude-use/config-profiles/<name>.json`.
+ * A named, reusable configuration profile at `~/.agent-shim/config-profiles/<name>.json`.
  *
  * `extends` is a flat array of other profiles' *names*, deliberately not a self-referential `z.lazy()` schema: nothing in this shape points back at a profile object, so each file validates in isolation and the extends graph is walked at resolve time. That also means Zod cannot detect a circular `extends` definition — the walker in `src/resolve/extends.ts` carries its own cycle guard.
  */
@@ -298,7 +298,7 @@ const IDENTITY_NAME_PATTERN = "[A-Za-z0-9][A-Za-z0-9._@-]*";
 /** A pool's own name: the identity alphabet minus `@`, since a pool is never an email address. */
 export const PoolNameSchema = z.string().min(1).regex(new RegExp(`^${POOL_NAME_PATTERN}$`));
 
-/** What a directory rule, a portable config or the active-identity file may name: a concrete identity, or `pool:<name>` to have claude-use pick one member of a pool at launch. */
+/** What a directory rule, a portable config or the active-identity file may name: a concrete identity, or `pool:<name>` to have agent-shim pick one member of a pool at launch. */
 const IdentitySelectorSchema = z.string().min(1).regex(new RegExp(`^(${POOL_SELECTOR_PREFIX}${POOL_NAME_PATTERN}|${IDENTITY_NAME_PATTERN})$`));
 
 /** A named, explicit set of identities to choose among at launch. Never implicit: a pool lists its members, so an identity that bills a client is only ever picked when someone put it there. */
@@ -310,7 +310,7 @@ const PoolSchema = z.strictObject({
 });
 export type Pool = z.infer<typeof PoolSchema>;
 
-/** One directory rule in `~/.claude-use/directory-rules.json`, scoped to an explicit absolute (or `~`-rooted) path. */
+/** One directory rule in `~/.agent-shim/directory-rules.json`, scoped to an explicit absolute (or `~`-rooted) path. */
 export const DirectoryRuleSchema = ConfigProfileSchema.omit({ description: true }).extend({
   path: z.string().min(1),
   configProfile: z.string().min(1).optional(),
@@ -319,7 +319,7 @@ export const DirectoryRuleSchema = ConfigProfileSchema.omit({ description: true 
 });
 export type DirectoryRule = z.infer<typeof DirectoryRuleSchema>;
 
-/** The `~/.claude-use/directory-rules.json` file. */
+/** The `~/.agent-shim/directory-rules.json` file. */
 export const DirectoryRulesSchema = z.strictObject({
   $schema: z.string().optional(),
   rules: z.array(DirectoryRuleSchema),
@@ -327,7 +327,7 @@ export const DirectoryRulesSchema = z.strictObject({
 export type DirectoryRules = z.infer<typeof DirectoryRulesSchema>;
 
 /**
- * A committed `.claude-use.json` (or its gitignored `.claude-use.local.json` sibling). Structurally a directory rule without the `path` field: its scope is implicit — wherever the file lives, and everything below it — which is exactly what makes it portable across clone locations.
+ * A committed `.agent-shim.json` (or its gitignored `.agent-shim.local.json` sibling). Structurally a directory rule without the `path` field: its scope is implicit — wherever the file lives, and everything below it — which is exactly what makes it portable across clone locations.
  */
 export const PortableConfigSchema = ConfigProfileSchema.omit({ description: true }).extend({
   configProfile: z.string().min(1).optional(),
@@ -337,7 +337,7 @@ export const PortableConfigSchema = ConfigProfileSchema.omit({ description: true
 export type PortableConfig = z.infer<typeof PortableConfigSchema>;
 
 /**
- * The user-global headroom daemon block: how claude-use installs and supervises the local headroom proxy when a launch routes through it. Deliberately global-only: the daemon is one per machine (one per CLAUDE_USE_HOME), so a per-directory or per-profile setting would be a claim about the same singleton from several places at once.
+ * The user-global headroom daemon block: how agent-shim installs and supervises the local headroom proxy when a launch routes through it. Deliberately global-only: the daemon is one per machine (one per AGENT_SHIM_HOME), so a per-directory or per-profile setting would be a claim about the same singleton from several places at once.
  */
 /** `cache` freezes earlier turns for provider prefix-cache hits; `token` may rewrite them for more compression. */
 const HEADROOM_MODES = ["cache", "token"] as const;
@@ -398,13 +398,13 @@ export const HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES = 15;
  */
 export const FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES = 15;
 
-/** The user-global front-door daemon block. Global-only for the same reason as headroom's: there is one front door per CLAUDE_USE_HOME, serving every routed session. */
+/** The user-global front-door daemon block. Global-only for the same reason as headroom's: there is one front door per AGENT_SHIM_HOME, serving every routed session. */
 const FrontDoorGlobalConfigSchema = z.strictObject({
   /** How long the front door may sit with no registered sessions before it closes and exits. Defaults to FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES. */
   idleShutdownMinutes: z.number().int().positive().optional(),
 });
 
-/** The user-global `~/.claude-use/config.json`. */
+/** The user-global `~/.agent-shim/config.json`. */
 export const GlobalConfigSchema = z.strictObject({
   $schema: z.string().optional(),
   defaultConfigProfile: z.string().min(1).optional(),
@@ -447,7 +447,7 @@ export const CategoryClassificationSchema = z.strictObject({
 });
 export type CategoryClassification = z.infer<typeof CategoryClassificationSchema>;
 
-/** The gitignored `~/.claude-use/categories.local.json` overlay: any subset of the classification lists, answering "what category is this new entry?" without editing the shipped default map. */
+/** The gitignored `~/.agent-shim/categories.local.json` overlay: any subset of the classification lists, answering "what category is this new entry?" without editing the shipped default map. */
 export const CategoryClassificationOverlaySchema = z.strictObject({
   $schema: z.string().optional(),
   secret: z.array(z.string().min(1)).optional(),

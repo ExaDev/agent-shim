@@ -83,8 +83,8 @@ describe("runLauncher with a pool selector", () => {
     expect(decision).toContain("7d 60% used");
   });
 
-  it("takes a pool from CLAUDE_USE_IDENTITY and from --identity", () => {
-    expect(spawnedEnv(launch({ argv: ["--print"], env: { CLAUDE_USE_IDENTITY: "pool:main" } }).spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
+  it("takes a pool from AGENT_SHIM_IDENTITY and from --identity", () => {
+    expect(spawnedEnv(launch({ argv: ["--print"], env: { AGENT_SHIM_IDENTITY: "pool:main" } }).spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
     expect(spawnedEnv(launch({ argv: ["--identity", "pool:main", "--print"] }).spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
   });
 

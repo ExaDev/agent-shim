@@ -112,12 +112,12 @@ function membersOf(options: Readonly<PoolMembersOptions>): readonly string[] {
   return options.identity;
 }
 
-/** Registers the `claude-use pool` subcommand tree onto `program`. */
+/** Registers the `agent-shim pool` subcommand tree onto `program`. */
 export function registerPoolCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
   const pool = withExamples(
     program.command("pool").description("Manage pools: named sets of identities that a launch picks one member of, by remaining quota, with `claude @pool:<name>`."),
-    ["claude-use pool add subs --identity work --identity personal", "claude-use pool pick subs"],
+    ["agent-shim pool add subs --identity work --identity personal", "agent-shim pool pick subs"],
   );
 
   withExamples(
@@ -131,7 +131,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         addPool(paths, name, members);
         console.log(`Created pool "${name}" with ${members.join(", ")}.`);
       }),
-    ["claude-use pool add subs --identity work --identity personal"],
+    ["agent-shim pool add subs --identity work --identity personal"],
   );
 
   withExamples(
@@ -145,7 +145,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         setPool(paths, name, members);
         console.log(`Pool "${name}" now has ${members.join(", ")}.`);
       }),
-    ["claude-use pool set subs --identity work --identity personal --identity spare"],
+    ["agent-shim pool set subs --identity work --identity personal --identity spare"],
   );
 
   withExamples(
@@ -162,14 +162,14 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         }
         const names = Object.keys(pools).sort();
         if (names.length === 0) {
-          console.log("No pools yet. Run `claude-use pool add <name> --identity <name>...` to create one.");
+          console.log("No pools yet. Run `agent-shim pool add <name> --identity <name>...` to create one.");
           return;
         }
         for (const name of names) {
           console.log(`${active === `${POOL_SELECTOR_PREFIX}${name}` ? "*" : " "} ${name}: ${(pools[name]?.identities ?? []).join(", ")}`);
         }
       }),
-    ["claude-use pool list", "claude-use pool list --json"],
+    ["agent-shim pool list", "agent-shim pool list --json"],
   );
 
   withExamples(
@@ -186,7 +186,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         console.log(`Pool: ${name}`);
         console.log(`Members: ${entry.identities.join(", ")}`);
       }),
-    ["claude-use pool show subs"],
+    ["agent-shim pool show subs"],
   );
 
   withExamples(
@@ -200,7 +200,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         removePool(paths, name);
         console.log(`Removed pool "${name}".`);
       }),
-    ["claude-use pool remove subs --yes"],
+    ["agent-shim pool remove subs --yes"],
   );
 
   withExamples(
@@ -211,7 +211,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         useIdentity(paths, `${POOL_SELECTOR_PREFIX}${name}`);
         console.log(`Active selection is now pool "${name}".`);
       }),
-    ["claude-use pool use subs"],
+    ["agent-shim pool use subs"],
   );
 
   withExamples(
@@ -230,6 +230,6 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
           console.log(line);
         }
       }),
-    ["claude-use pool pick subs", "claude-use pool pick subs --json"],
+    ["agent-shim pool pick subs", "agent-shim pool pick subs --json"],
   );
 }

@@ -83,7 +83,7 @@ export function resolveEntry(relPath: string, params: DecideParams): { decision:
       code: "UNCLASSIFIED_ENTRY",
       severity: "warning",
       message:
-        `"${head}" is not in the category map, so it is excluded. Run \`claude-use configure\` to classify it, ` +
+        `"${head}" is not in the category map, so it is excluded. Run \`agent-shim configure\` to classify it, ` +
         `which records the answer in the local overlay without touching the shipped default map.`,
       subject: head,
     });
@@ -157,7 +157,7 @@ export function resolveEntry(relPath: string, params: DecideParams): { decision:
 /**
  * Reports the one interaction the corrected comparator makes deliberately invisible otherwise: an earlier layer's *exact* key losing to a later layer's *glob*.
  *
- * That outcome is correct — ranking layer above exactness is what stops an untrusted committed `.claude-use.json` from beating a personal override written later — but it is also the one case where a user's precisely-written key silently stops applying, so it is surfaced rather than resolved in silence.
+ * That outcome is correct — ranking layer above exactness is what stops an untrusted committed `.agent-shim.json` from beating a personal override written later — but it is also the one case where a user's precisely-written key silently stops applying, so it is surfaced rather than resolved in silence.
  */
 function reportOverriddenExactKeys(winner: CompiledRule, params: DecideParams, relPath: string): Diagnostic[] {
   if (winner.isExact) {

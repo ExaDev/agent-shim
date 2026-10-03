@@ -23,7 +23,7 @@ let root: string;
 let paths: LayoutPaths;
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "claude-use-pools-"));
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-pools-"));
   paths = buildLayoutPaths(root);
   process.exitCode = undefined;
 });
@@ -40,7 +40,7 @@ interface CliResult {
   readonly stderr: string;
 }
 
-/** Runs one `claude-use` invocation against the throwaway layout the way `src/cli.ts` does. */
+/** Runs one `agent-shim` invocation against the throwaway layout the way `src/cli.ts` does. */
 async function cli(argv: readonly string[]): Promise<CliResult> {
   const out: string[] = [];
   const err: string[] = [];
@@ -91,7 +91,7 @@ function seedSnapshot(identity: string, window: { readonly utilization: number; 
   fs.writeFileSync(snapshotPath(paths.usageSnapshotsDir, identity), JSON.stringify(snapshot));
 }
 
-describe("claude-use pool", () => {
+describe("agent-shim pool", () => {
   beforeEach(() => {
     addIdentity(paths, "work");
     addIdentity(paths, "personal");

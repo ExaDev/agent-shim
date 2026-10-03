@@ -134,7 +134,7 @@ function couldReach(patternSegments: readonly string[], dirSegments: readonly st
  *
  * The order, exactly:
  *
- * 1. **Different layers — the later layer wins, period.** This rank sits deliberately *above* exactness. Ranking exactness first would let an untrusted committed `.claude-use.json`'s exact key beat your own later, personal glob override, breaking the design's stated trust property that a directory-scoped local rule can only ever tighten what a committed file opened, never the reverse. Nothing in the design asserts that an earlier exact key beats a later glob, so nothing is lost by closing that hole.
+ * 1. **Different layers — the later layer wins, period.** This rank sits deliberately *above* exactness. Ranking exactness first would let an untrusted committed `.agent-shim.json`'s exact key beat your own later, personal glob override, breaking the design's stated trust property that a directory-scoped local rule can only ever tighten what a committed file opened, never the reverse. Nothing in the design asserts that an earlier exact key beats a later glob, so nothing is lost by closing that hole.
  * 2. Same layer: an exact literal beats a glob.
  * 3. Same layer: the longer literal prefix wins.
  * 4. Same layer: more path segments wins, which separates a one-wildcard pattern from a two-wildcard one at the same depth.

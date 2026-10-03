@@ -23,7 +23,7 @@ type LayerKind =
 export interface Layer {
   readonly id: LayerId;
   readonly kind: LayerKind;
-  /** Human-readable origin (a file path, or a profile name) used by `claude-use check` to explain a decision. */
+  /** Human-readable origin (a file path, or a profile name) used by `agent-shim check` to explain a decision. */
   readonly source: string;
   readonly categories?: CategoryMap;
   readonly entries?: Entries;
@@ -92,7 +92,7 @@ export interface CompiledRule {
   readonly matches: (relPath: string) => boolean;
 }
 
-/** How a decision was reached, for `claude-use check`'s "which layer decided this" output. */
+/** How a decision was reached, for `agent-shim check`'s "which layer decided this" output. */
 type DecisionVia =
   /** The unconditional pre-cascade floor: the path's real classification is `secret`. */
   | "secret-floor"
@@ -123,7 +123,7 @@ export interface EliminatedRule {
   readonly failed: readonly string[];
 }
 
-/** Every diagnostic the resolver can raise. Codes are stable strings so `claude-use check` and tests can assert on them. */
+/** Every diagnostic the resolver can raise. Codes are stable strings so `agent-shim check` and tests can assert on them. */
 type DiagnosticCode =
   /** A profile's `extends` graph contains a cycle. */
   | "EXTENDS_CYCLE"

@@ -2,8 +2,9 @@ import { Help, type Command } from "commander";
 
 import { UsageError } from "./cliError";
 import { LAUNCHER_FLAG_NAMES } from "./launcher/argv";
+import { LEGACY_COMMAND_NAME } from "./legacy";
 
-/** The shells `claude-use completion` can generate a script for. */
+/** The shells `agent-shim completion` can generate a script for. */
 const COMPLETION_SHELLS = ["bash", "zsh", "fish"] as const;
 type CompletionShell = (typeof COMPLETION_SHELLS)[number];
 
@@ -38,7 +39,7 @@ function collectNodes(program: Command): CompletionNode[] {
     const children = new Map(subcommands.map((sub) => [sub.name(), `${id}/${sub.name()}`]));
     const optionWords: CompletionWord[] =
       command.name() === "run" && id !== "root"
-        ? LAUNCHER_FLAG_NAMES.map((flag) => ({ word: flag, description: "claude-use launch flag" }))
+        ? LAUNCHER_FLAG_NAMES.map((flag) => ({ word: flag, description: "agent-shim launch flag" }))
         : help
             .visibleOptions(command)
             .flatMap((option) => (option.long === undefined ? [] : [{ word: option.long, description: firstSentence(option.description) }]));
@@ -76,8 +77,8 @@ function bashScript(nodes: readonly CompletionNode[]): string {
   const arms = nodes
     .map((node) => `    ${singleQuote(node.id)}) candidates=${singleQuote(node.words.map((word) => word.word).join(" "))} ;;`)
     .join("\n");
-  return `# claude-use bash completion. Load with: source <(claude-use completion bash)
-_claude_use() {
+  return `# agent-shim bash completion. Load with: source <(agent-shim completion bash)
+_agent_shim() {
   local cur="\${COMP_WORDS[COMP_CWORD]}" node=root candidates="" i
   for ((i = 1; i < COMP_CWORD; i++)); do
     case "\${node}:\${COMP_WORDS[i]}" in
@@ -89,7 +90,7 @@ ${arms}
   esac
   COMPREPLY=($(compgen -W "\${candidates}" -- "\${cur}"))
 }
-complete -o default -F _claude_use claude-use
+complete -o default -F _agent_shim agent-shim ${LEGACY_COMMAND_NAME}
 `;
 }
 
@@ -100,9 +101,9 @@ function zshScript(nodes: readonly CompletionNode[]): string {
       return `    ${singleQuote(node.id)}) candidates=(${entries}) ;;`;
     })
     .join("\n");
-  return `#compdef claude-use
-# claude-use zsh completion. Load with: source <(claude-use completion zsh), after compinit.
-_claude_use() {
+  return `#compdef agent-shim ${LEGACY_COMMAND_NAME}
+# agent-shim zsh completion. Load with: source <(agent-shim completion zsh), after compinit.
+_agent_shim() {
   local node=root word
   local -a candidates
   for word in "\${(@)words[2,CURRENT-1]}"; do
@@ -113,12 +114,12 @@ ${transitionArms(nodes, "      ")}
   case "\${node}" in
 ${arms}
   esac
-  _describe -t commands 'claude-use' candidates
+  _describe -t commands 'agent-shim' candidates
 }
-if [ "\${funcstack[1]}" = "_claude_use" ]; then
-  _claude_use "$@"
+if [ "\${funcstack[1]}" = "_agent_shim" ]; then
+  _agent_shim "$@"
 else
-  compdef _claude_use claude-use
+  compdef _agent_shim agent-shim ${LEGACY_COMMAND_NAME}
 fi
 `;
 }
@@ -132,14 +133,14 @@ function fishScript(nodes: readonly CompletionNode[]): string {
   const completions = nodes
     .flatMap((node) =>
       node.words.map((word) => {
-        const condition = fishQuote(`test (__claude_use_node) = ${node.id}`);
+        const condition = fishQuote(`test (__agent_shim_node) = ${node.id}`);
         const target = word.word.startsWith("--") ? `-l ${fishQuote(word.word.slice(2))}` : `-a ${fishQuote(word.word)}`;
-        return `complete -c claude-use -n ${condition} ${target} -d ${fishQuote(word.description)}`;
+        return ["agent-shim", LEGACY_COMMAND_NAME].map((command) => `complete -c ${command} -n ${condition} ${target} -d ${fishQuote(word.description)}`).join("\n");
       }),
     )
     .join("\n");
-  return `# claude-use fish completion. Load with: claude-use completion fish | source
-function __claude_use_node
+  return `# agent-shim fish completion. Load with: agent-shim completion fish | source
+function __agent_shim_node
     set -l node root
     for word in (commandline -opc)[2..-1]
         switch "$node:$word"
@@ -148,12 +149,12 @@ ${transitions}
     end
     echo $node
 end
-complete -c claude-use -f
+complete -c agent-shim -f
 ${completions}
 `;
 }
 
-/** Raised when `claude-use completion` is asked for a shell it cannot generate a script for. */
+/** Raised when `agent-shim completion` is asked for a shell it cannot generate a script for. */
 export class UnsupportedShellError extends UsageError {
   constructor(readonly shell: string) {
     super(`Unsupported shell "${shell}". Supported shells: ${COMPLETION_SHELLS.join(", ")}.`);
@@ -182,7 +183,7 @@ function generateCompletion(program: Command, shell: CompletionShell): string {
   }
 }
 
-/** Registers `claude-use completion <shell>` onto `program`. Register it last, since the script covers whatever the tree holds at the moment it runs. */
+/** Registers `agent-shim completion <shell>` onto `program`. Register it last, since the script covers whatever the tree holds at the moment it runs. */
 export function registerCompletionCommand(program: Command): void {
   program
     .command("completion")
@@ -196,6 +197,6 @@ export function registerCompletionCommand(program: Command): void {
     })
     .addHelpText(
       "after",
-      "\nExamples:\n  $ source <(claude-use completion bash)   # in ~/.bashrc\n  $ source <(claude-use completion zsh)    # in ~/.zshrc, after compinit\n  $ claude-use completion fish | source    # in ~/.config/fish/config.fish",
+      "\nExamples:\n  $ source <(agent-shim completion bash)   # in ~/.bashrc\n  $ source <(agent-shim completion zsh)    # in ~/.zshrc, after compinit\n  $ agent-shim completion fish | source    # in ~/.config/fish/config.fish",
     );
 }

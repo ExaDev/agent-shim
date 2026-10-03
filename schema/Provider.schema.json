@@ -1,5 +1,5 @@
 {
-  "$id": "https://github.com/ExaDev/claude-use/schema/Provider.schema.json",
+  "$id": "https://github.com/ExaDev/agent-shim/schema/Provider.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "oneOf": [
     {

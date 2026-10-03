@@ -62,22 +62,22 @@ describe("parseBool", () => {
 
 describe("parseEnvBool", () => {
   it("reads unset and empty as not given", () => {
-    expect(parseEnvBool("CLAUDE_USE_HEADROOM", undefined)).toBeUndefined();
-    expect(parseEnvBool("CLAUDE_USE_HEADROOM", "")).toBeUndefined();
+    expect(parseEnvBool("AGENT_SHIM_HEADROOM", undefined)).toBeUndefined();
+    expect(parseEnvBool("AGENT_SHIM_HEADROOM", "")).toBeUndefined();
   });
 
   it("uses the same vocabulary as a flag value", () => {
-    expect(parseEnvBool("CLAUDE_USE_HEADROOM", "true")).toBe(true);
-    expect(parseEnvBool("CLAUDE_USE_HEADROOM", "1")).toBe(true);
-    expect(parseEnvBool("CLAUDE_USE_HEADROOM", "false")).toBe(false);
-    expect(parseEnvBool("CLAUDE_USE_HEADROOM", "0")).toBe(false);
+    expect(parseEnvBool("AGENT_SHIM_HEADROOM", "true")).toBe(true);
+    expect(parseEnvBool("AGENT_SHIM_HEADROOM", "1")).toBe(true);
+    expect(parseEnvBool("AGENT_SHIM_HEADROOM", "false")).toBe(false);
+    expect(parseEnvBool("AGENT_SHIM_HEADROOM", "0")).toBe(false);
   });
 
   it("raises a usage error naming the variable for anything else, rather than reading it as false", () => {
-    expect(() => parseEnvBool("CLAUDE_USE_HEADROOM", "yes")).toThrow(InvalidEnvBoolError);
-    expect(() => parseEnvBool("CLAUDE_USE_HEADROOM", "yes")).toThrow(/CLAUDE_USE_HEADROOM/);
+    expect(() => parseEnvBool("AGENT_SHIM_HEADROOM", "yes")).toThrow(InvalidEnvBoolError);
+    expect(() => parseEnvBool("AGENT_SHIM_HEADROOM", "yes")).toThrow(/AGENT_SHIM_HEADROOM/);
     try {
-      parseEnvBool("CLAUDE_USE_HEADROOM", "on");
+      parseEnvBool("AGENT_SHIM_HEADROOM", "on");
     } catch (error) {
       expect(error).toBeInstanceOf(InvalidEnvBoolError);
       expect(error instanceof InvalidEnvBoolError ? error.exitCode : undefined).toBe(EXIT_USAGE);

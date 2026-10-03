@@ -57,7 +57,7 @@ describe("assembleCascade layer ordering", () => {
 
   it("puts the global config first, the base profile chain next, then directory levels, then CLI overrides", () => {
     const levels: DirectoryLevelSources[] = [
-      { dir: `${FAKE_HOME}/work`, portable: { config: { categories: { history: true } }, filepath: `${FAKE_HOME}/work/.claude-use.json` } },
+      { dir: `${FAKE_HOME}/work`, portable: { config: { categories: { history: true } }, filepath: `${FAKE_HOME}/work/.agent-shim.json` } },
     ];
     const assembled = assembleCascade({
       home: FAKE_HOME,

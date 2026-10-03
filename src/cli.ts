@@ -3,6 +3,7 @@ import path from "node:path";
 import { reportFatalError } from "./cliReport";
 import type { CommandDeps } from "./cli/commandDeps";
 import { isInvokedAsClaude } from "./claudeShim";
+import { aliasLegacyEnv } from "./legacy";
 import { realPromptsPort } from "./configure";
 import { tryRunAtIdentityShortcut } from "./identityManager";
 import { resolveLayoutPaths } from "./paths";
@@ -10,16 +11,19 @@ import { buildProgram } from "./program";
 import { runClaude } from "./runClaude";
 
 /**
- * The single entrypoint backing both the `claude` and `claude-use` binaries: one compiled artifact, dispatching on which name it was invoked as (`path.basename(process.argv[1])`).
+ * The single entrypoint backing both the `claude` and `agent-shim` binaries: one compiled artifact, dispatching on which name it was invoked as (`path.basename(process.argv[1])`). The former name, `claude-use`, is a second name for `agent-shim` and reaches the same program.
+ *
+ * Before anything reads the environment, every `CLAUDE_USE_*` variable is aliased to its `AGENT_SHIM_*` name (see `src/legacy.ts`).
  *
  * `claude` runs the launcher (`src/runClaude.ts`), which resolves the identity, loads and assembles the cascade for the current directory, resyncs that identity's symlink farm to match, and spawns the real `claude` binary with `CLAUDE_CONFIG_DIR` pointed at the farm.
  *
- * `claude-use` runs the Commander tree `buildProgram` (`src/program.ts`) constructs, whose `run` subcommand reaches the exact same launcher pipeline, just fed a different argv source, so a `claude`-named file on `PATH` is never required. `shim enable`/`shim disable` is the one explicit, separate action that creates or removes that `claude`-named file at all; nothing does so automatically.
+ * `agent-shim` runs the Commander tree `buildProgram` (`src/program.ts`) constructs, whose `run` subcommand reaches the exact same launcher pipeline, just fed a different argv source, so a `claude`-named file on `PATH` is never required. `shim enable`/`shim disable` is the one explicit, separate action that creates or removes that `claude`-named file at all; nothing does so automatically.
  *
  * `parseAsync`, not `parse`: some Commander actions are `async` and return a promise Commander never awaits under `parse`, so a rejection there would surface as an unhandled promise rejection rather than reaching `reportFatalError`.
  */
 async function main(): Promise<void> {
-  const invokedName = path.basename(process.argv[1] ?? "claude-use");
+  aliasLegacyEnv(process.env);
+  const invokedName = path.basename(process.argv[1] ?? "agent-shim");
   if (isInvokedAsClaude(invokedName)) {
     await runClaude();
     return;

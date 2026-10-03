@@ -1,16 +1,16 @@
-# claude-use
+# agent-shim
 
-[![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white)](https://github.com/ExaDev/claude-use) [![npm](https://img.shields.io/badge/npm-CB3837?logo=npm&logoColor=white)](https://www.npmjs.com/package/claude-use) [![Release](https://img.shields.io/github/v/release/ExaDev/claude-use)](https://github.com/ExaDev/claude-use/releases/latest) [![CI](https://img.shields.io/github/actions/workflow/status/ExaDev/claude-use/ci.yml?branch=main)](https://github.com/ExaDev/claude-use/actions) [![Homebrew](https://img.shields.io/badge/Homebrew-FBB040?logo=homebrew&logoColor=white)](https://github.com/ExaDev/homebrew-claude-use) [![Scoop](https://img.shields.io/badge/Scoop-205081?logo=data:image/svg%2Bxml%3Bbase64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTExIDJoMnY5aC0yek0xMiAyMmE3IDcgMCAwIDAgNy03SDVhNyA3IDAgMCAwIDcgN3oiIGZpbGw9IiNmZmYiLz48L3N2Zz4K&logoColor=white)](https://github.com/ExaDev/scoop-claude-use)
+[![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white)](https://github.com/ExaDev/agent-shim) [![npm](https://img.shields.io/badge/npm-CB3837?logo=npm&logoColor=white)](https://www.npmjs.com/package/agent-shim) [![Release](https://img.shields.io/github/v/release/ExaDev/agent-shim)](https://github.com/ExaDev/agent-shim/releases/latest) [![CI](https://img.shields.io/github/actions/workflow/status/ExaDev/agent-shim/ci.yml?branch=main)](https://github.com/ExaDev/agent-shim/actions) [![Homebrew](https://img.shields.io/badge/Homebrew-FBB040?logo=homebrew&logoColor=white)](https://github.com/ExaDev/homebrew-agent-shim) [![Scoop](https://img.shields.io/badge/Scoop-205081?logo=data:image/svg%2Bxml%3Bbase64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTExIDJoMnY5aC0yek0xMiAyMmE3IDcgMCAwIDAgNy03SDVhNyA3IDAgMCAwIDcgN3oiIGZpbGw9IiNmZmYiLz48L3N2Zz4K&logoColor=white)](https://github.com/ExaDev/scoop-agent-shim)
 
 A profile manager and launcher for [Claude Code](https://claude.com/claude-code) that lets one person run multiple logins from one machine while controlling — precisely, and per working directory — what gets shared between them.
 
-[![npm downloads chart, log scale](https://shieldcn.dev/chart/npm/claude-use.svg?bg=transparent&logo=false&yScale=log)](https://www.npmjs.com/package/claude-use)
+[![npm downloads chart, log scale](https://shieldcn.dev/chart/npm/agent-shim.svg?bg=transparent&logo=false&yScale=log)](https://www.npmjs.com/package/agent-shim)
 
 ## The problem
 
 Claude Code keeps everything it knows in one place: `~/.claude`. Skills, memory, conventions, but also every conversation transcript, session file, and task list you've ever produced, across every project you've ever touched. If you want a second login (a personal account alongside a work one, say) or you want to keep one client's work cleanly separated from another's, there's no built-in way to say "share the skills and conventions, but not the history" — it's all one directory, all or nothing.
 
-`claude-use` solves this with two independent things:
+`agent-shim` solves this with two independent things:
 
 - **An identity** is a login. It's the thing that owns credentials and daemon state, and it's what you switch between with `claude @work` or `claude @personal`.
 - **A configuration profile** is a reusable, named bundle of sharing rules — what's visible, what isn't. It exists independently of any identity, and which one applies can depend entirely on which directory you're working in.
@@ -20,32 +20,43 @@ Keeping these separate matters because they answer different questions. "Which l
 ## Install
 
 ```bash
-curl -fsSL https://github.com/ExaDev/claude-use/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/ExaDev/agent-shim/releases/latest/download/install.sh | sh
 ```
 
-This installs `claude-use` alone into `~/.local/bin`; your existing `claude` command is left untouched. `claude-use run [args...]` reaches the same identity-resolve, farm-resync, spawn pipeline a `claude`-named binary would, so every feature already works with no further setup. Run `claude-use shim enable` once for the shorter `claude @<name>` form (`shim disable` reverses it).
+This installs `agent-shim` alone into `~/.local/bin`; your existing `claude` command is left untouched. `agent-shim run [args...]` reaches the same identity-resolve, farm-resync, spawn pipeline a `claude`-named binary would, so every feature already works with no further setup. Run `agent-shim shim enable` once for the shorter `claude @<name>` form (`shim disable` reverses it).
 
-Also available: npm (`npm install -g claude-use`, needs Node 22.18 or later, or 24 and above), Homebrew (`brew install ExaDev/claude-use/claude-use`), Scoop on Windows, a scoped GitHub Packages alias, and installing straight from the git repository with no registry at all. Each channel's exact commands, the platform support matrix, and the one architecture (macOS x64) that needs a different install path are in [docs/installation.md](docs/installation.md).
+Also available: npm (`npm install -g agent-shim`, needs Node 22.18 or later, or 24 and above), Homebrew (`brew install ExaDev/agent-shim/agent-shim`), Scoop on Windows, a scoped GitHub Packages alias, and installing straight from the git repository with no registry at all. Each channel's exact commands, the platform support matrix, and the one architecture (macOS x64) that needs a different install path are in [docs/installation.md](docs/installation.md).
+
+## Renamed from claude-use
+
+agent-shim was called `claude-use` until it was renamed. Everything written for the old name keeps working, and `agent-shim doctor` lists what still uses it:
+
+- The `claude-use` command is installed beside `agent-shim` by every channel and runs the same program.
+- `CLAUDE_USE_*` environment variables are read wherever `AGENT_SHIM_*` is; the current name wins when both are set.
+- An existing `~/.claude-use` is used in place when there is no `~/.agent-shim`. Do not move it: macOS Claude Code keys each identity's Keychain login on the exact path of its configuration directory (`<root>/identities/<name>`), so relocating the root signs every identity out. A fresh installation uses `~/.agent-shim`.
+- A committed `.claude-use.json` or `.claude-use.local.json` is read when the directory has no `.agent-shim.json` or `.agent-shim.local.json`; `configure` keeps writing into the legacy local file while it is the only one.
+- A farm manifest written under the old name is read, and replaced by the current one on the next resync.
+- npm: install `agent-shim`; the `claude-use` package is deprecated in its favour. Homebrew moves an installed `claude-use` formula to `agent-shim` on upgrade.
 
 ## Quick start
 
 ```bash
-claude-use identity add personal      # create your first identity (a fresh login)
-claude-use run @personal              # log in and start using it
+agent-shim identity add personal      # create your first identity (a fresh login)
+agent-shim run @personal              # log in and start using it
 ```
 
-Want the shorter `claude @personal` instead? Run `claude-use shim enable` once — see [Install](#install).
+Want the shorter `claude @personal` instead? Run `agent-shim shim enable` once — see [Install](#install).
 
 That's it — with no further configuration, everything in `~/.claude` that isn't credentials or daemon runtime is classified into categories (see below) and shared according to sensible defaults. Add a second identity, add configuration profiles, and add directory rules only once you actually need more control than that.
 
 ## Concepts
 
-`claude-use` separates two things most ad hoc multi-account setups conflate:
+`agent-shim` separates two things most ad hoc multi-account setups conflate:
 
-- **An identity** is a login: the thing that owns credentials and daemon state, selected with `claude-use run @<name>` or, once `claude-use shim enable` has run, `claude @<name>`.
-- **A configuration profile** is a reusable, named bundle of sharing rules, independent of any identity, resolved per working directory via directory rules or a committed `.claude-use.json`.
+- **An identity** is a login: the thing that owns credentials and daemon state, selected with `agent-shim run @<name>` or, once `agent-shim shim enable` has run, `claude @<name>`.
+- **A configuration profile** is a reusable, named bundle of sharing rules, independent of any identity, resolved per working directory via directory rules or a committed `.agent-shim.json`.
 
-A third, optional thing sits on top of identities: **a pool** is a named list of them. Select `pool:<name>` where an identity name goes (`claude @pool:subs`) and claude-use picks the member whose unused quota is closest to expiring, skipping any that are refused right now, using the usage it already records. See [docs/configuration-model.md](docs/configuration-model.md#pools-picking-an-account-at-launch).
+A third, optional thing sits on top of identities: **a pool** is a named list of them. Select `pool:<name>` where an identity name goes (`claude @pool:subs`) and agent-shim picks the member whose unused quota is closest to expiring, skipping any that are refused right now, using the usage it already records. See [docs/configuration-model.md](docs/configuration-model.md#pools-picking-an-account-at-launch).
 
 Every top-level entry in `~/.claude` is classified into one of five categories, shipped as a default map (`config/categories.default.json`):
 
@@ -57,9 +68,9 @@ Every top-level entry in `~/.claude` is classified into one of five categories, 
 | `knowledge` | Yes | `skills`, `agents`, `rules`, `memory`, `commands`, `plugins`, `hooks`, `AGENTS.md`, `CLAUDE.md`, `README.md` |
 | `settings` | Yes | `settings.json`, `settings.local.json` |
 
-Sharing composes through a cascade (shipped defaults, then a user-global override, then the active configuration profile, then directory rules for `$PWD`, shallowest to deepest); a specific path override always outranks a category default regardless of which layer set it. A committed `.claude-use.json` at a project's root makes this portable: anyone who clones the repo and runs `claude` inside it gets the same isolation rules with no local setup.
+Sharing composes through a cascade (shipped defaults, then a user-global override, then the active configuration profile, then directory rules for `$PWD`, shallowest to deepest); a specific path override always outranks a category default regardless of which layer set it. A committed `.agent-shim.json` at a project's root makes this portable: anyone who clones the repo and runs `claude` inside it gets the same isolation rules with no local setup.
 
-`claude` refuses to launch while `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` or a `CLAUDE_CODE_USE_BEDROCK`/`VERTEX`/`FOUNDRY` variable is set in the environment, because those outrank every identity's stored credential and would make all identities authenticate as the same account. Opt in deliberately with `CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL=1` for one launch or `claude-use identity set <name> --allow-ambient-credential`.
+`claude` refuses to launch while `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` or a `CLAUDE_CODE_USE_BEDROCK`/`VERTEX`/`FOUNDRY` variable is set in the environment, because those outrank every identity's stored credential and would make all identities authenticate as the same account. Opt in deliberately with `AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL=1` for one launch or `agent-shim identity set <name> --allow-ambient-credential`.
 
 Providers and identities take their token from one `credential` block: an ordered list of sources (`env`, `file`, `command`, and the `op` and `keychain` presets, plus a `literal` placeholder for a local proxy), tried in turn, and a target (`bearer`, `apiKey`, or `oauthToken` for an identity). The token reaches the child's environment only; `check`, `doctor` and `--json` report the source kind and target, never the value.
 
@@ -68,79 +79,79 @@ The full mechanics, including the credential block, the merge algorithm, conditi
 ## CLI reference
 
 ```
-claude-use <noun> <verb> [name] [options]      # nouns: identity, profile, pool, provider, rule
+agent-shim <noun> <verb> [name] [options]      # nouns: identity, profile, pool, provider, rule
 
-claude-use identity add <name>
-claude-use identity list [--json]
-claude-use identity show <name> [--json]
-claude-use identity set <name> [--default-profile <profile> | --no-default-profile] [--[no-]allow-ambient-credential]
-claude-use identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential]
-claude-use identity remove <name> [--yes]
-claude-use identity use <name>
-claude-use @<name>                          # shorthand for `identity use <name>`
-claude-use identity resolve-conflicts <name>  # interactively resolve a retained superseded farm's conflicts
+agent-shim identity add <name>
+agent-shim identity list [--json]
+agent-shim identity show <name> [--json]
+agent-shim identity set <name> [--default-profile <profile> | --no-default-profile] [--[no-]allow-ambient-credential]
+agent-shim identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential]
+agent-shim identity remove <name> [--yes]
+agent-shim identity use <name>
+agent-shim @<name>                          # shorthand for `identity use <name>`
+agent-shim identity resolve-conflicts <name>  # interactively resolve a retained superseded farm's conflicts
 
-claude-use profile add [name] [--extends <profile>]... [--description <text>]   # interactive with no options on a terminal
-claude-use profile set <name> [--category <category>=<bool>]... [--entry <category>/<path>=<bool>]...
-claude-use profile set <name> [--extends <profile>]... [--no-extends] [--description <text> | --no-description]
-claude-use profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage]
-claude-use profile set <name> [--launch-provider <provider> | --no-launch-provider]
-claude-use profile list [--json]
-claude-use profile show <name> [--json]
-claude-use profile remove <name> [--yes]
-claude-use profile use <name>               # the global default configuration profile
+agent-shim profile add [name] [--extends <profile>]... [--description <text>]   # interactive with no options on a terminal
+agent-shim profile set <name> [--category <category>=<bool>]... [--entry <category>/<path>=<bool>]...
+agent-shim profile set <name> [--extends <profile>]... [--no-extends] [--description <text> | --no-description]
+agent-shim profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage]
+agent-shim profile set <name> [--launch-provider <provider> | --no-launch-provider]
+agent-shim profile list [--json]
+agent-shim profile show <name> [--json]
+agent-shim profile remove <name> [--yes]
+agent-shim profile use <name>               # the global default configuration profile
 
-claude-use pool add <name> --identity <identity>...
-claude-use pool set <name> --identity <identity>...
-claude-use pool list [--json]
-claude-use pool show <name> [--json]
-claude-use pool remove <name> [--yes]
-claude-use pool use <name>
-claude-use pool pick <name> [--json]
+agent-shim pool add <name> --identity <identity>...
+agent-shim pool set <name> --identity <identity>...
+agent-shim pool list [--json]
+agent-shim pool show <name> [--json]
+agent-shim pool remove <name> [--yes]
+agent-shim pool use <name>
+agent-shim pool pick <name> [--json]
 
-claude-use provider add <name> --display-name <name> (--base-url <url> | --kind codex) (--credential <source>)... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]...
+agent-shim provider add <name> --display-name <name> (--base-url <url> | --kind codex) (--credential <source>)... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]...
                                               [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>]
-claude-use provider set <name> [--display-name <name>] ([--base-url <url>] | --kind codex) [--credential <source>]... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]...
+agent-shim provider set <name> [--display-name <name>] ([--base-url <url>] | --kind codex) [--credential <source>]... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]...
                                               [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>]
-claude-use provider list [--json]
-claude-use provider show <name> [--json]
-claude-use provider remove <name> [--yes]
+agent-shim provider list [--json]
+agent-shim provider show <name> [--json]
+agent-shim provider remove <name> [--yes]
 
-claude-use rule add <path> [--config-profile <profile>] [--identity <identity>]
-claude-use rule set <path> [--config-profile <profile> | --no-config-profile] [--identity <identity> | --no-identity]
-claude-use rule list [--json]
-claude-use rule show <path> [--json]
-claude-use rule remove <path> [--yes]
+agent-shim rule add <path> [--config-profile <profile>] [--identity <identity>]
+agent-shim rule set <path> [--config-profile <profile> | --no-config-profile] [--identity <identity> | --no-identity]
+agent-shim rule list [--json]
+agent-shim rule show <path> [--json]
+agent-shim rule remove <path> [--yes]
 
-claude-use configure [path] [--identity <identity>]
-claude-use check [path] [--identity <identity>] [--json] [--strict]
-claude-use doctor [--json]
-claude-use headroom status [--json]
-claude-use codex status [--json]
-claude-use frontdoor status [--json]
-claude-use usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--json]
-claude-use account show [<identity>] [--refresh] [--json]
-claude-use completion <bash|zsh|fish>
-claude-use shim enable [--dir <path>] [--force]
-claude-use shim disable [--dir <path>] [--force]
+agent-shim configure [path] [--identity <identity>]
+agent-shim check [path] [--identity <identity>] [--json] [--strict]
+agent-shim doctor [--json]
+agent-shim headroom status [--json]
+agent-shim codex status [--json]
+agent-shim frontdoor status [--json]
+agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--json]
+agent-shim account show [<identity>] [--refresh] [--json]
+agent-shim completion <bash|zsh|fish>
+agent-shim shim enable [--dir <path>] [--force]
+agent-shim shim disable [--dir <path>] [--force]
 
-claude-use run [@<identity>] [launch flags] [claude arguments]
+agent-shim run [@<identity>] [launch flags] [claude arguments]
   # launch flags, recognised only before a `--` terminator:
   #   --identity <name>  --config-profile <name>  --provider <name> | --no-provider
   #   --category <category>=<bool>  --share <category>/<path>  --hide <category>/<path>   (each repeatable)
   #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom  --[no-]track-usage  --[no-]wait
-claude @<identity> ...                      # the same, once `claude-use shim enable` has run
+claude @<identity> ...                      # the same, once `agent-shim shim enable` has run
 ```
 
-Every `list`, `show`, `check`, `doctor` and `headroom status` prints text by default and JSON with `--json`. Prompts appear only when standard input is a terminal; without one, a command that needs input fails with the option that supplies it (a `remove` needs `--yes`). Failures print as `claude-use: <message>` and exit 1, usage errors exit 2, a selected provider or identity whose credential block yields no token exits 64, and `CLAUDE_USE_DEBUG=1` adds stack traces to unexpected errors. `claude-use completion <bash|zsh|fish>` prints a shell completion script.
+Every `list`, `show`, `check`, `doctor` and `headroom status` prints text by default and JSON with `--json`. Prompts appear only when standard input is a terminal; without one, a command that needs input fails with the option that supplies it (a `remove` needs `--yes`). Failures print as `agent-shim: <message>` and exit 1, usage errors exit 2, a selected provider or identity whose credential block yields no token exits 64, and `AGENT_SHIM_DEBUG=1` adds stack traces to unexpected errors. `agent-shim completion <bash|zsh|fish>` prints a shell completion script.
 
-`claude-use check [path]` resolves the full cascade for a directory without touching the farm, and is the primary way to answer "why is X shared or hidden here". `claude-use doctor` audits the whole `~/.claude-use` config graph at once: every identity, profile, `extends` chain, provider (naming the exact replacement for a file still in the format before the credential block) and directory rule, plus whether the right `claude-use` is the one actually on `PATH`.
+`agent-shim check [path]` resolves the full cascade for a directory without touching the farm, and is the primary way to answer "why is X shared or hidden here". `agent-shim doctor` audits the whole `~/.agent-shim` config graph at once: every identity, profile, `extends` chain, provider (naming the exact replacement for a file still in the format before the credential block) and directory rule, plus whether the right `agent-shim` is the one actually on `PATH`.
 
 The full per-setting flag and environment-variable table (global, one-off, and directory-scoped forms of every setting), and the file-precedence rules `configure` uses when writing a toggle, are in [docs/cli-reference.md](docs/cli-reference.md).
 
 ## Architecture
 
-One compiled binary backs both `claude` and `claude-use`; the entrypoint dispatches on `path.basename(process.argv[1])`, so installation just needs two differently-named copies (or hardlinks) of the same executable on `PATH`.
+One compiled binary backs both `claude` and `agent-shim`; the entrypoint dispatches on `path.basename(process.argv[1])`, so installation just needs two differently-named copies (or hardlinks) of the same executable on `PATH`.
 
 ```
 src/
@@ -160,7 +171,7 @@ install.sh                 # downloads, verifies, and installs the latest releas
 
 Every custom error extends `CliError`; `main()`'s top-level catch prints its message alone for an expected failure and a full stack trace for anything else. Config validation is Zod throughout, with `categories` a closed shape and `entries` an open, glob-capable record, since the two fields have opposite key cardinality. The resolver itself is pure: it takes filesystem, git, and environment facts as an injected parameter rather than reading them itself, which is what makes it unit-testable with fakes.
 
-The package also publishes a library surface alongside the binary: `import { resolveDecisions, resyncFarm, startConnectServer, runFrontDoorSupervisor, runSupervisor, detectAmbientCredential } from "claude-use"` (ESM or CJS, with type declarations). It re-exports only the pure, port-injected modules, so another tool can resolve identities, sync a farm, run the front door's CONNECT surface and supervisor and the headroom supervisor, or check the ambient-credential guard in process without the CLI installed. Nothing reachable from it imports `commander` or `@clack/prompts`, and the build fails if that stops being true. Its dependencies stay external, installed through the package's own `dependencies`.
+The package also publishes a library surface alongside the binary: `import { resolveDecisions, resyncFarm, startConnectServer, runFrontDoorSupervisor, runSupervisor, detectAmbientCredential } from "agent-shim"` (ESM or CJS, with type declarations). It re-exports only the pure, port-injected modules, so another tool can resolve identities, sync a farm, run the front door's CONNECT surface and supervisor and the headroom supervisor, or check the ambient-credential guard in process without the CLI installed. Nothing reachable from it imports `commander` or `@clack/prompts`, and the build fails if that stops being true. Its dependencies stay external, installed through the package's own `dependencies`.
 
 The full source layout with per-file responsibilities, the schema design rationale, why config loading uses cosmiconfig's `load()` rather than `search()`, and the resolver's merge and materialisation mechanics are in [docs/architecture.md](docs/architecture.md).
 
@@ -174,7 +185,7 @@ The full CI pipeline (why the six platform builds also run on every PR, the sema
 
 ## Testing
 
-The resolver's cascade and materialisation logic is pure, taking filesystem, git, and environment facts as an injected parameter, so it is unit-tested extensively with fakes rather than a real filesystem, `git`, or `~/.claude-use`. `launcher.ts`, `check.ts`, and `doctor.ts` each get their own coverage for the real side effects the resolver's purity does not reach: symlink and materialised-directory writes, spawning the real `claude` binary, and the ambient-credential guard.
+The resolver's cascade and materialisation logic is pure, taking filesystem, git, and environment facts as an injected parameter, so it is unit-tested extensively with fakes rather than a real filesystem, `git`, or `~/.agent-shim`. `launcher.ts`, `check.ts`, and `doctor.ts` each get their own coverage for the real side effects the resolver's purity does not reach: symlink and materialised-directory writes, spawning the real `claude` binary, and the ambient-credential guard.
 
 The full list of test cases, including the two-phase merge algorithm, conditional entries, farm reconciliation, and every command's own edge cases, is in [docs/testing.md](docs/testing.md).
 
@@ -189,7 +200,7 @@ pnpm build       # bundle src/cli.ts with esbuild, then node --build-sea (needs 
 pnpm schema      # regenerate schema/*.schema.json from src/config/schema.ts; CI fails if this drifts from what's committed
 ```
 
-Run a single test file directly with `pnpm exec vitest run <path>`. Tests never touch a real identity: `vitest.config.ts` sets `CLAUDE_USE_HOME` to a throwaway directory, and a setup file refuses to run at all if that variable is unset or resolves to the real `~/.claude-use`.
+Run a single test file directly with `pnpm exec vitest run <path>`. Tests never touch a real identity: `vitest.config.ts` sets `AGENT_SHIM_HOME` to a throwaway directory, and a setup file refuses to run at all if that variable is unset or resolves to the real `~/.agent-shim`.
 
 Commits are gated by Husky hooks: `commit-msg` enforces conventional-commit format, `pre-commit` runs `eslint --fix` on staged files and rejects merge/squash commits and mass deletions on `main`, and `pre-push` runs the full test suite and also rejects a push that would delete more than 100 files on the remote.
 
@@ -208,7 +219,7 @@ Issues and pull requests are welcome. Please keep the tool itself free of assump
 
 ## References
 
-- [docs/configuration-model.md](docs/configuration-model.md): identities, configuration profiles, category-based sharing, the cascade merge algorithm, directory rules, conditional matching, portable `.claude-use.json`, `~/.claude/projects/` pattern matching, providers, headroom routing, and launch flags.
+- [docs/configuration-model.md](docs/configuration-model.md): identities, configuration profiles, category-based sharing, the cascade merge algorithm, directory rules, conditional matching, portable `.agent-shim.json`, `~/.claude/projects/` pattern matching, providers, headroom routing, and launch flags.
 - [docs/cli-reference.md](docs/cli-reference.md): the full flag and environment-variable table, `configure`'s file-write precedence, and the `check`/`doctor` debugging commands.
 - [docs/examples.md](docs/examples.md): worked configuration examples and a permutation reference.
 - [docs/architecture.md](docs/architecture.md): the source layout file by file, error reporting design, schema rationale, and resolver mechanics.

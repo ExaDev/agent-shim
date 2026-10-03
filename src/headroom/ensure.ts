@@ -61,7 +61,7 @@ export function ensureHeadroom(params: {
       }
       if (state.lastError !== undefined) {
         throw new HeadroomStartError(
-          `claude-use: the headroom daemon reported a fatal error and is not serving: ${state.lastError} ` +
+          `agent-shim: the headroom daemon reported a fatal error and is not serving: ${state.lastError} ` +
             `(daemon log: ${paths.headroomLogPath})`,
         );
       }
@@ -87,7 +87,7 @@ export function ensureHeadroom(params: {
     if (ports.now() >= deadline) {
       const lastError = state?.lastError;
       throw new HeadroomStartError(
-        `claude-use: the headroom daemon did not become ready within ${String(HEADROOM_START_TIMEOUT_MS)}ms` +
+        `agent-shim: the headroom daemon did not become ready within ${String(HEADROOM_START_TIMEOUT_MS)}ms` +
           (lastError === undefined ? "" : ` (last error: ${lastError})`) +
             `. Daemon log: ${paths.headroomLogPath}`,
       );

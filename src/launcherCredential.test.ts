@@ -34,13 +34,13 @@ describe("runLauncher identity credential", () => {
     expect(credentials.runCommand.mock.calls[0]?.[0]).toEqual(["op", "read", "op://vault/claude-work/token"]);
     const env = spawnedEnv(spawn);
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe(WORK_TOKEN);
-    expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.claude-use/identities/work`);
+    expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.agent-shim/identities/work`);
     expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["--print"]);
     expect([...log.infos, ...log.warns, ...log.errors].join("\n")).not.toContain(WORK_TOKEN);
     expect(log.infos.join("\n")).toContain("identity credential oauthToken from op op://vault/claude-work/token");
   });
 
-  it("does not trip the ambient-credential guard on the same token a claude-use launch of this identity left in the environment", () => {
+  it("does not trip the ambient-credential guard on the same token a agent-shim launch of this identity left in the environment", () => {
     const spawn = fakeSpawn();
 
     const code = runAndCaptureExit({
@@ -110,7 +110,7 @@ describe("runLauncher identity credential", () => {
     expect(code).toBe(CREDENTIAL_UNAVAILABLE_EXIT);
     expect(spawn.spawnSync).not.toHaveBeenCalled();
     expect(log.errors).toEqual([
-      "claude-use: identity work has no usable credential: op op://vault/claude-work/token needs a person to approve it, but there is no terminal or desktop session",
+      "agent-shim: identity work has no usable credential: op op://vault/claude-work/token needs a person to approve it, but there is no terminal or desktop session",
     ]);
   });
 
@@ -122,7 +122,7 @@ describe("runLauncher identity credential", () => {
       paths,
       fs: fakeFs({
         ...workWithCredential,
-        [`${FAKE_HOME}/.claude-use/providers/z.json`]: {
+        [`${FAKE_HOME}/.agent-shim/providers/z.json`]: {
           displayName: "GLM",
           baseUrl: "https://api.z.ai/api/anthropic",
           credential: { sources: [{ env: "Z_API_TOKEN" }] },

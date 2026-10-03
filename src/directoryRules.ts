@@ -28,17 +28,17 @@ export class DirectoryRuleMissingTargetError extends CliError {
 /** Raised by `addDirectoryRule` when a rule for the exact path already exists: `rule add` creates, `rule set` updates. */
 export class DirectoryRuleAlreadyExistsError extends CliError {
   constructor(readonly rulePath: string) {
-    super(`A directory rule for path "${rulePath}" already exists. Use \`claude-use rule set\` to change it.`);
+    super(`A directory rule for path "${rulePath}" already exists. Use \`agent-shim rule set\` to change it.`);
     this.name = "DirectoryRuleAlreadyExistsError";
   }
 }
 
-/** Reads `~/.claude-use/directory-rules.json`, or an empty rule set when the file does not exist yet. */
+/** Reads `~/.agent-shim/directory-rules.json`, or an empty rule set when the file does not exist yet. */
 export function readDirectoryRules(paths: LayoutPaths): DirectoryRules {
   return readJson(paths.directoryRulesFile, DirectoryRulesSchema) ?? { rules: [] };
 }
 
-/** Validates and writes the whole `~/.claude-use/directory-rules.json` file. Exported so `src/configure.ts` can update a single rule's `categories`/`entries` in place without duplicating this validate-then-write step. Throws `ConfigValidationError` when `rules` fails `DirectoryRulesSchema`, rather than letting the underlying `ZodError` escape as an unhandled crash. */
+/** Validates and writes the whole `~/.agent-shim/directory-rules.json` file. Exported so `src/configure.ts` can update a single rule's `categories`/`entries` in place without duplicating this validate-then-write step. Throws `ConfigValidationError` when `rules` fails `DirectoryRulesSchema`, rather than letting the underlying `ZodError` escape as an unhandled crash. */
 export function writeDirectoryRules(paths: LayoutPaths, rules: DirectoryRules): void {
   const parsed = DirectoryRulesSchema.safeParse(rules);
   if (!parsed.success) {
@@ -80,7 +80,7 @@ export interface UpdateDirectoryRuleOptions {
   readonly identity?: string | false;
 }
 
-/** Whether `rule` still does anything: pins a profile or identity, or carries its own categories, entries or launch settings (which `claude-use configure` writes). */
+/** Whether `rule` still does anything: pins a profile or identity, or carries its own categories, entries or launch settings (which `agent-shim configure` writes). */
 function ruleHasEffect(rule: DirectoryRule): boolean {
   return (
     rule.configProfile !== undefined ||
@@ -154,14 +154,14 @@ async function checkRuleTargets(deps: CommandDeps, options: Readonly<{ configPro
   }
 }
 
-/** Registers the `claude-use rule` subcommand tree onto `program`. */
+/** Registers the `agent-shim rule` subcommand tree onto `program`. */
 export function registerRuleCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
   const rule = withExamples(
     program
       .command("rule")
       .description("Manage directory rules: pin an identity or configuration profile to every launch under a path."),
-    ["claude-use rule add ~/work/acme --config-profile client-acme", "claude-use rule list"],
+    ["agent-shim rule add ~/work/acme --config-profile client-acme", "agent-shim rule list"],
   );
 
   withExamples(
@@ -175,7 +175,7 @@ export function registerRuleCommand(program: Command, deps: CommandDeps): void {
         addDirectoryRule(paths, rulePath, options);
         console.log(`Added directory rule for "${rulePath}".`);
       }),
-    ["claude-use rule add ~/work/acme --config-profile client-acme", "claude-use rule add ~/personal --identity personal"],
+    ["agent-shim rule add ~/work/acme --config-profile client-acme", "agent-shim rule add ~/personal --identity personal"],
   );
 
   withExamples(
@@ -194,7 +194,7 @@ export function registerRuleCommand(program: Command, deps: CommandDeps): void {
         updateDirectoryRule(paths, rulePath, options);
         console.log(`Updated directory rule for "${rulePath}".`);
       }),
-    ["claude-use rule set ~/work/acme --identity work", "claude-use rule set ~/work/acme --no-config-profile"],
+    ["agent-shim rule set ~/work/acme --identity work", "agent-shim rule set ~/work/acme --no-config-profile"],
   );
 
   withExamples(
@@ -209,14 +209,14 @@ export function registerRuleCommand(program: Command, deps: CommandDeps): void {
           return;
         }
         if (entries.length === 0) {
-          console.log("No directory rules yet. Run `claude-use rule add <path>` to create one.");
+          console.log("No directory rules yet. Run `agent-shim rule add <path>` to create one.");
           return;
         }
         for (const entry of entries) {
           console.log(`  ${entry.path} (${describeRule(entry)})`);
         }
       }),
-    ["claude-use rule list", "claude-use rule list --json"],
+    ["agent-shim rule list", "agent-shim rule list --json"],
   );
 
   withExamples(
@@ -236,7 +236,7 @@ export function registerRuleCommand(program: Command, deps: CommandDeps): void {
         console.log(`Directory rule: ${found.path}`);
         console.log(`Settings: ${describeRule(found)}`);
       }),
-    ["claude-use rule show ~/work/acme"],
+    ["agent-shim rule show ~/work/acme"],
   );
 
   withExamples(
@@ -252,6 +252,6 @@ export function registerRuleCommand(program: Command, deps: CommandDeps): void {
         removeDirectoryRule(paths, rulePath);
         console.log(`Removed directory rule for "${rulePath}".`);
       }),
-    ["claude-use rule remove ~/work/acme --yes"],
+    ["agent-shim rule remove ~/work/acme --yes"],
   );
 }

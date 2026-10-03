@@ -239,7 +239,7 @@ export async function runSupervisor(
     ports.isRunning(previousState.supervisorPid)
   ) {
     // Another live supervisor already keeps headroom up for every launch: a second daemon would only split the sessions, and "taking over" the state file would repoint new launches while the first supervisor keeps serving (and later rewriting) its own.
-    ports.log(`claude-use headroom supervisor ${String(ports.ownPid)}: supervisor ${String(previousState.supervisorPid)} already owns the daemon; exiting`);
+    ports.log(`agent-shim headroom supervisor ${String(ports.ownPid)}: supervisor ${String(previousState.supervisorPid)} already owns the daemon; exiting`);
     return 0;
   }
   let installedSource = previousState?.installedSource;
@@ -272,7 +272,7 @@ export async function runSupervisor(
     if (writeOwnState({ lastError: message, ...sticky() })) {
       fs.removeRecursive(paths.headroomLockFile);
     }
-    ports.log(`claude-use headroom supervisor: ${message}`);
+    ports.log(`agent-shim headroom supervisor: ${message}`);
     return 1;
   };
 
@@ -290,7 +290,7 @@ export async function runSupervisor(
       installedSource = config.source;
       return true;
     }
-    ports.log(`claude-use headroom supervisor: installing headroom from ${config.source}`);
+    ports.log(`agent-shim headroom supervisor: installing headroom from ${config.source}`);
     const result = ports.install(config.source);
     if (!result.ok) {
       return false;
@@ -306,12 +306,12 @@ export async function runSupervisor(
 
   // Fresh ownership: whatever came before, this supervisor is now the one keeping headroom alive. The sticky address is carried over so a new generation starts where the last one served.
   writeOwnState({ supervisorPid: ports.ownPid, version, installedSource, ...sticky() });
-  ports.log(`claude-use headroom supervisor ${String(ports.ownPid)}: managing headroom on allowlist [${allowlistOf(ports).join(", ")}]`);
+  ports.log(`agent-shim headroom supervisor ${String(ports.ownPid)}: managing headroom on allowlist [${allowlistOf(ports).join(", ")}]`);
 
   const orphanPid = previousState?.headroomPid;
   if (orphanPid !== undefined && ports.isRunning(orphanPid)) {
     // A predecessor's daemon that outlived it (its supervisor died by a signal nothing could intercept, say) would keep squatting on its port forever: nothing supervises it, nothing idles it out. Take it over before starting its own.
-    ports.log(`claude-use headroom supervisor: stopping daemon pid ${String(orphanPid)} left behind by the previous supervisor`);
+    ports.log(`agent-shim headroom supervisor: stopping daemon pid ${String(orphanPid)} left behind by the previous supervisor`);
     ports.stopProcess(orphanPid);
   }
 
@@ -336,14 +336,14 @@ export async function runSupervisor(
     pruneDeadSessions(fs, paths.headroomSessionsDir, ports.isRunning);
     const ownsNow = ownsState();
     if (!ownsNow && !superseded) {
-      ports.log("claude-use headroom supervisor: another supervisor now owns state.json; serving this daemon's own sessions until they end");
+      ports.log("agent-shim headroom supervisor: another supervisor now owns state.json; serving this daemon's own sessions until they end");
     }
     superseded = !ownsNow;
 
     const crashed = headroomPid !== undefined && !ports.isRunning(headroomPid);
     if (headroomPid === undefined || crashed) {
       if (crashed) {
-        ports.log(`claude-use headroom supervisor: headroom pid ${String(headroomPid)} died`);
+        ports.log(`agent-shim headroom supervisor: headroom pid ${String(headroomPid)} died`);
         headroomPid = undefined;
         runningHash = undefined;
         runningSettingsHash = undefined;
@@ -376,7 +376,7 @@ export async function runSupervisor(
         lastPort = port;
         if (previousSticky !== undefined && port !== previousSticky) {
           ports.log(
-            `claude-use headroom supervisor: sticky port ${String(previousSticky)} was occupied; moving to ${String(port)} (sessions launched against the old port are stale until they relaunch)`,
+            `agent-shim headroom supervisor: sticky port ${String(previousSticky)} was occupied; moving to ${String(port)} (sessions launched against the old port are stale until they relaunch)`,
           );
         }
         const recorded = writeOwnState({
@@ -394,12 +394,12 @@ export async function runSupervisor(
           fs.removeRecursive(paths.headroomLockFile);
         }
         idleSince = undefined;
-        ports.log(`claude-use headroom supervisor: headroom pid ${String(pid)} ready on 127.0.0.1:${String(port)}`);
+        ports.log(`agent-shim headroom supervisor: headroom pid ${String(pid)} ready on 127.0.0.1:${String(port)}`);
       } else {
         ports.stopProcess(pid);
         consecutiveFailures += 1;
         ports.log(
-          `claude-use headroom supervisor: headroom did not become ready on port ${String(port)} ` +
+          `agent-shim headroom supervisor: headroom did not become ready on port ${String(port)} ` +
             `(attempt ${String(consecutiveFailures)} of ${String(HEADROOM_START_RETRY_BUDGET)})`,
         );
         await ports.sleep(backoffForAttempt(consecutiveFailures));
@@ -409,7 +409,7 @@ export async function runSupervisor(
       // Running: drift first. A changed allowlist, install spec or setting means the daemon would run differently from what the configuration asks for, but restarting would cut off live sessions, so it waits until none is registered against this supervisor.
       if (runningHash !== allowlistHash || runningSettingsHash !== settingsHash || installedSource !== config.source) {
         if (sessionsForSupervisor(fs, paths.headroomSessionsDir, ports.ownPid).length === 0) {
-          ports.log("claude-use headroom supervisor: configuration drifted and no sessions are live; restarting headroom");
+          ports.log("agent-shim headroom supervisor: configuration drifted and no sessions are live; restarting headroom");
           ports.stopProcess(headroomPid);
           headroomPid = undefined;
           runningHash = undefined;
@@ -424,7 +424,7 @@ export async function runSupervisor(
         const idleMs = ports.now() - idleSince;
         if (idleMs >= config.idleShutdownMinutes * MS_PER_MINUTE) {
           ports.log(
-            `claude-use headroom supervisor: no sessions for ${String(config.idleShutdownMinutes)} minute(s); stopping headroom and exiting`,
+            `agent-shim headroom supervisor: no sessions for ${String(config.idleShutdownMinutes)} minute(s); stopping headroom and exiting`,
           );
           ports.stopProcess(headroomPid);
           // The sticky address survives the shutdown so the next generation starts where this one served. A superseded supervisor leaves the new owner's record alone.

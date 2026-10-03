@@ -163,7 +163,7 @@ describe("serveRouted", () => {
       {
         resolveRoute: async () => await Promise.resolve({ ok: true, route: recordingRoute() }),
         responseObservers: [(event) => { statuses.push(event.status); return undefined; }],
-        admit: () => ({ ok: false, message: "claude-use front door: this request carries no capability from a live claude-use launch" }),
+        admit: () => ({ ok: false, message: "agent-shim front door: this request carries no capability from a live agent-shim launch" }),
         now: () => 0,
         log: () => undefined,
       },

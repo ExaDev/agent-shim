@@ -14,7 +14,7 @@ const DAY_MS = 86_400_000;
 const DAYS_IN_WEEK = 7;
 
 /**
- * How long the usage log keeps records: seven days, the longest quota window any upstream claude-use routes to enforces (Anthropic's subscription `seven_day` window, and the weekly windows z.ai's GLM Coding Plan and MiniMax's Token Plan document). Consumers ask the log how a credential's quota was spent within its current windows; a record older than the longest window can no longer count against any of them. Segments are pruned whole, by day, so the log always covers at least the full window.
+ * How long the usage log keeps records: seven days, the longest quota window any upstream agent-shim routes to enforces (Anthropic's subscription `seven_day` window, and the weekly windows z.ai's GLM Coding Plan and MiniMax's Token Plan document). Consumers ask the log how a credential's quota was spent within its current windows; a record older than the longest window can no longer count against any of them. Segments are pruned whole, by day, so the log always covers at least the full window.
  */
 export const USAGE_RETENTION_MS = DAYS_IN_WEEK * DAY_MS;
 
@@ -89,7 +89,7 @@ export function foldProviderState(current: ProviderUsageState | undefined, recor
 /**
  * The usage store's writer, owned by the front-door process.
  *
- * The log is append-only JSON Lines under `usage/log/`, one segment per writing process per UTC day (`<YYYY-MM-DD>.<pid>.jsonl`). Every segment has exactly one writer, so concurrent writers (two door generations overlapping during a restart) can never interleave within a line, and readers (`claude-use usage`, other tools) need no lock: the only partial line they can meet is a segment's unfinished last one, which they skip. Retention is enforced by pruning whole segments on the first write of each day.
+ * The log is append-only JSON Lines under `usage/log/`, one segment per writing process per UTC day (`<YYYY-MM-DD>.<pid>.jsonl`). Every segment has exactly one writer, so concurrent writers (two door generations overlapping during a restart) can never interleave within a line, and readers (`agent-shim usage`, other tools) need no lock: the only partial line they can meet is a segment's unfinished last one, which they skip. Retention is enforced by pruning whole segments on the first write of each day.
  *
  * Each identity's snapshot (`usage/snapshots/<identity>.json`) is rewritten atomically (a temporary sibling renamed into place) after every record, so a reader always sees a whole snapshot. Two writers racing on one snapshot can each overwrite the other's newest observation for a provider, but never corrupt the file; the next record repairs it, and the log, not the snapshot, is the record of truth. A snapshot that cannot be read (a newer schema, a corrupted file) is replaced with a fresh one, and the replacement is logged.
  *

@@ -31,9 +31,9 @@ export interface ClassificationPattern {
 export interface ClassifyResult {
   /** Every input name mapped to its category, or to null when nothing in either map recognises it. */
   readonly classification: ReadonlyMap<string, CategoryName | null>;
-  /** The input names that nothing recognised, in input order. These are the names `claude-use configure` prompts about. */
+  /** The input names that nothing recognised, in input order. These are the names `agent-shim configure` prompts about. */
   readonly unclassified: readonly string[];
-  /** For each classified name, the pattern that decided it — used by `claude-use check` to explain a classification. */
+  /** For each classified name, the pattern that decided it — used by `agent-shim check` to explain a classification. */
   readonly decidedBy: ReadonlyMap<string, ClassificationPattern>;
 }
 
@@ -85,7 +85,7 @@ export function compileClassificationPatterns(
 /**
  * Ranks two matching classification patterns. Higher wins. The order is exactness first, then source:
  *
- * 1. An exact literal beats a glob, regardless of which map it came from. This is the safe direction — a shipped exact `.credentials.json` (secret) can never be reclassified out from under itself by a broad local glob, while a local *exact* answer still wins over a shipped *glob*, which is the case the local overlay actually exists to serve (`claude-use configure` only ever writes exact names).
+ * 1. An exact literal beats a glob, regardless of which map it came from. This is the safe direction — a shipped exact `.credentials.json` (secret) can never be reclassified out from under itself by a broad local glob, while a local *exact* answer still wins over a shipped *glob*, which is the case the local overlay actually exists to serve (`agent-shim configure` only ever writes exact names).
  * 2. A local overlay pattern beats a shipped default pattern of equal exactness.
  * 3. Longest pattern wins (a longer glob is the more specific one).
  * 4. Later ordinal wins, so the comparison is total and never iteration-order-dependent.
@@ -126,7 +126,7 @@ export function loadClassification(paths: LayoutPaths): LoadedClassification {
 /**
  * Classifies a list of real top-level `~/.claude` entry names against the shipped category map plus an optional local overlay.
  *
- * An unrecognised name maps to `null` rather than being silently assumed safe or silently dropped: the resolver treats it as not-shared and reports it, and `claude-use configure` prompts for an answer that is then written to the local overlay.
+ * An unrecognised name maps to `null` rather than being silently assumed safe or silently dropped: the resolver treats it as not-shared and reports it, and `agent-shim configure` prompts for an answer that is then written to the local overlay.
  */
 export function classifyEntries(
   names: readonly string[],

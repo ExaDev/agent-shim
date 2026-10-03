@@ -5,7 +5,7 @@ import { createFakeFarmFs } from "../test-helpers";
 import { collectHeadroomStatus, formatHeadroomStatus, headroomSpawnEnv } from "./commands";
 import { hashAllowlist, headroomAllowlist, writeHeadroomState, writeSession } from "./state";
 
-const paths = buildLayoutPaths("/home/testuser/.claude-use");
+const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
 const SUPERVISOR_PID = 11;
 const HEADROOM_PID = 12;

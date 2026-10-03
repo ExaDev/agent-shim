@@ -81,7 +81,7 @@ export function flagAmbiguousEncodings(flattened: FlattenedCascade, facts: Entry
   return detectEncodingAmbiguity(fragments, { home: facts.home, existingNames: existingProjectNames(facts) });
 }
 
-/** Renders one entry's resolved decision as a single explanatory line, for `claude-use check`'s printout. */
+/** Renders one entry's resolved decision as a single explanatory line, for `agent-shim check`'s printout. */
 export function formatDecision(decision: Decision): string {
   const status = decision.shared ? "shared" : "hidden";
   let reason: string;
@@ -297,7 +297,7 @@ export interface RunCheckParams {
   readonly provider?: CheckProviderInput;
 }
 
-/** Everything `claude-use check` reports about one directory/identity, without touching the farm or spawning anything. */
+/** Everything `agent-shim check` reports about one directory/identity, without touching the farm or spawning anything. */
 export interface CheckReport {
   readonly identityName?: string;
   readonly identitySource: IdentityDecisionSource;
@@ -314,7 +314,7 @@ export interface CheckReport {
 }
 
 /**
- * Resolves the full cascade for one directory/identity and reports everything `claude-use check` documents: every entry's resolved state and which layer/condition decided it, any ambiguous `history/projects/` encoding in scope, and the three always-on diagnostics (ambient-credential exposure, macOS Keychain service name, settings-secrets exposure).
+ * Resolves the full cascade for one directory/identity and reports everything `agent-shim check` documents: every entry's resolved state and which layer/condition decided it, any ambiguous `history/projects/` encoding in scope, and the three always-on diagnostics (ambient-credential exposure, macOS Keychain service name, settings-secrets exposure).
  *
  * Deliberately reuses the same cascade machinery a real launch uses — `resolveDecisions` and `buildEntryFacts` — rather than reimplementing any part of resolution. The one thing this function never does that a launch does is touch the farm or spawn anything: it only reads the canonical `~/.claude` tree to build the fact manifest resolution needs, and every other input (cascade, classification, settings file contents, the Keychain lookup) is handed in already loaded.
  */
@@ -343,7 +343,7 @@ export function runCheck(params: RunCheckParams): CheckReport {
     env: params.env,
     allowAmbientCredential: params.identity?.allowAmbientCredential ?? false,
     allowAmbientCredentialOverride:
-      parseEnvBool("CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL", params.env.CLAUDE_USE_ALLOW_AMBIENT_CREDENTIAL) === true,
+      parseEnvBool("AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL", params.env.AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL) === true,
     ...(params.identityName === undefined ? {} : { identityName: params.identityName }),
   });
 
@@ -371,7 +371,7 @@ export function runCheck(params: RunCheckParams): CheckReport {
   };
 }
 
-/** Renders a full `CheckReport` as plain text lines, in the order `claude-use check` prints them. */
+/** Renders a full `CheckReport` as plain text lines, in the order `agent-shim check` prints them. */
 export function formatCheckReport(report: CheckReport): string[] {
   const lines: string[] = [];
   lines.push(`Identity: ${report.identityName ?? "(none)"} (${report.identitySource})`);
@@ -511,7 +511,7 @@ function loadCheckProvider(paths: LayoutPaths, name: string): CheckProviderInput
 }
 
 /**
- * Registers `claude-use check [path] [--identity <name>] [--json] [--strict]` onto `program`.
+ * Registers `agent-shim check [path] [--identity <name>] [--json] [--strict]` onto `program`.
  *
  * This is the one place in `src/check.ts` that performs real I/O: it wires the real filesystem, clock, git, and `security` ports, resolves the identity/config-profile/cascade for the given path exactly as a real launch would, and hands everything already-loaded to `runCheck`. `runCheck` itself never reads a file, spawns a process, or touches the farm — this wiring function is what makes that possible, mirroring the same split `src/launcher.ts`/`src/cli.ts` already use between pure orchestration and real ports.
  */
@@ -624,5 +624,5 @@ export function registerCheckCommand(program: Command, deps: CommandDeps): void 
         process.exitCode = 1;
       }
     });
-  withExamples(command, ["claude-use check", "claude-use check ~/work/acme --identity work --json", "claude-use check --strict"]);
+  withExamples(command, ["agent-shim check", "agent-shim check ~/work/acme --identity work --json", "agent-shim check --strict"]);
 }

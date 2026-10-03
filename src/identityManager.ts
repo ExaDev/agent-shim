@@ -22,7 +22,7 @@ import { realFarmFs } from "./realPorts";
 /** Raised by any operation that requires an identity to already exist, when it does not. */
 export class IdentityNotFoundError extends CliError {
   constructor(readonly name: string) {
-    super(`No identity named "${name}". Run \`claude-use identity add ${name}\` first.`);
+    super(`No identity named "${name}". Run \`agent-shim identity add ${name}\` first.`);
     this.name = "IdentityNotFoundError";
   }
 }
@@ -76,7 +76,7 @@ export function addIdentity(paths: LayoutPaths, name: string): Identity {
 }
 
 /**
- * Persists `name` as the active identity, written atomically as plain text (not JSON — this file is read by `decideIdentity` in `src/launcher/identity.ts` via a simple UTF-8 read-and-trim, matching the README's documented `~/.claude-use/active-identity` file).
+ * Persists `name` as the active identity, written atomically as plain text (not JSON — this file is read by `decideIdentity` in `src/launcher/identity.ts` via a simple UTF-8 read-and-trim, matching the README's documented `~/.agent-shim/active-identity` file).
  *
  * `name` may be a `pool:<name>` selector, which makes launches pick a member of that pool. Throws `IdentityNotFoundError` when no identity with this name exists yet, and `PoolNotFoundError` for a pool that is not defined: selecting either would silently persist a name nothing else can ever load.
  */
@@ -163,9 +163,9 @@ async function selectIdentity(deps: CommandDeps, name: string): Promise<void> {
 }
 
 /**
- * Handles the `claude-use @<name>` shortcut for `claude-use identity use <name>`: terser, and matches the `@name` convention `run @name`/`claude @name` already use for selecting an identity, rather than introducing a new one.
+ * Handles the `agent-shim @<name>` shortcut for `agent-shim identity use <name>`: terser, and matches the `@name` convention `run @name`/`claude @name` already use for selecting an identity, rather than introducing a new one.
  *
- * Deliberately requires the `@` prefix and requires `@<name>` to be the *only* argument, rather than also accepting a bare `claude-use <name>`: identity names are user-chosen and unconstrained against the registered subcommand vocabulary, so a bare positional name could collide with a real subcommand, today by an unlikely coincidence, but the tool's own vocabulary only grows over time. `@` makes the token unambiguous on sight and guarantees no future subcommand name can ever collide with it.
+ * Deliberately requires the `@` prefix and requires `@<name>` to be the *only* argument, rather than also accepting a bare `agent-shim <name>`: identity names are user-chosen and unconstrained against the registered subcommand vocabulary, so a bare positional name could collide with a real subcommand, today by an unlikely coincidence, but the tool's own vocabulary only grows over time. `@` makes the token unambiguous on sight and guarantees no future subcommand name can ever collide with it.
  *
  * Returns `false` when `argv` doesn't match this exact one-argument `@name` shape at all, so the caller falls through to normal Commander subcommand dispatch (including its own "unknown command" error for anything else). Returns `true` once handled; the selection itself is `selectIdentity`, so a missing identity behaves exactly as it does under `identity use`.
  */
@@ -191,9 +191,9 @@ export function readActiveIdentity(paths: LayoutPaths): string | undefined {
 }
 
 /**
- * Whether a directory name directly under `identitiesDir` names an actual identity, rather than one of claude-use's own farm directories.
+ * Whether a directory name directly under `identitiesDir` names an actual identity, rather than one of agent-shim's own farm directories.
  *
- * `IdentitySchema` requires an identity name to start with a letter or digit, so a leading `.` can only be a resync's own bookkeeping: a `.<identity>.scratch.<suffix>` tree still being built, or a `.<identity>.previous.<suffix>` superseded farm retained for `claude-use identity resolve-conflicts`. Neither is an identity, and neither should be reported as a broken one for lacking an `identity.json` a resync never put there.
+ * `IdentitySchema` requires an identity name to start with a letter or digit, so a leading `.` can only be a resync's own bookkeeping: a `.<identity>.scratch.<suffix>` tree still being built, or a `.<identity>.previous.<suffix>` superseded farm retained for `agent-shim identity resolve-conflicts`. Neither is an identity, and neither should be reported as a broken one for lacking an `identity.json` a resync never put there.
  */
 export function isIdentityDirectoryName(name: string): boolean {
   return !name.startsWith(".");
@@ -239,7 +239,7 @@ function readIdentityForListing(paths: LayoutPaths, name: string): Identity | { 
 /**
  * Lists every identity under `identitiesDir`, marking which one (if any) is currently active.
  *
- * One identity whose `identity.json` cannot be read is reported as its own `UnreadableIdentityListEntry` rather than aborting the whole listing. A single bad file blocking `identity list` outright is exactly the failure mode that hides every *other* identity from view at the moment the user most needs to see them — and the file need not even be corrupt to land here, since a name written by a newer claude-use whose naming rule has since widened is rejected outright by an older binary's own copy of `IdentitySchema`.
+ * One identity whose `identity.json` cannot be read is reported as its own `UnreadableIdentityListEntry` rather than aborting the whole listing. A single bad file blocking `identity list` outright is exactly the failure mode that hides every *other* identity from view at the moment the user most needs to see them — and the file need not even be corrupt to land here, since a name written by a newer agent-shim whose naming rule has since widened is rejected outright by an older binary's own copy of `IdentitySchema`.
  */
 export function listIdentities(paths: LayoutPaths): readonly IdentityListing[] {
   if (!fs.existsSync(paths.identitiesDir)) {
@@ -388,12 +388,12 @@ interface IdentitySetOptions extends CredentialCacheOptions {
   readonly credentialTarget?: CredentialTarget;
 }
 
-/** Registers the `claude-use identity` subcommand tree onto `program`. */
+/** Registers the `agent-shim identity` subcommand tree onto `program`. */
 export function registerIdentityCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
   const identity = withExamples(
     program.command("identity").description("Manage identities: each one is a separate Claude Code login with its own credentials."),
-    ["claude-use identity add work", "claude-use identity list"],
+    ["agent-shim identity add work", "agent-shim identity list"],
   );
 
   withExamples(
@@ -404,7 +404,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         addIdentity(paths, name);
         console.log(`Created identity "${name}".`);
       }),
-    ["claude-use identity add work"],
+    ["agent-shim identity add work"],
   );
 
   withExamples(
@@ -419,17 +419,17 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
           return;
         }
         if (entries.length === 0) {
-          console.log("No identities yet. Run `claude-use identity add <name>` to create one.");
+          console.log("No identities yet. Run `agent-shim identity add <name>` to create one.");
           return;
         }
         for (const entry of entries) {
           console.log(formatIdentityLine(entry));
         }
         if (entries.some((entry) => entry.problem !== undefined)) {
-          console.log("\nRun `claude-use doctor` for the full detail on every unreadable entry.");
+          console.log("\nRun `agent-shim doctor` for the full detail on every unreadable entry.");
         }
       }),
-    ["claude-use identity list", "claude-use identity list --json"],
+    ["agent-shim identity list", "agent-shim identity list --json"],
   );
 
   withExamples(
@@ -457,7 +457,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         console.log(`Allows ambient credential: ${view.allowAmbientCredential === true ? "yes" : "no"}`);
         console.log(`Credential: ${entry.identity?.credential === undefined ? "(none; uses its stored login)" : describeCredential(entry.identity.credential)}`);
       }),
-    ["claude-use identity show work", "claude-use identity show work --json"],
+    ["agent-shim identity show work", "agent-shim identity show work --json"],
   );
 
   const identitySet = identity
@@ -525,10 +525,10 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         }
       }),
     [
-      "claude-use identity set work --default-profile client-acme",
-      "claude-use identity set work --allow-ambient-credential",
-      "claude-use identity set work --credential-target oauthToken --credential op:op://vault/claude-work/token",
-      "claude-use identity set work --no-credential",
+      "agent-shim identity set work --default-profile client-acme",
+      "agent-shim identity set work --allow-ambient-credential",
+      "agent-shim identity set work --credential-target oauthToken --credential op:op://vault/claude-work/token",
+      "agent-shim identity set work --no-credential",
     ],
   );
 
@@ -547,7 +547,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         removeIdentity(paths, name);
         console.log(`Removed identity "${name}".`);
       }),
-    ["claude-use identity remove old-client --yes"],
+    ["agent-shim identity remove old-client --yes"],
   );
 
   withExamples(
@@ -557,7 +557,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
       .action(async (name: string) => {
         await selectIdentity(deps, name);
       }),
-    ["claude-use identity use work", "claude-use @work"],
+    ["agent-shim identity use work", "agent-shim @work"],
   );
 
   withExamples(
@@ -605,6 +605,6 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
             `cleared, ${String(result.retained.length)} still retained pending a skipped conflict.`,
         );
       }),
-    ["claude-use identity resolve-conflicts work"],
+    ["agent-shim identity resolve-conflicts work"],
   );
 }
