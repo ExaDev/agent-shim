@@ -1,3 +1,9 @@
+## [7.12.1](https://github.com/ExaDev/agent-shim/compare/v7.12.0...v7.12.1) (2026-10-03)
+
+### Bug Fixes
+
+* **frontdoor:** say which request and phase a failed headroom hop belongs to ([0544c45](https://github.com/ExaDev/agent-shim/commit/0544c4572393025e550a01a2c1dade54e70c5a3d))
+
 ## [7.12.0](https://github.com/ExaDev/agent-shim/compare/v7.11.0...v7.12.0) (2026-10-03)
 
 ### Features
