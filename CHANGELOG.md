@@ -1,3 +1,9 @@
+## [6.2.2](https://github.com/ExaDev/claude-use/compare/v6.2.1...v6.2.2) (2026-10-03)
+
+### Bug Fixes
+
+* **headroom:** pin the default install source to the streaming passthrough build ([7411860](https://github.com/ExaDev/claude-use/commit/7411860503850ec9183e7e96af2058cd671e36a8))
+
 ## [6.2.1](https://github.com/ExaDev/claude-use/compare/v6.2.0...v6.2.1) (2026-10-03)
 
 ### Bug Fixes
