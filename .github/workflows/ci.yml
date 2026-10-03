@@ -474,7 +474,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ""
 
-  # Publishes the same build as an additional scoped alias, @exadev/agent-shim, to GitHub Packages -- so anyone with npm.pkg.github.com configured against this org can install without ever touching npmjs.com. A dedicated job, not folded into publish-npm above: GitHub Packages has no OIDC trusted-publishing exchange, and pnpm/npm attempt that exchange whenever id-token: write is granted regardless of which registry is actually being published to -- confirmed elsewhere in this org to fail with a 401 when a GitHub Packages leg shared a job holding that permission. This job deliberately never requests id-token: write and authenticates with a plain packages: write GITHUB_TOKEN instead.
+  # Publishes the same build as an additional scoped alias, @exadev/agent-shim, and under the former name as @exadev/claude-use, to GitHub Packages -- so anyone with npm.pkg.github.com configured against this org can install without ever touching npmjs.com. A dedicated job, not folded into publish-npm above: GitHub Packages has no OIDC trusted-publishing exchange, and pnpm/npm attempt that exchange whenever id-token: write is granted regardless of which registry is actually being published to -- confirmed elsewhere in this org to fail with a 401 when a GitHub Packages leg shared a job holding that permission. This job deliberately never requests id-token: write and authenticates with a plain packages: write GITHUB_TOKEN instead.
   publish-github-packages:
     name: Publish alias to GitHub Packages
     if: needs.semantic-release.outputs.published == 'true'
@@ -511,6 +511,14 @@ jobs:
       - run: npm publish --access public
         env:
           # GitHub Packages has no OIDC exchange to attempt, so this job (unlike publish-npm above) authenticates with a token -- GITHUB_TOKEN is sufficient and needs no separate secret.
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the former name too
+        # The same alias policy as npmjs.com (see publish-npm-alias): the package keeps its former name, @exadev/claude-use, so installs configured against this org's registry under the old name keep receiving releases instead of stopping at the last release made under it.
+        run: |
+          npm pkg set name="@exadev/claude-use"
+          npm publish --access public
+        env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Stays bespoke rather than using the composite action: it needs the schema regen+stamp sequence and a multi-artifact download fan-in, neither of which fits a single generic command.
