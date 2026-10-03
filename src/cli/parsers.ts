@@ -1,67 +1,12 @@
 import { InvalidArgumentError } from "commander";
 import { parseDuration } from "../resolve/conditions";
-import { parseBoolWord } from "./bool";
+import { parsePair, parseBool } from "./pairs";
 
 /**
  * Parsing helpers shared by every agent-shim flag and environment variable.
  *
  * Flags that take a list are repeated, one value per occurrence (`--category history=true --category knowledge=false`); no flag splits its value on commas. Environment variables cannot be repeated, so the two list-valued ones (`AGENT_SHIM_CATEGORY_OVERRIDE`, `AGENT_SHIM_ENTRY_OVERRIDE`) are the one place a comma-separated list is parsed, via `parseBoolPairList`. No escaping syntax is defined for a comma inside one of their values.
  */
-
-/** Splits `input` on commas. An empty string yields an empty array, not `[""]`. */
-function splitCommas(input: string): readonly string[] {
-  if (input === "") {
-    return [];
-  }
-  return input.split(",");
-}
-
-/** One `<key>=<value>` pair, as parsed by `parsePair`. */
-export interface ParsedPair {
-  readonly key: string;
-  readonly value: string;
-}
-
-/**
- * Splits `input` on its *first* `=` into a key and a value. The value may itself contain further `=` characters (they stay part of the value); only the first `=` is treated as the separator.
- *
- * Throws when there is no `=` at all, or when the key half is empty (`=true`, or a leading `=`).
- */
-export function parsePair(input: string): ParsedPair {
-  const eqIndex = input.indexOf("=");
-  if (eqIndex === -1) {
-    throw new Error(`Expected "<key>=<value>", got "${input}" (no "=" found)`);
-  }
-  const key = input.slice(0, eqIndex);
-  const value = input.slice(eqIndex + 1);
-  if (key === "") {
-    throw new Error(`Expected a non-empty key before "=" in "${input}"`);
-  }
-  return { key, value };
-}
-
-/** Parses `input` as a boolean in the shared vocabulary (`true`/`1`, `false`/`0`); throws on anything else. */
-export function parseBool(input: string): boolean {
-  const parsed = parseBoolWord(input);
-  if (parsed === undefined) {
-    throw new Error(`Expected "true", "false", "1" or "0", got "${input}"`);
-  }
-  return parsed;
-}
-
-/**
- * Parses a comma-separated list of `<key>=<bool>` pairs into a plain object, e.g. `"history=true,knowledge=false"` becomes `{ history: true, knowledge: false }`. Used only for the list-valued environment variables; flags repeat instead.
- *
- * An empty string parses to `{}`. A key repeated within the same list is not an error: the later occurrence wins, matching how a plain object literal with a repeated key behaves.
- */
-export function parseBoolPairList(input: string): Record<string, boolean> {
-  const result: Record<string, boolean> = {};
-  for (const piece of splitCommas(input)) {
-    const { key, value } = parsePair(piece);
-    result[key] = parseBool(value);
-  }
-  return result;
-}
 
 /** Re-raises a plain parse failure as Commander's `InvalidArgumentError`, so Commander reports it as a usage error naming the offending option instead of it escaping as a crash. */
 function asInvalidArgument<T>(parse: () => T): T {

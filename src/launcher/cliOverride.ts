@@ -1,4 +1,4 @@
-import { parseBool, parseBoolPairList, parsePair } from "../cli/parsers";
+import { parseBool, parseBoolPairList, parsePair } from "../cli/pairs";
 import { ENTRY_KEY_RE, expandAllCategoryKey, isOverridableCategory, type CategoryMap, type Entries } from "../config/schema";
 import { CliError, UsageError } from "../cliError";
 
