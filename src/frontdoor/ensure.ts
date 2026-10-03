@@ -4,7 +4,7 @@ import { CliError } from "../cliError";
 import type { LayoutPaths } from "../paths";
 import { readStartLock, type HeadroomFs, type HeadroomLock } from "../headroom/state";
 import type { ListenerVerdict } from "./probe";
-import { readFrontDoorState, writeFrontDoorSession } from "./state";
+import { FRONT_DOOR_PROTOCOL, readFrontDoorState, writeFrontDoorSession } from "./state";
 
 /** How long one launch waits for the front door. The listener is this same binary binding one loopback port, so a cold start takes a second or two; the bound only bites when something is genuinely broken. */
 const FRONTDOOR_START_TIMEOUT_MS = 30_000;
@@ -31,6 +31,8 @@ export interface EnsureFrontDoorPorts {
   readonly spawnSupervisor: (paths: LayoutPaths) => number;
   /** Authenticates the provider listener on `port`: a TLS handshake chaining to agent-shim's CA and a healthy answer, with no capability sent (see `probeFrontDoorSync`). */
   readonly verifyListener: (port: number) => ListenerVerdict;
+  /** Asks a running front-door supervisor to exit, without waiting for it to: the caller polls `isRunning`. Only ever called for a pid whose recorded listener has just authenticated as agent-shim's own. */
+  readonly stopSupervisor: (pid: number) => void;
 }
 
 /**
@@ -42,6 +44,7 @@ export function ensureFrontDoor(params: { readonly paths: LayoutPaths; readonly 
   const { paths, ports } = params;
   const deadline = ports.now() + FRONTDOOR_START_TIMEOUT_MS;
   let spawned = false;
+  let replaced = false;
   const distrusted = new Set<number>();
   let lastRejection: string | undefined;
 
@@ -51,6 +54,18 @@ export function ensureFrontDoor(params: { readonly paths: LayoutPaths; readonly 
     if (supervisorPid !== undefined && !distrusted.has(supervisorPid) && ports.isRunning(supervisorPid)) {
       if (state?.port !== undefined && state.connectPort !== undefined) {
         const verdict = ports.verifyListener(state.port);
+        if (verdict.ok && (state.protocol ?? 0) < FRONT_DOOR_PROTOCOL && !replaced) {
+          // A door older than this launcher speaks a protocol this launcher's sessions cannot use (a door from before the protocol field is protocol 0). It is replaced, never joined: the registry is on disk and the replacement binds the same sticky ports, so sessions already running reach it on the addresses they froze. The listener has authenticated as this tool's own, which is what makes the recorded pid safe to stop.
+          ports.stopSupervisor(supervisorPid);
+          while (ports.isRunning(supervisorPid)) {
+            if (ports.now() >= deadline) {
+              throw new FrontDoorStartError(`agent-shim: the front door (pid ${String(supervisorPid)}, protocol ${String(state.protocol ?? 0)}) is older than this launcher (protocol ${String(FRONT_DOOR_PROTOCOL)}) and did not exit when asked. Daemon log: ${paths.frontdoorLogPath}`);
+            }
+            ports.sleep(FRONTDOOR_LAUNCHER_POLL_MS);
+          }
+          replaced = true;
+          continue;
+        }
         if (verdict.ok) {
           // The token is generated here, per launch: the registry entry is what the door's listeners check requests against, and a fresh launch invalidates nothing (its entry is added alongside the live ones).
           const token = randomUUID();

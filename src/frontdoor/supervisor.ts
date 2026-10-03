@@ -1,6 +1,6 @@
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
-import { listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, writeFrontDoorState, type FrontDoorState } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, writeFrontDoorState, type FrontDoorState } from "./state";
 
 /** A bound front-door listener in this process, and how to stop it. */
 interface FrontDoorListenerHandle {
@@ -114,7 +114,7 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
   }
   lastDirectPort = direct.port;
 
-  writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: ports.ownPid, port: http.port, connectPort: connect.port, directPort: direct.port, ...sticky() });
+  writeFrontDoorState(fs, paths.frontdoorStateFile, { protocol: FRONT_DOOR_PROTOCOL, supervisorPid: ports.ownPid, port: http.port, connectPort: connect.port, directPort: direct.port, ...sticky() });
   // The start lock has done its job: state now names a live supervisor, so every future launcher finds it there instead.
   fs.removeRecursive(paths.frontdoorLockFile);
   ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: front door on 127.0.0.1:${String(http.port)}, CONNECT surface on 127.0.0.1:${String(connect.port)}`);
