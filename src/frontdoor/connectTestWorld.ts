@@ -168,6 +168,13 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
     res.writeHead(HTTP_UNAUTHORIZED, { "content-type": "text/plain", "content-length": String(body.length) });
     res.end(body);
   });
+  // Upgrades reaching the fake upstream are answered as a real websocket server would: the 101 handshake, then a raw echo channel, so a relayed upgrade can be proven end to end.
+  const upstreamUpgrades: string[] = [];
+  fakeUpstream.on("upgrade", (req, socket) => {
+    upstreamUpgrades.push(req.url ?? "?");
+    socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+    socket.pipe(socket);
+  });
 
   const echoServer = net.createServer((socket) => {
     socket.pipe(socket);
@@ -186,9 +193,10 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
     ...realConnectEffects(),
     connectTlsUpstream: async (host, _port, clientAlpn) =>
       await new Promise((resolve, reject) => {
-        // The real implementation dials the tap host's real server; a test always dials the local TLS echo standing in for it, presenting the host's name so the certificate matches. The echoed ALPN choice is recorded, unused by the dial itself, so tests can assert the mirror.
+        // The real implementation dials the host's own server over TLS; a test dials a local stand-in presenting the host's name so the certificate matches. The API host's stand-in is the fake HTTP upstream (whose upgrade listener answers the 101 handshake a relayed upgrade needs); a tap host's is the raw TLS echo. The offered ALPN choice is recorded, unused by the dial itself, so tests can assert the mirror.
         tapAlpnOffered.push(clientAlpn);
-        const socket = tls.connect({ port: tapEchoPort, host: "127.0.0.1", servername: host, ca: [upstreamCa.certPem], rejectUnauthorized: true });
+        const port = host === CONNECT_INTERCEPT_HOST ? portOf(fakeUpstream) : tapEchoPort;
+        const socket = tls.connect({ port, host: "127.0.0.1", servername: host, ca: [upstreamCa.certPem], rejectUnauthorized: true });
         socket.once("secureConnect", () => {
           resolve(socket);
         });
@@ -208,6 +216,7 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
 
   return {
     dials,
+    upstreamUpgrades,
     tapAlpnOffered,
     routedRequests,
     upstreamRequests,

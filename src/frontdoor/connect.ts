@@ -2,6 +2,7 @@ import { X509Certificate, createPrivateKey } from "node:crypto";
 import * as fs from "node:fs";
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import type * as net from "node:net";
+import type { Duplex } from "node:stream";
 
 import { issueCaCertificate, issueLeafCertificate } from "./x509";
 import type { ConnectCapture, PassthroughObserver } from "./capture";
@@ -303,8 +304,8 @@ export interface ConnectEffects {
   readonly createTlsAcceptor: (leaf: LeafCert, onSecure: (secure: net.Socket) => void, alpnProtocols?: readonly string[]) => TlsAcceptor;
   /** Opens a TLS connection to a real host, presenting its name as SNI, for a tap session's upstream half. `clientAlpn`, when given, is the protocol the client negotiated with the surface and the only one offered upstream, so the tap never changes the channel's protocol. */
   readonly connectTlsUpstream: (host: string, port: number, clientAlpn: string | undefined) => Promise<net.Socket>;
-  /** Builds the HTTP parser bound to one request handler. `onUpgrade`, when given, sees every HTTP upgrade request arriving on a terminated session; the session destroys the socket afterwards either way, with or without one, matching Node's own no-listener behaviour. */
-  readonly createHttpSession: (handler: ConnectRequestHandler, onUpgrade?: (request: IncomingMessage) => void) => HttpParserSession;
+  /** Builds the HTTP parser bound to one request handler. `onUpgrade`, when given, owns every HTTP upgrade request arriving on a terminated session, socket and already-read bytes included; a session without one lets Node destroy the upgrade, its own no-listener behaviour. */
+  readonly createHttpSession: (handler: ConnectRequestHandler, onUpgrade?: (request: IncomingMessage, socket: Duplex, head: Buffer) => void) => HttpParserSession;
   /** Opens a raw TCP connection for a blind tunnel. */
   readonly connectTcp: (host: string, port: number) => Promise<net.Socket>;
   /** Streams one request to `target` and the response back, never buffering a body. When `observer` is given, the forwarding drives it with additive listeners (request and response chunks arrive to both the pipe and the observer) so capturing never changes the forwarding's own flow control. */
@@ -354,7 +355,18 @@ const TAP_ALPN_PROTOCOLS: readonly string[] = ["h2", "http/1.1"];
  */
 export async function startConnectServer(config: ConnectServerConfig, effects: ConnectEffects, preferredPort: number | undefined): Promise<ConnectServerHandle> {
   // One HTTP parser per intercept host, so each handler knows by closure which host's session it serves and therefore which upstream a non-routed path is piped to. No socket-to-host bookkeeping to get wrong: the only path into a session's handler is that host's acceptor.
-  const onUpgrade = config.capture === undefined ? undefined : (request: IncomingMessage) => config.capture?.upgrade(request);
+  // An upgrade request is relayed, never parsed: the client wants a 101 and a raw byte channel after it (Remote Control's websocket to the API host is exactly this), which no request/response forwarding can carry. The relay splices the client's TLS session to a fresh TLS connection to the session's real host, byte for byte, using the same pump a tap host uses; the capture records the upgrade's head, and the frames after it flow unrecorded.
+  const onUpgrade = (host: string) => (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+    config.capture?.upgrade(request);
+    if (head.length > 0) {
+      // Paused first, exactly as the CONNECT head parser does: an unshift on a still-flowing socket hands its bytes to listeners that no longer exist, losing them before the relay's pipe attaches.
+      socket.pause();
+      socket.unshift(head);
+    }
+    // The parser consumed the request's own head, so the relay reconstructs it verbatim (method, target, and every header exactly as sent, case and order included via rawHeaders) for the upstream to parse; everything after it is spliced raw.
+    const headText = `${request.method ?? "GET"} ${request.url ?? "/"} HTTP/1.1\r\n${request.rawHeaders.reduce((accumulated, value, index) => (index % 2 === 0 ? `${accumulated}${value}: ` : `${accumulated}${value}\r\n`), "")}\r\n`;
+    pumpTapSession(socket, async (clientAlpn) => await effects.connectTlsUpstream(host, HTTPS_PORT, clientAlpn), undefined, Buffer.from(headText, "utf8"));
+  };
   const sessions = config.interceptHosts.map((host) => {
     if (config.tapHosts.includes(host)) {
       const tlsAcceptor = effects.createTlsAcceptor(
@@ -373,7 +385,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
       }
       effects.forwardHttp(config.upstreamFor(host), request, response, config.capture?.observePassthrough(request));
     };
-    const httpSession = effects.createHttpSession(handler, onUpgrade);
+    const httpSession = effects.createHttpSession(handler, onUpgrade(host));
     const tlsAcceptor = effects.createTlsAcceptor(config.leafFor(host), (secure) => {
       httpSession.serve(secure);
     });
