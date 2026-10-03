@@ -39,7 +39,7 @@ import { probeFrontDoorSync } from "./probe";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { resolveTrustBundle, type TrustBundleFs } from "./trust";
-import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, removeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
+import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
 import { runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
 import { createAccountReader } from "../usage/account";
 import { createUsageMiddleware } from "../usage/middleware";
@@ -141,6 +141,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       return { port: handle.port, close: handle.close };
     },
     startConnectListener: async (preferredPort) => {
+      // The transparent surface exists only when something asked for it (AGENT_SHIM_TRANSPARENT_SURFACE naming the port an operating-system redirect sends the API host's address to): the door then mints its own registered session for redirect-arriving traffic, keyed by its own pid so the session lives exactly as long as the door does and the idle pruner never reaps it while the door serves.
+      const transparentPort = process.env.AGENT_SHIM_TRANSPARENT_SURFACE === undefined ? undefined : Number(process.env.AGENT_SHIM_TRANSPARENT_SURFACE);
+      const transparentCapability = transparentPort === undefined || Number.isNaN(transparentPort) ? undefined : randomUUID();
+      if (transparentCapability !== undefined) {
+        writeFrontDoorSession(realFarmFs, paths.frontdoorSessionsDir, { pid: process.pid, startedAt: Date.now(), token: transparentCapability });
+      }
       const leafFor = createLeafCache(loadCa(), () => new Date());
       // Capture is a per-door diagnostic, decided by the environment of the launch that starts (or restarts) the door, because the door is one process serving every launch: a per-launch toggle would record some sessions and silently not others. The value is read here, at door start, so it never changes mid-process.
       const capture = captureFromEnv(process.env, paths.logsDir);
@@ -175,6 +181,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
           leafFor,
           upstreamFor: (host) => ({ host, port: HTTPS_PORT, tls: true }),
           isLiveCapability: isLiveToken,
+          ...(transparentPort === undefined || Number.isNaN(transparentPort) ? {} : { transparentPort, ...(transparentCapability === undefined ? {} : { transparentCapability }) }),
           limits: CONNECT_LIMITS,
           ...(capture === undefined ? {} : { capture }),
         },
