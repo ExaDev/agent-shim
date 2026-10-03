@@ -14,6 +14,7 @@ import {
   readHeadroomState,
   readSession,
   removeSession,
+  sessionsForSupervisor,
   writeHeadroomState,
   writeSession,
   type HeadroomFs,
@@ -23,6 +24,8 @@ const paths = buildLayoutPaths("/home/testuser/.claude-use");
 
 const SESSION_EARLY_PID = 42;
 const SESSION_LATE_PID = 101;
+const SUPERVISOR_A_PID = 7001;
+const SUPERVISOR_B_PID = 7002;
 
 function seededProviders(fs: HeadroomFs): void {
   fs.mkdirp(paths.providersDir);
@@ -104,19 +107,34 @@ describe("headroom state files", () => {
 describe("session registry", () => {
   it("writes, reads, lists, and removes session entries", () => {
     const fs = createFakeFarmFs({});
-    writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_LATE_PID, startedAt: 1000 });
-    writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_EARLY_PID, startedAt: 900 });
-    expect(readSession(fs, paths.headroomSessionsDir, SESSION_LATE_PID)).toEqual({ pid: SESSION_LATE_PID, startedAt: 1000 });
+    writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_LATE_PID, startedAt: 1000, supervisorPid: SUPERVISOR_A_PID });
+    writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_EARLY_PID, startedAt: 900, supervisorPid: SUPERVISOR_A_PID });
+    expect(readSession(fs, paths.headroomSessionsDir, SESSION_LATE_PID)).toEqual({ pid: SESSION_LATE_PID, startedAt: 1000, supervisorPid: SUPERVISOR_A_PID });
     expect(listSessions(fs, paths.headroomSessionsDir).map((session) => session.pid)).toEqual([SESSION_EARLY_PID, SESSION_LATE_PID]);
     removeSession(fs, paths.headroomSessionsDir, SESSION_LATE_PID);
     expect(readSession(fs, paths.headroomSessionsDir, SESSION_LATE_PID)).toBeUndefined();
     removeSession(fs, paths.headroomSessionsDir, SESSION_LATE_PID);
   });
 
+  it("lists only the sessions registered against one supervisor, because each supervisor's idle and drift decisions concern its own daemon", () => {
+    const fs = createFakeFarmFs({});
+    writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_EARLY_PID, startedAt: 0, supervisorPid: SUPERVISOR_A_PID });
+    writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_LATE_PID, startedAt: 0, supervisorPid: SUPERVISOR_B_PID });
+    expect(sessionsForSupervisor(fs, paths.headroomSessionsDir, SUPERVISOR_A_PID).map((session) => session.pid)).toEqual([SESSION_EARLY_PID]);
+    expect(sessionsForSupervisor(fs, paths.headroomSessionsDir, SUPERVISOR_B_PID).map((session) => session.pid)).toEqual([SESSION_LATE_PID]);
+  });
+
+  it("skips a registry file that names no supervisor instead of attributing it to anyone", () => {
+    const fs = createFakeFarmFs({});
+    fs.mkdirp(paths.headroomSessionsDir);
+    fs.writeFileUtf8(`${paths.headroomSessionsDir}/${String(SESSION_EARLY_PID)}.json`, JSON.stringify({ pid: SESSION_EARLY_PID, startedAt: 0 }));
+    expect(listSessions(fs, paths.headroomSessionsDir)).toEqual([]);
+  });
+
   it("prunes exactly the entries whose pid is no longer alive", () => {
     const fs = createFakeFarmFs({});
-    writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_EARLY_PID, startedAt: 0 });
-    writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_LATE_PID, startedAt: 0 });
+    writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_EARLY_PID, startedAt: 0, supervisorPid: SUPERVISOR_A_PID });
+    writeSession(fs, paths.headroomSessionsDir, { pid: SESSION_LATE_PID, startedAt: 0, supervisorPid: SUPERVISOR_A_PID });
     const alive = new Set([SESSION_LATE_PID]);
     const removed = pruneDeadSessions(fs, paths.headroomSessionsDir, (pid) => alive.has(pid));
     expect(removed).toEqual([SESSION_EARLY_PID]);

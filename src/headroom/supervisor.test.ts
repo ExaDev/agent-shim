@@ -31,6 +31,9 @@ const ORPHAN_DAEMON_PID = 888;
 const ORPHAN_DAEMON_PORT = 4321;
 const STICKY_PORT = 4100;
 const OWN_PID = 4242;
+const OTHER_SUPERVISOR_PID = 5151;
+const OTHER_DAEMON_PID = 5152;
+const OTHER_DAEMON_PORT = 5100;
 const TICKS_INSTALL_TEST = 3;
 const TICKS_SHORT = 2;
 const TICKS_CRASH_RESTART = 6;
@@ -135,9 +138,22 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
       dropReadyPort(pid);
     },
     freePortCallCount: () => freePortCalls,
-    writeSessionFile(pid: number): void {
+    /** Registers a live launcher against `supervisorPid`: this supervisor unless a test says another one owns the session. */
+    writeSessionFile(pid: number, supervisorPid: number = OWN_PID): void {
       alive.add(pid);
-      writeSession(fs, paths.headroomSessionsDir, { pid, startedAt: clock });
+      writeSession(fs, paths.headroomSessionsDir, { pid, startedAt: clock, supervisorPid });
+    },
+    /** Another supervisor taking ownership of state.json: alive, with its own daemon and port recorded, the way a second supervisor's startup or crash-restart leaves the file. */
+    handOwnershipToAnotherSupervisor(): void {
+      alive.add(OTHER_SUPERVISOR_PID);
+      alive.add(OTHER_DAEMON_PID);
+      writeHeadroomState(fs, paths.headroomStateFile, {
+        supervisorPid: OTHER_SUPERVISOR_PID,
+        headroomPid: OTHER_DAEMON_PID,
+        port: OTHER_DAEMON_PORT,
+        lastPort: OTHER_DAEMON_PORT,
+        installedSource: HEADROOM_DEFAULT_SOURCE,
+      });
     },
     ports: {
       fs,
@@ -532,6 +548,61 @@ describe("runSupervisor", () => {
     const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_ONE_MINUTE }, { tickLimit: TICKS_LONG_SESSION });
     expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     expect(world.stops).toHaveLength(0);
+  });
+
+  it("exits at once, touching neither state.json nor the other daemon, when another live supervisor already owns it", async () => {
+    const world = makeWorld();
+    world.handOwnershipToAnotherSupervisor();
+    const before = world.fs.readFileUtf8(paths.headroomStateFile);
+    const code = await supervise(world, config);
+    expect(code).toBe(0);
+    expect(world.spawns).toHaveLength(0);
+    expect(world.stops).toHaveLength(0);
+    expect(world.fs.readFileUtf8(paths.headroomStateFile)).toBe(before);
+  });
+
+  it("keeps serving its own sessions but stops writing state.json once another supervisor owns it, so a crash-restart cannot repoint new launches at it", async () => {
+    const world = makeWorld();
+    world.writeSessionFile(SESSION_PID);
+    let handedOver = false;
+    world.onSleep = () => {
+      if (world.spawns.length > 0 && !handedOver) {
+        handedOver = true;
+        world.handOwnershipToAnotherSupervisor();
+        world.kill(world.spawns[0]?.pid ?? 0);
+      }
+    };
+    const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_CRASH_RESTART });
+    expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
+    expect(world.spawns).toHaveLength(2);
+    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    expect(state.supervisorPid).toBe(OTHER_SUPERVISOR_PID);
+    expect(state.port).toBe(OTHER_DAEMON_PORT);
+  });
+
+  it("retires once its own sessions are gone after losing ownership, without clearing the new owner's state", async () => {
+    const world = makeWorld();
+    let handedOver = false;
+    world.onSleep = () => {
+      if (world.spawns.length > 0 && !handedOver) {
+        handedOver = true;
+        world.handOwnershipToAnotherSupervisor();
+      }
+    };
+    const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_ONE_MINUTE });
+    expect(code).toBe(0);
+    expect(world.stops).toEqual([world.spawns[0]?.pid]);
+    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    expect(state.supervisorPid).toBe(OTHER_SUPERVISOR_PID);
+    expect(state.headroomPid).toBe(OTHER_DAEMON_PID);
+  });
+
+  it("does not count another supervisor's sessions as keeping this daemon alive, so a superseded daemon idles out while the owner's sessions run", async () => {
+    const world = makeWorld();
+    world.writeSessionFile(SESSION_PID, OTHER_SUPERVISOR_PID);
+    const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_ONE_MINUTE });
+    expect(code).toBe(0);
+    expect(world.stops).toHaveLength(1);
   });
 
   it("prunes registry entries whose launcher pid has died, including a zombie the signal-0 table still lists", async () => {

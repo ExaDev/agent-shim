@@ -83,6 +83,14 @@ describe("ensureHeadroom", () => {
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/43.json`)).toBeDefined();
   });
 
+  it("registers the session against the supervisor whose daemon port it returns, so only that supervisor counts it as live", () => {
+    const world = makeWorld();
+    world.writeReadyState();
+    ensureHeadroom({ paths, launcherPid: 44, ports: world.ports });
+    const entry = JSON.parse(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/44.json`) ?? "{}") as Record<string, unknown>;
+    expect(entry.supervisorPid).toBe(SUPERVISOR_PID);
+  });
+
   it("spawns a replacement supervisor when the recorded one is dead", () => {
     const world = makeWorld();
     writeHeadroomState(world.fs, paths.headroomStateFile, {
@@ -202,7 +210,7 @@ describe("ensureHeadroom", () => {
   it("does not re-register a session that already exists; writeSession is idempotent per pid", () => {
     const world = makeWorld();
     world.writeReadyState();
-    writeSession(world.fs, paths.headroomSessionsDir, { pid: 50, startedAt: 123 });
+    writeSession(world.fs, paths.headroomSessionsDir, { pid: 50, startedAt: 123, supervisorPid: SUPERVISOR_PID });
     ensureHeadroom({ paths, launcherPid: 50, ports: world.ports });
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/50.json`)).toBeDefined();
   });
