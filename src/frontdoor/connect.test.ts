@@ -1,4 +1,5 @@
 import * as net from "node:net";
+import * as tls from "node:tls";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { ConnectCapture, PassthroughObserver } from "./capture";
@@ -20,6 +21,9 @@ import {
   settled,
   TEST_CAPABILITY,
 } from "./connectTestWorld";
+
+/** The capability the transparent surface's synthetic session carries in the tests that exercise it. */
+const TRANSPARENT_CAPABILITY = "transparent-test-capability";
 
 
 describe("MITM proxy over real sockets", () => {
@@ -139,6 +143,35 @@ describe("MITM proxy over real sockets", () => {
         secure.destroy();
       } finally {
         await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "serves a redirected connection on the transparent port with no CONNECT handshake, admitting its header-less requests by the transparent capability",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa, { transparent: { port: 0, capability: TRANSPARENT_CAPABILITY } });
+      const started = await world.start();
+      try {
+        // A redirected client connects straight in: TLS presenting the door's CA, SNI naming the API host, no proxy handshake of any kind, then sends a bare routed request with none of the launcher's headers.
+        const secure = await new Promise<tls.TLSSocket>((resolve, reject) => {
+          const direct = tls.connect({ port: started.transparentPort ?? 0, host: "127.0.0.1", servername: CONNECT_INTERCEPT_HOST, ca: ca.certPem, rejectUnauthorized: true });
+          direct.once("secureConnect", () => {
+            resolve(direct);
+          });
+          direct.once("error", (error) => {
+            reject(error);
+          });
+        });
+        const piped = await requestOn(secure, `POST /v1/messages HTTP/1.1\r\nHost: ${CONNECT_INTERCEPT_HOST}\r\ncontent-length: 2\r\n\r\n{}`);
+        expect(piped.statusLine).toContain(String(HTTP_OK));
+        // The transparent capability was injected where the request carried none, so the pipeline admitted what a redirect delivers: traffic with no launcher headers at all.
+        expect(world.routedRequests[0]?.headers["x-agent-shim-auth"]).toBe(TRANSPARENT_CAPABILITY);
+        secure.destroy();
+      } finally {
+        await started.close();
         await world.stop();
       }
     },

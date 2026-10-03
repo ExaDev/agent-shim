@@ -331,6 +331,14 @@ export interface ConnectServerConfig {
   readonly upstreamFor: (host: string) => ConnectForwardTarget;
   /** Whether a capability presented as a CONNECT request's proxy credential belongs to a live launch: the same constant-time check against the same registry the routed pipeline's admission makes, read fresh on every call because launches come and go. */
   readonly isLiveCapability: (token: string) => boolean;
+  /**
+   * Binds a second listener that serves the intercept hosts' sessions to connections arriving pre-established, with no CONNECT handshake to authenticate: what an operating-system redirect (a pf rule sending the real hosts' address to this port) delivers. Only the API host's session is reachable this way, never a tap host's, because a redirect can name only addresses and the control plane shares the API host's address today; if that ever splits, the transparent listener must not follow it blindly. There is no capability to check on this surface: the connection carried no proxy credential, so every request rides the pipeline anonymously, admitted the way a tunnel's own header-less requests are (by nothing, which is exactly what they present), and the surface exists solely for clients that ignore proxies and would otherwise be invisible to the door entirely.
+   */
+  readonly transparentPort?: number;
+  /**
+   * The capability the transparent surface's sessions carry: a real, registered token minted by the door for its own pid, so header-less traffic that arrives by redirect is admitted and attributed like any launch's instead of being refused for a credential it cannot possibly present. Absent along with `transparentPort`.
+   */
+  readonly transparentCapability?: string;
   /** The intercept hosts that are never HTTP-parsed: terminated, tapped at the byte level, and pumped to their real host. */
   readonly tapHosts: readonly string[];
   /** The connection deadlines and caps; production passes `CONNECT_LIMITS`. */
@@ -342,6 +350,8 @@ export interface ConnectServerConfig {
 /** A running connect surface. */
 export interface ConnectServerHandle {
   readonly port: number;
+  /** The transparent listener's port, when one was requested: what an operating-system redirect should point at. */
+  readonly transparentPort?: number;
   /** Stops the listener, drops every live tunnel and terminated session, and resolves once the port is released. */
   readonly close: () => Promise<void>;
 }
@@ -408,11 +418,22 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
     handleConnect(socket, { config, effects, sessions, ledger });
   });
 
+  const apiSession = sessions.find((session) => session.host === config.routedHost);
+  const transparent =
+    config.transparentPort === undefined || apiSession === undefined
+      ? undefined
+      : await effects.listenLoopback(config.transparentPort, (socket) => {
+          // A redirected connection is the intercept host's session the moment it arrives: no head to parse, no credential to read, straight into the API host's TLS acceptor, whose session then handles routing, piped forwarding and relayed upgrades exactly as a CONNECT-tunnelled one does.
+          apiSession.tlsAcceptor.accept(socket, config.transparentCapability ?? "");
+        });
+
   return {
     port: listener.port,
+    ...(transparent === undefined ? {} : { transparentPort: transparent.port }),
     close: async () => {
       ledger.close();
       await listener.close();
+      await transparent?.close();
       for (const { httpSession, tlsAcceptor } of sessions) {
         tlsAcceptor.close();
         httpSession?.close();

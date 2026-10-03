@@ -138,7 +138,7 @@ export async function requestTimingOn(secure: tls.TLSSocket, request: string): P
 /**
  * The real-socket world the round-trip tests run against: a CA issued by `x509.ts`, a fake routed backend on plain HTTP (standing in for whatever the pipeline would serve), a fake upstream presenting TLS signed by its own CA, and the real connect surface with only its tunnel target redirected.
  */
-export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { readonly limits?: Partial<ConnectLimits>; readonly isLiveCapability?: (token: string) => boolean; readonly capture?: ConnectCapture; readonly tapHosts?: readonly string[] } = {}) {
+export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { readonly limits?: Partial<ConnectLimits>; readonly isLiveCapability?: (token: string) => boolean; readonly capture?: ConnectCapture; readonly tapHosts?: readonly string[]; readonly transparent?: { readonly port: number; readonly capability: string } } = {}) {
   /** Every tunnel target the surface dialled, so a refusal can be shown never to have reached one. */
   const dials: { host: string; port: number }[] = [];
   const routedRequests: { method: string; url: string; headers: http.IncomingHttpHeaders }[] = [];
@@ -219,7 +219,7 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
     tapAlpnOffered,
     routedRequests,
     upstreamRequests,
-    async start(): Promise<{ readonly connectPort: number; readonly close: () => Promise<void> }> {
+    async start(): Promise<{ readonly connectPort: number; readonly transparentPort?: number; readonly close: () => Promise<void> }> {
       await listen(fakeRouted);
       await listen(fakeUpstream);
       await listen(echoServer);
@@ -247,13 +247,19 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
             rejectUnauthorized: true,
           }),
           isLiveCapability: options.isLiveCapability ?? ((token) => token === TEST_CAPABILITY),
+          ...(options.transparent === undefined
+            ? {}
+            : {
+                transparentPort: options.transparent.port,
+                transparentCapability: options.transparent.capability,
+              }),
           limits: { ...CONNECT_LIMITS, ...options.limits },
           ...(options.capture === undefined ? {} : { capture: options.capture }),
         },
         effects,
         undefined,
       );
-      return { connectPort: server.port, close: async () => { await server.close(); } };
+      return { connectPort: server.port, ...(server.transparentPort === undefined ? {} : { transparentPort: server.transparentPort }), close: async () => { await server.close(); } };
     },
     async stop(): Promise<void> {
       await closeServer(fakeRouted);
