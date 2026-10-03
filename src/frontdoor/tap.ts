@@ -3,11 +3,11 @@ import type * as net from "node:net";
 import type { StreamTap } from "./capture";
 
 /**
- * Pumps one already-TLS-terminated stream byte for byte to its real host over a fresh TLS connection, teeing every chunk in both directions into `tap` when one is given. This is the instrumentation for a host whose protocol the surface does not parse: the claude.ai control plane carries Remote Control on a channel where no HTTP/1.1 byte ever appears (observed under capture: the CONNECT session opens, the client's OAuth token refresh on the API host succeeds, and then nothing parseable crosses), so the only honest instrument is the byte level. Pass everything through unchanged and record, never interpret: the frames are decoded offline, and a protocol the door does not understand keeps working exactly as the blind tunnel served it.
+ * Pumps one already-TLS-terminated stream byte for byte to its real host over a fresh TLS connection, teeing every chunk in both directions into `tap` when one is given. This is the instrumentation for a host whose protocol the surface does not parse: the claude.ai control plane carries Remote Control on a channel that mixes shapes (observed under capture: an HTTP/1.1-shaped token request first, then binary HTTP/2 frames around it), so parsing it as either protocol would destroy or distort it. Pass everything through unchanged and record, never interpret: the frames are decoded offline, and a protocol the door does not understand keeps working exactly as the blind tunnel served it.
  *
  * Lifecycle mirrors `blindTunnel`: whoever goes away first takes the other side with it, so neither half of a tap session ever outlives its peer. The tap's listeners ride beside the pipes, additive like every other observer in this surface, so a recording failure fails loudly rather than silently stopping a diagnostic.
  */
-export function pumpTapSession(secure: net.Socket, openUpstream: () => Promise<net.Socket>, tap: StreamTap | undefined): void {
+export function pumpTapSession(secure: net.Socket, openUpstream: (clientAlpn: string | undefined) => Promise<net.Socket>, tap: StreamTap | undefined): void {
   let upstream: net.Socket | undefined;
   let ended = false;
   const end = (): void => {
@@ -26,9 +26,11 @@ export function pumpTapSession(secure: net.Socket, openUpstream: () => Promise<n
     upstream?.destroy();
   });
   secure.once("error", drop);
+  // The protocol the client negotiated with this surface's own TLS, forwarded as the only protocol offered upstream. Offering h2 upstream regardless (the first version of this tap did) answers an HTTP/1.1-speaking client with an HTTP/2 SETTINGS frame, which is binary garbage to it: the tap broke the very channel it existed to observe. A client that negotiated nothing is piped to an upstream that offers nothing, exactly as the blind tunnel served it.
+  const clientAlpn = "alpnProtocol" in secure && typeof secure.alpnProtocol === "string" ? secure.alpnProtocol : undefined;
   void (async () => {
     try {
-      upstream = await openUpstream();
+      upstream = await openUpstream(clientAlpn);
     } catch {
       // Nothing to pump to: the only honest response is to drop the client's session, exactly as a blind tunnel with no target is dropped.
       drop();

@@ -3,7 +3,7 @@ import * as https from "node:https";
 import * as net from "node:net";
 import * as tls from "node:tls";
 
-import { HTTP_BAD_GATEWAY, TAP_ALPN_PROTOCOLS as TAP_ALPN_PROTOCOLS_FOR_UPSTREAM, forwardableHeaders, type ConnectEffects, type ConnectListenerHandle } from "./connect";
+import { HTTP_BAD_GATEWAY, forwardableHeaders, type ConnectEffects, type ConnectListenerHandle } from "./connect";
 
 /** The real `ConnectEffects` over node's own net, tls, and http. `connectTcp` opens real connections to the CONNECTed host, so tests that want a blind tunnel redirect it. */
 export function realConnectEffects(): ConnectEffects {
@@ -101,10 +101,10 @@ export function realConnectEffects(): ConnectEffects {
         },
       };
     },
-    connectTlsUpstream: async (host, port) =>
+    connectTlsUpstream: async (host, port, clientAlpn) =>
       await new Promise((resolve, reject) => {
-        // The upstream half of a tap session speaks TLS to the real host, offering the same ALPN list the tap's own front advertised so the negotiated protocol is the client's real choice, not ours.
-        const socket = tls.connect({ host, port, servername: host, ALPNProtocols: [...TAP_ALPN_PROTOCOLS_FOR_UPSTREAM] });
+        // The upstream half of a tap session speaks TLS to the real host, offering exactly the protocol the client negotiated with the tap's front (and nothing when the client negotiated nothing), so the channel's protocol is the client's choice, never ours.
+        const socket = tls.connect({ host, port, servername: host, ...(clientAlpn === undefined ? {} : { ALPNProtocols: [clientAlpn] }) });
         socket.once("secureConnect", () => {
           resolve(socket);
         });
