@@ -8,6 +8,7 @@ import { issueCaCertificate, issueLeafCertificate } from "./x509";
 import type { ConnectCapture, PassthroughObserver } from "./capture";
 import { pumpTapSession } from "./tap";
 import { CONNECT_PROXY_REALM, capabilityFromProxyAuthorization } from "./capability";
+import { AUTH_HEADER } from "./route";
 import { FRONTDOOR_POLL_MS } from "./supervisor";
 
 /**
@@ -282,8 +283,8 @@ export interface ConnectListenerHandle {
 
 /** Presents one leaf's server-side TLS on CONNECTed sockets. */
 interface TlsAcceptor {
-  /** Starts the TLS handshake on a socket that has just received its CONNECT response. */
-  readonly accept: (socket: net.Socket) => void;
+  /** Starts the TLS handshake on a socket that has just received its CONNECT response, carrying `context` to the handshake's completion untouched: whatever the caller knows about this connection (its tunnel's capability) reaches `onSecure` without the acceptor interpreting it. */
+  readonly accept: (socket: net.Socket, context: string) => void;
   /** Drops every session this acceptor is terminating. */
   readonly close: () => void;
 }
@@ -300,8 +301,8 @@ interface HttpParserSession {
 export interface ConnectEffects {
   /** Binds a loopback TCP listener; `preferredPort` is tried first and any free port used when it is taken (bind, do not probe: check-then-bind races). Resolves with the bound port and a close handle. */
   readonly listenLoopback: (preferredPort: number | undefined, onSocket: (socket: net.Socket) => void) => Promise<ConnectListenerHandle>;
-  /** Builds the TLS terminator for one leaf, handing each successfully handshaked session to `onSecure`. `alpnProtocols`, when given, is advertised during the handshake, which is how a tap host's session can offer HTTP/2 the way its real server does. */
-  readonly createTlsAcceptor: (leaf: LeafCert, onSecure: (secure: net.Socket) => void, alpnProtocols?: readonly string[]) => TlsAcceptor;
+  /** Builds the TLS terminator for one leaf, handing each successfully handshaked session to `onSecure` together with the context its `accept` call carried. `alpnProtocols`, when given, is advertised during the handshake, which is how a tap host's session can offer HTTP/2 the way its real server does. */
+  readonly createTlsAcceptor: (leaf: LeafCert, onSecure: (secure: net.Socket, context: string) => void, alpnProtocols?: readonly string[]) => TlsAcceptor;
   /** Opens a TLS connection to a real host, presenting its name as SNI, for a tap session's upstream half. `clientAlpn`, when given, is the protocol the client negotiated with the surface and the only one offered upstream, so the tap never changes the channel's protocol. */
   readonly connectTlsUpstream: (host: string, port: number, clientAlpn: string | undefined) => Promise<net.Socket>;
   /** Builds the HTTP parser bound to one request handler. `onUpgrade`, when given, owns every HTTP upgrade request arriving on a terminated session, socket and already-read bytes included; a session without one lets Node destroy the upgrade, its own no-listener behaviour. */
@@ -354,6 +355,8 @@ const TAP_ALPN_PROTOCOLS: readonly string[] = ["h2", "http/1.1"];
  * The connection flow: read the CONNECT head within the deadline (never more of the stream than that, so an early ClientHello glued to the head is pushed back with `unshift` and still seen by whatever consumes the socket next), authenticate it, then either blind-tunnel the target or terminate its TLS and parse HTTP on the session. Every network effect flows through `effects`; nothing here touches the network or filesystem itself.
  */
 export async function startConnectServer(config: ConnectServerConfig, effects: ConnectEffects, preferredPort: number | undefined): Promise<ConnectServerHandle> {
+  // The capability each terminated session's tunnel authenticated with, keyed by the TLS session the acceptor handed over. A request riding that session is admitted by this token when its own headers carry none: the pipeline's per-request admission exists for listeners with no transport auth (a loopback process spending a session's credentials through the provider listener), while a CONNECT surface session already authenticated at the tunnel, and a client inside the child that never sees the launcher's headers (Claude Code's Remote Control bridge is exactly this, and its requests were refused with a 401 Claude Code misreports as a rejected login) has nothing else to present.
+  const tunnelTokens = new WeakMap<net.Socket, string>();
   // One HTTP parser per intercept host, so each handler knows by closure which host's session it serves and therefore which upstream a non-routed path is piped to. No socket-to-host bookkeeping to get wrong: the only path into a session's handler is that host's acceptor.
   // An upgrade request is relayed, never parsed: the client wants a 101 and a raw byte channel after it (Remote Control's websocket to the API host is exactly this), which no request/response forwarding can carry. The relay splices the client's TLS session to a fresh TLS connection to the session's real host, byte for byte, using the same pump a tap host uses; the capture records the upgrade's head, and the frames after it flow unrecorded.
   const onUpgrade = (host: string) => (request: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -378,15 +381,21 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
       );
       return { host, tlsAcceptor };
     }
+
     const handler: ConnectRequestHandler = (request, response) => {
       if (host === config.routedHost && servedByPipeline(request.url)) {
+        const tunnelToken = tunnelTokens.get(request.socket);
+        if (tunnelToken !== undefined && request.headers[AUTH_HEADER] === undefined) {
+          request.headers[AUTH_HEADER] = tunnelToken;
+        }
         config.serveRouted(request, response);
         return;
       }
       effects.forwardHttp(config.upstreamFor(host), request, response, config.capture?.observePassthrough(request));
     };
     const httpSession = effects.createHttpSession(handler, onUpgrade(host));
-    const tlsAcceptor = effects.createTlsAcceptor(config.leafFor(host), (secure) => {
+    const tlsAcceptor = effects.createTlsAcceptor(config.leafFor(host), (secure, context) => {
+      tunnelTokens.set(secure, context);
       httpSession.serve(secure);
     });
     return { host, httpSession, tlsAcceptor };
@@ -578,6 +587,7 @@ function routeConnect(socket: net.Socket, head: string, context: ConnectionConte
   const credential = proxyAuthorizationOf(head);
   const capability = credential === undefined ? undefined : capabilityFromProxyAuthorization(credential);
   if (capability === undefined || !config.isLiveCapability(capability)) {
+    console.error(`[upg-dbg] refused CONNECT to ${head.split("\r\n", 1)[0]?.split(" ")[1] ?? "?"} (credential ${credential === undefined ? "absent" : "present but dead"})`);
     refuse(socket, REFUSAL.proxyAuthenticationRequired, [`Proxy-Authenticate: Basic realm="${CONNECT_PROXY_REALM}"`]);
     return;
   }
@@ -597,7 +607,7 @@ function routeConnect(socket: net.Socket, head: string, context: ConnectionConte
   config.capture?.connect(target, session !== undefined);
   socket.write(CONNECT_ESTABLISHED);
   if (session !== undefined) {
-    session.tlsAcceptor.accept(socket);
+    session.tlsAcceptor.accept(socket, capability);
     return;
   }
   void blindTunnel(socket, target, effects);
