@@ -154,6 +154,34 @@ describe("createFrontDoorServer", () => {
     }
   });
 
+  it("admits a child launched under the former name, whose capability and identity arrive as x-claude-use-* headers, and does not forward them", async () => {
+    let seen: { readonly headers: Readonly<Record<string, unknown>>; readonly session: SessionIdentity } | undefined;
+    const echo: FrontDoorRoute = {
+      name: "echo",
+      headroomEligible: false,
+      headroomUpstream: undefined,
+      serve: async (request, response) => {
+        seen = { headers: request.headers, session: request.session };
+        response.start(HTTP_STATUS.ok, { "Content-Type": "application/json" });
+        await response.write("{}");
+        response.end();
+      },
+    };
+    const door = await startDoor(resolves(echo));
+    try {
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        method: "POST",
+        headers: { "x-claude-use-identity": "work", "x-claude-use-session": "session-1", "x-claude-use-auth": LAUNCH_TOKEN, authorization: "Bearer tok" },
+        body: "{}",
+      });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(seen?.session).toMatchObject({ identity: "work", sessionId: "session-1" });
+      expect(Object.keys(seen?.headers ?? {}).filter((name) => name.startsWith("x-claude-use-") || name.startsWith("x-agent-shim-"))).toEqual([]);
+    } finally {
+      await door.close();
+    }
+  });
+
   it("streams a response chunk by chunk as the route produces it, not buffered until it ends", async () => {
     const routeState = { secondChunkPushed: false };
     const streamer: FrontDoorRoute = {
