@@ -438,6 +438,42 @@ jobs:
           # Blanked, not omitted -- an inherited NPM_TOKEN/NODE_AUTH_TOKEN would otherwise be used in preference to the OIDC exchange.
           NODE_AUTH_TOKEN: ""
 
+  # Publishes the same build under the project's former npm name, `claude-use`, so `npx claude-use` and `npm install -g claude-use` keep working and keep tracking releases. The package is identical apart from its name; both packages expose the `agent-shim` and `claude-use` commands (see package.json's bin). A dedicated job rather than a matrix leg of publish-npm: nothing downstream depends on it, so a failure here (for example a missing trusted publisher for `claude-use`, which is registered per package) is reported on its own without holding back the tap, bucket and verification jobs that follow the primary package. It needs its own trusted-publisher registration on npmjs.com for the same repository and this workflow file.
+  publish-npm-alias:
+    name: Publish npm alias (claude-use)
+    if: needs.semantic-release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    needs: [semantic-release, build-arm64]
+    permissions:
+      contents: read
+      id-token: write # OIDC identity for npm trusted publishing (no NPM_TOKEN)
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .tool-versions
+          cache: pnpm
+          # registry-url is deliberately absent, for the reason given on publish-npm.
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Upgrade npm for OIDC trusted publishing (needs npm CLI >=11.5.1)
+        run: npm install -g npm@latest
+
+      - run: pnpm build:bundle
+
+      - name: Rename the package to its former name
+        run: npm pkg set name="claude-use"
+
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ""
+
   # Publishes the same build as an additional scoped alias, @exadev/agent-shim, to GitHub Packages -- so anyone with npm.pkg.github.com configured against this org can install without ever touching npmjs.com. A dedicated job, not folded into publish-npm above: GitHub Packages has no OIDC trusted-publishing exchange, and pnpm/npm attempt that exchange whenever id-token: write is granted regardless of which registry is actually being published to -- confirmed elsewhere in this org to fail with a 401 when a GitHub Packages leg shared a job holding that permission. This job deliberately never requests id-token: write and authenticates with a plain packages: write GITHUB_TOKEN instead.
   publish-github-packages:
     name: Publish alias to GitHub Packages

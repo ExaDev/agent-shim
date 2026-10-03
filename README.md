@@ -36,7 +36,7 @@ agent-shim was called `claude-use` until it was renamed. Everything written for 
 - An existing `~/.claude-use` is used in place when there is no `~/.agent-shim`. Do not move it: macOS Claude Code keys each identity's Keychain login on the exact path of its configuration directory (`<root>/identities/<name>`), so relocating the root signs every identity out. A fresh installation uses `~/.agent-shim`.
 - A committed `.claude-use.json` or `.claude-use.local.json` is read when the directory has no `.agent-shim.json` or `.agent-shim.local.json`; `configure` keeps writing into the legacy local file while it is the only one.
 - A farm manifest written under the old name is read, and replaced by the current one on the next resync.
-- npm: install `agent-shim`; the `claude-use` package is deprecated in its favour. Homebrew moves an installed `claude-use` formula to `agent-shim` on upgrade.
+- npm: `claude-use` is still published, identical to `agent-shim` and exposing both commands, so `npm install -g claude-use` keeps tracking releases. Homebrew moves an installed `claude-use` formula to `agent-shim` on upgrade.
 
 ## Quick start
 
