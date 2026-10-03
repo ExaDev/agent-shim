@@ -4,7 +4,7 @@ import { cosmiconfigReader } from "./config/load";
 import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/identity";
 import { resolveClaudeHome } from "./paths";
-import { collectPoolPick } from "./pools";
+import { collectPoolPick } from "./poolPickReport";
 import { PoolNotFoundError } from "./poolStore";
 import { cascadeProviderName } from "./providersStore";
 import { realFarmFs, realFsPort, realRunPort, resolveGitBranch } from "./realPorts";
@@ -19,7 +19,7 @@ import { AMBIENT_CREDENTIAL_VARS, evaluateAmbientCredentialGuard, type AmbientCr
 import type { ConfigProfileDecisionSource, IdentityDecisionSource } from "./launcher/identity";
 import type { FarmFs, RunPort } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
-import type { PoolPickReport } from "./pools";
+import type { PoolPickReport } from "./poolPickReport";
 import { LegacyProviderFileError, readProvider } from "./providersStore";
 import { detectEncodingAmbiguity, type EncodingAmbiguity } from "./resolve/projects";
 import { resolveDecisions, type ResolvedState } from "./resolve/pipeline";
