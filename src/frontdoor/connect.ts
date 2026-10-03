@@ -7,6 +7,7 @@ import * as net from "node:net";
 import * as tls from "node:tls";
 
 import { issueCaCertificate, issueLeafCertificate } from "./x509";
+import type { ConnectCapture, PassthroughObserver } from "./capture";
 import { CONNECT_PROXY_REALM, capabilityFromProxyAuthorization } from "./capability";
 import { FRONTDOOR_POLL_MS } from "./supervisor";
 
@@ -15,7 +16,7 @@ import { FRONTDOOR_POLL_MS } from "./supervisor";
  *
  * Nothing is tunnelled or intercepted for a client that has not authenticated: every CONNECT request must present a live launch's capability as its proxy credential (`Proxy-Authorization: Basic`, which clients derive from the credential in the `HTTPS_PROXY` URL the launcher sets), or it is answered 407 before any target is dialled, so the port is no open proxy for other local processes. Pending and authenticated connections are bounded by `ConnectLimits`.
  *
- * Every authenticated CONNECT target is blind-tunnelled byte for byte EXCEPT the intercept host (Claude Code's own API), whose TLS this surface terminates with a leaf certificate signed by a locally generated CA. On the terminated session, the paths the front door routes (`/v1/`) are handed to the same ordered pipeline the provider listener serves (the client's Authorization header passes through untouched), and every other path is piped by this surface to the real upstream over TLS, so Remote Control's streaming, OAuth refreshes, and unknown endpoints bypass the pipeline entirely.
+ * Every authenticated CONNECT target is blind-tunnelled byte for byte EXCEPT the intercept host (Claude Code's own API), whose TLS this surface terminates with a leaf certificate signed by a locally generated CA. On the terminated session, the paths the front door routes (`/v1/`) are handed to the same ordered pipeline the provider listener serves (the client's Authorization header passes through untouched), and every other path is piped by this surface to the real upstream over TLS, so Remote Control's streaming, OAuth refreshes, and unknown endpoints bypass the pipeline entirely. When a `capture` is configured, those piped exchanges and every CONNECT target are recorded through it (see `./capture.ts`); the forwarding itself is identical either way.
  */
 
 /** The one CONNECT host whose TLS gets terminated: Claude Code's own API, the upstream every OAuth session is really talking to. */
@@ -292,12 +293,12 @@ export interface ConnectEffects {
   readonly listenLoopback: (preferredPort: number | undefined, onSocket: (socket: net.Socket) => void) => Promise<ConnectListenerHandle>;
   /** Builds the TLS terminator for one leaf, handing each successfully handshaked session to `onSecure`. */
   readonly createTlsAcceptor: (leaf: LeafCert, onSecure: (secure: net.Socket) => void) => TlsAcceptor;
-  /** Builds the HTTP parser bound to one request handler. */
-  readonly createHttpSession: (handler: ConnectRequestHandler) => HttpParserSession;
+  /** Builds the HTTP parser bound to one request handler. `onUpgrade`, when given, sees every HTTP upgrade request arriving on a terminated session; the session destroys the socket afterwards either way, with or without one, matching Node's own no-listener behaviour. */
+  readonly createHttpSession: (handler: ConnectRequestHandler, onUpgrade?: (request: IncomingMessage) => void) => HttpParserSession;
   /** Opens a raw TCP connection for a blind tunnel. */
   readonly connectTcp: (host: string, port: number) => Promise<net.Socket>;
-  /** Streams one request to `target` and the response back, never buffering a body. */
-  readonly forwardHttp: (target: ConnectForwardTarget, request: IncomingMessage, response: ServerResponse) => void;
+  /** Streams one request to `target` and the response back, never buffering a body. When `observer` is given, the forwarding drives it with additive listeners (request and response chunks arrive to both the pipe and the observer) so capturing never changes the forwarding's own flow control. */
+  readonly forwardHttp: (target: ConnectForwardTarget, request: IncomingMessage, response: ServerResponse, observer?: PassthroughObserver) => void;
 }
 
 /** Everything the connect surface needs to route, resolved before it starts. */
@@ -316,6 +317,8 @@ export interface ConnectServerConfig {
   readonly isLiveCapability: (token: string) => boolean;
   /** The connection deadlines and caps; production passes `CONNECT_LIMITS`. */
   readonly limits: ConnectLimits;
+  /** The diagnostic tap, when capturing is enabled; absent means nothing is recorded. */
+  readonly capture?: ConnectCapture;
 }
 
 /** A running connect surface. */
@@ -336,10 +339,10 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
       config.serveRouted(request, response);
       return;
     }
-    effects.forwardHttp(config.upstream, request, response);
+    effects.forwardHttp(config.upstream, request, response, config.capture?.observePassthrough(request));
   };
 
-  const httpSession = effects.createHttpSession(handler);
+  const httpSession = effects.createHttpSession(handler, config.capture === undefined ? undefined : (request) => config.capture?.upgrade(request));
   const tlsAcceptor = effects.createTlsAcceptor(config.leafFor(config.interceptHost), (secure) => {
     httpSession.serve(secure);
   });
@@ -536,6 +539,7 @@ function routeConnect(socket: net.Socket, head: string, context: ConnectionConte
     refuse(socket, REFUSAL.serviceUnavailable);
     return;
   }
+  config.capture?.connect(target, isInterceptedHost(target.host, config.interceptHost));
   socket.write(CONNECT_ESTABLISHED);
   if (isInterceptedHost(target.host, config.interceptHost)) {
     tlsAcceptor.accept(socket);
@@ -646,11 +650,18 @@ export function realConnectEffects(): ConnectEffects {
         },
       };
     },
-    createHttpSession: (handler) => {
+    createHttpSession: (handler, onUpgrade) => {
       const server = http.createServer(handler);
       server.on("clientError", (_error, socket) => {
         socket.destroy();
       });
+      if (onUpgrade !== undefined) {
+        // A server with no 'upgrade' listener has Node destroy the connection itself; this handler sees the request through the capture and then destroys it, preserving that outcome exactly whether or not anything is being recorded.
+        server.on("upgrade", (request, socket) => {
+          onUpgrade(request);
+          socket.destroy();
+        });
+      }
       return {
         serve: (socket) => {
           server.emit("connection", socket);
@@ -669,7 +680,7 @@ export function realConnectEffects(): ConnectEffects {
         });
         socket.once("error", reject);
       }),
-    forwardHttp: (target, request, response) => {
+    forwardHttp: (target, request, response, observer) => {
       const headers = forwardableHeaders(request.headers);
       const options: https.RequestOptions = {
         host: target.host,
@@ -689,9 +700,16 @@ export function realConnectEffects(): ConnectEffects {
         }
       }
       const onUpstreamResponse = (upstreamResponse: http.IncomingMessage): void => {
+        observer?.onResponse(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, upstreamResponse.headers);
         response.writeHead(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, forwardableHeaders(upstreamResponse.headers));
         // Headers go out before the first body byte: a streaming (SSE) response must reach the client as its chunks arrive, not when it completes.
         response.flushHeaders();
+        // Additive listeners, not a tee: the pipe keeps sole control of flow control, and the observer simply sees the same chunk deliveries the client does.
+        if (observer !== undefined) {
+          upstreamResponse.on("data", (chunk: Buffer) => {
+            observer.onResponseChunk(chunk);
+          });
+        }
         upstreamResponse.pipe(response);
       };
       // Branching rather than selecting the namespace, because a union of the two module objects types `request` as `any` and loses every check on it.
@@ -705,6 +723,14 @@ export function realConnectEffects(): ConnectEffects {
         response.writeHead(HTTP_BAD_GATEWAY, { "content-type": "text/plain", "content-length": String(body.length) });
         response.end(body);
       });
+      if (observer !== undefined) {
+        request.on("data", (chunk: Buffer) => {
+          observer.onRequestChunk(chunk);
+        });
+        response.on("close", () => {
+          observer.onEnd();
+        });
+      }
       request.pipe(upstream);
       request.socket.setNoDelay(true);
       upstream.on("socket", (socket) => {

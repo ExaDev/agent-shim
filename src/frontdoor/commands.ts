@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import fs from "node:fs";
 import type { Command } from "commander";
 
@@ -13,6 +14,7 @@ import type { LayoutPaths } from "../paths";
 import { realFarmFs, realFsPort, realIsProcessRunning, realSleepSync, spawnDetachedSupervisor } from "../realPorts";
 import { createDoorPipelines } from "./assembly";
 import { isLiveCapability } from "./capability";
+import { createFileCapture } from "./capture";
 import {
   CONNECT_INTERCEPT_HOST,
   CONNECT_LIMITS,
@@ -137,6 +139,11 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     },
     startConnectListener: async (preferredPort) => {
       const leafFor = createLeafCache(loadCa(), () => new Date());
+      // Capture is a per-door diagnostic, decided by the environment of the launch that starts (or restarts) the door, because the door is one process serving every launch: a per-launch toggle would record some sessions and silently not others. The value is read here, at door start, so it never changes mid-process.
+      const capture = process.env.AGENT_SHIM_FRONTDOOR_CAPTURE === "1" ? createFileCapture(path.join(paths.logsDir, "frontdoor-capture.jsonl")) : undefined;
+      if (capture !== undefined) {
+        log(`capture enabled, recording CONNECT targets and piped exchanges to ${path.join(paths.logsDir, "frontdoor-capture.jsonl")}`);
+      }
       const server = await startConnectServer(
         {
           interceptHost: CONNECT_INTERCEPT_HOST,
@@ -164,6 +171,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
           upstream: { host: CONNECT_INTERCEPT_HOST, port: HTTPS_PORT, tls: true },
           isLiveCapability: isLiveToken,
           limits: CONNECT_LIMITS,
+          ...(capture === undefined ? {} : { capture }),
         },
         realConnectEffects(),
         preferredPort,
