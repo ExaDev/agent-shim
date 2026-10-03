@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import * as esbuild from "esbuild";
+import { rollup } from "rollup";
+import { dts } from "rollup-plugin-dts";
 
 /**
  * Bundles `src/cli.ts` with esbuild into a single CJS file, then — unless `--bundle-only` is given — invokes the now-stable `node --build-sea=<config>` single command (Node v25.5.0 or later) to produce a self-contained single-executable-application binary.
@@ -79,7 +81,20 @@ async function buildLibrary(): Promise<void> {
     });
     assertNoCliOnlyImports(result.metafile);
   }
-  execFileSync(process.execPath, [path.join(rootDir, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.lib.json"], { cwd: rootDir, stdio: "inherit" });
+  await bundleDeclarations();
+}
+
+/**
+ * Bundles the library's declarations into the single `dist/types/index.d.ts`. Per-file declarations keep the source's extensionless relative imports, which a consumer on `module: NodeNext` cannot resolve: every type the package exports then reads as an error type. One file has no relative imports to resolve.
+ */
+async function bundleDeclarations(): Promise<void> {
+  const declarations = await rollup({ input: path.join(rootDir, "src", "index.ts"), plugins: [dts({ tsconfig: path.join(rootDir, "tsconfig.lib.json") })], external: (id) => !id.startsWith(".") && !path.isAbsolute(id) });
+  await declarations.write({ file: path.join(distDir, "types", "index.d.ts"), format: "es" });
+  await declarations.close();
+  const relative = /\bfrom\s+["']\.{1,2}\//.exec(fs.readFileSync(path.join(distDir, "types", "index.d.ts"), "utf8"));
+  if (relative !== null) {
+    throw new Error(`the bundled declarations still import a relative path (${relative[0]}), which a NodeNext consumer cannot resolve`);
+  }
 }
 
 /** Dependencies that exist for the command line alone. The library must work for a consumer that has installed neither. */
