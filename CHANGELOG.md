@@ -1,3 +1,9 @@
+## [7.4.0](https://github.com/ExaDev/agent-shim/compare/v7.3.0...v7.4.0) (2026-10-03)
+
+### Features
+
+* **frontdoor:** terminate platform.claude.com on the CONNECT surface ([d19c144](https://github.com/ExaDev/agent-shim/commit/d19c1449af517163cbc15ef1ae701f81245cba6b))
+
 ## [7.3.0](https://github.com/ExaDev/agent-shim/compare/v7.2.0...v7.3.0) (2026-10-03)
 
 ### Features
