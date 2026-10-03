@@ -3,6 +3,7 @@ import type { CategoryClassification, CategoryClassificationOverlay } from "../c
 import { resolveAll, type ResolveAllResult } from "./decide";
 import { flattenLayers } from "./flatten";
 import { planFarm, type FarmPlan } from "./plan";
+import { descendPolicy, type DescendPolicy } from "./walkPolicy";
 import { assembleCascade, type AssembledCascade, type CascadeInput } from "./walk";
 import type { Diagnostic, EntryFacts, FlattenedCascade } from "./types";
 
@@ -33,6 +34,11 @@ export function topLevelNames(facts: EntryFacts): string[] {
     }
   }
   return [...names].sort();
+}
+
+/** The walk policy `buildEntryFacts` needs for `cascade`: which directories of `~/.claude` the fact walk must enter, derived from the flattened rules (see `descendPolicy`). */
+export function descendPolicyFor(cascade: CascadeInput, home: string): DescendPolicy {
+  return descendPolicy(flattenLayers(assembleCascade(cascade).layers, { home }).rules.values());
 }
 
 /**

@@ -148,8 +148,9 @@ describe("resyncFarm", () => {
 
     expect(result.adopted).toEqual(["skills/newthing/SKILL.md"]);
     expect(fs.readFileUtf8(`${FAKE_CLAUDE_HOME}/skills/newthing/SKILL.md`)).toBe("brand new");
-    // Adopted in time to be resolved by this same resync, rather than only becoming visible on the next launch.
-    expect(result.resolved.decisions.has("skills/newthing/SKILL.md")).toBe(true);
+    // Adopted in time to be resolved by this same resync, rather than only becoming visible on the next launch. No rule reaches inside the adopted directory, so it is one entry (omitted here, since only skills/commit is shared), not a record per file.
+    expect(result.resolved.decisions.get("skills/newthing")?.shared).toBe(false);
+    expect(result.resolved.farm.entries).toContainEqual({ kind: "omit", rel: "skills/newthing" });
   });
 
   it("preserves a farm copy alongside the canonical one when the two differ, overwriting neither", () => {
