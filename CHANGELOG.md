@@ -1,3 +1,9 @@
+## [7.10.2](https://github.com/ExaDev/agent-shim/compare/v7.10.1...v7.10.2) (2026-10-03)
+
+### Documentation
+
+* state plainly that Remote Control's websocket bypasses the proxy ([6b8c25f](https://github.com/ExaDev/agent-shim/commit/6b8c25fcc53694780e55dd529c23aa8229678a83))
+
 ## [7.10.1](https://github.com/ExaDev/agent-shim/compare/v7.10.0...v7.10.1) (2026-10-03)
 
 ### Bug Fixes
