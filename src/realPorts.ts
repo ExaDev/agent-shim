@@ -314,10 +314,21 @@ export function detachedDaemonSpawnOptions(logFd: number, env: NodeJS.ProcessEnv
  * Spawns a detached supervisor: a background copy of this very executable running a hidden internal subcommand, its output appended to `logPath`, unref'd so the launcher never waits on it. `AGENT_SHIM_HOME` is passed explicitly so the supervisor lands on the same root as its spawner even when the launcher was started with the variable set only for itself.
  */
 export function spawnDetachedSupervisor(paths: LayoutPaths, subcommand: string, logPath: string): number {
+  return spawnDetachedDaemon(selfInvocation([subcommand]), paths, subcommand, logPath);
+}
+
+/** Starts a background daemon: `paths`, `subcommand` and `logPath` as for `spawnDetachedSupervisor`, which a caller that is not the agent-shim command line process supplies in place of it. */
+export type DaemonSpawner = (paths: LayoutPaths, subcommand: string, logPath: string) => number;
+
+/** A `DaemonSpawner` that starts daemons through the agent-shim executable at `executable`, for a caller (a library host) whose own process is not it. */
+export function spawnDaemonThrough(executable: string): DaemonSpawner {
+  return (paths, subcommand, logPath) => spawnDetachedDaemon({ command: executable, args: [subcommand] }, paths, subcommand, logPath);
+}
+
+function spawnDetachedDaemon(invocation: { readonly command: string; readonly args: readonly string[] }, paths: LayoutPaths, subcommand: string, logPath: string): number {
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
   const logFd = fs.openSync(logPath, "a");
   try {
-    const invocation = selfInvocation([subcommand]);
     const child = spawn(invocation.command, invocation.args, detachedDaemonSpawnOptions(logFd, { ...process.env, AGENT_SHIM_HOME: paths.root }));
     child.unref();
     if (child.pid === undefined) {
@@ -329,9 +340,9 @@ export function spawnDetachedSupervisor(paths: LayoutPaths, subcommand: string, 
   }
 }
 
-/** Spawns the detached headroom supervisor (the hidden `__headroom-supervisor` subcommand), logging to the headroom daemon log. */
-function spawnHeadroomSupervisor(paths: LayoutPaths): number {
-  return spawnDetachedSupervisor(paths, "__headroom-supervisor", paths.headroomLogPath);
+/** The headroom supervisor's hidden subcommand and where it logs, shared by every `DaemonSpawner` a headroom launch uses. */
+function spawnHeadroomSupervisor(paths: LayoutPaths, spawnDaemon: DaemonSpawner): number {
+  return spawnDaemon(paths, "__headroom-supervisor", paths.headroomLogPath);
 }
 
 /**
@@ -357,7 +368,7 @@ export async function realIsPortFree(port: number): Promise<boolean> {
 /**
  * The real `HeadroomPort` for one launch: `ensure` runs the lock-and-poll coordination against the real filesystem and process table and derives the per-project identity from the real git repository containing the working directory; `release` removes this launcher's session-registry entry.
  */
-export function realHeadroomPort(paths: LayoutPaths): HeadroomPort {
+export function realHeadroomPort(paths: LayoutPaths, options: { readonly spawnDaemon: DaemonSpawner; readonly cwd: string }): HeadroomPort {
   return {
     ensure: () => {
       const up = ensureHeadroom({
@@ -369,12 +380,12 @@ export function realHeadroomPort(paths: LayoutPaths): HeadroomPort {
           isRunning: realIsProcessRunning,
           now: () => Date.now(),
           sleep: realSleepSync,
-          spawnSupervisor: spawnHeadroomSupervisor,
+          spawnSupervisor: (layout) => spawnHeadroomSupervisor(layout, options.spawnDaemon),
         },
       });
       return {
         port: up.port,
-        projectId: resolveGitRoot(realRunPort, process.cwd()) ?? process.cwd(),
+        projectId: resolveGitRoot(realRunPort, options.cwd) ?? options.cwd,
       };
     },
     release: () => {

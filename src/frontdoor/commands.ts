@@ -2,44 +2,24 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import type { Command } from "commander";
-
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { HTTP_STATUS } from "../codex/http";
 import { readGlobalConfig } from "../configProfilesStore";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
 import { createCodexRoutePorts } from "../codex/commands";
 import { readHeadroomState, type HeadroomFs } from "../headroom/state";
-import type { FrontDoorPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, realFsPort, realIsProcessRunning, realSleepSync, spawnDetachedSupervisor } from "../realPorts";
+import { realFarmFs, realFsPort, realIsProcessRunning } from "../realPorts";
 import { createDoorPipelines } from "./assembly";
 import { isLiveCapability } from "./capability";
 import { captureFromEnv } from "./capture";
-import {
-  CONNECT_INTERCEPT_HOST,
-  CONNECT_INTERCEPT_HOSTS,
-  CONNECT_LIMITS,
-  CONNECT_TAP_HOSTS,
-  HTTPS_PORT,
-  LOOPBACK_LEAF_NAMES,
-  createLeafCache,
-  ensureCa,
-  generateCa,
-  mintLeaf,
-  realConnectCertStore,
-
-  startConnectServer,
-  type CaMaterial,
-} from "./connect";
+import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_LIMITS, CONNECT_TAP_HOSTS, HTTPS_PORT, LOOPBACK_LEAF_NAMES, createLeafCache, ensureCa, generateCa, mintLeaf, realConnectCertStore, startConnectServer, type CaMaterial } from "./connect";
 import { realConnectEffects } from "./connectEffects";
 import { createCredentialCustody } from "./custody";
-import { ensureFrontDoor } from "./ensure";
 import { serveRouted } from "./pipeline";
-import { probeFrontDoorSync } from "./probe";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { resolveTrustBundle, type TrustBundleFs } from "./trust";
-import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
+import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, writeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
 import { runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
 import { createAccountReader } from "../usage/account";
 import { createUsageMiddleware } from "../usage/middleware";
@@ -205,53 +185,6 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     },
     log: (line) => {
       appendLog(paths, line);
-    },
-  };
-}
-
-/** The real file effects for `resolveTrustBundle`. The bundle is public certificate material, so the atomic write's owner-only mode costs nothing: only this user's children read it. */
-const realTrustBundleFs: TrustBundleFs = {
-  readFileUtf8: (file) => fs.readFileSync(file, "utf8"),
-  exists: (file) => fs.existsSync(file),
-  mkdirp: (dir) => {
-    fs.mkdirSync(dir, { recursive: true });
-  },
-  writeFileAtomic: (file, contents) => {
-    realFarmFs.writeFilePrivate(file, contents);
-  },
-};
-
-/** The real `FrontDoorPort` for one launch: `ensure` runs the lock-and-poll coordination, authenticates the listener and registers this launcher; `release` removes its registration. */
-export function realFrontDoorPort(paths: LayoutPaths): FrontDoorPort {
-  return {
-    ensure: (inheritedExtraCaCerts) => {
-      const up = ensureFrontDoor({
-        paths,
-        launcherPid: process.pid,
-        ports: {
-          fs: realFarmFs,
-          isRunning: realIsProcessRunning,
-          now: () => Date.now(),
-          sleep: realSleepSync,
-          spawnSupervisor: (layout) => spawnDetachedSupervisor(layout, "__frontdoor-supervisor", layout.frontdoorLogPath),
-          stopSupervisor: (pid) => {
-            process.kill(pid, "SIGTERM");
-          },
-          // Read fresh for each probe: a replacement supervisor may have regenerated an unparseable CA, and the probe must trust exactly what the serving door's leaf chains to.
-          verifyListener: (port) => probeFrontDoorSync(port, fs.readFileSync(paths.frontdoorCaCertFile, "utf8")),
-        },
-      });
-      const trust = resolveTrustBundle({ caCertFile: paths.frontdoorCaCertFile, bundlesDir: paths.frontdoorCaBundlesDir, inherited: inheritedExtraCaCerts, fs: realTrustBundleFs });
-      return {
-        port: up.port,
-        connectPort: up.connectPort,
-        trustBundlePath: trust.path,
-        ...(trust.warning === undefined ? {} : { trustWarning: trust.warning }),
-        sessionToken: up.token,
-      };
-    },
-    release: () => {
-      removeFrontDoorSession(realFarmFs, paths.frontdoorSessionsDir, process.pid);
     },
   };
 }
