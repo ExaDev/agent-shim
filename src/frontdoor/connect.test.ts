@@ -211,6 +211,8 @@ describe("MITM proxy over real sockets", () => {
         });
         expect(echoed).toContain("tap-payload");
         expect(streams).toEqual(["platform.claude.com"]);
+        // The hand-rolled client negotiated no ALPN, so the upstream was asked to offer none: the blind tunnel's exact behaviour.
+        expect(world.tapAlpnOffered).toEqual([undefined]);
         expect(chunks).toContainEqual({ dir: "client-to-server", text: "tap-payload" });
         expect(chunks).toContainEqual({ dir: "server-to-client", text: "tap-payload" });
         secure.destroy();

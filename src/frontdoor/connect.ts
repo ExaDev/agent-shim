@@ -26,7 +26,7 @@ export const CONNECT_INTERCEPT_HOST = "api.anthropic.com";
 export const CONNECT_INTERCEPT_HOSTS: readonly string[] = [CONNECT_INTERCEPT_HOST, "platform.claude.com"];
 
 /**
- * The intercept hosts the surface never parses as HTTP: terminated with ALPN for HTTP/2 offered (the claude.ai control plane's channel offers no HTTP/1.1 byte to parse), pumped byte for byte to the real host over TLS, and teed into the capture's stream tap when capturing is on. Routing them through the HTTP/1.1 machinery instead would destroy the session at the first h2 frame; tapping preserves the channel exactly as a blind tunnel served it while making its bytes observable.
+ * The intercept hosts the surface never parses as HTTP: terminated with ALPN for HTTP/2 and HTTP/1.1 both offered, pumped byte for byte to the real host over TLS (offering upstream only the protocol the client negotiated), and teed into the capture's stream tap when capturing is on. The claude.ai control plane's channel mixes an HTTP/1.1-shaped request with binary HTTP/2 frames, so parsing it as either protocol would destroy or distort it; tapping preserves the channel exactly as a blind tunnel served it while making its bytes observable.
  */
 export const CONNECT_TAP_HOSTS: readonly string[] = ["platform.claude.com"];
 
@@ -301,8 +301,8 @@ export interface ConnectEffects {
   readonly listenLoopback: (preferredPort: number | undefined, onSocket: (socket: net.Socket) => void) => Promise<ConnectListenerHandle>;
   /** Builds the TLS terminator for one leaf, handing each successfully handshaked session to `onSecure`. `alpnProtocols`, when given, is advertised during the handshake, which is how a tap host's session can offer HTTP/2 the way its real server does. */
   readonly createTlsAcceptor: (leaf: LeafCert, onSecure: (secure: net.Socket) => void, alpnProtocols?: readonly string[]) => TlsAcceptor;
-  /** Opens a TLS connection to a real host, presenting its name as SNI, for a tap session's upstream half. */
-  readonly connectTlsUpstream: (host: string, port: number) => Promise<net.Socket>;
+  /** Opens a TLS connection to a real host, presenting its name as SNI, for a tap session's upstream half. `clientAlpn`, when given, is the protocol the client negotiated with the surface and the only one offered upstream, so the tap never changes the channel's protocol. */
+  readonly connectTlsUpstream: (host: string, port: number, clientAlpn: string | undefined) => Promise<net.Socket>;
   /** Builds the HTTP parser bound to one request handler. `onUpgrade`, when given, sees every HTTP upgrade request arriving on a terminated session; the session destroys the socket afterwards either way, with or without one, matching Node's own no-listener behaviour. */
   readonly createHttpSession: (handler: ConnectRequestHandler, onUpgrade?: (request: IncomingMessage) => void) => HttpParserSession;
   /** Opens a raw TCP connection for a blind tunnel. */
@@ -360,7 +360,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
       const tlsAcceptor = effects.createTlsAcceptor(
         config.leafFor(host),
         (secure) => {
-          pumpTapSession(secure, async () => await effects.connectTlsUpstream(host, HTTPS_PORT), config.capture?.tapStream?.(host));
+          pumpTapSession(secure, async (clientAlpn) => await effects.connectTlsUpstream(host, HTTPS_PORT, clientAlpn), config.capture?.tapStream?.(host));
         },
         TAP_ALPN_PROTOCOLS,
       );

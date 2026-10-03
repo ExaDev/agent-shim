@@ -180,11 +180,14 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
 
   let echoPort = 0;
   let tapEchoPort = 0;
+  /** The ALPN protocol each tap upstream was asked to offer, so a test can assert the client's negotiation was mirrored. */
+  const tapAlpnOffered: (string | undefined)[] = [];
   const effects: ConnectEffects = {
     ...realConnectEffects(),
-    connectTlsUpstream: async (host) =>
+    connectTlsUpstream: async (host, _port, clientAlpn) =>
       await new Promise((resolve, reject) => {
-        // The real implementation dials the tap host's real server; a test always dials the local TLS echo standing in for it, presenting the host's name so the certificate matches.
+        // The real implementation dials the tap host's real server; a test always dials the local TLS echo standing in for it, presenting the host's name so the certificate matches. The echoed ALPN choice is recorded, unused by the dial itself, so tests can assert the mirror.
+        tapAlpnOffered.push(clientAlpn);
         const socket = tls.connect({ port: tapEchoPort, host: "127.0.0.1", servername: host, ca: [upstreamCa.certPem], rejectUnauthorized: true });
         socket.once("secureConnect", () => {
           resolve(socket);
@@ -205,6 +208,7 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
 
   return {
     dials,
+    tapAlpnOffered,
     routedRequests,
     upstreamRequests,
     async start(): Promise<{ readonly connectPort: number; readonly close: () => Promise<void> }> {
