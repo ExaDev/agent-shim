@@ -109,6 +109,21 @@ describe("the pass-through route", () => {
     }
   });
 
+  it("addresses the request under the upstream's base path, so a provider whose base URL has a path is reached", async () => {
+    const upstream = await fakeUpstream();
+    const door = await startDoor({ baseUrl: `http://127.0.0.1:${String(upstream.port)}/api/anthropic/`, stripPrefix: "/providers/z", headroomUpstream: undefined });
+    try {
+      await fetch(`${door.url}/providers/z/v1/messages?beta=true`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer tok", [IDENTITY_HEADER]: "work", [AUTH_HEADER]: "launch-token-for-tests" },
+        body: "{}",
+      });
+      expect(upstream.seen()[0]?.url).toBe("/api/anthropic/v1/messages?beta=true");
+    } finally {
+      await door.close();
+    }
+  });
+
   it("answers an unreachable upstream as an Anthropic-shaped 502 rather than hanging", async () => {
     // A port nothing listens on: bind and release one to be sure it is genuinely closed.
     const probe = http.createServer();
