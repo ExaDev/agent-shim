@@ -3,7 +3,7 @@ import { CommanderError } from "commander";
 
 import { CliError, EXIT_FAILURE, EXIT_USAGE, MissingInputError, PromptCancelledError, UsageError } from "./cliError";
 import { reportFatalError } from "./cliReport";
-import { IdentityAlreadyExistsError, IdentityNotFoundError, InvalidIdentityNameError } from "./identityManager";
+import { IdentityAlreadyExistsError, IdentityNotFoundError, InvalidIdentityNameError } from "./identityStore";
 import { InvalidCategoryNameError, ProfileAlreadyExistsError, ProfileNotFoundError } from "./configProfilesStore";
 import { DirectoryRuleAlreadyExistsError, DirectoryRuleMissingTargetError, DirectoryRuleNotFoundError } from "./directoryRulesStore";
 import { InvalidEnvBoolError } from "./cli/parsers";

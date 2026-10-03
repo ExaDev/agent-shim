@@ -3,7 +3,7 @@ import { confirmRemoval, printJson, withExamples, type CommandDeps } from "./cli
 import type { DirectoryRule } from "./config/schema";
 import { UsageError } from "./cliError";
 import { ensureProfileExists } from "./configProfiles";
-import { IdentityNotFoundError, readIdentity } from "./identityManager";
+import { IdentityNotFoundError, readIdentity } from "./identityStore";
 import { DirectoryRuleNotFoundError, listDirectoryRules, addDirectoryRule, updateDirectoryRule, removeDirectoryRule } from "./directoryRulesStore";
 
 /** Renders a rule's own settings as `key=value` parts, for `rule list` and `rule show`. */
