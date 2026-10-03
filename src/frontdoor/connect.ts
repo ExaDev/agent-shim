@@ -368,7 +368,8 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
     }
     // The parser consumed the request's own head, so the relay reconstructs it verbatim (method, target, and every header exactly as sent, case and order included via rawHeaders) for the upstream to parse; everything after it is spliced raw.
     const headText = `${request.method ?? "GET"} ${request.url ?? "/"} HTTP/1.1\r\n${request.rawHeaders.reduce((accumulated, value, index) => (index % 2 === 0 ? `${accumulated}${value}: ` : `${accumulated}${value}\r\n`), "")}\r\n`;
-    pumpTapSession(socket, async (clientAlpn) => await effects.connectTlsUpstream(host, HTTPS_PORT, clientAlpn), undefined, Buffer.from(headText, "utf8"));
+    // The relayed websocket is teed like a tap host's stream when capturing is on: the door never parses the frames, but the capture records them both directions so the channel's protocol can be decoded offline (see `wsFrames.ts`).
+    pumpTapSession(socket, async (clientAlpn) => await effects.connectTlsUpstream(host, HTTPS_PORT, clientAlpn), config.capture?.tapStream?.(host), Buffer.from(headText, "utf8"));
   };
   const sessions = config.interceptHosts.map((host) => {
     if (config.tapHosts.includes(host)) {
