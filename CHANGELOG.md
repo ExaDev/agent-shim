@@ -1,3 +1,10 @@
+## [7.13.2](https://github.com/ExaDev/agent-shim/compare/v7.13.1...v7.13.2) (2026-10-03)
+
+### Bug Fixes
+
+* **types:** bundle library declarations into one file ([41d3ef8](https://github.com/ExaDev/agent-shim/commit/41d3ef87cfc848ffb391e3afe728d878d96bdbf0))
+* **usage:** publish the UsageRecord JSON Schema ([2d07dbd](https://github.com/ExaDev/agent-shim/commit/2d07dbddc5f1df7970f19a1995e362bd1a09745d))
+
 ## [7.13.1](https://github.com/ExaDev/agent-shim/compare/v7.13.0...v7.13.1) (2026-10-03)
 
 ### Bug Fixes
