@@ -14,7 +14,7 @@ import { resolvePoolLaunch } from "./launcher/pool";
 import { IdentityLockBusyError } from "./launcher/lock";
 import type { FarmFs, FsPort, FrontDoorPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
 import { spawnClaude } from "./launcher/spawn";
-import { resolveProvider } from "./providers";
+import { resolveProvider } from "./providersStore";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
 import { providerBaseUrl } from "./frontdoor/route";

@@ -1,7 +1,7 @@
 import { isCodexProvider } from "../config/schema";
 import { resolveCredential, type CredentialPort } from "../credential";
 import type { FsPort } from "../launcher/ports";
-import { loadProvider } from "../providers";
+import { loadProvider } from "../providersStore";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import { adapterFor, quotaFreshnessMs, type ProviderQuotaAdapter, type QuotaHttpGet } from "./providerQuota";
 import type { ProviderQuota, UsageRecord } from "./schema";

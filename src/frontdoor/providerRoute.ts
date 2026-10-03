@@ -3,7 +3,7 @@ import { isCodexProvider, type CodexProvider, type Provider } from "../config/sc
 import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { resolveCodexConfig } from "../codex/translate";
-import { LegacyProviderFileError, loadProvider } from "../providers";
+import { LegacyProviderFileError, loadProvider } from "../providersStore";
 import type { FsPort } from "../launcher/ports";
 import { createCodexRouteMount } from "./codexMount";
 import { CONNECT_INTERCEPT_HOST, HTTPS_PORT } from "./connect";

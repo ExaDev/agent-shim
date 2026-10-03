@@ -9,7 +9,7 @@ import { CREDENTIAL_UNAVAILABLE_EXIT, describeCredential, resolveCredential, typ
 import { effectiveStore, ttlMs, type CredentialCachePort } from "./credentialCache";
 import { IdentityNotFoundError, readIdentity, setIdentityCredential } from "./identityManager";
 import { storeIdentityToken } from "./identityToken";
-import { ProviderNotFoundError, readProvider } from "./providers";
+import { ProviderNotFoundError, readProvider } from "./providersStore";
 import { realCredentialPort } from "./realPorts";
 import { cacheFileNameFor, createRealCredentialCache } from "./realCredentialCache";
 
