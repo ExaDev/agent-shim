@@ -2,7 +2,7 @@
   "name": "agent-shim",
   "version": "7.1.0",
   "description": "A profile manager and launcher for Claude Code that lets one person run multiple logins from one machine while controlling what gets shared between them.",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "author": "Joseph Mearman <joseph@mearman.co.uk>",
   "repository": {
     "type": "git",

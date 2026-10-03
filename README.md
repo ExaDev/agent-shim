@@ -230,4 +230,4 @@ Issues and pull requests are welcome. Please keep the tool itself free of assump
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[MIT License](LICENSE).

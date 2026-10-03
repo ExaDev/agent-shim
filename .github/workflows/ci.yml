@@ -691,7 +691,7 @@ jobs:
             desc "Profile manager and launcher for Claude Code with per-directory sharing rules"
             homepage "https://github.com/ExaDev/agent-shim"
             version "${VERSION}"
-            license "Apache-2.0"
+            license "MIT"
 
             on_macos do
               on_arm do
@@ -798,7 +798,7 @@ jobs:
               "version": "${VERSION}",
               "description": "Profile manager and launcher for Claude Code with per-directory sharing rules",
               "homepage": "https://github.com/ExaDev/agent-shim",
-              "license": "Apache-2.0",
+              "license": "MIT",
               "architecture": {
                   "64bit": {
                       "url": "https://github.com/ExaDev/agent-shim/releases/download/${TAG}/agent-shim-windows-x64.zip",
