@@ -1,7 +1,7 @@
 /**
  * Measures what headroom's transforms are worth on real conversations, offline: replays requests rebuilt from local Claude Code transcripts through scratch headroom daemons, one per settings variant, with a local fake upstream standing in for the provider.
  *
- * Usage: node scripts/headroom-measure.mts [--transcript FILE]... [--projects-dir DIR]... [--sessions N] [--requests N] [--variants NAME,NAME] [--out DIR] [--dry-run]
+ * Usage: node scripts/headroom-measure.mts [--transcript FILE]... [--projects-dir DIR]... [--sessions N] [--requests N] [--variant NAME]... [--out DIR] [--dry-run]
  *
  * Nothing leaves the machine: each daemon runs with `HEADROOM_OFFLINE=1` (headroom's no-egress switch), no telemetry and a throwaway workspace, and it forwards only to the loopback fake upstream, which answers every request with a canned reply. The replayed conversations are your own transcripts, so the per-request records written to `--out` carry token counts, transform names and timings but never message content, and sessions are named s1, s2, ... rather than by file.
  *
@@ -102,6 +102,10 @@ const VARIANTS: readonly Variant[] = [
   { name: "token, target ratio 0.5", settings: { mode: "token", targetRatio: 0.5 } },
   { name: "cache, tool-result interceptors (canary)", settings: { rolloutChannel: "canary", interceptToolResults: true } },
   { name: "cache, read maturation (beta)", settings: { rolloutChannel: "beta", readMaturation: true } },
+  // The experimental features exist to keep token mode's savings without its prefix loss, and only show an effect when compression is happening at all, which in cache mode it almost never is.
+  { name: "token, lossless", settings: { mode: "token", ccr: "lossless" } },
+  { name: "token, tool-result interceptors (canary)", settings: { mode: "token", rolloutChannel: "canary", interceptToolResults: true } },
+  { name: "token, read maturation (beta)", settings: { mode: "token", rolloutChannel: "beta", readMaturation: true } },
 ];
 
 interface Options {
@@ -119,7 +123,7 @@ function parseArgs(argv: readonly string[]): Options {
   const projectsDirs: string[] = [];
   let sessions = DEFAULT_SESSIONS;
   let requests = DEFAULT_REQUESTS;
-  let variants: string[] = [];
+  const variants: string[] = [];
   let out: string | undefined;
   let dryRun = false;
   for (let index = 0; index < argv.length; index += 1) {
@@ -148,8 +152,8 @@ function parseArgs(argv: readonly string[]): Options {
       case "--requests":
         requests = Number(value());
         break;
-      case "--variants":
-        variants = value().split(",").map((name) => name.trim());
+      case "--variant":
+        variants.push(value());
         break;
       case "--out":
         out = value();
@@ -497,6 +501,10 @@ async function main(): Promise<void> {
   }
   if (options.dryRun || sessions.length === 0) {
     return;
+  }
+  const unknown = options.variants.filter((name) => !VARIANTS.some((variant) => variant.name === name));
+  if (unknown.length > 0) {
+    throw new Error(`unknown variant ${unknown.map((name) => `"${name}"`).join(", ")}; known: ${VARIANTS.map((variant) => `"${variant.name}"`).join(", ")}`);
   }
   const selected = options.variants.length === 0 ? VARIANTS : VARIANTS.filter((variant) => options.variants.includes(variant.name));
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "headroom-measure-"));
