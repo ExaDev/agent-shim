@@ -94,7 +94,7 @@ describe("discoverClaudeBinary", () => {
       listVersionsDir: () => [file("2.1.220"), file("2.10.0")],
       pathDirs: ["/fake/bin"],
       findExecutableInDir: () => undefined,
-      ownInstallDirs: [],
+      isOwnBinary: () => false,
     });
 
     expect(result.source).toBe("versions-dir");
@@ -106,23 +106,56 @@ describe("discoverClaudeBinary", () => {
     const result = discoverClaudeBinary({
       versionsDir: "/fake/versions",
       listVersionsDir: () => [],
-      pathDirs: ["/fake/own-install", "/fake/other-bin"],
+      pathDirs: ["/fake/empty-bin", "/fake/other-bin"],
       findExecutableInDir: (dir, name) => (dir === "/fake/other-bin" ? `${dir}/${name}` : undefined),
-      ownInstallDirs: ["/fake/own-install"],
+      isOwnBinary: () => false,
     });
 
     expect(result.source).toBe("path-fallback");
     expect(result.path).toBe("/fake/other-bin/claude");
   });
 
-  it("excludes this tool's own install directory from the PATH fallback", () => {
+  it("discovers a different package's claude sitting in the same directory as agent-shim itself (one npm global prefix, #188)", () => {
+    // The co-location layout: agent-shim and claude-code both installed under one npm prefix, so `<prefix>/bin/claude` is a genuinely different package's executable regular file in the very directory agent-shim runs from. The directory must not be excluded wholesale; only agent-shim's own files are.
+    const prefixBin = "/fake/prefix/bin";
+    const asked: string[] = [];
+    const result = discoverClaudeBinary({
+      versionsDir: "/fake/versions",
+      listVersionsDir: () => [],
+      pathDirs: [prefixBin],
+      findExecutableInDir: (dir, name) => {
+        asked.push(dir);
+        return `${dir}/${name}`;
+      },
+      isOwnBinary: (candidate) => candidate === `${prefixBin}/agent-shim`,
+    });
+
+    expect(result.source).toBe("path-fallback");
+    expect(result.path).toBe(`${prefixBin}/claude`);
+    expect(asked).toEqual([prefixBin]);
+  });
+
+  it("never returns this tool's own binary from the PATH fallback, and keeps searching later directories", () => {
+    const result = discoverClaudeBinary({
+      versionsDir: "/fake/versions",
+      listVersionsDir: () => [],
+      pathDirs: ["/fake/own-install", "/fake/other-bin"],
+      findExecutableInDir: (dir, name) => `${dir}/${name}`,
+      isOwnBinary: (candidate) => candidate === "/fake/own-install/claude",
+    });
+
+    expect(result.source).toBe("path-fallback");
+    expect(result.path).toBe("/fake/other-bin/claude");
+  });
+
+  it("fails loudly when the only PATH candidate is this tool's own binary (a `shim enable` copy named claude)", () => {
     expect(() =>
       discoverClaudeBinary({
         versionsDir: "/fake/versions",
         listVersionsDir: () => [],
         pathDirs: ["/fake/own-install"],
         findExecutableInDir: (dir, name) => `${dir}/${name}`,
-        ownInstallDirs: ["/fake/own-install"],
+        isOwnBinary: () => true,
       }),
     ).toThrow(/Could not find a claude binary/);
   });
@@ -134,7 +167,7 @@ describe("discoverClaudeBinary", () => {
         listVersionsDir: () => [],
         pathDirs: [],
         findExecutableInDir: () => undefined,
-        ownInstallDirs: [],
+        isOwnBinary: () => false,
       }),
     ).toThrow(/Could not find a claude binary/);
   });

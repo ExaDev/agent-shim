@@ -71,15 +71,33 @@ export function isInvokedAsClaude(invokedName: string): boolean {
 }
 
 /**
- * The directories `discoverClaudeBinary`'s PATH-fallback search must exclude to avoid recursively discovering/spawning this very tool: wherever the running executable itself lives, plus wherever `shim enable` last placed a `claude`-named copy, when that's a *different* directory (i.e. `--dir` was used). Without folding the recorded shim directory in here too, `agent-shim run`/`agent-shim doctor` would only exclude their own directory, not a `--dir`-placed shim living elsewhere on PATH.
+ * Builds the check `discoverClaudeBinary`'s PATH fallback uses to recognise this very tool among the `claude` candidates it finds, so the launcher can never recursively discover and spawn itself.
+ *
+ * A candidate counts as this tool when it is the file `claude-shim.json` records (the marker is authoritative even after an agent-shim upgrade left the target holding the previous version's bytes, when neither its content nor its inode match the running binary any more; the same trust `enableClaudeShim`/`disableClaudeShim` already place in the marker) or when it is the same file as this process's own content, compared by inode the way `enableClaudeShim` already compares for its "is this target mine" decision (`fs.statSync` follows symlinks, so a `claude` symlink pointing at the running binary counts as the same file too, while a package manager's symlink to a different package's launcher does not).
+ *
+ * Deliberately checks candidate files rather than excluding whole directories, the previous shape: an npm global prefix's bin directory holds every globally-installed package's binaries side by side, so a directory-level exclusion hid a genuinely separate `@anthropic-ai/claude-code` install living in the same directory as agent-shim (#188). The layouts the exclusion existed for stay safe, because the only `claude` dropped in them is agent-shim's own shim copy: install.sh's `~/.local/bin`, Homebrew's `/opt/homebrew/bin` and Scoop's shims directory are shared bin directories in exactly the same way, and a different package's claude there is now found instead of hidden.
  */
-export function resolveOwnInstallDirs(paths: LayoutPaths, ownExecutablePath: string): string[] {
-  const dirs = [path.dirname(ownExecutablePath)];
+export function resolveOwnBinaryCheck(paths: LayoutPaths, contentSourcePath: string): (candidate: string) => boolean {
   const state = readJson(paths.claudeShimFile, ClaudeShimStateSchema);
-  if (state !== undefined) {
-    dirs.push(path.dirname(state.targetPath));
-  }
-  return dirs;
+  const recordedTarget = state === undefined ? undefined : path.resolve(state.targetPath);
+  // Statted on first use rather than at build time, since discovery may resolve through the versions directory and never ask about a PATH candidate at all.
+  let ownStat: fs.Stats | undefined;
+  return (candidate) => {
+    if (recordedTarget !== undefined && path.resolve(candidate) === recordedTarget) {
+      return true;
+    }
+    ownStat ??= statOrUndefined(contentSourcePath);
+    const candidateStat = statOrUndefined(candidate);
+    return (
+      ownStat !== undefined &&
+      candidateStat !== undefined &&
+      // A platform reporting no inode number for either file must not read every candidate as this tool.
+      ownStat.ino !== 0 &&
+      candidateStat.ino !== 0 &&
+      candidateStat.dev === ownStat.dev &&
+      candidateStat.ino === ownStat.ino
+    );
+  };
 }
 
 /** Where `shim enable` places `claude` absent a --dir override: alongside the running executable. */
@@ -98,6 +116,18 @@ function isCrossDeviceError(error: unknown): boolean {
 function lstatOrUndefined(target: string): fs.Stats | undefined {
   try {
     return fs.lstatSync(target);
+  } catch (error) {
+    if (isEnoent(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+/** `fs.statSync` with ENOENT collapsed to undefined. Unlike `lstatOrUndefined` it follows symlinks, so a `claude` symlink resolves to whatever file it actually points at, which is what `resolveOwnBinaryCheck`'s inode comparison needs. */
+function statOrUndefined(target: string): fs.Stats | undefined {
+  try {
+    return fs.statSync(target);
   } catch (error) {
     if (isEnoent(error)) {
       return undefined;

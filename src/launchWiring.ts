@@ -2,7 +2,7 @@ import os from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { CliError } from "./cliError";
-import { resolveOwnInstallDirs } from "./claudeShim";
+import { resolveOwnBinaryCheck } from "./claudeShim";
 import { loadClassification } from "./config/classify";
 import { cosmiconfigReader } from "./config/load";
 import type { Pool } from "./config/schema";
@@ -13,12 +13,12 @@ import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import type { LogPort, ProcPort } from "./launcher/ports";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
 import {
+  realContentSourcePath,
   realCredentialPort,
   realFarmFs,
   realFsPort,
   realHeadroomPort,
   realIsProcessRunning,
-  realOwnExecutablePath,
   realResolveClaudeBinary,
   realRunPort,
   realSleepSync,
@@ -92,7 +92,7 @@ export function realPrepareLaunchParams(paths: LayoutPaths, options: RealLaunchO
     fs: realFsPort,
     proc: options.proc,
     log: options.log,
-    resolveClaudeBinary: realResolveClaudeBinary(resolveOwnInstallDirs(paths, realOwnExecutablePath())),
+    resolveClaudeBinary: realResolveClaudeBinary(resolveOwnBinaryCheck(paths, realContentSourcePath())),
     farm: farm.runtime,
     headroom: realHeadroomPort(paths, { spawnDaemon: options.spawnDaemon, cwd: farm.runtime.cwd }),
     frontdoor: realFrontDoorPort(paths, options.spawnDaemon),

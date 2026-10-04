@@ -592,13 +592,13 @@ export function realContentSourcePath(): string {
   return resolveContentSourcePath({ isSea: isSea(), execPath: process.execPath, argv1: process.argv[1] });
 }
 
-/** Builds the real `resolveClaudeBinary` callback `runLauncher` needs: scans the real versions directory, then falls back to a real PATH search, excluding this tool's own install directory. */
-export function realResolveClaudeBinary(ownInstallDirs: readonly string[]): () => DiscoveredClaudeBinary {
+/** Builds the real `resolveClaudeBinary` callback `runLauncher` needs: scans the real versions directory, then falls back to a real PATH search, never returning this tool's own binary (see `resolveOwnBinaryCheck`, which builds that check from the shim marker and the running executable's own content). */
+export function realResolveClaudeBinary(isOwnBinary: (candidate: string) => boolean): () => DiscoveredClaudeBinary {
   return () =>
     discoverClaudeBinary({
       listVersionsDir,
       pathDirs: (process.env.PATH ?? "").split(path.delimiter).filter((dir) => dir !== ""),
       findExecutableInDir,
-      ownInstallDirs: [...ownInstallDirs],
+      isOwnBinary,
     });
 }

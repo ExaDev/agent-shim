@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
 
-import { formatDoctorReport, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type DoctorIdentityInput, type DoctorProviderInput, type RunDoctorParams } from "./doctorReport";
+import { collectDoctorReport, formatDoctorReport, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type DoctorIdentityInput, type DoctorProviderInput, type RunDoctorParams } from "./doctorReport";
 import type { RunPort } from "./launcher/ports";
+import { buildLayoutPaths } from "./paths";
 
 const DISCOVERED_BINARY = { ok: true, binary: { path: "/opt/claude/2.1.0", source: "versions-dir", version: "2.1.0" } } as const;
 
@@ -670,5 +674,35 @@ describe("runDoctor legacy name", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0]?.severity).toBe("warn");
     expect(findings[0]?.message).toContain("Keychain");
+  });
+});
+
+describe("collectDoctorReport: binary discovery", () => {
+  // Real-wired, unlike the runDoctor suites above, because the co-location bug (#188) lived in the wiring: which candidates the PATH fallback is allowed to return. Follows claudeShim.test.ts's real-temp-directory convention.
+  it("reports the claude binary co-located with agent-shim under one npm global prefix (#188)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-discovery-root-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-discovery-home-"));
+    // realpathSync: macOS's os.tmpdir() resolves through a symlink (/var -> /private/var), and the found-binary message prints the PATH directory as given, so the assertion compares against the dereferenced form.
+    const prefixBin = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "doctor-discovery-bin-")));
+    const coLocatedClaude = path.join(prefixBin, "claude");
+    try {
+      fs.writeFileSync(path.join(prefixBin, "agent-shim"), "agent-shim binary", { mode: 0o755 });
+      fs.writeFileSync(coLocatedClaude, "@anthropic-ai/claude-code bundle", { mode: 0o755 });
+      // HOME/USERPROFILE steer os.homedir() (and so the default versions directory) at an empty home, and PATH at the co-located prefix, so the PATH fallback is the strategy that runs.
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("USERPROFILE", home);
+      vi.stubEnv("PATH", prefixBin);
+      const report = collectDoctorReport({ paths: buildLayoutPaths(root), env: { PATH: prefixBin } });
+      const findings = findingsFor(report, "binary-discovery");
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({ severity: "pass" });
+      expect(findings[0]?.message).toContain(coLocatedClaude);
+      expect(findings[0]?.message).toContain("path-fallback");
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(prefixBin, { recursive: true, force: true });
+    }
   });
 });
