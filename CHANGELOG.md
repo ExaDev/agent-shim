@@ -1,3 +1,9 @@
+## [7.14.0](https://github.com/ExaDev/agent-shim/compare/v7.13.2...v7.14.0) (2026-10-04)
+
+### Features
+
+* **frontdoor:** make the door's upstream dials interception-proof ([4eadab3](https://github.com/ExaDev/agent-shim/commit/4eadab3c52e98d52dc81445aa272935de523eaae))
+
 ## [7.13.2](https://github.com/ExaDev/agent-shim/compare/v7.13.1...v7.13.2) (2026-10-03)
 
 ### Bug Fixes
