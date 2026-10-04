@@ -225,7 +225,7 @@ export function createLeafCache(ca: CaMaterial, now: () => Date): (host: string)
 }
 
 /**
- * Persistence for the CA: generated once on the machine's first headroom start and reused forever after, because regenerating it would invalidate every child's `NODE_EXTRA_CA_CERTS` pointing at the old file. The real implementation writes the key with mode 0600; injected fakes keep it in memory.
+ * Persistence for the CA: generated once on the machine's first front-door start and reused forever after, because regenerating it would invalidate every child's `NODE_EXTRA_CA_CERTS` pointing at the old file. The real implementation writes the key with mode 0600; injected fakes keep it in memory.
  */
 export interface ConnectCertStore {
   /** The persisted CA, or undefined when none exists yet (or only half of it does: a cert without its key can sign nothing, so it counts as absent). */
