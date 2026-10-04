@@ -1,3 +1,9 @@
+## [8.2.0](https://github.com/ExaDev/agent-shim/compare/v8.1.0...v8.2.0) (2026-10-04)
+
+### Features
+
+* **scripts:** add a door mode to the RC interception rig ([dbac8ac](https://github.com/ExaDev/agent-shim/commit/dbac8acc026bc058381a8e52f3b4438c6850ade7))
+
 ## [8.1.0](https://github.com/ExaDev/agent-shim/compare/v8.0.2...v8.1.0) (2026-10-04)
 
 ### Features
