@@ -86,11 +86,12 @@ describe("the Remote Control session tracker", () => {
     expect(tracker.list()).toEqual([]);
   });
 
-  it("refreshes the retained bearer latest-wins on the session's recurring calls, and does not lose it when a call carries none", () => {
+  it("refreshes the retained OAuth bearer latest-wins among OAuth-kind calls, and never lets a worker JWT displace it", () => {
     const { tracker, advance } = trackerWithClock();
     exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-REDACTED" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
     advance(HEARTBEAT_INTERVAL_MS);
-    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer sk-ant-REDACTED" }).respond(HTTP_STATUS.ok);
+    // The worker's recurring calls carry the worker JWT, a different credential kind that authorises worker operations only: the exchange refreshes the entry's liveness without touching the injection credential (a JWT replayed on the client half is answered 401, observed live).
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }).respond(HTTP_STATUS.ok);
     expect(tracker.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-REDACTED");
     advance(HEARTBEAT_INTERVAL_MS);
     exchange(tracker, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/client/presence`, authorization: "Bearer sk-ant-REDACTED" }).respond(HTTP_STATUS.ok);
@@ -368,6 +369,22 @@ describe("injectRcUserMessage over an injected dial", () => {
     ]);
   });
 
+  it("refuses a write verbosely when only worker calls were observed, since the worker JWT does not authorise the client half", async () => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }).respond(HTTP_STATUS.ok);
+    const dial: RcEventDial = {
+      writeEvents: async () => {
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: "{}" });
+      },
+    };
+    const result = await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial, newUuid: () => "uuid-4" }, SESSION_ID, "hello");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toContain("no claude.ai OAuth bearer has been observed");
+      expect(result.message).toContain("worker JWT");
+    }
+  });
+
   it("refuses an unobserved session and reports an unreachable API host, both verbosely and without throwing", async () => {
     const { tracker } = trackerWithClock();
     const dial: RcEventDial = {
@@ -381,7 +398,7 @@ describe("injectRcUserMessage over an injected dial", () => {
       expect(unknown.message).toContain(SESSION_ID);
       expect(unknown.message).toContain("has not observed");
     }
-    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b" }).respond(HTTP_STATUS.ok);
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-REDACTED" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
     const unreachable = await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial, newUuid: () => "uuid-3" }, SESSION_ID, "hello");
     expect(unreachable.ok).toBe(false);
     if (!unreachable.ok) {
