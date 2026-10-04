@@ -35,6 +35,8 @@ const HTTP_CONFLICT = 409;
 /** The sequence numbers the scripted dials answer with, named for the same reason. */
 const FIRST_SEQUENCE_NUM = 411;
 const SECOND_SEQUENCE_NUM = 412;
+/** The number the real API returned as a JSON string in the observed live write answer. */
+const LIVE_STRING_SEQUENCE_NUM = 6;
 
 /** One exchange driven through the tracker the way the door's adapters drive it: request facts, the request body's chunks and end, then the response head, body and end. */
 function exchange(tracker: RcSessionTracker, request: { method: string; url: string; authorization?: string; headers?: Record<string, string>; requestBody?: string }): { readonly respond: (status: number, body?: string, headers?: Record<string, string>) => void } {
@@ -320,6 +322,10 @@ describe("the injected event's payload and answer parsing", () => {
 
   it("reads the sequence numbers out of an accepted write answer", () => {
     expect(rcEventWriteResultFromAnswer({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: FIRST_SEQUENCE_NUM }, { sequence_num: SECOND_SEQUENCE_NUM }] }) })).toEqual({ ok: true, sequenceNums: [FIRST_SEQUENCE_NUM, SECOND_SEQUENCE_NUM] });
+  });
+
+  it("reads a sequence number the real API returned as a JSON string, the shape observed live", () => {
+    expect(rcEventWriteResultFromAnswer({ status: HTTP_STATUS.ok, body: '{"results":[{"duplicate":false,"event_id":"cb3d099c-1725-4820-a5a2-f857ecb6a26b","sequence_num":"6"}]}' })).toEqual({ ok: true, sequenceNums: [LIVE_STRING_SEQUENCE_NUM] });
   });
 
   it("names the stale observed bearer as the cause when the API answers 401", () => {
