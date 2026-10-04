@@ -1,3 +1,13 @@
+## [8.0.2](https://github.com/ExaDev/agent-shim/compare/v8.0.1...v8.0.2) (2026-10-04)
+
+### Bug Fixes
+
+* **frontdoor:** terminate the transparent surface per host keyed on SNI ([07618a4](https://github.com/ExaDev/agent-shim/commit/07618a462c8c3a9b958dc5e7e6394cd08b6bd2c9))
+
+### Documentation
+
+* **frontdoor:** describe the connect surface's per-host termination ([b159d02](https://github.com/ExaDev/agent-shim/commit/b159d0215aaccc042ab35d8570dce2ab84529e40))
+
 ## [8.0.1](https://github.com/ExaDev/agent-shim/compare/v8.0.0...v8.0.1) (2026-10-04)
 
 ### Bug Fixes
