@@ -7,6 +7,8 @@ import type { Command } from "commander";
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { HTTP_STATUS } from "../codex/http";
 import { readGlobalConfig } from "../configProfilesStore";
+import { realTrustBundleFs } from "../frontdoor/realFrontDoorPort";
+import { resolveTrustBundle, type TrustBundle, type TrustBundleFs } from "../frontdoor/trust";
 import { hashSettings, settingsArgs, settingsEnv, settingsOf, type HeadroomSettings } from "./settings";
 import { parseInstalledCommit } from "./source";
 import type { LayoutPaths } from "../paths";
@@ -129,10 +131,25 @@ function headroomPidRunning(pid: number): boolean {
   return !exitedHeadroom.has(pid) && realIsProcessRunning(pid);
 }
 
+/** Headroom's additive trust variable: one PEM file whose certificates headroom trusts on top of its default trust (the operating system's store plus certifi's bundle). */
+const HEADROOM_CA_BUNDLE = "HEADROOM_CA_BUNDLE";
+
+/**
+ * The file headroom is pointed at through `HEADROOM_CA_BUNDLE`, or undefined when no front door has ever run on this root (no `caCertFile` exists, so there is no door certificate headroom could ever be presented). Headroom needs the door's CA because a transparent-interception deployment redirects the API host's address machine-wide: headroom's own dials to `api.anthropic.com` (an OAuth session's upstream, and its subscription tracking) then reach the door's transparent surface and its leaf, not the origin's public certificate. Every other dial headroom makes (the door's direct listener is plain HTTP; huggingface, pypi and the other public hosts are not intercepted) needs only its default trust, which the additive variable keeps. `inherited` is the parent environment's own `HEADROOM_CA_BUNDLE`, folded into the bundle exactly as `resolveTrustBundle` folds an inherited `NODE_EXTRA_CA_CERTS`, because headroom reads one file from the variable.
+ */
+export function resolveHeadroomTrustBundle(params: { readonly caCertFile: string; readonly bundlesDir: string; readonly inherited: string | undefined; readonly fs: TrustBundleFs }): TrustBundle | undefined {
+  if (!params.fs.exists(params.caCertFile)) {
+    return undefined;
+  }
+  return resolveTrustBundle({ ...params, variable: HEADROOM_CA_BUNDLE });
+}
+
 /**
  * Environment for the supervised headroom proxy. `HEADROOM_HTTP2` defaults to `0`: headroom's HTTP/2 upstream pool multiplexes every request over shared keep-alive connections, and when a provider retires one (GOAWAY is routine load-balancer behaviour, not an error) every in-flight request on it dies at once; headroom retries exactly once, and that retry regularly lands on another dying connection from the same co-aged pool, which surfaces to Claude Code as "No response from API" after its full timeout budget. HTTP/1.1 gives each request its own connection, so a retirement can only kill the one request already being retried. An explicit `HEADROOM_HTTP2` in the parent environment wins, so the default can be overridden without editing agent-shim once headroom fixes its pool management.
+ *
+ * `trustBundlePath`, when given, is the file `resolveHeadroomTrustBundle` chose, and becomes `HEADROOM_CA_BUNDLE`: a path, never certificate text, and an additive variable, never `SSL_CERT_FILE` or `REQUESTS_CA_BUNDLE`. Those two replace headroom's whole trust store (and switch off its operating-system store, which is where a corporate TLS-inspection root lives), so pointing them at the door's CA alone would make every public upstream untrusted.
  */
-export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readonly string[], settings: Readonly<HeadroomSettings>, caBundle?: string): NodeJS.ProcessEnv {
+export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readonly string[], settings: Readonly<HeadroomSettings>, trustBundlePath?: string): NodeJS.ProcessEnv {
   // Headroom refuses `--uds` alongside a TCP address from its environment, so an ambient HEADROOM_HOST or HEADROOM_PORT (a shell set up for running headroom by hand) would stop the supervised daemon starting at all. The supervisor alone decides where the daemon listens.
   const inherited = { ...parentEnv };
   delete inherited.HEADROOM_HOST;
@@ -141,8 +158,8 @@ export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readon
     ...inherited,
     HEADROOM_ALLOWED_BASE_URLS: allowlist.join(","),
     HEADROOM_HTTP2: parentEnv.HEADROOM_HTTP2 ?? "0",
-    // A transparent-interception deployment redirects the API host's address machine-wide, so headroom's own Python dials reach the front door's leaf instead of the origin's public certificate, and Python trusts only the system store: point its two trust variables (urllib3/httpx read both) at the door's combined bundle, which carries the system-equivalent anchors alongside the door's CA. An explicit value in the parent environment always wins, exactly like HEADROOM_HTTP2.
-    ...(caBundle === undefined || parentEnv.REQUESTS_CA_BUNDLE !== undefined || parentEnv.SSL_CERT_FILE !== undefined ? {} : { REQUESTS_CA_BUNDLE: caBundle, SSL_CERT_FILE: caBundle }),
+    // The bundle already holds any inherited HEADROOM_CA_BUNDLE's certificates, so replacing the variable loses nothing. An inherited SSL_CERT_FILE or REQUESTS_CA_BUNDLE passes through untouched and, by headroom's own precedence, still replaces everything: an explicit choice in the parent environment wins.
+    ...(trustBundlePath === undefined ? {} : { [HEADROOM_CA_BUNDLE]: trustBundlePath }),
     ...settingsEnv(settings),
   };
 }
@@ -211,15 +228,17 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
     socketTrust: realHeadroomSocketTrust,
     readConfig: () => resolveSupervisorConfig(readGlobalConfig(paths)?.headroom ?? {}),
     spawnHeadroom: (socketPath, allowlist, settings) => {
-      // The door's combined CA bundle, when a door has ever run on this root: under transparent interception headroom needs the door's CA trusted, and on a normal root the bundle simply also holds the system-equivalent anchors, so passing it is never wrong.
-      const caBundle = fs.existsSync(paths.frontdoorCaCertFile) ? fs.readFileSync(paths.frontdoorCaCertFile, "utf8") : undefined;
+      const trust = resolveHeadroomTrustBundle({ caCertFile: paths.frontdoorCaCertFile, bundlesDir: paths.frontdoorCaBundlesDir, inherited: process.env[HEADROOM_CA_BUNDLE], fs: realTrustBundleFs });
       fs.mkdirSync(paths.logsDir, { recursive: true });
+      if (trust?.warning !== undefined) {
+        fs.appendFileSync(paths.headroomLogPath, `${new Date().toISOString()} ${trust.warning}\n`);
+      }
       const logFd = fs.openSync(paths.headroomLogPath, "a");
       try {
         const child = spawn("headroom", headroomProxyArgs(socketPath, settings), {
           detached: true,
           stdio: ["ignore", logFd, logFd],
-          env: headroomSpawnEnv(process.env, allowlist, settings, caBundle),
+          env: headroomSpawnEnv(process.env, allowlist, settings, trust?.path),
         });
         if (child.pid === undefined) {
           throw new Error("spawning headroom returned no pid");

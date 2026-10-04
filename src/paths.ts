@@ -51,7 +51,7 @@ export interface LayoutPaths {
   readonly frontdoorCaCertFile: string;
   /** Path to the front door's CA private key, mode 0600: whoever can read it can impersonate the door to every routed child. */
   readonly frontdoorCaKeyFile: string;
-  /** Directory of combined CA bundles: a parent environment's own NODE_EXTRA_CA_CERTS file plus the front door's CA, one file per distinct combination, for children that must keep trusting both. */
+  /** Directory of combined CA bundles: a parent environment's own NODE_EXTRA_CA_CERTS (for a routed child) or HEADROOM_CA_BUNDLE (for the headroom daemon) file plus the front door's CA, one file per distinct combination, for processes that must keep trusting both. */
   readonly frontdoorCaBundlesDir: string;
   /** Path to the front door's state.json: its supervisor pid, its port, and the sticky port it last served on. */
   readonly frontdoorStateFile: string;

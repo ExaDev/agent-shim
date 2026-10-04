@@ -1,8 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-import { buildLayoutPaths } from "../paths";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { ensureCa, generateCa, realConnectCertStore } from "../frontdoor/connect";
+import { realTrustBundleFs } from "../frontdoor/realFrontDoorPort";
+import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { collectHeadroomStatus, formatHeadroomStatus, headroomProxyArgs, headroomSpawnEnv } from "./commands";
+import { collectHeadroomStatus, formatHeadroomStatus, headroomProxyArgs, headroomSpawnEnv, resolveHeadroomTrustBundle } from "./commands";
 import { headroomSocketPath } from "./socket";
 import { hashAllowlist, headroomAllowlist, writeHeadroomState, writeSession } from "./state";
 
@@ -116,6 +122,90 @@ describe("headroomSpawnEnv", () => {
     expect(Object.keys(env)).toEqual(expect.arrayContaining(["PATH", "HEADROOM_ALLOWED_BASE_URLS", "HEADROOM_HTTP2"]));
     expect(env).not.toHaveProperty("HEADROOM_HOST");
     expect(env).not.toHaveProperty("HEADROOM_PORT");
+  });
+});
+
+/** Every environment variable a TLS stack headroom runs reads as a file or directory path naming trust anchors: headroom's own additive bundle, Python's ssl and httpx (`SSL_CERT_FILE`, `SSL_CERT_DIR`), and requests (`REQUESTS_CA_BUNDLE`). */
+const TRUST_PATH_VARIABLES = ["HEADROOM_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE"] as const;
+
+/** The armour line every PEM certificate starts with: its presence in an environment value means certificate text where a path belongs. */
+const PEM_CERTIFICATE_HEADER = "-----BEGIN CERTIFICATE-----";
+
+describe("headroom trust", () => {
+  let root: string;
+  let layout: LayoutPaths;
+
+  beforeEach(() => {
+    root = mkdtempSync(path.join(os.tmpdir(), "headroom-trust-test-"));
+    layout = buildLayoutPaths(root);
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** Writes a real door CA to this root, exactly as the door's first start does, and returns its certificate PEM. */
+  function startDoorCa(): string {
+    return ensureCa(realConnectCertStore(layout), () => generateCa(new Date())).certPem;
+  }
+
+  it("hands headroom no trust bundle on a root where no door has ever run", () => {
+    expect(resolveHeadroomTrustBundle({ caCertFile: layout.frontdoorCaCertFile, bundlesDir: layout.frontdoorCaBundlesDir, inherited: undefined, fs: realTrustBundleFs })).toBeUndefined();
+  });
+
+  it("points HEADROOM_CA_BUNDLE at a file holding the door's CA, and exports no certificate text in any variable", () => {
+    const caPem = startDoorCa();
+    const trust = resolveHeadroomTrustBundle({ caCertFile: layout.frontdoorCaCertFile, bundlesDir: layout.frontdoorCaBundlesDir, inherited: undefined, fs: realTrustBundleFs });
+    const env = headroomSpawnEnv({ PATH: "/usr/bin" }, ["https://api.anthropic.com"], {}, trust?.path);
+
+    expect(env.HEADROOM_CA_BUNDLE).toBe(layout.frontdoorCaCertFile);
+    expect(readFileSync(layout.frontdoorCaCertFile, "utf8")).toBe(caPem);
+    for (const [name, value] of Object.entries(env)) {
+      expect(value, name).not.toContain(PEM_CERTIFICATE_HEADER);
+    }
+    for (const name of TRUST_PATH_VARIABLES) {
+      const value = env[name];
+      if (value !== undefined) {
+        expect(statSync(value).isFile(), name).toBe(true);
+      }
+    }
+  });
+
+  it("never replaces headroom's default trust store with the door's CA alone", () => {
+    startDoorCa();
+    const trust = resolveHeadroomTrustBundle({ caCertFile: layout.frontdoorCaCertFile, bundlesDir: layout.frontdoorCaBundlesDir, inherited: undefined, fs: realTrustBundleFs });
+    const env = headroomSpawnEnv({ PATH: "/usr/bin" }, ["https://api.anthropic.com"], {}, trust?.path);
+
+    expect(env).not.toHaveProperty("SSL_CERT_FILE");
+    expect(env).not.toHaveProperty("REQUESTS_CA_BUNDLE");
+  });
+
+  it("folds an inherited HEADROOM_CA_BUNDLE into the bundle, since headroom reads one file from it", () => {
+    const caPem = startDoorCa();
+    const corporateFile = path.join(root, "corporate.pem");
+    const corporatePem = generateCa(new Date()).certPem;
+    writeFileSync(corporateFile, corporatePem, "utf8");
+
+    const trust = resolveHeadroomTrustBundle({ caCertFile: layout.frontdoorCaCertFile, bundlesDir: layout.frontdoorCaBundlesDir, inherited: corporateFile, fs: realTrustBundleFs });
+    const env = headroomSpawnEnv({ HEADROOM_CA_BUNDLE: corporateFile }, ["https://api.anthropic.com"], {}, trust?.path);
+
+    if (trust === undefined) {
+      throw new Error("a door CA exists, so headroom must be handed a trust bundle");
+    }
+    expect(env.HEADROOM_CA_BUNDLE).toBe(trust.path);
+    expect(path.dirname(trust.path)).toBe(layout.frontdoorCaBundlesDir);
+    const bundle = readFileSync(trust.path, "utf8");
+    expect(bundle).toContain(caPem.trim());
+    expect(bundle).toContain(corporatePem.trim());
+  });
+
+  it("leaves an inherited SSL_CERT_FILE in place, so an explicit replacement store in the parent environment still wins", () => {
+    startDoorCa();
+    const trust = resolveHeadroomTrustBundle({ caCertFile: layout.frontdoorCaCertFile, bundlesDir: layout.frontdoorCaBundlesDir, inherited: undefined, fs: realTrustBundleFs });
+    const env = headroomSpawnEnv({ SSL_CERT_FILE: "/etc/ssl/corporate.pem" }, ["https://api.anthropic.com"], {}, trust?.path);
+
+    expect(env.SSL_CERT_FILE).toBe("/etc/ssl/corporate.pem");
+    expect(env.HEADROOM_CA_BUNDLE).toBe(layout.frontdoorCaCertFile);
   });
 });
 
