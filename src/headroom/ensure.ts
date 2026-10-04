@@ -71,7 +71,7 @@ export function ensureHeadroom(params: {
         const holders = sessionsForSupervisor(ports.fs, paths.headroomSessionsDir, state.supervisorPid).filter((session) => ports.isRunning(session.pid));
         if (holders.length > 0) {
           throw new HeadroomStartError(
-            `agent-shim: the running headroom daemon was started before this launch's front door address and would refuse every request this launch sends through it. ` +
+            `the running headroom daemon was started before this launch's front door address and would refuse every request this launch sends through it. ` +
               `It restarts once the launches using it end (pid ${holders.map((session) => String(session.pid)).join(", ")}); end them and launch again, or launch with --no-headroom.`,
           );
         }
@@ -79,7 +79,7 @@ export function ensureHeadroom(params: {
       }
       if (state.lastError !== undefined) {
         throw new HeadroomStartError(
-          `agent-shim: the headroom daemon reported a fatal error and is not serving: ${state.lastError} ` +
+          `the headroom daemon reported a fatal error and is not serving: ${state.lastError} ` +
             `(daemon log: ${paths.headroomLogPath})`,
         );
       }
@@ -105,7 +105,7 @@ export function ensureHeadroom(params: {
     if (ports.now() >= deadline) {
       const lastError = state?.lastError;
       throw new HeadroomStartError(
-        `agent-shim: the headroom daemon did not become ready within ${String(HEADROOM_START_TIMEOUT_MS)}ms` +
+        `the headroom daemon did not become ready within ${String(HEADROOM_START_TIMEOUT_MS)}ms` +
           (lastError === undefined ? "" : ` (last error: ${lastError})`) +
           (awaitingAllowlist ? " (the running daemon's allowlist does not admit this launch's front door, and it did not restart)" : "") +
             `. Daemon log: ${paths.headroomLogPath}`,

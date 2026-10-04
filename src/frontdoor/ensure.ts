@@ -59,7 +59,7 @@ export function ensureFrontDoor(params: { readonly paths: LayoutPaths; readonly 
           ports.stopSupervisor(supervisorPid);
           while (ports.isRunning(supervisorPid)) {
             if (ports.now() >= deadline) {
-              throw new FrontDoorStartError(`agent-shim: the front door (pid ${String(supervisorPid)}, protocol ${String(state.protocol ?? 0)}) is older than this launcher (protocol ${String(FRONT_DOOR_PROTOCOL)}) and did not exit when asked. Daemon log: ${paths.frontdoorLogPath}`);
+              throw new FrontDoorStartError(`the front door (pid ${String(supervisorPid)}, protocol ${String(state.protocol ?? 0)}) is older than this launcher (protocol ${String(FRONT_DOOR_PROTOCOL)}) and did not exit when asked. Daemon log: ${paths.frontdoorLogPath}`);
             }
             ports.sleep(FRONTDOOR_LAUNCHER_POLL_MS);
           }
@@ -74,13 +74,13 @@ export function ensureFrontDoor(params: { readonly paths: LayoutPaths; readonly 
         }
         lastRejection = `the listener on 127.0.0.1:${String(state.port)} (recorded for pid ${String(supervisorPid)}) failed authentication: ${verdict.reason}`;
         if (spawned) {
-          throw new FrontDoorStartError(`agent-shim: ${lastRejection}; refusing to send this session's credentials to it. Daemon log: ${paths.frontdoorLogPath}`);
+          throw new FrontDoorStartError(`${lastRejection}; refusing to send this session's credentials to it. Daemon log: ${paths.frontdoorLogPath}`);
         }
         distrusted.add(supervisorPid);
         continue;
       }
       if (state?.lastError !== undefined) {
-        throw new FrontDoorStartError(`agent-shim: the front door reported a fatal error and is not serving: ${state.lastError} (daemon log: ${paths.frontdoorLogPath})`);
+        throw new FrontDoorStartError(`the front door reported a fatal error and is not serving: ${state.lastError} (daemon log: ${paths.frontdoorLogPath})`);
       }
     } else if (!spawned) {
       ports.fs.mkdirp(paths.frontdoorDir);
@@ -101,7 +101,7 @@ export function ensureFrontDoor(params: { readonly paths: LayoutPaths; readonly 
     if (ports.now() >= deadline) {
       const lastError = state?.lastError;
       throw new FrontDoorStartError(
-        `agent-shim: the front door did not become ready within ${String(FRONTDOOR_START_TIMEOUT_MS)}ms` +
+        `the front door did not become ready within ${String(FRONTDOOR_START_TIMEOUT_MS)}ms` +
           (lastError === undefined ? "" : ` (last error: ${lastError})`) +
           (lastRejection === undefined ? "" : ` (${lastRejection})`) +
           `. Daemon log: ${paths.frontdoorLogPath}`,
