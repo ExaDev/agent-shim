@@ -6,13 +6,25 @@ import { HTTP_STATUS } from "../codex/http";
 import { CONTROL_PATH_PREFIX, createRcControlHandler, frontDoorRcControl, realRcControlTransport, type RcControlTransport } from "./rcControl";
 import { generateCa, mintLeaf, LOOPBACK_LEAF_NAMES, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
-import type { RcInjectResult, RcSessionSummary } from "./rcSessions";
+import type { RcEventWriteResult, RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
 
 const TOKEN = "control-token-under-test";
 /** The sequence number the scripted inject answers with, named so the literal never reads as a magic number. */
 const SEQUENCE_NUM = 412;
 const SESSION_ID = "cse_00000000-0000-4000-8000-000000000001";
-const SESSIONS: readonly RcSessionSummary[] = [{ id: SESSION_ID, createdAt: 1_000, lastSeenAt: 2_000 }];
+/** A second tracked session with nothing pending, so an empty pending list is distinguishable from an untracked id. */
+const QUIET_SESSION_ID = "cse_00000000-0000-4000-8000-000000000002";
+const SESSIONS: readonly RcSessionSummary[] = [
+  { id: SESSION_ID, createdAt: 1_000, lastSeenAt: 2_000 },
+  { id: QUIET_SESSION_ID, createdAt: 1_100, lastSeenAt: 2_100 },
+];
+/** The request id the scripted pending entry carries, of the shape the protocol's own requests echo. */
+const REQUEST_ID = "req_00000000-0000-4000-8000-00000000000a";
+const PENDING: readonly RcPendingRequestSummary[] = [{ sessionId: SESSION_ID, requestId: REQUEST_ID, type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: 1_500 }];
+const STATUSES: readonly RcSessionStatus[] = [
+  { id: SESSION_ID, createdAt: 1_000, lastSeenAt: 2_000, workerState: { value: "WORKER_STATUS_RUNNING", observedAt: 1_200 }, workerIdleSeconds: { value: 7, observedAt: 2_000 }, pending: [...PENDING] },
+  { id: QUIET_SESSION_ID, createdAt: 1_100, lastSeenAt: 2_100, workerState: undefined, workerIdleSeconds: undefined, pending: [] },
+];
 
 /** The plain-HTTP transport the handler tests use: the handler is transport-agnostic, so a loopback HTTP server exercises it without any TLS setup. */
 function plainTransport(port: number): RcControlTransport {
@@ -61,9 +73,28 @@ async function serve(handler: (request: http.IncomingMessage, response: http.Ser
   };
 }
 
-/** One inject result the scripted handler deps answer with. */
-function injectAnswering(result: RcInjectResult): (sessionId: string, text: string) => Promise<RcInjectResult> {
+/** One write result the scripted handler deps answer with. */
+function writeAnswering(result: RcEventWriteResult): (sessionId: string, text: string) => Promise<RcEventWriteResult> {
   return async () => await Promise.resolve(result);
+}
+
+/** The full handler deps the scripted tests serve with, so every route has its dependency and each test overrides only what it exercises. */
+function handlerDeps(overrides: Readonly<Partial<Parameters<typeof createRcControlHandler>[0]>> = {}): Parameters<typeof createRcControlHandler>[0] {
+  return {
+    expectedToken: TOKEN,
+    list: () => SESSIONS,
+    statusOf: (sessionId?: string) => STATUSES.filter((status) => sessionId === undefined || status.id === sessionId),
+    pendingOf: (sessionId?: string) => PENDING.filter((pending) => sessionId === undefined || pending.sessionId === sessionId),
+    inject: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
+    answer: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
+    ...overrides,
+  };
+}
+
+/** The error message a JSON answer carried, when it carried one. */
+function errorTextOf(body: string): string {
+  const parsed: unknown = JSON.parse(body);
+  return typeof parsed === "object" && parsed !== null && "error" in parsed && typeof parsed.error === "string" ? parsed.error : body;
 }
 
 describe("the Remote Control control handler", () => {
@@ -75,7 +106,7 @@ describe("the Remote Control control handler", () => {
   });
 
   it("lists the observed sessions for the generation's token, and refuses any other credential", async () => {
-    const started = await serve(createRcControlHandler({ expectedToken: TOKEN, list: () => SESSIONS, inject: injectAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }) }));
+    const started = await serve(createRcControlHandler(handlerDeps()));
     running = started;
     const transport = plainTransport(started.port);
     const refused = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/sessions`, headers: { authorization: "Bearer wrong" } });
@@ -87,13 +118,37 @@ describe("the Remote Control control handler", () => {
     expect(JSON.parse(allowed.body)).toEqual({ sessions: SESSIONS });
   });
 
+  it("reports each session's status and pending control requests, and refuses a named session it has not observed rather than answering empty", async () => {
+    const started = await serve(createRcControlHandler(handlerDeps()));
+    running = started;
+    const transport = plainTransport(started.port);
+    const headers = { authorization: `Bearer ${TOKEN}` };
+    const statuses = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/status`, headers });
+    expect(statuses.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(statuses.body)).toEqual({ statuses: STATUSES });
+    const oneSession = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/status?session=${SESSION_ID}`, headers });
+    expect(JSON.parse(oneSession.body)).toEqual({ statuses: [STATUSES[0]] });
+    const unknownSession = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/status?session=cse_00000000-0000-4000-8000-0000000000ff`, headers });
+    expect(unknownSession.status).toBe(HTTP_STATUS.notFound);
+    expect(errorTextOf(unknownSession.body)).toContain("has not observed Remote Control session");
+    const pending = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/pending`, headers });
+    expect(pending.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(pending.body)).toEqual({ pending: PENDING });
+    const pendingOne = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/pending?session=${SESSION_ID}`, headers });
+    expect(JSON.parse(pendingOne.body)).toEqual({ pending: PENDING });
+    const pendingNone = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/pending?session=${QUIET_SESSION_ID}`, headers });
+    // A tracked session with nothing pending is an empty list, not a refusal; the untracked id above is the refusal.
+    expect(pendingNone.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(pendingNone.body)).toEqual({ pending: [] });
+    const pendingUnknown = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/pending?session=cse_00000000-0000-4000-8000-0000000000ee`, headers });
+    expect(pendingUnknown.status).toBe(HTTP_STATUS.notFound);
+    const wrongMethod = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/pending`, headers, body: "{}" });
+    expect(wrongMethod.status).toBe(HTTP_STATUS.methodNotAllowed);
+  });
+
   it("carries an inject out and answers with the sequence numbers, or with the operation's verbose failure", async () => {
     const started = await serve(
-      createRcControlHandler({
-        expectedToken: TOKEN,
-        list: () => SESSIONS,
-        inject: injectAnswering({ ok: false, message: "the API refused the observed Authorization bearer for this session (HTTP 401): the bearer went stale" }),
-      }),
+      createRcControlHandler(handlerDeps({ inject: writeAnswering({ ok: false, message: "the API refused the observed Authorization bearer for this session (HTTP 401): the bearer went stale" }) })),
     );
     running = started;
     const transport = plainTransport(started.port);
@@ -111,17 +166,55 @@ describe("the Remote Control control handler", () => {
     expect(wrongMethod.status).toBe(HTTP_STATUS.methodNotAllowed);
   });
 
+  it("carries an answer out and answers with the sequence numbers, refusing a malformed body and an approval that carries text", async () => {
+    const seen: { session: string; request: string; decision: { approve: boolean; message: string | undefined } }[] = [];
+    const started = await serve(
+      createRcControlHandler(
+        handlerDeps({
+          answer: async (session, request, decision) => {
+            seen.push({ session, request, decision });
+            return await Promise.resolve({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+          },
+        }),
+      ),
+    );
+    running = started;
+    const transport = plainTransport(started.port);
+    const headers = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
+    const denied = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/answer`, headers, body: JSON.stringify({ session: SESSION_ID, request: REQUEST_ID, approve: false, text: "not today" }) });
+    expect(denied.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(denied.body)).toEqual({ session: SESSION_ID, request: REQUEST_ID, sequenceNums: [SEQUENCE_NUM] });
+    expect(seen).toEqual([{ session: SESSION_ID, request: REQUEST_ID, decision: { approve: false, message: "not today" } }]);
+    const approved = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/answer`, headers, body: JSON.stringify({ session: SESSION_ID, request: REQUEST_ID, approve: true }) });
+    expect(approved.status).toBe(HTTP_STATUS.ok);
+    expect(seen[1]).toEqual({ session: SESSION_ID, request: REQUEST_ID, decision: { approve: true, message: undefined } });
+    const approvalWithText = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/answer`, headers, body: JSON.stringify({ session: SESSION_ID, request: REQUEST_ID, approve: true, text: "go on" }) });
+    expect(approvalWithText.status).toBe(HTTP_STATUS.badRequest);
+    expect(errorTextOf(approvalWithText.body)).toContain("allow result has no message field");
+    for (const malformed of ["{not json", JSON.stringify({ session: SESSION_ID, request: REQUEST_ID }), JSON.stringify({ session: SESSION_ID, request: REQUEST_ID, approve: "yes" }), JSON.stringify({ session: "", request: REQUEST_ID, approve: true })]) {
+      const refused = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/answer`, headers, body: malformed });
+      expect(refused.status).toBe(HTTP_STATUS.badRequest);
+    }
+    const failed = await serve(
+      createRcControlHandler(handlerDeps({ answer: writeAnswering({ ok: false, message: "the front door has not observed control request req_missing pending on session cse_1: it was answered already" }) })),
+    );
+    running = failed;
+    const verbose = await plainTransport(failed.port).request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/answer`, headers, body: JSON.stringify({ session: SESSION_ID, request: "req_missing", approve: true }) });
+    expect(verbose.status).toBe(HTTP_STATUS.badGateway);
+    expect(errorTextOf(verbose.body)).toContain("answered already");
+  });
+
   it("passes the session and text it received to the inject operation", async () => {
     const seen: { session: string; text: string }[] = [];
     const started = await serve(
-      createRcControlHandler({
-        expectedToken: TOKEN,
-        list: () => [],
-        inject: async (session, text) => {
-          seen.push({ session, text });
-          return await Promise.resolve({ ok: true, sequenceNums: [SEQUENCE_NUM] });
-        },
-      }),
+      createRcControlHandler(
+        handlerDeps({
+          inject: async (session, text) => {
+            seen.push({ session, text });
+            return await Promise.resolve({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+          },
+        }),
+      ),
     );
     running = started;
     const answer = await plainTransport(started.port).request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/inject`, headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ session: SESSION_ID, text: "run the tests" }) });
@@ -139,18 +232,30 @@ describe("the control client", () => {
     running = undefined;
   });
 
-  it("lists sessions and delivers a prompt through the transport, surfacing the door's verbose failure message", async () => {
-    const started = await serve(createRcControlHandler({ expectedToken: TOKEN, list: () => SESSIONS, inject: injectAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }) }));
+  it("lists sessions, reads status and pending, and delivers writes through the transport, surfacing the door's verbose failure message", async () => {
+    const started = await serve(createRcControlHandler(handlerDeps()));
     running = started;
     const control = frontDoorRcControl(plainTransport(started.port), TOKEN);
     expect(await control.listSessions()).toEqual(SESSIONS);
+    expect(await control.statusOf()).toEqual(STATUSES);
+    expect(await control.statusOf(SESSION_ID)).toEqual([STATUSES[0]]);
+    expect(await control.pendingOf()).toEqual(PENDING);
+    expect(await control.pendingOf(QUIET_SESSION_ID)).toEqual([]);
     expect(await control.sendPrompt(SESSION_ID, "run the tests")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+    expect(await control.answerRequest(SESSION_ID, REQUEST_ID, { approve: false, message: "not today" })).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+    await expect(control.statusOf("cse_00000000-0000-4000-8000-0000000000ff")).rejects.toThrow("has not observed Remote Control session");
     await started.stop();
     const unreachable = await frontDoorRcControl(plainTransport(started.port), TOKEN).sendPrompt(SESSION_ID, "hello");
     expect(unreachable.ok).toBe(false);
     if (!unreachable.ok) {
       expect(unreachable.message).toContain("could not reach the front door's control listener");
     }
+    const unreachableAnswer = await frontDoorRcControl(plainTransport(started.port), TOKEN).answerRequest(SESSION_ID, REQUEST_ID, { approve: true, message: undefined });
+    expect(unreachableAnswer.ok).toBe(false);
+    if (!unreachableAnswer.ok) {
+      expect(unreachableAnswer.message).toContain("could not reach the front door's control listener");
+    }
+    await expect(frontDoorRcControl(plainTransport(started.port), TOKEN).statusOf()).rejects.toThrow("could not reach the front door's control listener");
   });
 });
 

@@ -347,6 +347,12 @@ export function realConnectEffects(): ConnectEffects {
         request.on("data", (chunk: Buffer) => {
           observer.onRequestChunk(chunk);
         });
+        if (observer.onRequestEnd !== undefined) {
+          // Additive, exactly like the chunk listener: the pipe keeps sole control of flow control, and the observer learns the body completed.
+          request.on("end", () => {
+            observer.onRequestEnd?.();
+          });
+        }
         response.on("close", () => {
           observer.onEnd();
         });

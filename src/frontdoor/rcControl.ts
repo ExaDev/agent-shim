@@ -3,12 +3,12 @@ import * as https from "node:https";
 
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
-import type { RcInjectResult, RcSessionSummary } from "./rcSessions";
+import type { RcAnswerDecision, RcEventWriteResult, RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
 
 /**
- * The Remote Control control surface: the small HTTP namespace the serving door answers on its provider listener, next to `/healthz`, through which `agent-shim frontdoor rc` lists the observed sessions and injects a prompt into one.
+ * The Remote Control control surface: the small HTTP namespace the serving door answers on its provider listener, next to `/healthz`, through which `agent-shim frontdoor rc` lists the observed sessions, reports each one's status and pending control requests, injects a prompt into one, and answers one of its pending requests.
  *
- * This rides the listener `frontdoor status` already knows the door by (its address comes from the same state file, its trust anchor from the same CA path) rather than any second channel. The routes sit under one prefix the routed pipeline never serves, and every request must present the serving generation's control token as a Bearer credential: a fresh random value per door start, written owner-only under the front door's state directory so only this user's CLI can read it, and checked in constant time like every other capability the door accepts. An inject request is carried out by the door itself over its interception-proof dials, which is the whole point: the CLI never dials the API host directly, so nothing about the injection depends on the caller's own network path.
+ * This rides the listener `frontdoor status` already knows the door by (its address comes from the same state file, its trust anchor from the same CA path) rather than any second channel. The routes sit under one prefix the routed pipeline never serves, and every request must present the serving generation's control token as a Bearer credential: a fresh random value per door start, written owner-only under the front door's state directory so only this user's CLI can read it, and checked in constant time like every other capability the door accepts. An inject or answer request is carried out by the door itself over its interception-proof dials, which is the whole point: the CLI never dials the API host directly, so nothing about the write depends on the caller's own network path.
  */
 
 /** The one path prefix every Remote Control control route sits under, answered before the routed pipeline like `/healthz` is. */
@@ -30,8 +30,14 @@ export interface RcControlHandlerDeps {
   readonly expectedToken: string;
   /** The observed sessions as the tracker lists them. */
   readonly list: () => readonly RcSessionSummary[];
+  /** The observed sessions as the tracker reports their status, filtered to one when named. */
+  readonly statusOf: (sessionId?: string) => readonly RcSessionStatus[];
+  /** The control requests awaiting an answer, filtered to one session when named. */
+  readonly pendingOf: (sessionId?: string) => readonly RcPendingRequestSummary[];
   /** The inject operation, already wired to the tracker and the door's API-host dial. */
-  readonly inject: (sessionId: string, text: string) => Promise<RcInjectResult>;
+  readonly inject: (sessionId: string, text: string) => Promise<RcEventWriteResult>;
+  /** The answer operation, already wired to the tracker and the door's API-host dial. */
+  readonly answer: (sessionId: string, requestId: string, decision: RcAnswerDecision) => Promise<RcEventWriteResult>;
 }
 
 /** Writes one JSON answer: the status, the object, and the connection closed after it. */
@@ -65,11 +71,14 @@ async function readBody(request: IncomingMessage): Promise<string> {
 }
 
 /**
- * Builds the control handler the provider listener serves under `CONTROL_PATH_PREFIX`. Every route demands the generation's control token first, so nothing about the sessions (their ids, their timing, and most of all the prompts injected into them) is reachable by a process that did not read the owner-only token file.
+ * Builds the control handler the provider listener serves under `CONTROL_PATH_PREFIX`. Every route demands the generation's control token first, so nothing about the sessions (their ids, their timing, and most of all the prompts and approvals carried into them) is reachable by a process that did not read the owner-only token file.
  */
 export function createRcControlHandler(deps: RcControlHandlerDeps): (request: IncomingMessage, response: ServerResponse) => void {
   const sessionsPath = `${CONTROL_PATH_PREFIX}/sessions`;
+  const statusPath = `${CONTROL_PATH_PREFIX}/status`;
+  const pendingPath = `${CONTROL_PATH_PREFIX}/pending`;
   const injectPath = `${CONTROL_PATH_PREFIX}/inject`;
+  const answerPath = `${CONTROL_PATH_PREFIX}/answer`;
   return (request, response) => {
     const presented = request.headers.authorization;
     const bearerPrefix = "bearer ".length;
@@ -78,9 +87,9 @@ export function createRcControlHandler(deps: RcControlHandlerDeps): (request: In
       answerJson(response, HTTP_STATUS.unauthorized, { error: "the front door's control routes demand this generation's control token as a Bearer credential" } satisfies ControlErrorBody);
       return;
     }
-    const url = request.url ?? "/";
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const handle = async (): Promise<void> => {
-      if (url === sessionsPath) {
+      if (url.pathname === sessionsPath) {
         if (request.method !== "GET") {
           answerJson(response, HTTP_STATUS.methodNotAllowed, { error: "the session list is a GET" } satisfies ControlErrorBody);
           return;
@@ -88,7 +97,21 @@ export function createRcControlHandler(deps: RcControlHandlerDeps): (request: In
         answerJson(response, HTTP_STATUS.ok, { sessions: deps.list() });
         return;
       }
-      if (url === injectPath) {
+      if (url.pathname === statusPath || url.pathname === pendingPath) {
+        if (request.method !== "GET") {
+          answerJson(response, HTTP_STATUS.methodNotAllowed, { error: "the status and pending reads are GETs" } satisfies ControlErrorBody);
+          return;
+        }
+        const session = url.searchParams.get("session") ?? undefined;
+        // A named session that is not tracked is refused rather than answered as empty, so a mistyped id never reads as "observed, nothing pending".
+        if (session !== undefined && !deps.statusOf(session).some((entry) => entry.id === session)) {
+          answerJson(response, HTTP_STATUS.notFound, { error: `the front door has not observed Remote Control session ${session}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)` } satisfies ControlErrorBody);
+          return;
+        }
+        answerJson(response, HTTP_STATUS.ok, url.pathname === statusPath ? { statuses: deps.statusOf(session) } : { pending: deps.pendingOf(session) });
+        return;
+      }
+      if (url.pathname === injectPath) {
         if (request.method !== "POST") {
           answerJson(response, HTTP_STATUS.methodNotAllowed, { error: "the inject operation is a POST" } satisfies ControlErrorBody);
           return;
@@ -112,7 +135,37 @@ export function createRcControlHandler(deps: RcControlHandlerDeps): (request: In
         answerJson(response, HTTP_STATUS.badGateway, { error: result.message } satisfies ControlErrorBody);
         return;
       }
-      answerJson(response, HTTP_STATUS.notFound, { error: `no such control route: ${url}` } satisfies ControlErrorBody);
+      if (url.pathname === answerPath) {
+        if (request.method !== "POST") {
+          answerJson(response, HTTP_STATUS.methodNotAllowed, { error: "the answer operation is a POST" } satisfies ControlErrorBody);
+          return;
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(await readBody(request));
+        } catch {
+          answerJson(response, HTTP_STATUS.badRequest, { error: "the answer body is not readable JSON within the control body cap" } satisfies ControlErrorBody);
+          return;
+        }
+        if (typeof parsed !== "object" || parsed === null || !("session" in parsed) || !("request" in parsed) || !("approve" in parsed) || typeof parsed.session !== "string" || typeof parsed.request !== "string" || typeof parsed.approve !== "boolean" || parsed.session === "" || parsed.request === "") {
+          answerJson(response, HTTP_STATUS.badRequest, { error: "the answer body must be JSON naming a non-empty session id, request id, and an approve boolean" } satisfies ControlErrorBody);
+          return;
+        }
+        const text = "text" in parsed && typeof parsed.text === "string" ? parsed.text : undefined;
+        // The protocol's allow result has no text field, so an approval with a message would silently drop it; refuse the combination rather than lose the caller's words.
+        if (parsed.approve && text !== undefined && text !== "") {
+          answerJson(response, HTTP_STATUS.badRequest, { error: "an approval carries no text (the protocol's allow result has no message field); text is the denial message" } satisfies ControlErrorBody);
+          return;
+        }
+        const result = await deps.answer(parsed.session, parsed.request, { approve: parsed.approve, message: parsed.approve ? undefined : text });
+        if (result.ok) {
+          answerJson(response, HTTP_STATUS.ok, { session: parsed.session, request: parsed.request, sequenceNums: result.sequenceNums });
+          return;
+        }
+        answerJson(response, HTTP_STATUS.badGateway, { error: result.message } satisfies ControlErrorBody);
+        return;
+      }
+      answerJson(response, HTTP_STATUS.notFound, { error: `no such control route: ${url.pathname}` } satisfies ControlErrorBody);
     };
     handle().catch((error: unknown) => {
       answerJson(response, HTTP_STATUS.internalServerError, { error: `the control route failed: ${error instanceof Error ? error.message : String(error)}` } satisfies ControlErrorBody);
@@ -190,6 +243,45 @@ function isRcSessionSummary(value: unknown): value is RcSessionSummary {
   return typeof value.id === "string" && typeof value.createdAt === "number" && typeof value.lastSeenAt === "number";
 }
 
+/** Whether one value is one worker fact as this surface defines it: the value and the instant of the exchange that carried it. */
+function isRcWorkerFact(value: unknown, valueIs: (candidate: unknown) => boolean): boolean {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  if (!("value" in value) || !("observedAt" in value)) {
+    return false;
+  }
+  return valueIs(value.value) && typeof value.observedAt === "number";
+}
+
+/** Whether one value is a session status as this surface defines it: a summary plus the worker facts and the pending list. The worker facts may be absent, since a door that observed none serialises no field for them. */
+function isRcSessionStatus(value: unknown): value is RcSessionStatus {
+  if (!isRcSessionSummary(value)) {
+    return false;
+  }
+  if (!("pending" in value) || !Array.isArray(value.pending)) {
+    return false;
+  }
+  if ("workerState" in value && value.workerState !== undefined && !isRcWorkerFact(value.workerState, (candidate) => typeof candidate === "string")) {
+    return false;
+  }
+  if ("workerIdleSeconds" in value && value.workerIdleSeconds !== undefined && !isRcWorkerFact(value.workerIdleSeconds, (candidate) => typeof candidate === "number")) {
+    return false;
+  }
+  return value.pending.every((candidate) => isRcPendingRequestSummary(candidate));
+}
+
+/** Whether one value is a pending control request as this surface defines it, narrowed field by field rather than asserted. */
+function isRcPendingRequestSummary(value: unknown): value is RcPendingRequestSummary {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  if (!("sessionId" in value) || !("requestId" in value) || !("type" in value) || !("summary" in value) || !("observedAt" in value)) {
+    return false;
+  }
+  return typeof value.sessionId === "string" && typeof value.requestId === "string" && typeof value.type === "string" && typeof value.summary === "string" && typeof value.observedAt === "number";
+}
+
 /** Parses a JSON body's `sequenceNums` array, narrowed element by element, or undefined when the body names none. */
 function sequenceNumsOfBody(body: string): readonly number[] | undefined {
   let parsed: unknown;
@@ -212,17 +304,30 @@ function sequenceNumsOfBody(body: string): readonly number[] | undefined {
   return sequenceNums;
 }
 
-/** The door-facing client the `frontdoor rc` verbs use: the session list and the inject operation, over the injected transport. */
+/** The door-facing client the `frontdoor rc` verbs use: the session list, the status and pending reads, and the inject and answer operations, over the injected transport. */
 export interface FrontDoorRcControl {
   /** The observed sessions, oldest-created first. Throws with the door's verbose reason when the list cannot be had. */
   readonly listSessions: () => Promise<readonly RcSessionSummary[]>;
+  /** The observed sessions' status, oldest-created first and filtered to one when named. Throws with the door's verbose reason when the read cannot be had, including a named session the door has not observed. */
+  readonly statusOf: (sessionId?: string) => Promise<readonly RcSessionStatus[]>;
+  /** The control requests awaiting an answer, oldest-observed first and filtered to one session when named. Throws with the door's verbose reason when the read cannot be had. */
+  readonly pendingOf: (sessionId?: string) => Promise<readonly RcPendingRequestSummary[]>;
   /** Injects one prompt, returning the sequence numbers the real service assigned or the verbose failure. */
-  readonly sendPrompt: (sessionId: string, text: string) => Promise<RcInjectResult>;
+  readonly sendPrompt: (sessionId: string, text: string) => Promise<RcEventWriteResult>;
+  /** Answers one pending control request, returning the sequence numbers the real service assigned or the verbose failure. */
+  readonly answerRequest: (sessionId: string, requestId: string, decision: RcAnswerDecision) => Promise<RcEventWriteResult>;
 }
 
 /** Builds the control client: every request presents the control token, and a non-2xx answer becomes the verbose message the door sent with it. */
 export function frontDoorRcControl(transport: RcControlTransport, token: string): FrontDoorRcControl {
   const headers = { authorization: `Bearer ${token}` };
+  const listAnswerOf = async (path: string, what: string): Promise<RcControlAnswer> => {
+    try {
+      return await transport.request({ method: "GET", path, headers });
+    } catch (error) {
+      throw new Error(`${what}: could not reach the front door's control listener: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+  };
   const sessionsOf = (answer: RcControlAnswer, what: string): readonly RcSessionSummary[] => {
     if (answer.status !== HTTP_STATUS.ok) {
       throw new Error(`${what} failed (HTTP ${String(answer.status)}): ${controlErrorOf(answer.body) ?? answer.body}`);
@@ -246,29 +351,81 @@ export function frontDoorRcControl(transport: RcControlTransport, token: string)
     }
     return sessions;
   };
+  const statusesOf = (answer: RcControlAnswer, what: string): readonly RcSessionStatus[] => {
+    if (answer.status !== HTTP_STATUS.ok) {
+      throw new Error(`${what} failed (HTTP ${String(answer.status)}): ${controlErrorOf(answer.body) ?? answer.body}`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(answer.body);
+    } catch {
+      throw new Error(`${what}: the door's answer was not JSON: ${answer.body}`);
+    }
+    if (typeof parsed !== "object" || parsed === null || !("statuses" in parsed) || !Array.isArray(parsed.statuses)) {
+      throw new Error(`${what}: the door's answer named no status list: ${answer.body}`);
+    }
+    const statuses: RcSessionStatus[] = [];
+    for (const value of parsed.statuses) {
+      if (!isRcSessionStatus(value)) {
+        throw new Error(`${what}: the door's answer named no status list: ${answer.body}`);
+      }
+      statuses.push(value);
+    }
+    return statuses;
+  };
+  const pendingOfAnswer = (answer: RcControlAnswer, what: string): readonly RcPendingRequestSummary[] => {
+    if (answer.status !== HTTP_STATUS.ok) {
+      throw new Error(`${what} failed (HTTP ${String(answer.status)}): ${controlErrorOf(answer.body) ?? answer.body}`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(answer.body);
+    } catch {
+      throw new Error(`${what}: the door's answer was not JSON: ${answer.body}`);
+    }
+    if (typeof parsed !== "object" || parsed === null || !("pending" in parsed) || !Array.isArray(parsed.pending)) {
+      throw new Error(`${what}: the door's answer named no pending list: ${answer.body}`);
+    }
+    const pending: RcPendingRequestSummary[] = [];
+    for (const value of parsed.pending) {
+      if (!isRcPendingRequestSummary(value)) {
+        throw new Error(`${what}: the door's answer named no pending list: ${answer.body}`);
+      }
+      pending.push(value);
+    }
+    return pending;
+  };
+  const writeOf = async (path: string, body: string, describeFailure: (status: number, message: string) => string): Promise<RcEventWriteResult> => {
+    let answer: RcControlAnswer;
+    try {
+      answer = await transport.request({ method: "POST", path, headers: { ...headers, "content-type": "application/json" }, body });
+    } catch (error) {
+      return { ok: false, message: `could not reach the front door's control listener: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    if (answer.status === HTTP_STATUS.ok) {
+      const sequenceNums = sequenceNumsOfBody(answer.body);
+      if (sequenceNums === undefined) {
+        return { ok: false, message: `the door accepted the event but its answer named no sequence numbers: ${answer.body}` };
+      }
+      return { ok: true, sequenceNums };
+    }
+    return { ok: false, message: describeFailure(answer.status, controlErrorOf(answer.body) ?? answer.body) };
+  };
+  const sessionQuery = (sessionId: string | undefined): string => (sessionId === undefined ? "" : `?session=${encodeURIComponent(sessionId)}`);
   return {
     listSessions: async () =>
-      sessionsOf(await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/sessions`, headers }), "listing the door's Remote Control sessions"),
-    sendPrompt: async (sessionId, text) => {
-      let answer: RcControlAnswer;
-      try {
-        answer = await transport.request({
-          method: "POST",
-          path: `${CONTROL_PATH_PREFIX}/inject`,
-          headers: { ...headers, "content-type": "application/json" },
-          body: JSON.stringify({ session: sessionId, text }),
-        });
-      } catch (error) {
-        return { ok: false, message: `could not reach the front door's control listener: ${error instanceof Error ? error.message : String(error)}` };
-      }
-      if (answer.status === HTTP_STATUS.ok) {
-        const sequenceNums = sequenceNumsOfBody(answer.body);
-        if (sequenceNums === undefined) {
-          return { ok: false, message: `the door accepted the event but its answer named no sequence numbers: ${answer.body}` };
-        }
-        return { ok: true, sequenceNums };
-      }
-      return { ok: false, message: `injecting into ${sessionId} failed (HTTP ${String(answer.status)}): ${controlErrorOf(answer.body) ?? answer.body}` };
-    },
+      sessionsOf(await listAnswerOf(`${CONTROL_PATH_PREFIX}/sessions`, "listing the door's Remote Control sessions"), "listing the door's Remote Control sessions"),
+    statusOf: async (sessionId) =>
+      statusesOf(await listAnswerOf(`${CONTROL_PATH_PREFIX}/status${sessionQuery(sessionId)}`, "reading the door's Remote Control session status"), "reading the door's Remote Control session status"),
+    pendingOf: async (sessionId) =>
+      pendingOfAnswer(await listAnswerOf(`${CONTROL_PATH_PREFIX}/pending${sessionQuery(sessionId)}`, "listing the door's pending Remote Control control requests"), "listing the door's pending Remote Control control requests"),
+    sendPrompt: async (sessionId, text) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/inject`, JSON.stringify({ session: sessionId, text }), (status, message) => `injecting into ${sessionId} failed (HTTP ${String(status)}): ${message}`),
+    answerRequest: async (sessionId, requestId, decision) =>
+      await writeOf(
+        `${CONTROL_PATH_PREFIX}/answer`,
+        JSON.stringify({ session: sessionId, request: requestId, approve: decision.approve, ...(decision.approve || decision.message === undefined ? {} : { text: decision.message }) }),
+        (status, message) => `answering control request ${requestId} on ${sessionId} failed (HTTP ${String(status)}): ${message}`,
+      ),
   };
 }

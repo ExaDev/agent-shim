@@ -44,6 +44,8 @@ interface CapturedRequestShape {
 /** The callbacks one piped request's forwarding drives, all optional callers except, so a fake or a partial observer fits the same seam. */
 export interface PassthroughObserver {
   readonly onRequestChunk: (chunk: Buffer) => void;
+  /** The request body ended, when the observer cares about the body as a whole (the Remote Control tracker's adapter); optional because the capture, which records chunk excerpts as they arrive, never needs it. */
+  readonly onRequestEnd?: () => void;
   readonly onResponse: (status: number, headers: IncomingHttpHeaders) => void;
   readonly onResponseChunk: (chunk: Buffer) => void;
   readonly onEnd: () => void;
