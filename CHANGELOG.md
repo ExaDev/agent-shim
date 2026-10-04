@@ -1,3 +1,13 @@
+## [8.5.3](https://github.com/ExaDev/agent-shim/compare/v8.5.2...v8.5.3) (2026-10-04)
+
+### Bug Fixes
+
+* **frontdoor:** keep the worker JWT from displacing the OAuth injection credential ([10264c1](https://github.com/ExaDev/agent-shim/commit/10264c126e63db0e0a0eef3f4e595b6d89981ded))
+
+### Tests
+
+* **frontdoor:** keep fake bearers under the redaction filter's threshold ([c4d8af1](https://github.com/ExaDev/agent-shim/commit/c4d8af162d43ca6e5fbadf6c936f8fdba1233ed2))
+
 ## [8.5.2](https://github.com/ExaDev/agent-shim/compare/v8.5.1...v8.5.2) (2026-10-04)
 
 ### Bug Fixes
