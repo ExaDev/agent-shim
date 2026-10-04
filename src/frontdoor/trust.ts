@@ -16,22 +16,22 @@ export interface TrustBundleFs {
   readonly writeFileAtomic: (file: string, contents: string) => void;
 }
 
-/** The CA bundle a routed child is pointed at through `NODE_EXTRA_CA_CERTS`, and why it differs from what the parent environment set, when it does. */
+/** The CA bundle a child is pointed at through an additive trust variable (`NODE_EXTRA_CA_CERTS` for a routed Claude Code child, `HEADROOM_CA_BUNDLE` for the headroom daemon), and why it differs from what the parent environment set, when it does. */
 export interface TrustBundle {
   readonly path: string;
   readonly warning?: string;
 }
 
 /**
- * Decides the `NODE_EXTRA_CA_CERTS` a routed child gets. Node reads exactly one file from that variable, so a user who already set it (a corporate proxy's CA, say) would lose that trust if the launcher simply pointed it at agent-shim's CA. Instead:
+ * Decides the file an additive trust variable names for a child: `variable` is that variable's name, and `inherited` is the parent environment's own value of it. Both consumers (Node for `NODE_EXTRA_CA_CERTS`, headroom for `HEADROOM_CA_BUNDLE`) read exactly one file from the variable and trust it on top of their default store, so a user who already set it (a corporate proxy's CA, say) would lose that trust if agent-shim simply pointed it at agent-shim's CA. Instead:
  *
  * - nothing inherited: agent-shim's CA file itself;
  * - an inherited file that already contains agent-shim's CA (a launch from inside a routed session): that file, unchanged;
  * - any other readable inherited file: a combined bundle (the inherited certificates, then agent-shim's CA) written once under `bundlesDir`, named by its content hash so concurrent launches agree on it and a live child's file is never rewritten under it;
- * - an inherited file that cannot be read: agent-shim's CA alone, with a warning naming the file. Node itself would have ignored that file with a warning, so the child loses no trust it would otherwise have had.
+ * - an inherited file that cannot be read: agent-shim's CA alone, with a warning naming the file. The consumer itself would have ignored that file with a warning, so the child loses no trust it would otherwise have had.
  */
-export function resolveTrustBundle(params: { readonly caCertFile: string; readonly bundlesDir: string; readonly inherited: string | undefined; readonly fs: TrustBundleFs }): TrustBundle {
-  const { caCertFile, bundlesDir, inherited, fs } = params;
+export function resolveTrustBundle(params: { readonly caCertFile: string; readonly bundlesDir: string; readonly variable: string; readonly inherited: string | undefined; readonly fs: TrustBundleFs }): TrustBundle {
+  const { caCertFile, bundlesDir, variable, inherited, fs } = params;
   if (inherited === undefined || inherited === "" || path.resolve(inherited) === path.resolve(caCertFile)) {
     return { path: caCertFile };
   }
@@ -42,7 +42,7 @@ export function resolveTrustBundle(params: { readonly caCertFile: string; readon
   } catch (error) {
     return {
       path: caCertFile,
-      warning: `agent-shim: NODE_EXTRA_CA_CERTS names ${inherited}, which could not be read (${error instanceof Error ? error.message : String(error)}); the child trusts agent-shim's front-door CA on top of the system store, and nothing from that file`,
+      warning: `agent-shim: ${variable} names ${inherited}, which could not be read (${error instanceof Error ? error.message : String(error)}); the child trusts agent-shim's front-door CA on top of the system store, and nothing from that file`,
     };
   }
   if (inheritedPem.includes(caPem.trim())) {

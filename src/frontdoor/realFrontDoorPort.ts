@@ -8,7 +8,7 @@ import { resolveTrustBundle, type TrustBundleFs } from "./trust";
 import { removeFrontDoorSession } from "./state";
 
 /** The real file effects for `resolveTrustBundle`. The bundle is public certificate material, so the atomic write's owner-only mode costs nothing: only this user's children read it. */
-const realTrustBundleFs: TrustBundleFs = {
+export const realTrustBundleFs: TrustBundleFs = {
   readFileUtf8: (file) => fs.readFileSync(file, "utf8"),
   exists: (file) => fs.existsSync(file),
   mkdirp: (dir) => {
@@ -39,7 +39,7 @@ export function realFrontDoorPort(paths: LayoutPaths, spawnDaemon: DaemonSpawner
           verifyListener: (port) => probeFrontDoorSync(port, fs.readFileSync(paths.frontdoorCaCertFile, "utf8")),
         },
       });
-      const trust = resolveTrustBundle({ caCertFile: paths.frontdoorCaCertFile, bundlesDir: paths.frontdoorCaBundlesDir, inherited: inheritedExtraCaCerts, fs: realTrustBundleFs });
+      const trust = resolveTrustBundle({ caCertFile: paths.frontdoorCaCertFile, bundlesDir: paths.frontdoorCaBundlesDir, variable: "NODE_EXTRA_CA_CERTS", inherited: inheritedExtraCaCerts, fs: realTrustBundleFs });
       return {
         port: up.port,
         connectPort: up.connectPort,
