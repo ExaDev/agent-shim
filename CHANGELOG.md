@@ -1,3 +1,9 @@
+## [8.5.6](https://github.com/ExaDev/agent-shim/compare/v8.5.5...v8.5.6) (2026-10-04)
+
+### Bug Fixes
+
+* print the agent-shim prefix once on a door or headroom start failure ([6dd825b](https://github.com/ExaDev/agent-shim/commit/6dd825bc1f4df2a5467a949161fb75378487a937))
+
 ## [8.5.5](https://github.com/ExaDev/agent-shim/compare/v8.5.4...v8.5.5) (2026-10-04)
 
 ### Bug Fixes
