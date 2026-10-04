@@ -1,3 +1,15 @@
+## [8.5.0](https://github.com/ExaDev/agent-shim/compare/v8.4.1...v8.5.0) (2026-10-04)
+
+### Features
+
+* **scripts:** add a harness that replays transcripts through scratch headroom daemons ([fb8e076](https://github.com/ExaDev/agent-shim/commit/fb8e07656a7cff3c35dcb6a305c6caeb52c222f5))
+* **scripts:** add the pure core of a headroom measurement harness ([94d94bf](https://github.com/ExaDev/agent-shim/commit/94d94bff7807c9cb7232114050789ebccc4234cb))
+* **scripts:** select measurement variants by repeatable --variant and add token-mode combinations ([54c6516](https://github.com/ExaDev/agent-shim/commit/54c6516e07d706f49e847809c3e1d3db80e05fec))
+
+### Documentation
+
+* describe how headroom's transforms are measured ([ec466f7](https://github.com/ExaDev/agent-shim/commit/ec466f799e5a779541f87145ed51a838a1d2992c))
+
 ## [8.4.1](https://github.com/ExaDev/agent-shim/compare/v8.4.0...v8.4.1) (2026-10-04)
 
 ### Bug Fixes
