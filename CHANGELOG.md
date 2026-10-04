@@ -1,3 +1,13 @@
+## [8.4.0](https://github.com/ExaDev/agent-shim/compare/v8.3.0...v8.4.0) (2026-10-04)
+
+### Features
+
+* **frontdoor:** observe and answer Remote Control control requests ([87ffcd5](https://github.com/ExaDev/agent-shim/commit/87ffcd57335e78f72f22ed7cda85ae3d4c3a37de))
+
+### Documentation
+
+* **cli-reference:** list the frontdoor rc verbs in the full command list ([957c419](https://github.com/ExaDev/agent-shim/commit/957c4197c62c80e31a2aea458f9ae02bf0d638c0)), references [#136](https://github.com/ExaDev/agent-shim/issues/136)
+
 ## [8.3.0](https://github.com/ExaDev/agent-shim/compare/v8.2.0...v8.3.0) (2026-10-04)
 
 ### Features
