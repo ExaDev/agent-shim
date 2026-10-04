@@ -21,7 +21,7 @@ import { createCredentialCustody } from "./custody";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
-import { RC_IDLE_EXPIRY_MS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, observingRoutedRoute, type RcAnswerDecision, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import { RC_IDLE_EXPIRY_MS, RC_PERMISSION_MODES, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, interruptRcSession, isRcPermissionMode, observingRoutedRoute, setRcSessionModel, setRcSessionPermissionMode, type RcAnswerDecision, type RcPermissionMode, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, writeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
@@ -141,6 +141,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, dial: rcDial, newUuid: randomUUID }, sessionId, text);
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>
         await answerRcControlRequest({ credentialOf: rcTracker.credentialOf, pendingOf: (id) => rcTracker.pendingOf(id), completePending: rcTracker.completePending, dial: rcDial }, sessionId, requestId, decision);
+      const rcControlRequestDeps = { credentialOf: rcTracker.credentialOf, dial: rcDial, newUuid: randomUUID };
+      const rcInterrupt = async (sessionId: string) => await interruptRcSession(rcControlRequestDeps, sessionId);
+      const rcSetModel = async (sessionId: string, model: string) => await setRcSessionModel(rcControlRequestDeps, sessionId, model);
+      const rcSetPermissionMode = async (sessionId: string, mode: RcPermissionMode) => await setRcSessionPermissionMode(rcControlRequestDeps, sessionId, mode);
       // Written before the listener binds, so a listener that answers control requests is always one whose token exists; removed when this listener closes, so an idle-shut door leaves no token behind that a squatter on the port could be probed with.
       realFarmFs.mkdirp(paths.frontdoorDir);
       realFarmFs.writeFilePrivate(paths.frontdoorControlTokenFile, `${rcControlToken}\n`);
@@ -150,7 +154,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         },
         log,
         mintLeaf(authority, LOOPBACK_LEAF_NAMES, new Date()),
-        createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcTracker.statusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer }),
+        createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcTracker.statusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer, interrupt: rcInterrupt, setModel: rcSetModel, setPermissionMode: rcSetPermissionMode }),
       );
       const handle = await listenFrontDoor(server, { ...(preferredPort === undefined ? {} : { preferredPort }), ca: authority.certPem, onError: onListenerError("provider") });
       return {
@@ -386,7 +390,7 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
   );
 
   const rc = withExamples(
-    frontdoor.command("rc").description("Observe the Remote Control sessions passing through the front door, send a prompt into one, and answer its pending control requests."),
+    frontdoor.command("rc").description("Observe the Remote Control sessions passing through the front door, send a prompt into one, answer its pending control requests, and steer one with the client half's own control requests (interrupt, model, permission mode)."),
     ["agent-shim frontdoor rc list", "agent-shim frontdoor rc pending"],
   );
 
@@ -497,6 +501,74 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
     [
       "agent-shim frontdoor rc answer --session cse_00000000-0000-4000-8000-000000000000 --request req_00000000-0000-4000-8000-000000000000 --approve",
       'agent-shim frontdoor rc answer --session cse_00000000-0000-4000-8000-000000000000 --request req_00000000-0000-4000-8000-000000000000 --deny --text "not today"',
+    ],
+  );
+
+  withExamples(
+    rc
+      .command("interrupt")
+      .description("Interrupt one observed Remote Control session's running turn, as an attached client's stop button would. Queued commands survive the interrupt.")
+      .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
+      .option("--json", "Print the delivery result as JSON.")
+      .action(async (options: Readonly<{ session: string; json?: boolean }>) => {
+        const result = await frontDoorRcControlFromState(realFarmFs, paths).interruptSession(options.session);
+        if (!result.ok) {
+          throw new Error(result.message);
+        }
+        if (options.json === true) {
+          printJson({ session: options.session, sequenceNums: result.sequenceNums });
+          return;
+        }
+        console.log(`interrupted ${options.session}: sequence_num ${result.sequenceNums.join(", ")}`);
+      }),
+    ["agent-shim frontdoor rc interrupt --session cse_00000000-0000-4000-8000-000000000000"],
+  );
+
+  withExamples(
+    rc
+      .command("set-model")
+      .description("Set the model one observed Remote Control session's subsequent turns use, as an attached client's model picker would.")
+      .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
+      .requiredOption("--model <model>", "The model id to switch the session to.")
+      .option("--json", "Print the delivery result as JSON.")
+      .action(async (options: Readonly<{ session: string; model: string; json?: boolean }>) => {
+        const result = await frontDoorRcControlFromState(realFarmFs, paths).setModel(options.session, options.model);
+        if (!result.ok) {
+          throw new Error(result.message);
+        }
+        if (options.json === true) {
+          printJson({ session: options.session, model: options.model, sequenceNums: result.sequenceNums });
+          return;
+        }
+        console.log(`set ${options.session} to model ${options.model}: sequence_num ${result.sequenceNums.join(", ")}`);
+      }),
+    ["agent-shim frontdoor rc set-model --session cse_00000000-0000-4000-8000-000000000000 --model claude-opus-5-5"],
+  );
+
+  withExamples(
+    rc
+      .command("set-permission-mode")
+      .description("Set one observed Remote Control session's permission mode, as an attached client's mode switcher would.")
+      .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
+      .requiredOption("--mode <mode>", `The permission mode to set; one of the SDK's own modes (${RC_PERMISSION_MODES.join(", ")}).`)
+      .option("--json", "Print the delivery result as JSON.")
+      .action(async (options: Readonly<{ session: string; mode: string; json?: boolean }>) => {
+        if (!isRcPermissionMode(options.mode)) {
+          throw new UsageError(`--mode must be one of the SDK's own permission modes (${RC_PERMISSION_MODES.join(", ")}), not "${options.mode}"`);
+        }
+        const result = await frontDoorRcControlFromState(realFarmFs, paths).setPermissionMode(options.session, options.mode);
+        if (!result.ok) {
+          throw new Error(result.message);
+        }
+        if (options.json === true) {
+          printJson({ session: options.session, mode: options.mode, sequenceNums: result.sequenceNums });
+          return;
+        }
+        console.log(`set ${options.session} to permission mode ${options.mode}: sequence_num ${result.sequenceNums.join(", ")}`);
+      }),
+    [
+      "agent-shim frontdoor rc set-permission-mode --session cse_00000000-0000-4000-8000-000000000000 --mode plan",
+      "agent-shim frontdoor rc set-permission-mode --session cse_00000000-0000-4000-8000-000000000000 --mode acceptEdits",
     ],
   );
 

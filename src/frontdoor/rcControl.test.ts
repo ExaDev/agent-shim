@@ -73,8 +73,8 @@ async function serve(handler: (request: http.IncomingMessage, response: http.Ser
   };
 }
 
-/** One write result the scripted handler deps answer with. */
-function writeAnswering(result: RcEventWriteResult): (sessionId: string, text: string) => Promise<RcEventWriteResult> {
+/** One write result the scripted handler deps answer with, whatever the operation's own parameters are. */
+function writeAnswering(result: RcEventWriteResult): (sessionId: string) => Promise<RcEventWriteResult> {
   return async () => await Promise.resolve(result);
 }
 
@@ -87,6 +87,9 @@ function handlerDeps(overrides: Readonly<Partial<Parameters<typeof createRcContr
     pendingOf: (sessionId?: string) => PENDING.filter((pending) => sessionId === undefined || pending.sessionId === sessionId),
     inject: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
     answer: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
+    interrupt: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
+    setModel: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
+    setPermissionMode: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
     ...overrides,
   };
 }
@@ -222,6 +225,63 @@ describe("the Remote Control control handler", () => {
     expect(JSON.parse(answer.body)).toEqual({ session: SESSION_ID, sequenceNums: [SEQUENCE_NUM] });
     expect(seen).toEqual([{ session: SESSION_ID, text: "run the tests" }]);
   });
+
+  it("carries the three client-originated control requests out, echoing each body's own fields, and refuses a malformed body and a mode the SDK's own type does not permit", async () => {
+    const seen: { interrupt: string[]; setModel: [string, string][]; setPermissionMode: [string, string][] } = { interrupt: [], setModel: [], setPermissionMode: [] };
+    const started = await serve(
+      createRcControlHandler(
+        handlerDeps({
+          interrupt: async (session) => {
+            seen.interrupt.push(session);
+            return await Promise.resolve({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+          },
+          setModel: async (session, model) => {
+            seen.setModel.push([session, model]);
+            return await Promise.resolve({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+          },
+          setPermissionMode: async (session, mode) => {
+            seen.setPermissionMode.push([session, mode]);
+            return await Promise.resolve({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+          },
+        }),
+      ),
+    );
+    running = started;
+    const transport = plainTransport(started.port);
+    const headers = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
+    const interrupted = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/interrupt`, headers, body: JSON.stringify({ session: SESSION_ID }) });
+    expect(interrupted.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(interrupted.body)).toEqual({ session: SESSION_ID, sequenceNums: [SEQUENCE_NUM] });
+    const modelSet = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/set-model`, headers, body: JSON.stringify({ session: SESSION_ID, model: "claude-opus-5-5" }) });
+    expect(modelSet.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(modelSet.body)).toEqual({ session: SESSION_ID, model: "claude-opus-5-5", sequenceNums: [SEQUENCE_NUM] });
+    const modeSet = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/set-permission-mode`, headers, body: JSON.stringify({ session: SESSION_ID, mode: "plan" }) });
+    expect(modeSet.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(modeSet.body)).toEqual({ session: SESSION_ID, mode: "plan", sequenceNums: [SEQUENCE_NUM] });
+    expect(seen).toEqual({ interrupt: [SESSION_ID], setModel: [[SESSION_ID, "claude-opus-5-5"]], setPermissionMode: [[SESSION_ID, "plan"]] });
+    // Every malformed shape is refused before the operation runs: unreadable JSON, a missing or empty field, and a mode outside the SDK's own enum.
+    for (const [path, body] of [
+      [`${CONTROL_PATH_PREFIX}/interrupt`, "{not json"],
+      [`${CONTROL_PATH_PREFIX}/interrupt`, JSON.stringify({})],
+      [`${CONTROL_PATH_PREFIX}/interrupt`, JSON.stringify({ session: "" })],
+      [`${CONTROL_PATH_PREFIX}/set-model`, JSON.stringify({ session: SESSION_ID })],
+      [`${CONTROL_PATH_PREFIX}/set-model`, JSON.stringify({ session: SESSION_ID, model: "" })],
+      [`${CONTROL_PATH_PREFIX}/set-permission-mode`, JSON.stringify({ session: SESSION_ID })],
+      [`${CONTROL_PATH_PREFIX}/set-permission-mode`, JSON.stringify({ session: SESSION_ID, mode: "yolo" })],
+      [`${CONTROL_PATH_PREFIX}/set-permission-mode`, JSON.stringify({ session: SESSION_ID, mode: "AcceptEdits" })],
+    ] as const) {
+      const refused = await transport.request({ method: "POST", path, headers, body });
+      expect(refused.status).toBe(HTTP_STATUS.badRequest);
+    }
+    expect(seen).toEqual({ interrupt: [SESSION_ID], setModel: [[SESSION_ID, "claude-opus-5-5"]], setPermissionMode: [[SESSION_ID, "plan"]] });
+    const wrongMethod = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/interrupt`, headers: { authorization: `Bearer ${TOKEN}` } });
+    expect(wrongMethod.status).toBe(HTTP_STATUS.methodNotAllowed);
+    const failed = await serve(createRcControlHandler(handlerDeps({ setPermissionMode: writeAnswering({ ok: false, message: "the front door has not observed Remote Control session cse_missing" }) })));
+    running = failed;
+    const verbose = await plainTransport(failed.port).request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/set-permission-mode`, headers, body: JSON.stringify({ session: SESSION_ID, mode: "plan" }) });
+    expect(verbose.status).toBe(HTTP_STATUS.badGateway);
+    expect(errorTextOf(verbose.body)).toContain("has not observed Remote Control session");
+  });
 });
 
 describe("the control client", () => {
@@ -243,6 +303,9 @@ describe("the control client", () => {
     expect(await control.pendingOf(QUIET_SESSION_ID)).toEqual([]);
     expect(await control.sendPrompt(SESSION_ID, "run the tests")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
     expect(await control.answerRequest(SESSION_ID, REQUEST_ID, { approve: false, message: "not today" })).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+    expect(await control.interruptSession(SESSION_ID)).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+    expect(await control.setModel(SESSION_ID, "claude-opus-5-5")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+    expect(await control.setPermissionMode(SESSION_ID, "dontAsk")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
     await expect(control.statusOf("cse_00000000-0000-4000-8000-0000000000ff")).rejects.toThrow("has not observed Remote Control session");
     await started.stop();
     const unreachable = await frontDoorRcControl(plainTransport(started.port), TOKEN).sendPrompt(SESSION_ID, "hello");
@@ -254,6 +317,11 @@ describe("the control client", () => {
     expect(unreachableAnswer.ok).toBe(false);
     if (!unreachableAnswer.ok) {
       expect(unreachableAnswer.message).toContain("could not reach the front door's control listener");
+    }
+    const unreachableInterrupt = await frontDoorRcControl(plainTransport(started.port), TOKEN).interruptSession(SESSION_ID);
+    expect(unreachableInterrupt.ok).toBe(false);
+    if (!unreachableInterrupt.ok) {
+      expect(unreachableInterrupt.message).toContain("could not reach the front door's control listener");
     }
     await expect(frontDoorRcControl(plainTransport(started.port), TOKEN).statusOf()).rejects.toThrow("could not reach the front door's control listener");
   });
