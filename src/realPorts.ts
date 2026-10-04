@@ -1,7 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { isSea } from "node:sea";
@@ -10,6 +9,7 @@ import { cosmiconfigReader } from "./config/load";
 import type { CredentialPort } from "./credential";
 import { discoverClaudeBinary, type DiscoveredClaudeBinary, type VersionsDirEntry } from "./versionDiscovery";
 import { ensureHeadroom } from "./headroom/ensure";
+import type { HeadroomSocketTrustPorts } from "./headroom/socket";
 import { removeSession } from "./headroom/state";
 import type { LayoutPaths } from "./paths";
 import type { FarmFs, FsPort, HeadroomPort, LogPort, ProcPort, RunPort, SpawnPort } from "./launcher/ports";
@@ -345,25 +345,34 @@ function spawnHeadroomSupervisor(paths: LayoutPaths, spawnDaemon: DaemonSpawner)
   return spawnDaemon(paths, "__headroom-supervisor", paths.headroomLogPath);
 }
 
+/** The permission bits of a stat's mode, without its file type bits, as the headroom socket checks compare them. */
+const SOCKET_PERMISSION_BITS = 0o777;
+
 /**
- * Whether nothing is currently listening on one specific loopback port: binds it on 127.0.0.1 and releases, so the headroom supervisor can decide whether its sticky `lastPort` is still reusable. The same bind-and-release technique the supervisor's `freePort` uses, applied to a number the caller already cares about rather than asking the OS to pick one.
+ * The real `HeadroomSocketTrustPorts`: this process's platform and user id, and an `lstat` that never follows symlinks, so a symlinked socket or socket directory is seen as the symlink it is and refused.
  */
-export async function realIsPortFree(port: number): Promise<boolean> {
-  return await new Promise((resolve) => {
-    const server = net.createServer();
-    server.unref();
-    // First resolution wins: an error while binding means the port is taken, and the later close event must not overwrite that answer.
-    server.once("error", () => {
-      resolve(false);
-    });
-    server.once("close", () => {
-      resolve(true);
-    });
-    server.listen(port, "127.0.0.1", () => {
-      server.close();
-    });
-  });
-}
+export const realHeadroomSocketTrust: HeadroomSocketTrustPorts = {
+  platform: process.platform,
+  currentUid: () => {
+    if (process.getuid === undefined) {
+      throw new Error(`no POSIX user id on ${process.platform}`);
+    }
+    return process.getuid();
+  },
+  lstat: (target) => {
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(target);
+    } catch (error) {
+      if (isEnoent(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+    const kind = stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "dir" : stat.isSocket() ? "socket" : "other";
+    return { kind, uid: stat.uid, mode: stat.mode & SOCKET_PERMISSION_BITS };
+  },
+};
 
 /**
  * The real `HeadroomPort` for one launch: `ensure` runs the lock-and-poll coordination against the real filesystem and process table and derives the per-project identity from the real git repository containing the working directory; `release` removes this launcher's session-registry entry.
@@ -384,7 +393,7 @@ export function realHeadroomPort(paths: LayoutPaths, options: { readonly spawnDa
         },
       });
       return {
-        port: up.port,
+        socketPath: up.socketPath,
         projectId: resolveGitRoot(realRunPort, options.cwd) ?? options.cwd,
       };
     },

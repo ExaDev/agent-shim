@@ -4,6 +4,7 @@ import categoriesDefaultJson from "./config/categories.default.json";
 import { CategoryClassificationSchema, type CategoryClassification } from "./config/schema";
 import type { CommandDeps } from "./cli/commandDeps";
 import type { MultiselectParams, PromptsPort, SelectParams } from "./configure";
+import type { HeadroomSocketTrustPorts, SocketPathStat } from "./headroom/socket";
 import type { FarmFs, FarmStat } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
 import type { EntryFact, EntryFacts } from "./resolve/types";
@@ -602,6 +603,38 @@ export function fakeCommandDeps(
     isInteractive: () => options.interactive ?? false,
     exit: (code: number): never => {
       throw new FakeExit(code);
+    },
+  };
+}
+
+/** The uid the fake socket trust reports for this process and, unless overridden, for every path it stats. */
+export const FAKE_UID = 501;
+
+/** The mode the fake socket trust reports for a fake directory created without an explicit one: an ordinary `mkdir` under a 022 umask. */
+const FAKE_DEFAULT_DIR_MODE = 0o755;
+
+/**
+ * A `HeadroomSocketTrustPorts` over a fake farm filesystem: a fake directory stats as owned by `FAKE_UID` with the mode the fake recorded (`mkdirPrivate` records 0700) or an ordinary 0755, a fake symlink as a symlink, and anything listed in `overrides` (keyed by resolved path) exactly as given, which is how a test stands up a socket, another user's directory, or a wide mode without a real filesystem.
+ */
+export function fakeSocketTrust(
+  fs: FakeFarmFs,
+  options: { readonly platform?: string; readonly overrides?: Readonly<Record<string, SocketPathStat>> } = {},
+): HeadroomSocketTrustPorts {
+  return {
+    platform: options.platform ?? "linux",
+    currentUid: () => FAKE_UID,
+    lstat: (target) => {
+      const resolved = path.resolve(target);
+      const override = options.overrides?.[resolved];
+      if (override !== undefined) {
+        return override;
+      }
+      const stat = fs.lstat(resolved);
+      if (stat === undefined) {
+        return undefined;
+      }
+      const kind = stat.kind === "dir" ? "dir" : stat.kind === "symlink" ? "symlink" : "other";
+      return { kind, uid: FAKE_UID, mode: fs.modeOf(resolved) ?? FAKE_DEFAULT_DIR_MODE };
     },
   };
 }

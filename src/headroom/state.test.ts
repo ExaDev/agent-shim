@@ -1,9 +1,11 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ProviderSchema } from "../config/schema";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import {
+  HEADROOM_STATE_SCHEMA_VERSION,
   hashAllowlist,
   headroomAllowlist,
   headroomUpstreams,
@@ -73,18 +75,23 @@ describe("headroomAllowlist", () => {
 });
 
 describe("headroom state files", () => {
-  it("round-trips state through the fake filesystem", () => {
+  it("round-trips the socket path the daemon serves on", () => {
     const fs = createFakeFarmFs({});
-    writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: 11, port: 8123 });
-    expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ supervisorPid: 11, port: 8123 });
+    const socketPath = `${paths.headroomSocketDir}/11.sock`;
+    writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: 11, headroomPid: 12, socketPath });
+    expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ supervisorPid: 11, headroomPid: 12, socketPath });
   });
 
-  it("round-trips the sticky lastPort alongside the ready-signal port", () => {
+  it("keeps its state in a file named by the schema version, apart from the earlier port-based state.json", () => {
+    expect(path.basename(paths.headroomStateFile)).toBe(`state.v${String(HEADROOM_STATE_SCHEMA_VERSION)}.json`);
+    expect(path.dirname(paths.headroomStateFile)).toBe(paths.headroomDir);
+  });
+
+  it("reads a record carrying a TCP port as malformed, so nothing of the earlier schema is ever dialled", () => {
     const fs = createFakeFarmFs({});
-    writeHeadroomState(fs, paths.headroomStateFile, { port: 8123, lastPort: 8123 });
-    expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ port: 8123, lastPort: 8123 });
-    writeHeadroomState(fs, paths.headroomStateFile, { lastPort: 8123 });
-    expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ lastPort: 8123 });
+    fs.mkdirp(paths.headroomDir);
+    fs.writeFileUtf8(paths.headroomStateFile, JSON.stringify({ supervisorPid: 11, headroomPid: 12, port: 8123, lastPort: 8123 }));
+    expect(readHeadroomState(fs, paths.headroomStateFile)).toBeUndefined();
   });
 
   it("treats a missing or malformed state file as absent rather than throwing", () => {

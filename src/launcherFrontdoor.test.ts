@@ -4,7 +4,7 @@ import type { HeadroomPort } from "./launcher/ports";
 import { discovered, FAKE_HOME, FAKE_TRUST_BUNDLE, fakeCredentials, fakeFs, fakeFrontDoorPort, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
 const FRONTDOOR_PORT = 4100;
-const HEADROOM_PORT = 8123;
+const HEADROOM_SOCKET = "/home/testuser/.agent-shim/headroom/run/8123.sock";
 
 const codexProvider = {
   kind: "codex",
@@ -16,7 +16,7 @@ function fakeHeadroomPort(record: (daemon: string) => void): HeadroomPort {
   return {
     ensure: () => {
       record("headroom");
-      return { port: HEADROOM_PORT, projectId: "/repo" };
+      return { socketPath: HEADROOM_SOCKET, projectId: "/repo" };
     },
     release: () => undefined,
   };
@@ -109,7 +109,6 @@ describe("runLauncher with a provider", () => {
     const env = spawnedEnv(spawn);
     expect(order).toEqual(["frontdoor", "headroom"]);
     expect(env.ANTHROPIC_BASE_URL).toBe(`https://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
-    expect(env.HEADROOM_PROXY_URL).toBe(`http://127.0.0.1:${String(HEADROOM_PORT)}`);
     // The child names no upstream for headroom: the door's hop decides where headroom forwards, so no x-headroom-base-url exists any more.
     expect(env.ANTHROPIC_CUSTOM_HEADERS).not.toContain("x-headroom-base-url");
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain("x-agent-shim-headroom: 1");
@@ -168,7 +167,6 @@ describe("runLauncher with a provider", () => {
     expect(frontdoor.ensures()).toBe(1);
     expect(childEnv.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(childEnv.HTTPS_PROXY).toContain("127.0.0.1");
-    expect(childEnv.HEADROOM_PROXY_URL).toBeUndefined();
     expect(log.infos.join("\n")).toContain("OAuth via the door's CONNECT surface");
     expect(frontdoor.releases()).toBeGreaterThan(0);
   });

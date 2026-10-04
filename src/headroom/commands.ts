@@ -1,15 +1,16 @@
 import fs from "node:fs";
-import net from "node:net";
+import http from "node:http";
 import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
+import { HTTP_STATUS } from "../codex/http";
 import { readGlobalConfig } from "../configProfilesStore";
 import { hashSettings, settingsArgs, settingsEnv, settingsOf, type HeadroomSettings } from "./settings";
 import { parseInstalledCommit } from "./source";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, realIsPortFree, realIsProcessRunning, realSleepSync } from "../realPorts";
+import { realFarmFs, realHeadroomSocketTrust, realIsProcessRunning, realSleepSync } from "../realPorts";
 import {
   hashAllowlist,
   listSessions,
@@ -79,12 +80,12 @@ export function formatHeadroomStatus(status: HeadroomStatus): string[] {
       `supervisor: pid ${String(status.state.supervisorPid)} (${status.supervisorAlive ? "alive" : "NOT running"})`,
     );
   }
-  if (status.state.headroomPid === undefined || status.state.port === undefined) {
+  if (status.state.headroomPid === undefined || status.state.socketPath === undefined) {
     lines.push("headroom: not running");
   } else {
     lines.push(
       `headroom: pid ${String(status.state.headroomPid)} (${status.headroomAlive ? "alive" : "NOT running"}), ` +
-        `listening on 127.0.0.1:${String(status.state.port)}` +
+        `listening on unix socket ${status.state.socketPath}` +
         (status.state.version === undefined ? "" : `, ${status.state.version}`),
     );
   }
@@ -110,27 +111,6 @@ export function formatHeadroomStatus(status: HeadroomStatus): string[] {
   return lines;
 }
 
-/** Binds a real loopback port and releases it again, giving headroom a port nothing else is listening on. */
-async function realFreePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.on("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      // A listening TCP server's address is always the object form; the string form is for pipes and unix sockets only.
-      const port = typeof address === "object" && address !== null ? address.port : 0;
-      server.close(() => {
-        if (port === 0) {
-          reject(new Error("could not reserve a loopback port"));
-          return;
-        }
-        resolve(port);
-      });
-    });
-  });
-}
-
 /**
  * The headroom processes this supervisor owns, by pid. Keeping the ChildProcess handles is what reaps the children: consuming the exit event is libuv's cue to waitpid, and a child nobody listens for is a child nobody reaps (the original zombie bug). The entry is removed on exit, so the map also names exactly what the exit hook below must not leave behind.
  */
@@ -141,7 +121,7 @@ const ownedHeadroom = new Map<number, ChildProcess>();
  */
 const exitedHeadroom = new Set<number>();
 
-/** Per-attempt timeout on the readiness probe: a loopback request either answers quickly or the attempt has failed. */
+/** Per-attempt timeout on the readiness probe: a request over the local socket either answers quickly or the attempt has failed. */
 const READY_FETCH_TIMEOUT_MS = 2000;
 
 /** Dead by exit event or by the zombie-aware table check, whichever says so first. */
@@ -153,14 +133,41 @@ function headroomPidRunning(pid: number): boolean {
  * Environment for the supervised headroom proxy. `HEADROOM_HTTP2` defaults to `0`: headroom's HTTP/2 upstream pool multiplexes every request over shared keep-alive connections, and when a provider retires one (GOAWAY is routine load-balancer behaviour, not an error) every in-flight request on it dies at once; headroom retries exactly once, and that retry regularly lands on another dying connection from the same co-aged pool, which surfaces to Claude Code as "No response from API" after its full timeout budget. HTTP/1.1 gives each request its own connection, so a retirement can only kill the one request already being retried. An explicit `HEADROOM_HTTP2` in the parent environment wins, so the default can be overridden without editing agent-shim once headroom fixes its pool management.
  */
 export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readonly string[], settings: Readonly<HeadroomSettings>, caBundle?: string): NodeJS.ProcessEnv {
+  // Headroom refuses `--uds` alongside a TCP address from its environment, so an ambient HEADROOM_HOST or HEADROOM_PORT (a shell set up for running headroom by hand) would stop the supervised daemon starting at all. The supervisor alone decides where the daemon listens.
+  const inherited = { ...parentEnv };
+  delete inherited.HEADROOM_HOST;
+  delete inherited.HEADROOM_PORT;
   return {
-    ...parentEnv,
+    ...inherited,
     HEADROOM_ALLOWED_BASE_URLS: allowlist.join(","),
     HEADROOM_HTTP2: parentEnv.HEADROOM_HTTP2 ?? "0",
     // A transparent-interception deployment redirects the API host's address machine-wide, so headroom's own Python dials reach the front door's leaf instead of the origin's public certificate, and Python trusts only the system store: point its two trust variables (urllib3/httpx read both) at the door's combined bundle, which carries the system-equivalent anchors alongside the door's CA. An explicit value in the parent environment always wins, exactly like HEADROOM_HTTP2.
     ...(caBundle === undefined || parentEnv.REQUESTS_CA_BUNDLE !== undefined || parentEnv.SSL_CERT_FILE !== undefined ? {} : { REQUESTS_CA_BUNDLE: caBundle, SSL_CERT_FILE: caBundle }),
     ...settingsEnv(settings),
   };
+}
+
+/**
+ * The `headroom proxy` arguments the supervisor starts the daemon with: the unix socket to serve on, and the token-saving settings. Never `--host` or `--port`: the daemon binds no TCP listener, and headroom refuses `--uds` alongside either.
+ */
+export function headroomProxyArgs(socketPath: string, settings: Readonly<HeadroomSettings>): readonly string[] {
+  return ["proxy", "--uds", socketPath, ...settingsArgs(settings)];
+}
+
+/** Asks the daemon's `/readyz` over its unix socket, answering whether it replied 200 (headroom's ready answer) inside the per-attempt timeout. */
+async function readyOverSocket(socketPath: string): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const probe = http.get({ socketPath, path: "/readyz", timeout: READY_FETCH_TIMEOUT_MS }, (response) => {
+      response.resume();
+      resolve(response.statusCode === HTTP_STATUS.ok);
+    });
+    probe.on("timeout", () => {
+      probe.destroy();
+    });
+    probe.on("error", () => {
+      resolve(false);
+    });
+  });
 }
 
 /** The `uv tool` name headroom installs under, which is its distribution name. */
@@ -201,16 +208,15 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
       });
     },
     isRunning: headroomPidRunning,
-    freePort: realFreePort,
-    isPortFree: realIsPortFree,
+    socketTrust: realHeadroomSocketTrust,
     readConfig: () => resolveSupervisorConfig(readGlobalConfig(paths)?.headroom ?? {}),
-    spawnHeadroom: (port, allowlist, settings) => {
+    spawnHeadroom: (socketPath, allowlist, settings) => {
       // The door's combined CA bundle, when a door has ever run on this root: under transparent interception headroom needs the door's CA trusted, and on a normal root the bundle simply also holds the system-equivalent anchors, so passing it is never wrong.
       const caBundle = fs.existsSync(paths.frontdoorCaCertFile) ? fs.readFileSync(paths.frontdoorCaCertFile, "utf8") : undefined;
       fs.mkdirSync(paths.logsDir, { recursive: true });
       const logFd = fs.openSync(paths.headroomLogPath, "a");
       try {
-        const child = spawn("headroom", ["proxy", "--host", "127.0.0.1", "--port", String(port), ...settingsArgs(settings)], {
+        const child = spawn("headroom", headroomProxyArgs(socketPath, settings), {
           detached: true,
           stdio: ["ignore", logFd, logFd],
           env: headroomSpawnEnv(process.env, allowlist, settings, caBundle),
@@ -247,14 +253,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
         );
       }
     },
-    ready: async (port) => {
-      try {
-        const response = await fetch(`http://127.0.0.1:${String(port)}/readyz`, { signal: AbortSignal.timeout(READY_FETCH_TIMEOUT_MS) });
-        return response.ok;
-      } catch {
-        return false;
-      }
-    },
+    ready: readyOverSocket,
     install: (spec) => {
       const result = spawnSync("uv", ["tool", "install", spec], { encoding: "utf8" });
       if (result.error !== undefined) {
@@ -290,7 +289,7 @@ export function registerHeadroomCommand(program: Command, deps: CommandDeps): vo
   withExamples(
     headroom
       .command("status")
-      .description("Report the headroom daemon's supervisor, process, port, sessions, and last error. Read-only.")
+      .description("Report the headroom daemon's supervisor, process, socket, sessions, and last error. Read-only.")
       .option("--json", "Print the status as JSON.")
       .action((options: Readonly<{ json?: boolean }>) => {
         const status = collectHeadroomStatus(realFarmFs, paths, realIsProcessRunning);

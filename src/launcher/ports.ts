@@ -109,8 +109,8 @@ export interface LogPort {
 
 /** The running headroom daemon one launch routed through, as `HeadroomPort.ensure` reports it. The front door owns the session's routing; this names the daemon the door's headroom hop forwards to, and the project identity headroom scopes memory to. */
 export interface HeadroomUp {
-  /** The loopback port the headroom daemon listens on: what the door's headroom hop reads live and `HEADROOM_PROXY_URL` names for anything else that wants the daemon. */
-  readonly port: number;
+  /** The unix socket the headroom daemon serves on, inside the owner-only socket directory: what the door's headroom hop dials. The child never reaches the daemon itself, so this is reported, never exported to its environment. */
+  readonly socketPath: string;
   /** The project identity headroom scopes memory state to: the git repo root of the launch directory, or the directory itself outside a repository. */
   readonly projectId: string;
 }
