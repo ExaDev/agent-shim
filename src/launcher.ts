@@ -424,7 +424,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   if (resolvedFlags.headroom && headroomPort !== undefined) {
     headroom = headroomPort.ensure();
     const via = resolvedProvider === undefined ? `OAuth via the door's CONNECT surface on 127.0.0.1:${String(frontDoor?.connectPort ?? 0)}` : `provider ${resolvedProvider.name}`;
-    log.info(`agent-shim: routing through the front door on 127.0.0.1:${String(frontDoor?.port ?? 0)} with headroom on 127.0.0.1:${String(headroom.port)} (${via}, project ${headroom.projectId})`);
+    log.info(`agent-shim: routing through the front door on 127.0.0.1:${String(frontDoor?.port ?? 0)} with headroom on unix socket ${headroom.socketPath} (${via}, project ${headroom.projectId})`);
   } else if (resolvedFlags.headroom) {
     log.error("agent-shim: headroom routing was requested but this launcher has no headroom port wired; refusing to launch without it.");
     proc.exit(1);

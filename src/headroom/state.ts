@@ -9,19 +9,22 @@ import type { FarmFs } from "../launcher/ports";
 export const HEADROOM_ANTHROPIC_UPSTREAM = "https://api.anthropic.com";
 
 /**
- * The headroom supervisor's state.json under `<home>/headroom/`. Every field is optional because the file exists in stages: a fresh supervisor writes only `supervisorPid` before the daemon is up, and a shut-down daemon leaves the file with everything cleared except any `lastError` worth surfacing.
+ * The version of the headroom state file's schema, carried in its file name (`state.v<N>.json`, see `LayoutPaths.headroomStateFile`). Version 1 was the unversioned `state.json`, which named a loopback TCP port; version 2 names the daemon's unix socket instead. Each version gets its own file because a supervisor started by an earlier release keeps running, and writing, until its own sessions end: sharing one file, each would read the other's record as malformed and claim it, and the two would overwrite each other indefinitely. With separate files the earlier generation drains its own sessions and idles out, and this release's launches never read its port.
+ */
+export const HEADROOM_STATE_SCHEMA_VERSION = 2;
+
+/**
+ * The headroom supervisor's state file under `<home>/headroom/`. Every field is optional because the file exists in stages: a fresh supervisor writes only `supervisorPid` before the daemon is up, and a shut-down daemon leaves the file with everything cleared except any `lastError` worth surfacing.
  */
 export const HeadroomStateSchema = z.strictObject({
   /** The supervisor process owning the daemon. Alive means someone is keeping headroom running. */
   supervisorPid: z.number().int().positive().optional(),
   /** The headroom proxy process itself. Absent while the supervisor is between restarts. */
   headroomPid: z.number().int().positive().optional(),
-  /** The loopback port the proxy listens on. Absent until the proxy has passed its readiness check, so "port is set" is itself the ready signal a launcher polls for. */
-  port: z.number().int().positive().optional(),
   /**
-   * The sticky port preference: the address the daemon last served on, kept across crashes, restarts, and idle shutdowns so the next start reuses it. Distinct from `port` on purpose: `port` is the ready signal (absent whenever nothing is serving), while `lastPort` survives every shutdown, because the front door (which routes sessions through this daemon) reads it live and follows a restart to whichever address it lands on.
+   * The unix socket the proxy serves on, inside the owner-only socket directory. Absent until the proxy has passed its readiness check, so "socketPath is set" is itself the ready signal a launcher polls for. The front door reads it on every hop, so a restart (which keeps the generation's path) is followed without anything being relaunched.
    */
-  lastPort: z.number().int().positive().optional(),
+  socketPath: z.string().min(1).optional(),
   /** The `headroom --version` output of the running install. */
   version: z.string().optional(),
   /** Hash of the allowlist the running proxy was started with, so a provider-file change is detected as drift. */
@@ -59,7 +62,7 @@ function parseJson<T>(raw: string | undefined, schema: z.ZodType<T>): T | undefi
   return parsed.success ? parsed.data : undefined;
 }
 
-/** Reads state.json, or undefined when absent. A malformed file is treated as absent: the lock-and-spawn flow below overwrites it with a fresh supervisor's state rather than crashing every future launch over one bad write. */
+/** Reads the state file, or undefined when absent. A malformed file is treated as absent: the lock-and-spawn flow below overwrites it with a fresh supervisor's state rather than crashing every future launch over one bad write. */
 export function readHeadroomState(fs: HeadroomFs, stateFile: string): HeadroomState | undefined {
   try {
     return parseJson(fs.readFileUtf8(stateFile), HeadroomStateSchema);
@@ -69,7 +72,7 @@ export function readHeadroomState(fs: HeadroomFs, stateFile: string): HeadroomSt
 }
 
 /**
- * Writes state.json atomically (a temporary sibling renamed into place), so a concurrent reader never sees a partial file. A reader treats a malformed file as absent, and a launcher that finds no supervisor in state spawns one, so a torn write read mid-flight started a redundant supervisor and daemon.
+ * Writes the state file atomically (a temporary sibling renamed into place), so a concurrent reader never sees a partial file. A reader treats a malformed file as absent, and a launcher that finds no supervisor in state spawns one, so a torn write read mid-flight started a redundant supervisor and daemon.
  */
 export function writeHeadroomState(fs: HeadroomFs, stateFile: string, state: Readonly<HeadroomState>): void {
   fs.mkdirp(path.dirname(stateFile));

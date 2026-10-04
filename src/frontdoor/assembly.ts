@@ -1,3 +1,4 @@
+import type { HeadroomSocketTarget } from "../headroom/socket";
 import { restoreCredentials, type CredentialCustody } from "./custody";
 import type { PipelineDeps, ResponseObserver, RouteResolution } from "./pipeline";
 import { AUTH_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, parseProviderPath, type RoutedRequest } from "./route";
@@ -7,8 +8,8 @@ export interface DoorPipelineDeps {
   readonly resolveRoute: (request: RoutedRequest) => Promise<RouteResolution>;
   /** Whether a presented capability belongs to a live registered launch, read fresh on every request since launches come and go. */
   readonly isLiveToken: (token: string) => boolean;
-  /** The headroom daemon's port as it stands right now, undefined while it is down. */
-  readonly headroomPort: () => number | undefined;
+  /** The headroom daemon's socket as it stands right now, authenticated: undefined while the daemon is down, a refusal when the recorded socket fails the owner-only check. */
+  readonly headroomSocket: () => HeadroomSocketTarget | undefined;
   /** This generation's hop secret: held only in this process's memory, set on what the hop sends headroom and demanded back on the direct listener. */
   readonly hopSecret: string;
   /** Where the hop parks a provider session's real credentials while its request crosses headroom. */
@@ -62,7 +63,7 @@ export function createDoorPipelines(deps: DoorPipelineDeps): { readonly clientFa
       // The response middleware hook point, where usage tracking registers. The direct listener registers none, because its responses are consumed by headroom, not by the client: the entry the client sees is where observation belongs, and observing both would record every hopped request twice.
       responseObservers: deps.responseObservers,
       admit: admitLaunch(deps.isLiveToken),
-      headroom: { headroomPort: deps.headroomPort, hopSecret: deps.hopSecret, custody: deps.custody, log: deps.log },
+      headroom: { headroomSocket: deps.headroomSocket, hopSecret: deps.hopSecret, custody: deps.custody, log: deps.log },
       now: deps.now,
       log: deps.log,
     },

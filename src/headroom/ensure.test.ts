@@ -12,7 +12,7 @@ const OTHER_LAUNCHER_PID = 777;
 const SLEEPS_BEFORE_RECOVERY = 3;
 const SLEEPS_BEFORE_OTHER_SUPERVENDOR_READY = 2;
 const HEADROOM_PID = 501;
-const PORT = 8123;
+const SOCKET_PATH = "/home/testuser/.agent-shim/headroom/run/7.sock";
 /** A supervisor pid that is dead in every test that names it, distinct from the live fake's SUPERVISOR_PID. */
 const DEAD_SUPERVISOR_PID = 999;
 
@@ -35,11 +35,11 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean } = {}) {
     set onSleep(hook: (() => void) | undefined) {
       onSleep = hook;
     },
-    writeReadyState(port = PORT): void {
+    writeReadyState(socketPath = SOCKET_PATH): void {
       writeHeadroomState(fs, paths.headroomStateFile, {
         supervisorPid: SUPERVISOR_PID,
         headroomPid: HEADROOM_PID,
-        port,
+        socketPath,
         version: "headroom 0.39.1",
       });
     },
@@ -69,7 +69,7 @@ describe("ensureHeadroom", () => {
   it("starts a supervisor when nothing is running and waits for its ready state, then registers the session", () => {
     const world = makeWorld();
     const result = ensureHeadroom({ paths, launcherPid: 42, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ socketPath: SOCKET_PATH });
     expect(world.spawns).toHaveLength(1);
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/42.json`)).toBeDefined();
   });
@@ -78,12 +78,12 @@ describe("ensureHeadroom", () => {
     const world = makeWorld();
     world.writeReadyState();
     const result = ensureHeadroom({ paths, launcherPid: 43, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ socketPath: SOCKET_PATH });
     expect(world.spawns).toHaveLength(0);
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/43.json`)).toBeDefined();
   });
 
-  it("registers the session against the supervisor whose daemon port it returns, so only that supervisor counts it as live", () => {
+  it("registers the session against the supervisor whose daemon socket it returns, so only that supervisor counts it as live", () => {
     const world = makeWorld();
     world.writeReadyState();
     ensureHeadroom({ paths, launcherPid: 44, ports: world.ports });
@@ -96,10 +96,10 @@ describe("ensureHeadroom", () => {
     writeHeadroomState(world.fs, paths.headroomStateFile, {
       supervisorPid: DEAD_SUPERVISOR_PID,
       headroomPid: HEADROOM_PID,
-      port: PORT,
+      socketPath: SOCKET_PATH,
     });
     const result = ensureHeadroom({ paths, launcherPid: 44, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ socketPath: SOCKET_PATH });
     expect(world.spawns).toHaveLength(1);
   });
 
@@ -108,19 +108,19 @@ describe("ensureHeadroom", () => {
     writeHeadroomState(world.fs, paths.headroomStateFile, {
       supervisorPid: DEAD_SUPERVISOR_PID,
       headroomPid: HEADROOM_PID,
-      port: PORT,
+      socketPath: SOCKET_PATH,
     });
     // The supervisor died without being reaped: it still "exists" in the table, but nothing is running there.
     world.alive.add(DEAD_SUPERVISOR_PID);
     world.zombies.add(DEAD_SUPERVISOR_PID);
     const result = ensureHeadroom({ paths, launcherPid: 51, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ socketPath: SOCKET_PATH });
     expect(world.spawns).toHaveLength(1);
   });
 
-  it("keeps waiting while a live supervisor has not yet recorded a serving port, and returns once it has", () => {
+  it("keeps waiting while a live supervisor has not yet recorded a serving socket, and returns once it has", () => {
     const world = makeWorld({ spawnWritesReadyState: false });
-    // The supervisor half arrives first; the daemon's port arrives partway through the wait.
+    // The supervisor half arrives first; the daemon's socket arrives partway through the wait.
     writeHeadroomState(world.fs, paths.headroomStateFile, {
       supervisorPid: SUPERVISOR_PID,
       headroomPid: HEADROOM_PID,
@@ -133,7 +133,7 @@ describe("ensureHeadroom", () => {
       }
     };
     const result = ensureHeadroom({ paths, launcherPid: 52, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ socketPath: SOCKET_PATH });
     expect(sleeps).toBeGreaterThanOrEqual(SLEEPS_BEFORE_RECOVERY);
   });
 
@@ -142,7 +142,7 @@ describe("ensureHeadroom", () => {
     writeHeadroomState(world.fs, paths.headroomStateFile, {
       supervisorPid: SUPERVISOR_PID,
       headroomPid: DEAD_SUPERVISOR_PID,
-      port: PORT,
+      socketPath: SOCKET_PATH,
     });
     // The supervisor brings the daemon back partway through the wait.
     let sleeps = 0;
@@ -153,7 +153,7 @@ describe("ensureHeadroom", () => {
       }
     };
     const result = ensureHeadroom({ paths, launcherPid: 45, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ socketPath: SOCKET_PATH });
     expect(sleeps).toBeGreaterThanOrEqual(SLEEPS_BEFORE_RECOVERY);
   });
 
@@ -170,7 +170,7 @@ describe("ensureHeadroom", () => {
       }
     };
     const result = ensureHeadroom({ paths, launcherPid: 46, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ socketPath: SOCKET_PATH });
     expect(world.spawns).toHaveLength(0);
   });
 
@@ -180,7 +180,7 @@ describe("ensureHeadroom", () => {
     world.fs.writeFileUtf8(paths.headroomLockFile, JSON.stringify({ pid: OTHER_LAUNCHER_PID, at: 0 }));
     // 777 deliberately not in the alive set.
     const result = ensureHeadroom({ paths, launcherPid: 47, ports: world.ports });
-    expect(result).toEqual({ port: PORT });
+    expect(result).toEqual({ socketPath: SOCKET_PATH });
     expect(world.spawns).toHaveLength(1);
   });
 

@@ -7,9 +7,10 @@ import { HTTP_STATUS } from "../codex/http";
 import { readGlobalConfig } from "../configProfilesStore";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
 import { createCodexRoutePorts } from "../codex/commands";
+import { verifyHeadroomSocket, type HeadroomSocketTarget, type HeadroomSocketTrustPorts } from "../headroom/socket";
 import { readHeadroomState, type HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, realFsPort, realIsProcessRunning } from "../realPorts";
+import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning } from "../realPorts";
 import { createDoorPipelines } from "./assembly";
 import { isLiveCapability } from "./capability";
 import { captureFromEnv } from "./capture";
@@ -32,9 +33,12 @@ function appendLog(paths: LayoutPaths, line: string): void {
   fs.appendFileSync(paths.frontdoorLogPath, `${new Date().toISOString()} ${line}\n`);
 }
 
-/** The headroom daemon's loopback port, read live from its state on every routed request that needs the hop: the daemon can crash and restart on a different port while this door keeps listening, and the hop must follow it (and answer 502 while it is between restarts). */
-function liveHeadroomPort(paths: LayoutPaths): number | undefined {
-  return readHeadroomState(realFarmFs, paths.headroomStateFile)?.port;
+/**
+ * The headroom daemon's socket as the hop may use it, read from the daemon's state on every routed request that needs the hop and authenticated each time: a new supervisor generation serves on a new path while this door keeps listening, and the hop must follow it (and answer 502 while the daemon is between restarts, or refuse a socket that fails the owner-only check). Undefined while no socket is recorded.
+ */
+export function headroomSocketTarget(fsPort: HeadroomFs, trust: HeadroomSocketTrustPorts, paths: LayoutPaths): HeadroomSocketTarget | undefined {
+  const socketPath = readHeadroomState(fsPort, paths.headroomStateFile)?.socketPath;
+  return socketPath === undefined ? undefined : verifyHeadroomSocket(socketPath, trust);
 }
 
 /**
@@ -78,7 +82,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     isLiveToken,
     responseObservers: [usageMiddleware],
     now: () => Date.now(),
-    headroomPort: () => liveHeadroomPort(paths),
+    headroomSocket: () => headroomSocketTarget(realFarmFs, realHeadroomSocketTrust, paths),
     // The per-generation capability the direct listener demands: held only in this process's memory, so a loopback process that discovers the direct port still cannot use it.
     hopSecret: randomUUID(),
     custody: createCredentialCustody(() => randomUUID()),
@@ -199,20 +203,20 @@ export interface FrontDoorStatus {
   readonly state: FrontDoorState;
   readonly supervisorAlive: boolean;
   readonly sessions: readonly FrontDoorSessionStatus[];
-  /** The headroom daemon's port as the door's hop reads it live, when the daemon is serving. */
-  readonly headroomPort: number | undefined;
+  /** The headroom daemon's socket as the door's hop reads and authenticates it live: undefined when no socket is recorded, a refusal when the recorded one fails the owner-only check. */
+  readonly headroomSocket: HeadroomSocketTarget | undefined;
   readonly logPath: string;
   readonly logExists: boolean;
 }
 
 /** Collects the front door's read-only status. */
-export function collectFrontDoorStatus(fsPort: HeadroomFs, paths: LayoutPaths, isRunning: (pid: number) => boolean): FrontDoorStatus {
+export function collectFrontDoorStatus(fsPort: HeadroomFs, socketTrust: HeadroomSocketTrustPorts, paths: LayoutPaths, isRunning: (pid: number) => boolean): FrontDoorStatus {
   const state = readFrontDoorState(fsPort, paths.frontdoorStateFile) ?? {};
   return {
     state,
     supervisorAlive: state.supervisorPid !== undefined && isRunning(state.supervisorPid),
     sessions: listFrontDoorSessions(fsPort, paths.frontdoorSessionsDir).map((session) => ({ ...session, alive: isRunning(session.pid) })),
-    headroomPort: readHeadroomState(fsPort, paths.headroomStateFile)?.port,
+    headroomSocket: headroomSocketTarget(fsPort, socketTrust, paths),
     logPath: paths.frontdoorLogPath,
     logExists: fsPort.readFileUtf8(paths.frontdoorLogPath) !== undefined,
   };
@@ -236,11 +240,13 @@ export function formatFrontDoorStatus(status: FrontDoorStatus, caCertPath: strin
   } else {
     lines.push(`connect surface: listening on 127.0.0.1:${String(status.state.connectPort)}, CA ${caCertPath}`);
   }
-  lines.push(
-    status.headroomPort === undefined
-      ? "headroom hop: the daemon is not serving (sessions asking for headroom fail until it is up)"
-      : `headroom hop: daemon on 127.0.0.1:${String(status.headroomPort)}`,
-  );
+  if (status.headroomSocket === undefined) {
+    lines.push("headroom hop: the daemon is not serving (sessions asking for headroom fail until it is up)");
+  } else if (status.headroomSocket.refused === undefined) {
+    lines.push(`headroom hop: daemon on unix socket ${status.headroomSocket.socketPath}`);
+  } else {
+    lines.push(`headroom hop: REFUSING the daemon's socket (sessions asking for headroom fail until it is fixed): ${status.headroomSocket.refused}`);
+  }
   if (status.sessions.length === 0) {
     lines.push("sessions: none");
   } else {
@@ -267,7 +273,7 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       .description("Report the front door's supervisor, listeners, sessions, and last error. Read-only.")
       .option("--json", "Print the status as JSON.")
       .action((options: Readonly<{ json?: boolean }>) => {
-        const status = collectFrontDoorStatus(realFarmFs, paths, realIsProcessRunning);
+        const status = collectFrontDoorStatus(realFarmFs, realHeadroomSocketTrust, paths, realIsProcessRunning);
         if (options.json === true) {
           printJson(status);
           return;

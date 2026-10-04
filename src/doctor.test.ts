@@ -9,7 +9,7 @@ const ALIVE_SUPERVISOR_PID = 11;
 const ALIVE_DAEMON_PID = 12;
 const REPLACEMENT_SUPERVISOR_PID = 21;
 const REPLACEMENT_DAEMON_PID = 22;
-const HEADROOM_PORT = 8123;
+const HEADROOM_SOCKET = "/agent-shim/headroom/run/8123.sock";
 
 function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorParams {
   return {
@@ -26,7 +26,7 @@ function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorParams {
     rootPath: "/home/u/.agent-shim",
     pathResolution: { ownExecutablePath: "/home/u/.local/bin/agent-shim", agentShim: { status: "ok" } },
     platform: "linux",
-    headroom: { state: { path: "/agent-shim/headroom/state.json", raw: undefined }, isRunning: () => false },
+    headroom: { state: { path: "/agent-shim/headroom/state.v2.json", raw: undefined }, isRunning: () => false },
     ...overrides,
   };
 }
@@ -64,7 +64,7 @@ describe("runDoctor: headroom", () => {
   });
 
   it("fails on a malformed state.json instead of guessing", () => {
-    const report = runDoctor(baseParams({ headroom: { state: { path: "/agent-shim/headroom/state.json", raw: "{bad" }, isRunning: () => false } }));
+    const report = runDoctor(baseParams({ headroom: { state: { path: "/agent-shim/headroom/state.v2.json", raw: "{bad" }, isRunning: () => false } }));
     expect(findingsFor(report, "headroom").some((finding) => finding.severity === "fail")).toBe(true);
   });
 
@@ -73,21 +73,21 @@ describe("runDoctor: headroom", () => {
     const report = runDoctor(
       baseParams({
         headroom: {
-          state: { path: "/agent-shim/headroom/state.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT, version: "headroom 0.39.1" }) },
+          state: { path: "/agent-shim/headroom/state.v2.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, socketPath: HEADROOM_SOCKET, version: "headroom 0.39.1" }) },
           isRunning: (pid: number) => alive.has(pid),
         },
       }),
     );
     const findings = findingsFor(report, "headroom");
     expect(findings.every((finding) => finding.severity === "pass")).toBe(true);
-    expect(findings[0]?.message).toContain(`127.0.0.1:${String(HEADROOM_PORT)}`);
+    expect(findings[0]?.message).toContain(`unix socket ${HEADROOM_SOCKET}`);
   });
 
   it("warns, without failing the report, when the recorded supervisor is no longer running", () => {
     const report = runDoctor(
       baseParams({
         headroom: {
-          state: { path: "/agent-shim/headroom/state.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT }) },
+          state: { path: "/agent-shim/headroom/state.v2.json", raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, socketPath: HEADROOM_SOCKET }) },
           isRunning: () => false,
         },
       }),
@@ -103,8 +103,8 @@ describe("runDoctor: headroom", () => {
       baseParams({
         headroom: {
           state: {
-            path: "/agent-shim/headroom/state.json",
-            raw: JSON.stringify({ supervisorPid: REPLACEMENT_SUPERVISOR_PID, headroomPid: REPLACEMENT_DAEMON_PID, port: HEADROOM_PORT, lastError: "previous crash" }),
+            path: "/agent-shim/headroom/state.v2.json",
+            raw: JSON.stringify({ supervisorPid: REPLACEMENT_SUPERVISOR_PID, headroomPid: REPLACEMENT_DAEMON_PID, socketPath: HEADROOM_SOCKET, lastError: "previous crash" }),
           },
           isRunning: (pid: number) => alive.has(pid),
         },
@@ -119,8 +119,8 @@ describe("runDoctor: headroom", () => {
       baseParams({
         headroom: {
           state: {
-            path: "/agent-shim/headroom/state.json",
-            raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, port: HEADROOM_PORT, installedSource }),
+            path: "/agent-shim/headroom/state.v2.json",
+            raw: JSON.stringify({ supervisorPid: ALIVE_SUPERVISOR_PID, headroomPid: ALIVE_DAEMON_PID, socketPath: HEADROOM_SOCKET, installedSource }),
           },
           isRunning: (pid: number) => alive.has(pid),
         },

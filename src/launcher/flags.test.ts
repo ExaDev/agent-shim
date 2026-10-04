@@ -298,10 +298,9 @@ describe("buildEnv", () => {
       identitiesDir: "/home/testuser/.agent-shim/identities",
       provider: resolvedProvider({ baseUrl: "https://127.0.0.1:4100/providers/z" }),
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/home/testuser/.agent-shim/frontdoor/ca/bundles/0123abcd.pem", sessionToken: "launch-token-for-tests" },
-      headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
+      headroom: { socketPath: "/home/testuser/.agent-shim/headroom/run/8123.sock", projectId: "/home/testuser/work/repo" },
     });
     expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/z");
-    expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
     expect(env.HTTPS_PROXY).toBeUndefined();
     expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.agent-shim/frontdoor/ca/bundles/0123abcd.pem");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
@@ -352,7 +351,6 @@ describe("buildEnv", () => {
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" },
     });
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests");
-    expect(env.HEADROOM_PROXY_URL).toBeUndefined();
   });
 
   it("routes an OAuth launch (no provider) through the door's CONNECT surface: HTTPS_PROXY (carrying the launch's capability as its proxy credential) and the CA are set, ANTHROPIC_BASE_URL stays unset so Remote Control keeps working", () => {
@@ -363,12 +361,11 @@ describe("buildEnv", () => {
       resolvedIdentityName: "work",
       identitiesDir: "/home/testuser/.agent-shim/identities",
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/home/testuser/.agent-shim/frontdoor/ca/ca.pem", sessionToken: "launch-token-for-tests" },
-      headroom: { port: 8123, projectId: "/home/testuser/work/repo" },
+      headroom: { socketPath: "/home/testuser/.agent-shim/headroom/run/8123.sock", projectId: "/home/testuser/work/repo" },
     });
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
     expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.agent-shim/frontdoor/ca/ca.pem");
-    expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
   });
 
@@ -379,7 +376,7 @@ describe("buildEnv", () => {
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.agent-shim/identities",
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" },
-      headroom: { port: 8123, projectId: "/repo" },
+      headroom: { socketPath: "/home/testuser/.agent-shim/headroom/run/8123.sock", projectId: "/repo" },
     });
     expect(env.ANTHROPIC_BASE_URL).toBe("https://custom-gateway.example");
   });
@@ -407,6 +404,5 @@ describe("buildEnv", () => {
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
     expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
-    expect(env.HEADROOM_PROXY_URL).toBeUndefined();
   });
 });

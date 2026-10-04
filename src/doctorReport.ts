@@ -135,7 +135,7 @@ export interface RunDoctorParams {
   readonly run?: RunPort;
   /** `process.platform` in real use; the Keychain check only ever runs when this is `"darwin"`. */
   readonly platform: string;
-  /** The headroom daemon's state.json plus a zombie-aware liveness predicate for the pids it names (a defunct daemon holds no port but still answers signal 0). Omit the raw text when the daemon has never run; that is a pass, not a failure. */
+  /** The headroom daemon's state.json plus a zombie-aware liveness predicate for the pids it names (a defunct daemon serves nothing but still answers signal 0). Omit the raw text when the daemon has never run; that is a pass, not a failure. */
   readonly headroom: {
     readonly state: DoctorFileInput;
     readonly isRunning: (pid: number) => boolean;
@@ -481,7 +481,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
           "warn",
           `Headroom state names supervisor pid ${String(state.supervisorPid)}, which is not running; the next launch through headroom will start a replacement.`,
         );
-      } else if (state.headroomPid === undefined || state.port === undefined) {
+      } else if (state.headroomPid === undefined || state.socketPath === undefined) {
         push(
           "headroom",
           "warn",
@@ -499,7 +499,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
         push(
           "headroom",
           "pass",
-          `Headroom daemon is up on 127.0.0.1:${String(state.port)} (supervisor ${String(state.supervisorPid)}, daemon ${String(state.headroomPid)}).`,
+          `Headroom daemon is up on unix socket ${state.socketPath} (supervisor ${String(state.supervisorPid)}, daemon ${String(state.headroomPid)}).`,
         );
       }
       if (state.lastError !== undefined && supervisorAlive) {

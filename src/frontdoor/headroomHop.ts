@@ -2,20 +2,21 @@ import * as http from "node:http";
 import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
+import type { HeadroomSocketTarget } from "../headroom/socket";
 import { forwardableHeaders } from "./connect";
 import type { CredentialCustody } from "./custody";
 import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, PROJECT_ID_HEADER, parseProviderPath, type RoutedRequest, type RoutedResponse } from "./route";
 import { upstreamChunks } from "./server";
 
-/** What one hop answers when it cannot serve: the daemon is between restarts, or unreachable. Answering with 502 (rather than bypassing headroom) is what keeps a launch that asked for compression from silently losing it. */
+/** What one hop answers when it cannot serve: the daemon is between restarts, unreachable, or its socket failed authentication. Answering with 502 (rather than bypassing headroom) is what keeps a launch that asked for compression from silently losing it. */
 const HTTP_BAD_GATEWAY = HTTP_STATUS.badGateway;
 
 /** Everything the headroom hop depends on, injected so the pipeline's ordering tests can point it at a scripted daemon. */
 export interface HeadroomHopDeps {
   /**
-   * The headroom daemon's loopback port, read per request rather than captured at start-up: the daemon can crash and restart on a different port while this door keeps listening, and the hop must follow it. Undefined while the daemon is down (the restart window).
+   * The headroom daemon's unix socket, authenticated (see `verifyHeadroomSocket`) and read per request rather than captured at start-up: a new supervisor generation serves on a new path while this door keeps listening, and the hop must follow it. Undefined while the daemon is down (the restart window); a refusal names why the socket recorded in state must not be dialled. There is no TCP address to fall back to: the hop reaches headroom over this socket or not at all.
    */
-  readonly headroomPort: () => number | undefined;
+  readonly headroomSocket: () => HeadroomSocketTarget | undefined;
   /**
    * The per-generation secret the direct listener requires on what the hop forwards back. Headroom passes non-x-headroom headers through untouched, so the secret survives the round trip and arrives where this process can check it, while no loopback process outside this door ever holds it.
    */
@@ -45,13 +46,17 @@ function responseHeaders(headers: Readonly<IncomingHttpHeaders>): Record<string,
  * `upstream` is what headroom is told to forward to once it has done its work (its per-request base URL header). When it is set it is always this door's direct listener (every provider route declares exactly that), and the provider credential is then taken into custody for the hop: headroom receives placeholders and a hop id, and the direct listener restores the real headers when headroom forwards the request back. Neither headroom nor anything that binds a port on that plain-HTTP round trip ever holds the credential. Undefined leaves headroom's default upstream (Claude Code's API) in charge, which is exactly what an OAuth session wants, and the OAuth bearer then passes through untouched: headroom forwards it straight to that API, never back here, and uses it for its subscription tracking. The session's project identity is re-set here, and only here: the identity step stripped it from everything that leaves the machine, and headroom is the one consumer that needs it.
  */
 export async function applyHeadroomHop(request: RoutedRequest, response: RoutedResponse, upstream: string | undefined, deps: HeadroomHopDeps): Promise<void> {
-  const port = deps.headroomPort();
-  if (port === undefined) {
-    response.start(HTTP_BAD_GATEWAY, { "Content-Type": "application/json" });
-    await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message: "agent-shim front door: the headroom daemon is restarting" } }));
-    response.end();
+  const target = deps.headroomSocket();
+  if (target === undefined) {
+    await answerBadGateway(response, "agent-shim front door: the headroom daemon is restarting");
     return;
   }
+  if (target.refused !== undefined) {
+    deps.log(`front door: refusing the headroom hop (${request.method} ${new URL(request.url, "http://127.0.0.1").pathname}): ${target.refused}`);
+    await answerBadGateway(response, `agent-shim front door: refusing to send this request to headroom: ${target.refused}`);
+    return;
+  }
+  const { socketPath } = target;
   let headers: Record<string, string | string[] | undefined> = forwardableHeaders(request.headers);
   let hopId: string | undefined;
   // Set only by the door, never inherited: which upstream headroom forwards to is this route's own declaration, and any inbound copy of the header was already stripped at the identity step, so nothing a client sends can redirect the daemon behind the door's back.
@@ -72,7 +77,7 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
   }
   headers[HOP_SECRET_HEADER] = deps.hopSecret;
   try {
-    await forwardThroughHeadroom(request, response, { port, headers, log: deps.log });
+    await forwardThroughHeadroom(request, response, { socketPath, headers, log: deps.log });
   } finally {
     // The hop is over (answered, failed, or abandoned by the client): its custody id stops redeeming, so a copy of it seen anywhere along the way is worthless from here on.
     if (hopId !== undefined) {
@@ -81,9 +86,15 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
   }
 }
 
+/** Answers one hop with a 502 in the Anthropic error shape, before anything was sent to headroom. */
+async function answerBadGateway(response: RoutedResponse, message: string): Promise<void> {
+  response.start(HTTP_BAD_GATEWAY, { "Content-Type": "application/json" });
+  await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message } }));
+  response.end();
+}
 
 /**
- * The hop's own agent, with keep-alive off: the headroom daemon closes idle keep-alive connections well inside any pooling window (observed against the live daemon, which dropped a connection inside a fifteen-second idle), and Node's global agent keeps such sockets pooled, so the first hop after an idle gap rode a dead socket and the door answered it "socket hang up", one sporadic 502 at a time. A fresh loopback connection per hop costs nothing, and a streaming response holds its socket for the stream's own life regardless of pooling.
+ * The hop's own agent, with keep-alive off: the headroom daemon closes idle keep-alive connections well inside any pooling window (observed against the live daemon, which dropped a connection inside a fifteen-second idle), and Node's global agent keeps such sockets pooled, so the first hop after an idle gap rode a dead connection and the door answered it "socket hang up", one sporadic 502 at a time. A fresh local connection per hop costs nothing, and a streaming response holds its socket for the stream's own life regardless of pooling.
  */
 const HOP_AGENT = new http.Agent({ keepAlive: false });
 
@@ -91,9 +102,9 @@ const HOP_AGENT = new http.Agent({ keepAlive: false });
 async function forwardThroughHeadroom(
   request: RoutedRequest,
   response: RoutedResponse,
-  target: { readonly port: number; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void },
+  target: { readonly socketPath: string; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void },
 ): Promise<void> {
-  const { port, headers } = target;
+  const { socketPath, headers } = target;
   await new Promise<void>((resolve) => {
     const onUpstreamResponse = (upstreamResponse: IncomingMessage): void => {
       response.start(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, responseHeaders(upstreamResponse.headers));
@@ -113,7 +124,7 @@ async function forwardThroughHeadroom(
         } catch (error) {
           // The client went away mid-stream, or the daemon dropped the connection: either way the response is no longer salvageable. Only the second is a fault worth a log line, and the client having gone is told apart by its own abort signal.
           if (!request.signal.aborted) {
-            target.log(`front door: headroom hop to 127.0.0.1:${String(port)} ended mid-stream (${request.method} ${new URL(request.url, "http://127.0.0.1").pathname}): ${error instanceof Error ? error.message : String(error)}`);
+            target.log(`front door: headroom hop to ${socketPath} ended mid-stream (${request.method} ${new URL(request.url, "http://127.0.0.1").pathname}): ${error instanceof Error ? error.message : String(error)}`);
           }
           response.destroy();
         }
@@ -121,12 +132,13 @@ async function forwardThroughHeadroom(
       };
       void stream();
     };
-    const hop = http.request({ host: "127.0.0.1", port, method: request.method, path: request.url, headers, agent: HOP_AGENT }, onUpstreamResponse);
+    // `socketPath` is the whole address: no host or port is given, so nothing listening on a TCP port can ever receive this request.
+    const hop = http.request({ socketPath, method: request.method, path: request.url, headers, agent: HOP_AGENT }, onUpstreamResponse);
     hop.on("error", (error: Error) => {
       // Which request and which phase decide whether this is a daemon that closed on a request it had accepted (mid-stream), one that was never reachable (before the response started), or neither: the line carries both, with the error's own code, so a recurring failure can be told apart without reproducing it.
       const phase = response.headersSent ? "mid-stream" : "before the response started";
       const code = "code" in error && typeof error.code === "string" ? ` ${error.code}` : "";
-      target.log(`front door: headroom hop to 127.0.0.1:${String(port)} failed (${request.method} ${new URL(request.url, "http://127.0.0.1").pathname}, ${phase}): ${error.message}${code}`);
+      target.log(`front door: headroom hop to ${socketPath} failed (${request.method} ${new URL(request.url, "http://127.0.0.1").pathname}, ${phase}): ${error.message}${code}`);
       if (!response.headersSent) {
         response.start(HTTP_BAD_GATEWAY, { "Content-Type": "application/json" });
         void response

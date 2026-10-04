@@ -7,10 +7,10 @@ import type { FsPort, HeadroomPort } from "./launcher/ports";
 import { prepareLaunch, runLauncher } from "./launcher";
 import { FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, createFakeFarmFs, discovered, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
-/** The loopback port the fake headroom daemon pretends to listen on. */
-const HEADROOM_PORT = 8123;
-/** A second port, so one test can prove the daemon in use is the one ensure() reported. */
-const OTHER_HEADROOM_PORT = 9999;
+/** The unix socket the fake headroom daemon pretends to serve on. */
+const HEADROOM_SOCKET = "/home/testuser/.agent-shim/headroom/run/8123.sock";
+/** A second socket, so one test can prove the daemon in use is the one ensure() reported. */
+const OTHER_HEADROOM_SOCKET = "/home/testuser/.agent-shim/headroom/run/9999.sock";
 
 describe("prepareLaunch", () => {
   it("returns the binary, arguments and environment to spawn without spawning anything", () => {
@@ -312,7 +312,7 @@ describe("runLauncher", () => {
 });
 
 describe("runLauncher headroom routing", () => {
-  function fakeHeadroomPort(port = HEADROOM_PORT, projectId = "/home/testuser/work/repo"): HeadroomPort & { readonly ensures: number; readonly releases: number } {
+  function fakeHeadroomPort(socketPath = HEADROOM_SOCKET, projectId = "/home/testuser/work/repo"): HeadroomPort & { readonly ensures: number; readonly releases: number } {
     let ensures = 0;
     let releases = 0;
     return {
@@ -324,7 +324,7 @@ describe("runLauncher headroom routing", () => {
       },
       ensure: () => {
         ensures += 1;
-        return { port, projectId };
+        return { socketPath, projectId };
       },
       release: () => {
         releases += 1;
@@ -343,13 +343,14 @@ describe("runLauncher headroom routing", () => {
     const spawn = fakeSpawn();
     const headroom = fakeHeadroomPort();
     const frontdoor = fakeFrontDoorPort();
+    const log = fakeLog();
 
     runAndCaptureExit({
       paths,
       fs: fakeFs({}),
       spawn,
       proc: fakeProc({ AGENT_SHIM_HEADROOM: "1" }, ["--print"]),
-      log: fakeLog(),
+      log,
       resolveClaudeBinary: () => discovered,
       frontdoor,
       headroom,
@@ -361,7 +362,9 @@ describe("runLauncher headroom routing", () => {
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
     expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.agent-shim/frontdoor/ca/ca.pem");
-    expect(env.HEADROOM_PROXY_URL).toBe("http://127.0.0.1:8123");
+    // The daemon serves only on its unix socket, which the door's hop dials: nothing in the child's environment names it.
+    expect(Object.keys(env).filter((name) => name.startsWith("HEADROOM_"))).toEqual([]);
+    expect(log.infos.join("\n")).toContain(`with headroom on unix socket ${HEADROOM_SOCKET}`);
     expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
     expect(headroom.releases).toBeGreaterThan(0);
     expect(frontdoor.releases()).toBeGreaterThan(0);
@@ -370,14 +373,15 @@ describe("runLauncher headroom routing", () => {
   it("resolves headroom through the cascade like any other launch flag", () => {
     const fs = createFakeFarmFs({});
     const spawn = fakeSpawn();
-    const headroom = fakeHeadroomPort(OTHER_HEADROOM_PORT, "/repo");
+    const log = fakeLog();
+    const headroom = fakeHeadroomPort(OTHER_HEADROOM_SOCKET, "/repo");
 
     runAndCaptureExit({
       paths,
       fs: fakeFs({}),
       spawn,
       proc: fakeProc({}, ["@work"]),
-      log: fakeLog(),
+      log,
       resolveClaudeBinary: () => discovered,
       farm: fakeFarm(fs, { launch: { headroom: true } }),
       frontdoor: fakeFrontDoorPort(),
@@ -385,7 +389,7 @@ describe("runLauncher headroom routing", () => {
     });
 
     expect(headroom.ensures).toBe(1);
-    expect(spawnedEnv(spawn).HEADROOM_PROXY_URL).toBe("http://127.0.0.1:9999");
+    expect(log.infos.join("\n")).toContain(`with headroom on unix socket ${OTHER_HEADROOM_SOCKET} (OAuth via the door's CONNECT surface on 127.0.0.1:4200, project /repo)`);
   });
 
   it("resolves headroom from the cascade on an escape-hatch launch, where no farm resync runs", () => {

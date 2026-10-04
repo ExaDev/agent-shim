@@ -1,14 +1,22 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { Agent, fetch } from "undici";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, fakeResponse, recordingFetch } from "../codex/testing";
+import { HEADROOM_SOCKET_DIR_MODE, headroomSocketPath, type HeadroomSocketTarget } from "../headroom/socket";
+import { writeHeadroomState } from "../headroom/state";
+import { buildLayoutPaths, type LayoutPaths } from "../paths";
+import { realFarmFs, realHeadroomSocketTrust } from "../realPorts";
 import { FAKE_HOME, fakeFs } from "../test-helpers";
 import { createDoorPipelines } from "./assembly";
+import { headroomSocketTarget } from "./commands";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
 import { SEQUESTERED_CREDENTIAL, createCredentialCustody } from "./custody";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, IDENTITY_HEADER, SESSION_HEADER } from "./route";
@@ -25,6 +33,14 @@ const HOP_SECRET = "hop-secret-for-tests";
 const PROVIDER_TOKEN = "made-up-provider-token";
 const SETTLE_MS = 50;
 const MESSAGES_BODY = JSON.stringify({ model: "claude-sonnet-4-5", stream: false, messages: [{ role: "user", content: "hi" }], metadata: { user_id: "user-a" } });
+/** The pid the fake headroom's supervisor generation is recorded under, which names its socket. */
+const SUPERVISOR_PID = 4242;
+/** The mode headroom creates its socket with. */
+const HEADROOM_SOCKET_MODE = 0o600;
+/** A socket directory mode every user can enter: what the door must refuse. */
+const WORLD_DIR_MODE = 0o755;
+/** The server-sent events a streaming fake headroom answers with, sent one at a time. */
+const STREAM_EVENTS = ["event: message_start\ndata: {\"type\":\"message_start\"}\n\n", "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"] as const;
 /** The per-launch capability token the door's client-facing listeners accept in these tests. */
 const LAUNCH_TOKEN = "launch-token-for-tests";
 const TEXT_TURN = [
@@ -46,7 +62,7 @@ interface HopSeen {
 /**
  * The fake headroom: records each request it is handed, optionally holds it (so a test can act while the hop is live), then forwards it the way the real daemon does. Standing in for the real daemon is exactly this much: a forwarding hop keyed by the per-request base URL.
  */
-async function fakeHeadroom(options: { readonly hold?: () => Promise<void> } = {}): Promise<{ readonly seen: () => readonly HopSeen[]; readonly port: () => number; readonly closedRequests: () => number; readonly close: () => Promise<void> }> {
+async function fakeHeadroom(options: { readonly hold?: () => Promise<void> } = {}): Promise<{ readonly seen: () => readonly HopSeen[]; readonly closedRequests: () => number; readonly close: () => Promise<void> }> {
   const requests: HopSeen[] = [];
   let closedRequests = 0;
   const server = http.createServer((request, response) => {
@@ -64,10 +80,9 @@ async function fakeHeadroom(options: { readonly hold?: () => Promise<void> } = {
       });
     });
   });
-  await listen(server);
+  await listenOnHeadroomSocket(server);
   return {
     seen: () => requests,
-    port: () => portOf(server),
     closedRequests: () => closedRequests,
     close: async () => {
       await closeServer(server);
@@ -110,6 +125,52 @@ async function listen(server: http.Server): Promise<void> {
   });
 }
 
+/**
+ * A throwaway agent-shim root on the real filesystem, laid out exactly as the supervisor lays it out: the socket directory created mode 0700, and this generation's socket path inside it. Real, because the door's socket checks are `lstat`s of real paths, and the hop under test is the production one from state file to `socketPath`.
+ */
+interface HeadroomHome {
+  readonly paths: LayoutPaths;
+  readonly socketPath: string;
+  /** Records the daemon as serving on its socket, the way the supervisor does once `/readyz` has answered. */
+  readonly recordServing: () => void;
+  /** The production resolution the door runs on every hop: read the state file, then authenticate the socket it names. */
+  readonly target: () => HeadroomSocketTarget | undefined;
+}
+
+let home: HeadroomHome;
+const homeRoots: string[] = [];
+
+function makeHeadroomHome(): HeadroomHome {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "as-hop-"));
+  homeRoots.push(root);
+  const paths = buildLayoutPaths(root);
+  realFarmFs.mkdirPrivate(paths.headroomSocketDir);
+  const socketPath = headroomSocketPath(paths, SUPERVISOR_PID);
+  return {
+    paths,
+    socketPath,
+    recordServing: () => {
+      writeHeadroomState(realFarmFs, paths.headroomStateFile, { supervisorPid: SUPERVISOR_PID, headroomPid: SUPERVISOR_PID + 1, socketPath });
+    },
+    target: () => headroomSocketTarget(realFarmFs, realHeadroomSocketTrust, paths),
+  };
+}
+
+beforeEach(() => {
+  home = makeHeadroomHome();
+});
+
+/** Serves `server` on this test's headroom socket and records it as the serving daemon. */
+async function listenOnHeadroomSocket(server: http.Server): Promise<void> {
+  servers.push(server);
+  await new Promise<void>((resolve) => {
+    server.listen(home.socketPath, resolve);
+  });
+  // Node creates the socket under the process umask; headroom creates its own owner-only, and that is the socket the door is checked against.
+  fs.chmodSync(home.socketPath, HEADROOM_SOCKET_MODE);
+  home.recordServing();
+}
+
 function portOf(server: http.Server): number {
   const address = server.address();
   if (address === null || typeof address === "string") {
@@ -119,6 +180,9 @@ function portOf(server: http.Server): number {
 }
 
 async function closeServer(server: http.Server): Promise<void> {
+  if (!server.listening) {
+    return;
+  }
   await new Promise<void>((resolve) => {
     server.closeAllConnections();
     server.close(() => {
@@ -133,6 +197,9 @@ afterEach(async () => {
       await closeServer(server);
     }),
   );
+  for (const root of homeRoots.splice(0)) {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 /** The trust every request to the door's TLS provider listener is made with: agent-shim's CA alone, as a routed child's NODE_EXTRA_CA_CERTS gives it. */
@@ -149,7 +216,7 @@ beforeAll(() => {
 /**
  * The whole door assembly over a fake headroom, built from the production `createDoorPipelines`: the TLS provider listener (with the hop and launch admission) and the plain-HTTP direct listener (without the hop, admitting only the hop's own requests), sharing one resolver whose in-process routes name the direct address and one credential custody.
  */
-async function startDoor(options: { readonly files: Record<string, unknown>; readonly headroomPort: () => number | undefined; readonly log?: (line: string) => void }): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly directPort: () => number }> {
+async function startDoor(options: { readonly files: Record<string, unknown>; readonly log?: (line: string) => void }): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly directPort: () => number }> {
   const upstream = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const ports: Omit<CodexRoutePorts, "loadProvider"> = {
     upstream: { fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" },
@@ -163,7 +230,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
   const pipelines = createDoorPipelines({
     resolveRoute,
     isLiveToken: (token) => token === LAUNCH_TOKEN,
-    headroomPort: options.headroomPort,
+    headroomSocket: home.target,
     hopSecret: HOP_SECRET,
     custody: createCredentialCustody(() => randomUUID()),
     responseObservers: [],
@@ -228,7 +295,7 @@ async function settle(): Promise<void> {
 describe("the headroom hop", () => {
   it("sits before the translator: headroom receives the Anthropic-shaped request, and the translator serves what headroom forwards back through the direct listener", async () => {
     const headroom = await fakeHeadroom();
-    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: headroom.port });
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
     try {
       const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
         dispatcher: trusting,
@@ -255,7 +322,7 @@ describe("the headroom hop", () => {
 
   it("re-sets the project identity on the hop and forwards no session header to it, or beyond", async () => {
     const headroom = await fakeHeadroom();
-    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: headroom.port });
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
     try {
       await fetch(`${door.url}/providers/codex/v1/messages`, {
         dispatcher: trusting,
@@ -274,7 +341,8 @@ describe("the headroom hop", () => {
   });
 
   it("answers 502 rather than bypassing headroom while the daemon is between restarts", async () => {
-    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: () => undefined });
+    // Nothing is recorded as serving: the state file names no socket.
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
     try {
       const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
         dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
@@ -288,9 +356,8 @@ describe("the headroom hop", () => {
   it("aborts the hop the moment the client disconnects, which is what cancels the daemon's request", async () => {
     // This headroom never answers: it holds the request open, so the only way the test ends is the client's abort unwinding the hop.
     const server = http.createServer(() => undefined);
-    await listen(server);
-    const holdingPort = portOf(server);
-    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: () => holdingPort });
+    await listenOnHeadroomSocket(server);
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
     try {
       const abort = new AbortController();
       const pending = fetch(`${door.url}/providers/codex/v1/messages`, {
@@ -311,11 +378,10 @@ describe("the headroom hop", () => {
 
   it("does not log the hop's own cancellation as a failure when the client disconnects", async () => {
     const server = http.createServer(() => undefined);
-    await listen(server);
+    await listenOnHeadroomSocket(server);
     const logged: string[] = [];
     const door = await startDoor({
       files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider },
-      headroomPort: () => portOf(server),
       log: (line) => {
         logged.push(line);
       },
@@ -343,14 +409,16 @@ describe("the headroom hop", () => {
   });
 
   it("logs a hop that fails while the client is still waiting, naming the request and that no response had started", async () => {
+    // A daemon that died without removing its socket: the socket file is still there, owner-only, but nothing listens on it. A hard link keeps the socket's inode after the server unlinks its own path on close.
     const dead = http.createServer();
-    await listen(dead);
-    const deadPort = portOf(dead);
+    await listenOnHeadroomSocket(dead);
+    const leftover = `${home.socketPath}.leftover`;
+    fs.linkSync(home.socketPath, leftover);
     await closeServer(dead);
+    fs.renameSync(leftover, home.socketPath);
     const logged: string[] = [];
     const door = await startDoor({
       files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider },
-      headroomPort: () => deadPort,
       log: (line) => {
         logged.push(line);
       },
@@ -376,11 +444,10 @@ describe("the headroom hop", () => {
         response.destroy();
       }, SETTLE_MS);
     });
-    await listen(dropping);
+    await listenOnHeadroomSocket(dropping);
     const logged: string[] = [];
     const door = await startDoor({
       files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider },
-      headroomPort: () => portOf(dropping),
       log: (line) => {
         logged.push(line);
       },
@@ -406,7 +473,7 @@ describe("the headroom hop", () => {
 
   it("serves a headroom-ineligible or flag-less session directly, never through the hop", async () => {
     const headroom = await fakeHeadroom();
-    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomPort: headroom.port });
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
     try {
       // No headroom flag header: the session never asked for the hop, so the door serves the route itself.
       const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
@@ -425,7 +492,7 @@ describe("the headroom hop", () => {
     async () => {
       const upstream = await fakeProviderUpstream();
       const headroom = await fakeHeadroom();
-      const door = await startDoor({ files: { [`${PROVIDERS_DIR}/z.json`]: httpProvider(upstream.port) }, headroomPort: headroom.port });
+      const door = await startDoor({ files: { [`${PROVIDERS_DIR}/z.json`]: httpProvider(upstream.port) } });
       try {
         const base = { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN };
         const bearer = await fetch(`${door.url}/providers/z/v1/messages`, { dispatcher: trusting, method: "POST", headers: { ...base, authorization: `Bearer ${PROVIDER_TOKEN}` }, body: MESSAGES_BODY });
@@ -470,9 +537,9 @@ describe("the headroom hop", () => {
         releaseHop = resolve;
       });
       const headroom = await fakeHeadroom({ hold: async () => { await held; } });
-      const door = await startDoor({ files: { [`${PROVIDERS_DIR}/z.json`]: httpProvider(upstream.port), [`${PROVIDERS_DIR}/other.json`]: httpProvider(upstream.port) }, headroomPort: headroom.port });
-      const direct = async (path: string, headers: Readonly<Record<string, string>>): Promise<number> =>
-        (await fetch(`http://127.0.0.1:${String(door.directPort())}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: MESSAGES_BODY })).status;
+      const door = await startDoor({ files: { [`${PROVIDERS_DIR}/z.json`]: httpProvider(upstream.port), [`${PROVIDERS_DIR}/other.json`]: httpProvider(upstream.port) } });
+      const direct = async (requestPath: string, headers: Readonly<Record<string, string>>): Promise<number> =>
+        (await fetch(`http://127.0.0.1:${String(door.directPort())}${requestPath}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: MESSAGES_BODY })).status;
       try {
         const client = fetch(`${door.url}/providers/z/v1/messages`, {
           dispatcher: trusting,
@@ -512,7 +579,7 @@ describe("the headroom hop", () => {
     "leaves an OAuth session's bearer untouched on the hop, since headroom forwards it straight to Claude Code's API and never back to the door",
     async () => {
       const headroom = await fakeHeadroom();
-      const door = await startDoor({ files: {}, headroomPort: headroom.port });
+      const door = await startDoor({ files: {} });
       try {
         const response = await fetch(`${door.url}/v1/messages`, {
           dispatcher: trusting,
@@ -530,4 +597,157 @@ describe("the headroom hop", () => {
     },
     KEYGEN_TIMEOUT_MS,
   );
+
+  it(
+    "carries a streamed response over the socket chunk by chunk, each event reaching the client before headroom sends the next",
+    async () => {
+      let releaseRest: () => void = () => undefined;
+      const rest = new Promise<void>((resolve) => {
+        releaseRest = resolve;
+      });
+      let received = "";
+      const streaming = http.createServer((request, response) => {
+        request.on("data", (chunk: Buffer) => {
+          received += chunk.toString("utf8");
+        });
+        request.on("end", () => {
+          response.writeHead(HTTP_STATUS.ok, { "content-type": "text/event-stream" });
+          response.write(STREAM_EVENTS[0]);
+          void rest.then(() => {
+            response.end(STREAM_EVENTS[1]);
+          });
+        });
+      });
+      await listenOnHeadroomSocket(streaming);
+      const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
+      try {
+        const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+          dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
+        expect(response.status).toBe(HTTP_STATUS.ok);
+        expect(response.headers.get("content-type")).toBe("text/event-stream");
+        const body = response.body;
+        if (body === null) {
+          throw new Error("expected a streamed body");
+        }
+        const reader = body.pipeThrough(new TextDecoderStream()).getReader();
+        const first = await reader.read();
+        // Headroom has not sent the second event yet: what arrived is exactly the first, relayed as it was written.
+        expect(first.value).toBe(STREAM_EVENTS[0]);
+        releaseRest();
+        let remainder = "";
+        for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+          remainder += chunk.value;
+        }
+        expect(remainder).toBe(STREAM_EVENTS[1]);
+        expect(JSON.parse(received)).toEqual(JSON.parse(MESSAGES_BODY));
+      } finally {
+        releaseRest();
+        await door.close();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "never dials a process squatting on headroom's old TCP port, whether the daemon is down or serving on its socket",
+    async () => {
+      // The squatter holds a loopback port and counts every connection it is offered. The earlier release's state file names that port, as it would after the daemon it described died and the port was taken.
+      let squatterConnections = 0;
+      const squatter = net.createServer((socket) => {
+        squatterConnections += 1;
+        socket.destroy();
+      });
+      await new Promise<void>((resolve) => {
+        squatter.listen(0, "127.0.0.1", resolve);
+      });
+      const squatterAddress = squatter.address();
+      if (squatterAddress === null || typeof squatterAddress === "string") {
+        throw new Error("squatter has no TCP address");
+      }
+      fs.writeFileSync(path.join(home.paths.headroomDir, "state.json"), JSON.stringify({ supervisorPid: SUPERVISOR_PID, headroomPid: SUPERVISOR_PID + 1, port: squatterAddress.port, lastPort: squatterAddress.port }));
+      const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
+      const send = async (): Promise<Awaited<ReturnType<typeof fetch>>> =>
+        await fetch(`${door.url}/providers/codex/v1/messages`, {
+          dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
+      try {
+        // The daemon is down: nothing names a socket, so the hop answers 502 and the port in the old state is never tried.
+        expect((await send()).status).toBe(HTTP_STATUS.badGateway);
+        // The current state file rewritten in the old shape, with a port in it, is not a socket to dial either.
+        fs.writeFileSync(home.paths.headroomStateFile, JSON.stringify({ supervisorPid: SUPERVISOR_PID, headroomPid: SUPERVISOR_PID + 1, port: squatterAddress.port }));
+        expect((await send()).status).toBe(HTTP_STATUS.badGateway);
+        // The daemon comes up on its socket: the request reaches it there, and still nothing reaches the squatter.
+        const headroom = await fakeHeadroom();
+        const served = await send();
+        expect(served.status).toBe(HTTP_STATUS.ok);
+        expect(headroom.seen()).toHaveLength(1);
+        await settle();
+        expect(squatterConnections).toBe(0);
+      } finally {
+        await door.close();
+        await new Promise<void>((resolve) => {
+          squatter.close(() => {
+            resolve(undefined);
+          });
+        });
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it.each([
+    [
+      "a socket directory other users can enter",
+      (): void => {
+        fs.chmodSync(home.paths.headroomSocketDir, WORLD_DIR_MODE);
+      },
+      (): string => `the headroom socket directory ${home.paths.headroomSocketDir} has mode 0755, which lets other users reach it; it must be accessible to its owner only`,
+    ],
+    [
+      "a socket directory that is a symlink",
+      (): void => {
+        const real = `${home.paths.headroomSocketDir}.real`;
+        fs.renameSync(home.paths.headroomSocketDir, real);
+        fs.symlinkSync(real, home.paths.headroomSocketDir);
+      },
+      (): string => `the headroom socket directory ${home.paths.headroomSocketDir} is a symlink; it must be the real directory`,
+    ],
+    [
+      "a socket that is a symlink",
+      (): void => {
+        const real = path.join(home.paths.headroomSocketDir, "real.sock");
+        fs.renameSync(home.socketPath, real);
+        fs.symlinkSync(real, home.socketPath);
+      },
+      (): string => `the headroom socket ${home.socketPath} is a symlink; it must be the real socket`,
+    ],
+  ])(
+    "refuses %s, failing the request with the reason and sending headroom nothing",
+    async (_name, tamper, reason) => {
+      const headroom = await fakeHeadroom();
+      tamper();
+      const logged: string[] = [];
+      const door = await startDoor({
+        files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider },
+        log: (line) => {
+          logged.push(line);
+        },
+      });
+      try {
+        const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+          dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
+        expect(response.status).toBe(HTTP_STATUS.badGateway);
+        expect(await response.json()).toEqual({ type: "error", error: { type: "api_error", message: `agent-shim front door: refusing to send this request to headroom: ${reason()}` } });
+        expect(logged).toContain(`front door: refusing the headroom hop (POST /providers/codex/v1/messages): ${reason()}`);
+        await settle();
+        expect(headroom.seen()).toHaveLength(0);
+      } finally {
+        await door.close();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it("creates its socket directory owner-only in these tests, exactly as the supervisor does", () => {
+    expect(fs.lstatSync(home.paths.headroomSocketDir).mode & WORLD_DIR_MODE).toBe(HEADROOM_SOCKET_DIR_MODE & WORLD_DIR_MODE);
+  });
 });

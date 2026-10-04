@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES, HEADROOM_DEFAULT_SOURCE } from "../config/schema";
 import { buildLayoutPaths } from "../paths";
-import { createFakeFarmFs } from "../test-helpers";
+import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
 import {
   backoffForAttempt,
   HEADROOM_SUPERVISOR_STILL_RUNNING,
@@ -21,6 +21,7 @@ import {
   type SupervisorPorts,
 } from "./supervisor";
 import type { HeadroomSettings } from "./settings";
+import { HEADROOM_SOCKET_DIR_MODE, headroomSocketPath, UNIX_SOCKET_PATH_MAX_BYTES, type SocketPathStat } from "./socket";
 import { pinnedGitCommit } from "./source";
 import { hashAllowlist, headroomAllowlist, writeHeadroomState, writeSession } from "./state";
 
@@ -29,12 +30,19 @@ const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 const SESSION_PID = 321;
 const ZOMBIE_SESSION_PID = 322;
 const ORPHAN_DAEMON_PID = 888;
-const ORPHAN_DAEMON_PORT = 4321;
-const STICKY_PORT = 4100;
 const OWN_PID = 4242;
 const OTHER_SUPERVISOR_PID = 5151;
 const OTHER_DAEMON_PID = 5152;
-const OTHER_DAEMON_PORT = 5100;
+/** The socket this supervisor generation serves on. */
+const OWN_SOCKET = headroomSocketPath(paths, OWN_PID);
+/** The socket another live supervisor's daemon serves on. */
+const OTHER_SOCKET = headroomSocketPath(paths, OTHER_SUPERVISOR_PID);
+/** A supervisor pid nothing is running as: whatever socket it left is stale. */
+const DEAD_SUPERVISOR_PID = 6161;
+/** Another user's uid, for a socket directory this user does not own. */
+const OTHER_UID = 0;
+/** A socket directory mode other users can enter and list. */
+const GROUP_READABLE_DIR_MODE = 0o750;
 /** A full commit SHA that is not the default source's pinned commit. */
 const OTHER_COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const TICKS_INSTALL_TEST = 3;
@@ -69,17 +77,16 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
 
   let clock = 0;
   let nextPid = 1000;
-  let nextPort = 2000;
-  const readyPorts = new Set<number>();
+  const readySockets = new Set<string>();
   let autoReady = true;
   let version: string | undefined = "headroom 0.39.1";
   let installOk = true;
   let installedCommit: string | undefined = pinnedGitCommit(HEADROOM_DEFAULT_SOURCE);
   const alive = new Set<number>([process.pid]);
   const zombies = new Set<number>();
-  const occupied = new Set<number>();
-  let freePortCalls = 0;
-  const spawns: { pid: number; port: number; allowlist: readonly string[]; settings: HeadroomSettings }[] = [];
+  const spawns: { pid: number; socketPath: string; allowlist: readonly string[]; settings: HeadroomSettings }[] = [];
+  let platform = "linux";
+  let socketStatOverrides: Record<string, SocketPathStat> = {};
   let currentConfig: HeadroomSupervisorConfig = resolveSupervisorConfig({});
   const stops: number[] = [];
   const installs: string[] = [];
@@ -92,12 +99,12 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
     return await Promise.resolve(value);
   }
 
-  /** A dead daemon closes its listener, whatever its port was: without this, a reused port would keep answering /readyz from beyond the grave. */
-  function dropReadyPort(pid: number): void {
+  /** A dead daemon closes its listener: without this, a generation's reused socket path would keep answering /readyz from beyond the grave. */
+  function dropReadySocket(pid: number): void {
     for (let index = spawns.length - 1; index >= 0; index -= 1) {
       const spawn = spawns[index];
       if (spawn?.pid === pid) {
-        readyPorts.delete(spawn.port);
+        readySockets.delete(spawn.socketPath);
         return;
       }
     }
@@ -110,7 +117,6 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
     fs,
     alive,
     zombies,
-    occupied,
     spawns,
     stops,
     installs,
@@ -119,7 +125,15 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
     set onSleep(hook: (() => void) | undefined) {
       onSleep = hook;
     },
-    /** When false, spawned proxies never answer /readyz, whatever port they get. */
+    /** The platform the socket checks see. */
+    set platform(value: string) {
+      platform = value;
+    },
+    /** Socket-check stats that replace the fake filesystem's, keyed by resolved path: another owner, a wide mode, a symlink. */
+    set socketStats(value: Record<string, SocketPathStat>) {
+      socketStatOverrides = value;
+    },
+    /** When false, spawned proxies never answer /readyz. */
     set autoReady(value: boolean) {
       autoReady = value;
     },
@@ -138,28 +152,26 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
     kill(pid: number): void {
       alive.delete(pid);
       zombies.delete(pid);
-      dropReadyPort(pid);
+      dropReadySocket(pid);
     },
     /** The observed macOS failure mode: the process died but nothing reaped it, so signal 0 still answers while nothing is running. */
     zombify(pid: number): void {
       zombies.add(pid);
-      dropReadyPort(pid);
+      dropReadySocket(pid);
     },
-    freePortCallCount: () => freePortCalls,
     /** Registers a live launcher against `supervisorPid`: this supervisor unless a test says another one owns the session. */
     writeSessionFile(pid: number, supervisorPid: number = OWN_PID): void {
       alive.add(pid);
       writeSession(fs, paths.headroomSessionsDir, { pid, startedAt: clock, supervisorPid });
     },
-    /** Another supervisor taking ownership of state.json: alive, with its own daemon and port recorded, the way a second supervisor's startup or crash-restart leaves the file. */
+    /** Another supervisor taking ownership of the state file: alive, with its own daemon and socket recorded, the way a second supervisor's startup or crash-restart leaves the file. */
     handOwnershipToAnotherSupervisor(): void {
       alive.add(OTHER_SUPERVISOR_PID);
       alive.add(OTHER_DAEMON_PID);
       writeHeadroomState(fs, paths.headroomStateFile, {
         supervisorPid: OTHER_SUPERVISOR_PID,
         headroomPid: OTHER_DAEMON_PID,
-        port: OTHER_DAEMON_PORT,
-        lastPort: OTHER_DAEMON_PORT,
+        socketPath: OTHER_SOCKET,
         installedSource: HEADROOM_DEFAULT_SOURCE,
       });
     },
@@ -177,20 +189,22 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
         await settled(undefined);
       },
       isRunning: (pid: number) => alive.has(pid) && !zombies.has(pid),
-      freePort: async () => {
-        freePortCalls += 1;
-        nextPort += 1;
-        return await settled(nextPort);
+      // Read through getters, so a test can switch the platform or replace a stat after the world is built.
+      socketTrust: {
+        get platform() {
+          return platform;
+        },
+        currentUid: () => FAKE_UID,
+        lstat: (target: string) => fakeSocketTrust(fs, { overrides: socketStatOverrides }).lstat(target),
       },
-      isPortFree: async (port: number) => await settled(!occupied.has(port)),
       readConfig: () => currentConfig,
-      spawnHeadroom: (port: number, allowlist: readonly string[], settings: Readonly<HeadroomSettings>) => {
+      spawnHeadroom: (socketPath: string, allowlist: readonly string[], settings: Readonly<HeadroomSettings>) => {
         nextPid += 1;
         alive.add(nextPid);
         zombies.delete(nextPid);
-        spawns.push({ pid: nextPid, port, allowlist: [...allowlist], settings });
+        spawns.push({ pid: nextPid, socketPath, allowlist: [...allowlist], settings });
         if (autoReady) {
-          readyPorts.add(port);
+          readySockets.add(socketPath);
         }
         return nextPid;
       },
@@ -198,7 +212,7 @@ function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[]
         alive.delete(pid);
         stops.push(pid);
       },
-      ready: async (port: number) => await settled(readyPorts.has(port)),
+      ready: async (socketPath: string) => await settled(readySockets.has(socketPath)),
       install: (spec: string) => {
         installs.push(spec);
         if (installOk) {
@@ -291,7 +305,8 @@ describe("runSupervisor", () => {
     const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
     expect(state.supervisorPid).toBe(OWN_PID);
     expect(state.headroomPid).toBe(spawn.pid);
-    expect(state.port).toBe(spawn.port);
+    expect(spawn.socketPath).toBe(OWN_SOCKET);
+    expect(state.socketPath).toBe(OWN_SOCKET);
     expect(state.allowlistHash).toBe(hashAllowlist(headroomAllowlist([{ baseUrl: "https://api.z.ai/api/anthropic" }])));
     expect(state.installedSource).toBe(HEADROOM_DEFAULT_SOURCE);
   });
@@ -358,7 +373,7 @@ describe("runSupervisor", () => {
     expect(world.spawns).toHaveLength(2);
   });
 
-  it("clears the daemon fields from state the moment a crash is detected, so status never claims a dead port", async () => {
+  it("clears the daemon fields from state the moment a crash is detected, so status never claims a dead socket", async () => {
     const world = makeWorld();
     let zombified = false;
     world.onSleep = () => {
@@ -374,7 +389,7 @@ describe("runSupervisor", () => {
     };
     await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_SHORT });
     const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
-    expect(state.port).toBeUndefined();
+    expect(state.socketPath).toBeUndefined();
     expect(state.headroomPid).toBeUndefined();
     expect(state.supervisorPid).toBe(OWN_PID);
     expect(world.spawns.length).toBeGreaterThanOrEqual(2);
@@ -386,7 +401,7 @@ describe("runSupervisor", () => {
     writeHeadroomState(world.fs, paths.headroomStateFile, {
       supervisorPid: 1,
       headroomPid: ORPHAN_DAEMON_PID,
-      port: ORPHAN_DAEMON_PORT,
+      socketPath: headroomSocketPath(paths, 1),
       installedSource: HEADROOM_DEFAULT_SOURCE,
     });
     const code = await supervise(world, config, { tickLimit: TICKS_SHORT });
@@ -396,9 +411,8 @@ describe("runSupervisor", () => {
     expect(world.alive.has(ORPHAN_DAEMON_PID)).toBe(false);
   });
 
-  it("reuses the sticky port from state on start and on every restart while it stays free, so live sessions keep their address", async () => {
+  it("serves every restart in one generation on the same socket, inside a directory created owner-only", async () => {
     const world = makeWorld();
-    writeHeadroomState(world.fs, paths.headroomStateFile, { lastPort: STICKY_PORT });
     let crashed = false;
     world.onSleep = () => {
       if (!crashed && world.spawns.length === 1) {
@@ -411,42 +425,70 @@ describe("runSupervisor", () => {
     };
     const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_CRASH_RESTART });
     expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
-    expect(world.spawns).toHaveLength(2);
-    expect(world.spawns.map((spawn) => spawn.port)).toEqual([STICKY_PORT, STICKY_PORT]);
-    expect(world.freePortCallCount()).toBe(0);
+    expect(world.spawns.map((spawn) => spawn.socketPath)).toEqual([OWN_SOCKET, OWN_SOCKET]);
+    expect(world.fs.modeOf(paths.headroomSocketDir)).toBe(HEADROOM_SOCKET_DIR_MODE);
     const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
-    expect(state.port).toBe(STICKY_PORT);
-    expect(state.lastPort).toBe(STICKY_PORT);
+    expect(state.socketPath).toBe(OWN_SOCKET);
+    expect(state.headroomPid).toBe(world.spawns[1]?.pid);
   });
 
-  it("falls back to a fresh port and records the move when the sticky port is occupied", async () => {
+  it("removes the sockets dead supervisor generations left behind and keeps a live supervisor's", async () => {
     const world = makeWorld();
-    writeHeadroomState(world.fs, paths.headroomStateFile, { lastPort: STICKY_PORT });
-    world.occupied.add(STICKY_PORT);
+    world.alive.add(OTHER_SUPERVISOR_PID);
+    world.fs.mkdirPrivate(paths.headroomSocketDir);
+    world.fs.writeFileUtf8(headroomSocketPath(paths, DEAD_SUPERVISOR_PID), "");
+    world.fs.writeFileUtf8(OTHER_SOCKET, "");
+    world.fs.writeFileUtf8(`${paths.headroomSocketDir}/notes.txt`, "");
     await supervise(world, config, { tickLimit: TICKS_SHORT });
-    const fresh = world.spawns[0];
-    if (fresh === undefined) {
-      throw new Error("expected a spawn");
-    }
-    expect(fresh.port).not.toBe(STICKY_PORT);
-    expect(world.freePortCallCount()).toBe(1);
-    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
-    expect(state.lastPort).toBe(fresh.port);
-    expect(world.logLines.some((line) => line.includes(`sticky port ${String(STICKY_PORT)} was occupied`))).toBe(true);
+    expect(world.fs.readdir(paths.headroomSocketDir)).toEqual([`${String(OTHER_SUPERVISOR_PID)}.sock`, "notes.txt"]);
+    expect(world.spawns).toHaveLength(1);
   });
 
-  it("keeps lastPort across an idle shutdown and seeds the next supervisor generation with it", async () => {
+  it("refuses to start on a platform without unix sockets, recording why, and never installs or spawns", async () => {
     const world = makeWorld();
-    writeHeadroomState(world.fs, paths.headroomStateFile, { lastPort: STICKY_PORT });
-    const idleCode = await supervise(world, { ...config, idleShutdownMinutes: IDLE_ONE_MINUTE });
-    expect(idleCode).toBe(0);
-    const shutDown = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
-    expect(shutDown.port).toBeUndefined();
-    expect(shutDown.lastPort).toBe(STICKY_PORT);
-    const nextCode = await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_SHORT });
-    expect(nextCode).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
-    expect(world.spawns[0]?.port).toBe(STICKY_PORT);
-    expect(world.freePortCallCount()).toBe(0);
+    world.platform = "win32";
+    world.version = undefined;
+    const code = await supervise(world, config);
+    expect(code).toBe(1);
+    expect(world.installs).toEqual([]);
+    expect(world.spawns).toHaveLength(0);
+    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    expect(String(state.lastError)).toContain("headroom routing needs a unix domain socket, which headroom cannot serve on win32");
+  });
+
+  it("refuses a socket directory that is a symlink without creating anything through it", async () => {
+    const world = makeWorld();
+    world.fs.seed({ [paths.headroomSocketDir]: { symlink: "/somewhere/else" } });
+    const code = await supervise(world, config);
+    expect(code).toBe(1);
+    expect(world.spawns).toHaveLength(0);
+    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    expect(String(state.lastError)).toBe(`the headroom socket directory ${paths.headroomSocketDir} is a symlink; it must be the real directory`);
+  });
+
+  it("refuses a socket directory another user owns, or that stays group accessible, before any daemon starts", async () => {
+    for (const [stat, reason] of [
+      [{ kind: "dir", uid: OTHER_UID, mode: HEADROOM_SOCKET_DIR_MODE }, `is owned by uid ${String(OTHER_UID)}, not by this user (uid ${String(FAKE_UID)})`],
+      [{ kind: "dir", uid: FAKE_UID, mode: GROUP_READABLE_DIR_MODE }, "has mode 0750, which lets other users reach it; it must be accessible to its owner only"],
+    ] as const) {
+      const world = makeWorld();
+      world.socketStats = { [paths.headroomSocketDir]: stat };
+      const code = await supervise(world, config);
+      expect(code).toBe(1);
+      expect(world.spawns).toHaveLength(0);
+      const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+      expect(String(state.lastError)).toBe(`the headroom socket directory ${paths.headroomSocketDir} ${reason}`);
+    }
+  });
+
+  it("refuses a state root so deep that the socket path cannot fit in a unix socket address", async () => {
+    const deepPaths = buildLayoutPaths(`/home/testuser/${"d".repeat(UNIX_SOCKET_PATH_MAX_BYTES)}`);
+    const world = makeWorld();
+    const code = await runSupervisor(config, { ...world.ports, paths: deepPaths });
+    expect(code).toBe(1);
+    expect(world.spawns).toHaveLength(0);
+    const state = JSON.parse(world.fs.readFileUtf8(deepPaths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    expect(String(state.lastError)).toContain(`longer than the ${String(UNIX_SOCKET_PATH_MAX_BYTES)} a unix socket path can hold`);
   });
 
   it("gives up after the retry budget when the daemon never becomes ready, recording lastError", async () => {
@@ -545,7 +587,7 @@ describe("runSupervisor", () => {
     expect(world.stops).toHaveLength(1);
     const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
     expect(state.supervisorPid).toBeUndefined();
-    expect(state.port).toBeUndefined();
+    expect(state.socketPath).toBeUndefined();
   });
 
   it("resets the idle clock while a session is live, so a long session never triggers shutdown", async () => {
@@ -560,7 +602,7 @@ describe("runSupervisor", () => {
     expect(world.stops).toHaveLength(0);
   });
 
-  it("exits at once, touching neither state.json nor the other daemon, when another live supervisor already owns it", async () => {
+  it("exits at once, touching neither the state file nor the other daemon, when another live supervisor already owns it", async () => {
     const world = makeWorld();
     world.handOwnershipToAnotherSupervisor();
     const before = world.fs.readFileUtf8(paths.headroomStateFile);
@@ -571,7 +613,7 @@ describe("runSupervisor", () => {
     expect(world.fs.readFileUtf8(paths.headroomStateFile)).toBe(before);
   });
 
-  it("keeps serving its own sessions but stops writing state.json once another supervisor owns it, so a crash-restart cannot repoint new launches at it", async () => {
+  it("keeps serving its own sessions but stops writing the state file once another supervisor owns it, so a crash-restart cannot repoint new launches at it", async () => {
     const world = makeWorld();
     world.writeSessionFile(SESSION_PID);
     let handedOver = false;
@@ -587,7 +629,7 @@ describe("runSupervisor", () => {
     expect(world.spawns).toHaveLength(2);
     const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
     expect(state.supervisorPid).toBe(OTHER_SUPERVISOR_PID);
-    expect(state.port).toBe(OTHER_DAEMON_PORT);
+    expect(state.socketPath).toBe(OTHER_SOCKET);
   });
 
   it("retires once its own sessions are gone after losing ownership, without clearing the new owner's state", async () => {

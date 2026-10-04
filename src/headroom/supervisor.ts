@@ -2,6 +2,7 @@ import { HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES, HEADROOM_DEFAULT_SOURCE, type H
 import type { LayoutPaths } from "../paths";
 import { frontDoorOrigin, readFrontDoorState } from "../frontdoor/state";
 import { hashSettings, settingsOf, type HeadroomSettings } from "./settings";
+import { prepareHeadroomSocket, pruneStaleHeadroomSockets, type HeadroomSocketTrustPorts } from "./socket";
 import { pinnedGitCommit } from "./source";
 import {
   hashAllowlist,
@@ -51,20 +52,18 @@ export interface SupervisorPorts {
    * Zombie-aware liveness, and for a daemon this supervisor spawned, exit-event-backed: the implementation keeps the spawned ChildProcess handle, consumes its exit event (which is also what reaps it), and reports the pid as not running from that moment. A bare signal-0 check is not enough, because a defunct process still answers it.
    */
   readonly isRunning: (pid: number) => boolean;
-  /** Returns a free loopback port. Async because the only reliable way to reserve one is to bind and release a socket. */
-  readonly freePort: () => Promise<number>;
-  /** Whether nothing is currently listening on one specific loopback port: the check that decides whether the sticky `lastPort` can be reused. The same bind-and-release technique `freePort` uses, applied to a number the caller already cares about. */
-  readonly isPortFree: (port: number) => Promise<boolean>;
+  /** The platform facts and owner-only checks the daemon's socket directory is prepared and verified with (see `prepareHeadroomSocket`). */
+  readonly socketTrust: HeadroomSocketTrustPorts;
   /**
-   * Starts `headroom proxy` bound to `port` with the given allowlist, returning its pid. Output goes to the daemon log. The implementation must keep the ChildProcess handle and attach an exit listener (detaching the process is fine; unref'ing a child you still need events from is not, since without the listener nothing reaps it and it lingers as a zombie).
+   * Starts `headroom proxy` serving on the unix socket `socketPath` (and on no TCP port) with the given allowlist, returning its pid. Output goes to the daemon log. The implementation must keep the ChildProcess handle and attach an exit listener (detaching the process is fine; unref'ing a child you still need events from is not, since without the listener nothing reaps it and it lingers as a zombie).
    */
-  readonly spawnHeadroom: (port: number, allowlist: readonly string[], settings: Readonly<HeadroomSettings>) => number;
+  readonly spawnHeadroom: (socketPath: string, allowlist: readonly string[], settings: Readonly<HeadroomSettings>) => number;
   /** Reads the headroom config block as it stands on disk now. The supervisor calls it every tick, so a changed `source` or setting is noticed while the daemon runs and applied by the same quiet-registry restart an allowlist change gets. */
   readonly readConfig: () => HeadroomSupervisorConfig;
   /** Stops a process the supervisor owns, escalating SIGTERM to SIGKILL on a bounded timeout (see `stopSupervisedProcess`). */
   readonly stopProcess: (pid: number) => void;
-  /** True once `GET /readyz` on the port succeeds. */
-  readonly ready: (port: number) => Promise<boolean>;
+  /** True once `GET /readyz` over the unix socket succeeds. */
+  readonly ready: (socketPath: string) => Promise<boolean>;
   /** Runs `uv tool install <spec>`, logging output to the daemon log. Returns ok=false with the error when `uv` is absent or the install fails. */
   readonly install: (spec: string) => { readonly ok: boolean; readonly error?: string };
   /** The installed `headroom --version` output, or undefined when the binary is not on PATH. */
@@ -243,14 +242,9 @@ export async function runSupervisor(
     return 0;
   }
   let installedSource = previousState?.installedSource;
-  // The sticky address, inherited from the previous generation and updated on every successful start: even a fatal give-up keeps it, so the next generation starts where this one served.
-  let lastPort = previousState?.lastPort;
-
-  /** The sticky address, attached to every state write so the next generation inherits it whatever else the write says. */
-  const sticky = (): Pick<HeadroomState, "lastPort"> => (lastPort === undefined ? {} : { lastPort });
 
   /**
-   * Whether this supervisor may write state.json: no other live supervisor is recorded there. An absent file or a dead owner is claimable, so a deleted or stale file heals itself, and the loser of two simultaneous claims finds the winner's pid at its next write and stands down.
+   * Whether this supervisor may write the state file: no other live supervisor is recorded there. An absent file or a dead owner is claimable, so a deleted or stale file heals itself, and the loser of two simultaneous claims finds the winner's pid at its next write and stands down.
    */
   const ownsState = (): boolean => {
     const owner = readHeadroomState(fs, paths.headroomStateFile)?.supervisorPid;
@@ -258,7 +252,7 @@ export async function runSupervisor(
   };
 
   /**
-   * Writes state.json unless another live supervisor owns it, returning whether it wrote. A superseded supervisor keeps serving the sessions it already has but must not overwrite the owner's record: state.json names the daemon new launches connect to, and a crash-restart here would repoint them at a daemon being drained.
+   * Writes the state file unless another live supervisor owns it, returning whether it wrote. A superseded supervisor keeps serving the sessions it already has but must not overwrite the owner's record: the state file names the daemon new launches connect to, and a crash-restart here would repoint them at a daemon being drained.
    */
   const writeOwnState = (state: Readonly<HeadroomState>): boolean => {
     if (!ownsState()) {
@@ -269,7 +263,7 @@ export async function runSupervisor(
   };
 
   const fail = (message: string): number => {
-    if (writeOwnState({ lastError: message, ...sticky() })) {
+    if (writeOwnState({ lastError: message })) {
       fs.removeRecursive(paths.headroomLockFile);
     }
     ports.log(`agent-shim headroom supervisor: ${message}`);
@@ -299,18 +293,26 @@ export async function runSupervisor(
     return true;
   };
 
+  // The socket is settled before anything is installed: a platform without unix sockets, or a socket directory the door would refuse, can never serve, and installing first would only delay the refusal.
+  const socket = prepareHeadroomSocket(fs, ports.socketTrust, paths, ports.ownPid);
+  if (socket.refused !== undefined) {
+    return fail(socket.refused);
+  }
+  const { socketPath } = socket;
+  pruneStaleHeadroomSockets(fs, paths, ports.isRunning);
+
   if (!ensureInstalled()) {
     return fail(`could not install headroom from ${config.source}: install failed (is uv installed and on PATH?)`);
   }
   const version = ports.headroomVersion() ?? "unknown";
 
-  // Fresh ownership: whatever came before, this supervisor is now the one keeping headroom alive. The sticky address is carried over so a new generation starts where the last one served.
-  writeOwnState({ supervisorPid: ports.ownPid, version, installedSource, ...sticky() });
+  // Fresh ownership: whatever came before, this supervisor is now the one keeping headroom alive.
+  writeOwnState({ supervisorPid: ports.ownPid, version, installedSource });
   ports.log(`agent-shim headroom supervisor ${String(ports.ownPid)}: managing headroom on allowlist [${allowlistOf(ports).join(", ")}]`);
 
   const orphanPid = previousState?.headroomPid;
   if (orphanPid !== undefined && ports.isRunning(orphanPid)) {
-    // A predecessor's daemon that outlived it (its supervisor died by a signal nothing could intercept, say) would keep squatting on its port forever: nothing supervises it, nothing idles it out. Take it over before starting its own.
+    // A predecessor's daemon that outlived it (its supervisor died by a signal nothing could intercept, say) would keep running forever: nothing supervises it, nothing idles it out. Take it over before starting its own.
     ports.log(`agent-shim headroom supervisor: stopping daemon pid ${String(orphanPid)} left behind by the previous supervisor`);
     ports.stopProcess(orphanPid);
   }
@@ -336,7 +338,7 @@ export async function runSupervisor(
     pruneDeadSessions(fs, paths.headroomSessionsDir, ports.isRunning);
     const ownsNow = ownsState();
     if (!ownsNow && !superseded) {
-      ports.log("agent-shim headroom supervisor: another supervisor now owns state.json; serving this daemon's own sessions until they end");
+      ports.log("agent-shim headroom supervisor: another supervisor now owns the state file; serving this daemon's own sessions until they end");
     }
     superseded = !ownsNow;
 
@@ -347,12 +349,11 @@ export async function runSupervisor(
         headroomPid = undefined;
         runningHash = undefined;
         runningSettingsHash = undefined;
-        // Clear the daemon fields immediately: until the replacement is ready, state must not claim a serving port for a process that just died, or `headroom status` and waiting launchers read a healthy daemon that no longer exists. The front door reads the port live and its headroom hop answers 502 until the daemon is back. `lastPort` stays, so the replacement restarts on the same address.
+        // Clear the daemon fields immediately: until the replacement is ready, state must not claim a serving socket for a process that just died, or `headroom status` and waiting launchers read a healthy daemon that no longer exists. The front door reads the socket path live and its headroom hop answers 502 until the daemon is back on the same path.
         writeOwnState({
           supervisorPid: ports.ownPid,
           version,
           installedSource,
-          ...sticky(),
         });
       }
       if (consecutiveFailures >= HEADROOM_START_RETRY_BUDGET) {
@@ -362,44 +363,34 @@ export async function runSupervisor(
       if (installedSource !== config.source && !ensureInstalled()) {
         return fail(`could not install headroom from ${config.source}: install failed (is uv installed and on PATH?)`);
       }
-      // The address must stay stable across restarts: every live session's environment was frozen at launch with HEADROOM_PROXY_URL pointing at the daemon, so a restart that moves strands those sessions on a dead address for the rest of their lives. The sticky lastPort is reused whenever it is still free; only a genuinely occupied port justifies moving, and then the old sessions are unavoidably stale until they relaunch, which is why the move is logged.
-      const previousSticky = lastPort;
-      const port =
-        lastPort !== undefined && (await ports.isPortFree(lastPort)) ? lastPort : await ports.freePort();
-      const pid = ports.spawnHeadroom(port, allowlist, config.settings);
-      const ready = await waitUntilReady(ports, port);
+      // Every restart in this generation serves on the same path: headroom replaces a socket nothing is listening on, so a crashed predecessor's leftover never blocks it.
+      const pid = ports.spawnHeadroom(socketPath, allowlist, config.settings);
+      const ready = await waitUntilReady(ports, socketPath);
       if (ready) {
         consecutiveFailures = 0;
         headroomPid = pid;
         runningHash = allowlistHash;
         runningSettingsHash = settingsHash;
-        lastPort = port;
-        if (previousSticky !== undefined && port !== previousSticky) {
-          ports.log(
-            `agent-shim headroom supervisor: sticky port ${String(previousSticky)} was occupied; moving to ${String(port)} (sessions launched against the old port are stale until they relaunch)`,
-          );
-        }
         const recorded = writeOwnState({
           supervisorPid: ports.ownPid,
           headroomPid: pid,
-          port,
+          socketPath,
           version,
           allowlistHash,
           settingsHash,
           installedSource: config.source,
-          ...sticky(),
         });
         if (recorded) {
           // The start lock has done its job: state now names a live supervisor, so every future launcher finds it there instead.
           fs.removeRecursive(paths.headroomLockFile);
         }
         idleSince = undefined;
-        ports.log(`agent-shim headroom supervisor: headroom pid ${String(pid)} ready on 127.0.0.1:${String(port)}`);
+        ports.log(`agent-shim headroom supervisor: headroom pid ${String(pid)} ready on unix socket ${socketPath}`);
       } else {
         ports.stopProcess(pid);
         consecutiveFailures += 1;
         ports.log(
-          `agent-shim headroom supervisor: headroom did not become ready on port ${String(port)} ` +
+          `agent-shim headroom supervisor: headroom did not become ready on unix socket ${socketPath} ` +
             `(attempt ${String(consecutiveFailures)} of ${String(HEADROOM_START_RETRY_BUDGET)})`,
         );
         await ports.sleep(backoffForAttempt(consecutiveFailures));
@@ -427,11 +418,8 @@ export async function runSupervisor(
             `agent-shim headroom supervisor: no sessions for ${String(config.idleShutdownMinutes)} minute(s); stopping headroom and exiting`,
           );
           ports.stopProcess(headroomPid);
-          // The sticky address survives the shutdown so the next generation starts where this one served. A superseded supervisor leaves the new owner's record alone.
-          writeOwnState({
-            version,
-            ...sticky(),
-          });
+          // A superseded supervisor leaves the new owner's record alone.
+          writeOwnState({ version });
           return 0;
         }
       } else {
@@ -453,11 +441,11 @@ function allowlistOf(ports: SupervisorPorts): readonly string[] {
   return currentHeadroomAllowlist(ports.fs, ports.paths);
 }
 
-/** Polls `/readyz` until it answers or `HEADROOM_READY_TIMEOUT_MS` elapses. */
-async function waitUntilReady(ports: SupervisorPorts, port: number): Promise<boolean> {
+/** Polls `/readyz` over the socket until it answers or `HEADROOM_READY_TIMEOUT_MS` elapses. */
+async function waitUntilReady(ports: SupervisorPorts, socketPath: string): Promise<boolean> {
   const deadline = ports.now() + HEADROOM_READY_TIMEOUT_MS;
   for (;;) {
-    if (await ports.ready(port)) {
+    if (await ports.ready(socketPath)) {
       return true;
     }
     if (ports.now() >= deadline) {
