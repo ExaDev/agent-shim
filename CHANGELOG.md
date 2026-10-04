@@ -1,3 +1,19 @@
+## [8.0.0](https://github.com/ExaDev/agent-shim/compare/v7.14.0...v8.0.0) (2026-10-04)
+
+### ⚠ BREAKING CHANGES
+
+* **headroom:** ensureHeadroom returns { socketPath } instead of { port };
+  SupervisorPorts drops freePort and isPortFree, gains socketTrust, and its
+  spawnHeadroom and ready take the socket path; LayoutPaths gains
+  headroomSocketDir and headroomStateFile names state.v2.json. Launched
+  sessions no longer receive HEADROOM_PROXY_URL, since the daemon has no
+  TCP address.
+
+### Bug Fixes
+
+* **headroom:** pin the fork commit that adds proxy --uds ([bf36064](https://github.com/ExaDev/agent-shim/commit/bf36064b395ec9d78da47eca06c6c19dc490c659))
+* **headroom:** reach the headroom daemon only over an owner-only unix socket ([eb2a25c](https://github.com/ExaDev/agent-shim/commit/eb2a25c9ff82a5e6b63f8a9cd0554ba50bc2c04f)), closes [#68](https://github.com/ExaDev/agent-shim/issues/68)
+
 ## [7.14.0](https://github.com/ExaDev/agent-shim/compare/v7.13.2...v7.14.0) (2026-10-04)
 
 ### Features
