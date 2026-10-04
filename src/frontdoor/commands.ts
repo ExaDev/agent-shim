@@ -4,6 +4,7 @@ import fs from "node:fs";
 import type { Command } from "commander";
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { HTTP_STATUS } from "../codex/http";
+import { UsageError } from "../cliError";
 import { readGlobalConfig } from "../configProfilesStore";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
 import { createCodexRoutePorts } from "../codex/commands";
@@ -20,7 +21,7 @@ import { createCredentialCustody } from "./custody";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
-import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, injectRcUserMessage, observingRoutedRoute, type RcSessionSummary } from "./rcSessions";
+import { RC_IDLE_EXPIRY_MS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, observingRoutedRoute, type RcAnswerDecision, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, writeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
@@ -134,9 +135,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     isRunning: realIsProcessRunning,
     startProviderListener: async (preferredPort) => {
       const authority = loadCa();
-      // The inject operation the control routes carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly.
+      // The write operations the control routes carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly.
+      const rcDial = realRcEventDial();
       const rcInject = async (sessionId: string, text: string) =>
-        await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, dial: realRcEventDial(), newUuid: randomUUID }, sessionId, text);
+        await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, dial: rcDial, newUuid: randomUUID }, sessionId, text);
+      const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>
+        await answerRcControlRequest({ credentialOf: rcTracker.credentialOf, pendingOf: (id) => rcTracker.pendingOf(id), completePending: rcTracker.completePending, dial: rcDial }, sessionId, requestId, decision);
       // Written before the listener binds, so a listener that answers control requests is always one whose token exists; removed when this listener closes, so an idle-shut door leaves no token behind that a squatter on the port could be probed with.
       realFarmFs.mkdirp(paths.frontdoorDir);
       realFarmFs.writeFilePrivate(paths.frontdoorControlTokenFile, `${rcControlToken}\n`);
@@ -146,7 +150,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         },
         log,
         mintLeaf(authority, LOOPBACK_LEAF_NAMES, new Date()),
-        createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, inject: rcInject }),
+        createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcTracker.statusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer }),
       );
       const handle = await listenFrontDoor(server, { ...(preferredPort === undefined ? {} : { preferredPort }), ca: authority.certPem, onError: onListenerError("provider") });
       return {
@@ -301,6 +305,42 @@ export function formatRcSessionList(sessions: readonly RcSessionSummary[]): stri
   return sessions.map((session) => `${session.id}  created ${new Date(session.createdAt).toISOString()}  last seen ${new Date(session.lastSeenAt).toISOString()}`);
 }
 
+/** Formats `agent-shim frontdoor rc status`: one line per observed session, its worker facts, and its pending control requests indented beneath. */
+export function formatRcSessionStatus(statuses: readonly RcSessionStatus[]): string[] {
+  if (statuses.length === 0) {
+    return ["no Remote Control sessions observed"];
+  }
+  const lines: string[] = [];
+  for (const status of statuses) {
+    lines.push(`${status.id}  created ${new Date(status.createdAt).toISOString()}  last seen ${new Date(status.lastSeenAt).toISOString()}`);
+    const worker =
+      status.workerState === undefined && status.workerIdleSeconds === undefined
+        ? "not observed"
+        : [
+            status.workerState === undefined ? "state unknown" : `state ${status.workerState.value} since ${new Date(status.workerState.observedAt).toISOString()}`,
+            status.workerIdleSeconds === undefined ? "idle unknown" : `idle ${String(status.workerIdleSeconds.value)} s as of ${new Date(status.workerIdleSeconds.observedAt).toISOString()}`,
+          ].join(", ");
+    lines.push(`  worker: ${worker}`);
+    if (status.pending.length === 0) {
+      lines.push("  pending: none");
+    } else {
+      lines.push("  pending:");
+      for (const pending of status.pending) {
+        lines.push(...formatRcPendingList([pending]).map((line) => `    ${line}`));
+      }
+    }
+  }
+  return lines;
+}
+
+/** Formats `agent-shim frontdoor rc pending`, one line per control request awaiting an answer. */
+export function formatRcPendingList(pending: readonly RcPendingRequestSummary[]): string[] {
+  if (pending.length === 0) {
+    return ["no pending control requests observed"];
+  }
+  return pending.map((request) => `${request.sessionId}  ${request.requestId}  ${request.type}${request.summary === "" ? "" : `  ${request.summary}`}  observed ${new Date(request.observedAt).toISOString()}`);
+}
+
 /**
  * Opens the serving door's Remote Control control client: the provider listener's address from the same state file `frontdoor status` reads, its CA from the same CA path, and this generation's control token from the owner-only file the door writes. Throws with the verbose reason when the door is not serving or its control material is missing, so a verb never dials anything on a guess.
  */
@@ -345,9 +385,10 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
     ["agent-shim frontdoor status", "agent-shim frontdoor status --json"],
   );
 
-  const rc = withExamples(frontdoor.command("rc").description("Observe the Remote Control sessions passing through the front door, and send a prompt into one."), [
-    "agent-shim frontdoor rc list",
-  ]);
+  const rc = withExamples(
+    frontdoor.command("rc").description("Observe the Remote Control sessions passing through the front door, send a prompt into one, and answer its pending control requests."),
+    ["agent-shim frontdoor rc list", "agent-shim frontdoor rc pending"],
+  );
 
   withExamples(
     rc
@@ -369,6 +410,44 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
 
   withExamples(
     rc
+      .command("status")
+      .description("Report each observed Remote Control session's worker state and idle from its latest observed heartbeat and registration, with its pending control requests. Read-only.")
+      .argument("[session]", "One cse_ session id, as `frontdoor rc list` shows it; every observed session when omitted.")
+      .option("--json", "Print the statuses as JSON.")
+      .action(async (session: string | undefined, options: Readonly<{ json?: boolean }>) => {
+        const statuses = await frontDoorRcControlFromState(realFarmFs, paths).statusOf(session);
+        if (options.json === true) {
+          printJson({ statuses });
+          return;
+        }
+        for (const line of formatRcSessionStatus(statuses)) {
+          console.log(line);
+        }
+      }),
+    ["agent-shim frontdoor rc status", "agent-shim frontdoor rc status cse_00000000-0000-4000-8000-000000000000 --json"],
+  );
+
+  withExamples(
+    rc
+      .command("pending")
+      .description("List the control requests (tool and plan approvals above all) the front door has observed and that are still awaiting an answer. Read-only.")
+      .argument("[session]", "One cse_ session id, as `frontdoor rc list` shows it; every observed session when omitted.")
+      .option("--json", "Print the pending requests as JSON.")
+      .action(async (session: string | undefined, options: Readonly<{ json?: boolean }>) => {
+        const pending = await frontDoorRcControlFromState(realFarmFs, paths).pendingOf(session);
+        if (options.json === true) {
+          printJson({ pending });
+          return;
+        }
+        for (const line of formatRcPendingList(pending)) {
+          console.log(line);
+        }
+      }),
+    ["agent-shim frontdoor rc pending", "agent-shim frontdoor rc pending --json"],
+  );
+
+  withExamples(
+    rc
       .command("send")
       .description("Send a text prompt into one observed Remote Control session, arriving as a message from an attached client would.")
       .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
@@ -386,6 +465,39 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
         console.log(`sent to ${options.session}: sequence_num ${result.sequenceNums.join(", ")}`);
       }),
     ['agent-shim frontdoor rc send --session cse_00000000-0000-4000-8000-000000000000 --text "run the tests"'],
+  );
+
+  withExamples(
+    rc
+      .command("answer")
+      .description("Answer one pending control request on an observed session, approving or denying it as an attached client's approval would.")
+      .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
+      .requiredOption("--request <id>", "The control request's id, as `frontdoor rc pending` shows it.")
+      .option("--approve", "Approve the request.")
+      .option("--deny", "Deny the request.")
+      .option("--text <text>", "The denial message the worker sees; applies to --deny only.")
+      .option("--json", "Print the delivery result as JSON.")
+      .action(async (options: Readonly<{ session: string; request: string; approve?: boolean; deny?: boolean; text?: string; json?: boolean }>) => {
+        if (options.approve === options.deny) {
+          throw new UsageError("answer exactly one way: pass --approve or --deny, not both and not neither");
+        }
+        if (options.approve === true && options.text !== undefined) {
+          throw new UsageError("--text is the denial message; an approval carries no text (the protocol's allow result has no message field)");
+        }
+        const result = await frontDoorRcControlFromState(realFarmFs, paths).answerRequest(options.session, options.request, { approve: options.approve === true, message: options.deny === true ? options.text : undefined });
+        if (!result.ok) {
+          throw new Error(result.message);
+        }
+        if (options.json === true) {
+          printJson({ session: options.session, request: options.request, sequenceNums: result.sequenceNums });
+          return;
+        }
+        console.log(`${options.approve === true ? "approved" : "denied"} ${options.request} on ${options.session}: sequence_num ${result.sequenceNums.join(", ")}`);
+      }),
+    [
+      "agent-shim frontdoor rc answer --session cse_00000000-0000-4000-8000-000000000000 --request req_00000000-0000-4000-8000-000000000000 --approve",
+      'agent-shim frontdoor rc answer --session cse_00000000-0000-4000-8000-000000000000 --request req_00000000-0000-4000-8000-000000000000 --deny --text "not today"',
+    ],
   );
 
   program

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { writeHeadroomState } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
-import { collectFrontDoorStatus, formatFrontDoorStatus, formatRcSessionList, frontDoorRcControlFromState } from "./commands";
+import { collectFrontDoorStatus, formatFrontDoorStatus, formatRcPendingList, formatRcSessionList, formatRcSessionStatus, frontDoorRcControlFromState } from "./commands";
 import { writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
@@ -96,6 +96,40 @@ describe("frontdoor rc", () => {
     const lastSeenAt = createdAt + ONE_HEARTBEAT_MS;
     expect(formatRcSessionList([{ id: "cse_1", createdAt, lastSeenAt }])).toEqual([
       "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.020Z",
+    ]);
+  });
+
+  it("formats the session status, the worker facts, and the pending requests, with plain lines for what was never observed", () => {
+    const createdAt = 1_000;
+    expect(formatRcSessionStatus([])).toEqual(["no Remote Control sessions observed"]);
+    expect(formatRcSessionStatus([{ id: "cse_1", createdAt, lastSeenAt: createdAt, workerState: undefined, workerIdleSeconds: undefined, pending: [] }])).toEqual([
+      "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.000Z",
+      "  worker: not observed",
+      "  pending: none",
+    ]);
+    expect(
+      formatRcSessionStatus([
+        {
+          id: "cse_1",
+          createdAt,
+          lastSeenAt: createdAt + ONE_HEARTBEAT_MS,
+          workerState: { value: "WORKER_STATUS_RUNNING", observedAt: createdAt },
+          workerIdleSeconds: { value: 7, observedAt: createdAt + ONE_HEARTBEAT_MS },
+          pending: [{ sessionId: "cse_1", requestId: "req_1", type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: createdAt }],
+        },
+      ]),
+    ).toEqual([
+      "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.020Z",
+      "  worker: state WORKER_STATUS_RUNNING since 1970-01-01T00:00:01.000Z, idle 7 s as of 1970-01-01T00:00:01.020Z",
+      "  pending:",
+      '    cse_1  req_1  can_use_tool  Bash {"command":"pnpm test"}  observed 1970-01-01T00:00:01.000Z',
+    ]);
+  });
+
+  it("formats the pending request list, one line per request and a plain line when there are none", () => {
+    expect(formatRcPendingList([])).toEqual(["no pending control requests observed"]);
+    expect(formatRcPendingList([{ sessionId: "cse_1", requestId: "req_1", type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: 1_000 }])).toEqual([
+      'cse_1  req_1  can_use_tool  Bash {"command":"pnpm test"}  observed 1970-01-01T00:00:01.000Z',
     ]);
   });
 });
