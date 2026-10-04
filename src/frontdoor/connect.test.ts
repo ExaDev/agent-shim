@@ -6,6 +6,7 @@ import type { ConnectCapture, PassthroughObserver } from "./capture";
 import { CONNECT_INTERCEPT_HOST, CONNECT_TAP_HOSTS, generateCa, HTTPS_PORT, type CaMaterial } from "./connect";
 import {
   connectHead,
+  connectRedirected,
   connectThroughProxy,
   HTTP_OK,
   HTTP_UNAUTHORIZED,
@@ -156,19 +157,98 @@ describe("MITM proxy over real sockets", () => {
       const started = await world.start();
       try {
         // A redirected client connects straight in: TLS presenting the door's CA, SNI naming the API host, no proxy handshake of any kind, then sends a bare routed request with none of the launcher's headers.
-        const secure = await new Promise<tls.TLSSocket>((resolve, reject) => {
-          const direct = tls.connect({ port: started.transparentPort ?? 0, host: "127.0.0.1", servername: CONNECT_INTERCEPT_HOST, ca: ca.certPem, rejectUnauthorized: true });
-          direct.once("secureConnect", () => {
-            resolve(direct);
-          });
-          direct.once("error", (error) => {
-            reject(error);
-          });
-        });
+        const secure = await connectRedirected(started.transparentPort ?? 0, CONNECT_INTERCEPT_HOST, ca.certPem);
         const piped = await requestOn(secure, `POST /v1/messages HTTP/1.1\r\nHost: ${CONNECT_INTERCEPT_HOST}\r\ncontent-length: 2\r\n\r\n{}`);
         expect(piped.statusLine).toContain(String(HTTP_OK));
         // The transparent capability was injected where the request carried none, so the pipeline admitted what a redirect delivers: traffic with no launcher headers at all.
         expect(world.routedRequests[0]?.headers["x-agent-shim-auth"]).toBe(TRANSPARENT_CAPABILITY);
+        secure.destroy();
+      } finally {
+        await started.close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "terminates a redirected connection for the control-plane host with that host's own leaf and pipes its session to that host's upstream",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa, { transparent: { port: 0, capability: TRANSPARENT_CAPABILITY } });
+      const started = await world.start();
+      try {
+        // The control plane shares the API host's address, so a redirect delivers its connections here too, SNI naming the control plane: the handshake must answer with that host's leaf (the hostname check inside it proves the certificate names the host) and the session must be the control plane's own.
+        const secure = await connectRedirected(started.transparentPort ?? 0, "platform.claude.com", ca.certPem);
+        expect(secure.getPeerCertificate().subject.CN).toBe("platform.claude.com");
+        const piped = await requestOn(secure, "GET /api/oauth/token HTTP/1.1\r\nHost: platform.claude.com\r\n\r\n");
+        expect(piped.statusLine).toContain(String(HTTP_UNAUTHORIZED));
+        expect(piped.body).toBe("upstream-says-no");
+        expect(world.upstreamRequests.map((seen) => seen.url)).toEqual(["/api/oauth/token"]);
+        expect(world.upstreamRequests[0]?.headers.host).toBe("platform.claude.com");
+        expect(world.routedRequests).toEqual([]);
+        secure.destroy();
+      } finally {
+        await started.close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a redirected connection whose SNI names a host outside the intercept set, presenting no certificate at all",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa, { transparent: { port: 0, capability: TRANSPARENT_CAPABILITY } });
+      const started = await world.start();
+      try {
+        // Certificate verification is off on purpose: a listener that answered claude.ai (which shares the redirected address but is no host the surface serves) with the API host's leaf would complete this handshake and hand that leaf over, while the fail-closed surface drops the connection before any certificate exists.
+        const outcome = await new Promise<string>((resolve) => {
+          const direct = tls.connect({ port: started.transparentPort ?? 0, host: "127.0.0.1", servername: "claude.ai", ca: ca.certPem, rejectUnauthorized: false });
+          direct.once("secureConnect", () => {
+            direct.destroy();
+            resolve("handshaked: the surface presented a certificate");
+          });
+          direct.once("error", (error) => {
+            resolve(`refused: ${error.message}`);
+          });
+        });
+        expect(outcome).toContain("refused");
+      } finally {
+        await started.close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "pumps a tap host's redirected session byte for byte to its real host, terminated with that host's leaf",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa, { transparent: { port: 0, capability: TRANSPARENT_CAPABILITY }, tapHosts: CONNECT_TAP_HOSTS });
+      const started = await world.start();
+      try {
+        // The shipped configuration taps the control plane, so this is the shape a redirected control-plane connection really meets: terminated with its own leaf, pumped byte for byte, parsed as no protocol at all.
+        const secure = await connectRedirected(started.transparentPort ?? 0, "platform.claude.com", ca.certPem);
+        expect(secure.getPeerCertificate().subject.CN).toBe("platform.claude.com");
+        const echoed = await new Promise<string>((resolve, reject) => {
+          function onData(chunk: Buffer): void {
+            if (chunk.toString("utf8").includes("tap-payload")) {
+              secure.off("data", onData);
+              secure.off("error", onError);
+              resolve(chunk.toString("utf8"));
+            }
+          }
+          function onError(error: Error): void {
+            secure.off("data", onData);
+            reject(error);
+          }
+          secure.on("data", onData);
+          secure.on("error", onError);
+          secure.write("tap-payload");
+        });
+        expect(echoed).toContain("tap-payload");
+        // The transparent surface offers no ALPN (node negotiates ALPN from the listener's own options, never from an SNI-selected context), so the pump forwarded the client's empty negotiation upstream unchanged.
+        expect(world.tapAlpnOffered).toEqual([undefined]);
         secure.destroy();
       } finally {
         await started.close();

@@ -289,6 +289,14 @@ interface TlsAcceptor {
   readonly close: () => void;
 }
 
+/** Presents every served host's leaf on one handshake, selected by the SNI name the client sent: the transparent surface's terminator, answering each redirected connection as the host it named. */
+interface SniTlsAcceptor {
+  /** Starts the TLS handshake on a redirected socket; a handshake that completes for a served host hands its secure session to the acceptor's `onSecure` with that host's name. */
+  readonly accept: (socket: net.Socket) => void;
+  /** Drops every session this acceptor is terminating. */
+  readonly close: () => void;
+}
+
 /** Parses HTTP over terminated sockets and serves each request through the handler, keep-alive included. */
 interface HttpParserSession {
   readonly serve: (socket: net.Socket) => void;
@@ -303,6 +311,8 @@ export interface ConnectEffects {
   readonly listenLoopback: (preferredPort: number | undefined, onSocket: (socket: net.Socket) => void) => Promise<ConnectListenerHandle>;
   /** Builds the TLS terminator for one leaf, handing each successfully handshaked session to `onSecure` together with the context its `accept` call carried. `alpnProtocols`, when given, is advertised during the handshake, which is how a tap host's session can offer HTTP/2 the way its real server does. */
   readonly createTlsAcceptor: (leaf: LeafCert, onSecure: (secure: net.Socket, context: string) => void, alpnProtocols?: readonly string[]) => TlsAcceptor;
+  /** Builds the transparent surface's TLS terminator: one handshake whose SNI name selects which served host's leaf answers it, so a connection redirected from any of the hosts sharing the redirected address is terminated as the host it named. A name the surface does not serve is answered with no certificate at all (a client that sends no SNI never reaches the selection and finds no default certificate either), because the only leaf that could answer such a name is another host's, which the client's own hostname check would reject anyway. No ALPN is offered: node's TLS server negotiates ALPN from the listener's own options and ignores protocols named on an SNI-selected secure context, and the API host's terminated session is parsed as HTTP/1.1, which a negotiated `h2` would strand. */
+  readonly createSniTlsAcceptor: (hosts: readonly string[], leafFor: (host: string) => LeafCert, onSecure: (secure: net.Socket, host: string) => void) => SniTlsAcceptor;
   /** Opens a TLS connection to a real host, presenting its name as SNI, for a tap session's upstream half. `clientAlpn`, when given, is the protocol the client negotiated with the surface and the only one offered upstream, so the tap never changes the channel's protocol. */
   readonly connectTlsUpstream: (host: string, port: number, clientAlpn: string | undefined) => Promise<net.Socket>;
   /** Builds the HTTP parser bound to one request handler. `onUpgrade`, when given, owns every HTTP upgrade request arriving on a terminated session, socket and already-read bytes included; a session without one lets Node destroy the upgrade, its own no-listener behaviour. */
@@ -332,7 +342,7 @@ export interface ConnectServerConfig {
   /** Whether a capability presented as a CONNECT request's proxy credential belongs to a live launch: the same constant-time check against the same registry the routed pipeline's admission makes, read fresh on every call because launches come and go. */
   readonly isLiveCapability: (token: string) => boolean;
   /**
-   * Binds a second listener that serves the intercept hosts' sessions to connections arriving pre-established, with no CONNECT handshake to authenticate: what an operating-system redirect (a pf rule sending the real hosts' address to this port) delivers. Only the API host's session is reachable this way, never a tap host's, because a redirect can name only addresses and the control plane shares the API host's address today; if that ever splits, the transparent listener must not follow it blindly. There is no capability to check on this surface: the connection carried no proxy credential, so every request rides the pipeline anonymously, admitted the way a tunnel's own header-less requests are (by nothing, which is exactly what they present), and the surface exists solely for clients that ignore proxies and would otherwise be invisible to the door entirely.
+   * Binds a second listener that terminates redirected connections per host, with no CONNECT handshake to authenticate: what an operating-system redirect (a pf rule sending the real hosts' address to this port) delivers, pre-established. A redirect names addresses, and several real hosts share the API host's, so the client's TLS SNI name is what says which host arrived: each intercept host is served with its own leaf and its own session exactly as a CONNECT-tunnelled connection to that host is (the API host's `/v1/` rides the routed pipeline, a tap host's stream is pumped to its real host), and a name outside the intercept set, or a connection presenting none, is refused with no certificate at all, because the only leaf that could answer it is another host's. There is no capability to check on this surface: the connection carried no proxy credential, so every request rides the pipeline anonymously, admitted the way a tunnel's own header-less requests are (by nothing, which is exactly what they present), and the surface exists solely for clients that ignore proxies and would otherwise be invisible to the door entirely.
    */
   readonly transparentPort?: number;
   /**
@@ -383,14 +393,11 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   };
   const sessions = config.interceptHosts.map((host) => {
     if (config.tapHosts.includes(host)) {
-      const tlsAcceptor = effects.createTlsAcceptor(
-        config.leafFor(host),
-        (secure) => {
-          pumpTapSession(secure, async (clientAlpn) => await effects.connectTlsUpstream(host, HTTPS_PORT, clientAlpn), config.capture?.tapStream?.(host));
-        },
-        TAP_ALPN_PROTOCOLS,
-      );
-      return { host, tlsAcceptor };
+      const serveSecure = (secure: net.Socket): void => {
+        pumpTapSession(secure, async (clientAlpn) => await effects.connectTlsUpstream(host, HTTPS_PORT, clientAlpn), config.capture?.tapStream?.(host));
+      };
+      const tlsAcceptor = effects.createTlsAcceptor(config.leafFor(host), serveSecure, TAP_ALPN_PROTOCOLS);
+      return { host, serveSecure, tlsAcceptor };
     }
 
     const handler: ConnectRequestHandler = (request, response) => {
@@ -405,11 +412,12 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
       effects.forwardHttp(config.upstreamFor(host), request, response, config.capture?.observePassthrough(request));
     };
     const httpSession = effects.createHttpSession(handler, onUpgrade(host));
-    const tlsAcceptor = effects.createTlsAcceptor(config.leafFor(host), (secure, context) => {
-      tunnelTokens.set(secure, context);
+    const serveSecure = (secure: net.Socket, capability: string): void => {
+      tunnelTokens.set(secure, capability);
       httpSession.serve(secure);
-    });
-    return { host, httpSession, tlsAcceptor };
+    };
+    const tlsAcceptor = effects.createTlsAcceptor(config.leafFor(host), serveSecure);
+    return { host, serveSecure, httpSession, tlsAcceptor };
   });
   const ledger = createConnectionLedger(config.limits, config.isLiveCapability);
 
@@ -419,12 +427,23 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   });
 
   const apiSession = sessions.find((session) => session.host === config.routedHost);
+  const sessionByHost = new Map(sessions.map((session) => [session.host, session]));
+  // The transparent surface's terminator: one handshake whose SNI name selects the leaf, because a redirect sends every host sharing the API host's address here and each must be terminated as the host it named, never with the API host's certificate.
+  const sniAcceptor = effects.createSniTlsAcceptor(config.interceptHosts, config.leafFor, (secure, host) => {
+    const session = sessionByHost.get(host);
+    if (session === undefined) {
+      // The acceptor fails the handshake of every name it was not given, and it was given exactly the intercept hosts these sessions cover, so reaching here means the acceptor itself misrouted; dropping the session is the fail-closed answer.
+      secure.destroy();
+      return;
+    }
+    session.serveSecure(secure, config.transparentCapability ?? "");
+  });
   const transparent =
     config.transparentPort === undefined || apiSession === undefined
       ? undefined
       : await effects.listenLoopback(config.transparentPort, (socket) => {
-          // A redirected connection is the intercept host's session the moment it arrives: no head to parse, no credential to read, straight into the API host's TLS acceptor, whose session then handles routing, piped forwarding and relayed upgrades exactly as a CONNECT-tunnelled one does.
-          apiSession.tlsAcceptor.accept(socket, config.transparentCapability ?? "");
+          // A redirected connection is the session of whatever host its TLS SNI names, the moment it arrives: no head to parse, no credential to read, straight into the SNI acceptor, and the session then handles routing, piped forwarding and relayed upgrades exactly as a CONNECT-tunnelled one does.
+          sniAcceptor.accept(socket);
         });
 
   return {
@@ -434,6 +453,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
       ledger.close();
       await listener.close();
       await transparent?.close();
+      sniAcceptor.close();
       for (const { httpSession, tlsAcceptor } of sessions) {
         tlsAcceptor.close();
         httpSession?.close();
@@ -445,6 +465,8 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
 /** One intercept host's terminated-session machinery: an HTTP-parsed session (the API host), or a byte-tapped pump (a tap host) with no HTTP session at all. */
 interface InterceptSession {
   readonly host: string;
+  /** Serves one TLS-terminated session of this host, whichever surface terminated it: the shared body of the CONNECT acceptor's and the transparent acceptor's completion handling, carrying the capability the connection authenticated by (a launch's for a CONNECT tunnel, the transparent capability for a redirect). */
+  readonly serveSecure: (secure: net.Socket, capability: string) => void;
   readonly tlsAcceptor: TlsAcceptor;
   readonly httpSession?: HttpParserSession;
 }

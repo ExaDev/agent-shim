@@ -91,6 +91,16 @@ export async function connectThroughProxy(port: number, host: string, caPem: str
   return secure;
 }
 
+/** Connects straight into the transparent surface the way an operating-system redirect delivers a connection: no proxy handshake of any kind, TLS presenting only the given CA as trust and naming the given host as SNI. */
+export async function connectRedirected(port: number, host: string, caPem: string): Promise<tls.TLSSocket> {
+  const direct = tls.connect({ port, host: "127.0.0.1", servername: host, ca: caPem, rejectUnauthorized: true });
+  await new Promise<void>((resolve, reject) => {
+    direct.once("secureConnect", resolve);
+    direct.once("error", reject);
+  });
+  return direct;
+}
+
 /** Sends one request on a TLS session and reads its content-length framed response. */
 export async function requestOn(secure: tls.TLSSocket, request: string): Promise<RawResponse> {
   const timed = await requestTimingOn(secure, request);
