@@ -73,7 +73,7 @@ export function readFrontDoorState(fs: HeadroomFs, stateFile: string): FrontDoor
 /** Writes state.json. A plain write, for the reason headroom's is: the file is advisory coordination read tolerantly, and the exclusive-create start lock is the actual mutual exclusion. */
 export function writeFrontDoorState(fs: HeadroomFs, stateFile: string, state: Readonly<FrontDoorState>): void {
   fs.mkdirp(path.dirname(stateFile));
-  fs.writeFileUtf8(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+  fs.writeFilePrivate(stateFile, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 /**

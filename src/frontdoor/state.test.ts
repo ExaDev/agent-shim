@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { listFrontDoorSessions, liveSessionTokens, pruneDeadFrontDoorSessions, removeFrontDoorSession, writeFrontDoorSession } from "./state";
+import { listFrontDoorSessions, liveSessionTokens, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -58,5 +58,14 @@ describe("front-door session registry", () => {
     writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 0, token: "t" });
     expect(fs.modeOf(paths.frontdoorSessionsDir)).toBe(OWNER_ONLY_DIR);
     expect(fs.modeOf(`${paths.frontdoorSessionsDir}/${String(LIVE)}.json`)).toBe(OWNER_ONLY_FILE);
+  });
+});
+
+describe("front-door state file", () => {
+  it("is replaced atomically and owner-only, so a launcher polling it never reads a half-written file and mistakes it for no door", () => {
+    const fs = createFakeFarmFs({});
+    writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: LIVE, port: 4100, connectPort: 4200, directPort: 4300 });
+    expect(fs.modeOf(paths.frontdoorStateFile)).toBe(OWNER_ONLY_FILE);
+    expect(readFrontDoorState(fs, paths.frontdoorStateFile)).toMatchObject({ supervisorPid: LIVE, directPort: 4300 });
   });
 });
