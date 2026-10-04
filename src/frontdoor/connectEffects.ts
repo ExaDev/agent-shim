@@ -37,9 +37,14 @@ const realAddressLookup: LookupFunction = (host, _options, callback) => {
     return;
   }
   dns.resolve4(host, (error, addresses) => {
+    // The error branch first, because a failed resolve hands undefined as the addresses: reading the first address before checking would crash on it instead of surfacing the lookup's own failure.
+    if (error !== null) {
+      callback(error, [{ address: "", family: 4 }]);
+      return;
+    }
     const first = addresses[0];
-    if (error !== null || first === undefined) {
-      callback(error ?? new Error(`no A record for ${host}`), [{ address: "", family: 4 }]);
+    if (first === undefined) {
+      callback(new Error(`no A record for ${host}`), [{ address: "", family: 4 }]);
       return;
     }
     callback(null, [{ address: first, family: 4 }]);
