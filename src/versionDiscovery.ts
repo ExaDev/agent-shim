@@ -23,8 +23,8 @@ export interface DiscoverClaudeBinaryOptions {
   pathDirs: string[];
   /** Looks up an executable of the given name inside one PATH directory, returning its full path if found. */
   findExecutableInDir: (dir: string, name: string) => string | undefined;
-  /** This tool's own install directory(ies), excluded from the PATH fallback search to avoid self-selection. */
-  ownInstallDirs: string[];
+  /** Decides whether a PATH-found `claude` candidate is this very tool (its own executable, or the `claude`-named copy `shim enable` makes of it), which the fallback must never return: spawning it would recursively launch agent-shim instead of Claude Code. The check is per candidate file, not per directory, because a shared bin directory can legitimately hold another package's claude beside agent-shim: under one npm global prefix, claude-code's `claude` sits in exactly the directory agent-shim was installed from. */
+  isOwnBinary: (candidate: string) => boolean;
 }
 
 /** The result of a successful discovery. */
@@ -92,7 +92,7 @@ export function pickHighestVersion(entries: readonly VersionsDirEntry[]): string
 }
 
 /**
- * Discovers the real `claude` binary to launch: first by scanning the versions directory and picking the highest genuinely-executable version, then falling back to a PATH search for a `claude` executable (excluding this tool's own install directory, so the launcher never recursively selects itself). Throws a clear, actionable error when neither strategy finds anything — this is a deliberate improvement over the legacy bash tool, which crashed cryptically on a missing or empty versions directory instead of reporting the problem.
+ * Discovers the real `claude` binary to launch: first by scanning the versions directory and picking the highest genuinely-executable version, then falling back to a PATH search for a `claude` executable, never returning this tool's own binary so the launcher cannot recursively select itself. Throws a clear, actionable error when neither strategy finds anything — this is a deliberate improvement over the legacy bash tool, which crashed cryptically on a missing or empty versions directory instead of reporting the problem.
  */
 export function discoverClaudeBinary(options: DiscoverClaudeBinaryOptions): DiscoveredClaudeBinary {
   const versionsDir = options.versionsDir ?? defaultVersionsDir();
@@ -107,14 +107,9 @@ export function discoverClaudeBinary(options: DiscoverClaudeBinaryOptions): Disc
     };
   }
 
-  const ownInstallDirs = new Set(options.ownInstallDirs.map((dir) => path.resolve(dir)));
-
   for (const dir of options.pathDirs) {
-    if (ownInstallDirs.has(path.resolve(dir))) {
-      continue;
-    }
     const found = options.findExecutableInDir(dir, "claude");
-    if (found !== undefined) {
+    if (found !== undefined && !options.isOwnBinary(found)) {
       return { path: found, source: "path-fallback" };
     }
   }
@@ -122,7 +117,7 @@ export function discoverClaudeBinary(options: DiscoverClaudeBinaryOptions): Disc
   throw new Error(
     `Could not find a claude binary. Looked for genuinely-executable versioned binaries under ` +
       `"${versionsDir}" (missing, empty, or containing nothing executable) and for a "claude" ` +
-      `executable on PATH (excluding this tool's own install directory). Install Claude Code, or ` +
+      `executable on PATH (never this tool's own binary). Install Claude Code, or ` +
       `set the versions directory / PATH correctly, then try again.`,
   );
 }

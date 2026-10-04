@@ -1,8 +1,8 @@
-import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnInstallDirs, type ClaudeShimState, type PathShadowStatus } from "./claudeShim";
+import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnBinaryCheck, type ClaudeShimState, type PathShadowStatus } from "./claudeShim";
 import type { LayoutPaths } from "./paths";
 import { readJson } from "./config/store";
 import { isIdentityDirectoryName } from "./identityStore";
-import { findExecutableInDir, realFsPort, realIsProcessRunning, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
+import { findExecutableInDir, realContentSourcePath, realFsPort, realIsProcessRunning, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
 import fs from "node:fs";
 import path from "node:path";
 import type { z } from "zod";
@@ -659,7 +659,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
 
   let binaryDiscovery: DoctorBinaryDiscovery;
   try {
-    const binary = realResolveClaudeBinary(resolveOwnInstallDirs(paths, ownExecutablePath))();
+    const binary = realResolveClaudeBinary(resolveOwnBinaryCheck(paths, realContentSourcePath()))();
     binaryDiscovery = { ok: true, binary };
   } catch (error) {
     binaryDiscovery = { ok: false, message: error instanceof Error ? error.message : String(error) };

@@ -13,6 +13,7 @@ import {
   findPathShadow,
   isInvokedAsClaude,
   resolveClaudeTargetPath,
+  resolveOwnBinaryCheck,
   type LinkFs,
 } from "./claudeShim";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
@@ -327,6 +328,58 @@ describe("claudeShim", () => {
         findExecutableInDir: () => undefined,
       });
       expect(status).toEqual({ status: "not-on-path" });
+    });
+  });
+
+  describe("resolveOwnBinaryCheck", () => {
+    it("accepts a different package's claude sitting beside agent-shim under one npm global prefix (#188)", () => {
+      const coLocatedClaude = path.join(binDir, "claude");
+      fs.writeFileSync(coLocatedClaude, "@anthropic-ai/claude-code bundle", { mode: 0o755 });
+      const check = resolveOwnBinaryCheck(paths, sourcePath);
+      expect(check(coLocatedClaude)).toBe(false);
+    });
+
+    it("recognises a `shim enable` hardlink of the running binary with no marker to say so (the install.sh layout)", () => {
+      const shimPath = path.join(binDir, "claude");
+      fs.linkSync(sourcePath, shimPath);
+      const check = resolveOwnBinaryCheck(paths, sourcePath);
+      expect(check(shimPath)).toBe(true);
+    });
+
+    it("recognises a `claude` symlink pointing at the running binary itself, while a symlink to another package's launcher stays foreign", () => {
+      const symlinkedSelf = path.join(binDir, "claude-self");
+      fs.symlinkSync(sourcePath, symlinkedSelf);
+      const foreignTarget = path.join(binDir, "claude-code-cli.js");
+      fs.writeFileSync(foreignTarget, "@anthropic-ai/claude-code bundle", { mode: 0o755 });
+      const symlinkedForeign = path.join(binDir, "claude-foreign");
+      fs.symlinkSync(foreignTarget, symlinkedForeign);
+      const check = resolveOwnBinaryCheck(paths, sourcePath);
+      expect(check(symlinkedSelf)).toBe(true);
+      expect(check(symlinkedForeign)).toBe(false);
+    });
+
+    it("trusts the recorded target path even after an upgrade left it holding the previous version's bytes, when neither inode nor content would match", () => {
+      enableClaudeShim({ paths, ownExecutablePath: sourcePath, contentSourcePath: sourcePath, platform: "linux", force: false });
+      const shimPath = path.join(binDir, "claude");
+      fs.rmSync(sourcePath);
+      fs.writeFileSync(sourcePath, "fake-binary-v2", { mode: 0o755 }); // new inode, and the shim still holds v1's bytes
+      const check = resolveOwnBinaryCheck(paths, sourcePath);
+      expect(check(shimPath)).toBe(true);
+    });
+
+    it("still accepts a foreign claude beside agent-shim when a --dir marker points at a shim living elsewhere", () => {
+      const otherDir = path.join(binDir, "elsewhere");
+      fs.mkdirSync(otherDir, { recursive: true });
+      enableClaudeShim({ paths, ownExecutablePath: sourcePath, contentSourcePath: sourcePath, platform: "linux", force: false, dir: otherDir });
+      const foreignClaude = path.join(binDir, "claude");
+      fs.writeFileSync(foreignClaude, "@anthropic-ai/claude-code bundle", { mode: 0o755 });
+      const check = resolveOwnBinaryCheck(paths, sourcePath);
+      expect(check(foreignClaude)).toBe(false);
+    });
+
+    it("reports a candidate that does not exist as not this tool rather than throwing", () => {
+      const check = resolveOwnBinaryCheck(paths, sourcePath);
+      expect(check(path.join(binDir, "claude"))).toBe(false);
     });
   });
 });
