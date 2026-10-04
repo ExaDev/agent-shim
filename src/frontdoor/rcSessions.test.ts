@@ -73,9 +73,9 @@ function trackerWithClock(startAt = CLOCK_START_MS): { readonly tracker: RcSessi
 describe("the Remote Control session tracker", () => {
   it("records a session from its create exchange, with the bearer and protocol headers that create carried", () => {
     const { tracker } = trackerWithClock();
-    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-REDACTED", headers: { "anthropic-version": "2023-06-01", "anthropic-client-platform": "desktop_app" } }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat", headers: { "anthropic-version": "2023-06-01", "anthropic-client-platform": "desktop_app" } }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
     expect(tracker.list()).toEqual([{ id: SESSION_ID, createdAt: CLOCK_START_MS, lastSeenAt: CLOCK_START_MS }]);
-    expect(tracker.credentialOf(SESSION_ID)).toEqual({ authorization: "Bearer sk-ant-REDACTED", anthropicVersion: "2023-06-01", anthropicClientPlatform: "desktop_app" });
+    expect(tracker.credentialOf(SESSION_ID)).toEqual({ authorization: "Bearer sk-ant-oat", anthropicVersion: "2023-06-01", anthropicClientPlatform: "desktop_app" });
   });
 
   it("ignores a create whose answer names no cse_ session id, and one whose status is not a success", () => {
@@ -88,22 +88,22 @@ describe("the Remote Control session tracker", () => {
 
   it("refreshes the retained OAuth bearer latest-wins among OAuth-kind calls, and never lets a worker JWT displace it", () => {
     const { tracker, advance } = trackerWithClock();
-    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-REDACTED" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
     advance(HEARTBEAT_INTERVAL_MS);
     // The worker's recurring calls carry the worker JWT, a different credential kind that authorises worker operations only: the exchange refreshes the entry's liveness without touching the injection credential (a JWT replayed on the client half is answered 401, observed live).
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }).respond(HTTP_STATUS.ok);
-    expect(tracker.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-REDACTED");
+    expect(tracker.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-oat");
     advance(HEARTBEAT_INTERVAL_MS);
-    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/client/presence`, authorization: "Bearer sk-ant-REDACTED" }).respond(HTTP_STATUS.ok);
-    expect(tracker.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-REDACTED");
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/client/presence`, authorization: "Bearer sk-ant-oat2" }).respond(HTTP_STATUS.ok);
+    expect(tracker.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-oat2");
     expect(tracker.list()[0]?.lastSeenAt).toBe(CLOCK_START_MS + 2 * HEARTBEAT_INTERVAL_MS);
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH }).respond(HTTP_STATUS.ok);
-    expect(tracker.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-REDACTED");
+    expect(tracker.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-oat2");
   });
 
   it("tracks a session it never saw created from its recurring calls alone", () => {
     const { tracker } = trackerWithClock();
-    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer sk-ant-REDACTED" }).respond(HTTP_STATUS.ok);
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer sk-ant-oat" }).respond(HTTP_STATUS.ok);
     expect(tracker.list()).toEqual([{ id: SESSION_ID, createdAt: CLOCK_START_MS, lastSeenAt: CLOCK_START_MS }]);
   });
 
@@ -350,7 +350,7 @@ describe("the injected event's payload and answer parsing", () => {
 describe("injectRcUserMessage over an injected dial", () => {
   it("posts the user-message write with the observed bearer and protocol headers, returning the sequence numbers", async () => {
     const { tracker } = trackerWithClock();
-    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-REDACTED", headers: { "anthropic-version": "2023-06-01", "anthropic-client-platform": "web_claude_ai" } }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat", headers: { "anthropic-version": "2023-06-01", "anthropic-client-platform": "web_claude_ai" } }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
     const dialled: { sessionId: string; headers: Record<string, string>; body: string }[] = [];
     const dial: RcEventDial = {
       writeEvents: async (sessionId, headers, body) => {
@@ -363,7 +363,7 @@ describe("injectRcUserMessage over an injected dial", () => {
     expect(dialled).toEqual([
       {
         sessionId: SESSION_ID,
-        headers: { "content-type": "application/json", authorization: "Bearer sk-ant-REDACTED", "anthropic-version": "2023-06-01", "anthropic-client-platform": "web_claude_ai" },
+        headers: { "content-type": "application/json", authorization: "Bearer sk-ant-oat", "anthropic-version": "2023-06-01", "anthropic-client-platform": "web_claude_ai" },
         body: JSON.stringify(buildRcEventWriteBody(buildRcUserMessagePayload("uuid-2", SESSION_ID, "run the tests"))),
       },
     ]);
@@ -398,7 +398,7 @@ describe("injectRcUserMessage over an injected dial", () => {
       expect(unknown.message).toContain(SESSION_ID);
       expect(unknown.message).toContain("has not observed");
     }
-    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-REDACTED" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
     const unreachable = await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial, newUuid: () => "uuid-3" }, SESSION_ID, "hello");
     expect(unreachable.ok).toBe(false);
     if (!unreachable.ok) {
@@ -413,11 +413,11 @@ describe("the control_response payload and answerRcControlRequest over an inject
   /** A tracker holding one observed session with one pending can_use_tool, the state every answer runs against. */
   const trackerWithPending = (): { readonly tracker: RcSessionTracker } => {
     const { tracker } = trackerWithClock();
-    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-REDACTED", headers: { "anthropic-version": "2023-06-01", "anthropic-client-platform": "desktop_app" } }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat", headers: { "anthropic-version": "2023-06-01", "anthropic-client-platform": "desktop_app" } }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
     exchange(tracker, {
       method: "POST",
       url: `/v1/code/sessions/${SESSION_ID}/worker/events`,
-      authorization: "Bearer sk-ant-REDACTED",
+      authorization: "Bearer sk-ant-oat",
       requestBody: JSON.stringify({ worker_epoch: 1, events: [{ payload: { type: "control_request", request_id: REQUEST_ID, request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "pnpm test" } } } }] }),
     }).respond(HTTP_STATUS.ok);
     return { tracker };
@@ -459,7 +459,7 @@ describe("the control_response payload and answerRcControlRequest over an inject
     expect(dialled).toEqual([
       {
         sessionId: SESSION_ID,
-        headers: { "content-type": "application/json", authorization: "Bearer sk-ant-REDACTED", "anthropic-version": "2023-06-01", "anthropic-client-platform": "desktop_app" },
+        headers: { "content-type": "application/json", authorization: "Bearer sk-ant-oat", "anthropic-version": "2023-06-01", "anthropic-client-platform": "desktop_app" },
         body: JSON.stringify(buildRcEventWriteBody(buildRcControlResponsePayload(REQUEST_ID, { approve: true, message: undefined }))),
       },
     ]);
@@ -533,7 +533,7 @@ describe("the RoutedResponse tee the door's resolver applies", () => {
     const request: RoutedRequest = {
       method: "POST",
       url: `/v1/code/sessions/${SESSION_ID}/worker/events`,
-      headers: { authorization: "Bearer sk-ant-REDACTED" },
+      headers: { authorization: "Bearer sk-ant-oat" },
       // A real IncomingMessage over an unconnected socket, fed by hand: the additive listeners must see exactly these bytes, and the route's own flow must be unchanged.
       body,
       signal: new AbortController().signal,
@@ -591,7 +591,7 @@ describe("the RoutedResponse tee the door's resolver applies", () => {
     const request: RoutedRequest = {
       method: "POST",
       url: "/v1/code/sessions",
-      headers: { authorization: "Bearer sk-ant-REDACTED" },
+      headers: { authorization: "Bearer sk-ant-oat" },
       // A real IncomingMessage over an unconnected socket: the stand-in route never reads the body, and constructing the genuine type keeps the request honest.
       body: new IncomingMessage(new Socket()),
       signal: new AbortController().signal,
@@ -601,6 +601,6 @@ describe("the RoutedResponse tee the door's resolver applies", () => {
     expect(writes).toEqual([Buffer.from(JSON.stringify({ session: { id: SESSION_ID } }), "utf8")]);
     expect(ended).toEqual([true]);
     expect(tracker.list()).toEqual([{ id: SESSION_ID, createdAt: CLOCK_START_MS, lastSeenAt: CLOCK_START_MS }]);
-    expect(tracker.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-REDACTED");
+    expect(tracker.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-oat");
   });
 });

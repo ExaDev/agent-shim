@@ -8,7 +8,7 @@ import { createRcControlHandler, frontDoorRcControl, type RcControlTransport } f
 import { RC_IDLE_EXPIRY_MS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, type RcAnswerDecision, type RcEventWriteResult, type RcSessionTracker } from "./rcSessions";
 
 /** The bearers the fake CLI presents, one per credential kind: the OAuth bearer the create carries (the client half's credential, the one an injected write must replay), and the worker JWT its recurring worker calls carry (a different kind that must never displace it, observed live as a 401 when replayed on the client half). */
-const CREATE_BEARER = "Bearer sk-ant-REDACTED";
+const CREATE_BEARER = "Bearer sk-ant-oat";
 const HEARTBEAT_BEARER = "Bearer eyJhbGciOiJFUzI1NiJ9.e2e.worker.jwt";
 /** The protocol headers the fake CLI sends on every Remote Control call, which the injected write must replay. */
 const VERSION = "2023-06-01";
