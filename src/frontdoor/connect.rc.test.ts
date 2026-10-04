@@ -7,9 +7,9 @@ import { KEYGEN_TIMEOUT_MS, RC_TEST_SEQUENCE_NUM, RC_TEST_SESSION_ID, HTTP_OK, c
 import { createRcControlHandler, frontDoorRcControl, type RcControlTransport } from "./rcControl";
 import { RC_IDLE_EXPIRY_MS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, type RcAnswerDecision, type RcEventWriteResult, type RcSessionTracker } from "./rcSessions";
 
-/** The bearers the fake CLI presents: the OAuth one the create carries, and the fresher one its recurring calls carry, so latest-wins is proven on the wire. */
+/** The bearers the fake CLI presents, one per credential kind: the OAuth bearer the create carries (the client half's credential, the one an injected write must replay), and the worker JWT its recurring worker calls carry (a different kind that must never displace it, observed live as a 401 when replayed on the client half). */
 const CREATE_BEARER = "Bearer sk-ant-REDACTED";
-const HEARTBEAT_BEARER = "Bearer sk-ant-REDACTED";
+const HEARTBEAT_BEARER = "Bearer eyJhbGciOiJFUzI1NiJ9.e2e.worker.jwt";
 /** The protocol headers the fake CLI sends on every Remote Control call, which the injected write must replay. */
 const VERSION = "2023-06-01";
 const PLATFORM = "desktop_app";
@@ -86,11 +86,11 @@ describe("Remote Control observation and injection over the connect surface", ()
         expect(tracker.list().map((session) => session.id)).toEqual([RC_TEST_SESSION_ID]);
         expect(tracker.credentialOf(RC_TEST_SESSION_ID)).toEqual({ authorization: CREATE_BEARER, anthropicVersion: VERSION, anthropicClientPlatform: PLATFORM });
 
-        // A recurring call refreshes the retained bearer latest-wins, exactly as the heartbeats do on a real session.
+        // The worker's recurring call carries the worker JWT: it refreshes the entry's liveness without displacing the OAuth bearer the write must replay.
         const heartbeat = await postOn(secure, `/v1/code/sessions/${RC_TEST_SESSION_ID}/worker/heartbeat`, HEARTBEAT_BEARER, JSON.stringify({ session_id: RC_TEST_SESSION_ID }));
         expect(heartbeat.statusLine).toContain(String(HTTP_OK));
         await settle();
-        expect(tracker.credentialOf(RC_TEST_SESSION_ID)?.authorization).toBe(HEARTBEAT_BEARER);
+        expect(tracker.credentialOf(RC_TEST_SESSION_ID)?.authorization).toBe(CREATE_BEARER);
 
         // The inject operation, driven the way the door's control route drives it: the tracker's observed credential, and the door's real dial code redirected at the stand-in API host.
         const delivered = await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial: rcDial, newUuid: () => "uuid-e2e" }, RC_TEST_SESSION_ID, "run the tests");
@@ -100,7 +100,7 @@ describe("Remote Control observation and injection over the connect surface", ()
         const write = world.upstreamRequests.find((seen) => seen.url === `/v1/code/sessions/${RC_TEST_SESSION_ID}/events`);
         expect(write).toBeDefined();
         expect(write?.method).toBe("POST");
-        expect(write?.headers.authorization).toBe(HEARTBEAT_BEARER);
+        expect(write?.headers.authorization).toBe(CREATE_BEARER);
         expect(write?.headers["anthropic-version"]).toBe(VERSION);
         expect(write?.headers["anthropic-client-platform"]).toBe(PLATFORM);
         expect(write?.headers.host).toBe(CONNECT_INTERCEPT_HOST);
@@ -259,7 +259,7 @@ describe("Remote Control observation and injection over the connect surface", ()
         const write = world.upstreamRequests.find((seen) => seen.url === `/v1/code/sessions/${RC_TEST_SESSION_ID}/events`);
         expect(write).toBeDefined();
         expect(write?.method).toBe("POST");
-        expect(write?.headers.authorization).toBe(HEARTBEAT_BEARER);
+        expect(write?.headers.authorization).toBe(CREATE_BEARER);
         expect(write?.headers["anthropic-version"]).toBe(VERSION);
         expect(write?.headers["anthropic-client-platform"]).toBe(PLATFORM);
         expect(write?.headers.host).toBe(CONNECT_INTERCEPT_HOST);

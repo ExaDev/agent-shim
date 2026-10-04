@@ -60,8 +60,8 @@ interface RcSessionRecord {
   readonly createdAt: number;
   /** The instant of the last observed exchange for this session. */
   lastSeenAt: number;
-  /** The most recent Authorization header value observed on this session's calls, replayed verbatim on injection. */
-  authorization: string | undefined;
+  /** The most recent OAuth-kind Authorization header observed on this session's calls, replayed verbatim on the client-half writes. Worker calls carry the worker JWT instead; that credential authorises worker operations only, so it never becomes this value (and is retained nowhere, since no door write presents it). */
+  oauthAuthorization: string | undefined;
   /** The most recent `anthropic-version` value observed on this session's calls. */
   anthropicVersion: string | undefined;
   /** The most recent `anthropic-client-platform` value observed on this session's calls. */
@@ -170,6 +170,15 @@ export interface RcSessionTracker {
 function singleHeader(headers: Readonly<IncomingHttpHeaders>, name: string): string | undefined {
   const value = headers[name];
   return typeof value === "string" ? value : undefined;
+}
+
+/** The Authorization prefix the client half presents: the claude.ai OAuth bearer, an opaque `sk-ant-oat` token. The protocol's other credential, the worker JWT a bridge registration mints, authorises worker calls only, so a header carrying it is never the injection credential (observed live: an inject replaying a heartbeat's JWT was answered 401). */
+const OAUTH_AUTHORIZATION_PREFIX = "Bearer sk-ant-oat";
+
+/** The OAuth-kind Authorization value a request carried, or undefined when the header is absent or presents the worker JWT instead. */
+function oauthAuthorizationOf(headers: Readonly<IncomingHttpHeaders>): string | undefined {
+  const value = singleHeader(headers, "authorization");
+  return value?.startsWith(OAUTH_AUTHORIZATION_PREFIX) === true ? value : undefined;
 }
 
 /** Whether a create response body names a session id: parses as JSON, navigates to `session.id`, and accepts only a `cse_`-prefixed string, the same prefix the real client validates. */
@@ -347,7 +356,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   const timer = setInterval(sweep, deps.idleMs);
   timer.unref();
 
-  const birth = (id: string, facts: Readonly<{ authorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined }>): RcSessionRecord => {
+  const birth = (id: string, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined }>): RcSessionRecord => {
     const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), workerState: undefined, workerIdleSeconds: undefined };
     entries.set(id, record);
     return record;
@@ -361,7 +370,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     }
     const tail = path.slice(RC_SESSIONS_PATH_PREFIX.length);
     const facts = {
-      authorization: singleHeader(request.headers, "authorization"),
+      oauthAuthorization: oauthAuthorizationOf(request.headers),
       anthropicVersion: singleHeader(request.headers, "anthropic-version"),
       anthropicClientPlatform: singleHeader(request.headers, "anthropic-client-platform"),
     };
@@ -402,10 +411,10 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     if (id?.startsWith(RC_SESSION_ID_PREFIX) !== true) {
       return undefined;
     }
-    // Every recurring session call refreshes the entry: the bearer and protocol headers are latest-wins because the freshest observed value is the live one (heartbeats and presence recur on the session's own credential).
+    // Every recurring session call refreshes the entry: the protocol headers and the OAuth-kind bearer are latest-wins because the freshest observed value is the live one. A worker call's JWT is not an OAuth credential, so it refreshes the entry's liveness without touching the injection credential (a worker JWT replayed on the client half is answered 401).
     const entry = entries.get(id) ?? birth(id, facts);
     entry.lastSeenAt = deps.now();
-    entry.authorization = facts.authorization ?? entry.authorization;
+    entry.oauthAuthorization = facts.oauthAuthorization ?? entry.oauthAuthorization;
     entry.anthropicVersion = facts.anthropicVersion ?? entry.anthropicVersion;
     entry.anthropicClientPlatform = facts.anthropicClientPlatform ?? entry.anthropicClientPlatform;
 
@@ -519,7 +528,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     },
     credentialOf: (sessionId) => {
       const entry = entries.get(sessionId);
-      return entry === undefined ? undefined : { authorization: entry.authorization, anthropicVersion: entry.anthropicVersion, anthropicClientPlatform: entry.anthropicClientPlatform };
+      return entry === undefined ? undefined : { authorization: entry.oauthAuthorization, anthropicVersion: entry.anthropicVersion, anthropicClientPlatform: entry.anthropicClientPlatform };
     },
     completePending: (sessionId, requestId) => {
       entries.get(sessionId)?.pending.delete(requestId);
@@ -625,7 +634,7 @@ export function buildRcEventWriteBody(payload: Record<string, unknown>): Record<
   return { events: [{ payload }] };
 }
 
-/** The headers a client-half write sends: the observed credential and protocol values, replayed verbatim, never invented. */
+/** The headers a client-half write sends: the observed OAuth-kind credential and protocol values, replayed verbatim, never invented. */
 export interface RcWriteHeaders {
   readonly authorization: string | undefined;
   readonly anthropicVersion: string | undefined;
@@ -701,7 +710,12 @@ export interface RcInjectDeps {
   readonly newUuid: () => string;
 }
 
-/** The headers every client-half write sends, from the observed credential: the observed values replayed verbatim, each only when observed, never invented. */
+/** The failure every client-half write returns when the tracker holds no OAuth-kind bearer for the session: only worker calls were observed, and the worker JWT they carry does not authorise the client half. */
+function noOAuthCredentialResult(sessionId: string): RcEventWriteResult {
+  return { ok: false, message: `no claude.ai OAuth bearer has been observed for session ${sessionId}: only worker calls crossed this door, and the worker JWT they carry is answered 401 on the client half. Reconnect Remote Control through this door and the create's own bearer will be observed` };
+}
+
+/** The headers every client-half write sends, from the observed credential: the observed values replayed verbatim. The authorization is present by construction, since every caller guards on it (the write refuses to go out unauthenticated rather than surface as a confusing 401). */
 function rcWriteHeaders(credential: RcObservedCredential): Record<string, string> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (credential.authorization !== undefined) {
@@ -723,6 +737,9 @@ export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string,
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
     return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)` };
+  }
+  if (credential.authorization === undefined) {
+    return noOAuthCredentialResult(sessionId);
   }
   const body = JSON.stringify(buildRcEventWriteBody(buildRcUserMessagePayload(deps.newUuid(), sessionId, text)));
   let answer: RcDialAnswer;
@@ -768,6 +785,9 @@ export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: stri
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
     return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)` };
+  }
+  if (credential.authorization === undefined) {
+    return noOAuthCredentialResult(sessionId);
   }
   if (!deps.pendingOf(sessionId).some((pending) => pending.requestId === requestId)) {
     return { ok: false, message: `the front door has not observed control request ${requestId} pending on session ${sessionId}: it was answered already (by this door or by an attached client), it passed its answer deadline (the protocol's permission round-trip bound), or it never passed through this door` };
