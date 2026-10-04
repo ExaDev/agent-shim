@@ -9,7 +9,7 @@ Results are point-in-time (they depend on the installed headroom build, the work
 ```bash
 node scripts/headroom-measure.mts --sessions 6 --requests 25 --out ./results
 node scripts/headroom-measure.mts --dry-run                       # print the workload shape and stop
-node scripts/headroom-measure.mts --variants "cache (default),token"
+node scripts/headroom-measure.mts --variant "cache (default)" --variant token
 node scripts/headroom-measure.mts --transcript ./session.jsonl    # replay a chosen transcript (repeatable)
 ```
 
@@ -34,7 +34,7 @@ The multipliers are the documented ones (https://platform.claude.com/docs/en/bui
 
 ## Variants
 
-The matrix covers `cache` (headroom's default) and `token` modes, lower `--target-ratio` values, `--lossless` and `--no-ccr` (retrieval markers off), and the experimental `--intercept-tool-results` and `--read-maturation` behind their rollout channels. `--variants` selects by name.
+The matrix covers `cache` (headroom's default) and `token` modes, lower `--target-ratio` values, `--lossless` and `--no-ccr` (retrieval markers off), and the experimental `--intercept-tool-results` and `--read-maturation` behind their rollout channels. `--variant NAME` (repeatable) selects by name, and an unknown name is an error.
 
 ## Limits
 
