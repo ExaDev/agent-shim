@@ -160,6 +160,41 @@ export function realConnectEffects(): ConnectEffects {
         },
       };
     },
+    createSniTlsAcceptor: (hosts, leafFor, onSecure) => {
+      // One secure context per served host, built once: `leafFor` is the leaf cache the CONNECT acceptors already minted through, so this only wraps each host's leaf in the form node's SNI selection hands out.
+      const contexts = new Map<string, tls.SecureContext>(
+        hosts.map((host) => {
+          const leaf = leafFor(host);
+          return [host, tls.createSecureContext({ key: leaf.keyPem, cert: leaf.certPem })];
+        }),
+      );
+      const server = tls.createServer(
+        {
+          // No default key or cert exists, so the SNI selection is the only source of credentials: an unserved name fails its handshake here, and a client that sent no SNI at all never reaches the selection and fails for want of any certificate, which is exactly the fail-closed shape this surface wants.
+          SNICallback: (servername, callback) => {
+            const context = contexts.get(servername);
+            callback(context === undefined ? new Error(`the transparent surface serves no host named ${servername}`) : null, context);
+          },
+        },
+        (secure) => {
+          // node types the servername `string | false | null` because a client may send none, and a handshake that completed here always did (the SNI selection is the only credential source); anything else still fails closed downstream, where no session carries its name.
+          onSecure(secure, typeof secure.servername === "string" ? secure.servername : "");
+        },
+      );
+      // A failed handshake (an unserved name, a client that does not trust the CA, a client that speaks no TLS) surfaces here; the only honest response is to drop the connection.
+      server.on("clientError", (_error: Error, socket: net.Socket) => {
+        socket.destroy();
+      });
+      return {
+        // The same hand-off the single-leaf acceptor uses: emitting the connection event runs the TLS server's own connection listener on a socket this process already owns (the redirect half of the connection) rather than one the server accepted itself.
+        accept: (socket) => {
+          server.emit("connection", socket);
+        },
+        close: () => {
+          server.close();
+        },
+      };
+    },
     createHttpSession: (handler, onUpgrade) => {
       const server = http.createServer(handler);
       server.on("clientError", (_error, socket) => {
