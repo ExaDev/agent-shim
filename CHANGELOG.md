@@ -1,3 +1,9 @@
+## [8.1.0](https://github.com/ExaDev/agent-shim/compare/v8.0.2...v8.1.0) (2026-10-04)
+
+### Features
+
+* **scripts:** codify the RC interception rig as a bring-up script ([49a4da5](https://github.com/ExaDev/agent-shim/commit/49a4da50bc08baca397b5b6b5fd1cd3fd377e80e)), closes [#184](https://github.com/ExaDev/agent-shim/issues/184), references [#136](https://github.com/ExaDev/agent-shim/issues/136) [#137](https://github.com/ExaDev/agent-shim/issues/137) [#182](https://github.com/ExaDev/agent-shim/issues/182)
+
 ## [8.0.2](https://github.com/ExaDev/agent-shim/compare/v8.0.1...v8.0.2) (2026-10-04)
 
 ### Bug Fixes
