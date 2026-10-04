@@ -1,3 +1,9 @@
+## [8.5.5](https://github.com/ExaDev/agent-shim/compare/v8.5.4...v8.5.5) (2026-10-04)
+
+### Bug Fixes
+
+* **frontdoor:** read a sequence number the API returns as a JSON string ([9ffe00d](https://github.com/ExaDev/agent-shim/commit/9ffe00dc6043e3293b625f8f7556caba36c3ef23))
+
 ## [8.5.4](https://github.com/ExaDev/agent-shim/compare/v8.5.3...v8.5.4) (2026-10-04)
 
 ### Bug Fixes
