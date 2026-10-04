@@ -1,3 +1,13 @@
+## [8.6.0](https://github.com/ExaDev/agent-shim/compare/v8.5.6...v8.6.0) (2026-10-04)
+
+### Features
+
+* **frontdoor:** send the client half's own control requests into a session ([ecbc27b](https://github.com/ExaDev/agent-shim/commit/ecbc27bd396456c2d9bcace152d97ee0d4ca4253))
+
+### Tests
+
+* **frontdoor:** bound the hop's added latency floor, not its median difference ([9195503](https://github.com/ExaDev/agent-shim/commit/9195503e5167e4d2c5a791ad2f13d821a9e834f7))
+
 ## [8.5.6](https://github.com/ExaDev/agent-shim/compare/v8.5.5...v8.5.6) (2026-10-04)
 
 ### Bug Fixes
