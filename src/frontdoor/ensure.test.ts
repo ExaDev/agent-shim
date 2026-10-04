@@ -242,6 +242,8 @@ describe("ensureFrontDoor", () => {
     writeFrontDoorState(world.fs, paths.frontdoorStateFile, { supervisorPid: SUPERVISOR_PID, lastPort: PORT, lastConnectPort: CONNECT_PORT, lastError: "gave up" });
     expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(FrontDoorStartError);
     expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow("gave up");
+    // The command line's error reporter adds the `agent-shim:` prefix, so the message must not carry its own.
+    expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(/^the front door reported a fatal error/);
   });
 
   it("times out naming the daemon log when the front door never becomes ready", () => {

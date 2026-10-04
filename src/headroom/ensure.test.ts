@@ -292,3 +292,12 @@ describe("ensureHeadroom allowlist gate", () => {
     expect(world.fs.readFileUtf8(sessionFile(GATED_LAUNCHER_PID))).toBeUndefined();
   });
 });
+
+describe("ensureHeadroom error messages", () => {
+  it("leave the `agent-shim:` prefix to the command line's error reporter, so it is not printed twice", () => {
+    const world = makeWorld();
+    world.writeReadyState();
+    writeHeadroomState(world.fs, paths.headroomStateFile, { supervisorPid: SUPERVISOR_PID, lastError: "boom" });
+    expect(() => ensureHeadroom({ paths, launcherPid: 70, ports: world.ports })).toThrow(/^the headroom daemon reported a fatal error/);
+  });
+});
