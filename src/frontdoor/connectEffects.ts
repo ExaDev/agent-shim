@@ -1,4 +1,5 @@
-import * as dns from "node:dns";
+// The module object itself, not a namespace import: dns.setServers rebinds module.exports' resolve functions, and a namespace import would keep the binding captured at import time, so only a live property read honours a resolver reconfigured later (which is how the regression test's resolver stand-in redirects the door's name dials at loopback).
+import dns from "node:dns";
 import * as http from "node:http";
 import * as https from "node:https";
 import type { LookupFunction } from "node:net";
@@ -14,10 +15,12 @@ import type { RcDialAnswer, RcEventDial } from "./rcSessions";
  */
 
 /**
- * The local source-port range the door's own upstream sockets bind, matching the pf exemption an interception deployment loads alongside the redirect: without it, the door's dial to the real address would be redirected straight back into its own transparent surface, an endless loop. Node binds one port per socket with no range option, so this hands them out in rotation and a dial that loses the race to a still-closing socket retries on the next port.
+ * The local source-port range the door's own upstream sockets bind, matching the pf exemption an interception deployment loads alongside the redirect: without it, the door's dial to the real address would be redirected straight back into its own transparent surface, an endless loop. Node binds one port per socket with no range option, so this hands them out in rotation. The bounds are exported for the regression tests that pin the range's ports the way a long-lived sibling holds them.
  */
-const UPSTREAM_LOCAL_PORT_START = 47900;
-const UPSTREAM_LOCAL_PORT_END = 47919;
+export const UPSTREAM_LOCAL_PORT_START = 47900;
+export const UPSTREAM_LOCAL_PORT_END = 47919;
+/** The range's width: one dial may take each port at most once before the range counts as fully held. */
+const UPSTREAM_LOCAL_PORT_COUNT = UPSTREAM_LOCAL_PORT_END - UPSTREAM_LOCAL_PORT_START + 1;
 let nextUpstreamLocalPort = UPSTREAM_LOCAL_PORT_START;
 
 /** The next source port for one of the door's own upstream dials, in rotation. */
@@ -47,12 +50,56 @@ const realAddressLookup: LookupFunction = (host, _options, callback) => {
 const HTTP_PORT = 80;
 
 /**
- * Builds one raw socket for the door's own upstream dials: bound into the reserved source-port range and resolved through real DNS for a real name (the pf-exemption counterparts, keeping a redirected address's traffic from looping into the door's own transparent surface), and dialled exactly as node's own agents would for an address literal, which no redirect can name.
+ * The errnos that mean this reserved port cannot serve this dial, so the next port of the range is worth trying: EADDRINUSE is the documented bind conflict, and EADDRNOTAVAIL is the form a port held by a long-lived sibling produces at connect time (the live observation behind the retry). Every other failure is a port-independent problem and surfaces unchanged.
  */
-function exemptDial(options: http.ClientRequestArgs, defaultPort: number): net.Socket {
-  const host = typeof options.host === "string" ? options.host : "";
-  const port = typeof options.port === "number" ? options.port : defaultPort;
-  return net.connect(net.isIP(host) === 0 ? { host, port, localPort: upstreamLocalPort(), lookup: realAddressLookup } : { host, port });
+const HELD_PORT_ERRNOS: ReadonlySet<string> = new Set(["EADDRINUSE", "EADDRNOTAVAIL"]);
+
+/** One dial's settled outcome: the socket with no error once its connection is established, or the socket the failure stopped on (dead by then) beside the error. The failed socket rides along because node's agent callback takes both, and ignores the socket whenever an error is set (exactly how node's own proxied https dial reports a failed tunnel). */
+type DialOutcome = { readonly error: null; readonly socket: net.Socket } | { readonly error: NodeJS.ErrnoException; readonly socket: net.Socket };
+
+/** Dials once and settles only once the outcome is certain, so a bind-phase failure can be told apart from a connection that is merely still coming up. */
+async function dialOnce(connectOptions: net.TcpSocketConnectOpts): Promise<DialOutcome> {
+  return await new Promise((resolve) => {
+    const socket = net.connect(connectOptions);
+    socket.once("connect", () => {
+      resolve({ error: null, socket });
+    });
+    socket.once("error", (error: NodeJS.ErrnoException) => {
+      resolve({ error, socket });
+    });
+  });
+}
+
+/** Where one of the door's own upstream dials is headed: the request's own host and port, with the protocol's default when the request names none. */
+function dialTarget(options: http.ClientRequestArgs, defaultPort: number): { readonly host: string; readonly port: number } {
+  return { host: typeof options.host === "string" ? options.host : "", port: typeof options.port === "number" ? options.port : defaultPort };
+}
+
+/**
+ * One of the door's own upstream dials for an address literal, dialled exactly as node's own agents would: no reserved source port, because an OS-chosen ephemeral port cannot be held against the dial, so there is nothing to settle or retry and the socket is returned still connecting, keeping the loopback and literal hot paths at their original shape and cost.
+ */
+function literalDial(target: { readonly host: string; readonly port: number }): net.Socket {
+  return net.connect({ host: target.host, port: target.port });
+}
+
+/**
+ * One of the door's own upstream dials for a real name: bound into the reserved source-port range and resolved through real DNS (the pf-exemption counterparts, keeping a redirected address's traffic from looping into the door's own transparent surface, which no address literal can name).
+ *
+ * The dial settles only once its outcome is certain, and a reserved port a long-lived sibling already holds (EADDRINUSE, or the EADDRNOTAVAIL of the live observation) is retried on the next port of the rotation, one attempt per port of the range, so a fully-held range surfaces the last bind error instead of spinning. Every other failure (a refused connection, a TLS fault) settles exactly as a bare dial's would.
+ */
+async function reservedDial(target: { readonly host: string; readonly port: number }): Promise<DialOutcome> {
+  // The rotation advances one full cycle over exactly the range's width of calls, so one attempt per port bounds the retry: the last attempt has tried every port once.
+  for (let attempt = 0; ; attempt += 1) {
+    const outcome = await dialOnce({ host: target.host, port: target.port, localPort: upstreamLocalPort(), lookup: realAddressLookup });
+    if (outcome.error === null) {
+      return outcome;
+    }
+    const held = outcome.error.code !== undefined && HELD_PORT_ERRNOS.has(outcome.error.code);
+    // A failure that is not a held port, or a range whose every port has been tried once: this dial's own settled failure is the honest one to hand back.
+    if (!held || attempt === UPSTREAM_LOCAL_PORT_COUNT - 1) {
+      return outcome;
+    }
+  }
 }
 
 /**
@@ -64,25 +111,50 @@ function requestServername(options: http.ClientRequestArgs, fallback: string): s
 
 /** The plain-HTTP sibling; http.Agent and https.Agent each carry their protocol, and one cannot serve the other's requests. */
 export class ExemptHttpAgent extends http.Agent {
-  createConnection(options: http.ClientRequestArgs): net.Socket {
-    return exemptDial(options, HTTP_PORT);
+  // A reserved-port dial that has to retry cannot produce its socket synchronously, so it settles first and arrives through the callback (node's documented asynchronous createConnection form); a literal dial has nothing to retry and keeps node's own synchronous shape.
+  createConnection(options: http.ClientRequestArgs, oncreate?: (error: Error | null, socket: net.Socket) => void): net.Socket | undefined {
+    const target = dialTarget(options, HTTP_PORT);
+    if (net.isIP(target.host) !== 0) {
+      return literalDial(target);
+    }
+    void reservedDial(target).then((outcome) => {
+      oncreate?.(outcome.error, outcome.socket);
+    });
+    return undefined;
   }
 }
 
 /** The TLS sibling: the door's keep-alive agent for https upstreams, every real-name socket in the pf-exempt source-port range. */
 export class ExemptTlsAgent extends https.Agent {
-  createConnection(options: http.ClientRequestArgs): net.Socket {
-    const host = typeof options.host === "string" ? options.host : "";
-    // The request's own TLS facts ride in the options (a forwarding target's servername, its trust anchors for a stand-in upstream, its verification stance): node's own agent consumes them, so this one must too.
-    const tlsOptions: tls.ConnectionOptions = { socket: exemptDial(options, HTTPS_PORT), servername: requestServername(options, host) };
-    if ("ca" in options && Array.isArray(options.ca)) {
-      tlsOptions.ca = options.ca;
+  // The same split as the plain sibling: a literal dial wraps TLS around the socket node's own agent would have returned, a reserved dial settles (retries included) first and arrives through the callback, which is exactly where node's own agent wraps its own dials.
+  createConnection(options: http.ClientRequestArgs, oncreate?: (error: Error | null, socket: net.Socket) => void): net.Socket | undefined {
+    const target = dialTarget(options, HTTPS_PORT);
+    if (net.isIP(target.host) !== 0) {
+      return tls.connect({ socket: literalDial(target), servername: requestServername(options, target.host), ...tlsFacts(options) });
     }
-    if ("rejectUnauthorized" in options && typeof options.rejectUnauthorized === "boolean") {
-      tlsOptions.rejectUnauthorized = options.rejectUnauthorized;
-    }
-    return tls.connect(tlsOptions);
+    void reservedDial(target).then((outcome) => {
+      if (outcome.error !== null) {
+        oncreate?.(outcome.error, outcome.socket);
+        return;
+      }
+      oncreate?.(null, tls.connect({ socket: outcome.socket, servername: requestServername(options, target.host), ...tlsFacts(options) }));
+    });
+    return undefined;
   }
+}
+
+/**
+ * The request's own TLS facts (a forwarding target's servername, its trust anchors for a stand-in upstream, its verification stance): node's own agent consumes them from the options, so this one must too.
+ */
+function tlsFacts(options: http.ClientRequestArgs): Pick<tls.ConnectionOptions, "ca" | "rejectUnauthorized"> {
+  const facts: Pick<tls.ConnectionOptions, "ca" | "rejectUnauthorized"> = {};
+  if ("ca" in options && Array.isArray(options.ca)) {
+    facts.ca = options.ca;
+  }
+  if ("rejectUnauthorized" in options && typeof options.rejectUnauthorized === "boolean") {
+    facts.rejectUnauthorized = options.rejectUnauthorized;
+  }
+  return facts;
 }
 
 /** Where the Remote Control inject path dials: the API host's own address by default, over TLS with the door's interception-proof agent (real-name DNS resolution and the pf-exempt source-port range), so an injected event cannot be looped back into the door's own transparent surface. A test redirects the dial at a local stand-in presenting the host's name, exactly as the forwarding targets are redirected. */
