@@ -236,6 +236,7 @@ Issues and pull requests are welcome. Please keep the tool itself free of assump
 - [docs/library.md](docs/library.md): using agent-shim in process: what the library exposes, and what stays CLI-only.
 - [docs/installation.md](docs/installation.md): every install channel in full, with the platform support matrix.
 - [docs/development.md](docs/development.md): test isolation, commit hooks, and the secret-redaction filter rationale.
+- [docs/headroom-measurement.md](docs/headroom-measurement.md): measuring what headroom's transforms are worth on real conversations, offline: the replay method, the cache-weighted cost model and its limits.
 - [docs/rc-interception-rig.md](docs/rc-interception-rig.md): the Remote Control interception rig: bring-up, per-host TLS proof, teardown, and the manual login step.
 
 ## License
