@@ -1,3 +1,9 @@
+## [8.4.1](https://github.com/ExaDev/agent-shim/compare/v8.4.0...v8.4.1) (2026-10-04)
+
+### Bug Fixes
+
+* **headroom:** start the daemon with its local rate limiter off ([d56306d](https://github.com/ExaDev/agent-shim/commit/d56306d3a367afebcf2911644d7ea21cc8c26f3e))
+
 ## [8.4.0](https://github.com/ExaDev/agent-shim/compare/v8.3.0...v8.4.0) (2026-10-04)
 
 ### Features
