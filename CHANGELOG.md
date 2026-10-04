@@ -1,3 +1,10 @@
+## [8.5.4](https://github.com/ExaDev/agent-shim/compare/v8.5.3...v8.5.4) (2026-10-04)
+
+### Bug Fixes
+
+* **frontdoor:** replace the state file atomically ([43309a4](https://github.com/ExaDev/agent-shim/commit/43309a4317e1693920eb70aed9b72374c184548a))
+* **headroom:** do not register a provider launch against a daemon that predates its allowlist ([375389e](https://github.com/ExaDev/agent-shim/commit/375389e75319e7f10a0f5ebad5a435052c28877a))
+
 ## [8.5.3](https://github.com/ExaDev/agent-shim/compare/v8.5.2...v8.5.3) (2026-10-04)
 
 ### Bug Fixes
