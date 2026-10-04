@@ -165,10 +165,10 @@ export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readon
 }
 
 /**
- * The `headroom proxy` arguments the supervisor starts the daemon with: the unix socket to serve on, and the token-saving settings. Never `--host` or `--port`: the daemon binds no TCP listener, and headroom refuses `--uds` alongside either.
+ * The `headroom proxy` arguments the supervisor starts the daemon with: the unix socket to serve on, `--no-rate-limit`, and the token-saving settings. Never `--host` or `--port`: the daemon binds no TCP listener, and headroom refuses `--uds` alongside either. The daemon's own limiter defaults to 60 requests a minute, which rejects a busy multi-session front door with 429 even though every caller is already the local user; the provider's own limits still apply upstream.
  */
 export function headroomProxyArgs(socketPath: string, settings: Readonly<HeadroomSettings>): readonly string[] {
-  return ["proxy", "--uds", socketPath, ...settingsArgs(settings)];
+  return ["proxy", "--uds", socketPath, "--no-rate-limit", ...settingsArgs(settings)];
 }
 
 /** Asks the daemon's `/readyz` over its unix socket, answering whether it replied 200 (headroom's ready answer) inside the per-attempt timeout. */

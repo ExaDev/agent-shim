@@ -212,8 +212,13 @@ describe("headroom trust", () => {
 describe("headroomProxyArgs", () => {
   it("serves the proxy on the unix socket and binds no TCP address", () => {
     const args = headroomProxyArgs(SOCKET_PATH, { mode: "token" });
-    expect(args).toEqual(["proxy", "--uds", SOCKET_PATH, "--mode", "token"]);
+    expect(args).toEqual(["proxy", "--uds", SOCKET_PATH, "--no-rate-limit", "--mode", "token"]);
     expect(args).not.toContain("--port");
     expect(args).not.toContain("--host");
+  });
+
+  it("turns the daemon's local rate limiter off whatever the settings", () => {
+    expect(headroomProxyArgs(SOCKET_PATH, {})).toContain("--no-rate-limit");
+    expect(headroomProxyArgs(SOCKET_PATH, { mode: "cache" })).toContain("--no-rate-limit");
   });
 });
