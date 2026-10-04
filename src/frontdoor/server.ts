@@ -5,6 +5,7 @@ import https from "node:https";
 import { HTTP_STATUS } from "../codex/http";
 import { aliasLegacyWireHeaders } from "../legacy";
 import type { LeafCert } from "./connect";
+import { CONTROL_PATH_PREFIX } from "./rcControl";
 import type { PipelineRequest } from "./pipeline";
 
 /** How long one health probe waits before giving up: a listener that just bound answers in milliseconds, so the bound only bites when the request path itself is broken. */
@@ -22,13 +23,22 @@ export type FrontDoorServer = http.Server | https.Server;
  *
  * With `tls`, the listener serves HTTPS with that leaf, which is how the provider listener authenticates itself to the child: the leaf is signed by agent-shim's CA, whose key only the owning user can read, and the only CA the child trusts for a 127.0.0.1 certificate is that one (no public CA issues certificates for a loopback address), so a process that merely binds the port cannot complete a handshake the child accepts and never receives the request (credentials and capability included). Without `tls` it serves plain HTTP, which only the direct listener does: nothing that reaches it carries a real credential (see the credential custody).
  *
- * The disconnect is read from the response's `close` event, not the request's: the request emits `close` as soon as its body has been read, long before the response ends. `GET /healthz` is answered here, before the pipeline, because a readiness probe is not a routed session and carries no session headers or capability.
+ * The disconnect is read from the response's `close` event, not the request's: the request emits `close` as soon as its body has been read, long before the response ends. `GET /healthz` is answered here, before the pipeline, because a readiness probe is not a routed session and carries no session headers or capability. The Remote Control control routes are answered here too, before the pipeline, through `control` when one is given: they are the operator's requests to the door itself, not a routed session's, and their prefix is outside the routed URL space.
  */
-export function createFrontDoorServer(pipeline: (request: PipelineRequest) => Promise<void>, log: (line: string) => void, tls?: LeafCert): FrontDoorServer {
+export function createFrontDoorServer(
+  pipeline: (request: PipelineRequest) => Promise<void>,
+  log: (line: string) => void,
+  tls?: LeafCert,
+  control?: (request: IncomingMessage, response: ServerResponse) => void,
+): FrontDoorServer {
   const handler = (request: IncomingMessage, response: ServerResponse): void => {
     if (request.method === "GET" && request.url === "/healthz") {
       response.writeHead(HTTP_STATUS.ok, { "Content-Type": "text/plain" });
       response.end("ok");
+      return;
+    }
+    if (control !== undefined && (request.url ?? "/").startsWith(CONTROL_PATH_PREFIX)) {
+      control(request, response);
       return;
     }
     const abort = new AbortController();

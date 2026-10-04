@@ -2,7 +2,7 @@
  * The library surface of agent-shim: the pure, port-injected parts other tools can call in-process instead of shelling out to the CLI. Four groups, none of which imports interactive prompting or argument parsing:
  *
  * - identity and configuration-profile resolution and farm sync (`resolveDecisions`, `resyncFarm`, `buildEntryFacts`, ...), pure over facts and ports passed in;
- * - routing: the front door's Remote-Control-preserving, capability-authenticated CONNECT surface and its certificate authority, the Remote Control session tracker and prompt injection over the same observed protocol, the front-door supervisor and ensure lifecycle, and the headroom supervisor and ensure lifecycle, each pure over its injected ports;
+ * - routing: the front door's Remote-Control-preserving, capability-authenticated CONNECT surface and its certificate authority, the Remote Control session tracker and prompt injection over the same observed protocol, the control surface that lists and injects through, the front-door supervisor and ensure lifecycle, and the headroom supervisor and ensure lifecycle, each pure over its injected ports;
  * - the ambient-credential guard;
  * - the per-identity usage snapshot a statusline or launcher reads: its schema and the reader over an injected filesystem;
  * - the state root's layout (`resolveAgentShimHome`, `resolveLayoutPaths`, `buildLayoutPaths`), which includes adopting an existing `~/.claude-use` in place, and the Zod schema and inferred type of every configuration file (identity, configuration profile, provider, pool, directory rules, global config, credential), so a tool can validate or generate them with the same definitions the CLI uses.
@@ -83,6 +83,7 @@ export {
   type RcSessionTracker,
   type RcSessionTrackerDeps,
 } from "./frontdoor/rcSessions";
+export { CONTROL_PATH_PREFIX, createRcControlHandler, frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl, type RcControlAnswer, type RcControlHandlerDeps, type RcControlTransport } from "./frontdoor/rcControl";
 export { ensureFrontDoor, FrontDoorStartError, type EnsureFrontDoorPorts } from "./frontdoor/ensure";
 export { runFrontDoorSupervisor, type FrontDoorSupervisorPorts, type RunFrontDoorSupervisorOptions } from "./frontdoor/supervisor";
 export { listUsageSnapshots, readUsageSnapshot, snapshotPath, UsageSnapshotError, type UsageReadFs } from "./usage/read";

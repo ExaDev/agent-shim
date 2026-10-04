@@ -17,7 +17,8 @@ import {
   type ConnectEffects,
   type ConnectLimits,
 } from "./connect";
-import { realConnectEffects } from "./connectEffects";
+import { realConnectEffects, realRcEventDial } from "./connectEffects";
+import { rcObserverAsPassthrough, type RcEventDial, type RcSessionTracker } from "./rcSessions";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates in `beforeAll`. */
 export const KEYGEN_TIMEOUT_MS = 120_000;
@@ -41,6 +42,10 @@ export const HEAD_TERMINATOR = "\r\n\r\n";
 
 /** A made-up launch capability the round-trip world accepts as live. */
 export const TEST_CAPABILITY = "connect-test-capability";
+
+/** The session id the world's fake routed backend names when a Remote Control create arrives, and the sequence number its fake upstream assigns an injected event: fixed values so the assertions name exactly what the scripted fakes answered. */
+export const RC_TEST_SESSION_ID = "cse_00000000-0000-4000-8000-000000000001";
+export const RC_TEST_SEQUENCE_NUM = 7;
 
 /** The `Proxy-Authorization` header a client derives from a launch's `HTTPS_PROXY` URL, built from the URL the launcher would set so the test exercises the same encoding round trip a real client does. */
 export function proxyAuthorizationFor(token: string): string {
@@ -147,12 +152,25 @@ export async function requestTimingOn(secure: tls.TLSSocket, request: string): P
 
 /**
  * The real-socket world the round-trip tests run against: a CA issued by `x509.ts`, a fake routed backend on plain HTTP (standing in for whatever the pipeline would serve), a fake upstream presenting TLS signed by its own CA, and the real connect surface with only its tunnel target redirected.
+ *
+ * With `rc`, the world also speaks the Remote Control protocol's client-visible half: the fake routed backend answers a session create with a fixed `cse_` id, the fake upstream answers an event write with a fixed sequence number (and records the request's body and Authorization header, which is what the observation assertions compare against), and the surface's routed requests are observed through the given tracker exactly as the door's route resolver observes them.
  */
-export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { readonly limits?: Partial<ConnectLimits>; readonly isLiveCapability?: (token: string) => boolean; readonly capture?: ConnectCapture; readonly tapHosts?: readonly string[]; readonly transparent?: { readonly port: number; readonly capability: string } } = {}) {
+export function makeTlsWorld(
+  ca: CaMaterial,
+  upstreamCa: CaMaterial,
+  options: {
+    readonly limits?: Partial<ConnectLimits>;
+    readonly isLiveCapability?: (token: string) => boolean;
+    readonly capture?: ConnectCapture;
+    readonly tapHosts?: readonly string[];
+    readonly transparent?: { readonly port: number; readonly capability: string };
+    readonly rc?: { readonly tracker: RcSessionTracker };
+  } = {},
+) {
   /** Every tunnel target the surface dialled, so a refusal can be shown never to have reached one. */
   const dials: { host: string; port: number }[] = [];
-  const routedRequests: { method: string; url: string; headers: http.IncomingHttpHeaders }[] = [];
-  const upstreamRequests: { method: string; url: string; headers: http.IncomingHttpHeaders }[] = [];
+  const routedRequests: { method: string; url: string; headers: http.IncomingHttpHeaders; body: string }[] = [];
+  const upstreamRequests: { method: string; url: string; headers: http.IncomingHttpHeaders; body: string }[] = [];
   let routedPort = 0;
 
   const fakeRouted = http.createServer((req, res) => {
@@ -160,6 +178,13 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
   });
   async function handleFakeRouted(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const body = await readBody(req);
+    if (options.rc !== undefined && req.method === "POST" && req.url === "/v1/code/sessions") {
+      // The Remote Control create: answered with the protocol's documented session envelope so the tracker's id extraction runs on the real shape.
+      const answer = JSON.stringify({ session: { id: RC_TEST_SESSION_ID } });
+      res.writeHead(HTTP_OK, { "content-type": "application/json", "content-length": String(answer.length) });
+      res.end(answer);
+      return;
+    }
     // A streamed response: the first byte goes out immediately, the rest only after the hold-back, so a buffering proxy cannot deliver the first byte early.
     const total = `streamed:${body}`;
     res.writeHead(HTTP_OK, { "content-type": "text/plain", "content-length": String(total.length) });
@@ -172,11 +197,22 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
 
   const upstreamLeaf = mintLeaf(upstreamCa, [...CONNECT_INTERCEPT_HOSTS], new Date());
   const fakeUpstream = https.createServer({ key: upstreamLeaf.keyPem, cert: upstreamLeaf.certPem }, (req, res) => {
-    upstreamRequests.push({ method: req.method ?? "", url: req.url ?? "", headers: { ...req.headers } });
-    const body = "upstream-says-no";
-    res.writeHead(HTTP_UNAUTHORIZED, { "content-type": "text/plain", "content-length": String(body.length) });
-    res.end(body);
+    void handleFakeUpstream(req, res);
   });
+  async function handleFakeUpstream(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const body = await readBody(req);
+    upstreamRequests.push({ method: req.method ?? "", url: req.url ?? "", headers: { ...req.headers }, body });
+    if (options.rc !== undefined && req.method === "POST" && (req.url ?? "").startsWith("/v1/code/sessions/") && (req.url ?? "").endsWith("/events")) {
+      // The client-half event write the inject path performs: answered with the protocol's documented per-event sequence numbers.
+      const answer = JSON.stringify({ results: [{ sequence_num: RC_TEST_SEQUENCE_NUM }] });
+      res.writeHead(HTTP_OK, { "content-type": "application/json", "content-length": String(answer.length) });
+      res.end(answer);
+      return;
+    }
+    const answer = "upstream-says-no";
+    res.writeHead(HTTP_UNAUTHORIZED, { "content-type": "text/plain", "content-length": String(answer.length) });
+    res.end(answer);
+  }
   // Upgrades reaching the fake upstream are answered as a real websocket server would: the 101 handshake, then a raw echo channel, so a relayed upgrade can be proven end to end.
   const upstreamUpgrades: string[] = [];
   fakeUpstream.on("upgrade", (req, socket) => {
@@ -229,7 +265,7 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
     tapAlpnOffered,
     routedRequests,
     upstreamRequests,
-    async start(): Promise<{ readonly connectPort: number; readonly transparentPort?: number; readonly close: () => Promise<void> }> {
+    async start(): Promise<{ readonly connectPort: number; readonly transparentPort?: number; readonly upstreamPort: number; readonly rcDial: RcEventDial; readonly close: () => Promise<void> }> {
       await listen(fakeRouted);
       await listen(fakeUpstream);
       await listen(echoServer);
@@ -237,14 +273,25 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
       await listen(tapEcho);
       tapEchoPort = portOf(tapEcho);
       routedPort = portOf(fakeRouted);
+      // The inject path's dial, redirected at the fake upstream exactly as the forwarding targets are: it presents the API host's name with the test CA's leaf, so the door's real dial code runs end to end against a stand-in.
+      const rcDial = realRcEventDial({ host: "127.0.0.1", port: portOf(fakeUpstream), servername: CONNECT_INTERCEPT_HOST, ca: [upstreamCa.certPem], rejectUnauthorized: true });
       const server = await startConnectServer(
         {
           interceptHosts: [...CONNECT_INTERCEPT_HOSTS],
           tapHosts: options.tapHosts ?? [],
           routedHost: CONNECT_INTERCEPT_HOST,
           serveRouted: (request, response) => {
-            routedRequests.push({ method: request.method ?? "", url: request.url ?? "", headers: { ...request.headers } });
-            realConnectEffects().forwardHttp({ host: "127.0.0.1", port: routedPort, tls: false }, request, response);
+            // Additive listeners, so the door-side recording sees the request's body without ever taking the stream away from the forwarding that pipes it.
+            const chunks: Buffer[] = [];
+            request.on("data", (chunk: Buffer) => {
+              chunks.push(chunk);
+            });
+            request.on("end", () => {
+              routedRequests.push({ method: request.method ?? "", url: request.url ?? "", headers: { ...request.headers }, body: Buffer.concat(chunks).toString("utf8") });
+            });
+            // The same observation the door's route resolver applies: the tracker sees the exchange's request facts here and its response through the forwarding's observer, which is the connect world's equivalent of the RoutedResponse tee.
+            const observed = options.rc?.tracker.observeExchange({ method: request.method, url: request.url, headers: request.headers });
+            realConnectEffects().forwardHttp({ host: "127.0.0.1", port: routedPort, tls: false }, request, response, observed === undefined ? undefined : rcObserverAsPassthrough(observed));
           },
           leafFor: createLeafCache(ca, () => new Date()),
           upstreamFor: (host) => ({
@@ -269,7 +316,7 @@ export function makeTlsWorld(ca: CaMaterial, upstreamCa: CaMaterial, options: { 
         effects,
         undefined,
       );
-      return { connectPort: server.port, ...(server.transparentPort === undefined ? {} : { transparentPort: server.transparentPort }), close: async () => { await server.close(); } };
+      return { connectPort: server.port, ...(server.transparentPort === undefined ? {} : { transparentPort: server.transparentPort }), upstreamPort: portOf(fakeUpstream), rcDial, close: async () => { await server.close(); } };
     },
     async stop(): Promise<void> {
       await closeServer(fakeRouted);

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { writeHeadroomState } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
-import { collectFrontDoorStatus, formatFrontDoorStatus } from "./commands";
+import { collectFrontDoorStatus, formatFrontDoorStatus, formatRcSessionList, frontDoorRcControlFromState } from "./commands";
 import { writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
@@ -71,5 +71,31 @@ describe("frontdoor status", () => {
     expect(lines).toContain(
       `headroom hop: REFUSING the daemon's socket (sessions asking for headroom fail until it is fixed): the headroom socket directory ${paths.headroomSocketDir} has mode 0777, which lets other users reach it; it must be accessible to its owner only`,
     );
+  });
+});
+
+describe("frontdoor rc", () => {
+  /** One heartbeat's cadence in the fake timestamps, so the last-seen offset is the protocol's own rather than a bare literal. */
+  const ONE_HEARTBEAT_MS = 20;
+  it("opens the control client only when the door is serving with its CA and control token, naming exactly what is missing otherwise", () => {
+    const nothing = createFakeFarmFs({});
+    expect(() => frontDoorRcControlFromState(nothing, paths)).toThrow("the front door is not serving");
+    const fs = createFakeFarmFs({});
+    writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: SUPERVISOR, port: PORT, lastPort: PORT });
+    expect(() => frontDoorRcControlFromState(fs, paths)).toThrow(`the front door's CA certificate is missing at ${paths.frontdoorCaCertFile}`);
+    fs.mkdirp(paths.frontdoorCaDir);
+    fs.writeFileUtf8(paths.frontdoorCaCertFile, "ca-pem");
+    expect(() => frontDoorRcControlFromState(fs, paths)).toThrow(`the serving front door's control token is missing at ${paths.frontdoorControlTokenFile}`);
+    fs.writeFileUtf8(paths.frontdoorControlTokenFile, "the-control-token");
+    expect(frontDoorRcControlFromState(fs, paths)).toBeDefined();
+  });
+
+  it("formats the observed session list, one line per session and a plain line when there are none", () => {
+    expect(formatRcSessionList([])).toEqual(["no Remote Control sessions observed"]);
+    const createdAt = 1_000;
+    const lastSeenAt = createdAt + ONE_HEARTBEAT_MS;
+    expect(formatRcSessionList([{ id: "cse_1", createdAt, lastSeenAt }])).toEqual([
+      "cse_1  created 1970-01-01T00:00:01.000Z  last seen 1970-01-01T00:00:01.020Z",
+    ]);
   });
 });

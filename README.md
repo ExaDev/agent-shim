@@ -130,6 +130,8 @@ agent-shim doctor [--json]
 agent-shim headroom status [--json]
 agent-shim codex status [--json]
 agent-shim frontdoor status [--json]
+agent-shim frontdoor rc list [--json]
+agent-shim frontdoor rc send --session <cse_id> --text <text> [--json]
 agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--json]
 agent-shim account show [<identity>] [--refresh] [--json]
 agent-shim completion <bash|zsh|fish>

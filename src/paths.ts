@@ -57,6 +57,10 @@ export interface LayoutPaths {
   readonly frontdoorStateFile: string;
   /** Path to the exclusive-create marker guarding "who spawns the front-door supervisor" so concurrent launches start at most one. */
   readonly frontdoorLockFile: string;
+  /**
+   * Path to the serving door's control token, mode 0600: the random bearer capability this generation's Remote Control control routes demand, rewritten on every door start. Only its owner can read it, which is what authenticates a CLI invocation to the door that minted it.
+   */
+  readonly frontdoorControlTokenFile: string;
   /** Directory holding one `<launcher-pid>.json` session-registry entry per live launch routed through the front door. */
   readonly frontdoorSessionsDir: string;
   /** Path to the front door's log: one line per lifecycle event and routed failure, never a token. */
@@ -129,6 +133,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     frontdoorCaBundlesDir: path.join(root, "frontdoor", "ca", "bundles"),
     frontdoorStateFile: path.join(root, "frontdoor", "state.json"),
     frontdoorLockFile: path.join(root, "frontdoor", "start.lock"),
+    frontdoorControlTokenFile: path.join(root, "frontdoor", "control-token"),
     frontdoorSessionsDir: path.join(root, "frontdoor", "sessions"),
     frontdoorLogPath: path.join(root, "logs", "frontdoor.log"),
     usageDir: path.join(root, "usage"),
