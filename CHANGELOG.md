@@ -1,3 +1,10 @@
+## [8.5.1](https://github.com/ExaDev/agent-shim/compare/v8.5.0...v8.5.1) (2026-10-04)
+
+### Bug Fixes
+
+* **frontdoor:** check a failed resolve before reading its addresses ([f4bb6fd](https://github.com/ExaDev/agent-shim/commit/f4bb6fdf6dbcf8a130b07d15b9110b093330cae0))
+* **frontdoor:** retry an exempt dial's held reserved port on the next of the range ([3e957b6](https://github.com/ExaDev/agent-shim/commit/3e957b6e71ab64b2da8e11e9c455058f20612646))
+
 ## [8.5.0](https://github.com/ExaDev/agent-shim/compare/v8.4.1...v8.5.0) (2026-10-04)
 
 ### Features
