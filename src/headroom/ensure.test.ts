@@ -35,12 +35,13 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean } = {}) {
     set onSleep(hook: (() => void) | undefined) {
       onSleep = hook;
     },
-    writeReadyState(socketPath = SOCKET_PATH): void {
+    writeReadyState(socketPath = SOCKET_PATH, allowlistHash?: string): void {
       writeHeadroomState(fs, paths.headroomStateFile, {
         supervisorPid: SUPERVISOR_PID,
         headroomPid: HEADROOM_PID,
         socketPath,
         version: "headroom 0.39.1",
+        ...(allowlistHash === undefined ? {} : { allowlistHash }),
       });
     },
     ports: {
@@ -213,5 +214,81 @@ describe("ensureHeadroom", () => {
     writeSession(world.fs, paths.headroomSessionsDir, { pid: 50, startedAt: 123, supervisorPid: SUPERVISOR_PID });
     ensureHeadroom({ paths, launcherPid: 50, ports: world.ports });
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/50.json`)).toBeDefined();
+  });
+});
+
+describe("ensureHeadroom allowlist gate", () => {
+  const STALE_HASH = "hash-of-the-allowlist-the-daemon-started-with";
+  const CURRENT_HASH = "hash-of-the-allowlist-this-launch-needs";
+  /** The launch under test; each test has its own world, so one pid serves them all. */
+  const GATED_LAUNCHER_PID = 61;
+  const required = (): string => CURRENT_HASH;
+  const sessionFile = (pid: number): string => `${paths.headroomSessionsDir}/${String(pid)}.json`;
+
+  it("registers a provider launch at once when the daemon was started with the allowlist the launch needs", () => {
+    const world = makeWorld();
+    world.writeReadyState(SOCKET_PATH, CURRENT_HASH);
+    expect(ensureHeadroom({ paths, launcherPid: GATED_LAUNCHER_PID, ports: world.ports, requiredAllowlistHash: required })).toEqual({ socketPath: SOCKET_PATH });
+    expect(world.fs.readFileUtf8(sessionFile(GATED_LAUNCHER_PID))).toBeDefined();
+  });
+
+  it("does not hold a launch that needs only Claude Code's own API to the allowlist, since every daemon admits it", () => {
+    const world = makeWorld();
+    world.writeReadyState(SOCKET_PATH, STALE_HASH);
+    expect(ensureHeadroom({ paths, launcherPid: GATED_LAUNCHER_PID, ports: world.ports })).toEqual({ socketPath: SOCKET_PATH });
+    expect(world.fs.readFileUtf8(sessionFile(GATED_LAUNCHER_PID))).toBeDefined();
+  });
+
+  it("refuses a provider launch whose daemon predates the allowlist while a live session holds it, naming that session and registering nothing", () => {
+    const world = makeWorld();
+    world.writeReadyState(SOCKET_PATH, STALE_HASH);
+    world.alive.add(OTHER_LAUNCHER_PID);
+    writeSession(world.fs, paths.headroomSessionsDir, { pid: OTHER_LAUNCHER_PID, startedAt: 0, supervisorPid: SUPERVISOR_PID });
+    expect(() => ensureHeadroom({ paths, launcherPid: GATED_LAUNCHER_PID, ports: world.ports, requiredAllowlistHash: required })).toThrow(HeadroomStartError);
+    expect(() => ensureHeadroom({ paths, launcherPid: GATED_LAUNCHER_PID, ports: world.ports, requiredAllowlistHash: required })).toThrow(String(OTHER_LAUNCHER_PID));
+    expect(world.fs.readFileUtf8(sessionFile(GATED_LAUNCHER_PID))).toBeUndefined();
+  });
+
+  it("ignores a registered session whose launcher has died, since the supervisor prunes it before restarting", () => {
+    const world = makeWorld();
+    world.writeReadyState(SOCKET_PATH, STALE_HASH);
+    writeSession(world.fs, paths.headroomSessionsDir, { pid: OTHER_LAUNCHER_PID, startedAt: 0, supervisorPid: SUPERVISOR_PID });
+    world.onSleep = () => {
+      world.writeReadyState(SOCKET_PATH, CURRENT_HASH);
+    };
+    expect(ensureHeadroom({ paths, launcherPid: GATED_LAUNCHER_PID, ports: world.ports, requiredAllowlistHash: required })).toEqual({ socketPath: SOCKET_PATH });
+  });
+
+  it("waits for the restart that brings the allowlist when no session holds the daemon, and registers only once it is back", () => {
+    const world = makeWorld();
+    world.writeReadyState(SOCKET_PATH, STALE_HASH);
+    let sleeps = 0;
+    world.onSleep = () => {
+      sleeps += 1;
+      expect(world.fs.readFileUtf8(sessionFile(GATED_LAUNCHER_PID))).toBeUndefined();
+      if (sleeps === SLEEPS_BEFORE_RECOVERY) {
+        world.writeReadyState(SOCKET_PATH, CURRENT_HASH);
+      }
+    };
+    expect(ensureHeadroom({ paths, launcherPid: GATED_LAUNCHER_PID, ports: world.ports, requiredAllowlistHash: required })).toEqual({ socketPath: SOCKET_PATH });
+    expect(sleeps).toBe(SLEEPS_BEFORE_RECOVERY);
+    expect(world.fs.readFileUtf8(sessionFile(GATED_LAUNCHER_PID))).toBeDefined();
+  });
+
+  it("re-reads the required hash on every poll, so a front door that moves while the launch waits is followed", () => {
+    const world = makeWorld();
+    world.writeReadyState(SOCKET_PATH, STALE_HASH);
+    let needed = CURRENT_HASH;
+    world.onSleep = () => {
+      needed = STALE_HASH;
+    };
+    expect(ensureHeadroom({ paths, launcherPid: GATED_LAUNCHER_PID, ports: world.ports, requiredAllowlistHash: () => needed })).toEqual({ socketPath: SOCKET_PATH });
+  });
+
+  it("times out loudly, saying the allowlist is why, when the daemon never restarts", () => {
+    const world = makeWorld();
+    world.writeReadyState(SOCKET_PATH, STALE_HASH);
+    expect(() => ensureHeadroom({ paths, launcherPid: GATED_LAUNCHER_PID, ports: world.ports, requiredAllowlistHash: required })).toThrow(/allowlist does not admit this launch's front door/);
+    expect(world.fs.readFileUtf8(sessionFile(GATED_LAUNCHER_PID))).toBeUndefined();
   });
 });

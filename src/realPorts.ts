@@ -9,8 +9,9 @@ import { cosmiconfigReader } from "./config/load";
 import type { CredentialPort } from "./credential";
 import { discoverClaudeBinary, type DiscoveredClaudeBinary, type VersionsDirEntry } from "./versionDiscovery";
 import { ensureHeadroom } from "./headroom/ensure";
+import { currentHeadroomAllowlist } from "./headroom/supervisor";
 import type { HeadroomSocketTrustPorts } from "./headroom/socket";
-import { removeSession } from "./headroom/state";
+import { hashAllowlist, removeSession } from "./headroom/state";
 import type { LayoutPaths } from "./paths";
 import type { FarmFs, FsPort, HeadroomPort, LogPort, ProcPort, RunPort, SpawnPort } from "./launcher/ports";
 
@@ -379,10 +380,11 @@ export const realHeadroomSocketTrust: HeadroomSocketTrustPorts = {
  */
 export function realHeadroomPort(paths: LayoutPaths, options: { readonly spawnDaemon: DaemonSpawner; readonly cwd: string }): HeadroomPort {
   return {
-    ensure: () => {
+    ensure: ({ routesProvider }) => {
       const up = ensureHeadroom({
         paths,
         launcherPid: process.pid,
+        ...(routesProvider ? { requiredAllowlistHash: () => hashAllowlist(currentHeadroomAllowlist(realFarmFs, paths)) } : {}),
         ports: {
           fs: realFarmFs,
           // Zombie-aware on purpose: a supervisor that died while still a child of this launcher sits unreaped until the launcher itself exits, and a defunct supervisor answering signal 0 as alive would stretch every launch to the full start timeout.

@@ -3,6 +3,7 @@ import type { LayoutPaths } from "../paths";
 import {
   readHeadroomState,
   readStartLock,
+  sessionsForSupervisor,
   writeSession,
   type HeadroomFs,
   type HeadroomLock,
@@ -46,18 +47,35 @@ export function ensureHeadroom(params: {
   readonly paths: LayoutPaths;
   readonly launcherPid: number;
   readonly ports: EnsureHeadroomPorts;
+  /**
+   * The hash of the allowlist the daemon must have been started with for this launch to work, read fresh on every poll because the front door's address it contains can change while the launch waits. Given for a launch that routes a provider through headroom, whose requests come back to the front door's direct origin and are refused by a daemon that was started without it; absent for a launch that only needs Claude Code's own API, which every daemon admits.
+   */
+  readonly requiredAllowlistHash?: () => string;
 }): { readonly socketPath: string } {
   const { paths, ports } = params;
   const deadline = ports.now() + HEADROOM_START_TIMEOUT_MS;
   let spawnedSupervisor = false;
+  let awaitingAllowlist = false;
 
   for (;;) {
     const state = readHeadroomState(ports.fs, paths.headroomStateFile);
     if (state?.supervisorPid !== undefined && ports.isRunning(state.supervisorPid)) {
       const daemonUp = state.socketPath !== undefined && state.headroomPid !== undefined && ports.isRunning(state.headroomPid);
       if (daemonUp && state.socketPath !== undefined) {
-        writeSession(ports.fs, paths.headroomSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), supervisorPid: state.supervisorPid });
-        return { socketPath: state.socketPath };
+        const required = params.requiredAllowlistHash?.();
+        if (required === undefined || state.allowlistHash === required) {
+          writeSession(ports.fs, paths.headroomSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), supervisorPid: state.supervisorPid });
+          return { socketPath: state.socketPath };
+        }
+        // The daemon's allowlist predates something this launch routes through (the front door moved to another port, or a provider changed), so it would answer every request with "Rejected unsafe upstream base URL". The supervisor restarts it as soon as no session is registered against it, so registering here would pin the stale daemon for as long as this launch lives: wait for the restart instead, or refuse when a live session is what holds it up.
+        const holders = sessionsForSupervisor(ports.fs, paths.headroomSessionsDir, state.supervisorPid).filter((session) => ports.isRunning(session.pid));
+        if (holders.length > 0) {
+          throw new HeadroomStartError(
+            `agent-shim: the running headroom daemon was started before this launch's front door address and would refuse every request this launch sends through it. ` +
+              `It restarts once the launches using it end (pid ${holders.map((session) => String(session.pid)).join(", ")}); end them and launch again, or launch with --no-headroom.`,
+          );
+        }
+        awaitingAllowlist = true;
       }
       if (state.lastError !== undefined) {
         throw new HeadroomStartError(
@@ -89,6 +107,7 @@ export function ensureHeadroom(params: {
       throw new HeadroomStartError(
         `agent-shim: the headroom daemon did not become ready within ${String(HEADROOM_START_TIMEOUT_MS)}ms` +
           (lastError === undefined ? "" : ` (last error: ${lastError})`) +
+          (awaitingAllowlist ? " (the running daemon's allowlist does not admit this launch's front door, and it did not restart)" : "") +
             `. Daemon log: ${paths.headroomLogPath}`,
       );
     }

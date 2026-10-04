@@ -422,7 +422,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   let headroom: HeadroomUp | undefined;
   const headroomPort = params.headroom;
   if (resolvedFlags.headroom && headroomPort !== undefined) {
-    headroom = headroomPort.ensure();
+    headroom = headroomPort.ensure({ routesProvider: resolvedProvider !== undefined });
     const via = resolvedProvider === undefined ? `OAuth via the door's CONNECT surface on 127.0.0.1:${String(frontDoor?.connectPort ?? 0)}` : `provider ${resolvedProvider.name}`;
     log.info(`agent-shim: routing through the front door on 127.0.0.1:${String(frontDoor?.port ?? 0)} with headroom on unix socket ${headroom.socketPath} (${via}, project ${headroom.projectId})`);
   } else if (resolvedFlags.headroom) {
