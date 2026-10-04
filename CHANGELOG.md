@@ -1,3 +1,10 @@
+## [8.3.0](https://github.com/ExaDev/agent-shim/compare/v8.2.0...v8.3.0) (2026-10-04)
+
+### Features
+
+* **frontdoor:** expose Remote Control sessions over the frontdoor rc verbs ([5a095f5](https://github.com/ExaDev/agent-shim/commit/5a095f54088d423a027c5a0f954226d181bda820))
+* **frontdoor:** track Remote Control sessions and inject prompts as the client half ([3bc279e](https://github.com/ExaDev/agent-shim/commit/3bc279e94aebe8890860824e6eed479d3f93fe0e))
+
 ## [8.2.0](https://github.com/ExaDev/agent-shim/compare/v8.1.0...v8.2.0) (2026-10-04)
 
 ### Features
