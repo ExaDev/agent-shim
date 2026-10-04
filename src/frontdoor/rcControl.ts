@@ -3,12 +3,15 @@ import * as https from "node:https";
 
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
-import type { RcAnswerDecision, RcEventWriteResult, RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
+import { RC_PERMISSION_MODES, isRcPermissionMode, type RcAnswerDecision, type RcEventWriteResult, type RcPendingRequestSummary, type RcPermissionMode, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+
+/** The SDK's own permission modes as one readable list, so a body refused for a bad mode names exactly what is permitted. */
+const RC_PERMISSION_MODE_LIST = RC_PERMISSION_MODES.join(", ");
 
 /**
- * The Remote Control control surface: the small HTTP namespace the serving door answers on its provider listener, next to `/healthz`, through which `agent-shim frontdoor rc` lists the observed sessions, reports each one's status and pending control requests, injects a prompt into one, and answers one of its pending requests.
+ * The Remote Control control surface: the small HTTP namespace the serving door answers on its provider listener, next to `/healthz`, through which `agent-shim frontdoor rc` lists the observed sessions, reports each one's status and pending control requests, injects a prompt into one, answers one of its pending requests, and sends its own control requests into one (interrupt, set-model, set-permission-mode).
  *
- * This rides the listener `frontdoor status` already knows the door by (its address comes from the same state file, its trust anchor from the same CA path) rather than any second channel. The routes sit under one prefix the routed pipeline never serves, and every request must present the serving generation's control token as a Bearer credential: a fresh random value per door start, written owner-only under the front door's state directory so only this user's CLI can read it, and checked in constant time like every other capability the door accepts. An inject or answer request is carried out by the door itself over its interception-proof dials, which is the whole point: the CLI never dials the API host directly, so nothing about the write depends on the caller's own network path.
+ * This rides the listener `frontdoor status` already knows the door by (its address comes from the same state file, its trust anchor from the same CA path) rather than any second channel. The routes sit under one prefix the routed pipeline never serves, and every request must present the serving generation's control token as a Bearer credential: a fresh random value per door start, written owner-only under the front door's state directory so only this user's CLI can read it, and checked in constant time like every other capability the door accepts. An inject, answer or control request is carried out by the door itself over its interception-proof dials, which is the whole point: the CLI never dials the API host directly, so nothing about the write depends on the caller's own network path.
  */
 
 /** The one path prefix every Remote Control control route sits under, answered before the routed pipeline like `/healthz` is. */
@@ -38,6 +41,12 @@ export interface RcControlHandlerDeps {
   readonly inject: (sessionId: string, text: string) => Promise<RcEventWriteResult>;
   /** The answer operation, already wired to the tracker and the door's API-host dial. */
   readonly answer: (sessionId: string, requestId: string, decision: RcAnswerDecision) => Promise<RcEventWriteResult>;
+  /** The interrupt operation, already wired to the tracker and the door's API-host dial. */
+  readonly interrupt: (sessionId: string) => Promise<RcEventWriteResult>;
+  /** The set-model operation, already wired to the tracker and the door's API-host dial. */
+  readonly setModel: (sessionId: string, model: string) => Promise<RcEventWriteResult>;
+  /** The set-permission-mode operation, already wired to the tracker and the door's API-host dial. */
+  readonly setPermissionMode: (sessionId: string, mode: RcPermissionMode) => Promise<RcEventWriteResult>;
 }
 
 /** Writes one JSON answer: the status, the object, and the connection closed after it. */
@@ -79,6 +88,9 @@ export function createRcControlHandler(deps: RcControlHandlerDeps): (request: In
   const pendingPath = `${CONTROL_PATH_PREFIX}/pending`;
   const injectPath = `${CONTROL_PATH_PREFIX}/inject`;
   const answerPath = `${CONTROL_PATH_PREFIX}/answer`;
+  const interruptPath = `${CONTROL_PATH_PREFIX}/interrupt`;
+  const setModelPath = `${CONTROL_PATH_PREFIX}/set-model`;
+  const setPermissionModePath = `${CONTROL_PATH_PREFIX}/set-permission-mode`;
   return (request, response) => {
     const presented = request.headers.authorization;
     const bearerPrefix = "bearer ".length;
@@ -160,6 +172,78 @@ export function createRcControlHandler(deps: RcControlHandlerDeps): (request: In
         const result = await deps.answer(parsed.session, parsed.request, { approve: parsed.approve, message: parsed.approve ? undefined : text });
         if (result.ok) {
           answerJson(response, HTTP_STATUS.ok, { session: parsed.session, request: parsed.request, sequenceNums: result.sequenceNums });
+          return;
+        }
+        answerJson(response, HTTP_STATUS.badGateway, { error: result.message } satisfies ControlErrorBody);
+        return;
+      }
+      if (url.pathname === interruptPath) {
+        if (request.method !== "POST") {
+          answerJson(response, HTTP_STATUS.methodNotAllowed, { error: "the interrupt operation is a POST" } satisfies ControlErrorBody);
+          return;
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(await readBody(request));
+        } catch {
+          answerJson(response, HTTP_STATUS.badRequest, { error: "the interrupt body is not readable JSON within the control body cap" } satisfies ControlErrorBody);
+          return;
+        }
+        if (typeof parsed !== "object" || parsed === null || !("session" in parsed) || typeof parsed.session !== "string" || parsed.session === "") {
+          answerJson(response, HTTP_STATUS.badRequest, { error: "the interrupt body must be JSON naming a non-empty session id" } satisfies ControlErrorBody);
+          return;
+        }
+        const result = await deps.interrupt(parsed.session);
+        if (result.ok) {
+          answerJson(response, HTTP_STATUS.ok, { session: parsed.session, sequenceNums: result.sequenceNums });
+          return;
+        }
+        answerJson(response, HTTP_STATUS.badGateway, { error: result.message } satisfies ControlErrorBody);
+        return;
+      }
+      if (url.pathname === setModelPath) {
+        if (request.method !== "POST") {
+          answerJson(response, HTTP_STATUS.methodNotAllowed, { error: "the set-model operation is a POST" } satisfies ControlErrorBody);
+          return;
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(await readBody(request));
+        } catch {
+          answerJson(response, HTTP_STATUS.badRequest, { error: "the set-model body is not readable JSON within the control body cap" } satisfies ControlErrorBody);
+          return;
+        }
+        if (typeof parsed !== "object" || parsed === null || !("session" in parsed) || !("model" in parsed) || typeof parsed.session !== "string" || typeof parsed.model !== "string" || parsed.session === "" || parsed.model === "") {
+          answerJson(response, HTTP_STATUS.badRequest, { error: "the set-model body must be JSON naming a non-empty session id and model id" } satisfies ControlErrorBody);
+          return;
+        }
+        const result = await deps.setModel(parsed.session, parsed.model);
+        if (result.ok) {
+          answerJson(response, HTTP_STATUS.ok, { session: parsed.session, model: parsed.model, sequenceNums: result.sequenceNums });
+          return;
+        }
+        answerJson(response, HTTP_STATUS.badGateway, { error: result.message } satisfies ControlErrorBody);
+        return;
+      }
+      if (url.pathname === setPermissionModePath) {
+        if (request.method !== "POST") {
+          answerJson(response, HTTP_STATUS.methodNotAllowed, { error: "the set-permission-mode operation is a POST" } satisfies ControlErrorBody);
+          return;
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(await readBody(request));
+        } catch {
+          answerJson(response, HTTP_STATUS.badRequest, { error: "the set-permission-mode body is not readable JSON within the control body cap" } satisfies ControlErrorBody);
+          return;
+        }
+        if (typeof parsed !== "object" || parsed === null || !("session" in parsed) || !("mode" in parsed) || typeof parsed.session !== "string" || parsed.session === "" || !isRcPermissionMode(parsed.mode)) {
+          answerJson(response, HTTP_STATUS.badRequest, { error: `the set-permission-mode body must be JSON naming a non-empty session id and a mode the SDK's own type permits (${RC_PERMISSION_MODE_LIST})` } satisfies ControlErrorBody);
+          return;
+        }
+        const result = await deps.setPermissionMode(parsed.session, parsed.mode);
+        if (result.ok) {
+          answerJson(response, HTTP_STATUS.ok, { session: parsed.session, mode: parsed.mode, sequenceNums: result.sequenceNums });
           return;
         }
         answerJson(response, HTTP_STATUS.badGateway, { error: result.message } satisfies ControlErrorBody);
@@ -304,7 +388,7 @@ function sequenceNumsOfBody(body: string): readonly number[] | undefined {
   return sequenceNums;
 }
 
-/** The door-facing client the `frontdoor rc` verbs use: the session list, the status and pending reads, and the inject and answer operations, over the injected transport. */
+/** The door-facing client the `frontdoor rc` verbs use: the session list, the status and pending reads, the inject and answer operations, and the door's own control requests (interrupt, set-model, set-permission-mode), over the injected transport. */
 export interface FrontDoorRcControl {
   /** The observed sessions, oldest-created first. Throws with the door's verbose reason when the list cannot be had. */
   readonly listSessions: () => Promise<readonly RcSessionSummary[]>;
@@ -316,6 +400,12 @@ export interface FrontDoorRcControl {
   readonly sendPrompt: (sessionId: string, text: string) => Promise<RcEventWriteResult>;
   /** Answers one pending control request, returning the sequence numbers the real service assigned or the verbose failure. */
   readonly answerRequest: (sessionId: string, requestId: string, decision: RcAnswerDecision) => Promise<RcEventWriteResult>;
+  /** Interrupts one session's running turn, returning the sequence numbers the real service assigned or the verbose failure. */
+  readonly interruptSession: (sessionId: string) => Promise<RcEventWriteResult>;
+  /** Sets the model one session's subsequent turns use, returning the sequence numbers the real service assigned or the verbose failure. */
+  readonly setModel: (sessionId: string, model: string) => Promise<RcEventWriteResult>;
+  /** Sets one session's permission mode, returning the sequence numbers the real service assigned or the verbose failure. */
+  readonly setPermissionMode: (sessionId: string, mode: RcPermissionMode) => Promise<RcEventWriteResult>;
 }
 
 /** Builds the control client: every request presents the control token, and a non-2xx answer becomes the verbose message the door sent with it. */
@@ -427,5 +517,11 @@ export function frontDoorRcControl(transport: RcControlTransport, token: string)
         JSON.stringify({ session: sessionId, request: requestId, approve: decision.approve, ...(decision.approve || decision.message === undefined ? {} : { text: decision.message }) }),
         (status, message) => `answering control request ${requestId} on ${sessionId} failed (HTTP ${String(status)}): ${message}`,
       ),
+    interruptSession: async (sessionId) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/interrupt`, JSON.stringify({ session: sessionId }), (status, message) => `interrupting ${sessionId} failed (HTTP ${String(status)}): ${message}`),
+    setModel: async (sessionId, model) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/set-model`, JSON.stringify({ session: sessionId, model }), (status, message) => `setting the model on ${sessionId} failed (HTTP ${String(status)}): ${message}`),
+    setPermissionMode: async (sessionId, mode) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/set-permission-mode`, JSON.stringify({ session: sessionId, mode }), (status, message) => `setting the permission mode on ${sessionId} failed (HTTP ${String(status)}): ${message}`),
   };
 }

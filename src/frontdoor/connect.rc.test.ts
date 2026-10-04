@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { CONNECT_INTERCEPT_HOST, generateCa, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS, RC_TEST_SEQUENCE_NUM, RC_TEST_SESSION_ID, HTTP_OK, connectThroughProxy, makeTlsWorld, requestOn, settle } from "./connectTestWorld";
 import { createRcControlHandler, frontDoorRcControl, type RcControlTransport } from "./rcControl";
-import { RC_IDLE_EXPIRY_MS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, type RcAnswerDecision, type RcEventWriteResult, type RcSessionTracker } from "./rcSessions";
+import { RC_IDLE_EXPIRY_MS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, interruptRcSession, setRcSessionModel, setRcSessionPermissionMode, type RcAnswerDecision, type RcEventDial, type RcEventWriteResult, type RcPermissionMode, type RcSessionTracker } from "./rcSessions";
 
 /** The bearers the fake CLI presents, one per credential kind: the OAuth bearer the create carries (the client half's credential, the one an injected write must replay), and the worker JWT its recurring worker calls carry (a different kind that must never displace it, observed live as a 401 when replayed on the client half). */
 const CREATE_BEARER = "Bearer sk-ant-oat";
@@ -19,6 +19,30 @@ const CONTROL_TOKEN = "e2e-control-token";
 const RC_TEST_REQUEST_ID = "req_00000000-0000-4000-8000-00000000000a";
 /** The idle the scripted heartbeat carries, so the status assertion names the protocol's own number rather than a bare literal. */
 const RC_TEST_IDLE_SECONDS = 7;
+/** The model id and permission mode the scripted set-model and set-permission-mode writes carry, of the shapes the SDK's own fields take. */
+const RC_TEST_MODEL_ID = "claude-opus-5-5";
+const RC_TEST_PERMISSION_MODE = "plan" as const satisfies RcPermissionMode;
+/** How many client-half event writes the three control request operations produce: one per operation, in the order the test drives them. */
+const CONTROL_REQUEST_WRITE_COUNT = 3;
+
+/** The first event's payload of one event-write body, narrowed field by field from its parsed JSON rather than reached into as `any`. */
+function firstPayloadOf(body: string): unknown {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || !("events" in parsed) || !Array.isArray(parsed.events)) {
+    return undefined;
+  }
+  const events: readonly unknown[] = parsed.events;
+  const first = events[0];
+  if (typeof first !== "object" || first === null || !("payload" in first)) {
+    return undefined;
+  }
+  return first.payload;
+}
 
 /** Sends one content-length framed POST on the TLS session, the way the CLI's own HTTP stack would. */
 async function postOn(secure: Parameters<typeof requestOn>[0], path: string, bearer: string, body: string): Promise<ReturnType<typeof requestOn>> {
@@ -26,6 +50,18 @@ async function postOn(secure: Parameters<typeof requestOn>[0], path: string, bea
     secure,
     `POST ${path} HTTP/1.1\r\nHost: ${CONNECT_INTERCEPT_HOST}\r\nAuthorization: ${bearer}\r\nanthropic-version: ${VERSION}\r\nanthropic-client-platform: ${PLATFORM}\r\ncontent-type: application/json\r\ncontent-length: ${String(body.length)}\r\n\r\n${body}`,
   );
+}
+
+/**
+ * The three client-originated control request operations as the control route wires them: the tracker's observed credential and the door's real dial code redirected at the stand-in API host, with the given request-id mint.
+ */
+function controlRequestOperations(tracker: RcSessionTracker, dial: RcEventDial, newUuid: () => string) {
+  const deps = { credentialOf: tracker.credentialOf, dial, newUuid };
+  return {
+    interrupt: async (sessionId: string) => await interruptRcSession(deps, sessionId),
+    setModel: async (sessionId: string, model: string) => await setRcSessionModel(deps, sessionId, model),
+    setPermissionMode: async (sessionId: string, mode: RcPermissionMode) => await setRcSessionPermissionMode(deps, sessionId, mode),
+  };
 }
 
 /** The PUT sibling, for the worker registration the protocol documents as PUT-not-POST. */
@@ -139,6 +175,7 @@ describe("Remote Control observation and injection over the connect surface", ()
           pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
           inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial: rcDial, newUuid: () => "uuid-e2e-control" }, sessionId, text),
           answer: async (sessionId, requestId, decision) => await answerRcControlRequest({ credentialOf: tracker.credentialOf, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial: rcDial }, sessionId, requestId, decision),
+          ...controlRequestOperations(tracker, rcDial, () => "uuid-e2e-control"),
         }),
       );
       try {
@@ -199,6 +236,7 @@ describe("Remote Control observation and injection over the connect surface", ()
           pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
           inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial: rcDial, newUuid: () => "uuid-e2e-answer" }, sessionId, text),
           answer,
+          ...controlRequestOperations(tracker, rcDial, () => "uuid-e2e-answer"),
         }),
       );
       try {
@@ -273,6 +311,75 @@ describe("Remote Control observation and injection over the connect surface", ()
             },
           ],
         });
+        secure.destroy();
+      } finally {
+        await new Promise<void>((resolve) => {
+          server.close(() => {
+            resolve(undefined);
+          });
+        });
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "sends the client half's own control requests (interrupt, set_model, set_permission_mode) over the control surface, and the API host receives each write with the observed bearer and the SDK's request envelope",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa, { rc: { tracker } });
+      const { connectPort, rcDial, close } = await world.start();
+      // Each operation mints its own request id, the id the worker's response echoes, so the three asserted envelopes name three distinct minted values.
+      let minted = 0;
+      const server = http.createServer(
+        createRcControlHandler({
+          expectedToken: CONTROL_TOKEN,
+          list: tracker.list,
+          statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
+          pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
+          inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial: rcDial, newUuid: () => "uuid-e2e-control" }, sessionId, text),
+          answer: async (sessionId, requestId, decision) => await answerRcControlRequest({ credentialOf: tracker.credentialOf, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial: rcDial }, sessionId, requestId, decision),
+          ...controlRequestOperations(tracker, rcDial, () => `uuid-e2e-control-request-${String(++minted)}`),
+        }),
+      );
+      try {
+        const secure = await connectThroughProxy(connectPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+        const create = await postOn(secure, "/v1/code/sessions", CREATE_BEARER, JSON.stringify({ bridge: {} }));
+        expect(create.statusLine).toContain(String(HTTP_OK));
+        await settle();
+
+        await new Promise<void>((resolve) => {
+          server.listen(0, "127.0.0.1", () => {
+            resolve(undefined);
+          });
+        });
+        const address = server.address();
+        if (typeof address !== "object" || address === null) {
+          throw new Error("expected a bound TCP server");
+        }
+        const client = frontDoorRcControl(loopbackTransport(address.port), CONTROL_TOKEN);
+
+        // Each write is driven the way the door's control route drives it: the tracker's observed credential, and the door's real dial code redirected at the stand-in API host.
+        expect(await client.interruptSession(RC_TEST_SESSION_ID)).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM] });
+        expect(await client.setModel(RC_TEST_SESSION_ID, RC_TEST_MODEL_ID)).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM] });
+        expect(await client.setPermissionMode(RC_TEST_SESSION_ID, RC_TEST_PERMISSION_MODE)).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM] });
+
+        // The API host received each documented client-half write: the session's events endpoint, the observed bearer, and the SDK's control_request envelope for its subtype.
+        const writes = world.upstreamRequests.filter((seen) => seen.url === `/v1/code/sessions/${RC_TEST_SESSION_ID}/events`);
+        expect(writes).toHaveLength(CONTROL_REQUEST_WRITE_COUNT);
+        for (const write of writes) {
+          expect(write.method).toBe("POST");
+          expect(write.headers.authorization).toBe(CREATE_BEARER);
+          expect(write.headers["anthropic-version"]).toBe(VERSION);
+          expect(write.headers["anthropic-client-platform"]).toBe(PLATFORM);
+          expect(write.headers.host).toBe(CONNECT_INTERCEPT_HOST);
+        }
+        expect(writes.map((write) => firstPayloadOf(write.body))).toEqual([
+          { type: "control_request", request_id: "uuid-e2e-control-request-1", request: { subtype: "interrupt" } },
+          { type: "control_request", request_id: "uuid-e2e-control-request-2", request: { subtype: "set_model", model: RC_TEST_MODEL_ID } },
+          { type: "control_request", request_id: "uuid-e2e-control-request-3", request: { subtype: "set_permission_mode", mode: RC_TEST_PERMISSION_MODE } },
+        ]);
         secure.destroy();
       } finally {
         await new Promise<void>((resolve) => {

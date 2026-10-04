@@ -5,11 +5,11 @@ import type { PassthroughObserver } from "./capture";
 import type { FrontDoorRoute, RoutedResponse } from "./route";
 
 /**
- * Remote Control session tracking and the client-half writes the front door performs: the record of the `cse_` sessions whose traffic crosses its terminated API-host session, the prompt injected into one, and the answer delivered to one of its pending control requests.
+ * Remote Control session tracking and the client-half writes the front door performs: the record of the `cse_` sessions whose traffic crosses its terminated API-host session, the prompt injected into one, the answer delivered to one of its pending control requests, and the client-originated control requests sent into one (interrupt, set_model, set_permission_mode).
  *
  * The tracker is observational: the door already terminates the API host's TLS, so it sees the CLI's own `POST /v1/code/sessions` (whose answer carries the new session's `cse_` id) and every recurring `/v1/code/sessions/...` call (heartbeat, presence), each carrying the session's Authorization bearer and the protocol headers a client-half replay needs. Per session the tracker retains the latest of each, because those calls recur and the freshest value is the live one. It also reads the request bodies of the exchanges whose payloads matter: the worker's event batches (whose `control_request` payloads, `can_use_tool` above all, are the approvals awaiting an answer), the worker heartbeats (whose bodies carry `idle_seconds`), the worker registration (whose body carries the worker state), and the client-half event writes (whose `control_response` payloads complete a pending request). Everything is held in this process's memory only: nothing here is written to a log, to the capture, or to disk, and the summary the control surface lists never includes the credential. The capture's existing redaction is untouched; a capture and this tracker observe the same exchanges through entirely separate paths.
  *
- * Both writes replay the protocol's documented client half rather than splicing frames into any relayed stream: `POST /v1/code/sessions/{id}/events` with one payload event (a user message, or a `control_response` answering an observed request by echoing its id), authenticated by the observed bearer and the observed protocol headers, sent from the door over its own interception-proof dials. Sequence numbers therefore come from the real service and the event is mirrored to every attached client, exactly as a message typed into claude.ai would be.
+ * Every write replays the protocol's documented client half rather than splicing frames into any relayed stream: `POST /v1/code/sessions/{id}/events` with one payload event (a user message, a `control_response` answering an observed request by echoing its id, or a `control_request` a client originates), authenticated by the observed bearer and the observed protocol headers, sent from the door over its own interception-proof dials. Sequence numbers therefore come from the real service and the event is mirrored to every attached client, exactly as a message typed into claude.ai would be.
  */
 
 /** Every Remote Control exchange on the API host sits under this path prefix. */
@@ -770,6 +770,40 @@ export function buildRcControlResponsePayload(requestId: string, decision: RcAns
   return { type: "control_response", response: { subtype: "success", request_id: requestId, response: result } };
 }
 
+/**
+ * The permission modes the SDK's own `set_permission_mode` control request accepts: exactly the strings its `PermissionMode` type declares (`@anthropic-ai/claude-agent-sdk` `sdk.d.ts`), nothing looser. A runtime list as well as a type, because the CLI and the control route both narrow untrusted strings through it before a write is ever attempted.
+ */
+export const RC_PERMISSION_MODES = ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"] as const;
+
+/** One permission mode the SDK's `set_permission_mode` control request accepts. */
+export type RcPermissionMode = (typeof RC_PERMISSION_MODES)[number];
+
+/** Whether a value is one of the SDK's own permission modes, the narrowing the CLI and the control route apply to untrusted input. */
+export function isRcPermissionMode(value: unknown): value is RcPermissionMode {
+  return RC_PERMISSION_MODES.some((mode) => mode === value);
+}
+
+/**
+ * Builds the `control_request` payload event for one interrupt: the SDK's request envelope (`SDKControlRequest`: `type`, `request_id`, `request`), carrying the `interrupt` subtype's own shape (`subtype` alone; its optional `cancel_queued` is absent, which the SDK reads as false, so queued commands survive the interrupt exactly as a plain stop button's would). The request id is the caller's minted uuid, the id the worker's `control_response` echoes.
+ */
+export function buildRcInterruptPayload(requestId: string): Record<string, unknown> {
+  return { type: "control_request", request_id: requestId, request: { subtype: "interrupt" } };
+}
+
+/**
+ * Builds the `control_request` payload event for one model switch: the SDK's request envelope carrying the `set_model` subtype's own shape, whose one field is the `model` id string (its omitted and null forms mean a reset to the session default, which this builder never sends; the operation refuses an empty id for the same reason).
+ */
+export function buildRcSetModelPayload(requestId: string, model: string): Record<string, unknown> {
+  return { type: "control_request", request_id: requestId, request: { subtype: "set_model", model } };
+}
+
+/**
+ * Builds the `control_request` payload event for one permission-mode change: the SDK's request envelope carrying the `set_permission_mode` subtype's own shape, whose one field is the `mode` from the SDK's own `PermissionMode` enum (`RC_PERMISSION_MODES`).
+ */
+export function buildRcSetPermissionModePayload(requestId: string, mode: RcPermissionMode): Record<string, unknown> {
+  return { type: "control_request", request_id: requestId, request: { subtype: "set_permission_mode", mode } };
+}
+
 /** Everything one answer needs, injected so the decision logic runs against fakes in unit tests. */
 export interface RcAnswerDeps {
   /** Reads the observed credential for a session: the tracker's accessor, in production. */
@@ -808,4 +842,80 @@ export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: stri
     deps.completePending(sessionId, requestId);
   }
   return result;
+}
+
+/** Everything one client-originated control request needs, injected so the decision logic runs against fakes in unit tests. */
+export interface RcControlRequestDeps {
+  /** Reads the observed credential for a session: the tracker's accessor, in production. */
+  readonly credentialOf: (sessionId: string) => RcObservedCredential | undefined;
+  /** The dial to the real API host. */
+  readonly dial: RcEventDial;
+  /** Mints the request's id: a v4 UUID or better in production, the id the worker's `control_response` echoes. */
+  readonly newUuid: () => string;
+}
+
+/**
+ * Interrupts one observed session's running turn: the same documented client-half write the inject and answer paths perform, carrying the SDK's `control_request` envelope for the `interrupt` subtype, authenticated by the observed bearer and protocol headers. The result is the sequence numbers the real service assigned, or a verbose failure. A dial that cannot reach the API host is reported rather than thrown, so a caller with no exception handling still shows the user exactly what failed.
+ */
+export async function interruptRcSession(deps: RcControlRequestDeps, sessionId: string): Promise<RcEventWriteResult> {
+  const credential = deps.credentialOf(sessionId);
+  if (credential === undefined) {
+    return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)` };
+  }
+  if (credential.authorization === undefined) {
+    return noOAuthCredentialResult(sessionId);
+  }
+  const body = JSON.stringify(buildRcEventWriteBody(buildRcInterruptPayload(deps.newUuid())));
+  let answer: RcDialAnswer;
+  try {
+    answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body);
+  } catch (error) {
+    return { ok: false, message: `the door could not reach the API host to interrupt session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  return rcEventWriteResultFromAnswer(answer);
+}
+
+/**
+ * Sets the model one observed session's subsequent turns use: the same documented client-half write the inject and answer paths perform, carrying the SDK's `control_request` envelope for the `set_model` subtype with the model id its own field names. The id is validated only as non-empty, because the SDK's field gives the empty-free forms their own meaning (omitted or null resets to the session default) and this operation sends neither. The result is the sequence numbers the real service assigned, or a verbose failure.
+ */
+export async function setRcSessionModel(deps: RcControlRequestDeps, sessionId: string, model: string): Promise<RcEventWriteResult> {
+  if (model === "") {
+    return { ok: false, message: "a set-model write needs a non-empty model id: the SDK's own field treats an omitted or null value as a reset to the session default, which this operation never sends, and an empty string is neither" };
+  }
+  const credential = deps.credentialOf(sessionId);
+  if (credential === undefined) {
+    return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)` };
+  }
+  if (credential.authorization === undefined) {
+    return noOAuthCredentialResult(sessionId);
+  }
+  const body = JSON.stringify(buildRcEventWriteBody(buildRcSetModelPayload(deps.newUuid(), model)));
+  let answer: RcDialAnswer;
+  try {
+    answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body);
+  } catch (error) {
+    return { ok: false, message: `the door could not reach the API host to set the model on session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  return rcEventWriteResultFromAnswer(answer);
+}
+
+/**
+ * Sets one observed session's permission mode: the same documented client-half write the inject and answer paths perform, carrying the SDK's `control_request` envelope for the `set_permission_mode` subtype with a mode from the SDK's own enum (`RC_PERMISSION_MODES`; the type accepts nothing looser, and the CLI and control route narrow untrusted strings through `isRcPermissionMode` before they ever reach this operation). The result is the sequence numbers the real service assigned, or a verbose failure.
+ */
+export async function setRcSessionPermissionMode(deps: RcControlRequestDeps, sessionId: string, mode: RcPermissionMode): Promise<RcEventWriteResult> {
+  const credential = deps.credentialOf(sessionId);
+  if (credential === undefined) {
+    return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)` };
+  }
+  if (credential.authorization === undefined) {
+    return noOAuthCredentialResult(sessionId);
+  }
+  const body = JSON.stringify(buildRcEventWriteBody(buildRcSetPermissionModePayload(deps.newUuid(), mode)));
+  let answer: RcDialAnswer;
+  try {
+    answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body);
+  } catch (error) {
+    return { ok: false, message: `the door could not reach the API host to set the permission mode on session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  return rcEventWriteResultFromAnswer(answer);
 }

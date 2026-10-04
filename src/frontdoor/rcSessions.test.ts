@@ -10,15 +10,23 @@ import {
   RC_IDLE_EXPIRY_MS,
   RC_PENDING_DEADLINE_MS,
   RC_PENDING_SUMMARY_EXCERPT_CHARS,
+  RC_PERMISSION_MODES,
   RC_REQUEST_PARSE_CAP_BYTES,
   answerRcControlRequest,
   buildRcControlResponsePayload,
   buildRcEventWriteBody,
+  buildRcInterruptPayload,
+  buildRcSetModelPayload,
+  buildRcSetPermissionModePayload,
   buildRcUserMessagePayload,
   createRcSessionTracker,
   injectRcUserMessage,
+  interruptRcSession,
+  isRcPermissionMode,
   observingRoutedRoute,
   rcEventWriteResultFromAnswer,
+  setRcSessionModel,
+  setRcSessionPermissionMode,
   type RcEventDial,
   type RcSessionTracker,
 } from "./rcSessions";
@@ -496,6 +504,132 @@ describe("the control_response payload and answerRcControlRequest over an inject
     }
     // A failed write leaves the request pending: only a confirmed delivery retires it.
     expect(tracker.pendingOf().map((request) => request.requestId)).toEqual([REQUEST_ID]);
+  });
+});
+
+describe("the control_request payloads and the three client-originated operations over an injected dial", () => {
+  /** The id the operation mints, so the asserted envelope names exactly what the dial received. */
+  const MINTED_REQUEST_ID = "minted-uuid-1";
+  /** A model id of the shape the SDK's own field takes. */
+  const MODEL_ID = "claude-opus-5-5";
+  /** A mode from the SDK's own enum. */
+  const MODE = "acceptEdits";
+
+  /** A tracker holding one observed session created with the OAuth bearer the writes must replay. */
+  const trackerWithSession = (): { readonly tracker: RcSessionTracker } => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat", headers: { "anthropic-version": "2023-06-01", "anthropic-client-platform": "desktop_app" } }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    return { tracker };
+  };
+  /** A dial that records what it was handed and answers with the documented per-event sequence numbers. */
+  const dialRecording = (): { readonly dial: RcEventDial; readonly dialled: readonly { sessionId: string; headers: Record<string, string>; body: string }[] } => {
+    const dialled: { sessionId: string; headers: Record<string, string>; body: string }[] = [];
+    return {
+      dialled,
+      dial: {
+        writeEvents: async (sessionId, headers, body) => {
+          dialled.push({ sessionId, headers: { ...headers }, body });
+          return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
+        },
+      },
+    };
+  };
+  /** The deps every one of the three operations runs with in these tests. */
+  const depsOf = (tracker: RcSessionTracker, dial: RcEventDial) => ({ credentialOf: tracker.credentialOf, dial, newUuid: () => MINTED_REQUEST_ID });
+  /** The headers every client-half write sends with this tracker's observed credential. */
+  const EXPECTED_HEADERS = { "content-type": "application/json", authorization: "Bearer sk-ant-oat", "anthropic-version": "2023-06-01", "anthropic-client-platform": "desktop_app" };
+
+  it("builds the SDK's control_request envelope for each subtype, with the fields its own type declares", () => {
+    expect(buildRcInterruptPayload(MINTED_REQUEST_ID)).toEqual({ type: "control_request", request_id: MINTED_REQUEST_ID, request: { subtype: "interrupt" } });
+    expect(buildRcSetModelPayload(MINTED_REQUEST_ID, MODEL_ID)).toEqual({ type: "control_request", request_id: MINTED_REQUEST_ID, request: { subtype: "set_model", model: MODEL_ID } });
+    expect(buildRcSetPermissionModePayload(MINTED_REQUEST_ID, MODE)).toEqual({ type: "control_request", request_id: MINTED_REQUEST_ID, request: { subtype: "set_permission_mode", mode: MODE } });
+  });
+
+  it("narrows the permission mode to exactly the strings the SDK's own type permits", () => {
+    for (const mode of RC_PERMISSION_MODES) {
+      expect(isRcPermissionMode(mode)).toBe(true);
+    }
+    for (const refused of ["", "AcceptEdits", "accept_edits", "yolo", "default plan", null, undefined]) {
+      expect(isRcPermissionMode(refused)).toBe(false);
+    }
+  });
+
+  it("sends each control request with the observed bearer and protocol headers inside the event write body, returning the sequence numbers", async () => {
+    const { tracker } = trackerWithSession();
+    const { dial, dialled } = dialRecording();
+    const deps = depsOf(tracker, dial);
+    expect(await interruptRcSession(deps, SESSION_ID)).toEqual({ ok: true, sequenceNums: [SECOND_SEQUENCE_NUM] });
+    expect(await setRcSessionModel(deps, SESSION_ID, MODEL_ID)).toEqual({ ok: true, sequenceNums: [SECOND_SEQUENCE_NUM] });
+    expect(await setRcSessionPermissionMode(deps, SESSION_ID, "plan")).toEqual({ ok: true, sequenceNums: [SECOND_SEQUENCE_NUM] });
+    expect(dialled).toEqual([
+      { sessionId: SESSION_ID, headers: EXPECTED_HEADERS, body: JSON.stringify(buildRcEventWriteBody(buildRcInterruptPayload(MINTED_REQUEST_ID))) },
+      { sessionId: SESSION_ID, headers: EXPECTED_HEADERS, body: JSON.stringify(buildRcEventWriteBody(buildRcSetModelPayload(MINTED_REQUEST_ID, MODEL_ID))) },
+      { sessionId: SESSION_ID, headers: EXPECTED_HEADERS, body: JSON.stringify(buildRcEventWriteBody(buildRcSetPermissionModePayload(MINTED_REQUEST_ID, "plan"))) },
+    ]);
+  });
+
+  it("refuses an unobserved session verbosely, and never dials", async () => {
+    const { tracker } = trackerWithClock();
+    const { dial, dialled } = dialRecording();
+    const deps = depsOf(tracker, dial);
+    for (const refused of [
+      await interruptRcSession(deps, SESSION_ID),
+      await setRcSessionModel(deps, SESSION_ID, MODEL_ID),
+      await setRcSessionPermissionMode(deps, SESSION_ID, MODE),
+    ]) {
+      expect(refused.ok).toBe(false);
+      if (!refused.ok) {
+        expect(refused.message).toContain("has not observed Remote Control session");
+        expect(refused.message).toContain(SESSION_ID);
+      }
+    }
+    expect(dialled).toEqual([]);
+  });
+
+  it("refuses each write verbosely when only worker calls were observed, since the worker JWT does not authorise the client half", async () => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }).respond(HTTP_STATUS.ok);
+    const { dial } = dialRecording();
+    const deps = depsOf(tracker, dial);
+    for (const refused of [
+      await interruptRcSession(deps, SESSION_ID),
+      await setRcSessionModel(deps, SESSION_ID, MODEL_ID),
+      await setRcSessionPermissionMode(deps, SESSION_ID, MODE),
+    ]) {
+      expect(refused.ok).toBe(false);
+      if (!refused.ok) {
+        expect(refused.message).toContain("no claude.ai OAuth bearer has been observed");
+        expect(refused.message).toContain("worker JWT");
+      }
+    }
+  });
+
+  it("refuses an empty model id without dialling, since the SDK's field gives its empty-free forms their own meaning", async () => {
+    const { tracker } = trackerWithSession();
+    const { dial, dialled } = dialRecording();
+    const refused = await setRcSessionModel(depsOf(tracker, dial), SESSION_ID, "");
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(refused.message).toContain("non-empty model id");
+    }
+    expect(dialled).toEqual([]);
+  });
+
+  it("reports an unreachable API host verbosely and without throwing", async () => {
+    const { tracker } = trackerWithSession();
+    const refusingDial: RcEventDial = { writeEvents: async () => await Promise.reject(new Error("ECONNREFUSED")) };
+    const deps = depsOf(tracker, refusingDial);
+    for (const refused of [
+      await interruptRcSession(deps, SESSION_ID),
+      await setRcSessionModel(deps, SESSION_ID, MODEL_ID),
+      await setRcSessionPermissionMode(deps, SESSION_ID, MODE),
+    ]) {
+      expect(refused.ok).toBe(false);
+      if (!refused.ok) {
+        expect(refused.message).toContain("could not reach the API host");
+        expect(refused.message).toContain("ECONNREFUSED");
+      }
+    }
   });
 });
 
