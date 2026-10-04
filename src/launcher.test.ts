@@ -312,18 +312,23 @@ describe("runLauncher", () => {
 });
 
 describe("runLauncher headroom routing", () => {
-  function fakeHeadroomPort(socketPath = HEADROOM_SOCKET, projectId = "/home/testuser/work/repo"): HeadroomPort & { readonly ensures: number; readonly releases: number } {
+  function fakeHeadroomPort(socketPath = HEADROOM_SOCKET, projectId = "/home/testuser/work/repo"): HeadroomPort & { readonly ensures: number; readonly releases: number; readonly routesProvider: readonly boolean[] } {
     let ensures = 0;
     let releases = 0;
+    const routesProvider: boolean[] = [];
     return {
       get ensures() {
         return ensures;
       },
+      get routesProvider() {
+        return routesProvider;
+      },
       get releases() {
         return releases;
       },
-      ensure: () => {
+      ensure: (options) => {
         ensures += 1;
+        routesProvider.push(options.routesProvider);
         return { socketPath, projectId };
       },
       release: () => {
@@ -443,6 +448,15 @@ describe("runLauncher headroom routing", () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
     expect(env.HTTPS_PROXY).toBeUndefined();
     expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
+    // The daemon has to admit the door's address for this launch's requests to be accepted, so the ensure step is told a provider is routed.
+    expect(headroom.routesProvider).toEqual([true]);
+  });
+
+  it("tells the headroom ensure step an OAuth launch routes no provider, since every daemon admits Claude Code's own API", () => {
+    const spawn = fakeSpawn();
+    const headroom = fakeHeadroomPort();
+    runAndCaptureExit({ paths, fs: fakeFs({}), spawn, proc: fakeProc({ AGENT_SHIM_HEADROOM: "1" }, ["--print"]), log: fakeLog(), resolveClaudeBinary: () => discovered, frontdoor: fakeFrontDoorPort(), headroom });
+    expect(headroom.routesProvider).toEqual([false]);
   });
 
   it("routes an apiKey provider on api.anthropic.com through the door with headroom: the token becomes the API key and the door is the base URL", () => {
