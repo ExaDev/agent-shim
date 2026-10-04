@@ -15,10 +15,13 @@ import { createDoorPipelines } from "./assembly";
 import { isLiveCapability } from "./capability";
 import { captureFromEnv } from "./capture";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_LIMITS, CONNECT_TAP_HOSTS, HTTPS_PORT, LOOPBACK_LEAF_NAMES, createLeafCache, ensureCa, generateCa, mintLeaf, realConnectCertStore, startConnectServer, type CaMaterial } from "./connect";
-import { realConnectEffects } from "./connectEffects";
+import { realConnectEffects, realRcEventDial } from "./connectEffects";
 import { createCredentialCustody } from "./custody";
-import { serveRouted } from "./pipeline";
+import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
+import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
+import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, injectRcUserMessage, observingRoutedRoute, type RcSessionSummary } from "./rcSessions";
+import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, writeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
 import { runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
@@ -42,6 +45,19 @@ export function headroomSocketTarget(fsPort: HeadroomFs, trust: HeadroomSocketTr
 }
 
 /**
+ * Wraps the door's route resolver so every route it resolves observes its served exchanges through the Remote Control tracker: the bare `/v1/` pass-through an OAuth session's Remote Control calls ride is where the tracker sees the create, the heartbeats and the presence, and the wrapper is a no-op for any path the tracker does not take (it hands the response through untouched).
+ */
+function rcObservingResolver(
+  resolve: (request: RoutedRequest) => Promise<RouteResolution>,
+  tracker: ReturnType<typeof createRcSessionTracker>,
+): (request: RoutedRequest) => Promise<RouteResolution> {
+  return async (request) => {
+    const resolution = await resolve(request);
+    return resolution.ok ? { ok: true, route: observingRoutedRoute(resolution.route, tracker) } : resolution;
+  };
+}
+
+/**
  * The real supervisor ports. The three listener starts are where the whole routing assembly is built: the codex translation's real ports, the provider route resolver over them, both pipelines (see `createDoorPipelines`), the three listeners that feed them, and the CA that signs both TLS-serving listeners' leaves.
  */
 function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPorts {
@@ -52,7 +68,11 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   let directPort = 0;
   // Built once for the process, not per request: the codex translation's upstream agent and auth store hold pooled connections and refresh state that must survive across requests.
   const codexPorts = createCodexRoutePorts(log);
-  const resolveRoute = createProviderRouteResolver({ fs: realFsPort, providersDir: paths.providersDir, codexPorts, directPort: () => directPort });
+  // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix.
+  const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+  // This generation's control token, minted per door start and written owner-only: the value the door's control routes demand and only this user's CLI can read. A crashed door's stale file never authenticates, because the next generation mints a fresh one over it.
+  const rcControlToken = randomUUID();
+  const resolveRoute = rcObservingResolver(createProviderRouteResolver({ fs: realFsPort, providersDir: paths.providersDir, codexPorts, directPort: () => directPort }), rcTracker);
 
   // One check for every listener that admits launches, read fresh on each call since launches come and go: the provider listener's and the CONNECT surface's routed paths (the capability header), and the CONNECT surface's own CONNECT requests (the proxy credential).
   const isLiveToken = (token: string): boolean => isLiveCapability(token, liveSessionTokens(realFarmFs, paths.frontdoorSessionsDir));
@@ -114,15 +134,28 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     isRunning: realIsProcessRunning,
     startProviderListener: async (preferredPort) => {
       const authority = loadCa();
+      // The inject operation the control routes carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly.
+      const rcInject = async (sessionId: string, text: string) =>
+        await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, dial: realRcEventDial(), newUuid: randomUUID }, sessionId, text);
+      // Written before the listener binds, so a listener that answers control requests is always one whose token exists; removed when this listener closes, so an idle-shut door leaves no token behind that a squatter on the port could be probed with.
+      realFarmFs.mkdirp(paths.frontdoorDir);
+      realFarmFs.writeFilePrivate(paths.frontdoorControlTokenFile, `${rcControlToken}\n`);
       const server = createFrontDoorServer(
         async (request) => {
           await serveRouted(request, pipelines.clientFacing);
         },
         log,
         mintLeaf(authority, LOOPBACK_LEAF_NAMES, new Date()),
+        createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, inject: rcInject }),
       );
       const handle = await listenFrontDoor(server, { ...(preferredPort === undefined ? {} : { preferredPort }), ca: authority.certPem, onError: onListenerError("provider") });
-      return { port: handle.port, close: handle.close };
+      return {
+        port: handle.port,
+        close: async () => {
+          realFarmFs.removeRecursive(paths.frontdoorControlTokenFile);
+          await handle.close();
+        },
+      };
     },
     startConnectListener: async (preferredPort) => {
       // The transparent surface exists only when something asked for it (AGENT_SHIM_TRANSPARENT_SURFACE naming the port an operating-system redirect sends the API host's address to): the door then mints its own registered session for redirect-arriving traffic, keyed by its own pid so the session lives exactly as long as the door does and the idle pruner never reaps it while the door serves.
@@ -260,7 +293,34 @@ export function formatFrontDoorStatus(status: FrontDoorStatus, caCertPath: strin
   return lines;
 }
 
-/** Registers `agent-shim frontdoor status` and the hidden `__frontdoor-supervisor` internal subcommand. */
+/** Formats `agent-shim frontdoor rc list`, one line per observed session. */
+export function formatRcSessionList(sessions: readonly RcSessionSummary[]): string[] {
+  if (sessions.length === 0) {
+    return ["no Remote Control sessions observed"];
+  }
+  return sessions.map((session) => `${session.id}  created ${new Date(session.createdAt).toISOString()}  last seen ${new Date(session.lastSeenAt).toISOString()}`);
+}
+
+/**
+ * Opens the serving door's Remote Control control client: the provider listener's address from the same state file `frontdoor status` reads, its CA from the same CA path, and this generation's control token from the owner-only file the door writes. Throws with the verbose reason when the door is not serving or its control material is missing, so a verb never dials anything on a guess.
+ */
+export function frontDoorRcControlFromState(fsPort: HeadroomFs, paths: LayoutPaths): FrontDoorRcControl {
+  const state = readFrontDoorState(fsPort, paths.frontdoorStateFile);
+  if (state?.port === undefined) {
+    throw new Error("the front door is not serving: Remote Control sessions are observed only while it runs, so start a session through the door first");
+  }
+  const ca = fsPort.readFileUtf8(paths.frontdoorCaCertFile);
+  if (ca === undefined) {
+    throw new Error(`the front door's CA certificate is missing at ${paths.frontdoorCaCertFile}, so its control listener cannot be authenticated`);
+  }
+  const token = fsPort.readFileUtf8(paths.frontdoorControlTokenFile)?.trim();
+  if (token === undefined || token === "") {
+    throw new Error(`the serving front door's control token is missing at ${paths.frontdoorControlTokenFile}`);
+  }
+  return frontDoorRcControl(realRcControlTransport(state.port, ca), token);
+}
+
+/** Registers `agent-shim frontdoor status`, the `frontdoor rc` verbs, and the hidden `__frontdoor-supervisor` internal subcommand. */
 export function registerFrontDoorCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
   const frontdoor = withExamples(program.command("frontdoor").description("Inspect the front-door daemon that routes every agent-shim session."), [
@@ -283,6 +343,49 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
         }
       }),
     ["agent-shim frontdoor status", "agent-shim frontdoor status --json"],
+  );
+
+  const rc = withExamples(frontdoor.command("rc").description("Observe the Remote Control sessions passing through the front door, and send a prompt into one."), [
+    "agent-shim frontdoor rc list",
+  ]);
+
+  withExamples(
+    rc
+      .command("list")
+      .description("List the Remote Control sessions the front door has observed, with when each was created and last seen. Read-only.")
+      .option("--json", "Print the sessions as JSON.")
+      .action(async (options: Readonly<{ json?: boolean }>) => {
+        const sessions = await frontDoorRcControlFromState(realFarmFs, paths).listSessions();
+        if (options.json === true) {
+          printJson({ sessions });
+          return;
+        }
+        for (const line of formatRcSessionList(sessions)) {
+          console.log(line);
+        }
+      }),
+    ["agent-shim frontdoor rc list", "agent-shim frontdoor rc list --json"],
+  );
+
+  withExamples(
+    rc
+      .command("send")
+      .description("Send a text prompt into one observed Remote Control session, arriving as a message from an attached client would.")
+      .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
+      .requiredOption("--text <text>", "The prompt text to deliver.")
+      .option("--json", "Print the delivery result as JSON.")
+      .action(async (options: Readonly<{ session: string; text: string; json?: boolean }>) => {
+        const result = await frontDoorRcControlFromState(realFarmFs, paths).sendPrompt(options.session, options.text);
+        if (!result.ok) {
+          throw new Error(result.message);
+        }
+        if (options.json === true) {
+          printJson({ session: options.session, sequenceNums: result.sequenceNums });
+          return;
+        }
+        console.log(`sent to ${options.session}: sequence_num ${result.sequenceNums.join(", ")}`);
+      }),
+    ['agent-shim frontdoor rc send --session cse_00000000-0000-4000-8000-000000000000 --text "run the tests"'],
   );
 
   program
