@@ -1,3 +1,9 @@
+## [8.5.2](https://github.com/ExaDev/agent-shim/compare/v8.5.1...v8.5.2) (2026-10-04)
+
+### Bug Fixes
+
+* **discovery:** accept a foreign claude sharing agent-shim's own bin directory ([ec6c183](https://github.com/ExaDev/agent-shim/commit/ec6c183e92a0f303194aca39975886b137ef8cc5)), references [#188](https://github.com/ExaDev/agent-shim/issues/188)
+
 ## [8.5.1](https://github.com/ExaDev/agent-shim/compare/v8.5.0...v8.5.1) (2026-10-04)
 
 ### Bug Fixes
