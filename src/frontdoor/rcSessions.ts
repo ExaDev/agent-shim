@@ -673,10 +673,14 @@ function sequenceNumsOf(body: string): readonly number[] | undefined {
       return undefined;
     }
     const sequenceNum: unknown = result.sequence_num;
-    if (typeof sequenceNum !== "number") {
+    // The real API returns the assigned number as a JSON string ("6"), observed live against a real write; accept either shape and normalise to the number it names, so a delivered event is never reported unconfirmed.
+    if (typeof sequenceNum === "number") {
+      sequenceNums.push(sequenceNum);
+    } else if (typeof sequenceNum === "string" && /^[0-9]+$/.test(sequenceNum)) {
+      sequenceNums.push(Number(sequenceNum));
+    } else {
       return undefined;
     }
-    sequenceNums.push(sequenceNum);
   }
   // An accepted write that assigned no sequence number at all confirms no delivery, so it is a failure to surface rather than an empty success.
   return sequenceNums.length === 0 ? undefined : sequenceNums;
