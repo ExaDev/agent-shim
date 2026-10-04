@@ -1,3 +1,13 @@
+## [8.0.1](https://github.com/ExaDev/agent-shim/compare/v8.0.0...v8.0.1) (2026-10-04)
+
+### Bug Fixes
+
+* **headroom:** hand headroom the door's CA by path through HEADROOM_CA_BUNDLE ([f3028d2](https://github.com/ExaDev/agent-shim/commit/f3028d2ffa86ad5fc9458b4bc71682c2579dbe49)), closes [#172](https://github.com/ExaDev/agent-shim/issues/172)
+
+### Code Refactoring
+
+* **frontdoor:** name the trust variable a combined bundle is resolved for ([3b43f4a](https://github.com/ExaDev/agent-shim/commit/3b43f4ae8362522f7b1d65ee1371c8f553865ad0))
+
 ## [8.0.0](https://github.com/ExaDev/agent-shim/compare/v7.14.0...v8.0.0) (2026-10-04)
 
 ### ⚠ BREAKING CHANGES
