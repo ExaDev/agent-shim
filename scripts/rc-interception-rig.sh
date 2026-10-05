@@ -221,21 +221,6 @@ ensure_door() {
     docker exec "$CONTAINER_NAME" sh -c "test -s $DOOR_CA"
 }
 
-ensure_claude_discoverable() {
-  # Door mode only. The launcher discovers the claude binary first under ~/.local/share/claude/versions (the native installer's layout, src/versionDiscovery.ts) and falls back to PATH excluding its own install directory, so one 'npm install -g' never yields a claude it can see: agent-shim and claude land as symlinks in the same /usr/local/bin, and the exclusion (which exists to stop the launcher selecting a claude-named copy of itself) hides the real claude beside it. Hardlinking the installed binary in under its real version feeds the first-choice discovery path instead; a symlink would not do, because the versions scan keeps genuine regular files only (listVersionsDir in src/realPorts.ts). The rig's container runs as the image's default root user, so the home is /root.
-  versions_dir=/root/.local/share/claude/versions
-  if docker exec "$CONTAINER_NAME" sh -c "ls -A $versions_dir 2>/dev/null | grep -q ."; then
-    info "a versioned claude is already discoverable under $versions_dir"
-    return
-  fi
-  npm_root=$(docker exec "$CONTAINER_NAME" npm root -g)
-  version=$(docker exec "$CONTAINER_NAME" node -p "require('$npm_root/@anthropic-ai/claude-code/package.json').version")
-  real_binary=$(docker exec "$CONTAINER_NAME" realpath /usr/local/bin/claude)
-  docker exec "$CONTAINER_NAME" mkdir -p "$versions_dir"
-  docker exec "$CONTAINER_NAME" ln -f "$real_binary" "$versions_dir/$version"
-  info "hardlinked claude $version into $versions_dir so the launcher's version discovery finds it"
-}
-
 ensure_door_identity() {
   if docker exec -e AGENT_SHIM_HOME="$DOOR_HOME" "$CONTAINER_NAME" agent-shim identity list 2>/dev/null | grep -Eq "^[* ]+ $DOOR_IDENTITY( |\$)"; then
     info "identity $DOOR_IDENTITY already present in $DOOR_HOME"
@@ -321,7 +306,6 @@ cmd_up() {
     # Every npm install happens before the redirect exists (see ensure_npm_global); the hosts entries precede the launch so the child resolves the intercepted names, and the door precedes the redirect so the port it aims at already listens.
     ensure_npm_global claude @anthropic-ai/claude-code
     ensure_npm_global agent-shim agent-shim
-    ensure_claude_discoverable
     ensure_door_identity
     ensure_hosts_entries
     ensure_door
