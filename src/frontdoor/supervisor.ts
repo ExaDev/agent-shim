@@ -1,6 +1,6 @@
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, writeFrontDoorState, type FrontDoorState } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
 
 /** A bound front-door listener in this process, and how to stop it. */
 interface FrontDoorListenerHandle {
@@ -35,6 +35,10 @@ export interface FrontDoorSupervisorPorts {
    * Stops the Remote Control stream hub: persists every live attachment's sequence cursor synchronously, then frees the dials. Called exactly once on every exit the supervisor owns, after every listener it started is down (a live listener could still settle an observed Remote Control exchange, and the reconcile that follows would re-attach a stream the close had just ended) and before the final state write and the process's exit.
    */
   readonly closeRcStreamHub: () => void;
+  /**
+   * Reports one tick's session-registry facts to the door's event backbone: the sessions the tick's listing saw (taken before the prune, so a pruned launch's record is still there to name its start time) and the pids the tick's prune removed. The launch lifecycle publisher turns the diff between ticks into source-tagged events; the listing is also this loop's own idle input, so the two read one fact instead of two.
+   */
+  readonly observeLaunchRegistry: (sessions: readonly FrontDoorSessionSummary[], pruned: readonly number[]) => void;
   readonly log: (line: string) => void;
 }
 
@@ -132,8 +136,12 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
       return FRONTDOOR_SUPERVISOR_STILL_RUNNING;
     }
     ticks += 1;
-    pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, ports.isRunning);
-    if (listFrontDoorSessions(fs, paths.frontdoorSessionsDir).length === 0) {
+    // The listing precedes the prune so the launch lifecycle publisher sees each pruned launch's record with its start time; the prune's removals are handed to it beside the listing, and the idle decision reads the same listing minus those removals rather than listing again.
+    const listed = listFrontDoorSessions(fs, paths.frontdoorSessionsDir);
+    const pruned = pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, ports.isRunning);
+    ports.observeLaunchRegistry(listed, pruned);
+    const prunedPids = new Set(pruned);
+    if (listed.filter((session) => !prunedPids.has(session.pid)).length === 0) {
       idleSince ??= ports.now();
       if (ports.now() - idleSince >= idleShutdownMinutes * MS_PER_MINUTE) {
         ports.log(`agent-shim frontdoor supervisor: no sessions for ${String(idleShutdownMinutes)} minute(s); closing the front door and exiting`);

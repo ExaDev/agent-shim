@@ -16,6 +16,7 @@ import {
   UsageWindowsInputSchema,
   UsageWindowsOutputSchema,
 } from "./controlSchemas";
+import { createEventsApiRouter, type DoorEventsApiDeps } from "./eventsApi";
 import { createRcApiRouter, doorApiAuth, doorApiNodeHandlerOf, frontDoorApiLink, type RcApiDeps } from "./rcApi";
 import type { FrontDoorStatus } from "./status";
 import type { PrePipelineApi } from "./server";
@@ -27,7 +28,7 @@ import type { PrePipelineApi } from "./server";
  * - `frontdoor.*` returns what `agent-shim frontdoor status` returns: the supervisor state, its liveness, the session registry's launches and the headroom hop.
  * - `check.run` and `doctor.run` return the reports `agent-shim check` and `agent-shim doctor` print, as data, `check.run` parameterised by an absolute directory path.
  *
- * Read-only by design: identity, configuration-profile, provider, pool and directory-rule management stay CLI-side, and adding writes over this mount is a decision of its own rather than a gap here. `createDoorApiNodeHandler` mounts these routers beside the Remote Control router on the one prefix the provider listener already serves, so a consumer dials one address with one token for the whole door.
+ * Read-only by design: identity, configuration-profile, provider, pool and directory-rule management stay CLI-side, and adding writes over this mount is a decision of its own rather than a gap here. `createDoorApiNodeHandler` mounts these routers and the door-wide `events.subscribe` router beside the Remote Control router on the one prefix the provider listener already serves, so a consumer dials one address with one token for the whole door.
  */
 
 /** Everything the control-plane procedures need, injected so they serve against fakes in tests exactly as the door's real wiring serves against this machine. */
@@ -100,12 +101,12 @@ export type ControlApiRouter = ReturnType<typeof createControlApiRouter>;
 /** The control plane alone as a client sees it: every call presents the control token, over TLS trusting only the CA file the door's own state names. */
 export type ControlApiClient = RouterClient<ControlApiRouter>;
 
-/** Everything the door's whole typed API needs: the Remote Control operations and the control-plane reads, one deps object because one mount serves them under one token. */
-export interface DoorApiDeps extends RcApiDeps, ControlApiDeps {}
+/** Everything the door's whole typed API needs: the Remote Control operations, the control-plane reads and the door-wide event stream, one deps object because one mount serves them under one token. */
+export interface DoorApiDeps extends RcApiDeps, ControlApiDeps, DoorEventsApiDeps {}
 
-/** Builds the door's whole typed API: the Remote Control router and the control-plane routers beside it, one object for the one handler the provider listener mounts. */
+/** Builds the door's whole typed API: the Remote Control router, the control-plane routers and the events router beside them, one object for the one handler the provider listener mounts. */
 export function createDoorApiRouter(deps: DoorApiDeps) {
-  return { ...createRcApiRouter(deps), ...createControlApiRouter(deps) };
+  return { ...createRcApiRouter(deps), ...createControlApiRouter(deps), ...createEventsApiRouter(deps) };
 }
 
 /** The door's whole typed API, as the client the door's own verbs and library consumers use is derived from it. */
