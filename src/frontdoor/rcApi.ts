@@ -2,7 +2,7 @@ import type { IncomingHttpHeaders } from "node:http";
 
 import { createORPCClient, ORPCError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
-import { eventIterator, os, withEventMeta, type RouterClient } from "@orpc/server";
+import { eventIterator, os, withEventMeta, type AnyRouter, type RouterClient } from "@orpc/server";
 import { BodyLimitPlugin, RPCHandler } from "@orpc/server/node";
 import { Agent, fetch as undiciFetch } from "undici";
 
@@ -31,6 +31,8 @@ import type { PrePipelineApi } from "./server";
  * The Remote Control operations as a typed oRPC API, so programmatic consumers (automation, a mobile or web client, another of this user's tools) get a generated type-safe client instead of hand-rolled HTTP. One procedure per existing operation, each wrapping the same operation the bespoke token-gated routes wrap (the routes stay: the CLI uses them), with inputs and outputs validating through the Zod schemas of `rcSchemas.ts`, which the operations' own values must satisfy, so contract and behaviour share one schema source and cannot drift apart silently.
  *
  * Mounted on the provider listener beside the bespoke namespace, authenticated by the same per-generation owner-only control token as a Bearer credential: a fresh random value per door start, written owner-only under the front door's state directory, and checked in constant time like every other capability the door accepts. `rc.subscribe` streams the client attachment's fan-out: every event the door's held stream produced, SSE-framed by oRPC's event iterator, each carrying its sequence number as the SSE event id so a consumer's own reconnect can resume exactly as the door's does.
+ *
+ * This module also owns the mount's router-agnostic plumbing, which the control-plane routers (`controlApi.ts`) serve on the same prefix under the same token: the control-token middleware (`doorApiAuth`), the node-handler builder (`doorApiNodeHandlerOf`) and the TLS-pinned client link (`frontDoorApiLink`).
  */
 
 /** The one path prefix the typed API is mounted under, answered before the routed pipeline like the bespoke control routes are. */
@@ -65,19 +67,29 @@ export interface RcApiDeps {
   readonly fanout: RcEventFanout;
 }
 
-/** Builds the typed API's router: one procedure per operation, every one behind the control-token middleware. */
-export function createRcApiRouter(deps: RcApiDeps) {
-  const authed = os
-    .$context<{ readonly headers: IncomingHttpHeaders }>()
+/** The context every procedure on the door's typed API runs in: the request's own headers, which the control-token middleware reads the Bearer credential from. */
+export interface DoorApiContext {
+  readonly headers: IncomingHttpHeaders;
+}
+
+/** Builds the middleware every procedure on the door's typed API sits behind, whichever router it belongs to: the per-generation owner-only control token, presented as a Bearer credential and checked in constant time like every other capability the door accepts. */
+export function doorApiAuth(expectedToken: string) {
+  return os
+    .$context<DoorApiContext>()
     .use(({ context, next }) => {
       const presented = context.headers.authorization;
       const bearerPrefix = "bearer ".length;
       const token = typeof presented === "string" && presented.slice(0, bearerPrefix).toLowerCase() === "bearer " ? presented.slice(bearerPrefix) : undefined;
-      if (token === undefined || !isLiveCapability(token, [deps.expectedToken])) {
+      if (token === undefined || !isLiveCapability(token, [expectedToken])) {
         throw new ORPCError("UNAUTHORIZED", { message: "the front door's typed API demands this generation's control token as a Bearer credential" });
       }
       return next();
     });
+}
+
+/** Builds the typed API's router: one procedure per operation, every one behind the control-token middleware. */
+export function createRcApiRouter(deps: RcApiDeps) {
+  const authed = doorApiAuth(deps.expectedToken);
   // A write the operation could not deliver becomes the same verbose message the bespoke routes answer 502 with, carried as an oRPC error a typed client reads as a thrown value.
   const delivered = (sessionId: string, result: RcEventWriteResult): readonly number[] => {
     if (!result.ok) {
@@ -180,24 +192,31 @@ export function createRcApiRouter(deps: RcApiDeps) {
 export type RcApiRouter = ReturnType<typeof createRcApiRouter>;
 
 /**
- * Builds the typed API's node handler, already bound to its mount prefix and context: the pre-pipeline surface the provider listener hands every request under `RC_ORPC_PATH_PREFIX`, answering with `matched: false` for a path under the prefix that names no procedure (which the listener itself answers as a 404). Request bodies are bounded by the same protocol cap the bespoke routes apply.
+ * Builds the node handler that serves one router of the door's typed API under the mount's one prefix: the pre-pipeline surface the provider listener hands every request under `RC_ORPC_PATH_PREFIX`, answering with `matched: false` for a path under the prefix that names no procedure (which the listener itself answers as a 404). Request bodies are bounded by the same protocol cap the bespoke routes apply. Every router the mount serves (Remote Control and the control plane) goes through this one builder, so the prefix, the context and the cap are stated once.
  */
-export function createRcApiNodeHandler(deps: RcApiDeps): PrePipelineApi {
-  const handler = new RPCHandler(createRcApiRouter(deps), { plugins: [new BodyLimitPlugin({ maxBodySize: CONTROL_BODY_CAP_BYTES })] });
+export function doorApiNodeHandlerOf(router: AnyRouter): PrePipelineApi {
+  const handler = new RPCHandler(router, { plugins: [new BodyLimitPlugin({ maxBodySize: CONTROL_BODY_CAP_BYTES })] });
   return {
     pathPrefix: RC_ORPC_PATH_PREFIX,
     handle: async (request, response) => await handler.handle(request, response, { context: { headers: request.headers }, prefix: RC_ORPC_PATH_PREFIX }),
   };
 }
 
+/**
+ * Builds the typed API's node handler for the Remote Control router alone: the pre-pipeline surface the provider listener hands every request under `RC_ORPC_PATH_PREFIX`.
+ */
+export function createRcApiNodeHandler(deps: RcApiDeps): PrePipelineApi {
+  return doorApiNodeHandlerOf(createRcApiRouter(deps));
+}
+
 /** The typed API's client as the `frontdoor rc` verbs use it: every call presents the control token, over TLS trusting only the CA file the door's own state names. */
 export type RcApiClient = RouterClient<RcApiRouter>;
 
-/** Builds the typed API's client for the door's provider listener: the same address, CA and per-generation control token the bespoke control client uses. */
-export function frontDoorRcApiClient(port: number, ca: string, token: string): RcApiClient {
-  // One dispatcher for the client's lifetime, trusting only the door's CA, so a process merely holding the port cannot answer as the door (the same trust rule the bespoke transport applies).
+/** Builds the link every client of the door's typed API dials through: the door's address under the mount prefix, the per-generation control token on every call, and TLS trusting only the CA the door's own state names. */
+export function frontDoorApiLink(port: number, ca: string, token: string) {
+  // One dispatcher for the link's lifetime, trusting only the door's CA, so a process merely holding the port cannot answer as the door (the same trust rule the bespoke transport applies).
   const dispatcher = new Agent({ connect: { ca } });
-  const link = new RPCLink({
+  return new RPCLink({
     url: `https://127.0.0.1:${String(port)}${RC_ORPC_PATH_PREFIX}`,
     headers: { authorization: `Bearer ${token}` },
     // undici's own Request and Response types and the global ones are distinct declarations of the same standard shapes (the package's bundled types sit beside @types/node's own), and its fetch refuses the global Request instance outright, so the call is rebuilt from the request's parts and the answer re-wrapped through the global constructors, never cast between the two. The request body is one bounded JSON object (the same protocol cap the handler enforces), so reading it whole costs nothing; it is the answer that streams.
@@ -213,5 +232,9 @@ export function frontDoorRcApiClient(port: number, ca: string, token: string): R
       return new Response(answered.body, { status: answered.status, statusText: answered.statusText, headers: [...answered.headers] });
     },
   });
-  return createORPCClient(link);
+}
+
+/** Builds the typed API's client for the door's provider listener: the same address, CA and per-generation control token the bespoke control client uses. */
+export function frontDoorRcApiClient(port: number, ca: string, token: string): RcApiClient {
+  return createORPCClient(frontDoorApiLink(port, ca, token));
 }

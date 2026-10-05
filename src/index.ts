@@ -2,7 +2,7 @@
  * The library surface of agent-shim: the pure, port-injected parts other tools can call in-process instead of shelling out to the CLI. Four groups, none of which imports interactive prompting or argument parsing:
  *
  * - identity and configuration-profile resolution and farm sync (`resolveDecisions`, `resyncFarm`, `buildEntryFacts`, ...), pure over facts and ports passed in;
- * - routing: the front door's Remote-Control-preserving, capability-authenticated CONNECT surface and its certificate authority, the Remote Control session tracker (pending control requests and worker status included) with prompt injection and control-request answering over the same observed protocol, the control surface that lists, reads status and writes through, the client read stream attachment (the SSE parser, the fan-out and the per-session hub that holds the stream open over the door's own dials), the same operations as a typed oRPC API with its node handler and TLS-pinned client, the front-door supervisor and ensure lifecycle, and the headroom supervisor and ensure lifecycle, each pure over its injected ports;
+ * - routing: the front door's Remote-Control-preserving, capability-authenticated CONNECT surface and its certificate authority, the Remote Control session tracker (pending control requests and worker status included) with prompt injection and control-request answering over the same observed protocol, the control surface that lists, reads status and writes through, the client read stream attachment (the SSE parser, the fan-out and the per-session hub that holds the stream open over the door's own dials), the same operations as a typed oRPC API with its node handler and TLS-pinned client, the door's control-plane routers beside it (usage snapshots and effective quota windows, the front door's status and session registry, check and doctor as data), the front-door supervisor and ensure lifecycle, and the headroom supervisor and ensure lifecycle, each pure over its injected ports;
  * - the ambient-credential guard;
  * - the per-identity usage snapshot a statusline or launcher reads: its schema and the reader over an injected filesystem, `effectiveWindow` (how a window past its reset reads), and the pool ranking (`rankPool` over snapshots and a clock, `collectPoolPick` reading this machine, and the schema of the report `pool pick --json` prints);
  * - `evaluateWhen` and `matchBranch`, the condition evaluator behind a rule's or entry's `when`, so a consumer reading directory rules applies the same semantics;
@@ -10,7 +10,7 @@
  *
  * Creating and changing identities, configuration profiles, providers, pools and directory rules: the `*Store` modules, which take the state root's `LayoutPaths`, return typed values and throw `CliError` subclasses.
  *
- * - `check` and `doctor` as data: `collectCheckReport` and `collectDoctorReport` read this machine and return the report, and the pure `runCheck` and `runDoctor` take the facts as parameters.
+ * - `check` and `doctor` as data: `collectCheckReport` and `collectDoctorReport` read this machine and return the report, the pure `runCheck` and `runDoctor` take the facts as parameters, and `checkReportToJson` returns the report in the shape `CheckReportJsonSchema` (in `checkReportSchema.ts`) defines, so the JSON the CLI prints, the door's `check.run` procedure and any consumer's validation share one definition.
  *
  * - launching: `prepareClaudeLaunch` resolves a launch for a directory on this machine and returns the binary, arguments and environment to spawn (performing the farm resync and daemon registration the child depends on), `prepareLaunch` does the same over injected ports, and `runLauncher` and `spawnClaude` are the spawn step itself: the former plans and releases in one call, the latter takes a plan's parts with the release-on-exit ordering an embedder would otherwise get wrong.
  *
@@ -110,11 +110,42 @@ export {
   RC_ORPC_PATH_PREFIX,
   createRcApiNodeHandler,
   createRcApiRouter,
+  doorApiAuth,
+  doorApiNodeHandlerOf,
+  frontDoorApiLink,
   frontDoorRcApiClient,
+  type DoorApiContext,
   type RcApiClient,
   type RcApiDeps,
   type RcApiRouter,
 } from "./frontdoor/rcApi";
+export {
+  createControlApiRouter,
+  createDoorApiNodeHandler,
+  createDoorApiRouter,
+  frontDoorApiClient,
+  type ControlApiClient,
+  type ControlApiDeps,
+  type ControlApiRouter,
+  type DoorApiClient,
+  type DoorApiDeps,
+  type DoorApiRouter,
+} from "./frontdoor/controlApi";
+export {
+  CheckRunInputSchema,
+  DoctorFindingSchema,
+  DoctorRunOutputSchema,
+  EffectiveWindowSchema,
+  FrontDoorSessionsOutputSchema,
+  FrontDoorSessionStatusSchema,
+  FrontDoorStatusOutputSchema,
+  HeadroomSocketTargetSchema,
+  UsageListOutputSchema,
+  UsageWindowsInputSchema,
+  UsageWindowsOutputSchema,
+} from "./frontdoor/controlSchemas";
+export { collectFrontDoorStatus, formatFrontDoorStatus, headroomSocketTarget, type FrontDoorSessionStatus, type FrontDoorStatus } from "./frontdoor/status";
+export { FrontDoorStateSchema } from "./frontdoor/state";
 export {
   RcPermissionModeSchema,
   RcStreamEnvelopeSchema,
@@ -287,6 +318,7 @@ export {
   type CollectCheckReportParams,
   type RunCheckParams,
 } from "./checkReport";
+export { CHECK_CREDENTIAL_APPLIES, CheckReportJsonSchema, type CheckReportJson } from "./checkReportSchema";
 export {
   collectDoctorReport,
   formatDoctorReport,

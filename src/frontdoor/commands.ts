@@ -8,8 +8,7 @@ import { UsageError } from "../cliError";
 import { readGlobalConfig } from "../configProfilesStore";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
 import { createCodexRoutePorts } from "../codex/commands";
-import { verifyHeadroomSocket, type HeadroomSocketTarget, type HeadroomSocketTrustPorts } from "../headroom/socket";
-import { readHeadroomState, type HeadroomFs } from "../headroom/state";
+import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning } from "../realPorts";
 import { createDoorPipelines } from "./assembly";
@@ -18,7 +17,11 @@ import { captureFromEnv } from "./capture";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_LIMITS, CONNECT_TAP_HOSTS, HTTPS_PORT, LOOPBACK_LEAF_NAMES, createLeafCache, ensureCa, generateCa, mintLeaf, realConnectCertStore, startConnectServer, type CaMaterial } from "./connect";
 import { lateRcEventDial, lateRcStreamDial, realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./connectEffects";
 import { createCredentialCustody } from "./custody";
-import { createRcApiNodeHandler, frontDoorRcApiClient, type RcApiClient } from "./rcApi";
+import { collectCheckReport } from "../checkReport";
+import { collectDoctorReport } from "../doctorReport";
+import { listUsageSnapshots, readUsageSnapshot } from "../usage/read";
+import { createDoorApiNodeHandler } from "./controlApi";
+import { frontDoorRcApiClient, type RcApiClient } from "./rcApi";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
@@ -30,7 +33,8 @@ import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcSt
 import type { RcStreamEvent } from "./rcSchemas";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, writeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
+import { collectFrontDoorStatus, formatFrontDoorStatus, headroomSocketTarget } from "./status";
+import { liveSessionTokens, readFrontDoorState, writeFrontDoorSession } from "./state";
 import { runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
 import { createAccountReader } from "../usage/account";
 import { createUsageMiddleware } from "../usage/middleware";
@@ -45,14 +49,6 @@ function appendLog(paths: LayoutPaths, line: string): void {
 
 /** How much random material a locally minted token carries: 32 bytes is the session-key scale, far past any guessing surface a local credential needs. */
 const MINTED_TOKEN_RANDOM_BYTES = 32;
-
-/**
- * The headroom daemon's socket as the hop may use it, read from the daemon's state on every routed request that needs the hop and authenticated each time: a new supervisor generation serves on a new path while this door keeps listening, and the hop must follow it (and answer 502 while the daemon is between restarts, or refuse a socket that fails the owner-only check). Undefined while no socket is recorded.
- */
-export function headroomSocketTarget(fsPort: HeadroomFs, trust: HeadroomSocketTrustPorts, paths: LayoutPaths): HeadroomSocketTarget | undefined {
-  const socketPath = readHeadroomState(fsPort, paths.headroomStateFile)?.socketPath;
-  return socketPath === undefined ? undefined : verifyHeadroomSocket(socketPath, trust);
-}
 
 /**
  * Wraps the door's route resolver so every route it resolves observes its served exchanges through the Remote Control tracker: the bare `/v1/` pass-through an OAuth session's Remote Control calls ride is where the tracker sees the create, the heartbeats and the presence, and the wrapper is a no-op for any path the tracker does not take (it hands the response through untouched). The client stream attachment is re-poked once an observed exchange's response has settled, so a session becomes attached the moment its create completes, without any polling of the tracker's own.
@@ -211,6 +207,15 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       const rcInterrupt = async (sessionId: string) => await interruptRcSession(rcControlRequestDeps, sessionId);
       const rcSetModel = async (sessionId: string, model: string) => await setRcSessionModel(rcControlRequestDeps, sessionId, model);
       const rcSetPermissionMode = async (sessionId: string, mode: RcPermissionMode) => await setRcSessionPermissionMode(rcControlRequestDeps, sessionId, mode);
+      // The control-plane reads the typed API serves beside Remote Control, each one the same read-only collector the CLI's own verbs use, so the door's answer and `frontdoor status`'s can never disagree.
+      const controlDeps = {
+        usageSnapshots: () => listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir),
+        usageSnapshotOf: (identity: string) => readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity),
+        now: () => Date.now(),
+        frontDoorStatus: () => collectFrontDoorStatus(realFarmFs, realHeadroomSocketTrust, paths, realIsProcessRunning),
+        checkReport: (target: string, identity?: string) => collectCheckReport({ paths, cwd: target, ...(identity === undefined ? {} : { identity }), env: process.env }),
+        doctorReport: () => collectDoctorReport({ paths, env: process.env }),
+      };
       // Written before the listener binds, so a listener that answers control requests is always one whose token exists; removed when this listener closes, so an idle-shut door leaves no token behind that a squatter on the port could be probed with.
       realFarmFs.mkdirp(paths.frontdoorDir);
       realFarmFs.writeFilePrivate(paths.frontdoorControlTokenFile, `${rcControlToken}\n`);
@@ -221,7 +226,19 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         log,
         mintLeaf(authority, LOOPBACK_LEAF_NAMES, new Date()),
         createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcTracker.statusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer, interrupt: rcInterrupt, setModel: rcSetModel, setPermissionMode: rcSetPermissionMode }),
-        createRcApiNodeHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcTracker.statusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer, interrupt: rcInterrupt, setModel: rcSetModel, setPermissionMode: rcSetPermissionMode, fanout: rcFanout }),
+        createDoorApiNodeHandler({
+          expectedToken: rcControlToken,
+          list: rcTracker.list,
+          statusOf: rcTracker.statusOf,
+          pendingOf: rcTracker.pendingOf,
+          inject: rcInject,
+          answer: rcAnswer,
+          interrupt: rcInterrupt,
+          setModel: rcSetModel,
+          setPermissionMode: rcSetPermissionMode,
+          fanout: rcFanout,
+          ...controlDeps,
+        }),
       );
       const handle = await listenFrontDoor(server, { ...(preferredPort === undefined ? {} : { preferredPort }), ca: authority.certPem, onError: onListenerError("provider") });
       return {
@@ -315,73 +332,6 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       appendLog(paths, line);
     },
   };
-}
-
-/** One session-registry entry plus whether its launcher is still running. */
-interface FrontDoorSessionStatus extends FrontDoorSessionSummary {
-  readonly alive: boolean;
-}
-
-/** Everything `agent-shim frontdoor status` reports, collected read-only: no process is started or stopped. */
-export interface FrontDoorStatus {
-  readonly state: FrontDoorState;
-  readonly supervisorAlive: boolean;
-  readonly sessions: readonly FrontDoorSessionStatus[];
-  /** The headroom daemon's socket as the door's hop reads and authenticates it live: undefined when no socket is recorded, a refusal when the recorded one fails the owner-only check. */
-  readonly headroomSocket: HeadroomSocketTarget | undefined;
-  readonly logPath: string;
-  readonly logExists: boolean;
-}
-
-/** Collects the front door's read-only status. */
-export function collectFrontDoorStatus(fsPort: HeadroomFs, socketTrust: HeadroomSocketTrustPorts, paths: LayoutPaths, isRunning: (pid: number) => boolean): FrontDoorStatus {
-  const state = readFrontDoorState(fsPort, paths.frontdoorStateFile) ?? {};
-  return {
-    state,
-    supervisorAlive: state.supervisorPid !== undefined && isRunning(state.supervisorPid),
-    sessions: listFrontDoorSessions(fsPort, paths.frontdoorSessionsDir).map((session) => ({ ...session, alive: isRunning(session.pid) })),
-    headroomSocket: headroomSocketTarget(fsPort, socketTrust, paths),
-    logPath: paths.frontdoorLogPath,
-    logExists: fsPort.readFileUtf8(paths.frontdoorLogPath) !== undefined,
-  };
-}
-
-/** Formats `agent-shim frontdoor status`, one line per entry. */
-export function formatFrontDoorStatus(status: FrontDoorStatus, caCertPath: string): string[] {
-  const lines: string[] = [];
-  if (status.state.supervisorPid === undefined) {
-    lines.push("supervisor: not running");
-  } else {
-    lines.push(`supervisor: pid ${String(status.state.supervisorPid)} (${status.supervisorAlive ? "alive" : "NOT running"})`);
-  }
-  if (status.state.port === undefined) {
-    lines.push(`front door: not listening${status.state.lastPort === undefined ? "" : ` (next start on 127.0.0.1:${String(status.state.lastPort)})`}`);
-  } else {
-    lines.push(`front door: listening on https://127.0.0.1:${String(status.state.port)}, routing /providers/<name> requests`);
-  }
-  if (status.state.connectPort === undefined) {
-    lines.push(`connect surface: not listening${status.state.lastConnectPort === undefined ? "" : ` (next start on 127.0.0.1:${String(status.state.lastConnectPort)})`}`);
-  } else {
-    lines.push(`connect surface: listening on 127.0.0.1:${String(status.state.connectPort)}, CA ${caCertPath}`);
-  }
-  if (status.headroomSocket === undefined) {
-    lines.push("headroom hop: the daemon is not serving (sessions asking for headroom fail until it is up)");
-  } else if (status.headroomSocket.refused === undefined) {
-    lines.push(`headroom hop: daemon on unix socket ${status.headroomSocket.socketPath}`);
-  } else {
-    lines.push(`headroom hop: REFUSING the daemon's socket (sessions asking for headroom fail until it is fixed): ${status.headroomSocket.refused}`);
-  }
-  if (status.sessions.length === 0) {
-    lines.push("sessions: none");
-  } else {
-    const pids = status.sessions.map((session) => `${String(session.pid)}${session.alive ? "" : " (dead)"}`);
-    lines.push(`sessions: ${String(status.sessions.length)} registered (${pids.join(", ")})`);
-  }
-  if (status.state.lastError !== undefined) {
-    lines.push(`last error: ${status.state.lastError}`);
-  }
-  lines.push(`daemon log: ${status.logPath}${status.logExists ? "" : " (not created yet)"}`);
-  return lines;
 }
 
 /** Formats `agent-shim frontdoor rc list`, one line per observed session. */
