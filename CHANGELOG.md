@@ -1,3 +1,9 @@
+## [8.11.1](https://github.com/ExaDev/agent-shim/compare/v8.11.0...v8.11.1) (2026-10-05)
+
+### Code Refactoring
+
+* **frontdoor:** inject the source-port range into the exempt dials ([8c4ea4d](https://github.com/ExaDev/agent-shim/commit/8c4ea4d82a4558dedb7e116dc85ffb28b43feb8c))
+
 ## [8.11.0](https://github.com/ExaDev/agent-shim/compare/v8.10.0...v8.11.0) (2026-10-05)
 
 ### Features
