@@ -1,3 +1,9 @@
+## [8.11.2](https://github.com/ExaDev/agent-shim/compare/v8.11.1...v8.11.2) (2026-10-05)
+
+### Documentation
+
+* state the terms position of the Codex login translation ([6dadbf6](https://github.com/ExaDev/agent-shim/commit/6dadbf6ce34e4c85bd36deebd40b8a18556eb34e))
+
 ## [8.11.1](https://github.com/ExaDev/agent-shim/compare/v8.11.0...v8.11.1) (2026-10-05)
 
 ### Code Refactoring
