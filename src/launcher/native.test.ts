@@ -43,6 +43,7 @@ describe("runNativeLaunch", () => {
       [["--native", "--identity", "work"], "@<identity> / --identity"],
       [["--native", "--provider", "z"], "--provider"],
       [["--native", "--no-provider"], "--no-provider"],
+      [["--native", "--claude-version", "2.1.220"], "--claude-version"],
       [["--native", "--headroom"], "--[no-]headroom"],
       [["--native", "--no-track-usage"], "--[no-]track-usage"],
       [["--native", "--skip-permissions"], "--[no-]skip-permissions"],

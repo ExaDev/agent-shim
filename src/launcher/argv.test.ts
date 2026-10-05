@@ -176,4 +176,10 @@ describe("parseLauncherArgv", () => {
     expect(result.native).toBeUndefined();
     expect(result.rest).toEqual(["mcp", "add", "n", "--", "cmd", "--native"]);
   });
+
+  it("consumes --claude-version in spaced and inline forms, the last occurrence winning", () => {
+    expect(parseLauncherArgv(["--claude-version", "2.1.220", "--print"])).toMatchObject({ claudeVersion: "2.1.220", rest: ["--print"] });
+    expect(parseLauncherArgv(["--claude-version=2.1.1", "--claude-version=2.1.2"]).claudeVersion).toBe("2.1.2");
+    expect(parseLauncherArgv(["mcp", "--", "cmd", "--claude-version", "9"]).claudeVersion).toBeUndefined();
+  });
 });

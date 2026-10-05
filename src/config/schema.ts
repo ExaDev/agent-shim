@@ -2,6 +2,8 @@ import path from "node:path";
 
 import { z } from "zod";
 
+import { NUMERIC_DOTTED_VERSION_RE } from "../versionDiscovery";
+
 /**
  * Every category a `~/.claude` entry can be classified into. `secret` is deliberately part of this list — it is a real classification the resolver acts on — but it is NOT part of `CategoryMapSchema`'s shape, because no configuration layer may ever toggle it. See OVERRIDABLE_CATEGORIES.
  */
@@ -91,6 +93,8 @@ const LaunchSchema = z.strictObject({
   provider: z.string().min(1).optional(),
   headroom: z.boolean().optional(),
   trackUsage: z.boolean().optional(),
+  /** The exact Claude Code version to run, as it is named in Claude Code's versions directory (`2.1.220`). A pin that is not installed fails the launch; it never falls back to the highest version. */
+  claudeVersion: z.string().regex(NUMERIC_DOTTED_VERSION_RE, "must be an exact dotted-numeric Claude Code version such as 2.1.220").optional(),
 });
 export type LaunchFlags = z.infer<typeof LaunchSchema>;
 

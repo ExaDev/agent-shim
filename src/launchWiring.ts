@@ -12,7 +12,7 @@ import { prepareLaunch, type FarmRuntime, type LaunchPlan, type PrepareLaunchPar
 import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import type { LogPort, ProcPort } from "./launcher/ports";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
-import type { DiscoveredClaudeBinary } from "./versionDiscovery";
+import type { ClaudeBinaryResolver } from "./versionDiscovery";
 import {
   realContentSourcePath,
   realCredentialPort,
@@ -86,7 +86,7 @@ export interface RealLaunchOptions {
 }
 
 /** The real `claude` binary discovery for this machine, skipping agent-shim's own binary: what a launch and a `--native` launch both resolve through. */
-export function realClaudeBinaryResolver(paths: LayoutPaths): () => DiscoveredClaudeBinary {
+export function realClaudeBinaryResolver(paths: LayoutPaths): ClaudeBinaryResolver {
   return realResolveClaudeBinary(resolveOwnBinaryCheck(paths, realContentSourcePath()));
 }
 

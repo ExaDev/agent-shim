@@ -330,6 +330,17 @@ describe("profile commands", () => {
     expect(readProfile(paths, "acme")?.launch).toEqual({ headroom: true, skipPermissions: false });
   });
 
+  it("sets and clears a Claude Code version pin, and refuses one that is not an exact version", async () => {
+    createProfile(paths, "acme");
+    await cli(["profile", "set", "acme", "--launch-claude-version", "2.1.220"]);
+    expect(readProfile(paths, "acme")?.launch).toEqual({ claudeVersion: "2.1.220" });
+    const refused = await cli(["profile", "set", "acme", "--launch-claude-version", "latest"]);
+    expect(refused.code).toBe(EXIT_FAILURE);
+    expect(readProfile(paths, "acme")?.launch).toEqual({ claudeVersion: "2.1.220" });
+    await cli(["profile", "set", "acme", "--no-launch-claude-version"]);
+    expect(readProfile(paths, "acme")?.launch).toBeUndefined();
+  });
+
   it("needs something to change without a terminal", async () => {
     createProfile(paths, "acme");
     expect((await cli(["profile", "set", "acme"])).code).toBe(EXIT_USAGE);

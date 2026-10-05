@@ -24,7 +24,8 @@ import type { CascadeInput } from "./resolve/walk";
 import { ANTHROPIC_PROVIDER } from "./usage/middleware";
 import { quotaWarnings } from "./usage/preflight";
 import { readUsageSnapshot, UsageSnapshotError } from "./usage/read";
-import type { DiscoveredClaudeBinary } from "./versionDiscovery";
+import type { ClaudeBinaryResolver } from "./versionDiscovery";
+import { resolveClaudeVersion } from "./launcher/claudeVersion";
 
 /**
  * Everything the farm resync needs that the launcher itself has no way to produce: a real filesystem, a real clock, the working directory, and a way to load the cascade for it.
@@ -63,7 +64,7 @@ export interface PrepareLaunchParams {
   readonly proc: ProcPort;
   readonly log: LogPort;
   /** Discovers the real `claude` binary to spawn. Injected so `runLauncher` never depends on `src/versionDiscovery.ts`'s own filesystem/PATH inputs directly — the caller (`src/cli.ts`) wires the real discovery, tests wire a fake that returns a fixed path. */
-  readonly resolveClaudeBinary: () => DiscoveredClaudeBinary;
+  readonly resolveClaudeBinary: ClaudeBinaryResolver;
   /** An identity pinned to `$PWD` by a directory rule. Accepted as an already-resolved value — the rules-loading code that produces it lands in Phase 4/5. */
   readonly directoryPinnedIdentity?: string;
   /** A directory rule's `configProfile` selection for `$PWD`. Accepted as an already-resolved value for the same reason. */
@@ -388,7 +389,12 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     cascadeLaunch = flattenLayers(assembleCascade(params.farm.loadCascade(configProfileDecision.name, cliOverride)).layers, { home: params.farm.home }).launch;
   }
 
-  const discovered = params.resolveClaudeBinary();
+  // A pinned Claude Code version comes from the same three forms as every launch setting, and is resolved before discovery because discovery has to run that exact version or fail.
+  const pinnedVersion = resolveClaudeVersion({ env, ...(parsedArgv.claudeVersion === undefined ? {} : { flag: parsedArgv.claudeVersion }), ...(cascadeLaunch?.claudeVersion === undefined ? {} : { cascade: cascadeLaunch.claudeVersion }) });
+  const discovered = params.resolveClaudeBinary(pinnedVersion === undefined ? undefined : { version: pinnedVersion.version });
+  if (pinnedVersion !== undefined) {
+    log.info(`agent-shim: Claude Code ${pinnedVersion.version} (pinned by ${pinnedVersion.source})`);
+  }
 
   const resolvedFlags = resolveLaunchFlags({
     env,

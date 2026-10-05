@@ -45,6 +45,7 @@ Launching:
     --category <category=bool>   share or hide a category (repeatable)
     --share <path>, --hide <path>  share or hide one <category>/<path> entry (repeatable)
     --[no-]skip-permissions, --[no-]remote-control, --[no-]headroom, --[no-]track-usage
+    --claude-version <version>   run exactly this installed Claude Code version (not the highest)
     --[no-]wait                  with @pool:<name>, sleep until the earliest member returns when all are refused
     --native                     run the real claude with nothing from agent-shim applied (no other launch flag allowed)
 

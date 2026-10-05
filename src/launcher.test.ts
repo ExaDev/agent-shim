@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { FarmRuntime } from "./launcher";
 import { ConflictingIdentityError } from "./launcher/argv";
+import { InvalidClaudeVersionError } from "./launcher/claudeVersion";
+import { ClaudeVersionNotInstalledError, type ClaudeBinaryResolver } from "./versionDiscovery";
 import { identityLockPath } from "./launcher/lock";
 import type { FsPort, HeadroomPort } from "./launcher/ports";
 import { prepareLaunch, runLauncher } from "./launcher";
@@ -825,3 +827,77 @@ describe("runLauncher quota warning", () => {
   });
 });
 
+
+describe("runLauncher Claude Code version pin", () => {
+  const PINNED = "2.1.5";
+
+  function launch(options: { readonly argv?: readonly string[]; readonly env?: Record<string, string>; readonly cascadeVersion?: string; readonly resolver?: ClaudeBinaryResolver }): {
+    readonly requests: (Parameters<ClaudeBinaryResolver>[0])[];
+    readonly log: ReturnType<typeof fakeLog>;
+    readonly spawn: ReturnType<typeof fakeSpawn>;
+    readonly run: () => number;
+  } {
+    const requests: (Parameters<ClaudeBinaryResolver>[0])[] = [];
+    const log = fakeLog();
+    const spawn = fakeSpawn();
+    const resolver: ClaudeBinaryResolver = options.resolver ?? (() => discovered);
+    const run = (): number =>
+      runAndCaptureExit({
+        paths,
+        fs: fakeFs({}),
+        spawn,
+        proc: fakeProc(options.env ?? {}, options.argv ?? ["--print"]),
+        log,
+        resolveClaudeBinary: (request) => {
+          requests.push(request);
+          return resolver(request);
+        },
+        farm: fakeFarm(createFakeFarmFs({}), options.cascadeVersion === undefined ? undefined : { launch: { claudeVersion: options.cascadeVersion } }),
+      });
+    return { requests, log, spawn, run };
+  }
+
+  it("asks discovery for no particular version when nothing pins one", () => {
+    const { requests, run, log } = launch({});
+    expect(run()).toBe(0);
+    expect(requests).toEqual([undefined]);
+    expect(log.infos.join("\n")).not.toContain("pinned");
+  });
+
+  it.each([
+    ["the --claude-version flag", { argv: ["--claude-version", PINNED, "--print"] }, "flag"],
+    ["AGENT_SHIM_CLAUDE_VERSION", { env: { AGENT_SHIM_CLAUDE_VERSION: PINNED } }, "environment"],
+    ["the cascade's launch.claudeVersion", { cascadeVersion: PINNED }, "cascade"],
+  ] as const)("runs the pinned version and says where the pin came from, for %s", (_name, options, source) => {
+    const { requests, run, log } = launch(options);
+    expect(run()).toBe(0);
+    expect(requests).toEqual([{ version: PINNED }]);
+    expect(log.infos.join("\n")).toContain(`Claude Code ${PINNED} (pinned by ${source})`);
+  });
+
+  it("lets the flag outrank the environment, and the environment outrank the cascade", () => {
+    const flag = launch({ argv: ["--claude-version", "2.1.1"], env: { AGENT_SHIM_CLAUDE_VERSION: "2.1.2" }, cascadeVersion: "2.1.3" });
+    flag.run();
+    expect(flag.requests).toEqual([{ version: "2.1.1" }]);
+    const env = launch({ env: { AGENT_SHIM_CLAUDE_VERSION: "2.1.2" }, cascadeVersion: "2.1.3" });
+    env.run();
+    expect(env.requests).toEqual([{ version: "2.1.2" }]);
+  });
+
+  it("refuses a launch whose pin is not installed, spawning nothing", () => {
+    const { spawn, run } = launch({
+      cascadeVersion: PINNED,
+      resolver: () => {
+        throw new ClaudeVersionNotInstalledError(PINNED, "/versions", ["2.1.9"]);
+      },
+    });
+    expect(run).toThrow(ClaudeVersionNotInstalledError);
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed environment pin before discovery runs", () => {
+    const { requests, run } = launch({ env: { AGENT_SHIM_CLAUDE_VERSION: "latest" } });
+    expect(run).toThrow(InvalidClaudeVersionError);
+    expect(requests).toEqual([]);
+  });
+});

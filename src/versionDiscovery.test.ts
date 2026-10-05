@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  ClaudeVersionNotInstalledError,
   compareVersions,
   discoverClaudeBinary,
+  installedVersions,
   isNumericDottedVersion,
   pickHighestVersion,
   type VersionsDirEntry,
@@ -170,5 +172,42 @@ describe("discoverClaudeBinary", () => {
         isOwnBinary: () => false,
       }),
     ).toThrow(/Could not find a claude binary/);
+  });
+});
+
+describe("discoverClaudeBinary with a pinned version", () => {
+  const options = (entries: readonly VersionsDirEntry[], extra: Readonly<{ findExecutableInDir?: () => string | undefined }> = {}) => ({
+    versionsDir: "/fake/versions",
+    listVersionsDir: () => [...entries],
+    pathDirs: ["/fake/bin"],
+    findExecutableInDir: extra.findExecutableInDir ?? (() => undefined),
+    isOwnBinary: () => false,
+  });
+
+  it("runs exactly the pinned version, not the highest", () => {
+    const result = discoverClaudeBinary({ ...options([file("2.1.220"), file("2.1.289")]), version: "2.1.220" });
+    expect(result).toEqual({ path: "/fake/versions/2.1.220", source: "versions-dir", version: "2.1.220" });
+  });
+
+  it("fails with the installed versions listed when the pin is not installed, never falling back to the highest version or to PATH", () => {
+    const run = () => discoverClaudeBinary({ ...options([file("2.1.287"), file("2.1.289")], { findExecutableInDir: () => "/fake/bin/claude" }), version: "2.1.200" });
+    expect(run).toThrow(ClaudeVersionNotInstalledError);
+    expect(run).toThrow(/Claude Code 2\.1\.200 is pinned .* Installed: 2\.1\.287, 2\.1\.289\./);
+  });
+
+  it("says no versions are installed when the directory has nothing runnable", () => {
+    expect(() => discoverClaudeBinary({ ...options([]), version: "2.1.200" })).toThrow(/no versions are installed there/);
+  });
+
+  it("does not count an entry that is not runnable as installed", () => {
+    for (const broken of [file("2.1.200", { isExecutable: false }), file("2.1.200", { sizeBytes: 0 }), file("2.1.200", { isFile: false })]) {
+      expect(() => discoverClaudeBinary({ ...options([broken, file("2.1.289")]), version: "2.1.200" })).toThrow(ClaudeVersionNotInstalledError);
+    }
+  });
+});
+
+describe("installedVersions", () => {
+  it("lists the runnable versions oldest first and skips everything else", () => {
+    expect(installedVersions([file("2.1.289"), file("2.1.9"), file(".DS_Store"), file("2.1.288", { isExecutable: false })])).toEqual(["2.1.9", "2.1.289"]);
   });
 });

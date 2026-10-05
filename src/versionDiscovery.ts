@@ -1,6 +1,8 @@
 import os from "node:os";
 import path from "node:path";
 
+import { CliError } from "./cliError";
+
 /** One entry observed inside a versions directory (e.g. ~/.local/share/claude/versions/2.1.220). */
 export interface VersionsDirEntry {
   /** The entry's own name — expected to be a plain dotted-numeric version like "2.1.220". */
@@ -23,6 +25,8 @@ export interface DiscoverClaudeBinaryOptions {
   pathDirs: string[];
   /** Looks up an executable of the given name inside one PATH directory, returning its full path if found. */
   findExecutableInDir: (dir: string, name: string) => string | undefined;
+  /** An exact version to run instead of the highest one. It must be installed: a missing pin is an error, never a fallback to the highest version or to PATH. */
+  version?: string;
   /** Decides whether a PATH-found `claude` candidate is this very tool (its own executable, or the `claude`-named copy `shim enable` makes of it), which the fallback must never return: spawning it would recursively launch agent-shim instead of Claude Code. The check is per candidate file, not per directory, because a shared bin directory can legitimately hold another package's claude beside agent-shim: under one npm global prefix, claude-code's `claude` sits in exactly the directory agent-shim was installed from. */
   isOwnBinary: (candidate: string) => boolean;
 }
@@ -37,12 +41,21 @@ export interface DiscoveredClaudeBinary {
   version?: string;
 }
 
+/** What a launch asks binary discovery for: nothing (the highest installed version) or an exact version. */
+interface ClaudeBinaryRequest {
+  readonly version?: string;
+}
+
+/** Discovers the real `claude` binary to spawn, for the version a launch asked for. Injected into the launcher so it never reads the filesystem or PATH itself. */
+export type ClaudeBinaryResolver = (request?: Readonly<ClaudeBinaryRequest>) => DiscoveredClaudeBinary;
+
 /** The default versions directory, matching the legacy bash tool's own layout. */
-function defaultVersionsDir(): string {
+export function defaultVersionsDir(): string {
   return path.join(os.homedir(), ".local", "share", "claude", "versions");
 }
 
-const NUMERIC_DOTTED_VERSION_RE = /^\d+(?:\.\d+)*$/;
+/** A plain dotted-numeric version such as `2.1.220`: the names Claude Code's versions directory uses, and what a pinned version must be. */
+export const NUMERIC_DOTTED_VERSION_RE = /^\d+(?:\.\d+)*$/;
 
 /** True when `name` is a plain dotted-numeric version string like "2.1.220" (never full semver — no pre-release/build metadata is expected here). */
 export function isNumericDottedVersion(name: string): boolean {
@@ -74,6 +87,26 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+/** Raised when a launch pins a Claude Code version that is not in the versions directory. */
+export class ClaudeVersionNotInstalledError extends CliError {
+  constructor(readonly version: string, readonly versionsDir: string, readonly installed: readonly string[]) {
+    super(
+      `Claude Code ${version} is pinned for this launch but is not installed under "${versionsDir}"` +
+        (installed.length === 0 ? " (no versions are installed there)." : `. Installed: ${installed.join(", ")}.`) +
+        " Install it, or change or remove the pin (--claude-version, AGENT_SHIM_CLAUDE_VERSION, or launch.claudeVersion).",
+    );
+    this.name = "ClaudeVersionNotInstalledError";
+  }
+}
+
+/** The versions that are genuinely runnable in a versions directory (executable, non-empty regular files named like a version), oldest first. */
+export function installedVersions(entries: readonly VersionsDirEntry[]): readonly string[] {
+  return entries
+    .filter((entry) => entry.isFile && entry.isExecutable && entry.sizeBytes > 0 && isNumericDottedVersion(entry.name))
+    .map((entry) => entry.name)
+    .sort(compareVersions);
+}
+
 /**
  * Filters `entries` to genuinely-executable, non-empty regular files whose name is a valid dotted-numeric version (skipping things like .DS_Store or a stray empty file), then picks the highest version by a real numeric-segment comparison. Returns undefined when nothing qualifies.
  */
@@ -98,6 +131,14 @@ export function discoverClaudeBinary(options: DiscoverClaudeBinaryOptions): Disc
   const versionsDir = options.versionsDir ?? defaultVersionsDir();
   const entries = options.listVersionsDir(versionsDir);
   const highestVersion = pickHighestVersion(entries);
+
+  if (options.version !== undefined) {
+    const installed = installedVersions(entries);
+    if (!installed.includes(options.version)) {
+      throw new ClaudeVersionNotInstalledError(options.version, versionsDir, installed);
+    }
+    return { path: path.join(versionsDir, options.version), source: "versions-dir", version: options.version };
+  }
 
   if (highestVersion !== undefined) {
     return {
