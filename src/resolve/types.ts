@@ -11,13 +11,15 @@ import type {
 export type LayerId = number;
 
 /** Where a cascade layer came from. Purely descriptive — precedence is carried by `LayerId`, never by kind. */
-type LayerKind =
-  | "global-config"
-  | "config-profile"
-  | "directory-rule"
-  | "portable"
-  | "portable-local"
-  | "cli-override";
+export const LAYER_KINDS = [
+  "global-config",
+  "config-profile",
+  "directory-rule",
+  "portable",
+  "portable-local",
+  "cli-override",
+] as const;
+type LayerKind = (typeof LAYER_KINDS)[number];
 
 /** One composable layer of the cascade: its own category toggles and entries overrides, plus the entries key order captured at load time. */
 export interface Layer {
@@ -93,17 +95,19 @@ export interface CompiledRule {
 }
 
 /** How a decision was reached, for `agent-shim check`'s "which layer decided this" output. */
-type DecisionVia =
+export const DECISION_VIAS = [
   /** The unconditional pre-cascade floor: the path's real classification is `secret`. */
-  | "secret-floor"
+  "secret-floor",
   /** Nothing in the classification map recognises the path's top-level entry. */
-  | "unclassified"
+  "unclassified",
   /** An entries rule matched and its condition (if any) held. */
-  | "entry-rule"
+  "entry-rule",
   /** No entries rule survived; a layer's category toggle decided it. */
-  | "category-override"
+  "category-override",
   /** No entries rule and no category toggle; the shipped default for the category decided it. */
-  | "category-default";
+  "category-default",
+] as const;
+type DecisionVia = (typeof DECISION_VIAS)[number];
 
 /** One entry's resolved sharing decision plus the reasoning behind it. */
 export interface Decision {
@@ -124,42 +128,45 @@ export interface EliminatedRule {
 }
 
 /** Every diagnostic the resolver can raise. Codes are stable strings so `agent-shim check` and tests can assert on them. */
-type DiagnosticCode =
+export const DIAGNOSTIC_CODES = [
   /** A profile's `extends` graph contains a cycle. */
-  | "EXTENDS_CYCLE"
+  "EXTENDS_CYCLE",
   /** An `extends` entry names a profile that does not exist. */
-  | "MISSING_PROFILE"
+  "MISSING_PROFILE",
   /** An entries key was written under the `secret/` prefix. Rejected at compile time — `secret` can never be overridden by any layer. */
-  | "SECRET_ENTRY_KEY"
+  "SECRET_ENTRY_KEY",
   /** An entries key under some other prefix matched a path whose real classification is `secret`. Neutralised at resolve time by the floor check. */
-  | "SECRET_PATH_NEUTRALISED"
+  "SECRET_PATH_NEUTRALISED",
   /** An entries key's declared category prefix disagrees with the real classification of a path it matched. */
-  | "CATEGORY_PREFIX_MISMATCH"
+  "CATEGORY_PREFIX_MISMATCH",
   /** An entries key is not of the form `<category>/<path>`. The schema rejects these at parse time; this fires only for a layer built in code. */
-  | "MALFORMED_ENTRY_KEY"
+  "MALFORMED_ENTRY_KEY",
   /** An earlier layer's exact key lost to a later layer's glob. Correct per the comparator, but worth surfacing rather than resolving silently. */
-  | "EXACT_ENTRY_OVERRIDDEN_BY_LATER_GLOB"
+  "EXACT_ENTRY_OVERRIDDEN_BY_LATER_GLOB",
   /** A `history/projects/` pattern's encoded form could plausibly correspond to more than one real path. */
-  | "AMBIGUOUS_PROJECT_ENCODING"
+  "AMBIGUOUS_PROJECT_ENCODING",
   /** A `history/projects/` key's path fragment is neither home-rooted nor absolute, so it cannot be encoded. */
-  | "UNROOTED_PROJECT_PATH"
+  "UNROOTED_PROJECT_PATH",
   /** A `~/.claude` entry nothing in the classification map recognises. */
-  | "UNCLASSIFIED_ENTRY"
+  "UNCLASSIFIED_ENTRY",
   /** An empty `when: {}` object, which is vacuously true and therefore has no effect. */
-  | "EMPTY_WHEN"
+  "EMPTY_WHEN",
   /** The previous farm's manifest is missing or unreadable, so reconciliation ran in conservative mode. */
-  | "FARM_MANIFEST_MISSING"
+  "FARM_MANIFEST_MISSING",
   /** A file Claude Code wrote into a materialised farm directory differs from the canonical copy of the same path. */
-  | "RECONCILE_CONFLICT"
+  "RECONCILE_CONFLICT",
   /** Reconciliation proposed adopting a path whose real classification is `secret`. Refused: the secret floor applies to data moving into `~/.claude` exactly as it applies to data moving out. */
-  | "RECONCILE_SECRET_BLOCKED"
+  "RECONCILE_SECRET_BLOCKED",
   /** A previous launch was interrupted mid-swap and this launch completed or undid the half-finished work. */
-  | "FARM_SWAP_RECOVERED"
+  "FARM_SWAP_RECOVERED",
   /** A superseded farm could not be discarded because it still held data the new farm has its own entry for, so it was left on disk for the user to look at. */
-  | "FARM_PREVIOUS_RETAINED";
+  "FARM_PREVIOUS_RETAINED",
+] as const;
+type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];
 
 /** Severity of a diagnostic. An `error` means a configuration layer asked for something the tool refused to do. */
-type DiagnosticSeverity = "error" | "warning" | "info";
+export const DIAGNOSTIC_SEVERITIES = ["error", "warning", "info"] as const;
+type DiagnosticSeverity = (typeof DIAGNOSTIC_SEVERITIES)[number];
 
 /** One structured diagnostic. */
 export interface Diagnostic {

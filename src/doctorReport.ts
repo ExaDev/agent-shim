@@ -22,24 +22,27 @@ import type { RunPort } from "./launcher/ports";
 import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./resolve/extends";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 
-type DoctorSeverity = "pass" | "warn" | "fail";
+export const DOCTOR_SEVERITIES = ["pass", "warn", "fail"] as const;
+type DoctorSeverity = (typeof DOCTOR_SEVERITIES)[number];
 
-type DoctorSection =
-  | "ambient-credential"
-  | "binary-discovery"
-  | "claude-shim"
-  | "path-resolution"
-  | "legacy-name"
-  | "config-profile"
-  | "identity"
-  | "pool"
-  | "provider"
-  | "keychain"
-  | "directory-rules"
-  | "global-config"
-  | "categories-local"
-  | "active-identity"
-  | "headroom";
+export const DOCTOR_SECTIONS = [
+  "ambient-credential",
+  "binary-discovery",
+  "claude-shim",
+  "path-resolution",
+  "legacy-name",
+  "config-profile",
+  "identity",
+  "pool",
+  "provider",
+  "keychain",
+  "directory-rules",
+  "global-config",
+  "categories-local",
+  "active-identity",
+  "headroom",
+] as const;
+type DoctorSection = (typeof DOCTOR_SECTIONS)[number];
 
 /** One line of `agent-shim doctor`'s report. `subject` names the identity/profile/rule the finding is about, when the section has more than one of those. */
 interface DoctorFinding {

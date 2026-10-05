@@ -2,7 +2,8 @@ import { UsageError } from "../cliError";
 import { NUMERIC_DOTTED_VERSION_RE } from "../versionDiscovery";
 
 /** Where a pinned Claude Code version came from, strongest first: the launch's own flag, then the environment, then the cascade. */
-type ClaudeVersionSource = "flag" | "environment" | "cascade";
+export const CLAUDE_VERSION_SOURCES = ["flag", "environment", "cascade"] as const;
+type ClaudeVersionSource = (typeof CLAUDE_VERSION_SOURCES)[number];
 
 /** The pinned version a launch runs, and which of the three forms named it. */
 export interface PinnedClaudeVersion {

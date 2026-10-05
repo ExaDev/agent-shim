@@ -93,11 +93,13 @@ export function encodeProjectPattern(fragment: string, options: Readonly<{ home:
 }
 
 /** Why a pattern's encoded form might not identify the real path its author had in mind. */
-export type EncodingAmbiguityReason =
+export const ENCODING_AMBIGUITY_REASONS = [
   /** The literal portion contains a character other than `/` that encodes to `-`, so a sibling path differing only in that character encodes identically. */
-  | "lossy-characters"
+  "lossy-characters",
   /** Two different patterns in the same configuration encode to the identical form. */
-  | "collides-with-sibling-pattern";
+  "collides-with-sibling-pattern",
+] as const;
+type EncodingAmbiguityReason = (typeof ENCODING_AMBIGUITY_REASONS)[number];
 
 /** One reported ambiguity in a `history/projects/` pattern. */
 export interface EncodingAmbiguity {

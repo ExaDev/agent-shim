@@ -5,19 +5,21 @@ import { IdentitySchema, POOL_SELECTOR_PREFIX, type Identity } from "../config/s
 import type { FsPort } from "./ports";
 
 /** Which precedence rule produced an identity decision. */
-export type IdentityDecisionSource =
+export const IDENTITY_DECISION_SOURCES = [
   /** `CLAUDE_CONFIG_DIR` was already set: identity resolution is skipped entirely and the real binary uses whatever it already points to. */
-  | "config-dir-escape-hatch"
+  "config-dir-escape-hatch",
   /** A leading `@name` argv[0] positional, or its explicit form `--identity <name>`. */
-  | "argv"
+  "argv",
   /** The `AGENT_SHIM_IDENTITY` environment variable. */
-  | "env"
+  "env",
   /** A directory rule pinning an identity to the current path. */
-  | "directory-pin"
+  "directory-pin",
   /** The persisted `~/.agent-shim/active-identity` file. */
-  | "active-identity-file"
+  "active-identity-file",
   /** Nothing resolved an identity at all — a bare launch with no active identity. */
-  | "none";
+  "none",
+] as const;
+export type IdentityDecisionSource = (typeof IDENTITY_DECISION_SOURCES)[number];
 
 /** The pool a `pool:<name>` selector names, or undefined when `selector` names an identity directly. */
 export function poolNameOf(selector: string): string | undefined {
@@ -89,19 +91,21 @@ export function decideIdentity(params: DecideIdentityParams): IdentityDecision {
 }
 
 /** Which precedence rule produced a configuration-profile decision. */
-export type ConfigProfileDecisionSource =
+export const CONFIG_PROFILE_DECISION_SOURCES = [
   /** An explicit `--config-profile` CLI flag. */
-  | "cli-flag"
+  "cli-flag",
   /** The `AGENT_SHIM_CONFIG_PROFILE` environment variable. */
-  | "env"
+  "env",
   /** A directory rule's `configProfile` selection for `$PWD`. */
-  | "directory-rule"
+  "directory-rule",
   /** The active identity's own declared `defaultConfigProfile`. */
-  | "identity-default"
+  "identity-default",
   /** The user-global `~/.agent-shim/config.json` default. */
-  | "global-default"
+  "global-default",
   /** Nothing resolved a configuration profile at all. */
-  | "none";
+  "none",
+] as const;
+export type ConfigProfileDecisionSource = (typeof CONFIG_PROFILE_DECISION_SOURCES)[number];
 
 /** The result of deciding which configuration profile applies to this launch. */
 export interface ConfigProfileDecision {
