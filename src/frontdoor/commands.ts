@@ -28,6 +28,7 @@ import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
 import { createRcCredentialStore } from "./rcCredentialStore";
+import { createRcClientPage } from "./rcClientPage";
 import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
 import { mintRcSelfHostCredential, readRcSelfHostRecord, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_IDLE_EXPIRY_MS, RC_PERMISSION_MODES, RC_PENDING_SUMMARY_EXCERPT_CHARS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, interruptRcSession, isRcPermissionMode, observingRoutedRoute, setRcSessionModel, setRcSessionPermissionMode, type RcAnswerDecision, type RcPermissionMode, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
@@ -230,20 +231,24 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         log,
         mintLeaf(authority, LOOPBACK_LEAF_NAMES, new Date()),
         createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcTracker.statusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer, interrupt: rcInterrupt, setModel: rcSetModel, setPermissionMode: rcSetPermissionMode }),
-        createDoorApiNodeHandler({
-          expectedToken: rcControlToken,
-          list: rcTracker.list,
-          statusOf: rcTracker.statusOf,
-          pendingOf: rcTracker.pendingOf,
-          inject: rcInject,
-          answer: rcAnswer,
-          interrupt: rcInterrupt,
-          setModel: rcSetModel,
-          setPermissionMode: rcSetPermissionMode,
-          fanout: rcFanout,
-          ...controlDeps,
-          events: doorEvents,
-        }),
+        [
+          createDoorApiNodeHandler({
+            expectedToken: rcControlToken,
+            list: rcTracker.list,
+            statusOf: rcTracker.statusOf,
+            pendingOf: rcTracker.pendingOf,
+            inject: rcInject,
+            answer: rcAnswer,
+            interrupt: rcInterrupt,
+            setModel: rcSetModel,
+            setPermissionMode: rcSetPermissionMode,
+            fanout: rcFanout,
+            ...controlDeps,
+            events: doorEvents,
+          }),
+          // The self-hosted web client rides the same listener under the same per-generation token as the typed API it speaks: no extra process, no new trust surface.
+          createRcClientPage(rcControlToken),
+        ],
       );
       const handle = await listenFrontDoor(server, { ...(preferredPort === undefined ? {} : { preferredPort }), ca: authority.certPem, onError: onListenerError("provider") });
       return {
