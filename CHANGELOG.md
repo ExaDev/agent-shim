@@ -1,3 +1,9 @@
+## [8.17.1](https://github.com/ExaDev/agent-shim/compare/v8.17.0...v8.17.1) (2026-10-05)
+
+### Bug Fixes
+
+* **frontdoor:** make the web client's door-state indicator truthful ([146eb20](https://github.com/ExaDev/agent-shim/commit/146eb20027381696bd5a1e68194b884870edbce7))
+
 ## [8.17.0](https://github.com/ExaDev/agent-shim/compare/v8.16.0...v8.17.0) (2026-10-05)
 
 ### Features
