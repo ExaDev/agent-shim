@@ -22,6 +22,7 @@ import { createRcApiNodeHandler, frontDoorRcApiClient, type RcApiClient } from "
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
+import { createRcCredentialStore } from "./rcCredentialStore";
 import { RC_IDLE_EXPIRY_MS, RC_PERMISSION_MODES, RC_PENDING_SUMMARY_EXCERPT_CHARS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, interruptRcSession, isRcPermissionMode, observingRoutedRoute, setRcSessionModel, setRcSessionPermissionMode, type RcAnswerDecision, type RcPermissionMode, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RcStreamEvent } from "./rcSchemas";
@@ -75,8 +76,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   let directPort = 0;
   // Built once for the process, not per request: the codex translation's upstream agent and auth store hold pooled connections and refresh state that must survive across requests.
   const codexPorts = createCodexRoutePorts(log);
-  // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix.
-  const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+  // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix. The client credential is the one part that must outlive the process (a session outlives any one door generation, and only client-half calls state the OAuth bearer), so it is persisted per session and read back by whichever generation needs it.
+  const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: createRcCredentialStore(realFarmFs, paths.frontdoorRcCredentialsDir) });
   // The door's own client read stream attachment: one held stream per tracked session, fanned out to every subscriber (the typed API's subscription and `frontdoor rc watch`), with its envelopes filed with the tracker. The door plays one client because the CLI routes permission approvals only toward attached clients: with no stream held, an approval falls back to the CLI's own local prompt and never crosses the door.
   const rcFanout = createRcEventFanout();
   const rcHub = createRcStreamHub({

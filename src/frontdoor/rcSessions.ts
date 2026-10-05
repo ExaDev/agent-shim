@@ -2,6 +2,7 @@ import type { IncomingHttpHeaders } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
 import type { PassthroughObserver } from "./capture";
+import type { RcCredentialStore } from "./rcCredentialStore";
 import type { RcStreamEnvelope } from "./rcSchemas";
 import type { FrontDoorRoute, RoutedResponse } from "./route";
 
@@ -152,6 +153,10 @@ export interface RcSessionTrackerDeps {
   readonly now: () => number;
   /** How long an entry may sit unobserved before it is expired; production passes `RC_IDLE_EXPIRY_MS`, tests pass small values so a deadline is reached in milliseconds. */
   readonly idleMs: number;
+  /**
+   * Where the observed client credential outlives this process. The worker's recurring calls carry the worker JWT, so a door generation that starts after a session's create observes nothing that states the OAuth bearer until some client-half call crosses; the store is what lets that generation still attach (and write). Absent, the credential is in memory only, exactly as it was before the store existed.
+   */
+  readonly credentialStore?: RcCredentialStore;
 }
 
 /** The live record of observed Remote Control sessions. */
@@ -376,6 +381,13 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     return record;
   };
 
+  /** Persists the entry's client credential whenever it holds an OAuth bearer, so the credential survives this process; the worker-JWT-only moments of a session's life simply leave whatever was last persisted in place. */
+  const persistCredential = (entry: RcSessionRecord): void => {
+    if (entry.oauthAuthorization !== undefined) {
+      deps.credentialStore?.write(entry.id, { authorization: entry.oauthAuthorization, anthropicVersion: entry.anthropicVersion, anthropicClientPlatform: entry.anthropicClientPlatform });
+    }
+  };
+
   const observeExchange = (request: RcObservedRequest): RcExchangeObserver | undefined => {
     const method = (request.method ?? "").toUpperCase();
     const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
@@ -416,7 +428,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
           if (id === undefined) {
             return;
           }
-          birth(id, facts);
+          persistCredential(birth(id, facts));
         },
       };
     }
@@ -431,6 +443,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     entry.oauthAuthorization = facts.oauthAuthorization ?? entry.oauthAuthorization;
     entry.anthropicVersion = facts.anthropicVersion ?? entry.anthropicVersion;
     entry.anthropicClientPlatform = facts.anthropicClientPlatform ?? entry.anthropicClientPlatform;
+    persistCredential(entry);
 
     // The one request-body shape each of these exchanges reads; every other recurring call's request body carries nothing the tracker retains.
     const bodyKind: RcRequestBodyKind | undefined =
@@ -500,8 +513,9 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
             },
           }),
       onResponse: (status, headers) => {
-        // A conflict header closes the session whatever the status says, and an accepted archive ends it by design; either way the entry describes something that is no longer live.
+        // A conflict header closes the session whatever the status says, and an accepted archive ends it by design; either way the entry describes something that is no longer live, and its persisted credential must not outlive it.
         if (singleHeader(headers, CONFLICT_REASON_HEADER) !== undefined || (archiving && isSuccessful(status))) {
+          deps.credentialStore?.remove(id);
           expire(id);
           return;
         }
@@ -542,7 +556,19 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
     },
     credentialOf: (sessionId) => {
       const entry = entries.get(sessionId);
-      return entry === undefined ? undefined : { authorization: entry.oauthAuthorization, anthropicVersion: entry.anthropicVersion, anthropicClientPlatform: entry.anthropicClientPlatform };
+      if (entry === undefined) {
+        return undefined;
+      }
+      if (entry.oauthAuthorization === undefined && deps.credentialStore !== undefined) {
+        // This generation never observed the session's client-half credential itself (it started after the create, and only worker calls have crossed since): the last generation's persisted copy is the freshest statement there is, and it is adopted once, as any later OAuth-bearing observation overwrites it the usual way.
+        const persisted = deps.credentialStore.read(sessionId);
+        if (persisted?.authorization !== undefined) {
+          entry.oauthAuthorization = persisted.authorization;
+          entry.anthropicVersion = entry.anthropicVersion ?? persisted.anthropicVersion;
+          entry.anthropicClientPlatform = entry.anthropicClientPlatform ?? persisted.anthropicClientPlatform;
+        }
+      }
+      return { authorization: entry.oauthAuthorization, anthropicVersion: entry.anthropicVersion, anthropicClientPlatform: entry.anthropicClientPlatform };
     },
     noteSequenceNums: (sessionId, sequenceNums) => {
       const entry = entries.get(sessionId);
