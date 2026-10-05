@@ -266,6 +266,10 @@ function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, m
   }
   const cache = cacheClause(cacheEnv, `provider ${entry.name}`, validated.data.credential);
   push("provider", cache.unreadable ? "fail" : "pass", `${entry.name} is valid (${describeProviderEndpoint(validated.data)}, credential ${describeCredential(validated.data.credential)})${cache.text}.`, entry.name);
+  // A provider session's base URL is the door, a host Claude Code does not treat as first party, and on a non-first-party base URL it loads MCP tools upfront rather than deferring them (it cannot assume the tool_reference beta survives the hop). Naming the env-block lever here keeps the default visible; whether to pull it stays the reader's call, because it only helps when the upstream backend understands tool_reference itself.
+  if (validated.data.env?.ENABLE_TOOL_SEARCH === undefined) {
+    push("provider", "warn", `${entry.name} does not set ENABLE_TOOL_SEARCH: a session on this provider loads MCP tools upfront rather than deferring them, because its base URL is the front door, which Claude Code treats as a non-first-party host. Set ENABLE_TOOL_SEARCH in the provider's env block to restore deferred loading, when the upstream backend supports the tool_reference payloads it sends.`, entry.name);
+  }
 }
 
 /**

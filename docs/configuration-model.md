@@ -246,6 +246,8 @@ On the command line, `--credential <source>` (repeatable, tried in the order giv
 
 A provider is a named API endpoint a session can be routed through instead of `api.anthropic.com`: an Anthropic-compatible relay, an OpenRouter-style aggregator, or any other base URL that speaks the Messages API. Providers replace the hand-written shell wrappers (`z` for GLM, `m` for MiniMax, `o` for OpenRouter, `s` for Synthetic) with first-class config, so the same identity, farm, and cascade machinery applies to them unchanged. A provider is one of two kinds: `http` (the default when `kind` is absent), the fixed endpoint described above, or `codex`, which routes through agent-shim's own translation daemon instead of any base URL.
 
+One Claude Code behaviour changes shape on a provider: deferred MCP tool loading. A provider session's base URL is the front door, a host Claude Code does not treat as first party, and on a non-first-party base URL it loads MCP tools upfront rather than deferring them (it cannot assume the `tool_reference` beta survives the hop), so every provider session runs with eager tool loading today. The `env` block is the lever: setting `ENABLE_TOOL_SEARCH` there restores deferred loading for the session, with the caveat that the upstream backend must itself understand the `tool_reference` payloads the session then sends (the door pipes requests untouched, so backend support is what gates it; `doctor` names this note for every provider without the variable set).
+
 Each provider lives in its own file at `~/.agent-shim/providers/<name>.json`:
 
 ```json
