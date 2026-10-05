@@ -165,7 +165,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
     const resolver = createProviderRouteResolver({
       fs: realFsPort,
       providersDir: resolveLayoutPaths().providersDir,
-      codexPorts: createCodexRoutePorts(() => undefined),
+      codexPorts: createCodexRoutePorts(() => undefined, resolveLayoutPaths().chatgptSignInFile),
       directPort: () => 0,
       rcSelfHostRoute: surface.route,
     });

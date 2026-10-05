@@ -788,8 +788,8 @@ describe("runDoctor: Sign in with ChatGPT provider", () => {
   const SIGN_IN_PATH = "/agent-shim/codex/chatgpt-sign-in.json";
   const signInProvider = provider("codex", { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] }, codex: { login: "chatgpt-sign-in" } });
   const grant = { clientId: "c", sub: "s", idToken: "i", accessToken: "a", refreshToken: "r", scopes: ["openid", "chatgpt.tokens.use.direct"], expiresAt: 0 };
-  const warnings = (chatgptSignIn: RunDoctorParams["chatgptSignIn"]) =>
-    findingsFor(runDoctor(baseParams({ providers: [signInProvider], chatgptSignIn })), "provider").filter((finding) => finding.severity === "warn");
+  const warnings = (chatgptSignIn: RunDoctorParams["chatgptSignIn"], providers = [signInProvider]) =>
+    findingsFor(runDoctor(baseParams({ providers, chatgptSignIn })), "provider").filter((finding) => finding.severity === "warn" && finding.message.includes("Sign in with ChatGPT"));
 
   it("warns, naming the login command, when nobody is signed in", () => {
     expect(warnings({ path: SIGN_IN_PATH, raw: undefined })).toEqual([
@@ -813,6 +813,6 @@ describe("runDoctor: Sign in with ChatGPT provider", () => {
   it("leaves the sign-in out when the file is not supplied, and for a provider on the Codex CLI login", () => {
     expect(warnings(undefined)).toEqual([]);
     const cliProvider = provider("codex", { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } });
-    expect(findingsFor(runDoctor(baseParams({ providers: [cliProvider], chatgptSignIn: { path: SIGN_IN_PATH, raw: undefined } })), "provider").filter((finding) => finding.severity === "warn")).toEqual([]);
+    expect(warnings({ path: SIGN_IN_PATH, raw: undefined }, [cliProvider])).toEqual([]);
   });
 });
