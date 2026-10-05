@@ -1,3 +1,10 @@
+## [8.9.0](https://github.com/ExaDev/agent-shim/compare/v8.8.0...v8.9.0) (2026-10-05)
+
+### Features
+
+* **frontdoor:** hold the Remote Control client read stream and serve its operations as a typed oRPC API ([22b4fd0](https://github.com/ExaDev/agent-shim/commit/22b4fd060146f16db28b31551ad5883d40c90b63)), references [#206](https://github.com/ExaDev/agent-shim/issues/206)
+* **launcher:** add --native to run the real claude with nothing from agent-shim applied ([66bfdd9](https://github.com/ExaDev/agent-shim/commit/66bfdd99599987fd2e0fd55d9cec683aeaefbd42))
+
 ## [8.8.0](https://github.com/ExaDev/agent-shim/compare/v8.7.0...v8.8.0) (2026-10-05)
 
 ### Features
