@@ -1,11 +1,17 @@
+import * as fs from "node:fs";
 import * as http from "node:http";
+import * as os from "node:os";
+// Named for the module, not `path`: this file's request helpers take a `path` parameter, which an import of the same name would shadow.
+import nodePath from "node:path";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { realFarmFs } from "../realPorts";
 import { CONNECT_INTERCEPT_HOST, LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial } from "./connect";
-import { KEYGEN_TIMEOUT_MS, RC_TEST_SEQUENCE_NUM, RC_TEST_SESSION_ID, HTTP_OK, SETTLE_MS, connectThroughProxy, makeTlsWorld, requestOn, settle } from "./connectTestWorld";
+import { KEYGEN_TIMEOUT_MS, RC_TEST_SEQUENCE_NUM, RC_TEST_SESSION_ID, HTTP_OK, SETTLE_MS, TEST_CAPABILITY, connectRedirected, connectThroughProxy, makeTlsWorld, requestOn, settle } from "./connectTestWorld";
 import { createRcApiNodeHandler, frontDoorRcApiClient } from "./rcApi";
 import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type RcControlTransport } from "./rcControl";
+import { createRcCredentialStore } from "./rcCredentialStore";
 import { RC_IDLE_EXPIRY_MS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, interruptRcSession, setRcSessionModel, setRcSessionPermissionMode, type RcAnswerDecision, type RcEventDial, type RcEventWriteResult, type RcPermissionMode, type RcSessionTracker } from "./rcSessions";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RcStreamEvent } from "./rcSchemas";
@@ -574,6 +580,112 @@ describe("Remote Control observation and injection over the connect surface", ()
         });
         await close();
         await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "reattaches over the transparent surface on a door generation that starts after the session's create, reading the persisted credential its worker-only traffic cannot restate",
+    async () => {
+      // The door's own credential directory, outliving either generation exactly as the front-door directory does: generation one observes the create's OAuth bearer and persists it; generation two starts with empty in-memory tracker state and only the worker's recurring traffic crossing it, which is the live shape of a door that restarted mid-session (the rig's silent hub).
+      const credentialsDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "rc-credentials-"));
+      const store = createRcCredentialStore(realFarmFs, credentialsDir);
+      try {
+        const trackerOne = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: store });
+        let hubOne: RcStreamHub | undefined;
+        const generationOne = makeTlsWorld(ca, upstreamCa, {
+          transparent: { port: 0, capability: TEST_CAPABILITY },
+          rc: { tracker: trackerOne, onExchangeSettled: () => hubOne?.reconcile() },
+        });
+        const first = await generationOne.start();
+        try {
+          // The create arrives the way the rig's redirected traffic does: no proxy handshake, no capability header, straight into the transparent surface.
+          const secure = await connectRedirected(first.transparentPort ?? 0, CONNECT_INTERCEPT_HOST, ca.certPem);
+          hubOne = createRcStreamHub({
+            now: () => Date.now(),
+            credentialOf: trackerOne.credentialOf,
+            trackedSessions: () => trackerOne.list().map((session) => session.id),
+            fileStreamEvent: trackerOne.fileStreamEvent,
+            sequenceNumOf: trackerOne.sequenceNumOf,
+            dial: first.rcStreamDial,
+            fanout: createRcEventFanout(),
+            newClientId: () => "e2e-generation-one",
+            backoffMs: RC_STREAM_BACKOFF_MS,
+            sleep: async (ms) => {
+              await new Promise<void>((resolve) => {
+                setTimeout(resolve, ms);
+              });
+            },
+          });
+          const create = await postOn(secure, "/v1/code/sessions", CREATE_BEARER, JSON.stringify({ bridge: {} }));
+          expect(create.statusLine).toContain(String(HTTP_OK));
+          // The create's own settled exchange pokes the attachment, and the generation that saw the OAuth bearer attaches.
+          await until(() => generationOne.rcStreamRequests.length === 1);
+          expect(store.read(RC_TEST_SESSION_ID)?.authorization).toBe(CREATE_BEARER);
+          secure.destroy();
+        } finally {
+          hubOne?.close();
+          await first.close();
+          await generationOne.stop();
+        }
+
+        // Generation two: a fresh tracker over the same store, a fresh surface, and a session that already exists. Only the worker's recurring calls cross it, and they carry the worker JWT, so the persisted credential is the only statement of the OAuth bearer this generation can ever see.
+        const trackerTwo = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: store });
+        let hubTwo: RcStreamHub | undefined;
+        const generationTwo = makeTlsWorld(ca, upstreamCa, {
+          transparent: { port: 0, capability: TEST_CAPABILITY },
+          rc: { tracker: trackerTwo, onExchangeSettled: () => hubTwo?.reconcile() },
+        });
+        const second = await generationTwo.start();
+        try {
+          const secure = await connectRedirected(second.transparentPort ?? 0, CONNECT_INTERCEPT_HOST, ca.certPem);
+          hubTwo = createRcStreamHub({
+            now: () => Date.now(),
+            credentialOf: trackerTwo.credentialOf,
+            trackedSessions: () => trackerTwo.list().map((session) => session.id),
+            fileStreamEvent: trackerTwo.fileStreamEvent,
+            sequenceNumOf: trackerTwo.sequenceNumOf,
+            dial: second.rcStreamDial,
+            fanout: createRcEventFanout(),
+            newClientId: () => "e2e-generation-two",
+            backoffMs: RC_STREAM_BACKOFF_MS,
+            sleep: async (ms) => {
+              await new Promise<void>((resolve) => {
+                setTimeout(resolve, ms);
+              });
+            },
+          });
+          const heartbeat = await postOn(secure, `/v1/code/sessions/${RC_TEST_SESSION_ID}/worker/heartbeat`, HEARTBEAT_BEARER, JSON.stringify({ session_id: RC_TEST_SESSION_ID }));
+          expect(heartbeat.statusLine).toContain(String(HTTP_OK));
+          // The heartbeat's settled exchange pokes the attachment, and the persisted credential is what the announcement and the stream replay: without it this generation never attaches at all, which is the defect the live rig exposed.
+          await until(() => generationTwo.rcStreamRequests.length === 1);
+          const presence = generationTwo.upstreamRequests.find((seen) => seen.url === `/v1/code/sessions/${RC_TEST_SESSION_ID}/client/presence`);
+          expect(presence?.headers.authorization).toBe(CREATE_BEARER);
+          expect(JSON.parse(presence?.body ?? "{}")).toEqual({ client_id: "e2e-generation-two", clear: false });
+          const stream = generationTwo.rcStreamRequests[0];
+          expect(stream?.headers.authorization).toBe(CREATE_BEARER);
+
+          // The reattached stream is a live one: a control_request written to it becomes a pending request the door can answer, exactly as the rig's approval does.
+          generationTwo.writeRcSse(
+            `event: client_event\nid: ${String(STREAM_SEQUENCE_NUM)}\ndata: ${JSON.stringify({
+              event_id: "ev-restart-1",
+              event_type: "control_request",
+              sequence_num: STREAM_SEQUENCE_NUM,
+              source: "worker",
+              payload: { type: "control_request", request_id: RC_TEST_REQUEST_ID, request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "pnpm test" } } },
+              created_at: "2026-10-05T12:00:00Z",
+            })}\n\n`,
+          );
+          await until(() => trackerTwo.pendingOf(RC_TEST_SESSION_ID).length === 1);
+          secure.destroy();
+        } finally {
+          hubTwo?.close();
+          await second.close();
+          await generationTwo.stop();
+        }
+      } finally {
+        fs.rmSync(credentialsDir, { recursive: true, force: true });
       }
     },
     KEYGEN_TIMEOUT_MS,

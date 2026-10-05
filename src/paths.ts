@@ -63,6 +63,10 @@ export interface LayoutPaths {
   readonly frontdoorControlTokenFile: string;
   /** Directory holding one `<launcher-pid>.json` session-registry entry per live launch routed through the front door. */
   readonly frontdoorSessionsDir: string;
+  /**
+   * Directory holding one `<cse-session-id>.json` Remote Control client credential per observed session, mode 0700 with 0600 files: the OAuth-kind bearer and protocol headers the door replays as the session's attached client, persisted so a door generation that starts after a session's create can still attach. The same secret the identity's own store holds, at the same owner-only protection.
+   */
+  readonly frontdoorRcCredentialsDir: string;
   /** Path to the front door's log: one line per lifecycle event and routed failure, never a token. */
   readonly frontdoorLogPath: string;
   /** Directory holding the usage store, mode 0700: the request log and the per-identity snapshots. Metadata only, never content or credentials. */
@@ -135,6 +139,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     frontdoorLockFile: path.join(root, "frontdoor", "start.lock"),
     frontdoorControlTokenFile: path.join(root, "frontdoor", "control-token"),
     frontdoorSessionsDir: path.join(root, "frontdoor", "sessions"),
+    frontdoorRcCredentialsDir: path.join(root, "frontdoor", "rc-credentials"),
     frontdoorLogPath: path.join(root, "logs", "frontdoor.log"),
     usageDir: path.join(root, "usage"),
     usageLogDir: path.join(root, "usage", "log"),

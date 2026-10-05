@@ -103,6 +103,7 @@ export {
   type RcWorkerFact,
   type RcWriteHeaders,
 } from "./frontdoor/rcSessions";
+export { createRcCredentialStore, type RcCredentialStore } from "./frontdoor/rcCredentialStore";
 export { CONTROL_PATH_PREFIX, createRcControlHandler, frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl, type RcControlAnswer, type RcControlHandlerDeps, type RcControlTransport } from "./frontdoor/rcControl";
 export {
   RC_ORPC_PATH_PREFIX,

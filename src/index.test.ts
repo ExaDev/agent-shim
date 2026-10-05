@@ -144,6 +144,7 @@ describe("library surface", () => {
       "createRcApiNodeHandler",
       "createRcApiRouter",
       "createRcControlHandler",
+      "createRcCredentialStore",
       "createRcEventFanout",
       "createRcSessionTracker",
       "createRcStreamHub",

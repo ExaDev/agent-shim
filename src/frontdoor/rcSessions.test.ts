@@ -4,7 +4,9 @@ import { Socket } from "node:net";
 import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
+import { createFakeFarmFs } from "../test-helpers";
 
+import { createRcCredentialStore } from "./rcCredentialStore";
 import type { FrontDoorRoute, RoutedRequest, RoutedResponse } from "./route";
 import {
   RC_IDLE_EXPIRY_MS,
@@ -115,6 +117,42 @@ describe("the Remote Control session tracker", () => {
     const { tracker } = trackerWithClock();
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer sk-ant-oat" }).respond(HTTP_STATUS.ok);
     expect(tracker.list()).toEqual([{ id: SESSION_ID, createdAt: CLOCK_START_MS, lastSeenAt: CLOCK_START_MS }]);
+  });
+
+  it("reads the persisted credential back on a generation that never saw the create, whose every observation since carried only the worker JWT", () => {
+    // One store shared by two tracker generations, exactly as the door's front-door directory is shared by two door processes: the live shape behind a door that restarts mid-session.
+    const store = createRcCredentialStore(createFakeFarmFs(), "/state/frontdoor/rc-credentials");
+    const first = createRcSessionTracker({ now: () => CLOCK_START_MS, idleMs: RC_IDLE_EXPIRY_MS, credentialStore: store });
+    exchange(first, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat", headers: { "anthropic-version": "2023-06-01", "anthropic-client-platform": "desktop_app" } }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    expect(store.read(SESSION_ID)).toEqual({ authorization: "Bearer sk-ant-oat", anthropicVersion: "2023-06-01", anthropicClientPlatform: "desktop_app" });
+
+    // The next generation: the create crossed the last one, and only the worker's recurring calls state anything now. Without the store this generation could never attach or write (the live defect behind the rig's silent hub), so its credential answer is the persisted copy.
+    const second = createRcSessionTracker({ now: () => CLOCK_START_MS, idleMs: RC_IDLE_EXPIRY_MS, credentialStore: store });
+    exchange(second, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }).respond(HTTP_STATUS.ok);
+    expect(second.list().map((session) => session.id)).toEqual([SESSION_ID]);
+    expect(second.credentialOf(SESSION_ID)).toEqual({ authorization: "Bearer sk-ant-oat", anthropicVersion: "2023-06-01", anthropicClientPlatform: "desktop_app" });
+
+    // A later OAuth-bearing observation overwrites the persisted copy the usual latest-wins way, and the next generation reads that one.
+    exchange(second, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/client/presence`, authorization: "Bearer sk-ant-oat2" }).respond(HTTP_STATUS.ok);
+    expect(store.read(SESSION_ID)?.authorization).toBe("Bearer sk-ant-oat2");
+    const third = createRcSessionTracker({ now: () => CLOCK_START_MS, idleMs: RC_IDLE_EXPIRY_MS, credentialStore: store });
+    exchange(third, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }).respond(HTTP_STATUS.ok);
+    expect(third.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-oat2");
+  });
+
+  it("forgets the persisted credential when the session closes, and keeps it through the idle sweep", () => {
+    const store = createRcCredentialStore(createFakeFarmFs(), "/state/frontdoor/rc-credentials");
+    let now = CLOCK_START_MS;
+    const tracker = createRcSessionTracker({ now: () => now, idleMs: RC_IDLE_EXPIRY_MS, credentialStore: store });
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    // The idle sweep drops the entry (a quiet session is not a closed one), and a returning heartbeat re-births it with the persisted credential intact.
+    now += RC_IDLE_EXPIRY_MS + 1;
+    expect(tracker.list()).toEqual([]);
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }).respond(HTTP_STATUS.ok);
+    expect(tracker.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-oat");
+    // An accepted archive closes the session by design: the persisted credential must not outlive it.
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/archive`, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }).respond(HTTP_STATUS.ok);
+    expect(store.read(SESSION_ID)).toBeUndefined();
   });
 
   it("expires an archived session on an accepted archive, and keeps it when the archive is refused", () => {
