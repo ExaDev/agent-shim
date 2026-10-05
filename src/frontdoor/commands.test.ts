@@ -4,7 +4,7 @@ import { writeHeadroomState } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
 import { RC_PENDING_SUMMARY_EXCERPT_CHARS } from "./rcSessions";
-import { collectFrontDoorStatus, formatFrontDoorStatus, formatRcPendingList, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./commands";
+import { collectFrontDoorStatus, formatFrontDoorStatus, formatRcPendingList, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./commands";
 import { writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
@@ -160,5 +160,21 @@ describe("frontdoor rc", () => {
     expect(formatRcStreamEvent({ session: "cse_1", envelope: { event_type: "user", sequence_num: 14, source: "worker", payload: long } })).toBe(
       `cse_1  user  sequence_num 14  source worker  "${"x".repeat(RC_PENDING_SUMMARY_EXCERPT_CHARS - 1)}...`,
     );
+  });
+
+  it("formats the self-hosted mint's result as names and next steps, never a token", () => {
+    const lines = formatRcSelfHostMint({
+      identity: "rig",
+      organizationUuid: "11111111-1111-4111-8111-111111111111",
+      credentialsFile: "/state/identities/rig/.credentials.json",
+      claudeJsonFile: "/state/identities/rig/.claude.json",
+      recordFile: "/state/frontdoor/rc-selfhost/credential.json",
+      replaced: false,
+    });
+    expect(lines[0]).toContain("identity:       rig");
+    expect(lines[1]).toContain("credential:     /state/identities/rig/.credentials.json");
+    expect(lines[lines.length - 1]).toContain("AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1");
+    // The mint's own output contract: no line of it ever carries token material, because the result never received any to print.
+    expect(lines.join("\n")).not.toMatch(/sk-ant-/);
   });
 });

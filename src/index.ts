@@ -56,12 +56,13 @@ export {
   type ConnectCertStore,
   type ConnectEffects,
   type ConnectLimits,
+  type ConnectLocalSurface,
   type ConnectServerConfig,
   type ConnectServerHandle,
   type ConnectTarget,
   type LeafCert,
 } from "./frontdoor/connect";
-export { realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./frontdoor/connectEffects";
+export { lateRcEventDial, lateRcStreamDial, realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./frontdoor/connectEffects";
 export {
   RC_SESSIONS_PATH_PREFIX,
   RC_IDLE_EXPIRY_MS,
@@ -135,6 +136,19 @@ export {
   type RcStreamHubDeps,
   type SseParsedEvent,
 } from "./frontdoor/rcStream";
+export {
+  RC_SELF_HOST_ENV,
+  RC_SELF_HOST_KEEPALIVE_MS,
+  RC_SELF_HOST_RETENTION_MS,
+  RC_SELF_HOST_SCOPE_LIST,
+  RC_SELF_HOST_WORKER_JWT_TTL_SECONDS,
+  createRcSelfHostSurface,
+  rcSelfHostFromEnv,
+  type RcSelfHostCredentialRecord,
+  type RcSelfHostDeps,
+  type RcSelfHostSurface,
+} from "./frontdoor/rcSelfHost";
+export { mintRcSelfHostCredential, readRcSelfHostRecord, RC_SELF_HOST_RECORD_DIR, RC_SELF_HOST_RECORD_FILE, type RcSelfHostMintResult } from "./frontdoor/rcSelfHostMint";
 export { ensureFrontDoor, FrontDoorStartError, type EnsureFrontDoorPorts } from "./frontdoor/ensure";
 export { runFrontDoorSupervisor, type FrontDoorSupervisorPorts, type RunFrontDoorSupervisorOptions } from "./frontdoor/supervisor";
 export { listUsageSnapshots, readUsageSnapshot, snapshotPath, UsageSnapshotError, type UsageReadFs } from "./usage/read";
