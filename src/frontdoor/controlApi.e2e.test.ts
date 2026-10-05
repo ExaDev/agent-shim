@@ -134,7 +134,7 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       () => undefined,
       mintLeaf(ca, LOOPBACK_LEAF_NAMES, new Date()),
       undefined,
-      { ...doorApi, handle: async (request, response) => { served.push(request.url ?? ""); return await doorApi.handle(request, response); } },
+      [{ ...doorApi, handle: async (request, response) => { served.push(request.url ?? ""); return await doorApi.handle(request, response); } }],
     );
     const handle = await listenFrontDoor(server, { ca: ca.certPem });
     port = handle.port;

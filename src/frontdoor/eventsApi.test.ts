@@ -61,7 +61,7 @@ async function serveApi(doorEvents: ReturnType<typeof createDoorEventHub>): Prom
     () => undefined,
     mintLeaf(ca, LOOPBACK_LEAF_NAMES, new Date()),
     undefined,
-    { ...api, handle: async (request, response) => { requests.push(request.url ?? ""); return await api.handle(request, response); } },
+    [{ ...api, handle: async (request, response) => { requests.push(request.url ?? ""); return await api.handle(request, response); } }],
   );
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", () => {

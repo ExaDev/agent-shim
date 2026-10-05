@@ -460,7 +460,7 @@ describe("Remote Control observation and injection over the connect surface", ()
         () => undefined,
         mintLeaf(ca, LOOPBACK_LEAF_NAMES, new Date()),
         createRcControlHandler(controlDeps),
-        { ...apiSurface, handle: async (request, response) => { apiRequests.push(request.url ?? ""); return await apiSurface.handle(request, response); } },
+        [{ ...apiSurface, handle: async (request, response) => { apiRequests.push(request.url ?? ""); return await apiSurface.handle(request, response); } }],
       );
       try {
         const secure = await connectThroughProxy(connectPort, CONNECT_INTERCEPT_HOST, ca.certPem);

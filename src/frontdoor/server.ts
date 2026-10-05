@@ -33,14 +33,14 @@ export interface PrePipelineApi {
  *
  * With `tls`, the listener serves HTTPS with that leaf, which is how the provider listener authenticates itself to the child: the leaf is signed by agent-shim's CA, whose key only the owning user can read, and the only CA the child trusts for a 127.0.0.1 certificate is that one (no public CA issues certificates for a loopback address), so a process that merely binds the port cannot complete a handshake the child accepts and never receives the request (credentials and capability included). Without `tls` it serves plain HTTP, which only the direct listener does: nothing that reaches it carries a real credential (see the credential custody).
  *
- * The disconnect is read from the response's `close` event, not the request's: the request emits `close` as soon as its body has been read, long before the response ends. `GET /healthz` is answered here, before the pipeline, because a readiness probe is not a routed session and carries no session headers or capability. The Remote Control control routes are answered here too, before the pipeline, through `control` when one is given, as is the typed API through `api`: they are the operator's requests to the door itself, not a routed session's, and their prefixes are outside the routed URL space.
+ * The disconnect is read from the response's `close` event, not the request's: the request emits `close` as soon as its body has been read, long before the response ends. `GET /healthz` is answered here, before the pipeline, because a readiness probe is not a routed session and carries no session headers or capability. The Remote Control control routes are answered here too, before the pipeline, through `control` when one is given, as is every pre-pipeline API through `apis` (the typed door API and the web client page): they are the operator's requests to the door itself, not a routed session's, and their prefixes are outside the routed URL space.
  */
 export function createFrontDoorServer(
   pipeline: (request: PipelineRequest) => Promise<void>,
   log: (line: string) => void,
   tls?: LeafCert,
   control?: (request: IncomingMessage, response: ServerResponse) => void,
-  api?: PrePipelineApi,
+  apis?: readonly PrePipelineApi[],
 ): FrontDoorServer {
   const handler = (request: IncomingMessage, response: ServerResponse): void => {
     if (request.method === "GET" && request.url === "/healthz") {
@@ -52,11 +52,12 @@ export function createFrontDoorServer(
       control(request, response);
       return;
     }
-    if (api !== undefined && (request.url ?? "/").startsWith(api.pathPrefix)) {
+    const api = apis?.find((candidate) => (request.url ?? "/").startsWith(candidate.pathPrefix));
+    if (api !== undefined) {
       api
         .handle(request, response)
         .then((result) => {
-          // A path under the API's prefix that names no procedure is the surface's own 404, answered here so every mount behaves the same whatever its handler does.
+          // A path under an API's prefix that names no procedure is that surface's own 404, answered here so every mount behaves the same whatever its handler does.
           if (!result.matched && !response.headersSent) {
             response.writeHead(HTTP_STATUS.notFound, { "Content-Type": "application/json" });
             response.end(JSON.stringify({ error: `no such API procedure: ${request.url ?? "/"}` }));
