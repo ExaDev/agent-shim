@@ -10,7 +10,8 @@ import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
 import { createCodexRoutePorts } from "../codex/commands";
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning } from "../realPorts";
+import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort } from "../realPorts";
+import { realCredentialCacheEnv } from "../realCredentialCache";
 import { createDoorPipelines } from "./assembly";
 import { isLiveCapability } from "./capability";
 import { captureFromEnv } from "./capture";
@@ -19,8 +20,7 @@ import { lateRcEventDial, lateRcStreamDial, realConnectEffects, realRcEventDial,
 import { createCredentialCustody } from "./custody";
 import { collectCheckReport } from "../checkReport";
 import { collectDoctorReport } from "../doctorReport";
-import { listUsageSnapshots, readUsageSnapshot } from "../usage/read";
-import { createDoorApiNodeHandler } from "./controlApi";
+import { listUsageSnapshots, readUsageSnapshot } from "../usage/read";import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
 import { createLaunchEventPublisher } from "./launchEvents";
 import { frontDoorRcApiClient, type RcApiClient } from "./rcApi";
@@ -144,7 +144,16 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   // This generation's control token, minted per door start and written owner-only: the value the door's control routes demand and only this user's CLI can read. A crashed door's stale file never authenticates, because the next generation mints a fresh one over it.
   const rcControlToken = randomUUID();
   const resolveRoute = rcObservingResolver(
-    createProviderRouteResolver({ fs: realFsPort, providersDir: paths.providersDir, codexPorts, directPort: () => directPort, ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }) }),
+    createProviderRouteResolver({
+      fs: realFsPort,
+      providersDir: paths.providersDir,
+      codexPorts,
+      directPort: () => directPort,
+      // The same port (cache included) the launcher resolves a launch's provider with, so the credential the door attaches at the route and the one the launcher handed the child are the same resolution of the same block.
+      env: process.env,
+      credentials: { ...realCredentialPort, cache: realCredentialCacheEnv(paths) },
+      ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
+    }),
     rcTracker,
     rcHub,
   );

@@ -7,6 +7,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { createCodexRoutePorts } from "../codex/commands";
 import { realFsPort } from "../realPorts";
 import { resolveLayoutPaths } from "../paths";
+import { fakeCredentials } from "../test-helpers";
 import { createDoorPipelines } from "./assembly";
 import { createCredentialCustody } from "./custody";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_TAP_HOSTS, createLeafCache, generateCa, startConnectServer, type CaMaterial } from "./connect";
@@ -167,6 +168,8 @@ describe("the self-hosted Remote Control mode end to end", () => {
       providersDir: resolveLayoutPaths().providersDir,
       codexPorts: createCodexRoutePorts(() => undefined, resolveLayoutPaths().chatgptSignInFile),
       directPort: () => 0,
+      env: {},
+      credentials: fakeCredentials(),
       rcSelfHostRoute: surface.route,
     });
     const observingResolver = async (request: Parameters<typeof resolver>[0]) => {

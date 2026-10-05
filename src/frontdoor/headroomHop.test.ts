@@ -14,7 +14,7 @@ import { HEADROOM_SOCKET_DIR_MODE, headroomSocketPath, type HeadroomSocketTarget
 import { writeHeadroomState } from "../headroom/state";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { realFarmFs, realHeadroomSocketTrust } from "../realPorts";
-import { FAKE_HOME, fakeFs } from "../test-helpers";
+import { FAKE_HOME, fakeCredentials, fakeFs } from "../test-helpers";
 import { createDoorPipelines } from "./assembly";
 import { headroomSocketTarget } from "./status";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
@@ -31,6 +31,9 @@ const KEYGEN_TIMEOUT_MS = 120_000;
 const HOP_SECRET = "hop-secret-for-tests";
 /** A made-up provider credential: what must reach the provider's upstream and nothing in between. */
 const PROVIDER_TOKEN = "made-up-provider-token";
+/** Made-up credentials a client presents at the door, which the route must replace with the provider file's own before anything leaves the machine. */
+const CLIENT_PRESENTED_BEARER = "client-presented-bearer";
+const CLIENT_PRESENTED_KEY = "client-presented-key";
 const SETTLE_MS = 50;
 const MESSAGES_BODY = JSON.stringify({ model: "claude-sonnet-4-5", stream: false, messages: [{ role: "user", content: "hi" }], metadata: { user_id: "user-a" } });
 /** The pid the fake headroom's supervisor generation is recorded under, which names its socket. */
@@ -225,7 +228,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
     log: () => undefined,
   };
   let directPort = 0;
-  const resolveRoute = createProviderRouteResolver({ fs: fakeFs(options.files), providersDir: PROVIDERS_DIR, codexPorts: ports, directPort: () => directPort });
+  const resolveRoute = createProviderRouteResolver({ fs: fakeFs(options.files), providersDir: PROVIDERS_DIR, codexPorts: ports, directPort: () => directPort, env: {}, credentials: fakeCredentials() });
   const log = options.log ?? ((): void => undefined);
   const pipelines = createDoorPipelines({
     resolveRoute,
@@ -278,9 +281,9 @@ async function fakeProviderUpstream(): Promise<{ readonly port: number; readonly
   return { port: portOf(server), seen: () => requests };
 }
 
-/** An http provider file pointing at a local upstream. */
+/** An http provider file pointing at a local upstream, whose credential block carries the token the door must attach at the route. */
 function httpProvider(upstreamPort: number): Record<string, unknown> {
-  return { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstreamPort)}`, credential: { sources: [{ literal: "unused-here" }] } };
+  return { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstreamPort)}`, credential: { sources: [{ literal: PROVIDER_TOKEN }] } };
 }
 
 const codexProvider = { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } };
@@ -488,16 +491,16 @@ describe("the headroom hop", () => {
   });
 
   it(
-    "keeps an http provider's credential away from headroom: headroom sees only placeholders and a hop id, and the provider's upstream receives the credential the client sent",
+    "keeps the door-attached provider credential away from headroom: headroom sees only placeholders of what the client presented and a hop id, and the provider's upstream receives the provider file's own credential, never the client's",
     async () => {
       const upstream = await fakeProviderUpstream();
       const headroom = await fakeHeadroom();
       const door = await startDoor({ files: { [`${PROVIDERS_DIR}/z.json`]: httpProvider(upstream.port) } });
       try {
         const base = { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN };
-        const bearer = await fetch(`${door.url}/providers/z/v1/messages`, { dispatcher: trusting, method: "POST", headers: { ...base, authorization: `Bearer ${PROVIDER_TOKEN}` }, body: MESSAGES_BODY });
+        const bearer = await fetch(`${door.url}/providers/z/v1/messages`, { dispatcher: trusting, method: "POST", headers: { ...base, authorization: `Bearer ${CLIENT_PRESENTED_BEARER}` }, body: MESSAGES_BODY });
         expect(bearer.status).toBe(HTTP_STATUS.ok);
-        const apiKey = await fetch(`${door.url}/providers/z/v1/messages`, { dispatcher: trusting, method: "POST", headers: { ...base, "x-api-key": PROVIDER_TOKEN }, body: MESSAGES_BODY });
+        const apiKey = await fetch(`${door.url}/providers/z/v1/messages`, { dispatcher: trusting, method: "POST", headers: { ...base, "x-api-key": CLIENT_PRESENTED_KEY }, body: MESSAGES_BODY });
         expect(apiKey.status).toBe(HTTP_STATUS.ok);
 
         const [bearerHop, apiKeyHop] = headroom.seen();
@@ -511,11 +514,13 @@ describe("the headroom hop", () => {
 
         const [bearerUpstream, apiKeyUpstream] = upstream.seen();
         expect(bearerUpstream?.headers.authorization).toBe(`Bearer ${PROVIDER_TOKEN}`);
-        expect(apiKeyUpstream?.headers["x-api-key"]).toBe(PROVIDER_TOKEN);
-        expect(apiKeyUpstream?.headers.authorization).toBeUndefined();
+        expect(apiKeyUpstream?.headers.authorization).toBe(`Bearer ${PROVIDER_TOKEN}`);
         expect(bearerUpstream?.url).toBe("/v1/messages");
-        // Nothing of the door's own machinery reaches the provider.
+        // Neither the client's own presentations nor anything of the door's machinery reaches the provider.
         for (const seen of upstream.seen()) {
+          expect(seen.headers["x-api-key"]).toBeUndefined();
+          expect(JSON.stringify(seen.headers)).not.toContain(CLIENT_PRESENTED_BEARER);
+          expect(JSON.stringify(seen.headers)).not.toContain(CLIENT_PRESENTED_KEY);
           expect(seen.headers[HOP_ID_HEADER]).toBeUndefined();
           expect(seen.headers[HOP_SECRET_HEADER]).toBeUndefined();
           expect(JSON.stringify(seen.headers)).not.toContain(SEQUESTERED_CREDENTIAL);
