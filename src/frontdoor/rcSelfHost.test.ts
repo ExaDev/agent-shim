@@ -40,6 +40,11 @@ const MINT_CLOCK_START_MS = 1_700_000_000_000;
 /** The owner-only mode the minted files must carry, the same mode the credential store's own test asserts. */
 const PRIVATE_FILE_MODE = 0o600;
 
+/** The guard every parsed-answer narrowing goes through, per the codebase's `unknown` discipline. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** A short fake bearer of the OAuth kind: kept short of the redaction filter's eight-character suffix on purpose (see the repo's secret-filter notes). */
 const MINTED_OAUTH_TOKEN = "sk-ant-oat1";
 const REFRESH_TOKEN = "selfhost-refresh";
@@ -394,6 +399,12 @@ describe("the self-hosted local answers", () => {
     const evalAnswer = await call(barePort, "POST", "/api/eval/sdk-anything", { attributes: {} });
     expect(evalAnswer.status).toBe(HTTP_STATUS.ok);
     expect((JSON.parse(evalAnswer.body) as { features: Record<string, unknown> }).features.tengu_ccr_bridge).toEqual({ defaultValue: true });
+    // The startup token validation: a 401 here (what piping it upstream would answer) tips the CLI straight into its login flow, as the live rig run showed.
+    const validated = await call(barePort, "POST", "/api/oauth/validate", null, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` });
+    expect(validated.status).toBe(HTTP_STATUS.ok);
+    const validation: unknown = JSON.parse(validated.body);
+    expect(isRecord(validation) && Array.isArray(validation.scopes) && validation.scopes.includes("user:inference") && validation.scopes.includes("user:profile")).toBe(true);
+    expect(isRecord(validation) && validation.expiresAt).toBeNull();
     expect((await get("/api/oauth/profile")).status).toBe(HTTP_STATUS.ok);
     expect(JSON.parse((await get("/api/oauth/profile")).body)).toMatchObject({ organization: { uuid: RECORD.organizationUuid } });
     expect((await get("/api/claude_code/policy_limits")).status).toBe(HTTP_STATUS.ok);

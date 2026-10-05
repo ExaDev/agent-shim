@@ -772,6 +772,17 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
         answerServerJson(response, HTTP_STATUS.ok, {});
         return true;
       }
+      if (method === "POST" && pathname === "/api/oauth/validate") {
+        // The startup check the CLI makes of its stored token (the live rig showed its 401 tipping a freshly minted session straight into the login flow). The answer names the token's scopes and account facts back, which is exactly what the check reads: the scopes gate accepts any of the mint's members, and a null expiry is the never-expiring form the mint itself wrote.
+        await readBody(request, CONTROL_BODY_CAP_BYTES);
+        const record = deps.credentialRecord();
+        if (record === undefined) {
+          answerServerJson(response, HTTP_SERVICE_UNAVAILABLE, { error: "the front door's self-hosted Remote Control surface is on but no credential has been minted for it" });
+          return true;
+        }
+        answerServerJson(response, HTTP_STATUS.ok, { scopes: [...RC_SELF_HOST_SCOPE_LIST], expiresAt: null, subscriptionType: "max", account_uuid: record.accountUuid, organization_uuid: record.organizationUuid });
+        return true;
+      }
       if (method === "POST" && (pathname === "/api/event_logging/v2/batch" || pathname === "/api/claude_code/metrics" || pathname === "/api/claude_cli_feedback")) {
         await readBody(request, CONTROL_BODY_CAP_BYTES);
         answerServerJson(response, HTTP_STATUS.ok, {});
