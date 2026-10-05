@@ -1,3 +1,9 @@
+## [8.7.0](https://github.com/ExaDev/agent-shim/compare/v8.6.0...v8.7.0) (2026-10-05)
+
+### Features
+
+* **check:** show the age of a cached credential in check and doctor ([0e9bad5](https://github.com/ExaDev/agent-shim/commit/0e9bad52a8caca20acc4b472306ab28ca6ad7963))
+
 ## [8.6.0](https://github.com/ExaDev/agent-shim/compare/v8.5.6...v8.6.0) (2026-10-04)
 
 ### Features
