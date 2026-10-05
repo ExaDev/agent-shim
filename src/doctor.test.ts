@@ -795,15 +795,15 @@ describe("runDoctor: Sign in with ChatGPT provider", () => {
     expect(warnings({ path: SIGN_IN_PATH, raw: undefined })).toEqual([
       { section: "provider", subject: "codex", severity: "warn", message: "codex uses the Sign in with ChatGPT login, but nobody is signed in: run `agent-shim codex login`." },
     ]);
-    expect(warnings({ path: SIGN_IN_PATH, raw: JSON.stringify({ hostId: "urn:uuid:x" }) })).toHaveLength(1);
+    expect(warnings({ path: SIGN_IN_PATH, raw: JSON.stringify({ registeredClientId: "c" }) })).toHaveLength(1);
   });
 
   it("is quiet when a grant with the plan scope exists", () => {
-    expect(warnings({ path: SIGN_IN_PATH, raw: JSON.stringify({ hostId: "urn:uuid:x", grant }) })).toEqual([]);
+    expect(warnings({ path: SIGN_IN_PATH, raw: JSON.stringify({ registeredClientId: "c", grant }) })).toEqual([]);
   });
 
   it("warns when the grant was not given permission to use the plan", () => {
-    expect(warnings({ path: SIGN_IN_PATH, raw: JSON.stringify({ hostId: "urn:uuid:x", grant: { ...grant, scopes: ["openid"] } }) })[0]?.message).toMatch(/not given permission to use your ChatGPT plan/);
+    expect(warnings({ path: SIGN_IN_PATH, raw: JSON.stringify({ registeredClientId: "c", grant: { ...grant, scopes: ["openid"] } }) })[0]?.message).toMatch(/not given permission to use your ChatGPT plan/);
   });
 
   it("reports an unreadable sign-in file instead of failing", () => {

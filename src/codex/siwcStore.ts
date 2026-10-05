@@ -19,9 +19,9 @@ const SiwcGrantSchema = z.strictObject({
 export type SiwcGrant = z.infer<typeof SiwcGrantSchema>;
 
 /**
- * The file a Sign in with ChatGPT login lives in. `hostId` is the identifier OpenAI keys this installation's registration on; it is written before the first sign-in and survives a sign-out, since OpenAI's reference keeps the registration through logout. `grant` is absent until a sign-in completes.
+ * The file a Sign in with ChatGPT login lives in. `registeredClientId` is the client id OpenAI issued to this installation at its first sign-in, written as soon as the callback delivers it and before the code exchange, so a sign-in that fails after registering reuses the registration instead of creating another; it survives a sign-out. `grant` is absent until a sign-in completes.
  */
-const SiwcFileSchema = z.strictObject({ hostId: z.string().min(1), grant: SiwcGrantSchema.optional() });
+const SiwcFileSchema = z.strictObject({ registeredClientId: z.string().min(1).optional(), grant: SiwcGrantSchema.optional() });
 export type SiwcFile = z.infer<typeof SiwcFileSchema>;
 
 /** How long before its expiry an access token is replaced, so a request that is already on its way never straddles the expiry. */
@@ -90,7 +90,7 @@ export function createSiwcStore(filePath: string, ports: SiwcStorePorts): SiwcSt
     cached = file.grant;
   };
 
-  const loadSignedIn = (): { readonly hostId: string; readonly grant: SiwcGrant } => {
+  const loadSignedIn = (): { readonly file: SiwcFile; readonly grant: SiwcGrant } => {
     const file = read();
     if (file?.grant === undefined) {
       throw new CodexAuthError(`no Sign in with ChatGPT login at ${filePath}: run \`agent-shim codex login\` first`);
@@ -98,13 +98,13 @@ export function createSiwcStore(filePath: string, ports: SiwcStorePorts): SiwcSt
     if (!file.grant.scopes.includes(SIWC_PLAN_SCOPE)) {
       throw new CodexAuthError(`the Sign in with ChatGPT login at ${filePath} was not granted permission to use your ChatGPT plan: run \`agent-shim codex login\` again and allow it`);
     }
-    return { hostId: file.hostId, grant: file.grant };
+    return { file, grant: file.grant };
   };
 
   const credentialsOf = (grant: SiwcGrant): CodexCredentials => ({ accessToken: grant.accessToken, accountId: undefined });
 
   const doRefresh = async (rejected: string | undefined): Promise<CodexCredentials> => {
-    const { hostId, grant } = loadSignedIn();
+    const { file, grant } = loadSignedIn();
     // Another process (a sign-in command, a second door) may already have replaced the rejected token.
     if (rejected !== undefined && grant.accessToken !== rejected) {
       cached = grant;
@@ -120,7 +120,7 @@ export function createSiwcStore(filePath: string, ports: SiwcStorePorts): SiwcSt
       throw error;
     }
     const next = grantFrom(grant, tokens);
-    write({ hostId, grant: next });
+    write({ ...file, grant: next });
     return credentialsOf(next);
   };
 

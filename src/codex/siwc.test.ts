@@ -6,7 +6,6 @@ import { HTTP_STATUS } from "./http";
 import {
   buildAuthorizeUrl,
   exchangeCode,
-  newHostId,
   newPkce,
   parseCallback,
   refreshTokens,
@@ -17,6 +16,7 @@ import {
   SIWC_RESOURCE,
   SIWC_TOKEN_URL,
   SiwcError,
+  SiwcInvalidGrantError,
   verifyIdToken,
   type SiwcPorts,
 } from "./siwc";
@@ -26,7 +26,6 @@ import type { UpstreamResponse } from "./upstreamPort";
 /** Made-up values of no real format: nothing here is, or looks like, a real credential. */
 const NOW = new Date("2026-10-05T12:00:00.000Z");
 const CLIENT_ID = "fake-issued-client";
-const HOST_ID = "urn:uuid:00000000-0000-4000-8000-000000000000";
 const REDIRECT = "http://127.0.0.1:1455/auth/callback";
 const ACCESS_LIFETIME_SECONDS = 3600;
 const MS_PER_SECOND = 1000;
@@ -42,26 +41,22 @@ function formOf(call: RecordedCall): URLSearchParams {
   return new URLSearchParams(call.init.body ?? "");
 }
 
-describe("PKCE and identifiers", () => {
+describe("PKCE", () => {
   it("derives the challenge as the S256 hash of the verifier", () => {
     const pkce = newPkce((size) => new Uint8Array(size).fill(FILL_BYTE));
     expect(Buffer.from(pkce.verifier, "base64url")).toHaveLength(SIWC_RANDOM_BYTES);
     expect(pkce.challenge).toBe(createHash("sha256").update(pkce.verifier).digest("base64url"));
   });
-
-  it("forms a host id in the urn:uuid shape", () => {
-    expect(newHostId(() => "abc")).toBe("urn:uuid:abc");
-  });
 });
 
 describe("buildAuthorizeUrl", () => {
-  const base = { agentName: "agent-shim", hostId: HOST_ID, redirectUri: REDIRECT, state: "s", nonce: "n", challenge: "c" };
+  const base = { agentName: "agent-shim", redirectUri: REDIRECT, state: "s", nonce: "n", challenge: "c" };
 
   it("registers dynamically on a first sign-in", () => {
     const params = new URL(buildAuthorizeUrl({ ...base, clientId: undefined })).searchParams;
     expect(params.get("client_id")).toBe(SIWC_DYNAMIC_CLIENT_ID);
     expect(params.get("agent_name_hint")).toBe("agent-shim");
-    expect(params.get("ext_agent_host_id")).toBe(HOST_ID);
+    expect(params.has("ext_agent_host_id")).toBe(false);
     expect(params.get("resource")).toBe(SIWC_RESOURCE);
     expect(params.get("code_challenge_method")).toBe("S256");
     expect(params.get("scope")?.split(" ")).toContain("chatgpt.tokens.use.direct");
@@ -126,6 +121,18 @@ describe("exchangeCode and refreshTokens", () => {
     expect(failure).toBeInstanceOf(SiwcError);
     expect((failure as Error).message).toContain("invalid_grant");
     expect((failure as Error).message).not.toContain("secret-code");
+  });
+
+  it("raises the typed invalid_grant error when the endpoint says so, and the plain one for other refusals", async () => {
+    const grantRefused = recordingFetch(() => fakeResponse({ status: HTTP_STATUS.badRequest, text: '{"error": "invalid_grant"}' }));
+    await expect(exchangeCode(ports(grantRefused.fetch), { clientId: CLIENT_ID, code: "c", verifier: "v", redirectUri: REDIRECT })).rejects.toBeInstanceOf(SiwcInvalidGrantError);
+    const otherRefused = recordingFetch(() => fakeResponse({ status: HTTP_STATUS.badRequest, text: '{"error": "invalid_request"}' }));
+    const failure = await exchangeCode(ports(otherRefused.fetch), { clientId: CLIENT_ID, code: "c", verifier: "v", redirectUri: REDIRECT }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(SiwcError);
+    expect(failure).not.toBeInstanceOf(SiwcInvalidGrantError);
   });
 
   it("rejects an answer with no access token", async () => {

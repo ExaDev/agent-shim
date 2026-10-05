@@ -61,6 +61,16 @@ export class SiwcError extends Error {
   }
 }
 
+/**
+ * Raised when the token endpoint answers `invalid_grant`. On a first sign-in this is expected once: OpenAI's own SDK keeps the client id the callback issued and runs a second authorisation with it, because a code can fail after the registration itself succeeded. On a refresh it means the login was revoked or expired.
+ */
+export class SiwcInvalidGrantError extends SiwcError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SiwcInvalidGrantError";
+  }
+}
+
 /** The primitives the flow draws on, injected so every step is deterministic under test. */
 export interface SiwcPorts {
   readonly fetch: UpstreamFetch;
@@ -83,16 +93,10 @@ export function newOpaqueValue(randomBytes: SiwcPorts["randomBytes"]): string {
   return base64Url(randomBytes(SIWC_RANDOM_BYTES));
 }
 
-/** A fresh host id: the stable, opaque identifier OpenAI keys this installation's registration on, in the `urn:uuid:` form its reference allows. */
-export function newHostId(randomUuid: () => string): string {
-  return `urn:uuid:${randomUuid()}`;
-}
-
 /** What one authorization request carries. `clientId` is undefined for a first sign-in, which registers dynamically. */
 export interface AuthorizeRequest {
   readonly clientId: string | undefined;
   readonly agentName: string;
-  readonly hostId: string;
   readonly redirectUri: string;
   readonly state: string;
   readonly nonce: string;
@@ -109,7 +113,6 @@ export function buildAuthorizeUrl(request: AuthorizeRequest): string {
   if (request.clientId === undefined) {
     params.set("agent_name_hint", request.agentName);
   }
-  params.set("ext_agent_host_id", request.hostId);
   if (request.returning !== undefined) {
     params.set("id_token_hint", request.returning.idToken);
     if (request.returning.loginHint !== undefined) {
@@ -176,7 +179,9 @@ async function postToken(ports: SiwcPorts, form: Readonly<Record<string, string>
     signal: AbortSignal.timeout(TOKEN_CALL_TIMEOUT_MS),
   });
   if (!response.ok) {
-    throw new SiwcError(`the ${what} failed with HTTP ${String(response.status)}: ${(await response.text()).slice(0, ERROR_BODY_CHARS)}`);
+    const detail = (await response.text()).slice(0, ERROR_BODY_CHARS);
+    const message = `the ${what} failed with HTTP ${String(response.status)}: ${detail}`;
+    throw /"error"\s*:\s*"invalid_grant"/.test(detail) ? new SiwcInvalidGrantError(message) : new SiwcError(message);
   }
   const parsed = TokenResponseSchema.safeParse(await response.json());
   if (!parsed.success) {

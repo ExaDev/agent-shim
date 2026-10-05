@@ -1,7 +1,6 @@
 import {
   buildAuthorizeUrl,
   exchangeCode,
-  newHostId,
   newOpaqueValue,
   newPkce,
   parseCallback,
@@ -10,10 +9,11 @@ import {
   SIWC_PLAN_SCOPE,
   SIWC_REVOKE_URL,
   SiwcError,
+  SiwcInvalidGrantError,
   verifyIdToken,
   type SiwcPorts,
 } from "./siwc";
-import type { SiwcStore } from "./siwcStore";
+import type { SiwcGrant, SiwcStore } from "./siwcStore";
 
 /** The name OpenAI shows the person on the consent screen, so they can tell which application is asking for their plan. */
 const SIWC_AGENT_NAME = "agent-shim";
@@ -29,9 +29,8 @@ export interface CallbackListener {
 export interface SiwcLoginPorts {
   readonly store: SiwcStore;
   readonly siwc: SiwcPorts;
-  readonly randomUuid: () => string;
-  /** Starts listening for the redirect on a loopback port. Raises when the port is taken. */
-  readonly listen: (port: number) => Promise<CallbackListener>;
+  /** Starts listening for the redirect on a loopback port, answering only a request that carries `state` (a stale tab's callback must not end this sign-in). Raises when the port is taken. */
+  readonly listen: (port: number, state: string) => Promise<CallbackListener>;
   /** Opens the system browser at `url`. */
   readonly openBrowser: (url: string) => void;
   readonly print: (line: string) => void;
@@ -47,42 +46,53 @@ export interface SiwcLoginResult {
 const SIWC_LOGIN_TIMEOUT_MS = 300_000;
 
 /**
- * Signs the person in through their browser and stores the grant. The host id is created and written before the browser opens, so a sign-in that is abandoned still leaves the registration identity the next attempt reuses. A returning sign-in names the client OpenAI already issued and hints the previous account; a first one registers dynamically and takes the issued client id from the callback.
+ * Signs the person in through their browser and stores the grant. A first sign-in registers dynamically and takes the issued client id from the callback; that id is written before the code exchange, and when the exchange answers `invalid_grant` a second authorisation runs with the issued id and no new registration, which is what OpenAI's own SDK does because a code can fail after the registration itself succeeded. A returning sign-in names the stored client and hints the previous account.
  *
  * The grant is refused unless it carries the plan scope, because a grant without it signs the person in but can never send a request, and storing it would only move the failure to the first request.
  */
 export async function runSiwcLogin(ports: SiwcLoginPorts, options: { readonly open: boolean }): Promise<SiwcLoginResult> {
   const existing = ports.store.read();
-  const hostId = existing?.hostId ?? newHostId(ports.randomUuid);
-  if (existing === undefined) {
-    ports.store.write({ hostId });
+  const returning = existing?.grant;
+  for (let attempt = 0; ; attempt += 1) {
+    const clientId = ports.store.read()?.registeredClientId ?? returning?.clientId;
+    try {
+      return await authorizeOnce(ports, options, clientId, attempt === 0 ? returning : undefined);
+    } catch (error) {
+      if (!(error instanceof SiwcInvalidGrantError) || attempt > 0) {
+        throw error;
+      }
+      ports.print("OpenAI did not accept the first code, which is expected once after registering: authorising again with the registration it issued.");
+    }
   }
-  const previous = existing?.grant;
+}
+
+async function authorizeOnce(ports: SiwcLoginPorts, options: { readonly open: boolean }, savedClientId: string | undefined, returning: SiwcGrant | undefined): Promise<SiwcLoginResult> {
   const pkce = newPkce(ports.siwc.randomBytes);
   const state = newOpaqueValue(ports.siwc.randomBytes);
   const nonce = newOpaqueValue(ports.siwc.randomBytes);
   const redirectUri = `http://127.0.0.1:${String(SIWC_CALLBACK_PORT)}${SIWC_CALLBACK_PATH}`;
   const url = buildAuthorizeUrl({
-    clientId: previous?.clientId,
+    clientId: savedClientId,
     agentName: SIWC_AGENT_NAME,
-    hostId,
     redirectUri,
     state,
     nonce,
     challenge: pkce.challenge,
-    ...(previous === undefined ? {} : { returning: { idToken: previous.idToken, loginHint: previous.email } }),
+    ...(returning === undefined ? {} : { returning: { idToken: returning.idToken, loginHint: returning.email } }),
   });
-  const listener = await ports.listen(SIWC_CALLBACK_PORT);
+  const listener = await ports.listen(SIWC_CALLBACK_PORT, state);
   try {
     ports.print(`Sign in at: ${url}`);
     if (options.open) {
       ports.openBrowser(url);
     }
     const callback = parseCallback(await listener.waitForCallback(AbortSignal.timeout(SIWC_LOGIN_TIMEOUT_MS)), state);
-    const clientId = callback.clientId ?? previous?.clientId;
+    const clientId = callback.clientId ?? savedClientId;
     if (clientId === undefined) {
       throw new SiwcError("the sign-in callback carried no client id and none was stored from an earlier sign-in");
     }
+    const grantBefore = ports.store.read()?.grant;
+    ports.store.write({ registeredClientId: clientId, ...(grantBefore === undefined ? {} : { grant: grantBefore }) });
     const tokens = await exchangeCode(ports.siwc, { clientId, code: callback.code, verifier: pkce.verifier, redirectUri });
     if (tokens.refreshToken === undefined || tokens.idToken === undefined) {
       throw new SiwcError("the token endpoint did not return a refresh token and an ID token, so the sign-in cannot be kept");
@@ -93,7 +103,7 @@ export async function runSiwcLogin(ports: SiwcLoginPorts, options: { readonly op
     }
     const identity = await verifyIdToken(ports.siwc, tokens.idToken, { clientId, nonce });
     ports.store.write({
-      hostId,
+      registeredClientId: clientId,
       grant: { clientId, sub: identity.sub, ...(identity.email === undefined ? {} : { email: identity.email }), idToken: tokens.idToken, accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, scopes, expiresAt: tokens.expiresAt },
     });
     return { email: identity.email, sub: identity.sub };
@@ -113,7 +123,7 @@ export interface SiwcLogoutResult {
 const REVOKE_TIMEOUT_MS = 30_000;
 
 /**
- * Signs out: revokes the refresh token at the issuer (RFC 7009) and removes the grant, keeping the host id so a later sign-in reuses the registration. The local removal happens even when the revocation call fails, because leaving a grant the person asked to remove would be worse than an unrevoked one, and the result says which happened.
+ * Signs out: revokes the refresh token at the issuer (RFC 7009) and removes the grant, keeping the registered client id so a later sign-in reuses the registration. The local removal happens even when the revocation call fails, because leaving a grant the person asked to remove would be worse than an unrevoked one, and the result says which happened.
  */
 export async function runSiwcLogout(ports: Pick<SiwcLoginPorts, "store" | "siwc">): Promise<SiwcLogoutResult> {
   const file = ports.store.read();
@@ -131,6 +141,6 @@ export async function runSiwcLogout(ports: Pick<SiwcLoginPorts, "store" | "siwc"
       (response) => response.ok,
       () => false,
     );
-  ports.store.write({ hostId: file.hostId });
+  ports.store.write({ registeredClientId: file.grant.clientId });
   return { hadGrant: true, revoked };
 }
