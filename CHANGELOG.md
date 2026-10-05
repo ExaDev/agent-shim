@@ -1,3 +1,14 @@
+## [8.17.0](https://github.com/ExaDev/agent-shim/compare/v8.16.0...v8.17.0) (2026-10-05)
+
+### Features
+
+* **frontdoor:** let the listener serve several pre-pipeline API surfaces ([4a3ac24](https://github.com/ExaDev/agent-shim/commit/4a3ac2451f3fb0b0d85fe8ca47af5e83382ac8e7))
+* **frontdoor:** serve the self-hosted Remote Control web client ([ddd8cb9](https://github.com/ExaDev/agent-shim/commit/ddd8cb97b573983959bc47a6d561fb4fe1cab43d)), closes [#249](https://github.com/ExaDev/agent-shim/issues/249)
+
+### Documentation
+
+* describe the self-hosted Remote Control web client ([de9aeba](https://github.com/ExaDev/agent-shim/commit/de9aebaa19ddce43296f5e4a4d4c7d918e49268e))
+
 ## [8.16.0](https://github.com/ExaDev/agent-shim/compare/v8.15.0...v8.16.0) (2026-10-05)
 
 ### Features
