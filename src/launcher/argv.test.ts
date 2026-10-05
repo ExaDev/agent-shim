@@ -163,4 +163,17 @@ describe("parseLauncherArgv", () => {
     expect(parseLauncherArgv(["--provider", "--", "x"])).toMatchObject({ rest: ["--provider", "--", "x"] });
     expect(parseLauncherArgv(["--provider", "--", "x"]).provider).toBeUndefined();
   });
+
+  it("consumes --native before a terminator and strips it from rest, leaving Claude Code's own --bare to be forwarded", () => {
+    const result = parseLauncherArgv(["--native", "--bare", "--print", "hi"]);
+    expect(result.native).toBe(true);
+    expect(result.rest).toEqual(["--bare", "--print", "hi"]);
+    expect(parseLauncherArgv(["--bare"]).native).toBeUndefined();
+  });
+
+  it("leaves --native after a -- terminator for the command claude runs", () => {
+    const result = parseLauncherArgv(["mcp", "add", "n", "--", "cmd", "--native"]);
+    expect(result.native).toBeUndefined();
+    expect(result.rest).toEqual(["mcp", "add", "n", "--", "cmd", "--native"]);
+  });
 });

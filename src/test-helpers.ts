@@ -513,6 +513,19 @@ export function fakeCredentials(options: FakeCredentialOptions = {}): Credential
 
 export const discovered: DiscoveredClaudeBinary = { path: "/home/testuser/.local/share/claude/versions/2.1.0", source: "versions-dir", version: "2.1.0" };
 
+/** Runs something that ends in `proc.exit` (a fake `ProcPort`'s `exit` throws) and returns the exit code it reached; throws when it returned normally or failed some other way. */
+export function captureExitCode(run: () => void): number {
+  try {
+    run();
+  } catch (error) {
+    if (error instanceof ExitCalled) {
+      return error.code;
+    }
+    throw error;
+  }
+  throw new Error("expected the run to reach proc.exit");
+}
+
 export function runAndCaptureExit(params: RunLauncherParams): number {
   try {
     runLauncher(params);
