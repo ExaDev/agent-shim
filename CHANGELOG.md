@@ -1,3 +1,9 @@
+## [8.14.0](https://github.com/ExaDev/agent-shim/compare/v8.13.0...v8.14.0) (2026-10-05)
+
+### Features
+
+* **frontdoor:** persist the RC stream hub's sequence cursor beside the credential ([72f55e5](https://github.com/ExaDev/agent-shim/commit/72f55e570711714e4ca03a9a9ba5db0510ac6da4)), references [#238](https://github.com/ExaDev/agent-shim/issues/238)
+
 ## [8.13.0](https://github.com/ExaDev/agent-shim/compare/v8.12.0...v8.13.0) (2026-10-05)
 
 ### Features
