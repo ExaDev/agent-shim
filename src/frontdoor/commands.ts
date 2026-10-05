@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import type { Command } from "commander";
@@ -16,13 +16,15 @@ import { createDoorPipelines } from "./assembly";
 import { isLiveCapability } from "./capability";
 import { captureFromEnv } from "./capture";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_LIMITS, CONNECT_TAP_HOSTS, HTTPS_PORT, LOOPBACK_LEAF_NAMES, createLeafCache, ensureCa, generateCa, mintLeaf, realConnectCertStore, startConnectServer, type CaMaterial } from "./connect";
-import { realConnectEffects, realRcEventDial, realRcStreamDial } from "./connectEffects";
+import { lateRcEventDial, lateRcStreamDial, realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./connectEffects";
 import { createCredentialCustody } from "./custody";
 import { createRcApiNodeHandler, frontDoorRcApiClient, type RcApiClient } from "./rcApi";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
 import { createRcCredentialStore } from "./rcCredentialStore";
+import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
+import { mintRcSelfHostCredential, readRcSelfHostRecord, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_IDLE_EXPIRY_MS, RC_PERMISSION_MODES, RC_PENDING_SUMMARY_EXCERPT_CHARS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, interruptRcSession, isRcPermissionMode, observingRoutedRoute, setRcSessionModel, setRcSessionPermissionMode, type RcAnswerDecision, type RcPermissionMode, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RcStreamEvent } from "./rcSchemas";
@@ -40,6 +42,9 @@ function appendLog(paths: LayoutPaths, line: string): void {
   fs.mkdirSync(paths.logsDir, { recursive: true });
   fs.appendFileSync(paths.frontdoorLogPath, `${new Date().toISOString()} ${line}\n`);
 }
+
+/** How much random material a locally minted token carries: 32 bytes is the session-key scale, far past any guessing surface a local credential needs. */
+const MINTED_TOKEN_RANDOM_BYTES = 32;
 
 /**
  * The headroom daemon's socket as the hop may use it, read from the daemon's state on every routed request that needs the hop and authenticated each time: a new supervisor generation serves on a new path while this door keeps listening, and the hop must follow it (and answer 502 while the daemon is between restarts, or refuse a socket that fails the owner-only check). Undefined while no socket is recorded.
@@ -74,11 +79,44 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   };
   // The direct listener's port is only known once it has bound, but the route resolver needs it to name the address a headroom hop forwards an in-process route back to. No request can arrive before the binds complete, so a closure over the late-filled value is exact, not a race.
   let directPort = 0;
+  // The self-hosted Remote Control mode, decided at door start like the transparent surface and the capture are: the door is one process, so the mode is the door's own. When it is on, the door serves the CCR session family itself (see rcSelfHost.ts) and points its own client-half dials at its own transparent surface; the record the surface authenticates against is read fresh on every call, so a re-mint applies without a restart.
+  const rcSelfHost = rcSelfHostFromEnv(process.env);
   // Built once for the process, not per request: the codex translation's upstream agent and auth store hold pooled connections and refresh state that must survive across requests.
   const codexPorts = createCodexRoutePorts(log);
+
+  // The CA is generated once on this machine's first front-door start and reused after: regenerating it would strand every child still pointing NODE_EXTRA_CA_CERTS at the old certificate. Loaded on first use by whichever listener starts first, and shared by both TLS-serving listeners.
+  let ca: CaMaterial | undefined;
+  const loadCa = (): CaMaterial => {
+    ca ??= ensureCa(realConnectCertStore(paths), () => generateCa(new Date()));
+    return ca;
+  };
+
+  // The transparent surface's port, known only once the connect listener has bound it. The self-hosted mode's client-half dials read it through `rcSelfHostDialTarget`, exactly the late-filled-closure pattern the direct port uses above: no dial can happen before the bind, because a tracked session needs traffic first and the traffic needs the surface.
+  let transparentPort: number | undefined;
+  let selfHostDialTarget: RcDialTarget | undefined;
+  /** Where the door's own Remote Control client half dials when the self-hosted mode is on: the door's own transparent surface, presenting the API host's name so the traffic terminates exactly as the CLI's does. Undefined while the mode is off or the surface is not yet bound, in which case the dial keeps its default (the real host). */
+  const rcSelfHostDialTarget = (): RcDialTarget | undefined => {
+    if (!rcSelfHost || transparentPort === undefined) {
+      return undefined;
+    }
+    selfHostDialTarget ??= { host: "127.0.0.1", port: transparentPort, servername: CONNECT_INTERCEPT_HOST, ca: [loadCa().certPem] };
+    return selfHostDialTarget;
+  };
+
+  // The served CCR surface itself: one per door process, in memory only. Its route rides the resolver below (so its exchanges are observed by the tracker exactly as the real host's are), and its local answers ride the connect surface's config.
+  const rcSelfHostSurface = rcSelfHost
+    ? createRcSelfHostSurface({
+        now: () => Date.now(),
+        newUuid: randomUUID,
+        randomToken: () => randomBytes(MINTED_TOKEN_RANDOM_BYTES).toString("base64url"),
+        credentialRecord: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir),
+        log,
+      })
+    : undefined;
+
   // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix. The client credential is the one part that must outlive the process (a session outlives any one door generation, and only client-half calls state the OAuth bearer), so it is persisted per session and read back by whichever generation needs it.
   const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: createRcCredentialStore(realFarmFs, paths.frontdoorRcCredentialsDir) });
-  // The door's own client read stream attachment: one held stream per tracked session, fanned out to every subscriber (the typed API's subscription and `frontdoor rc watch`), with its envelopes filed with the tracker. The door plays one client because the CLI routes permission approvals only toward attached clients: with no stream held, an approval falls back to the CLI's own local prompt and never crosses the door.
+  // The door's own client read stream attachment: one held stream per tracked session, fanned out to every subscriber (the typed API's subscription and `frontdoor rc watch`), with its envelopes filed with the tracker. The door plays one client because the CLI routes permission approvals only toward attached clients: with no stream held, an approval falls back to the CLI's own local prompt and never crosses the door. In the self-hosted mode the dial is resolved per call so it can name the door's own surface once that has bound.
   const rcFanout = createRcEventFanout();
   const rcHub = createRcStreamHub({
     now: () => Date.now(),
@@ -86,7 +124,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     trackedSessions: () => rcTracker.list().map((session) => session.id),
     fileStreamEvent: rcTracker.fileStreamEvent,
     sequenceNumOf: rcTracker.sequenceNumOf,
-    dial: realRcStreamDial(),
+    dial: rcSelfHost ? lateRcStreamDial(rcSelfHostDialTarget) : realRcStreamDial(),
     fanout: rcFanout,
     newClientId: randomUUID,
     backoffMs: RC_STREAM_BACKOFF_MS,
@@ -101,7 +139,11 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   });
   // This generation's control token, minted per door start and written owner-only: the value the door's control routes demand and only this user's CLI can read. A crashed door's stale file never authenticates, because the next generation mints a fresh one over it.
   const rcControlToken = randomUUID();
-  const resolveRoute = rcObservingResolver(createProviderRouteResolver({ fs: realFsPort, providersDir: paths.providersDir, codexPorts, directPort: () => directPort }), rcTracker, rcHub);
+  const resolveRoute = rcObservingResolver(
+    createProviderRouteResolver({ fs: realFsPort, providersDir: paths.providersDir, codexPorts, directPort: () => directPort, ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }) }),
+    rcTracker,
+    rcHub,
+  );
 
   // One check for every listener that admits launches, read fresh on each call since launches come and go: the provider listener's and the CONNECT surface's routed paths (the capability header), and the CONNECT surface's own CONNECT requests (the proxy credential).
   const isLiveToken = (token: string): boolean => isLiveCapability(token, liveSessionTokens(realFarmFs, paths.frontdoorSessionsDir));
@@ -138,13 +180,6 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     log,
   });
 
-  // The CA is generated once on this machine's first front-door start and reused after: regenerating it would strand every child still pointing NODE_EXTRA_CA_CERTS at the old certificate. Loaded on first use by whichever listener starts first, and shared by both TLS-serving listeners.
-  let ca: CaMaterial | undefined;
-  const loadCa = (): CaMaterial => {
-    ca ??= ensureCa(realConnectCertStore(paths), () => generateCa(new Date()));
-    return ca;
-  };
-
   const onListenerError = (name: string) => (error: Error): void => {
     appendLog(paths, `frontdoor ${String(process.pid)}: ${name} listener failed: ${error.message}; exiting`);
     process.exit(1);
@@ -163,8 +198,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     isRunning: realIsProcessRunning,
     startProviderListener: async (preferredPort) => {
       const authority = loadCa();
-      // The write operations the control routes and the typed API both carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly. A confirmed write advances the session's sequence cursor through the tracker, so a stream resume continues after the door's own events too.
-      const rcDial = realRcEventDial();
+      // The write operations the control routes and the typed API both carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly. A confirmed write advances the session's sequence cursor through the tracker, so a stream resume continues after the door's own events too. In the self-hosted mode the dial's target is resolved per call so it names the door's own surface once that has bound.
+      const rcDial = rcSelfHost ? lateRcEventDial(rcSelfHostDialTarget) : realRcEventDial();
       const rcInject = async (sessionId: string, text: string) =>
         await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text);
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>
@@ -196,8 +231,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     },
     startConnectListener: async (preferredPort) => {
       // The transparent surface exists only when something asked for it (AGENT_SHIM_TRANSPARENT_SURFACE naming the port an operating-system redirect sends the API host's address to): the door then mints its own registered session for redirect-arriving traffic, keyed by its own pid so the session lives exactly as long as the door does and the idle pruner never reaps it while the door serves.
-      const transparentPort = process.env.AGENT_SHIM_TRANSPARENT_SURFACE === undefined ? undefined : Number(process.env.AGENT_SHIM_TRANSPARENT_SURFACE);
-      const transparentCapability = transparentPort === undefined || Number.isNaN(transparentPort) ? undefined : randomUUID();
+      const wantedTransparentPort = process.env.AGENT_SHIM_TRANSPARENT_SURFACE === undefined ? undefined : Number(process.env.AGENT_SHIM_TRANSPARENT_SURFACE);
+      const transparentCapability = wantedTransparentPort === undefined || Number.isNaN(wantedTransparentPort) ? undefined : randomUUID();
       if (transparentCapability !== undefined) {
         writeFrontDoorSession(realFarmFs, paths.frontdoorSessionsDir, { pid: process.pid, startedAt: Date.now(), token: transparentCapability });
       }
@@ -207,11 +242,18 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       if (capture !== undefined) {
         log(`capture enabled, recording CONNECT targets and piped exchanges to ${path.join(paths.logsDir, "frontdoor-capture.jsonl")}`);
       }
+      if (rcSelfHostSurface !== undefined) {
+        log("self-hosted Remote Control surface on: the door serves the CCR session family itself, and its own client-half dials its own transparent surface");
+        if (wantedTransparentPort === undefined || Number.isNaN(wantedTransparentPort)) {
+          log("self-hosted Remote Control surface: AGENT_SHIM_TRANSPARENT_SURFACE is not set, so nothing redirects the CLI's Remote Control traffic to this door and the door's own client half has no surface to dial; set it to the interception port the mode is deployed with");
+        }
+      }
       const server = await startConnectServer(
         {
           interceptHosts: CONNECT_INTERCEPT_HOSTS,
           tapHosts: CONNECT_TAP_HOSTS,
           routedHost: CONNECT_INTERCEPT_HOST,
+          ...(rcSelfHostSurface === undefined ? {} : { localSurface: rcSelfHostSurface.local }),
           serveRouted: (request, response) => {
             // The connect surface hands the pipeline the same request shape the provider listener builds: identified, admitted, middleware-run, routed, with the abort wired to the client going away.
             const abort = new AbortController();
@@ -235,14 +277,22 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
           leafFor,
           upstreamFor: (host) => ({ host, port: HTTPS_PORT, tls: true }),
           isLiveCapability: isLiveToken,
-          ...(transparentPort === undefined || Number.isNaN(transparentPort) ? {} : { transparentPort, ...(transparentCapability === undefined ? {} : { transparentCapability }) }),
+          ...(wantedTransparentPort === undefined || Number.isNaN(wantedTransparentPort) ? {} : { transparentPort: wantedTransparentPort, ...(transparentCapability === undefined ? {} : { transparentCapability }) }),
           limits: CONNECT_LIMITS,
           ...(capture === undefined ? {} : { capture }),
         },
         realConnectEffects(),
         preferredPort,
       );
-      return { port: server.port, close: server.close };
+      // The bound transparent port is what the self-hosted mode's client-half dials name; recorded the moment it exists, exactly when the direct port is.
+      transparentPort = server.transparentPort;
+      return {
+        port: server.port,
+        close: async () => {
+          rcSelfHostSurface?.close();
+          await server.close();
+        },
+      };
     },
     startDirectListener: async (preferredPort) => {
       const server = createFrontDoorServer(async (request) => {
@@ -384,6 +434,17 @@ export function formatRcStreamEvent(event: RcStreamEvent): string {
   const { envelope } = event;
   const sketch = envelope.payload === undefined ? "" : `  ${eventExcerpt(JSON.stringify(envelope.payload))}`;
   return `${event.session}  ${envelope.event_type}  sequence_num ${String(envelope.sequence_num)}  source ${envelope.source}${sketch}`;
+}
+
+/** Formats `frontdoor rc selfhost mint`'s result: names and next steps only, never a token. */
+export function formatRcSelfHostMint(result: RcSelfHostMintResult): string[] {
+  return [
+    `identity:       ${result.identity} (organisation ${result.organizationUuid})`,
+    `credential:     ${result.credentialsFile}${result.replaced ? " (replacing this door's previous mint)" : ""}`,
+    `account block:  ${result.claudeJsonFile} (oauthAccount and the feature-cache seed merged in)`,
+    `door record:    ${result.recordFile} (the copy the door's served surface authenticates against)`,
+    "next:           start the door with AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1 and its transparent surface pointed at the interception port, then launch this identity and switch Remote Control on; no claude.ai login is involved",
+  ];
 }
 
 /**
@@ -663,6 +724,42 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
         }
       }),
     ["agent-shim frontdoor rc watch", "agent-shim frontdoor rc watch cse_00000000-0000-4000-8000-000000000000 --json"],
+  );
+
+  const selfhost = withExamples(
+    rc
+      .command("selfhost")
+      .description("Mint the local credential behind the door's self-hosted Remote Control surface: the opt-in mode (AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1 in the door's environment) where the door serves the CCR surface itself and a session activates Remote Control with no Anthropic credential anywhere."),
+    ["agent-shim frontdoor rc selfhost mint rig"],
+  );
+
+  withExamples(
+    selfhost
+      .command("mint")
+      .description("Mint the local OAuth credential, account block and feature-cache seed one identity needs to activate Remote Control against the door's own served surface, and record the door-side copy the surface authenticates against. Refuses to replace a real claude.ai login unless --force. Never prints a token.")
+      .argument("<identity>", "The identity to mint into, as `agent-shim identity list` names it.")
+      .option("--force", "Replace an existing OAuth credential this door did not mint.")
+      .option("--json", "Print the mint result as JSON.")
+      .action((identity: string, options: Readonly<{ force?: boolean; json?: boolean }>) => {
+        const result = mintRcSelfHostCredential({
+          fs: realFarmFs,
+          identitiesDir: paths.identitiesDir,
+          frontdoorDir: paths.frontdoorDir,
+          identity,
+          newUuid: randomUUID,
+          randomToken: () => randomBytes(MINTED_TOKEN_RANDOM_BYTES).toString("base64url"),
+          force: options.force === true,
+          now: () => Date.now(),
+        });
+        if (options.json === true) {
+          printJson(result);
+          return;
+        }
+        for (const line of formatRcSelfHostMint(result)) {
+          console.log(line);
+        }
+      }),
+    ["agent-shim frontdoor rc selfhost mint rig", "agent-shim frontdoor rc selfhost mint rig --force"],
   );
 
   program
