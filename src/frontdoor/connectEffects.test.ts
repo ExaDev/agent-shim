@@ -114,14 +114,21 @@ async function requestThrough(port: number): Promise<{ readonly body: string; re
   });
 }
 
-/** Holds one reserved port the way the door's own dials bind it: a wildcard-bound socket connected to the stand-in and kept open, the shape of the live failure (a long-lived sibling to the same destination holding a port of the range). */
-async function holdReservedPort(port: number, upstreamPort: number): Promise<net.Socket> {
+/** Holds one reserved port the way the door's own dials bind it: a wildcard-bound socket connected to the stand-in and kept open, the shape of the live failure (a long-lived sibling to the same destination holding a port of the range). Resolves undefined for a port that was already in use before it could be held. */
+async function holdReservedPort(port: number, upstreamPort: number): Promise<net.Socket | undefined> {
   return await new Promise((resolve, reject) => {
     const held = net.connect({ host: "127.0.0.1", port: upstreamPort, localPort: port });
     held.once("connect", () => {
       resolve(held);
     });
-    held.once("error", reject);
+    held.once("error", (error: NodeJS.ErrnoException) => {
+      // A port that is already unbindable (a sibling's socket, or the TIME_WAIT an earlier dial left on it, which Linux enforces on bind) fails the door's own dial with the same EADDRINUSE, so it is as held as one this helper holds itself.
+      if (error.code === "EADDRINUSE") {
+        resolve(undefined);
+        return;
+      }
+      reject(error);
+    });
   });
 }
 
@@ -200,7 +207,10 @@ describe("the exempt agents' reserved source-port rotation", () => {
         for (let step = 1; step <= HELD_PORTS; step += 1) {
           const port = reservedPortAhead(discovery.sourcePort, step);
           heldPorts.add(port);
-          held.push(await holdReservedPort(port, upstream.port));
+          const socket = await holdReservedPort(port, upstream.port);
+        if (socket !== undefined) {
+          held.push(socket);
+        }
         }
         const retried = await requestThrough(upstream.port);
         expect(retried.body).toBe("stand-in-answer");
@@ -224,7 +234,10 @@ describe("the exempt agents' reserved source-port rotation", () => {
     const held: net.Socket[] = [];
     try {
       for (let port = UPSTREAM_LOCAL_PORT_START; port <= UPSTREAM_LOCAL_PORT_END; port += 1) {
-        held.push(await holdReservedPort(port, upstream.port));
+        const socket = await holdReservedPort(port, upstream.port);
+        if (socket !== undefined) {
+          held.push(socket);
+        }
       }
       const failureCode = await requestFailureCode(upstream.port);
       expect(failureCode !== undefined && HELD_PORT_ERRNOS.has(failureCode)).toBe(true);
@@ -242,7 +255,10 @@ describe("the exempt agents' reserved source-port rotation", () => {
     const held: net.Socket[] = [];
     try {
       for (let port = UPSTREAM_LOCAL_PORT_START; port <= UPSTREAM_LOCAL_PORT_END; port += 1) {
-        held.push(await holdReservedPort(port, upstream.port));
+        const socket = await holdReservedPort(port, upstream.port);
+        if (socket !== undefined) {
+          held.push(socket);
+        }
       }
       const failureCode = await realConnectEffects()
         .connectTlsUpstream(DIAL_NAME, upstream.port, undefined)
