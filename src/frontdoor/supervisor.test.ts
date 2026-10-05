@@ -39,6 +39,9 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
   const connectBinds: (number | undefined)[] = [];
   const directBinds: (number | undefined)[] = [];
   const closes: number[] = [];
+  /** Every stop in the order it happened, so a test can prove what the shutdown sequence closes before what. */
+  const stopOrder: string[] = [];
+  let hubCloses = 0;
   const logs: string[] = [];
   let failListener = false;
   let failConnect = false;
@@ -66,6 +69,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
         port,
         close: async () => {
           closes.push(port);
+          stopOrder.push("provider");
           await Promise.resolve();
         },
       });
@@ -80,6 +84,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
         port,
         close: async () => {
           closes.push(port);
+          stopOrder.push("connect");
           await Promise.resolve();
         },
       });
@@ -94,9 +99,14 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
         port,
         close: async () => {
           closes.push(port);
+          stopOrder.push("direct");
           await Promise.resolve();
         },
       });
+    },
+    closeRcStreamHub: () => {
+      hubCloses += 1;
+      stopOrder.push("hub");
     },
     log: (line) => {
       logs.push(line);
@@ -111,6 +121,8 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
     binds,
     connectBinds,
     closes,
+    stopOrder,
+    hubCloses: () => hubCloses,
     logs,
     clock: () => clock,
     set failListener(value: boolean) {
@@ -191,6 +203,9 @@ describe("runFrontDoorSupervisor", () => {
     expect(code).toBe(1);
     expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)?.lastError).toContain("port chaos");
     expect(world.fs.readFileUtf8(paths.frontdoorLockFile)).toBeUndefined();
+    // A startup failure exits this process too, so the hub's close happens once there as well: nothing was ever attached, but the exit path is the same one the idle shutdown takes.
+    expect(world.hubCloses()).toBe(1);
+    expect(world.stopOrder).toEqual(["hub"]);
   });
 
   it("records the failure when the CONNECT surface cannot start, closing the listener it had already bound", async () => {
@@ -202,6 +217,9 @@ describe("runFrontDoorSupervisor", () => {
     expect(code).toBe(1);
     expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)?.lastError).toContain("connect chaos");
     expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)?.port).toBeUndefined();
+    // The already-bound listener closes first and the hub's close follows it, the same after-the-listeners position the idle shutdown gives it.
+    expect(world.hubCloses()).toBe(1);
+    expect(world.stopOrder).toEqual(["provider", "hub"]);
   });
 
   it("prunes dead launcher sessions and never idles out while one is live", async () => {
@@ -222,6 +240,24 @@ describe("runFrontDoorSupervisor", () => {
     // All three listeners close, the direct one included, and the sticky addresses seed the next generation: the plain listener rebinding its sticky port, the other two starting fresh.
     expect(world.closes.sort((a, b) => a - b)).toEqual([STICKY_PORT, FRESH_PORT, FRESH_PORT].sort((a, b) => a - b));
     expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)).toEqual({ lastPort: STICKY_PORT, lastConnectPort: FRESH_PORT, lastDirectPort: FRESH_PORT });
+  });
+
+  it("closes the Remote Control stream hub once, after every listener is down and before the exit, so the final cursor save is deterministic", async () => {
+    const world = makeWorld();
+    const code = await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS });
+    expect(code).toBe(0);
+    // The hub's close is the last stop of the serving machinery and happens exactly once: every listener is already down (nothing can settle an observed exchange and re-attach a stream the close had just ended), and the exit follows it.
+    expect(world.stopOrder).toEqual(["direct", "connect", "provider", "hub"]);
+    expect(world.hubCloses()).toBe(1);
+  });
+
+  it("never closes the Remote Control stream hub while the door is still serving", async () => {
+    const world = makeWorld();
+    world.alive.add(LIVE_SESSION);
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0, token: SESSION_TOKEN });
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
+    expect(world.hubCloses()).toBe(0);
+    expect(world.stopOrder).toEqual([]);
   });
 
   it("resets the idle clock when a new session arrives inside the window", async () => {

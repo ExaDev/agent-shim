@@ -443,6 +443,9 @@ describe("the client read stream attachment", () => {
     // The attachment's end is the boundary: one save, carrying the final cursor.
     hub.close();
     expect(saves).toEqual([{ sessionId: SESSION_ID, sequenceNum: STREAM_EVENT_LAST_SEQUENCE_NUM }]);
+    // The close is idempotent, which is what lets the supervisor's shutdown call it unconditionally: a second call finds no attachment and the memo still holds the final cursor, so nothing is written twice.
+    hub.close();
+    expect(saves).toEqual([{ sessionId: SESSION_ID, sequenceNum: STREAM_EVENT_LAST_SEQUENCE_NUM }]);
   });
 
   it("re-reads the credential and retries once on a 401, then backs off rather than hammering", async () => {
