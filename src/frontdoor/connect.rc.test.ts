@@ -275,7 +275,7 @@ describe("Remote Control observation and injection over the connect surface", ()
         await settle();
 
         // The CLI registers its worker and heartbeats, then posts the event batch carrying the approval request, exactly the writes the door observes on a real session.
-        const register = await putOn(secure, `/v1/code/sessions/${RC_TEST_SESSION_ID}/worker`, HEARTBEAT_BEARER, JSON.stringify({ status: "WORKER_STATUS_RUNNING" }));
+        const register = await putOn(secure, `/v1/code/sessions/${RC_TEST_SESSION_ID}/worker`, HEARTBEAT_BEARER, JSON.stringify({ worker_status: "WORKER_STATUS_RUNNING", worker_epoch: 1 }));
         expect(register.statusLine).toContain(String(HTTP_OK));
         const heartbeat = await postOn(secure, `/v1/code/sessions/${RC_TEST_SESSION_ID}/worker/heartbeat`, HEARTBEAT_BEARER, JSON.stringify({ session_id: RC_TEST_SESSION_ID, worker_epoch: 1, supports_heartbeat_probe: true, current_interval_seconds: 20, idle_seconds: RC_TEST_IDLE_SECONDS }));
         expect(heartbeat.statusLine).toContain(String(HTTP_OK));
