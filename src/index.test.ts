@@ -16,6 +16,47 @@ describe("library surface", () => {
     expect(typeof library.readUsageSnapshot).toBe("function");
   });
 
+  it("reads a window past its reset as empty, exactly as pool ranking and the launch warnings do", () => {
+    const nowMs = Date.parse("2026-10-05T12:00:00.000Z");
+    expect(library.effectiveWindow({ utilization: 1, status: "rejected", resetsAt: "2026-10-05T11:00:00.000Z" }, nowMs)).toEqual({ reset: true, utilization: 0 });
+    expect(library.effectiveWindow({ utilization: 0.5, resetsAt: "2026-10-05T13:00:00.000Z" }, nowMs)).toMatchObject({ reset: false, utilization: 0.5 });
+  });
+
+  it("evaluates a rule's `when` with the semantics the cascade uses", () => {
+    const context = { nowMs: 0, env: { CI: "1" }, branch: "main", branchDetached: false } satisfies library.ConditionContext;
+    expect(library.evaluateWhen({ branch: "main" }, context)).toEqual({ passed: true, checked: ["branch"], failed: [] });
+    expect(library.evaluateWhen({ branch: "release/*" }, context)).toMatchObject({ passed: false, failed: ["branch"] });
+    expect(library.matchBranch("feat/*", "feat/x")).toBe(true);
+  });
+
+  it("ranks a pool over snapshots and a clock, and its report validates against the published schema", () => {
+    const nowMs = Date.parse("2026-10-05T12:00:00.000Z");
+    const at = (offsetMs: number): string => new Date(nowMs + offsetMs).toISOString();
+    const HOUR_MS = 3_600_000;
+    const SIX_DAYS_MS = 518_400_000;
+    const LIGHTLY_USED = 0.1;
+    const HEAVILY_USED = 0.6;
+    const snapshot = (identity: string, utilization: number, resetsInMs: number): library.UsageSnapshot => ({
+      schemaVersion: 1,
+      identity,
+      updatedAt: at(-HOUR_MS),
+      providers: { anthropic: { lastRequestAt: at(-HOUR_MS), lastStatus: 200, rateLimit: { observedAt: at(-HOUR_MS), headers: {}, unified: { sevenDay: { utilization, resetsAt: at(resetsInMs) } } } } },
+    });
+    const ranking = library.rankPool({
+      nowMs,
+      resuming: false,
+      members: [
+        { identity: "later", records: [], snapshot: snapshot("later", LIGHTLY_USED, SIX_DAYS_MS), account: { organizationRateLimitTier: "default_claude_max_20x" } },
+        { identity: "sooner", records: [], snapshot: snapshot("sooner", HEAVILY_USED, HOUR_MS), account: { organizationRateLimitTier: "default_claude_max_20x" } },
+      ],
+    });
+    expect(ranking.pick?.identity).toBe("sooner");
+    expect(library.planOf({ organizationRateLimitTier: "default_claude_max_5x" })).toMatchObject({ kind: "subscription", capacity: 5 });
+    const report: library.PoolPickReport = { pool: "p", directory: "/d", pick: "sooner", candidates: ranking.candidates.map((c) => ({ identity: c.identity, class: c.class, feasible: c.feasible, plan: c.plan, reasons: [...c.reasons] })), missing: [] };
+    expect(library.PoolPickReportSchema.parse(report)).toEqual(report);
+    expect(library.PoolPickReportSchema.safeParse({ ...report, extra: true }).success).toBe(false);
+  });
+
   it("exposes exactly the documented entry points, so adding or removing one is a deliberate change to this list and to docs/library.md", () => {
     expect(Object.keys(library).sort()).toEqual([
       "AMBIENT_CREDENTIAL_VARS",
@@ -51,8 +92,11 @@ describe("library surface", () => {
       "InvalidProviderNameError",
       "LaunchRefusedError",
       "LegacyProviderFileError",
+      "PROMPT_CACHE_TTL_MS",
+      "PlanClassSchema",
       "PoolNameSchema",
       "PoolNotFoundError",
+      "PoolPickReportSchema",
       "PoolSchema",
       "PortableConfigSchema",
       "ProfileAlreadyExistsError",
@@ -89,16 +133,19 @@ describe("library surface", () => {
       "checkReportToJson",
       "collectCheckReport",
       "collectDoctorReport",
+      "collectPoolPick",
       "createLeafCache",
       "createProfile",
       "createRcControlHandler",
       "createRcSessionTracker",
       "describeProviderEndpoint",
       "detectAmbientCredential",
+      "effectiveWindow",
       "ensureCa",
       "ensureFrontDoor",
       "ensureHeadroom",
       "evaluateAmbientCredentialGuard",
+      "evaluateWhen",
       "formatAmbientCredentialGuardMessage",
       "formatCheckReport",
       "formatDoctorReport",
@@ -116,13 +163,16 @@ describe("library surface", () => {
       "listProfiles",
       "listProviders",
       "listUsageSnapshots",
+      "matchBranch",
       "mintLeaf",
       "observingRoutedRoute",
       "parseConnectTarget",
+      "planOf",
       "prepareClaudeLaunch",
       "prepareLaunch",
       "profileExists",
       "providerExists",
+      "rankPool",
       "rcEventWriteResultFromAnswer",
       "rcObserverAsPassthrough",
       "readActiveIdentity",

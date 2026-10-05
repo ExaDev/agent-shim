@@ -4,7 +4,8 @@
  * - identity and configuration-profile resolution and farm sync (`resolveDecisions`, `resyncFarm`, `buildEntryFacts`, ...), pure over facts and ports passed in;
  * - routing: the front door's Remote-Control-preserving, capability-authenticated CONNECT surface and its certificate authority, the Remote Control session tracker (pending control requests and worker status included) with prompt injection and control-request answering over the same observed protocol, the control surface that lists, reads status and writes through, the front-door supervisor and ensure lifecycle, and the headroom supervisor and ensure lifecycle, each pure over its injected ports;
  * - the ambient-credential guard;
- * - the per-identity usage snapshot a statusline or launcher reads: its schema and the reader over an injected filesystem;
+ * - the per-identity usage snapshot a statusline or launcher reads: its schema and the reader over an injected filesystem, `effectiveWindow` (how a window past its reset reads), and the pool ranking (`rankPool` over snapshots and a clock, `collectPoolPick` reading this machine, and the schema of the report `pool pick --json` prints);
+ * - `evaluateWhen` and `matchBranch`, the condition evaluator behind a rule's or entry's `when`, so a consumer reading directory rules applies the same semantics;
  * - the state root's layout (`resolveAgentShimHome`, `resolveLayoutPaths`, `buildLayoutPaths`), which includes adopting an existing `~/.claude-use` in place, and the Zod schema and inferred type of every configuration file (identity, configuration profile, provider, pool, directory rules, global config, credential), so a tool can validate or generate them with the same definitions the CLI uses.
  *
  * Creating and changing identities, configuration profiles, providers, pools and directory rules: the `*Store` modules, which take the state root's `LayoutPaths`, return typed values and throw `CliError` subclasses.
@@ -107,6 +108,12 @@ export { ensureFrontDoor, FrontDoorStartError, type EnsureFrontDoorPorts } from 
 export { runFrontDoorSupervisor, type FrontDoorSupervisorPorts, type RunFrontDoorSupervisorOptions } from "./frontdoor/supervisor";
 export { listUsageSnapshots, readUsageSnapshot, snapshotPath, UsageSnapshotError, type UsageReadFs } from "./usage/read";
 export { UsageSnapshotSchema, type UsageSnapshot } from "./usage/schema";
+export { effectiveWindow, type EffectiveWindow } from "./usage/preflight";
+export { PROMPT_CACHE_TTL_MS, rankPool, type Candidate, type PoolMember, type PoolRanking, type RankPoolInput, type StickyPick } from "./usage/pick";
+export { planOf, PlanClassSchema, type PlanClass } from "./usage/plan";
+export { collectPoolPick } from "./poolPickReport";
+export { PoolPickReportSchema, type PoolPickReport } from "./usage/pickReportSchema";
+export { evaluateWhen, matchBranch, type ConditionContext, type WhenEvaluation } from "./resolve/conditions";
 export { ensureHeadroom, HeadroomStartError, type EnsureHeadroomPorts } from "./headroom/ensure";
 export { resolveSupervisorConfig, runSupervisor, type HeadroomSupervisorConfig, type RunSupervisorOptions, type SupervisorPorts } from "./headroom/supervisor";
 
