@@ -31,6 +31,10 @@ export interface FrontDoorSupervisorPorts {
    * Starts the direct listener on `preferredPort` (same bind-time fallback): the same routes as the provider listener, minus the headroom hop, over plain HTTP because headroom is what connects to it. Headroom forwards routed traffic back here, which is what keeps the hop from looping, and the port is sticky like the others because headroom's allowlist admits its exact origin. It admits only the hop's own requests and holds no credential until it redeems one from the hop's custody.
    */
   readonly startDirectListener: (preferredPort: number | undefined) => Promise<FrontDoorListenerHandle>;
+  /**
+   * Stops the Remote Control stream hub: persists every live attachment's sequence cursor synchronously, then frees the dials. Called exactly once on every exit the supervisor owns, after every listener it started is down (a live listener could still settle an observed Remote Control exchange, and the reconcile that follows would re-attach a stream the close had just ended) and before the final state write and the process's exit.
+   */
+  readonly closeRcStreamHub: () => void;
   readonly log: (line: string) => void;
 }
 
@@ -67,6 +71,8 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
   });
 
   const fail = (message: string): number => {
+    // A startup failure exits this process exactly as the idle shutdown does, so the hub's final cursor save belongs here too: a session whose frozen base URL still names the sticky port could have delivered an observed exchange between the first listener's bind and this failure, and its attachment would otherwise lose the one save the exit could still make.
+    ports.closeRcStreamHub();
     writeFrontDoorState(fs, paths.frontdoorStateFile, { lastError: message, ...sticky() });
     fs.removeRecursive(paths.frontdoorLockFile);
     ports.log(`agent-shim frontdoor supervisor: ${message}`);
@@ -134,6 +140,8 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
         await direct.close();
         await connect.close();
         await http.close();
+        // Last of the serving machinery to stop, and deliberately last: with every listener down no observed exchange can settle and re-attach a stream, so the hub's synchronous cursor persistence is the final word on every attachment before the process exits.
+        ports.closeRcStreamHub();
         // The sticky addresses survive the shutdown so the next generation starts where this one served.
         writeFrontDoorState(fs, paths.frontdoorStateFile, sticky());
         return 0;
