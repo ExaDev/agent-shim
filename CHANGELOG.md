@@ -1,3 +1,13 @@
+## [8.13.0](https://github.com/ExaDev/agent-shim/compare/v8.12.0...v8.13.0) (2026-10-05)
+
+### Features
+
+* **library:** export runLauncher and spawnClaude so launching is one call ([a302af6](https://github.com/ExaDev/agent-shim/commit/a302af6a24d10b25b01acfa9ca48b5c5e2ea9d68))
+
+### Documentation
+
+* **library:** name the launch spawn exports' ordering guarantee ([885af3e](https://github.com/ExaDev/agent-shim/commit/885af3e93a27dd4fa72b1c58c632040da811e0ca))
+
 ## [8.12.0](https://github.com/ExaDev/agent-shim/compare/v8.11.3...v8.12.0) (2026-10-05)
 
 ### Features
