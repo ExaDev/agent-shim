@@ -1,10 +1,11 @@
 import type { HeaderReader } from "./quota";
 
-/** The request half of an outbound HTTP call, the subset of the Fetch API's `RequestInit` the codex route sends. */
+/** The request half of an outbound HTTP call, the subset of the Fetch API's `RequestInit` the codex route and the sign-in flow send. */
 export interface UpstreamRequestInit {
-  readonly method: "POST";
+  readonly method: "GET" | "POST";
   readonly headers: Readonly<Record<string, string>>;
-  readonly body: string;
+  /** The request body; absent for a GET. */
+  readonly body?: string;
   readonly signal: AbortSignal;
 }
 
