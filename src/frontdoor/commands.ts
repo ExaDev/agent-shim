@@ -114,8 +114,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       })
     : undefined;
 
-  // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix. The client credential is the one part that must outlive the process (a session outlives any one door generation, and only client-half calls state the OAuth bearer), so it is persisted per session and read back by whichever generation needs it.
-  const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: createRcCredentialStore(realFarmFs, paths.frontdoorRcCredentialsDir) });
+  // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix. The client credential and the stream's sequence cursor are the two parts that must outlive the process (a session outlives any one door generation, only client-half calls state the OAuth bearer, and a generation that lost the cursor would re-read the stream from its head), so both are persisted per session in one owner-only file and read back by whichever generation needs them.
+  const rcCredentialStore = createRcCredentialStore(realFarmFs, paths.frontdoorRcCredentialsDir);
+  const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: rcCredentialStore });
   // The door's own client read stream attachment: one held stream per tracked session, fanned out to every subscriber (the typed API's subscription and `frontdoor rc watch`), with its envelopes filed with the tracker. The door plays one client because the CLI routes permission approvals only toward attached clients: with no stream held, an approval falls back to the CLI's own local prompt and never crosses the door. In the self-hosted mode the dial is resolved per call so it can name the door's own surface once that has bound.
   const rcFanout = createRcEventFanout();
   const rcHub = createRcStreamHub({
@@ -124,6 +125,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     trackedSessions: () => rcTracker.list().map((session) => session.id),
     fileStreamEvent: rcTracker.fileStreamEvent,
     sequenceNumOf: rcTracker.sequenceNumOf,
+    storedSequenceNumOf: rcCredentialStore.readCursor,
+    saveSequenceNum: rcCredentialStore.writeCursor,
     dial: rcSelfHost ? lateRcStreamDial(rcSelfHostDialTarget) : realRcStreamDial(),
     fanout: rcFanout,
     newClientId: randomUUID,

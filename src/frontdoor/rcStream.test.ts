@@ -27,6 +27,11 @@ const WRITE_LOW_SEQUENCE_NUM = 2;
 const OTHER_SESSION_SEQUENCE_NUM = 7;
 const HELD_SEQUENCE_NUM = 8;
 const ATTACHED_SEQUENCE_NUM = 12;
+/** The cursor a previous door generation persisted, which a fresh generation's first attach resumes from: higher than every write-path number so the assertions name the store's value, not a number the tracker could have produced itself. */
+const PERSISTED_SEQUENCE_NUM = 21;
+/** The first event the stream delivers after resuming from the persisted cursor, and a later one past it, so the save assertions name the final cursor rather than the first. */
+const POST_RESUME_SEQUENCE_NUM = 23;
+const STREAM_EVENT_LAST_SEQUENCE_NUM = 14;
 /** The backoff the hub under test is configured with, so the sleep the tests resolve by hand is the documented one. */
 const BACKOFF_MS = 45_000;
 /** How many stream calls the 401 case ends having made: the refused pair, then the successful third after the backoff resolves. */
@@ -141,8 +146,8 @@ function scriptedDial(): ScriptedDial {
   };
 }
 
-/** The hub over a real tracker and a scripted dial, with a backoff sleep the test resolves by hand and an ordered log of every dial and sleep, so a test can prove what happened before what. */
-function hubOver(scripted: ScriptedDial, tracker: RcSessionTracker): { readonly subscribeFanout: ReturnType<typeof createRcEventFanout>; readonly hub: ReturnType<typeof createRcStreamHub>; readonly order: string[]; readonly resolveSleep: () => void } {
+/** The hub over a real tracker and a scripted dial, with a backoff sleep the test resolves by hand and an ordered log of every dial and sleep, so a test can prove what happened before what. The cursor ports are absent by default, so a test opts into exactly the persistence behaviour it asserts. */
+function hubOver(scripted: ScriptedDial, tracker: RcSessionTracker, ports: { readonly storedSequenceNumOf?: (sessionId: string) => number | undefined; readonly saveSequenceNum?: (sessionId: string, sequenceNum: number) => void } = {}): { readonly subscribeFanout: ReturnType<typeof createRcEventFanout>; readonly hub: ReturnType<typeof createRcStreamHub>; readonly order: string[]; readonly resolveSleep: () => void } {
   const fanout = createRcEventFanout();
   const order: string[] = [];
   let resolveSleep: (() => void) | undefined;
@@ -152,6 +157,7 @@ function hubOver(scripted: ScriptedDial, tracker: RcSessionTracker): { readonly 
     trackedSessions: () => tracker.list().map((session) => session.id),
     fileStreamEvent: tracker.fileStreamEvent,
     sequenceNumOf: tracker.sequenceNumOf,
+    ...ports,
     dial: {
       announcePresence: async (sessionId, headers, clientId) => {
         order.push("presence");
@@ -336,6 +342,107 @@ describe("the client read stream attachment", () => {
     expect(scripted.streamCalls.length).toBe(2);
     expect(scripted.streamCalls[1]?.resume).toEqual({ fromSequenceNum: ATTACHED_SEQUENCE_NUM });
     hub.close();
+  });
+
+  it("resumes a fresh generation's first attach from the persisted cursor, and from the tracker's own cursor once one exists", async () => {
+    const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: IDLE_MS });
+    birthSession(tracker);
+    const scripted = scriptedDial();
+    const first = controlledStream();
+    const second = controlledStream();
+    scripted.answerNextStreamWith({ status: HTTP_STATUS.ok, chunks: first.chunks });
+    scripted.answerNextStreamWith({ status: HTTP_STATUS.ok, chunks: second.chunks });
+    const storedCalls: string[] = [];
+    const saves: { readonly sessionId: string; readonly sequenceNum: number }[] = [];
+    const { hub } = hubOver(scripted, tracker, {
+      storedSequenceNumOf: (sessionId) => {
+        storedCalls.push(sessionId);
+        return PERSISTED_SEQUENCE_NUM;
+      },
+      saveSequenceNum: (sessionId, sequenceNum) => {
+        saves.push({ sessionId, sequenceNum });
+      },
+    });
+
+    hub.reconcile();
+    await tick();
+    // The tracker's memory holds no number (this generation started after the session's traffic), so the first attach names the persisted cursor: the fresh generation resumes where the last one left off instead of at the stream's head.
+    expect(scripted.streamCalls[0]?.resume).toEqual({ fromSequenceNum: PERSISTED_SEQUENCE_NUM });
+    expect(storedCalls).toEqual([SESSION_ID]);
+
+    // One event past the persisted cursor arrives, then the stream drops: the boundary persists the final cursor, and the reconnect resumes from the tracker's own number without consulting the store again.
+    first.push(sseBlock({ event_type: "user", sequence_num: POST_RESUME_SEQUENCE_NUM, source: "worker" }, POST_RESUME_SEQUENCE_NUM));
+    await tick();
+    expect(tracker.sequenceNumOf(SESSION_ID)).toBe(POST_RESUME_SEQUENCE_NUM);
+    expect(saves).toEqual([]);
+    first.end();
+    await tick();
+    expect(saves).toEqual([{ sessionId: SESSION_ID, sequenceNum: POST_RESUME_SEQUENCE_NUM }]);
+    expect(scripted.streamCalls[1]?.resume).toEqual({ fromSequenceNum: POST_RESUME_SEQUENCE_NUM });
+    expect(storedCalls).toEqual([SESSION_ID]);
+
+    // Closing the hub is another boundary, but one that moved nothing: the unchanged cursor is not written a second time.
+    hub.close();
+    expect(saves).toEqual([{ sessionId: SESSION_ID, sequenceNum: POST_RESUME_SEQUENCE_NUM }]);
+  });
+
+  it("attaches from the stream's own head when no cursor is known, and never consults the store once the tracker's cursor is defined", async () => {
+    const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: IDLE_MS });
+    birthSession(tracker);
+    // A door whose own confirmed write already advanced the cursor attaches from that number: the tracker's in-memory accessor is the primary source, and the store is not even read.
+    tracker.noteSequenceNums(SESSION_ID, [WRITE_HIGH_SEQUENCE_NUM]);
+    const scripted = scriptedDial();
+    const storedCalls: string[] = [];
+    const { hub } = hubOver(scripted, tracker, {
+      storedSequenceNumOf: (sessionId) => {
+        storedCalls.push(sessionId);
+        return PERSISTED_SEQUENCE_NUM;
+      },
+    });
+
+    hub.reconcile();
+    await tick();
+    expect(scripted.streamCalls[0]?.resume).toEqual({ fromSequenceNum: WRITE_HIGH_SEQUENCE_NUM });
+    expect(storedCalls).toEqual([]);
+    hub.close();
+
+    // Without the fallback port at all, a tracker that holds no number attaches the way the door always did before the cursor was persisted: from the stream's own head. This is the discrimination check: the fallback is what turns this undefined into the persisted cursor.
+    const freshTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: IDLE_MS });
+    birthSession(freshTracker);
+    const fallbackAbsent = scriptedDial();
+    const { hub: hubWithoutFallback } = hubOver(fallbackAbsent, freshTracker);
+    hubWithoutFallback.reconcile();
+    await tick();
+    expect(fallbackAbsent.streamCalls[0]?.resume).toBeUndefined();
+    hubWithoutFallback.close();
+  });
+
+  it("saves the cursor once per attachment end with the final cursor, and never per stream event", async () => {
+    const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: IDLE_MS });
+    birthSession(tracker);
+    const scripted = scriptedDial();
+    const held = controlledStream();
+    scripted.answerNextStreamWith({ status: HTTP_STATUS.ok, chunks: held.chunks });
+    const saves: { readonly sessionId: string; readonly sequenceNum: number }[] = [];
+    const { hub } = hubOver(scripted, tracker, {
+      saveSequenceNum: (sessionId, sequenceNum) => {
+        saves.push({ sessionId, sequenceNum });
+      },
+    });
+
+    hub.reconcile();
+    await tick();
+    // Three events cross the held stream and none of them writes the file: the native client persists at bridge-session boundaries, not per event, and so does the hub.
+    for (const sequenceNum of [ATTACHED_SEQUENCE_NUM, ATTACHED_SEQUENCE_NUM + 1, STREAM_EVENT_LAST_SEQUENCE_NUM]) {
+      held.push(sseBlock({ event_type: "user", sequence_num: sequenceNum, source: "worker" }, sequenceNum));
+    }
+    await tick();
+    expect(tracker.sequenceNumOf(SESSION_ID)).toBe(STREAM_EVENT_LAST_SEQUENCE_NUM);
+    expect(saves).toEqual([]);
+
+    // The attachment's end is the boundary: one save, carrying the final cursor.
+    hub.close();
+    expect(saves).toEqual([{ sessionId: SESSION_ID, sequenceNum: STREAM_EVENT_LAST_SEQUENCE_NUM }]);
   });
 
   it("re-reads the credential and retries once on a 401, then backs off rather than hammering", async () => {

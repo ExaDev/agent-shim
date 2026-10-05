@@ -36,6 +36,8 @@ const RC_TEST_PERMISSION_MODE = "plan" as const satisfies RcPermissionMode;
 const CONTROL_REQUEST_WRITE_COUNT = 3;
 /** The sequence number the scripted stream event carries, higher than the write path's fixed answer so the resume assertions name the cursor's own maximum rather than a number both paths could have produced. */
 const STREAM_SEQUENCE_NUM = 12;
+/** The event the generation-two stream delivers, one past the cursor that generation persisted: a resumed stream continues after its cursor, so the number it carries is the next one. */
+const STREAM_RESUMED_SEQUENCE_NUM = 13;
 /**
  * How long the attachment e2e may wait for a condition the door's detached loop produces (a dial landing, a pending birth). Loopback TLS handshakes and the loop itself run in milliseconds; the bound exists only so an overloaded machine fails visibly instead of hanging the suite, and is generous against the keygen-heavy world these tests run in.
  */
@@ -586,7 +588,7 @@ describe("Remote Control observation and injection over the connect surface", ()
   );
 
   it(
-    "reattaches over the transparent surface on a door generation that starts after the session's create, reading the persisted credential its worker-only traffic cannot restate",
+    "reattaches over the transparent surface on a door generation that starts after the session's create, reading the persisted credential its worker-only traffic cannot restate and resuming its stream from the persisted sequence cursor",
     async () => {
       // The door's own credential directory, outliving either generation exactly as the front-door directory does: generation one observes the create's OAuth bearer and persists it; generation two starts with empty in-memory tracker state and only the worker's recurring traffic crossing it, which is the live shape of a door that restarted mid-session (the rig's silent hub).
       const credentialsDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "rc-credentials-"));
@@ -608,6 +610,8 @@ describe("Remote Control observation and injection over the connect surface", ()
             trackedSessions: () => trackerOne.list().map((session) => session.id),
             fileStreamEvent: trackerOne.fileStreamEvent,
             sequenceNumOf: trackerOne.sequenceNumOf,
+            storedSequenceNumOf: store.readCursor,
+            saveSequenceNum: store.writeCursor,
             dial: first.rcStreamDial,
             fanout: createRcEventFanout(),
             newClientId: () => "e2e-generation-one",
@@ -622,6 +626,24 @@ describe("Remote Control observation and injection over the connect surface", ()
           expect(create.statusLine).toContain(String(HTTP_OK));
           // The create's own settled exchange pokes the attachment, and the generation that saw the OAuth bearer attaches.
           await until(() => generationOne.rcStreamRequests.length === 1);
+          expect(store.read(RC_TEST_SESSION_ID)?.authorization).toBe(CREATE_BEARER);
+          expect(store.readCursor(RC_TEST_SESSION_ID)).toBeUndefined();
+
+          // One event crosses the held stream, and then the stream ends the way the real host ends one: the drop is the attachment boundary where the cursor it reached is persisted, beside the credential the same file already held.
+          generationOne.writeRcSse(
+            `event: client_event\nid: ${String(STREAM_SEQUENCE_NUM)}\ndata: ${JSON.stringify({
+              event_id: "ev-first-generation",
+              event_type: "user",
+              sequence_num: STREAM_SEQUENCE_NUM,
+              source: "worker",
+              payload: { type: "user" },
+              created_at: "2026-10-05T12:00:00Z",
+            })}\n\n`,
+          );
+          await until(() => trackerOne.sequenceNumOf(RC_TEST_SESSION_ID) === STREAM_SEQUENCE_NUM);
+          generationOne.endRcSse();
+          await until(() => generationOne.rcStreamRequests.length === 2);
+          expect(store.readCursor(RC_TEST_SESSION_ID)).toBe(STREAM_SEQUENCE_NUM);
           expect(store.read(RC_TEST_SESSION_ID)?.authorization).toBe(CREATE_BEARER);
           secure.destroy();
         } finally {
@@ -646,6 +668,8 @@ describe("Remote Control observation and injection over the connect surface", ()
             trackedSessions: () => trackerTwo.list().map((session) => session.id),
             fileStreamEvent: trackerTwo.fileStreamEvent,
             sequenceNumOf: trackerTwo.sequenceNumOf,
+            storedSequenceNumOf: store.readCursor,
+            saveSequenceNum: store.writeCursor,
             dial: second.rcStreamDial,
             fanout: createRcEventFanout(),
             newClientId: () => "e2e-generation-two",
@@ -665,13 +689,16 @@ describe("Remote Control observation and injection over the connect surface", ()
           expect(JSON.parse(presence?.body ?? "{}")).toEqual({ client_id: "e2e-generation-two", clear: false });
           const stream = generationTwo.rcStreamRequests[0];
           expect(stream?.headers.authorization).toBe(CREATE_BEARER);
+          // The persisted cursor is what the reattachment resumes from: this generation's memory holds no number (it never saw the traffic that produced it), so without the store it would name no cursor and re-read the stream from its head.
+          expect(stream?.url.endsWith(`/v1/code/sessions/${RC_TEST_SESSION_ID}/events/stream?from_sequence_num=${String(STREAM_SEQUENCE_NUM)}`)).toBe(true);
+          expect(stream?.headers["last-event-id"]).toBe(String(STREAM_SEQUENCE_NUM));
 
           // The reattached stream is a live one: a control_request written to it becomes a pending request the door can answer, exactly as the rig's approval does.
           generationTwo.writeRcSse(
-            `event: client_event\nid: ${String(STREAM_SEQUENCE_NUM)}\ndata: ${JSON.stringify({
+            `event: client_event\nid: ${String(STREAM_RESUMED_SEQUENCE_NUM)}\ndata: ${JSON.stringify({
               event_id: "ev-restart-1",
               event_type: "control_request",
-              sequence_num: STREAM_SEQUENCE_NUM,
+              sequence_num: STREAM_RESUMED_SEQUENCE_NUM,
               source: "worker",
               payload: { type: "control_request", request_id: RC_TEST_REQUEST_ID, request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "pnpm test" } } },
               created_at: "2026-10-05T12:00:00Z",
