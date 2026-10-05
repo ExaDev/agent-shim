@@ -56,6 +56,7 @@ interface ProfileSetOptions {
   readonly launchHeadroom?: boolean;
   readonly launchTrackUsage?: boolean;
   readonly launchProvider?: string | false;
+  readonly launchClaudeVersion?: string | false;
 }
 
 /** Applies every field `profile set`'s options name, returning whether any were given. */
@@ -91,6 +92,9 @@ function applyProfileSet(paths: LayoutPaths, name: string, options: ProfileSetOp
   }
   if (options.launchProvider !== undefined) {
     launchPatch.provider = options.launchProvider === false ? undefined : options.launchProvider;
+  }
+  if (options.launchClaudeVersion !== undefined) {
+    launchPatch.claudeVersion = options.launchClaudeVersion === false ? undefined : options.launchClaudeVersion;
   }
   if (Object.keys(launchPatch).length > 0) {
     setProfileLaunchFlags(paths, name, launchPatch);
@@ -164,6 +168,8 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
       .option("--no-launch-track-usage", "Launches under this profile are not recorded unless a provider or headroom routes them anyway.")
       .option("--launch-provider <provider>", "Launches under this profile route through this provider.")
       .option("--no-launch-provider", "Clear this profile's provider selection.")
+      .option("--launch-claude-version <version>", "Launches under this profile run exactly this installed Claude Code version (such as 2.1.220); a version that is not installed fails the launch.")
+      .option("--no-launch-claude-version", "Clear this profile's Claude Code version pin.")
       .option("--json", "Print the result as JSON.")
       .action(async (name: string, allOptions: ProfileSetOptions) => {
         const { json, ...options } = allOptions;

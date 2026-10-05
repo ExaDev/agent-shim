@@ -2,7 +2,7 @@ import { UsageError } from "../cliError";
 import type { ParsedLauncherArgv } from "./argv";
 import type { ProcPort, SpawnPort } from "./ports";
 import { spawnClaude } from "./spawn";
-import type { DiscoveredClaudeBinary } from "../versionDiscovery";
+import type { ClaudeBinaryResolver } from "../versionDiscovery";
 
 /** Raised when `--native` is combined with a launch flag: a native launch applies nothing from agent-shim, so the flag would be silently ignored. */
 export class NativeLaunchConflictError extends UsageError {
@@ -18,6 +18,7 @@ function otherLaunchFlags(parsed: ParsedLauncherArgv): string[] {
     ...(parsed.identity === undefined ? [] : ["@<identity> / --identity"]),
     ...(parsed.configProfile === undefined ? [] : ["--config-profile"]),
     ...(parsed.provider === undefined ? [] : [parsed.provider === false ? "--no-provider" : "--provider"]),
+    ...(parsed.claudeVersion === undefined ? [] : ["--claude-version"]),
     ...(parsed.headroom === undefined ? [] : ["--[no-]headroom"]),
     ...(parsed.trackUsage === undefined ? [] : ["--[no-]track-usage"]),
     ...(parsed.skipPermissions === undefined ? [] : ["--[no-]skip-permissions"]),
@@ -35,7 +36,7 @@ export interface NativeLaunchParams {
   readonly proc: ProcPort;
   readonly spawn: SpawnPort;
   /** Discovers the real `claude` binary, skipping agent-shim's own. */
-  readonly resolveClaudeBinary: () => DiscoveredClaudeBinary;
+  readonly resolveClaudeBinary: ClaudeBinaryResolver;
 }
 
 /**

@@ -12,6 +12,8 @@ export interface ParsedLauncherArgv {
   readonly headroom?: boolean;
   /** The last `--track-usage`/`--no-track-usage` occurrence, when either was given. */
   readonly trackUsage?: boolean;
+  /** The last `--claude-version <version>` occurrence: the exact Claude Code version this launch runs. */
+  readonly claudeVersion?: string;
   /** The last `--wait`/`--no-wait` occurrence, when either was given: with a pool selected and every member refused, sleep until the earliest returns instead of refusing the launch. */
   readonly wait?: boolean;
   /** True when `--native` was given: run the real `claude` with nothing from agent-shim applied. It has no `--no-` form and cannot be combined with any other launch flag. */
@@ -38,7 +40,7 @@ export class ConflictingIdentityError extends UsageError {
   }
 }
 
-const VALUED_FLAGS = ["--identity", "--config-profile", "--provider", "--category", "--share", "--hide"] as const;
+const VALUED_FLAGS = ["--identity", "--config-profile", "--provider", "--claude-version", "--category", "--share", "--hide"] as const;
 type ValuedFlag = (typeof VALUED_FLAGS)[number];
 
 /** The boolean launch flags, each with a `--no-` form; the key names the field of `ParsedLauncherArgv` it sets. */
@@ -90,7 +92,7 @@ function matchBooleanFlag(token: string): { key: BooleanFlagKey; value: boolean 
 }
 
 /**
- * Parses the launcher's own argv for its identity selection and the one-off `agent-shim` launch flags (`--identity`, `--config-profile`, `--provider`/`--no-provider`, `--category`, `--share`, `--hide`, and the `--[no-]headroom`, `--[no-]track-usage`, `--[no-]skip-permissions`, `--[no-]remote-control`, `--[no-]wait` booleans, and `--native`). None of these are real Claude Code flags, so all are consumed here and never forwarded.
+ * Parses the launcher's own argv for its identity selection and the one-off `agent-shim` launch flags (`--identity`, `--config-profile`, `--provider`/`--no-provider`, `--claude-version`, `--category`, `--share`, `--hide`, and the `--[no-]headroom`, `--[no-]track-usage`, `--[no-]skip-permissions`, `--[no-]remote-control`, `--[no-]wait` booleans, and `--native`). None of these are real Claude Code flags, so all are consumed here and never forwarded.
  *
  * `name` in `@name` and `--identity <name>` may also be `pool:<pool>`, which the launcher resolves to a member of that pool. The `@name` form is consumed ONLY at argv[0], never mid-argument-list; `--identity <name>` is its explicit form, and naming two different identities through both throws `ConflictingIdentityError`. The flags are recognised only before a `--` terminator: from `--` onwards every token is forwarded verbatim, so `claude mcp add n -- cmd --provider x` keeps `--provider x` for `cmd`. Valued flags accept both `--flag value` and `--flag=value` and take exactly one value per occurrence; `--category`, `--share` and `--hide` repeat to supply several, and every other flag's later occurrence wins. A valued flag with no value after it (the last token, or directly before `--`) is left in place, untouched, since there is nothing to pair it with.
  */
@@ -103,6 +105,7 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
   let flagIdentity: string | undefined;
   let configProfile: string | undefined;
   let provider: string | false | undefined;
+  let claudeVersion: string | undefined;
   const booleans: Partial<Record<BooleanFlagKey, boolean>> = {};
   const categoryFlags: string[] = [];
   const shareFlags: string[] = [];
@@ -162,6 +165,9 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
       case "--provider":
         provider = value;
         break;
+      case "--claude-version":
+        claudeVersion = value;
+        break;
       case "--category":
         categoryFlags.push(value);
         break;
@@ -185,6 +191,7 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
     ...(identity === undefined ? {} : { identity }),
     ...(configProfile === undefined ? {} : { configProfile }),
     ...(provider === undefined ? {} : { provider }),
+    ...(claudeVersion === undefined ? {} : { claudeVersion }),
     ...(native ? { native: true as const } : {}),
     ...booleans,
     categoryFlags,

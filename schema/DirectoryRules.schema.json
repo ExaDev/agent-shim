@@ -120,6 +120,10 @@
               },
               "trackUsage": {
                 "type": "boolean"
+              },
+              "claudeVersion": {
+                "type": "string",
+                "pattern": "^\\d+(?:\\.\\d+)*$"
               }
             },
             "additionalProperties": false

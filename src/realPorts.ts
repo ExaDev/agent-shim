@@ -7,7 +7,7 @@ import { isSea } from "node:sea";
 
 import { cosmiconfigReader } from "./config/load";
 import type { CredentialPort } from "./credential";
-import { discoverClaudeBinary, type DiscoveredClaudeBinary, type VersionsDirEntry } from "./versionDiscovery";
+import { defaultVersionsDir, discoverClaudeBinary, installedVersions, type ClaudeBinaryResolver, type VersionsDirEntry } from "./versionDiscovery";
 import { ensureHeadroom } from "./headroom/ensure";
 import { currentHeadroomAllowlist } from "./headroom/supervisor";
 import type { HeadroomSocketTrustPorts } from "./headroom/socket";
@@ -595,12 +595,18 @@ export function realContentSourcePath(): string {
 }
 
 /** Builds the real `resolveClaudeBinary` callback `runLauncher` needs: scans the real versions directory, then falls back to a real PATH search, never returning this tool's own binary (see `resolveOwnBinaryCheck`, which builds that check from the shim marker and the running executable's own content). */
-export function realResolveClaudeBinary(isOwnBinary: (candidate: string) => boolean): () => DiscoveredClaudeBinary {
-  return () =>
+export function realResolveClaudeBinary(isOwnBinary: (candidate: string) => boolean): ClaudeBinaryResolver {
+  return (request) =>
     discoverClaudeBinary({
       listVersionsDir,
       pathDirs: (process.env.PATH ?? "").split(path.delimiter).filter((dir) => dir !== ""),
       findExecutableInDir,
       isOwnBinary,
+      ...(request?.version === undefined ? {} : { version: request.version }),
     });
+}
+
+/** The Claude Code versions installed in the real versions directory, oldest first: what `check` and `doctor` compare a pin against. */
+export function realInstalledClaudeVersions(): readonly string[] {
+  return installedVersions(listVersionsDir(defaultVersionsDir()));
 }
