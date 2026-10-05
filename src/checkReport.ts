@@ -12,6 +12,7 @@ import { realFarmFs, realFsPort, realInstalledClaudeVersions, realRunPort, resol
 import path from "node:path";
 import { z } from "zod";
 import { parseEnvBool } from "./cli/envBool";
+import type { CHECK_CREDENTIAL_APPLIES, CheckReportJson } from "./checkReportSchema";
 import { ConfigValidationError } from "./config/load";
 import { SHIPPED_CATEGORY_DEFAULTS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type Identity, type Provider } from "./config/schema";
 import { formatCredentialSummary, summariseCredential, type CredentialCacheEnv, type CredentialSummary } from "./credential";
@@ -237,8 +238,9 @@ type CheckProviderInput =
  * Which credential a launch here would use, by source kind and target only: a selected provider's credential block always wins; otherwise the identity's own credential block; otherwise the login stored in the identity's directory.
  */
 interface CredentialReport {
-  readonly applies: "provider" | "identity" | "stored-login";
-  readonly provider?: { readonly name: string; readonly credential?: CredentialSummary; readonly problem?: string; readonly cached?: CachedCredentialState };
+  readonly applies: (typeof CHECK_CREDENTIAL_APPLIES)[number];
+  /** The selected provider's usable block (with what its cache holds), or why it could not be used; the two never appear together, exactly as `CheckProviderInput` states it. */
+  readonly provider?: { readonly name: string; readonly credential: CredentialSummary; readonly cached?: CachedCredentialState; readonly problem?: never } | { readonly name: string; readonly problem: string; readonly credential?: never; readonly cached?: never };
   readonly identity?: CredentialSummary;
   /** What the identity's own credential cache holds, when its block caches and the cache could be read. */
   readonly identityCached?: CachedCredentialState;
@@ -450,7 +452,7 @@ export function formatCheckReport(report: CheckReport): string[] {
   const { credential } = report;
   if (credential.provider !== undefined) {
     lines.push(
-      `  Provider ${credential.provider.name}: ${credential.provider.credential === undefined ? `unusable: ${credential.provider.problem ?? ""}` : formatCredentialSummary(credential.provider.credential)}${credential.provider.cached === undefined ? "" : `; ${formatCachedCredentialState(credential.provider.cached)}`}`,
+      `  Provider ${credential.provider.name}: ${credential.provider.credential === undefined ? `unusable: ${credential.provider.problem}` : formatCredentialSummary(credential.provider.credential)}${credential.provider.cached === undefined ? "" : `; ${formatCachedCredentialState(credential.provider.cached)}`}`,
     );
   }
   if (credential.identity !== undefined) {
@@ -508,7 +510,7 @@ export function formatCheckReport(report: CheckReport): string[] {
 /**
  * The `check --json` form of a report: every field the text form prints, as plain data (no `Map`s, no compiled matchers), so a script can read the same verdicts a person would.
  */
-export function checkReportToJson(report: CheckReport): Record<string, unknown> {
+export function checkReportToJson(report: CheckReport): CheckReportJson {
   const decisions = [...report.resolved.decisions.values()].sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
   return {
     identity: { name: report.identityName ?? null, source: report.identitySource },
