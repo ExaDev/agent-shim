@@ -45,7 +45,8 @@ export interface SiwcStore {
   readonly auth: CodexAuthStore;
 }
 
-function parseFile(raw: string, filePath: string): SiwcFile {
+/** Parses a sign-in file's contents. Raises `CodexAuthError`, naming the login command, when they are not a sign-in file. */
+export function parseSiwcFile(raw: string, filePath: string): SiwcFile {
   let json: unknown;
   try {
     json = JSON.parse(raw);
@@ -79,7 +80,7 @@ export function createSiwcStore(filePath: string, ports: SiwcStorePorts): SiwcSt
 
   const read = (): SiwcFile | undefined => {
     const raw = ports.fs.read(filePath);
-    return raw === undefined ? undefined : parseFile(raw, filePath);
+    return raw === undefined ? undefined : parseSiwcFile(raw, filePath);
   };
 
   const write = (file: SiwcFile): void => {

@@ -14,6 +14,9 @@ export const SIWC_AUTHORIZE_URL = "https://auth.openai.com/api/accounts/authoriz
 /** The token endpoint, used for both the code exchange and the refresh grant. */
 export const SIWC_TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token";
 
+/** The revocation endpoint (RFC 7009) named by the discovery document, called on sign-out. */
+export const SIWC_REVOKE_URL = "https://auth.openai.com/api/accounts/oauth/revoke";
+
 /** The issuer, which an ID token's `iss` claim must equal. */
 export const SIWC_ISSUER = "https://auth.openai.com";
 

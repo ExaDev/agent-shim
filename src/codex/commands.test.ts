@@ -38,6 +38,7 @@ describe("codex status", () => {
       "listener: front door on 127.0.0.1:4100, serving codex providers under /providers/<name>",
       "codex providers: codex",
       "sessions: 2 registered (20, 21 (dead))",
+      "chatgpt sign-in: not signed in (run `agent-shim codex login`)",
       `usage snapshot: ${codexUsageSnapshotPath()} (not created yet)`,
       `daemon log: ${paths.frontdoorLogPath} (not created yet)`,
     ]);
@@ -52,8 +53,35 @@ describe("codex status", () => {
       "codex providers: none defined",
       "sessions: none",
       "last error: gave up",
+      "chatgpt sign-in: not signed in (run `agent-shim codex login`)",
       `usage snapshot: ${codexUsageSnapshotPath()} (not created yet)`,
       `daemon log: ${paths.frontdoorLogPath} (not created yet)`,
     ]);
+  });
+
+  const signInFile = (grant: unknown): Record<string, string> => ({ [paths.chatgptSignInFile]: JSON.stringify({ hostId: "urn:uuid:x", ...(grant === undefined ? {} : { grant }) }) });
+  const grant = { clientId: "c", sub: "s", email: "person@example.com", idToken: "i", accessToken: "a", refreshToken: "r", scopes: ["openid", "chatgpt.tokens.use.direct"], expiresAt: 5 };
+
+  it("reports a Sign in with ChatGPT login by who it is, never by its tokens", () => {
+    const fs = createFakeFarmFs(signInFile(grant));
+    const status = collectCodexStatus(fs, paths, () => false);
+    expect(status.signIn).toEqual({ state: "signed-in", email: "person@example.com", planScope: true, accessTokenExpiresAt: 5 });
+    expect(formatCodexStatus(status)).toContain("chatgpt sign-in: signed in as person@example.com");
+    expect(JSON.stringify(status)).not.toContain("refreshToken");
+  });
+
+  it("flags a login that was not given permission to use the plan", () => {
+    const fs = createFakeFarmFs(signInFile({ ...grant, scopes: ["openid"] }));
+    expect(formatCodexStatus(collectCodexStatus(fs, paths, () => false))).toContain("chatgpt sign-in: signed in as person@example.com, WITHOUT permission to use your ChatGPT plan (run `agent-shim codex login` again and allow it)");
+  });
+
+  it("treats a file with only a host id as not signed in", () => {
+    expect(collectCodexStatus(createFakeFarmFs(signInFile(undefined)), paths, () => false).signIn).toEqual({ state: "none" });
+  });
+
+  it("reports an unreadable sign-in file instead of failing the status", () => {
+    const status = collectCodexStatus(createFakeFarmFs({ [paths.chatgptSignInFile]: "{not json" }), paths, () => false);
+    expect(status.signIn).toMatchObject({ state: "unreadable" });
+    expect(formatCodexStatus(status).find((line) => line.startsWith("chatgpt sign-in:"))).toMatch(/not valid JSON/);
   });
 });
