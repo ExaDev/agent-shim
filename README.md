@@ -95,7 +95,8 @@ agent-shim identity resolve-conflicts <name>  # interactively resolve a retained
 agent-shim profile add [name] [--extends <profile>]... [--description <text>]   # interactive with no options on a terminal [--json]
 agent-shim profile set <name> [--category <category>=<bool>]... [--entry <category>/<path>=<bool>]... [--json]
 agent-shim profile set <name> [--extends <profile>]... [--no-extends] [--description <text> | --no-description] [--json]
-agent-shim profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage] [--json]
+agent-shim profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage]
+agent-shim profile set <name> [--launch-claude-version <version> | --no-launch-claude-version] [--json] [--json]
 agent-shim profile set <name> [--launch-provider <provider> | --no-launch-provider] [--json]
 agent-shim profile list [--json]
 agent-shim profile show <name> [--json]
@@ -150,6 +151,7 @@ agent-shim run [@<identity>] [launch flags] [claude arguments]
   #   --identity <name>  --config-profile <name>  --provider <name> | --no-provider
   #   --category <category>=<bool>  --share <category>/<path>  --hide <category>/<path>   (each repeatable)
   #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom  --[no-]track-usage  --[no-]wait
+  #   --claude-version <version>   run exactly this installed Claude Code version
   #   --native   run the real claude with nothing from agent-shim applied; cannot be combined with the flags above
 claude @<identity> ...                      # the same, once `agent-shim shim enable` has run
 ```
