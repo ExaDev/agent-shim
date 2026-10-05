@@ -82,3 +82,17 @@ agent-shim run @rig --track-usage
 ```
 
 Complete the browser login the session opens (on any machine with a browser). In proxy mode captured frames accumulate in `/tmp/agent-shim-rc-capture/logs/frontdoor-capture.jsonl` inside the container; in door mode the door's capture (already on) records to `/tmp/agent-shim-rig/logs/frontdoor-capture.jsonl`. Websocket frames in either file decode offline with `scripts/decode-stream-capture.mts`. Both captures can contain credential material: read them, then delete them, and never commit them.
+
+## The self-hosted proof (no login at all)
+
+The self-hosted Remote Control mode (issue #207) removes the manual login from the proof entirely: the door serves the CCR surface itself, so a session activates Remote Control against the door with no Anthropic credential anywhere. On a door-mode rig:
+
+```sh
+# inside the container, against the rig's agent-shim home
+export AGENT_SHIM_HOME=/tmp/agent-shim-rig
+agent-shim frontdoor rc selfhost mint rig        # mint the local credential (never prints a token)
+```
+
+then start the door with the mode on (`AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1` beside the transparent-surface and capture variables on the detached launch that starts it, or restart the door so they are read at start), relaunch the session (`agent-shim run @rig --track-usage --remote-control`), and switch Remote Control on in the session. Inference still routes exactly as it otherwise would (a provider of your own, or the real API when a real login exists; a minted credential alone does not make the real API answer `/v1/messages`), and every Remote Control exchange is served by the door: `frontdoor rc list` tracks the session, `frontdoor rc send` delivers a prompt, `frontdoor rc pending` and `rc answer` carry the approvals, and `frontdoor rc watch` streams both halves.
+
+The door's capture and the door's log are the observation surfaces, and the same disposal rule applies. The mode's protocol surface is pinned to the CLI version the rig installs and must be re-verified on upgrades (the standing caveat of issue #207: the transport changed shape once already within the 2.1.x line).
