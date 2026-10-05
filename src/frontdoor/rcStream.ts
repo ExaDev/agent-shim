@@ -302,6 +302,7 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
     if (!isSuccessful(answer.status)) {
       throw new Error(`the client read stream answered HTTP ${String(answer.status)}`);
     }
+    deps.log?.(`rc stream ${attachment.sessionId}: attached as client ${attachment.clientId}${resume === undefined ? ", reading from the stream's own head" : `, resuming after sequence number ${String(resume.fromSequenceNum)}`}`);
     const parser = createSseParser();
     for await (const chunk of answer.chunks) {
       attachment.controller.signal.throwIfAborted();
@@ -328,6 +329,7 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
       const credential = deps.credentialOf(attachment.sessionId);
       if (!live || credential?.authorization === undefined) {
         // The tracker gave up on the session, or only worker calls were observed from here on (the worker JWT they carry does not authorise the client half). The attachment ends; a later observed exchange whose credential is usable re-attaches through reconcile.
+        deps.log?.(`rc stream ${attachment.sessionId}: the attachment ended (${live ? "the session's client credential is no longer known" : "the tracker gave up on the session"})`);
         if (attachments.get(attachment.sessionId) === attachment) {
           attachments.delete(attachment.sessionId);
         }
@@ -350,6 +352,7 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
       }
       if (outcome === "dropped") {
         // The stream ended of its own accord: reconnect at once, resuming from whatever cursor the tracker holds by then.
+        deps.log?.(`rc stream ${attachment.sessionId}: the stream ended of its own accord, reconnecting`);
         retriedUnauthorized = false;
         continue;
       }
