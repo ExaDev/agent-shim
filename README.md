@@ -248,6 +248,7 @@ Issues and pull requests are welcome. Please keep the tool itself free of assump
 - [docs/development.md](docs/development.md): test isolation, commit hooks, and the secret-redaction filter rationale.
 - [docs/headroom-measurement.md](docs/headroom-measurement.md): measuring what headroom's transforms are worth on real conversations, offline: the replay method, the cache-weighted cost model and its limits.
 - [docs/rc-interception-rig.md](docs/rc-interception-rig.md): the Remote Control interception rig: bring-up, per-host TLS proof, teardown, and the manual login step.
+- [docs/rc-web-client.md](docs/rc-web-client.md): the self-hosted Remote Control web client: the page the door serves behind its control token for browser control of its sessions, how it authenticates and speaks the typed API, and how it is tested.
 
 ## License
 
