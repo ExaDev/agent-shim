@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { writeHeadroomState } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
-import { collectFrontDoorStatus, formatFrontDoorStatus, formatRcPendingList, formatRcSessionList, formatRcSessionStatus, frontDoorRcControlFromState } from "./commands";
+import { RC_PENDING_SUMMARY_EXCERPT_CHARS } from "./rcSessions";
+import { collectFrontDoorStatus, formatFrontDoorStatus, formatRcPendingList, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./commands";
 import { writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
@@ -90,6 +91,19 @@ describe("frontdoor rc", () => {
     expect(frontDoorRcControlFromState(fs, paths)).toBeDefined();
   });
 
+  it("opens the typed API client under the same serving, CA and control-token contract as the control client", () => {
+    const nothing = createFakeFarmFs({});
+    expect(() => frontDoorRcApiFromState(nothing, paths)).toThrow("the front door is not serving");
+    const fs = createFakeFarmFs({});
+    writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: SUPERVISOR, port: PORT, lastPort: PORT });
+    expect(() => frontDoorRcApiFromState(fs, paths)).toThrow(`the front door's CA certificate is missing at ${paths.frontdoorCaCertFile}, so its typed API cannot be authenticated`);
+    fs.mkdirp(paths.frontdoorCaDir);
+    fs.writeFileUtf8(paths.frontdoorCaCertFile, "ca-pem");
+    expect(() => frontDoorRcApiFromState(fs, paths)).toThrow(`the serving front door's control token is missing at ${paths.frontdoorControlTokenFile}`);
+    fs.writeFileUtf8(paths.frontdoorControlTokenFile, "the-control-token");
+    expect(frontDoorRcApiFromState(fs, paths)).toBeDefined();
+  });
+
   it("formats the observed session list, one line per session and a plain line when there are none", () => {
     expect(formatRcSessionList([])).toEqual(["no Remote Control sessions observed"]);
     const createdAt = 1_000;
@@ -131,5 +145,20 @@ describe("frontdoor rc", () => {
     expect(formatRcPendingList([{ sessionId: "cse_1", requestId: "req_1", type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: 1_000 }])).toEqual([
       'cse_1  req_1  can_use_tool  Bash {"command":"pnpm test"}  observed 1970-01-01T00:00:01.000Z',
     ]);
+  });
+
+  it("formats one stream event with its session, identification and a bounded payload sketch, and omits the sketch when the envelope carried no payload", () => {
+    expect(
+      formatRcStreamEvent({
+        session: "cse_1",
+        envelope: { event_type: "control_request", sequence_num: 12, source: "worker", payload: { type: "control_request", request_id: "req_1", request: { subtype: "can_use_tool", tool_name: "Bash" } } },
+      }),
+    ).toBe('cse_1  control_request  sequence_num 12  source worker  {"type":"control_request","request_id":"req_1","request":{"subtype":"can_use_tool","tool_name":"Bash"}}');
+    expect(formatRcStreamEvent({ session: "cse_1", envelope: { event_type: "user", sequence_num: 13, source: "worker" } })).toBe("cse_1  user  sequence_num 13  source worker");
+    // The sketch is the excerpt budget applied to the payload's JSON form, quotes included: one opening quote and all but one of the payload's x's fit inside it.
+    const long = "x".repeat(RC_PENDING_SUMMARY_EXCERPT_CHARS);
+    expect(formatRcStreamEvent({ session: "cse_1", envelope: { event_type: "user", sequence_num: 14, source: "worker", payload: long } })).toBe(
+      `cse_1  user  sequence_num 14  source worker  "${"x".repeat(RC_PENDING_SUMMARY_EXCERPT_CHARS - 1)}...`,
+    );
   });
 });

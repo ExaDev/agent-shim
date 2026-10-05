@@ -19,17 +19,28 @@ const HEALTH_RETRY_MS = 50;
 export type FrontDoorServer = http.Server | https.Server;
 
 /**
+ * A secondary pre-pipeline surface the listener answers under one path prefix: the typed Remote Control API. The listener owns only the dispatch (the prefix and the not-matched 404); the handle itself is whatever the door built, so this file stays independent of the API framework behind it.
+ */
+export interface PrePipelineApi {
+  /** The path prefix every request of this surface arrives under, outside the routed URL space. */
+  readonly pathPrefix: string;
+  /** Serves one request, resolving with whether a procedure under the prefix matched; the listener answers the 404 itself when one did not. */
+  readonly handle: (request: IncomingMessage, response: ServerResponse) => Promise<{ readonly matched: boolean }>;
+}
+
+/**
  * A front-door listener: the transport a routed session's requests arrive on. It turns each Node request into a `PipelineRequest` (the raw request plus an abort signal that fires the moment the client goes away before the response finished) and hands it to the pipeline; the pipeline owns identification, admission, middleware and routing.
  *
  * With `tls`, the listener serves HTTPS with that leaf, which is how the provider listener authenticates itself to the child: the leaf is signed by agent-shim's CA, whose key only the owning user can read, and the only CA the child trusts for a 127.0.0.1 certificate is that one (no public CA issues certificates for a loopback address), so a process that merely binds the port cannot complete a handshake the child accepts and never receives the request (credentials and capability included). Without `tls` it serves plain HTTP, which only the direct listener does: nothing that reaches it carries a real credential (see the credential custody).
  *
- * The disconnect is read from the response's `close` event, not the request's: the request emits `close` as soon as its body has been read, long before the response ends. `GET /healthz` is answered here, before the pipeline, because a readiness probe is not a routed session and carries no session headers or capability. The Remote Control control routes are answered here too, before the pipeline, through `control` when one is given: they are the operator's requests to the door itself, not a routed session's, and their prefix is outside the routed URL space.
+ * The disconnect is read from the response's `close` event, not the request's: the request emits `close` as soon as its body has been read, long before the response ends. `GET /healthz` is answered here, before the pipeline, because a readiness probe is not a routed session and carries no session headers or capability. The Remote Control control routes are answered here too, before the pipeline, through `control` when one is given, as is the typed API through `api`: they are the operator's requests to the door itself, not a routed session's, and their prefixes are outside the routed URL space.
  */
 export function createFrontDoorServer(
   pipeline: (request: PipelineRequest) => Promise<void>,
   log: (line: string) => void,
   tls?: LeafCert,
   control?: (request: IncomingMessage, response: ServerResponse) => void,
+  api?: PrePipelineApi,
 ): FrontDoorServer {
   const handler = (request: IncomingMessage, response: ServerResponse): void => {
     if (request.method === "GET" && request.url === "/healthz") {
@@ -39,6 +50,27 @@ export function createFrontDoorServer(
     }
     if (control !== undefined && (request.url ?? "/").startsWith(CONTROL_PATH_PREFIX)) {
       control(request, response);
+      return;
+    }
+    if (api !== undefined && (request.url ?? "/").startsWith(api.pathPrefix)) {
+      api
+        .handle(request, response)
+        .then((result) => {
+          // A path under the API's prefix that names no procedure is the surface's own 404, answered here so every mount behaves the same whatever its handler does.
+          if (!result.matched && !response.headersSent) {
+            response.writeHead(HTTP_STATUS.notFound, { "Content-Type": "application/json" });
+            response.end(JSON.stringify({ error: `no such API procedure: ${request.url ?? "/"}` }));
+          }
+        })
+        .catch((error: unknown) => {
+          log(`api request ${request.method ?? "?"} ${request.url ?? "?"} failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+          if (!response.headersSent) {
+            response.writeHead(HTTP_STATUS.internalServerError, { "Content-Type": "application/json" });
+            response.end(JSON.stringify({ error: "internal error in the agent-shim front door" }));
+            return;
+          }
+          response.destroy();
+        });
       return;
     }
     const abort = new AbortController();
