@@ -2,16 +2,22 @@ import { realPromptsPort, runProfileWizard } from "./configure";
 import { PromptCancelledError } from "./cliError";
 import { profileExists } from "./configProfilesStore";
 import { runIdentityWizard } from "./identityManager";
-import { buildFarmRuntime, realPrepareLaunchParams } from "./launchWiring";
+import { buildFarmRuntime, realClaudeBinaryResolver, realPrepareLaunchParams } from "./launchWiring";
 import { resolveLayoutPaths } from "./paths";
 import { runLauncher } from "./launcher";
 import { parseLauncherArgv } from "./launcher/argv";
+import { runNativeLaunch } from "./launcher/native";
 import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/identity";
 import { realFsPort, realLogPort, realProcPort, realSpawnPort, spawnDetachedSupervisor } from "./realPorts";
 
 /** Runs the launcher pipeline. `argvOverride`, when given, replaces `realProcPort`'s own `process.argv.slice(2)`; this is what lets `agent-shim run [args...]` reach the identical pipeline the `claude` binary name uses, fed the args Commander collected instead of the real argv. */
 export async function runClaude(argvOverride?: readonly string[]): Promise<void> {
   const paths = resolveLayoutPaths();
+  const launchProc = argvOverride === undefined ? realProcPort : { ...realProcPort, argv: argvOverride };
+  const nativeArgv = parseLauncherArgv(launchProc.argv);
+  if (nativeArgv.native === true) {
+    runNativeLaunch({ parsed: nativeArgv, proc: launchProc, spawn: realSpawnPort, resolveClaudeBinary: realClaudeBinaryResolver(paths) });
+  }
   const farm = buildFarmRuntime(paths, process.cwd());
 
   // On a real terminal, a launch that selects an identity or configuration profile that doesn't exist yet is offered the matching wizard before launching, so the first reference to a new name sets it up instead of failing. With no terminal (a script, CI) there is nothing to prompt on, and runLauncher refuses the missing name itself.

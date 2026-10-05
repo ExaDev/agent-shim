@@ -46,6 +46,7 @@ Launching:
     --share <path>, --hide <path>  share or hide one <category>/<path> entry (repeatable)
     --[no-]skip-permissions, --[no-]remote-control, --[no-]headroom, --[no-]track-usage
     --[no-]wait                  with @pool:<name>, sleep until the earliest member returns when all are refused
+    --native                     run the real claude with nothing from agent-shim applied (no other launch flag allowed)
 
 Environment:
   AGENT_SHIM_IDENTITY, AGENT_SHIM_CONFIG_PROFILE, AGENT_SHIM_SKIP_PERMISSIONS,

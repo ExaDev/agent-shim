@@ -14,6 +14,8 @@ export interface ParsedLauncherArgv {
   readonly trackUsage?: boolean;
   /** The last `--wait`/`--no-wait` occurrence, when either was given: with a pool selected and every member refused, sleep until the earliest returns instead of refusing the launch. */
   readonly wait?: boolean;
+  /** True when `--native` was given: run the real `claude` with nothing from agent-shim applied. It has no `--no-` form and cannot be combined with any other launch flag. */
+  readonly native?: true;
   /** The last `--skip-permissions`/`--no-skip-permissions` occurrence, when either was given. */
   readonly skipPermissions?: boolean;
   /** The last `--remote-control`/`--no-remote-control` occurrence, when either was given. */
@@ -52,9 +54,13 @@ type BooleanFlagKey = (typeof BOOLEAN_FLAGS)[number]["key"];
 /** Every flag `parseLauncherArgv` consumes, both forms of each boolean included: what `agent-shim completion` offers after `run`. */
 export const LAUNCHER_FLAG_NAMES: readonly string[] = [
   ...VALUED_FLAGS,
+  "--native",
   "--no-provider",
   ...BOOLEAN_FLAGS.flatMap(({ flag }) => [flag, `--no-${flag.slice(2)}`]),
 ];
+
+/** The launch flag that runs the real `claude` untouched. Not `--bare`, which is Claude Code's own minimal-mode flag and must keep reaching it. */
+const NATIVE_FLAG = "--native";
 
 /** The token that ends agent-shim's own flag recognition: everything from it onwards belongs to claude, or to a command claude runs. */
 const TERMINATOR = "--";
@@ -84,7 +90,7 @@ function matchBooleanFlag(token: string): { key: BooleanFlagKey; value: boolean 
 }
 
 /**
- * Parses the launcher's own argv for its identity selection and the one-off `agent-shim` launch flags (`--identity`, `--config-profile`, `--provider`/`--no-provider`, `--category`, `--share`, `--hide`, and the `--[no-]headroom`, `--[no-]track-usage`, `--[no-]skip-permissions`, `--[no-]remote-control`, `--[no-]wait` booleans). None of these are real Claude Code flags, so all are consumed here and never forwarded.
+ * Parses the launcher's own argv for its identity selection and the one-off `agent-shim` launch flags (`--identity`, `--config-profile`, `--provider`/`--no-provider`, `--category`, `--share`, `--hide`, and the `--[no-]headroom`, `--[no-]track-usage`, `--[no-]skip-permissions`, `--[no-]remote-control`, `--[no-]wait` booleans, and `--native`). None of these are real Claude Code flags, so all are consumed here and never forwarded.
  *
  * `name` in `@name` and `--identity <name>` may also be `pool:<pool>`, which the launcher resolves to a member of that pool. The `@name` form is consumed ONLY at argv[0], never mid-argument-list; `--identity <name>` is its explicit form, and naming two different identities through both throws `ConflictingIdentityError`. The flags are recognised only before a `--` terminator: from `--` onwards every token is forwarded verbatim, so `claude mcp add n -- cmd --provider x` keeps `--provider x` for `cmd`. Valued flags accept both `--flag value` and `--flag=value` and take exactly one value per occurrence; `--category`, `--share` and `--hide` repeat to supply several, and every other flag's later occurrence wins. A valued flag with no value after it (the last token, or directly before `--`) is left in place, untouched, since there is nothing to pair it with.
  */
@@ -93,6 +99,7 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
   const positionalIdentity = first !== undefined && first.startsWith("@") && first.length > 1 ? first.slice(1) : undefined;
   const remaining = positionalIdentity === undefined ? argv : argv.slice(1);
 
+  let native = false;
   let flagIdentity: string | undefined;
   let configProfile: string | undefined;
   let provider: string | false | undefined;
@@ -113,6 +120,10 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
     }
     if (token === "--no-provider") {
       provider = false;
+      continue;
+    }
+    if (token === NATIVE_FLAG) {
+      native = true;
       continue;
     }
     const booleanFlag = matchBooleanFlag(token);
@@ -174,6 +185,7 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
     ...(identity === undefined ? {} : { identity }),
     ...(configProfile === undefined ? {} : { configProfile }),
     ...(provider === undefined ? {} : { provider }),
+    ...(native ? { native: true as const } : {}),
     ...booleans,
     categoryFlags,
     shareFlags,

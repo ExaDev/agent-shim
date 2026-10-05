@@ -149,6 +149,7 @@ agent-shim run [@<identity>] [launch flags] [claude arguments]
   #   --identity <name>  --config-profile <name>  --provider <name> | --no-provider
   #   --category <category>=<bool>  --share <category>/<path>  --hide <category>/<path>   (each repeatable)
   #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom  --[no-]track-usage  --[no-]wait
+  #   --native   run the real claude with nothing from agent-shim applied; cannot be combined with the flags above
 claude @<identity> ...                      # the same, once `agent-shim shim enable` has run
 ```
 
