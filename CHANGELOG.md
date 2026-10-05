@@ -1,3 +1,18 @@
+## [8.10.0](https://github.com/ExaDev/agent-shim/compare/v8.9.0...v8.10.0) (2026-10-05)
+
+### Features
+
+* **check:** report the Claude Code version and warn about a pin that is not installed ([44ce129](https://github.com/ExaDev/agent-shim/commit/44ce129061b91e0a23301dd0ea903dd8904a35fd))
+* **launcher:** pin the Claude Code version a launch runs ([577924f](https://github.com/ExaDev/agent-shim/commit/577924f7c0ccb70a7853668d48d557afd0378b3c))
+
+### Documentation
+
+* describe pinning the Claude Code version ([5c9d1e3](https://github.com/ExaDev/agent-shim/commit/5c9d1e3451479ae77df47e13b11288f96b3c07ba))
+
+### Tests
+
+* **frontdoor:** treat an already-bound reserved port as held ([7fb2600](https://github.com/ExaDev/agent-shim/commit/7fb260042181df7ee5f2fdd3c35d671eef6e53cf))
+
 ## [8.9.0](https://github.com/ExaDev/agent-shim/compare/v8.8.0...v8.9.0) (2026-10-05)
 
 ### Features
