@@ -229,7 +229,7 @@ export class ProviderKindMismatchError extends UsageError {
 
 /** True when a codex settings block says nothing at all, so writing it would only add noise to the file. */
 function isEmptyCodexConfig(config: CodexProviderConfig | undefined): boolean {
-  return config === undefined || (config.defaultModel === undefined && config.effort === undefined && (config.models === undefined || Object.keys(config.models).length === 0));
+  return config === undefined || (config.defaultModel === undefined && config.effort === undefined && config.login === undefined && (config.models === undefined || Object.keys(config.models).length === 0));
 }
 
 /**

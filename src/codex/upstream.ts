@@ -91,7 +91,7 @@ export interface CodexUpstreamPorts {
 }
 
 /** The Codex backend, addressed the way the Codex CLI does: its account routing and client labels travel as headers. */
-export const CODEX_BACKEND_TARGET: CodexUpstreamTarget = { url: CODEX_RESPONSES_URL, headers: codexBackendHeaders };
+const CODEX_BACKEND_TARGET: CodexUpstreamTarget = { url: CODEX_RESPONSES_URL, headers: codexBackendHeaders };
 
 /** OpenAI's public Responses API, which a Sign in with ChatGPT grant is audience-bound to: a bearer token and nothing else, since the grant carries the account. */
 export const RESPONSES_API_TARGET: CodexUpstreamTarget = {

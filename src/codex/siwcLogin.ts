@@ -16,7 +16,7 @@ import {
 import type { SiwcStore } from "./siwcStore";
 
 /** The name OpenAI shows the person on the consent screen, so they can tell which application is asking for their plan. */
-export const SIWC_AGENT_NAME = "agent-shim";
+const SIWC_AGENT_NAME = "agent-shim";
 
 /** A loopback listener waiting for the browser's redirect. */
 export interface CallbackListener {
@@ -44,7 +44,7 @@ export interface SiwcLoginResult {
 }
 
 /** How long a sign-in waits for the person to finish in the browser. */
-export const SIWC_LOGIN_TIMEOUT_MS = 300_000;
+const SIWC_LOGIN_TIMEOUT_MS = 300_000;
 
 /**
  * Signs the person in through their browser and stores the grant. The host id is created and written before the browser opens, so a sign-in that is abandoned still leaves the registration identity the next attempt reuses. A returning sign-in names the client OpenAI already issued and hints the previous account; a first one registers dynamically and takes the issued client id from the callback.

@@ -3,7 +3,7 @@ import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDe
 import { addCredentialCacheOptions, cacheChange, collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX, type CredentialCacheOptions } from "./cli/credentialOption";
 import { collectRepeated, collectStringPair } from "./cli/parsers";
 import { resolveCodexConfig } from "./codex/translate";
-import { CODEX_EFFORTS, CODEX_TIERS, CodexProviderConfigSchema, isCodexProvider, PROVIDER_CREDENTIAL_TARGETS, PROVIDER_KINDS, type CodexEffort, type CodexProviderConfig, type CredentialSource, type Provider } from "./config/schema";
+import { CODEX_EFFORTS, CODEX_LOGINS, CODEX_TIERS, CodexProviderConfigSchema, isCodexProvider, PROVIDER_CREDENTIAL_TARGETS, PROVIDER_KINDS, type CodexEffort, type CodexLogin, type CodexProviderConfig, type CredentialSource, type Provider } from "./config/schema";
 import { UsageError } from "./cliError";
 import { describeCredential, summariseCredential } from "./credential";
 import { ProviderNotFoundError, providerExists, readProvider, listProviders, type ProviderCredentialTarget, type ProviderKind, describeProviderEndpoint, addProvider, updateProvider, removeProvider } from "./providersStore";
@@ -36,17 +36,19 @@ interface CodexOptions {
   readonly codexDefaultModel?: string;
   readonly codexModel?: Record<string, string>;
   readonly codexEffort?: CodexEffort;
+  readonly codexLogin?: CodexLogin;
 }
 
 /** The codex settings block the codex options describe, or undefined when none was given. Tier names are validated by the schema, which names any unknown one. */
 function codexConfigFromOptions(options: CodexOptions): CodexProviderConfig | undefined {
-  if (options.codexDefaultModel === undefined && options.codexModel === undefined && options.codexEffort === undefined) {
+  if (options.codexDefaultModel === undefined && options.codexModel === undefined && options.codexEffort === undefined && options.codexLogin === undefined) {
     return undefined;
   }
   const candidate = {
     ...(options.codexDefaultModel === undefined ? {} : { defaultModel: options.codexDefaultModel }),
     ...(options.codexModel === undefined ? {} : { models: options.codexModel }),
     ...(options.codexEffort === undefined ? {} : { effort: options.codexEffort }),
+    ...(options.codexLogin === undefined ? {} : { login: options.codexLogin }),
   };
   const parsed = CodexProviderConfigSchema.safeParse(candidate);
   if (!parsed.success) {
@@ -95,6 +97,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--codex-default-model <model>", "Codex providers: the codex model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: the codex model one tier (fable, opus, sonnet or haiku) maps to (repeatable).", collectStringPair)
       .addOption(new Option("--codex-effort <effort>", "Codex providers: the reasoning effort when a request asks for none the backend accepts.").choices(CODEX_EFFORTS))
+      .addOption(new Option("--codex-login <login>", "Codex providers: which login the upstream call uses, the Codex CLI's own login or a Sign in with ChatGPT grant from `agent-shim codex login`.").choices(CODEX_LOGINS))
       .option("--json", "Print the result as JSON.")
       .action((name: string, options: ProviderAddOptions) => {
         const codex = codexConfigFromOptions(options);
@@ -140,7 +143,8 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--unset-env <KEY>", "Remove an environment entry (repeatable).", collectRepeated)
       .option("--codex-default-model <model>", "Codex providers: replace the model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: set the codex model one tier maps to (repeatable; other tiers are kept).", collectStringPair)
-      .addOption(new Option("--codex-effort <effort>", "Codex providers: replace the default reasoning effort.").choices(CODEX_EFFORTS));
+      .addOption(new Option("--codex-effort <effort>", "Codex providers: replace the default reasoning effort.").choices(CODEX_EFFORTS))
+      .addOption(new Option("--codex-login <login>", "Codex providers: replace which login the upstream call uses.").choices(CODEX_LOGINS));
   addCredentialCacheOptions(providerSet);
   withExamples(
     providerSet
@@ -149,7 +153,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         const { json, ...options } = allOptions;
         if (Object.entries(allOptions).every(([key, value]) => key === "json" || value === undefined)) {
           throw new UsageError(
-            "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, a --credential-cache option, --env, --unset-env, --codex-default-model, --codex-model or --codex-effort.",
+            "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, a --credential-cache option, --env, --unset-env, --codex-default-model, --codex-model, --codex-effort or --codex-login.",
           );
         }
         const codex = codexConfigFromOptions(options);
@@ -220,6 +224,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           const config = resolveCodexConfig(found.codex);
           console.log(`Codex models: ${CODEX_TIERS.map((tier) => `${tier}=${config.models[tier]}`).join(", ")}, otherwise ${config.defaultModel}`);
           console.log(`Codex effort: ${config.effort}`);
+          console.log(`Codex login: ${config.login}`);
         } else {
           console.log(`Base URL: ${found.baseUrl}`);
         }

@@ -7,8 +7,10 @@ import fs from "node:fs";
 import path from "node:path";
 import type { z } from "zod";
 import { lookupKeychainService } from "./checkReport";
+import { parseSiwcFile } from "./codex/siwcStore";
+import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
-import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, ProviderSchema, type Credential } from "./config/schema";
+import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, isCodexProvider, ProviderSchema, type Credential } from "./config/schema";
 import { describeCredential, type CredentialCacheEnv } from "./credential";
 import { describeCachedCredential, formatCachedCredentialState } from "./credentialCache";
 import { realCredentialCacheEnv } from "./realCredentialCache";
@@ -126,6 +128,8 @@ export interface RunDoctorParams {
   readonly installedClaudeVersions?: readonly string[];
   /** Where cached credentials live. Omit to leave a credential cache's age out of the identity and provider findings; with it, a block that caches reports whether it holds an entry, how old it is and whether it has expired, never the token. */
   readonly credentialCache?: CredentialCacheEnv;
+  /** The Sign in with ChatGPT file. Omit to leave it out of the findings; with it, a codex provider whose `codex.login` is `chatgpt-sign-in` warns when there is no usable sign-in to spend. */
+  readonly chatgptSignIn?: { readonly path: string; readonly raw: string | undefined };
   readonly identities: readonly DoctorIdentityInput[];
   readonly configProfiles: readonly DoctorConfigProfileInput[];
   readonly providers: readonly DoctorProviderInput[];
@@ -242,10 +246,26 @@ function cacheClause(cacheEnv: CredentialCacheEnv | undefined, owner: string, bl
   return { text: `; ${formatCachedCredentialState(state)}`, unreadable: state.status === "unreadable" };
 }
 
+/** Why the Sign in with ChatGPT file cannot serve a request, or undefined when it can. */
+function signInProblem(signIn: NonNullable<RunDoctorParams["chatgptSignIn"]>): string | undefined {
+  if (signIn.raw === undefined) {
+    return "nobody is signed in: run `agent-shim codex login`.";
+  }
+  try {
+    const grant = parseSiwcFile(signIn.raw, signIn.path).grant;
+    if (grant === undefined) {
+      return "nobody is signed in: run `agent-shim codex login`.";
+    }
+    return grant.scopes.includes(SIWC_PLAN_SCOPE) ? undefined : "the login was not given permission to use your ChatGPT plan: run `agent-shim codex login` again and allow it.";
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
 /**
  * Reports one provider file: an old-format file (before the credential block) fails with the old fields named and the whole file rewritten in the current format, since that is the one change converting it needs; any other invalid file fails with its validation errors; a valid one passes with its credential described by source kind and target.
  */
-function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, entry: DoctorProviderInput, cacheEnv: CredentialCacheEnv | undefined): void {
+function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, entry: DoctorProviderInput, cacheEnv: CredentialCacheEnv | undefined, signIn: RunDoctorParams["chatgptSignIn"]): void {
   if (entry.raw === undefined) {
     push("provider", "fail", `${entry.path} is missing.`, entry.name);
     return;
@@ -272,6 +292,12 @@ function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, m
   // A provider session's base URL is the door, a host Claude Code does not treat as first party, and on a non-first-party base URL it loads MCP tools upfront rather than deferring them (it cannot assume the tool_reference beta survives the hop). Naming the env-block lever here keeps the default visible; whether to pull it stays the reader's call, because it only helps when the upstream backend understands tool_reference itself.
   if (validated.data.env?.ENABLE_TOOL_SEARCH === undefined) {
     push("provider", "warn", `${entry.name} does not set ENABLE_TOOL_SEARCH: a session on this provider loads MCP tools upfront rather than deferring them, because its base URL is the front door, which Claude Code treats as a non-first-party host. Set ENABLE_TOOL_SEARCH in the provider's env block to restore deferred loading, when the upstream backend supports the tool_reference payloads it sends.`, entry.name);
+  }
+  if (signIn !== undefined && isCodexProvider(validated.data) && validated.data.codex?.login === "chatgpt-sign-in") {
+    const problem = signInProblem(signIn);
+    if (problem !== undefined) {
+      push("provider", "warn", `${entry.name} uses the Sign in with ChatGPT login, but ${problem}`, entry.name);
+    }
   }
 }
 
@@ -427,7 +453,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   };
 
   for (const entry of params.providers) {
-    pushProvider(push, entry, params.credentialCache);
+    pushProvider(push, entry, params.credentialCache, params.chatgptSignIn);
   }
 
   if (params.platform !== "darwin" || params.run === undefined) {
@@ -723,6 +749,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
   const report = runDoctor({
     env: params.env,
     credentialCache: realCredentialCacheEnv(paths),
+    chatgptSignIn: { path: paths.chatgptSignInFile, raw: realFsPort.readFileUtf8(paths.chatgptSignInFile) },
     installedClaudeVersions: realInstalledClaudeVersions(),
     identities,
     configProfiles,

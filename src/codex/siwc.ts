@@ -9,7 +9,7 @@ import type { UpstreamFetch } from "./upstreamPort";
  */
 
 /** The authorization endpoint named by OpenAI's discovery document at `https://auth.openai.com/.well-known/openid-configuration`. */
-export const SIWC_AUTHORIZE_URL = "https://auth.openai.com/api/accounts/authorize";
+const SIWC_AUTHORIZE_URL = "https://auth.openai.com/api/accounts/authorize";
 
 /** The token endpoint, used for both the code exchange and the refresh grant. */
 export const SIWC_TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token";
@@ -33,7 +33,7 @@ export const SIWC_RESOURCE = "https://api.openai.com/v1";
 export const SIWC_RESPONSES_URL = `${SIWC_RESOURCE}/responses`;
 
 /** The scopes a plan-backed grant needs: identity, a refresh token, and the two that let the token invoke the Responses API against the person's plan. */
-export const SIWC_SCOPES: readonly string[] = ["openid", "profile", "email", "offline_access", "resource.invoke", "chatgpt.tokens.use.direct"];
+const SIWC_SCOPES: readonly string[] = ["openid", "profile", "email", "offline_access", "resource.invoke", "chatgpt.tokens.use.direct"];
 
 /** The scope that makes a grant spendable on the person's plan; a grant without it signs the person in but cannot send a request. */
 export const SIWC_PLAN_SCOPE = "chatgpt.tokens.use.direct";

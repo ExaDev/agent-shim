@@ -407,6 +407,12 @@ describe("provider commands", () => {
     expect(shown).toContain("haiku=gpt-b");
     expect(shown).toContain("otherwise gpt-c");
     expect(parseJson((await cli(["provider", "show", "codex", "--json"])).stdout)).toMatchObject({ kind: "codex", codex: { effort: "medium" } });
+    expect(shown).toContain("Codex login: codex-cli");
+
+    expect((await cli(["provider", "set", "codex", "--codex-login", "chatgpt-sign-in"])).code).toBe(0);
+    expect(readProvider(paths, "codex")).toMatchObject({ codex: { login: "chatgpt-sign-in", effort: "medium" } });
+    expect((await cli(["provider", "show", "codex"])).stdout).toContain("Codex login: chatgpt-sign-in");
+    expect((await cli(["provider", "set", "codex", "--codex-login", "nonsense"])).code).toBe(EXIT_USAGE);
 
     expect((await cli(["provider", "set", "codex", "--base-url", "https://x.example"])).code).toBe(EXIT_USAGE);
     expect((await cli(["provider", "set", "codex", "--codex-model", "gpt=nope"])).code).toBe(EXIT_USAGE);
@@ -414,6 +420,7 @@ describe("provider commands", () => {
     expect((await cli(["provider", "add", "h", "--display-name", "H", "--credential", "env:X"])).code).toBe(EXIT_USAGE);
     expect((await cli(addZ)).code).toBe(0);
     expect((await cli(["provider", "set", "z", "--codex-effort", "high"])).code).toBe(EXIT_USAGE);
+    expect((await cli(["provider", "set", "z", "--codex-login", "chatgpt-sign-in"])).code).toBe(EXIT_USAGE);
   });
 
   it("requires --credential on add", async () => {
