@@ -4,32 +4,9 @@ import type { FarmFs, FsPort } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
 import { rankPoolFromStore, readStickyPick } from "./usage/poolPick";
 import type { Candidate, PoolRanking } from "./usage/pick";
+import type { PoolPickReport } from "./usage/pickReportSchema";
 
-/** What `pool pick` reports: the ranking a launch from `directory` would act on right now. */
-export interface PoolPickReport {
-  readonly pool: string;
-  readonly directory: string;
-  /** The member a launch would run as, absent when every member is refused. */
-  readonly pick?: string;
-  readonly candidates: readonly PoolPickCandidateView[];
-  /** Members that name an identity that does not exist; a launch skips them. */
-  readonly missing: readonly string[];
-  /** When nothing can be picked, the soonest any member returns. */
-  readonly earliestReturn?: { readonly identity: string; readonly at: string };
-  /** Why the last-pick record could not be read, when that is the case. */
-  readonly stickyProblem?: string;
-}
-
-/** One ranked member as `pool pick --json` prints it. */
-interface PoolPickCandidateView {
-  readonly identity: string;
-  readonly class: Candidate["class"];
-  readonly score?: number;
-  readonly feasible: boolean;
-  readonly blockedUntil?: string;
-  readonly plan: Candidate["plan"];
-  readonly reasons: readonly string[];
-}
+type PoolPickCandidateView = PoolPickReport["candidates"][number];
 
 function candidateView(candidate: Candidate): PoolPickCandidateView {
   return {
@@ -39,7 +16,7 @@ function candidateView(candidate: Candidate): PoolPickCandidateView {
     feasible: candidate.feasible,
     ...(candidate.blockedUntilMs === undefined ? {} : { blockedUntil: new Date(candidate.blockedUntilMs).toISOString() }),
     plan: candidate.plan,
-    reasons: candidate.reasons,
+    reasons: [...candidate.reasons],
   };
 }
 
@@ -62,7 +39,7 @@ export function collectPoolPick(params: Readonly<{ paths: LayoutPaths; fs: FsPor
     directory: params.directory,
     ...(ranking.pick === undefined ? {} : { pick: ranking.pick.identity }),
     candidates: ranking.candidates.map(candidateView),
-    missing,
+    missing: [...missing],
     ...(ranking.earliestReturn === undefined ? {} : { earliestReturn: { identity: ranking.earliestReturn.identity, at: new Date(ranking.earliestReturn.atMs).toISOString() } }),
     ...(sticky.problem === undefined ? {} : { stickyProblem: sticky.problem }),
   };

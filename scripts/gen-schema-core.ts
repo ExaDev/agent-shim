@@ -18,6 +18,7 @@ import {
   WhenSchema,
 } from "../src/config/schema";
 import { UsageRecordSchema, UsageSnapshotSchema } from "../src/usage/schema";
+import { PoolPickReportSchema } from "../src/usage/pickReportSchema";
 
 /**
  * Generates one published JSON Schema file per exported Zod schema in `src/config/schema.ts`, using Zod v4's native `z.toJSONSchema()` — no separate `zod-to-json-schema` dependency.
@@ -43,6 +44,7 @@ const schemas: Record<string, z.ZodType> = {
   CategoryClassification: CategoryClassificationSchema,
   UsageRecord: UsageRecordSchema,
   UsageSnapshot: UsageSnapshotSchema,
+  PoolPickReport: PoolPickReportSchema,
 };
 
 function main(): void {

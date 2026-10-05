@@ -1,20 +1,26 @@
+import { z } from "zod";
+
 import type { AccountMetadata } from "./schema";
 
-/** What an account's plan means for picking it: a subscription with a capacity relative to the smallest paid tier, or an account billed by use. */
-export type PlanClass =
-  | {
-      readonly kind: "subscription";
-      /** The plan's size as a multiple of the smallest subscription tier (Max 5x is 5, Max 20x is 20). */
-      readonly capacity: number;
-      /** False when the tier string named no multiplier and no tier this project knows, so `capacity` is the neutral 1 rather than a reading. */
-      readonly recognised: boolean;
-      /** The tier string the classification rests on, when the account had one. */
-      readonly tier?: string;
-    }
-  | {
-      readonly kind: "pay-per-use";
-      readonly tier?: string;
-    };
+/**
+ * What an account's plan means for picking it: a subscription with a capacity relative to the smallest paid tier, or an account billed by use.
+ */
+export const PlanClassSchema = z.union([
+  z.strictObject({
+    kind: z.literal("subscription"),
+    /** The plan's size as a multiple of the smallest subscription tier (Max 5x is 5, Max 20x is 20). */
+    capacity: z.number().positive(),
+    /** False when the tier string named no multiplier and no tier this project knows, so `capacity` is the neutral 1 rather than a reading. */
+    recognised: z.boolean(),
+    /** The tier string the classification rests on, when the account had one. */
+    tier: z.string().optional(),
+  }),
+  z.strictObject({
+    kind: z.literal("pay-per-use"),
+    tier: z.string().optional(),
+  }),
+]);
+export type PlanClass = z.infer<typeof PlanClassSchema>;
 
 /** A trailing multiplier in a rate-limit tier, such as the `20x` of `default_claude_max_20x`. */
 const TIER_MULTIPLIER = /(?:^|_)(\d+)x$/;
