@@ -372,7 +372,7 @@ describe("injectRcUserMessage over an injected dial", () => {
         return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
       },
     };
-    const result = await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial, newUuid: () => "uuid-2" }, SESSION_ID, "run the tests");
+    const result = await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid: () => "uuid-2" }, SESSION_ID, "run the tests");
     expect(result).toEqual({ ok: true, sequenceNums: [SECOND_SEQUENCE_NUM] });
     expect(dialled).toEqual([
       {
@@ -391,7 +391,7 @@ describe("injectRcUserMessage over an injected dial", () => {
         return await Promise.resolve({ status: HTTP_STATUS.ok, body: "{}" });
       },
     };
-    const result = await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial, newUuid: () => "uuid-4" }, SESSION_ID, "hello");
+    const result = await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid: () => "uuid-4" }, SESSION_ID, "hello");
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.message).toContain("no claude.ai OAuth bearer has been observed");
@@ -406,14 +406,14 @@ describe("injectRcUserMessage over an injected dial", () => {
         return await Promise.reject(new Error("ECONNREFUSED"));
       },
     };
-    const unknown = await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial, newUuid: () => "uuid-3" }, SESSION_ID, "hello");
+    const unknown = await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid: () => "uuid-3" }, SESSION_ID, "hello");
     expect(unknown.ok).toBe(false);
     if (!unknown.ok) {
       expect(unknown.message).toContain(SESSION_ID);
       expect(unknown.message).toContain("has not observed");
     }
     exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat" }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
-    const unreachable = await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial, newUuid: () => "uuid-3" }, SESSION_ID, "hello");
+    const unreachable = await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid: () => "uuid-3" }, SESSION_ID, "hello");
     expect(unreachable.ok).toBe(false);
     if (!unreachable.ok) {
       expect(unreachable.message).toContain("could not reach the API host");
@@ -468,7 +468,7 @@ describe("the control_response payload and answerRcControlRequest over an inject
   it("answers with the observed bearer and protocol headers, and retires the request once the write is confirmed", async () => {
     const { tracker } = trackerWithPending();
     const { dial, dialled } = dialRecording();
-    const result = await answerRcControlRequest({ credentialOf: tracker.credentialOf, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial }, SESSION_ID, REQUEST_ID, { approve: true, message: undefined });
+    const result = await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial }, SESSION_ID, REQUEST_ID, { approve: true, message: undefined });
     expect(result).toEqual({ ok: true, sequenceNums: [SECOND_SEQUENCE_NUM] });
     expect(dialled).toEqual([
       {
@@ -483,7 +483,7 @@ describe("the control_response payload and answerRcControlRequest over an inject
   it("refuses an unobserved session, an unknown request, and a dial failure, each verbosely and without throwing", async () => {
     const { tracker } = trackerWithPending();
     const { dial } = dialRecording();
-    const deps = { credentialOf: tracker.credentialOf, pendingOf: (id: string) => tracker.pendingOf(id), completePending: tracker.completePending, dial };
+    const deps = { credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id: string) => tracker.pendingOf(id), completePending: tracker.completePending, dial };
     const unknownSession = await answerRcControlRequest(deps, "cse_00000000-0000-4000-8000-0000000000ff", REQUEST_ID, { approve: true, message: undefined });
     expect(unknownSession.ok).toBe(false);
     if (!unknownSession.ok) {
@@ -535,7 +535,7 @@ describe("the control_request payloads and the three client-originated operation
     };
   };
   /** The deps every one of the three operations runs with in these tests. */
-  const depsOf = (tracker: RcSessionTracker, dial: RcEventDial) => ({ credentialOf: tracker.credentialOf, dial, newUuid: () => MINTED_REQUEST_ID });
+  const depsOf = (tracker: RcSessionTracker, dial: RcEventDial) => ({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid: () => MINTED_REQUEST_ID });
   /** The headers every client-half write sends with this tracker's observed credential. */
   const EXPECTED_HEADERS = { "content-type": "application/json", authorization: "Bearer sk-ant-oat", "anthropic-version": "2023-06-01", "anthropic-client-platform": "desktop_app" };
 

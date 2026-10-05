@@ -16,12 +16,15 @@ import { createDoorPipelines } from "./assembly";
 import { isLiveCapability } from "./capability";
 import { captureFromEnv } from "./capture";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_LIMITS, CONNECT_TAP_HOSTS, HTTPS_PORT, LOOPBACK_LEAF_NAMES, createLeafCache, ensureCa, generateCa, mintLeaf, realConnectCertStore, startConnectServer, type CaMaterial } from "./connect";
-import { realConnectEffects, realRcEventDial } from "./connectEffects";
+import { realConnectEffects, realRcEventDial, realRcStreamDial } from "./connectEffects";
 import { createCredentialCustody } from "./custody";
+import { createRcApiNodeHandler, frontDoorRcApiClient, type RcApiClient } from "./rcApi";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
-import { RC_IDLE_EXPIRY_MS, RC_PERMISSION_MODES, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, interruptRcSession, isRcPermissionMode, observingRoutedRoute, setRcSessionModel, setRcSessionPermissionMode, type RcAnswerDecision, type RcPermissionMode, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import { RC_IDLE_EXPIRY_MS, RC_PERMISSION_MODES, RC_PENDING_SUMMARY_EXCERPT_CHARS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, interruptRcSession, isRcPermissionMode, observingRoutedRoute, setRcSessionModel, setRcSessionPermissionMode, type RcAnswerDecision, type RcPermissionMode, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
+import type { RcStreamEvent } from "./rcSchemas";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { listFrontDoorSessions, liveSessionTokens, readFrontDoorState, writeFrontDoorSession, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
@@ -46,15 +49,18 @@ export function headroomSocketTarget(fsPort: HeadroomFs, trust: HeadroomSocketTr
 }
 
 /**
- * Wraps the door's route resolver so every route it resolves observes its served exchanges through the Remote Control tracker: the bare `/v1/` pass-through an OAuth session's Remote Control calls ride is where the tracker sees the create, the heartbeats and the presence, and the wrapper is a no-op for any path the tracker does not take (it hands the response through untouched).
+ * Wraps the door's route resolver so every route it resolves observes its served exchanges through the Remote Control tracker: the bare `/v1/` pass-through an OAuth session's Remote Control calls ride is where the tracker sees the create, the heartbeats and the presence, and the wrapper is a no-op for any path the tracker does not take (it hands the response through untouched). The client stream attachment is re-poked once an observed exchange's response has settled, so a session becomes attached the moment its create completes, without any polling of the tracker's own.
  */
 function rcObservingResolver(
   resolve: (request: RoutedRequest) => Promise<RouteResolution>,
   tracker: ReturnType<typeof createRcSessionTracker>,
+  hub?: RcStreamHub,
 ): (request: RoutedRequest) => Promise<RouteResolution> {
   return async (request) => {
     const resolution = await resolve(request);
-    return resolution.ok ? { ok: true, route: observingRoutedRoute(resolution.route, tracker) } : resolution;
+    return resolution.ok
+      ? { ok: true, route: observingRoutedRoute(resolution.route, tracker, hub === undefined ? undefined : { onExchangeSettled: () => { hub.reconcile(); } }) }
+      : resolution;
   };
 }
 
@@ -71,9 +77,30 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   const codexPorts = createCodexRoutePorts(log);
   // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix.
   const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+  // The door's own client read stream attachment: one held stream per tracked session, fanned out to every subscriber (the typed API's subscription and `frontdoor rc watch`), with its envelopes filed with the tracker. The door plays one client because the CLI routes permission approvals only toward attached clients: with no stream held, an approval falls back to the CLI's own local prompt and never crosses the door.
+  const rcFanout = createRcEventFanout();
+  const rcHub = createRcStreamHub({
+    now: () => Date.now(),
+    credentialOf: rcTracker.credentialOf,
+    trackedSessions: () => rcTracker.list().map((session) => session.id),
+    fileStreamEvent: rcTracker.fileStreamEvent,
+    sequenceNumOf: rcTracker.sequenceNumOf,
+    dial: realRcStreamDial(),
+    fanout: rcFanout,
+    newClientId: randomUUID,
+    backoffMs: RC_STREAM_BACKOFF_MS,
+    sleep: async (ms) => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, ms);
+      });
+    },
+    log: (line) => {
+      appendLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
+    },
+  });
   // This generation's control token, minted per door start and written owner-only: the value the door's control routes demand and only this user's CLI can read. A crashed door's stale file never authenticates, because the next generation mints a fresh one over it.
   const rcControlToken = randomUUID();
-  const resolveRoute = rcObservingResolver(createProviderRouteResolver({ fs: realFsPort, providersDir: paths.providersDir, codexPorts, directPort: () => directPort }), rcTracker);
+  const resolveRoute = rcObservingResolver(createProviderRouteResolver({ fs: realFsPort, providersDir: paths.providersDir, codexPorts, directPort: () => directPort }), rcTracker, rcHub);
 
   // One check for every listener that admits launches, read fresh on each call since launches come and go: the provider listener's and the CONNECT surface's routed paths (the capability header), and the CONNECT surface's own CONNECT requests (the proxy credential).
   const isLiveToken = (token: string): boolean => isLiveCapability(token, liveSessionTokens(realFarmFs, paths.frontdoorSessionsDir));
@@ -135,13 +162,13 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     isRunning: realIsProcessRunning,
     startProviderListener: async (preferredPort) => {
       const authority = loadCa();
-      // The write operations the control routes carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly.
+      // The write operations the control routes and the typed API both carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly. A confirmed write advances the session's sequence cursor through the tracker, so a stream resume continues after the door's own events too.
       const rcDial = realRcEventDial();
       const rcInject = async (sessionId: string, text: string) =>
-        await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, dial: rcDial, newUuid: randomUUID }, sessionId, text);
+        await injectRcUserMessage({ credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID }, sessionId, text);
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision) =>
-        await answerRcControlRequest({ credentialOf: rcTracker.credentialOf, pendingOf: (id) => rcTracker.pendingOf(id), completePending: rcTracker.completePending, dial: rcDial }, sessionId, requestId, decision);
-      const rcControlRequestDeps = { credentialOf: rcTracker.credentialOf, dial: rcDial, newUuid: randomUUID };
+        await answerRcControlRequest({ credentialOf: rcTracker.credentialOf, pendingOf: (id) => rcTracker.pendingOf(id), completePending: rcTracker.completePending, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial }, sessionId, requestId, decision);
+      const rcControlRequestDeps = { credentialOf: rcTracker.credentialOf, noteSequenceNums: rcTracker.noteSequenceNums, dial: rcDial, newUuid: randomUUID };
       const rcInterrupt = async (sessionId: string) => await interruptRcSession(rcControlRequestDeps, sessionId);
       const rcSetModel = async (sessionId: string, model: string) => await setRcSessionModel(rcControlRequestDeps, sessionId, model);
       const rcSetPermissionMode = async (sessionId: string, mode: RcPermissionMode) => await setRcSessionPermissionMode(rcControlRequestDeps, sessionId, mode);
@@ -155,6 +182,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         log,
         mintLeaf(authority, LOOPBACK_LEAF_NAMES, new Date()),
         createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcTracker.statusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer, interrupt: rcInterrupt, setModel: rcSetModel, setPermissionMode: rcSetPermissionMode }),
+        createRcApiNodeHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcTracker.statusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer, interrupt: rcInterrupt, setModel: rcSetModel, setPermissionMode: rcSetPermissionMode, fanout: rcFanout }),
       );
       const handle = await listenFrontDoor(server, { ...(preferredPort === undefined ? {} : { preferredPort }), ca: authority.certPem, onError: onListenerError("provider") });
       return {
@@ -345,6 +373,18 @@ export function formatRcPendingList(pending: readonly RcPendingRequestSummary[])
   return pending.map((request) => `${request.sessionId}  ${request.requestId}  ${request.type}${request.summary === "" ? "" : `  ${request.summary}`}  observed ${new Date(request.observedAt).toISOString()}`);
 }
 
+/** One excerpt kept to the log-detail budget this surface already applies, marked when it was cut. */
+function eventExcerpt(text: string): string {
+  return text.length <= RC_PENDING_SUMMARY_EXCERPT_CHARS ? text : `${text.slice(0, RC_PENDING_SUMMARY_EXCERPT_CHARS)}...`;
+}
+
+/** Formats one client read stream event, as `frontdoor rc watch` prints each line of it: the session, the envelope's own identification, and a bounded sketch of the payload. */
+export function formatRcStreamEvent(event: RcStreamEvent): string {
+  const { envelope } = event;
+  const sketch = envelope.payload === undefined ? "" : `  ${eventExcerpt(JSON.stringify(envelope.payload))}`;
+  return `${event.session}  ${envelope.event_type}  sequence_num ${String(envelope.sequence_num)}  source ${envelope.source}${sketch}`;
+}
+
 /**
  * Opens the serving door's Remote Control control client: the provider listener's address from the same state file `frontdoor status` reads, its CA from the same CA path, and this generation's control token from the owner-only file the door writes. Throws with the verbose reason when the door is not serving or its control material is missing, so a verb never dials anything on a guess.
  */
@@ -362,6 +402,25 @@ export function frontDoorRcControlFromState(fsPort: HeadroomFs, paths: LayoutPat
     throw new Error(`the serving front door's control token is missing at ${paths.frontdoorControlTokenFile}`);
   }
   return frontDoorRcControl(realRcControlTransport(state.port, ca), token);
+}
+
+/**
+ * Opens the serving door's typed Remote Control API client, from the same state file, CA path and owner-only control token file the bespoke control client reads. Throws with the verbose reason when the door is not serving or its control material is missing, so a verb never dials anything on a guess.
+ */
+export function frontDoorRcApiFromState(fsPort: HeadroomFs, paths: LayoutPaths): RcApiClient {
+  const state = readFrontDoorState(fsPort, paths.frontdoorStateFile);
+  if (state?.port === undefined) {
+    throw new Error("the front door is not serving: Remote Control sessions are observed only while it runs, so start a session through the door first");
+  }
+  const ca = fsPort.readFileUtf8(paths.frontdoorCaCertFile);
+  if (ca === undefined) {
+    throw new Error(`the front door's CA certificate is missing at ${paths.frontdoorCaCertFile}, so its typed API cannot be authenticated`);
+  }
+  const token = fsPort.readFileUtf8(paths.frontdoorControlTokenFile)?.trim();
+  if (token === undefined || token === "") {
+    throw new Error(`the serving front door's control token is missing at ${paths.frontdoorControlTokenFile}`);
+  }
+  return frontDoorRcApiClient(state.port, ca, token);
 }
 
 /** Registers `agent-shim frontdoor status`, the `frontdoor rc` verbs, and the hidden `__frontdoor-supervisor` internal subcommand. */
@@ -390,7 +449,7 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
   );
 
   const rc = withExamples(
-    frontdoor.command("rc").description("Observe the Remote Control sessions passing through the front door, send a prompt into one, answer its pending control requests, and steer one with the client half's own control requests (interrupt, model, permission mode)."),
+    frontdoor.command("rc").description("Observe the Remote Control sessions passing through the front door, watch the stream their attached client receives, send a prompt into one, answer its pending control requests, and steer one with the client half's own control requests (interrupt, model, permission mode)."),
     ["agent-shim frontdoor rc list", "agent-shim frontdoor rc pending"],
   );
 
@@ -570,6 +629,39 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       "agent-shim frontdoor rc set-permission-mode --session cse_00000000-0000-4000-8000-000000000000 --mode plan",
       "agent-shim frontdoor rc set-permission-mode --session cse_00000000-0000-4000-8000-000000000000 --mode acceptEdits",
     ],
+  );
+
+  withExamples(
+    rc
+      .command("watch")
+      .description("Print the observed sessions' client read stream events as they arrive, the approvals the door's held stream receives above all, until Ctrl-C leaves. Read-only.")
+      .argument("[session]", "One cse_ session id, as `frontdoor rc list` shows it; every observed session when omitted.")
+      .option("--json", "Print each event as one JSON line as it arrives.")
+      .action(async (session: string | undefined, options: Readonly<{ json?: boolean }>) => {
+        const client = frontDoorRcApiFromState(realFarmFs, paths);
+        // Ctrl-C leaves the watch rather than killing the process: the abort ends the subscription, the stream's own cleanup runs, and the verb returns. A second Ctrl-C still terminates, because the handler installed here is a one-shot.
+        const leave = new AbortController();
+        const onInterrupt = (): void => {
+          leave.abort();
+        };
+        process.once("SIGINT", onInterrupt);
+        try {
+          for await (const event of await client.rc.subscribe(session === undefined ? {} : { session }, { signal: leave.signal })) {
+            if (options.json === true) {
+              console.log(JSON.stringify(event));
+              continue;
+            }
+            console.log(formatRcStreamEvent(event));
+          }
+        } catch (error) {
+          if (!leave.signal.aborted) {
+            throw error;
+          }
+        } finally {
+          process.off("SIGINT", onInterrupt);
+        }
+      }),
+    ["agent-shim frontdoor rc watch", "agent-shim frontdoor rc watch cse_00000000-0000-4000-8000-000000000000 --json"],
   );
 
   program

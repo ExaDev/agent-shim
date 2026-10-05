@@ -3,7 +3,7 @@ import * as https from "node:https";
 
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
-import { RC_PERMISSION_MODES, isRcPermissionMode, type RcAnswerDecision, type RcEventWriteResult, type RcPendingRequestSummary, type RcPermissionMode, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import { RC_PERMISSION_MODES, isRcPermissionMode, rcSessionNotObservedMessage, type RcAnswerDecision, type RcEventWriteResult, type RcPendingRequestSummary, type RcPermissionMode, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 
 /** The SDK's own permission modes as one readable list, so a body refused for a bad mode names exactly what is permitted. */
 const RC_PERMISSION_MODE_LIST = RC_PERMISSION_MODES.join(", ");
@@ -18,9 +18,9 @@ const RC_PERMISSION_MODE_LIST = RC_PERMISSION_MODES.join(", ");
 export const CONTROL_PATH_PREFIX = "/__agent-shim/rc";
 
 /**
- * The largest control request body accepted: 10 MiB, the protocol's own documented cap on one event batch, so a control body holding a single user turn is bounded by the same protocol limit. Anything larger is not a control body, and refusing it keeps the door from buffering an unbounded prompt.
+ * The largest control request body accepted: 10 MiB, the protocol's own documented cap on one event batch, so a control body holding a single user turn is bounded by the same protocol limit. Anything larger is not a control body, and refusing it keeps the door from buffering an unbounded prompt. Exported because the typed API's handler bounds its own request bodies by the same protocol limit.
  */
-const CONTROL_BODY_CAP_BYTES = 10_485_760;
+export const CONTROL_BODY_CAP_BYTES = 10_485_760;
 
 /** The one JSON error shape every control route answers a failure with. */
 interface ControlErrorBody {
@@ -117,7 +117,7 @@ export function createRcControlHandler(deps: RcControlHandlerDeps): (request: In
         const session = url.searchParams.get("session") ?? undefined;
         // A named session that is not tracked is refused rather than answered as empty, so a mistyped id never reads as "observed, nothing pending".
         if (session !== undefined && !deps.statusOf(session).some((entry) => entry.id === session)) {
-          answerJson(response, HTTP_STATUS.notFound, { error: `the front door has not observed Remote Control session ${session}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)` } satisfies ControlErrorBody);
+          answerJson(response, HTTP_STATUS.notFound, { error: rcSessionNotObservedMessage(session) } satisfies ControlErrorBody);
           return;
         }
         answerJson(response, HTTP_STATUS.ok, url.pathname === statusPath ? { statuses: deps.statusOf(session) } : { pending: deps.pendingOf(session) });

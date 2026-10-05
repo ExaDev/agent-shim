@@ -2,10 +2,14 @@ import * as http from "node:http";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { CONNECT_INTERCEPT_HOST, generateCa, type CaMaterial } from "./connect";
-import { KEYGEN_TIMEOUT_MS, RC_TEST_SEQUENCE_NUM, RC_TEST_SESSION_ID, HTTP_OK, connectThroughProxy, makeTlsWorld, requestOn, settle } from "./connectTestWorld";
-import { createRcControlHandler, frontDoorRcControl, type RcControlTransport } from "./rcControl";
+import { CONNECT_INTERCEPT_HOST, LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial } from "./connect";
+import { KEYGEN_TIMEOUT_MS, RC_TEST_SEQUENCE_NUM, RC_TEST_SESSION_ID, HTTP_OK, SETTLE_MS, connectThroughProxy, makeTlsWorld, requestOn, settle } from "./connectTestWorld";
+import { createRcApiNodeHandler, frontDoorRcApiClient } from "./rcApi";
+import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type RcControlTransport } from "./rcControl";
 import { RC_IDLE_EXPIRY_MS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, interruptRcSession, setRcSessionModel, setRcSessionPermissionMode, type RcAnswerDecision, type RcEventDial, type RcEventWriteResult, type RcPermissionMode, type RcSessionTracker } from "./rcSessions";
+import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
+import type { RcStreamEvent } from "./rcSchemas";
+import { createFrontDoorServer } from "./server";
 
 /** The bearers the fake CLI presents, one per credential kind: the OAuth bearer the create carries (the client half's credential, the one an injected write must replay), and the worker JWT its recurring worker calls carry (a different kind that must never displace it, observed live as a 401 when replayed on the client half). */
 const CREATE_BEARER = "Bearer sk-ant-oat";
@@ -24,6 +28,25 @@ const RC_TEST_MODEL_ID = "claude-opus-5-5";
 const RC_TEST_PERMISSION_MODE = "plan" as const satisfies RcPermissionMode;
 /** How many client-half event writes the three control request operations produce: one per operation, in the order the test drives them. */
 const CONTROL_REQUEST_WRITE_COUNT = 3;
+/** The sequence number the scripted stream event carries, higher than the write path's fixed answer so the resume assertions name the cursor's own maximum rather than a number both paths could have produced. */
+const STREAM_SEQUENCE_NUM = 12;
+/**
+ * How long the attachment e2e may wait for a condition the door's detached loop produces (a dial landing, a pending birth). Loopback TLS handshakes and the loop itself run in milliseconds; the bound exists only so an overloaded machine fails visibly instead of hanging the suite, and is generous against the keygen-heavy world these tests run in.
+ */
+const E2E_WAIT_BUDGET_MS = 5_000;
+
+/** Waits until the condition holds, polling at the world's own settle cadence, failing loudly at the budget rather than hanging. */
+async function until(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + E2E_WAIT_BUDGET_MS;
+  while (!condition()) {
+    if (Date.now() >= deadline) {
+      throw new Error("the door did not reach the awaited state within the test's wait budget");
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, SETTLE_MS);
+    });
+  }
+}
 
 /** The first event's payload of one event-write body, narrowed field by field from its parsed JSON rather than reached into as `any`. */
 function firstPayloadOf(body: string): unknown {
@@ -56,7 +79,7 @@ async function postOn(secure: Parameters<typeof requestOn>[0], path: string, bea
  * The three client-originated control request operations as the control route wires them: the tracker's observed credential and the door's real dial code redirected at the stand-in API host, with the given request-id mint.
  */
 function controlRequestOperations(tracker: RcSessionTracker, dial: RcEventDial, newUuid: () => string) {
-  const deps = { credentialOf: tracker.credentialOf, dial, newUuid };
+  const deps = { credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid };
   return {
     interrupt: async (sessionId: string) => await interruptRcSession(deps, sessionId),
     setModel: async (sessionId: string, model: string) => await setRcSessionModel(deps, sessionId, model),
@@ -129,7 +152,7 @@ describe("Remote Control observation and injection over the connect surface", ()
         expect(tracker.credentialOf(RC_TEST_SESSION_ID)?.authorization).toBe(CREATE_BEARER);
 
         // The inject operation, driven the way the door's control route drives it: the tracker's observed credential, and the door's real dial code redirected at the stand-in API host.
-        const delivered = await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial: rcDial, newUuid: () => "uuid-e2e" }, RC_TEST_SESSION_ID, "run the tests");
+        const delivered = await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e" }, RC_TEST_SESSION_ID, "run the tests");
         expect(delivered).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM] });
 
         // The API host received the documented client-half write: the session's events endpoint, the observed bearer, and the user-message payload in its event envelope.
@@ -173,8 +196,8 @@ describe("Remote Control observation and injection over the connect surface", ()
           list: tracker.list,
           statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
           pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
-          inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial: rcDial, newUuid: () => "uuid-e2e-control" }, sessionId, text),
-          answer: async (sessionId, requestId, decision) => await answerRcControlRequest({ credentialOf: tracker.credentialOf, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial: rcDial }, sessionId, requestId, decision),
+          inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-control" }, sessionId, text),
+          answer: async (sessionId, requestId, decision) => await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial: rcDial }, sessionId, requestId, decision),
           ...controlRequestOperations(tracker, rcDial, () => "uuid-e2e-control"),
         }),
       );
@@ -227,14 +250,14 @@ describe("Remote Control observation and injection over the connect surface", ()
       const world = makeTlsWorld(ca, upstreamCa, { rc: { tracker } });
       const { connectPort, rcDial, close } = await world.start();
       const answer = async (sessionId: string, requestId: string, decision: RcAnswerDecision): Promise<RcEventWriteResult> =>
-        await answerRcControlRequest({ credentialOf: tracker.credentialOf, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial: rcDial }, sessionId, requestId, decision);
+        await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial: rcDial }, sessionId, requestId, decision);
       const server = http.createServer(
         createRcControlHandler({
           expectedToken: CONTROL_TOKEN,
           list: tracker.list,
           statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
           pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
-          inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial: rcDial, newUuid: () => "uuid-e2e-answer" }, sessionId, text),
+          inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-answer" }, sessionId, text),
           answer,
           ...controlRequestOperations(tracker, rcDial, () => "uuid-e2e-answer"),
         }),
@@ -338,8 +361,8 @@ describe("Remote Control observation and injection over the connect surface", ()
           list: tracker.list,
           statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
           pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
-          inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, dial: rcDial, newUuid: () => "uuid-e2e-control" }, sessionId, text),
-          answer: async (sessionId, requestId, decision) => await answerRcControlRequest({ credentialOf: tracker.credentialOf, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial: rcDial }, sessionId, requestId, decision),
+          inject: async (sessionId, text) => await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-control" }, sessionId, text),
+          answer: async (sessionId, requestId, decision) => await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial: rcDial }, sessionId, requestId, decision),
           ...controlRequestOperations(tracker, rcDial, () => `uuid-e2e-control-request-${String(++minted)}`),
         }),
       );
@@ -386,6 +409,168 @@ describe("Remote Control observation and injection over the connect surface", ()
           server.close(() => {
             resolve(undefined);
           });
+        });
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
+    "attaches the client read stream with presence, surfaces and answers a stream-borne approval, streams the events to a typed subscriber, and resumes after a drop with the documented pair",
+    async () => {
+      // The hub is built after the world starts (its dial needs the stand-in's port) but before any exchange crosses the surface, so the settle hook the world fires finds it from the first create on.
+      let hub: RcStreamHub | undefined;
+      const world = makeTlsWorld(ca, upstreamCa, { rc: { tracker, onExchangeSettled: () => hub?.reconcile() } });
+      const { connectPort, rcDial, rcStreamDial, close } = await world.start();
+      const fanout = createRcEventFanout();
+      const rcInject = async (sessionId: string, text: string) =>
+        await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-stream" }, sessionId, text);
+      const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision): Promise<RcEventWriteResult> =>
+        await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial: rcDial }, sessionId, requestId, decision);
+      const rcControlRequestDeps = { credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-stream" };
+      const controlDeps = {
+        expectedToken: CONTROL_TOKEN,
+        list: tracker.list,
+        statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
+        pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
+        inject: rcInject,
+        answer: rcAnswer,
+        interrupt: async (sessionId: string) => await interruptRcSession(rcControlRequestDeps, sessionId),
+        setModel: async (sessionId: string, model: string) => await setRcSessionModel(rcControlRequestDeps, sessionId, model),
+        setPermissionMode: async (sessionId: string, mode: RcPermissionMode) => await setRcSessionPermissionMode(rcControlRequestDeps, sessionId, mode),
+      };
+      // The real listener shape: the same server builder the door uses, with both pre-pipeline surfaces mounted, over TLS signed by the world's CA. The typed API's handle is wrapped only to record that the subscription request landed, because the fan-out holds no replay: an event published before a subscriber's request arrives is simply not seen by that subscriber.
+      const apiSurface = createRcApiNodeHandler({ ...controlDeps, fanout });
+      const apiRequests: string[] = [];
+      // No routed path exists in this test, so a request that reaches the pipeline completes without one; the log goes nowhere, as the server tests' own stand-in listener does.
+      const server = createFrontDoorServer(
+        async () => {
+          await Promise.resolve();
+        },
+        () => undefined,
+        mintLeaf(ca, LOOPBACK_LEAF_NAMES, new Date()),
+        createRcControlHandler(controlDeps),
+        { ...apiSurface, handle: async (request, response) => { apiRequests.push(request.url ?? ""); return await apiSurface.handle(request, response); } },
+      );
+      try {
+        const secure = await connectThroughProxy(connectPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+        hub = createRcStreamHub({
+          now: () => Date.now(),
+          credentialOf: tracker.credentialOf,
+          trackedSessions: () => tracker.list().map((session) => session.id),
+          fileStreamEvent: tracker.fileStreamEvent,
+          sequenceNumOf: tracker.sequenceNumOf,
+          dial: rcStreamDial,
+          fanout,
+          newClientId: () => "e2e-door-client",
+          backoffMs: RC_STREAM_BACKOFF_MS,
+          sleep: async (ms) => {
+            await new Promise<void>((resolve) => {
+              setTimeout(resolve, ms);
+            });
+          },
+        });
+        const create = await postOn(secure, "/v1/code/sessions", CREATE_BEARER, JSON.stringify({ bridge: {} }));
+        expect(create.statusLine).toContain(String(HTTP_OK));
+
+        // The create's own settled exchange pokes the attachment: the door announced one stable client id and opened the stream, with the observed OAuth bearer and no resume (nothing has been seen yet).
+        await until(() => world.rcStreamRequests.length === 1);
+        const presence = world.upstreamRequests.find((seen) => seen.url === `/v1/code/sessions/${RC_TEST_SESSION_ID}/client/presence`);
+        expect(presence).toBeDefined();
+        expect(presence?.method).toBe("POST");
+        expect(presence?.headers.authorization).toBe(CREATE_BEARER);
+        expect(presence?.headers["anthropic-version"]).toBe(VERSION);
+        expect(JSON.parse(presence?.body ?? "{}")).toEqual({ client_id: "e2e-door-client", clear: false });
+        const firstStream = world.rcStreamRequests[0];
+        expect(firstStream?.method).toBe("GET");
+        expect(firstStream?.headers.authorization).toBe(CREATE_BEARER);
+        expect(firstStream?.headers.accept).toBe("text/event-stream");
+        expect(firstStream?.url).not.toContain("from_sequence_num");
+
+        // A typed subscriber over the door's real TLS, the same client the watch verb uses.
+        await new Promise<void>((resolve) => {
+          server.listen(0, "127.0.0.1", () => {
+            resolve(undefined);
+          });
+        });
+        const address = server.address();
+        if (typeof address !== "object" || address === null) {
+          throw new Error("expected a bound TCP server");
+        }
+        const api = frontDoorRcApiClient(address.port, ca.certPem, CONTROL_TOKEN);
+        // A caller without this generation's control token is refused by the typed API exactly as the bespoke routes refuse it.
+        const wrongToken = frontDoorRcApiClient(address.port, ca.certPem, "not-the-control-token");
+        await expect(wrongToken.rc.list()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+        const received: RcStreamEvent[] = [];
+        const stopWatching = new AbortController();
+        const watching = (async () => {
+          for await (const event of await api.rc.subscribe({ session: RC_TEST_SESSION_ID }, { signal: stopWatching.signal })) {
+            received.push(event);
+          }
+        })();
+        await until(() => apiRequests.some((url) => url.includes("/rc/subscribe")));
+
+        // A control_request arrives on the stream (source worker, the live finding's shape): it births a pending entry exactly as an observed worker-event body would, and the subscriber sees the event.
+        world.writeRcSse(
+          `event: client_event\nid: ${String(STREAM_SEQUENCE_NUM)}\ndata: ${JSON.stringify({
+            event_id: "ev-stream-1",
+            event_type: "control_request",
+            sequence_num: STREAM_SEQUENCE_NUM,
+            source: "worker",
+            payload: { type: "control_request", request_id: RC_TEST_REQUEST_ID, request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "pnpm test" } } },
+            created_at: "2026-10-05T12:00:00Z",
+          })}\n\n`,
+        );
+        await until(() => tracker.pendingOf(RC_TEST_SESSION_ID).length === 1);
+        // The control client over the same TLS the CLI's own verbs use, since this server is the door's real listener shape rather than a plain-HTTP stand-in.
+        const client = frontDoorRcControl(realRcControlTransport(address.port, ca.certPem), CONTROL_TOKEN);
+        const pending = await client.pendingOf(RC_TEST_SESSION_ID);
+        expect(pending.map((entry) => entry.requestId)).toEqual([RC_TEST_REQUEST_ID]);
+        expect(pending[0]?.type).toBe("can_use_tool");
+        expect(tracker.sequenceNumOf(RC_TEST_SESSION_ID)).toBe(STREAM_SEQUENCE_NUM);
+        await until(() => received.length === 1);
+        expect(received[0]?.session).toBe(RC_TEST_SESSION_ID);
+        expect(received[0]?.envelope).toEqual({
+          event_id: "ev-stream-1",
+          event_type: "control_request",
+          sequence_num: STREAM_SEQUENCE_NUM,
+          source: "worker",
+          payload: { type: "control_request", request_id: RC_TEST_REQUEST_ID, request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "pnpm test" } } },
+          created_at: "2026-10-05T12:00:00Z",
+        });
+
+        // The answer responds through the write path that is already live-proven, and the door's own confirmed delivery advances the same cursor the resume continues from (without ever lowering it past the stream's own events).
+        const approved = await client.answerRequest(RC_TEST_SESSION_ID, RC_TEST_REQUEST_ID, { approve: true, message: undefined });
+        expect(approved).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM] });
+        expect(await client.pendingOf(RC_TEST_SESSION_ID)).toEqual([]);
+        const write = world.upstreamRequests.find((seen) => seen.url === `/v1/code/sessions/${RC_TEST_SESSION_ID}/events`);
+        expect(write?.headers.authorization).toBe(CREATE_BEARER);
+        expect(JSON.parse(write?.body ?? "{}")).toEqual({
+          events: [{ payload: { type: "control_response", response: { subtype: "success", request_id: RC_TEST_REQUEST_ID, response: { behavior: "allow" } } } }],
+        });
+
+        // A drop reconnects with the documented resume pair together: the query parameter and the Last-Event-ID header, naming the highest sequence number the door has seen.
+        world.endRcSse();
+        await until(() => world.rcStreamRequests.length === 2);
+        const resumed = world.rcStreamRequests[1];
+        expect(resumed?.url.endsWith(`/v1/code/sessions/${RC_TEST_SESSION_ID}/events/stream?from_sequence_num=${String(STREAM_SEQUENCE_NUM)}`)).toBe(true);
+        expect(resumed?.headers["last-event-id"]).toBe(String(STREAM_SEQUENCE_NUM));
+        expect(resumed?.headers.authorization).toBe(CREATE_BEARER);
+
+        stopWatching.abort();
+        await watching.catch(() => {
+          // Leaving the subscription aborts its request; the iterator ending on that abort is the expected shape, not a failure to surface.
+        });
+        secure.destroy();
+      } finally {
+        hub?.close();
+        await new Promise<void>((resolve) => {
+          server.close(() => {
+            resolve(undefined);
+          });
+          server.closeAllConnections();
         });
         await close();
         await world.stop();

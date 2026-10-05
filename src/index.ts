@@ -2,7 +2,7 @@
  * The library surface of agent-shim: the pure, port-injected parts other tools can call in-process instead of shelling out to the CLI. Four groups, none of which imports interactive prompting or argument parsing:
  *
  * - identity and configuration-profile resolution and farm sync (`resolveDecisions`, `resyncFarm`, `buildEntryFacts`, ...), pure over facts and ports passed in;
- * - routing: the front door's Remote-Control-preserving, capability-authenticated CONNECT surface and its certificate authority, the Remote Control session tracker (pending control requests and worker status included) with prompt injection and control-request answering over the same observed protocol, the control surface that lists, reads status and writes through, the front-door supervisor and ensure lifecycle, and the headroom supervisor and ensure lifecycle, each pure over its injected ports;
+ * - routing: the front door's Remote-Control-preserving, capability-authenticated CONNECT surface and its certificate authority, the Remote Control session tracker (pending control requests and worker status included) with prompt injection and control-request answering over the same observed protocol, the control surface that lists, reads status and writes through, the client read stream attachment (the SSE parser, the fan-out and the per-session hub that holds the stream open over the door's own dials), the same operations as a typed oRPC API with its node handler and TLS-pinned client, the front-door supervisor and ensure lifecycle, and the headroom supervisor and ensure lifecycle, each pure over its injected ports;
  * - the ambient-credential guard;
  * - the per-identity usage snapshot a statusline or launcher reads: its schema and the reader over an injected filesystem, `effectiveWindow` (how a window past its reset reads), and the pool ranking (`rankPool` over snapshots and a clock, `collectPoolPick` reading this machine, and the schema of the report `pool pick --json` prints);
  * - `evaluateWhen` and `matchBranch`, the condition evaluator behind a rule's or entry's `when`, so a consumer reading directory rules applies the same semantics;
@@ -61,7 +61,7 @@ export {
   type ConnectTarget,
   type LeafCert,
 } from "./frontdoor/connect";
-export { realConnectEffects, realRcEventDial, type RcDialTarget } from "./frontdoor/connectEffects";
+export { realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./frontdoor/connectEffects";
 export {
   RC_SESSIONS_PATH_PREFIX,
   RC_IDLE_EXPIRY_MS,
@@ -104,6 +104,36 @@ export {
   type RcWriteHeaders,
 } from "./frontdoor/rcSessions";
 export { CONTROL_PATH_PREFIX, createRcControlHandler, frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl, type RcControlAnswer, type RcControlHandlerDeps, type RcControlTransport } from "./frontdoor/rcControl";
+export {
+  RC_ORPC_PATH_PREFIX,
+  createRcApiNodeHandler,
+  createRcApiRouter,
+  frontDoorRcApiClient,
+  type RcApiClient,
+  type RcApiDeps,
+  type RcApiRouter,
+} from "./frontdoor/rcApi";
+export {
+  RcPermissionModeSchema,
+  RcStreamEnvelopeSchema,
+  RcStreamEventSchema,
+  type RcStreamEnvelope,
+  type RcStreamEvent,
+} from "./frontdoor/rcSchemas";
+export {
+  RC_STREAM_BACKOFF_MS,
+  createRcEventFanout,
+  createRcStreamHub,
+  createSseParser,
+  parseRcStreamEnvelope,
+  type RcEventFanout,
+  type RcPresenceAnswer,
+  type RcStreamAnswer,
+  type RcStreamDial,
+  type RcStreamHub,
+  type RcStreamHubDeps,
+  type SseParsedEvent,
+} from "./frontdoor/rcStream";
 export { ensureFrontDoor, FrontDoorStartError, type EnsureFrontDoorPorts } from "./frontdoor/ensure";
 export { runFrontDoorSupervisor, type FrontDoorSupervisorPorts, type RunFrontDoorSupervisorOptions } from "./frontdoor/supervisor";
 export { listUsageSnapshots, readUsageSnapshot, snapshotPath, UsageSnapshotError, type UsageReadFs } from "./usage/read";

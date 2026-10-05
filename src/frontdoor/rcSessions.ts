@@ -2,6 +2,7 @@ import type { IncomingHttpHeaders } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
 import type { PassthroughObserver } from "./capture";
+import type { RcStreamEnvelope } from "./rcSchemas";
 import type { FrontDoorRoute, RoutedResponse } from "./route";
 
 /**
@@ -30,6 +31,9 @@ const RC_CREATE_RESPONSE_CAP_BYTES = 8192;
 
 /** The response header the API uses to close a worker's session out from under it: any observed value means this session is no longer the live one. */
 const CONFLICT_REASON_HEADER = "x-ccr-conflict-reason";
+
+/** The client read stream's envelope source that names the worker (the CLI's half) as an event's emitter: the source a stream-borne `control_request` must carry to be a request the door can answer. */
+const RC_STREAM_WORKER_SOURCE = "worker";
 
 /**
  * How long a control request stays answerable once observed. The protocol's own permission round-trip is documented at roughly 10 to 14 seconds end to end, so the ceiling of that window is the exact bound after which the worker has already given up waiting: answering later would write a `control_response` nothing is waiting for. A request exactly at the bound is already too late, which is why expiry is `>=` and not `>`.
@@ -72,6 +76,8 @@ interface RcSessionRecord {
   workerState: RcWorkerFact<string> | undefined;
   /** The idle the latest heartbeat carried, with when that exchange was observed. */
   workerIdleSeconds: RcWorkerFact<number> | undefined;
+  /** The highest sequence number the door has seen for this session, from the client read stream's envelopes or from its own confirmed writes: the value a stream resume continues after. */
+  sequenceNum: number | undefined;
 }
 
 /** One pending control request as the tracker holds it. */
@@ -160,6 +166,14 @@ export interface RcSessionTracker {
   readonly pendingOf: (sessionId?: string) => readonly RcPendingRequestSummary[];
   /** The observed credential and protocol headers for one session, the client-half writes' accessor: present only while the session is tracked, and never surfaced anywhere a summary, log or capture goes. */
   readonly credentialOf: (sessionId: string) => RcObservedCredential | undefined;
+  /** Advances the session's sequence cursor to the highest number named, which every confirmed client-half write calls with the numbers the real service assigned its events. */
+  readonly noteSequenceNums: (sessionId: string, sequenceNums: readonly number[]) => void;
+  /** The session's sequence cursor: the highest number the door has seen, from the client read stream's envelopes or from its own confirmed writes; undefined while neither has been seen. */
+  readonly sequenceNumOf: (sessionId: string) => number | undefined;
+  /**
+   * Files one client read stream envelope: advances the session's sequence cursor, and treats the payload exactly as an observed event-batch body's would be treated, which is how an approval reaches the pending list from the stream (the live finding behind the client attachment: the CLI routes `control_request`s only toward attached clients, so the stream, not the worker's own writes, is where a `can_use_tool` the door must answer becomes visible). A `control_request` whose envelope names the worker as its source births a pending entry; a `control_response` retires the request it answers, whoever answered it.
+   */
+  readonly fileStreamEvent: (sessionId: string, event: RcStreamEnvelope) => void;
   /** Retires one pending control request as answered: what a successful answer write calls, so the request stops being listed the moment it is answered. */
   readonly completePending: (sessionId: string, requestId: string) => void;
   /** Stops the idle sweep timer. The entries themselves are unreachable the moment the door drops them. */
@@ -357,7 +371,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   timer.unref();
 
   const birth = (id: string, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined }>): RcSessionRecord => {
-    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), workerState: undefined, workerIdleSeconds: undefined };
+    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), workerState: undefined, workerIdleSeconds: undefined, sequenceNum: undefined };
     entries.set(id, record);
     return record;
   };
@@ -530,6 +544,37 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       const entry = entries.get(sessionId);
       return entry === undefined ? undefined : { authorization: entry.oauthAuthorization, anthropicVersion: entry.anthropicVersion, anthropicClientPlatform: entry.anthropicClientPlatform };
     },
+    noteSequenceNums: (sessionId, sequenceNums) => {
+      const entry = entries.get(sessionId);
+      if (entry === undefined) {
+        return;
+      }
+      for (const sequenceNum of sequenceNums) {
+        entry.sequenceNum = entry.sequenceNum === undefined || sequenceNum > entry.sequenceNum ? sequenceNum : entry.sequenceNum;
+      }
+    },
+    sequenceNumOf: (sessionId) => entries.get(sessionId)?.sequenceNum,
+    fileStreamEvent: (sessionId, event) => {
+      const entry = entries.get(sessionId);
+      if (entry === undefined) {
+        return;
+      }
+      entry.sequenceNum = entry.sequenceNum === undefined || event.sequence_num > entry.sequenceNum ? event.sequence_num : entry.sequenceNum;
+      if (!isRecord(event.payload)) {
+        return;
+      }
+      const pending = pendingOfControlRequestPayload(event.payload);
+      if (pending !== undefined) {
+        // Only the worker emits control requests (the ground truth of the client half: the stream's `control_request` envelopes name the worker as their source), so a request from anyone else is not birthed.
+        if (event.source === RC_STREAM_WORKER_SOURCE) {
+          entry.pending.set(pending.requestId, { sessionId, ...pending, observedAt: deps.now() });
+        }
+        return;
+      }
+      for (const requestId of answeredRequestIdsOfControlResponsePayload(event.payload)) {
+        entry.pending.delete(requestId);
+      }
+    },
     completePending: (sessionId, requestId) => {
       entries.get(sessionId)?.pending.delete(requestId);
     },
@@ -541,8 +586,10 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
 
 /**
  * Wraps one route so the tracker sees every exchange the route serves: the request's facts are handed over first, and when they are Remote Control facts the request's body chunks and the response the route writes are teed to the tracker's observer while flowing on unchanged. Used on the door's route resolution, so the bare `/v1/` pass-through an OAuth session's Remote Control calls ride is where observation happens.
+ *
+ * `onExchangeSettled`, when given, is called once the exchange's response has ended and the observer has filed whatever it filed: it is where the door re-pokes the client stream attachment, so a session becomes attached the moment its create's own response completes rather than at whatever exchange happens to follow.
  */
-export function observingRoutedRoute(route: FrontDoorRoute, tracker: RcSessionTracker): FrontDoorRoute {
+export function observingRoutedRoute(route: FrontDoorRoute, tracker: RcSessionTracker, hooks?: { readonly onExchangeSettled?: () => void }): FrontDoorRoute {
   return {
     ...route,
     serve: async (request, response) => {
@@ -556,7 +603,7 @@ export function observingRoutedRoute(route: FrontDoorRoute, tracker: RcSessionTr
           observed.onRequestEnd?.();
         });
       }
-      await route.serve(request, observed === undefined ? response : teeRoutedResponse(response, observed));
+      await route.serve(request, observed === undefined ? response : teeRoutedResponse(response, observed, hooks?.onExchangeSettled));
     },
   };
 }
@@ -564,7 +611,7 @@ export function observingRoutedRoute(route: FrontDoorRoute, tracker: RcSessionTr
 /**
  * The response half of `observingRoutedRoute`: every call forwards to the wrapped response untouched, with the tracker's observer driven alongside. A route that ends mid-body because its client went away calls neither `end` nor `destroy`, so `onEnd` never runs and an unfinished create is simply never filed; the observer is then unreachable, and nothing is retained.
  */
-function teeRoutedResponse(response: RoutedResponse, observer: RcExchangeObserver): RoutedResponse {
+function teeRoutedResponse(response: RoutedResponse, observer: RcExchangeObserver, onSettled?: () => void): RoutedResponse {
   return {
     get headersSent(): boolean {
       return response.headersSent;
@@ -583,10 +630,12 @@ function teeRoutedResponse(response: RoutedResponse, observer: RcExchangeObserve
     end: () => {
       response.end();
       observer.onEnd();
+      onSettled?.();
     },
     destroy: () => {
       response.destroy();
       observer.onEnd();
+      onSettled?.();
     },
   };
 }
@@ -708,6 +757,8 @@ export type RcObservedCredential = RcWriteHeaders;
 export interface RcInjectDeps {
   /** Reads the observed credential for a session: the tracker's accessor, in production. */
   readonly credentialOf: (sessionId: string) => RcObservedCredential | undefined;
+  /** Advances the session's sequence cursor: the tracker's accessor, in production, so a delivered write's numbers are what a stream resume continues after. */
+  readonly noteSequenceNums: (sessionId: string, sequenceNums: readonly number[]) => void;
   /** The dial to the real API host. */
   readonly dial: RcEventDial;
   /** Mints the payload event's uuid: a v4 UUID or better in production. */
@@ -717,6 +768,11 @@ export interface RcInjectDeps {
 /** The failure every client-half write returns when the tracker holds no OAuth-kind bearer for the session: only worker calls were observed, and the worker JWT they carry does not authorise the client half. */
 function noOAuthCredentialResult(sessionId: string): RcEventWriteResult {
   return { ok: false, message: `no claude.ai OAuth bearer has been observed for session ${sessionId}: only worker calls crossed this door, and the worker JWT they carry is answered 401 on the client half. Reconnect Remote Control through this door and the create's own bearer will be observed` };
+}
+
+/** The verbose refusal every surface answers a session it has not observed with, in one place so the routes, the typed API and the operations all name the same reason. */
+export function rcSessionNotObservedMessage(sessionId: string): string {
+  return `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)`;
 }
 
 /** The headers every client-half write sends, from the observed credential: the observed values replayed verbatim. The authorization is present by construction, since every caller guards on it (the write refuses to go out unauthenticated rather than surface as a confusing 401). */
@@ -740,7 +796,7 @@ function rcWriteHeaders(credential: RcObservedCredential): Record<string, string
 export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string, text: string): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
-    return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)` };
+    return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
   }
   if (credential.authorization === undefined) {
     return noOAuthCredentialResult(sessionId);
@@ -752,7 +808,11 @@ export async function injectRcUserMessage(deps: RcInjectDeps, sessionId: string,
   } catch (error) {
     return { ok: false, message: `the door could not reach the API host to inject into session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
   }
-  return rcEventWriteResultFromAnswer(answer);
+  const result = rcEventWriteResultFromAnswer(answer);
+  if (result.ok) {
+    deps.noteSequenceNums(sessionId, result.sequenceNums);
+  }
+  return result;
 }
 
 /** The decision an answer carries: approve or deny, with the message a denial shows the worker (the protocol's allow result has no text field, so an approval carries none). */
@@ -812,6 +872,8 @@ export interface RcAnswerDeps {
   readonly pendingOf: (sessionId: string) => readonly RcPendingRequestSummary[];
   /** Retires a pending request as answered: the tracker's accessor, in production, called only once the write is confirmed delivered. */
   readonly completePending: (sessionId: string, requestId: string) => void;
+  /** Advances the session's sequence cursor: the tracker's accessor, in production, so a delivered write's numbers are what a stream resume continues after. */
+  readonly noteSequenceNums: (sessionId: string, sequenceNums: readonly number[]) => void;
   /** The dial to the real API host. */
   readonly dial: RcEventDial;
 }
@@ -822,7 +884,7 @@ export interface RcAnswerDeps {
 export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: string, requestId: string, decision: RcAnswerDecision): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
-    return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)` };
+    return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
   }
   if (credential.authorization === undefined) {
     return noOAuthCredentialResult(sessionId);
@@ -840,6 +902,7 @@ export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: stri
   const result = rcEventWriteResultFromAnswer(answer);
   if (result.ok) {
     deps.completePending(sessionId, requestId);
+    deps.noteSequenceNums(sessionId, result.sequenceNums);
   }
   return result;
 }
@@ -848,6 +911,8 @@ export async function answerRcControlRequest(deps: RcAnswerDeps, sessionId: stri
 export interface RcControlRequestDeps {
   /** Reads the observed credential for a session: the tracker's accessor, in production. */
   readonly credentialOf: (sessionId: string) => RcObservedCredential | undefined;
+  /** Advances the session's sequence cursor: the tracker's accessor, in production, so a delivered write's numbers are what a stream resume continues after. */
+  readonly noteSequenceNums: (sessionId: string, sequenceNums: readonly number[]) => void;
   /** The dial to the real API host. */
   readonly dial: RcEventDial;
   /** Mints the request's id: a v4 UUID or better in production, the id the worker's `control_response` echoes. */
@@ -860,7 +925,7 @@ export interface RcControlRequestDeps {
 export async function interruptRcSession(deps: RcControlRequestDeps, sessionId: string): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
-    return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)` };
+    return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
   }
   if (credential.authorization === undefined) {
     return noOAuthCredentialResult(sessionId);
@@ -872,7 +937,11 @@ export async function interruptRcSession(deps: RcControlRequestDeps, sessionId: 
   } catch (error) {
     return { ok: false, message: `the door could not reach the API host to interrupt session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
   }
-  return rcEventWriteResultFromAnswer(answer);
+  const result = rcEventWriteResultFromAnswer(answer);
+  if (result.ok) {
+    deps.noteSequenceNums(sessionId, result.sequenceNums);
+  }
+  return result;
 }
 
 /**
@@ -884,7 +953,7 @@ export async function setRcSessionModel(deps: RcControlRequestDeps, sessionId: s
   }
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
-    return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)` };
+    return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
   }
   if (credential.authorization === undefined) {
     return noOAuthCredentialResult(sessionId);
@@ -896,7 +965,11 @@ export async function setRcSessionModel(deps: RcControlRequestDeps, sessionId: s
   } catch (error) {
     return { ok: false, message: `the door could not reach the API host to set the model on session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
   }
-  return rcEventWriteResultFromAnswer(answer);
+  const result = rcEventWriteResultFromAnswer(answer);
+  if (result.ok) {
+    deps.noteSequenceNums(sessionId, result.sequenceNums);
+  }
+  return result;
 }
 
 /**
@@ -905,7 +978,7 @@ export async function setRcSessionModel(deps: RcControlRequestDeps, sessionId: s
 export async function setRcSessionPermissionMode(deps: RcControlRequestDeps, sessionId: string, mode: RcPermissionMode): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
-    return { ok: false, message: `the front door has not observed Remote Control session ${sessionId}: it may never have passed through this door, or it ended or expired (an entry lives only a bounded idle period past its last observed traffic)` };
+    return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
   }
   if (credential.authorization === undefined) {
     return noOAuthCredentialResult(sessionId);
@@ -917,5 +990,9 @@ export async function setRcSessionPermissionMode(deps: RcControlRequestDeps, ses
   } catch (error) {
     return { ok: false, message: `the door could not reach the API host to set the permission mode on session ${sessionId}: ${error instanceof Error ? error.message : String(error)}` };
   }
-  return rcEventWriteResultFromAnswer(answer);
+  const result = rcEventWriteResultFromAnswer(answer);
+  if (result.ok) {
+    deps.noteSequenceNums(sessionId, result.sequenceNums);
+  }
+  return result;
 }

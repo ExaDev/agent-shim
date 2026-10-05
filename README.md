@@ -138,6 +138,7 @@ agent-shim frontdoor rc answer --session <cse_id> --request <id> --approve | --d
 agent-shim frontdoor rc interrupt --session <cse_id> [--json]
 agent-shim frontdoor rc set-model --session <cse_id> --model <model> [--json]
 agent-shim frontdoor rc set-permission-mode --session <cse_id> --mode <mode> [--json]
+agent-shim frontdoor rc watch [<cse_id>] [--json]
 agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--json]
 agent-shim account show [<identity>] [--refresh] [--json]
 agent-shim completion <bash|zsh|fish>

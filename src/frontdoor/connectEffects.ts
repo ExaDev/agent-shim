@@ -6,8 +6,19 @@ import type { LookupFunction } from "node:net";
 import * as net from "node:net";
 import * as tls from "node:tls";
 
+import { HTTP_STATUS } from "../codex/http";
 import { CONNECT_INTERCEPT_HOST, HTTPS_PORT, HTTP_BAD_GATEWAY, forwardableHeaders, type ConnectEffects, type ConnectListenerHandle } from "./connect";
 import type { RcDialAnswer, RcEventDial } from "./rcSessions";
+import type { RcStreamDial } from "./rcStream";
+import { upstreamChunks } from "./server";
+
+/** The exclusive ceiling of the 2xx success class, whose bounds are fixed hundreds (RFC 9110 section 15); named once so a range check never carries a bare literal. */
+const SUCCESS_STATUS_MAX_EXCLUSIVE = 300;
+
+/** Whether a status is a 2xx success. */
+function isSuccessful(status: number): boolean {
+  return status >= HTTP_STATUS.ok && status < SUCCESS_STATUS_MAX_EXCLUSIVE;
+}
 
 /** The real `ConnectEffects` over node's own net, tls, and http. `connectTcp` opens real connections to the CONNECTed host, so tests that want a blind tunnel redirect it. */
 /**
@@ -211,6 +222,76 @@ export function realRcEventDial(target: RcDialTarget = { host: CONNECT_INTERCEPT
         request.once("error", reject);
         request.end(body);
       }),
+  };
+}
+
+/**
+ * The real `RcStreamDial`: the client read stream half's own dials, over the same interception-proof TLS agent the write path uses so the stream cannot be looped back into the door's own transparent surface. The presence call is one small JSON exchange; the stream request is answered chunk by chunk as the host sends them, never buffered, because the whole point of holding it open is to see events as they arrive. A non-2xx stream answer is drained and returned with no chunks (its body is one small error document), and the abort signal tears the request down wherever it is, which is how the door stops an attachment without waiting for the host to speak.
+ */
+/** An empty byte stream: what a non-2xx stream answer's chunks resolve to, its real body having been drained into the answer's error report. */
+const NO_CHUNKS: AsyncIterable<Uint8Array> = {
+  [Symbol.asyncIterator]: (): AsyncIterator<Uint8Array> => ({
+    next: async () => await Promise.resolve({ done: true, value: undefined }),
+  }),
+};
+
+export function realRcStreamDial(target: RcDialTarget = { host: CONNECT_INTERCEPT_HOST, port: HTTPS_PORT }): RcStreamDial {
+  const agent = new ExemptTlsAgent();
+  const request = async (method: "GET" | "POST", path: string, headers: Readonly<Record<string, string>>, body: string | undefined, signal: AbortSignal): Promise<{ readonly status: number; readonly response: http.IncomingMessage }> =>
+    await new Promise((resolve, reject) => {
+      const options: https.RequestOptions = {
+        host: target.host,
+        port: target.port,
+        method,
+        path,
+        // The Host header names the host whose API this is, not the address dialled: a redirected test dials a loopback stand-in while still speaking to the API host by name, exactly as the forwarded paths present their SNI.
+        headers: { ...headers, host: target.servername ?? target.host, ...(body === undefined ? {} : { "content-length": String(Buffer.byteLength(body, "utf8")) }) },
+        agent,
+        signal,
+      };
+      // The request's own TLS facts ride in the options (a stand-in's servername, its trust anchors, its verification stance), exactly as the write dial's do.
+      options.servername = target.servername ?? target.host;
+      if (target.ca !== undefined) {
+        options.ca = [...target.ca];
+      }
+      if (target.rejectUnauthorized !== undefined) {
+        options.rejectUnauthorized = target.rejectUnauthorized;
+      }
+      const sent = https.request(options, (response) => {
+        resolve({ status: response.statusCode ?? HTTP_BAD_GATEWAY, response });
+      });
+      sent.once("error", reject);
+      if (body === undefined) {
+        sent.end();
+      } else {
+        sent.end(body);
+      }
+    });
+  const readAll = async (response: http.IncomingMessage): Promise<string> => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of upstreamChunks(response)) {
+      chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  };
+  return {
+    announcePresence: async (sessionId, headers, clientId) => {
+      const body = JSON.stringify({ client_id: clientId, clear: false });
+      const { status, response } = await request("POST", `/v1/code/sessions/${encodeURIComponent(sessionId)}/client/presence`, { ...headers, "content-type": "application/json" }, body, new AbortController().signal);
+      return { status, body: await readAll(response) };
+    },
+    openStream: async (sessionId, headers, resume, signal) => {
+      // The protocol's documented resume rule: the query parameter and the header are sent together, naming the sequence number to continue after. An attachment that has seen no events yet sends neither and reads from the stream's own head.
+      const path = resume === undefined ? `/v1/code/sessions/${encodeURIComponent(sessionId)}/events/stream` : `/v1/code/sessions/${encodeURIComponent(sessionId)}/events/stream?from_sequence_num=${String(resume.fromSequenceNum)}`;
+      const streamHeaders = resume === undefined ? headers : { ...headers, "last-event-id": String(resume.fromSequenceNum) };
+      const { status, response } = await request("GET", path, streamHeaders, undefined, signal);
+      if (!isSuccessful(status)) {
+        // Drained, not kept: a refused answer's body is one small error document, and leaving it unread would hold the socket.
+        await readAll(response);
+        return { status, chunks: NO_CHUNKS };
+      }
+      return { status, chunks: response };
+    },
   };
 }
 
