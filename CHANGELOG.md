@@ -1,3 +1,9 @@
+## [8.11.3](https://github.com/ExaDev/agent-shim/compare/v8.11.2...v8.11.3) (2026-10-05)
+
+### Documentation
+
+* name the eager tool loading every provider session gets, and the env-block lever ([c2bccf5](https://github.com/ExaDev/agent-shim/commit/c2bccf58a7aed74e928e9edf211df9e6fb75b8db))
+
 ## [8.11.2](https://github.com/ExaDev/agent-shim/compare/v8.11.1...v8.11.2) (2026-10-05)
 
 ### Documentation
