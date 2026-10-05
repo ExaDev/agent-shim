@@ -1,5 +1,6 @@
 import { parseProviderPath } from "../frontdoor/route";
 import { HTTP_STATUS } from "./http";
+import type { CodexLogin } from "../config/schema";
 import type { ResolvedCodexConfig } from "./translate";
 import { CountTokensRequestSchema, MessagesRequestSchema } from "./anthropic";
 import { CodexErrorEnvelopeSchema, codexEvents, type CodexErrorDetail, type ResponsesUsage } from "./events";
@@ -33,7 +34,8 @@ export type CodexProviderLookup =
 
 /** Everything the route depends on. */
 export interface CodexRoutePorts {
-  readonly upstream: CodexUpstreamPorts;
+  /** The upstream call, per login: the provider's `codex.login` picks which one carries its requests. */
+  readonly upstreams: Readonly<Record<CodexLogin, CodexUpstreamPorts>>;
   /** Loads the named provider's translation settings, read per request so an edited provider file applies to the next request with no restart. */
   readonly loadProvider: (name: string) => CodexProviderLookup;
   /** Persists the usage snapshot a statusline reads. Failures are the port's to report; they never fail the request. */
@@ -104,13 +106,14 @@ export function createCodexRoute(ports: CodexRoutePorts): (request: RouteRequest
     }
     const body = parsed.data;
     const requestedModel = body.model ?? "";
+    const upstreamPorts = ports.upstreams[config.login];
     const { request: upstreamRequest, toolNames } = translateRequest(body, config);
     const started = ports.now();
     const elapsed = (): string => `${String(ports.now() - started)}ms`;
 
     let upstream: UpstreamResponse;
     try {
-      upstream = await callCodex(ports.upstream, upstreamRequest, sessionIdFor(body.metadata?.user_id, ports.upstream.randomId), request.signal);
+      upstream = await callCodex(upstreamPorts, upstreamRequest, sessionIdFor(body.metadata?.user_id, upstreamPorts.randomId), request.signal);
     } catch (error) {
       if (request.signal.aborted) {
         return errorResponse(HTTP_STATUS.clientClosedRequest, "client disconnected");
@@ -147,7 +150,7 @@ export function createCodexRoute(ports: CodexRoutePorts): (request: RouteRequest
     }
     snapshot(undefined);
 
-    const relay = createRelay({ requestedModel, toolNames, fallbackId: () => `msg_${ports.upstream.randomId()}` });
+    const relay = createRelay({ requestedModel, toolNames, fallbackId: () => `msg_${upstreamPorts.randomId()}` });
     const upstreamBody = upstream.body;
     const quota = { ...quotaHeaders(upstream.headers), ...unifiedQuotaHeaders(upstream.headers, false, undefined) };
     const logCompleted = (message: AnthropicMessageResponse, usage: ResponsesUsage | undefined): void => {

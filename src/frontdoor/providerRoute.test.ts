@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
-import { fakeAuth, recordingFetch } from "../codex/testing";
+import { fakeAuth, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { FAKE_HOME, fakeFs } from "../test-helpers";
 import { createProviderRouteResolver } from "./providerRoute";
 import type { RoutedRequest } from "./route";
@@ -20,7 +20,7 @@ function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
     throw new Error("these tests never answer an upstream call");
   });
   return {
-    upstream: { fetch: fetch.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" },
+    upstreams: sameUpstreamForEveryLogin({ fetch: fetch.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }),
     writeUsageSnapshot: () => undefined,
     now: () => 0,
     log: () => undefined,

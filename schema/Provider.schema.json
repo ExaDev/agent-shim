@@ -431,6 +431,13 @@
                 "medium",
                 "high"
               ]
+            },
+            "login": {
+              "type": "string",
+              "enum": [
+                "codex-cli",
+                "chatgpt-sign-in"
+              ]
             }
           },
           "additionalProperties": false

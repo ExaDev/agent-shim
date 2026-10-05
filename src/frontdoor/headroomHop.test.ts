@@ -9,7 +9,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
-import { fakeAuth, fakeResponse, recordingFetch } from "../codex/testing";
+import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { HEADROOM_SOCKET_DIR_MODE, headroomSocketPath, type HeadroomSocketTarget } from "../headroom/socket";
 import { writeHeadroomState } from "../headroom/state";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
@@ -219,7 +219,7 @@ beforeAll(() => {
 async function startDoor(options: { readonly files: Record<string, unknown>; readonly log?: (line: string) => void }): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly directPort: () => number }> {
   const upstream = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const ports: Omit<CodexRoutePorts, "loadProvider"> = {
-    upstream: { fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" },
+    upstreams: sameUpstreamForEveryLogin({ fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }),
     writeUsageSnapshot: () => undefined,
     now: () => 0,
     log: () => undefined,

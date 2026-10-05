@@ -1,5 +1,7 @@
+import type { CodexLogin } from "../config/schema";
 import type { CodexAuthStore, CodexCredentials } from "./auth";
 import { HTTP_STATUS } from "./http";
+import type { CodexUpstreamPorts } from "./upstream";
 import type { UpstreamFetch, UpstreamRequestInit, UpstreamResponse } from "./upstreamPort";
 
 /**
@@ -40,6 +42,11 @@ export function fakeResponse(
       return await Promise.resolve(value);
     },
   };
+}
+
+/** The same upstream ports for every login, for tests that do not tell the logins apart. */
+export function sameUpstreamForEveryLogin(upstream: CodexUpstreamPorts): Record<CodexLogin, CodexUpstreamPorts> {
+  return { "codex-cli": upstream, "chatgpt-sign-in": upstream };
 }
 
 /** One recorded upstream call. */

@@ -1,4 +1,4 @@
-import { createHash, createSign, generateKeyPairSync, type JsonWebKey } from "node:crypto";
+import { createHash, createSign, generateKeyPairSync } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
@@ -137,7 +137,7 @@ describe("exchangeCode and refreshTokens", () => {
 describe("verifyIdToken", () => {
   const pair = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const otherPair = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  const jwk: JsonWebKey = pair.publicKey.export({ format: "jwk" });
+  const jwk = pair.publicKey.export({ format: "jwk" });
   const KID = "key-1";
 
   const segment = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString("base64url");

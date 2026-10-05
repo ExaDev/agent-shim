@@ -4,7 +4,7 @@ import { HTTP_STATUS } from "./http";
 import type { UsageSnapshot } from "./quota";
 import { createCodexRoute, type CodexProviderLookup, type RouteRequest } from "./route";
 import { CODEX_TOOL_NAME_LIMIT, resolveCodexConfig } from "./translate";
-import { sessionIdFor } from "./upstream";
+import { RESPONSES_API_TARGET, sessionIdFor } from "./upstream";
 import type { UpstreamResponse } from "./upstreamPort";
 import {
   collectBody,
@@ -16,6 +16,7 @@ import {
   parseAnthropicSse,
   recordingFetch,
   type RecordedCall,
+  sameUpstreamForEveryLogin,
 } from "./testing";
 
 const MESSAGES_PATH = "/providers/codex/v1/messages";
@@ -67,7 +68,7 @@ function harness(respond: (call: RecordedCall, index: number) => UpstreamRespons
   const logs: string[] = [];
   let ids = 0;
   const route = createCodexRoute({
-    upstream: { fetch: fetch.fetch, auth, timers: manualTimers(), randomId: () => `random-${String((ids += 1))}` },
+    upstreams: sameUpstreamForEveryLogin({ fetch: fetch.fetch, auth, timers: manualTimers(), randomId: () => `random-${String((ids += 1))}` }),
     loadProvider: lookup ?? (() => ({ ok: true, config: resolveCodexConfig(undefined) })),
     writeUsageSnapshot: (snapshot) => {
       snapshots.push(snapshot);
@@ -370,5 +371,44 @@ describe("codex route: client disconnect", () => {
     const response = await route(post(MESSAGES_PATH, { messages: [], stream: true }, client.signal));
     const relayed = parseAnthropicSse(await collectBody(response.body));
     expect(relayed.map((event) => event.event)).toEqual(["message_start"]);
+  });
+});
+
+describe("codex route: login selection", () => {
+  const BODY = { model: "claude-sonnet-4-5", messages: [{ role: "user", content: "Hi" }], stream: false };
+
+  function routeWithTwoLogins(login: "codex-cli" | "chatgpt-sign-in") {
+    const cli = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
+    const signIn = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
+    const route = createCodexRoute({
+      upstreams: {
+        "codex-cli": { fetch: cli.fetch, auth: fakeAuth(), timers: manualTimers(), randomId: () => "random" },
+        "chatgpt-sign-in": { fetch: signIn.fetch, auth: fakeAuth(), timers: manualTimers(), randomId: () => "random", target: RESPONSES_API_TARGET },
+      },
+      loadProvider: () => ({ ok: true, config: resolveCodexConfig({ login }) }),
+      writeUsageSnapshot: () => undefined,
+      now: () => NOW,
+      log: () => undefined,
+    });
+    return { route, cli, signIn };
+  }
+
+  it("sends a codex-cli provider to the Codex backend with its account headers", async () => {
+    const { route, cli, signIn } = routeWithTwoLogins("codex-cli");
+    await route(post(MESSAGES_PATH, BODY));
+    expect(signIn.calls).toHaveLength(0);
+    expect(cli.calls[0]?.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+    expect(cli.calls[0]?.init.headers).toMatchObject({ Authorization: `Bearer ${FAKE_ACCESS_TOKEN}`, "chatgpt-account-id": "fake-account", originator: "codex_cli_rs" });
+  });
+
+  it("sends a chatgpt-sign-in provider to the public Responses API with a bearer token only", async () => {
+    const { route, cli, signIn } = routeWithTwoLogins("chatgpt-sign-in");
+    const response = await route(post(MESSAGES_PATH, BODY));
+    expect(response.status).toBe(HTTP_STATUS.ok);
+    expect(cli.calls).toHaveLength(0);
+    expect(signIn.calls[0]?.url).toBe("https://api.openai.com/v1/responses");
+    const headers = signIn.calls[0]?.init.headers ?? {};
+    expect(headers.Authorization).toBe(`Bearer ${FAKE_ACCESS_TOKEN}`);
+    expect(Object.keys(headers).sort()).toEqual(["Accept", "Authorization", "Content-Type"]);
   });
 });

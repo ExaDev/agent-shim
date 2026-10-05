@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 
 import {
   CODEX_DEFAULT_EFFORT,
+  CODEX_DEFAULT_LOGIN,
   CODEX_DEFAULT_MODEL,
   CODEX_DEFAULT_TIER_MODELS,
   CODEX_TIERS,
   type CodexEffort,
+  type CodexLogin,
   type CodexProviderConfig,
   type CodexTier,
 } from "../config/schema";
@@ -26,6 +28,7 @@ export interface ResolvedCodexConfig {
   readonly defaultModel: string;
   readonly models: Readonly<Record<CodexTier, string>>;
   readonly effort: CodexEffort;
+  readonly login: CodexLogin;
 }
 
 /** Applies the shipped defaults to a provider's optional `codex` block. */
@@ -40,6 +43,7 @@ export function resolveCodexConfig(config: CodexProviderConfig | undefined): Res
       haiku: overrides?.haiku ?? CODEX_DEFAULT_TIER_MODELS.haiku,
     },
     effort: config?.effort ?? CODEX_DEFAULT_EFFORT,
+    login: config?.login ?? CODEX_DEFAULT_LOGIN,
   };
 }
 

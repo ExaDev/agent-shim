@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
-import { fakeAuth, fakeResponse, parseAnthropicSse, recordingFetch, type RecordedCall } from "../codex/testing";
+import { fakeAuth, fakeResponse, parseAnthropicSse, recordingFetch, sameUpstreamForEveryLogin, type RecordedCall } from "../codex/testing";
 import { FAKE_HOME, admitLaunchToken, fakeFs } from "../test-helpers";
 import type { SessionIdentity } from "./route";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute } from "./route";
@@ -66,7 +66,7 @@ async function startDoor(resolveRoute: PipelineDeps["resolveRoute"], preferredPo
 async function startProviderDoor(files: Record<string, unknown>, preferredPort?: number): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly port: number; readonly calls: readonly RecordedCall[] }> {
   const upstream = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const ports: Omit<CodexRoutePorts, "loadProvider"> = {
-    upstream: { fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" },
+    upstreams: sameUpstreamForEveryLogin({ fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }),
     writeUsageSnapshot: () => undefined,
     now: () => 0,
     log: () => undefined,
