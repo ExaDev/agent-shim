@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Credential } from "./config/schema";
+import type { CredentialCacheEnv } from "./credential";
 import type { Decision } from "./resolve/types";
 import { shippedClassification, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, createFakeFarmFs } from "./test-helpers";
 import { checkReportHasWarnings, checkReportToJson, flagAmbiguousEncodings, formatCheckReport, formatDecision, inspectSettingsExposure, lookupKeychainService, runCheck, type RunCheckParams } from "./checkReport";
@@ -400,6 +401,41 @@ describe("runCheck credential report", () => {
     expect(report.credential).toEqual({ applies: "provider", provider: { name: "z", problem: 'no provider named "z"' } });
     expect(formatCheckReport(report)).toContain('  Provider z: unusable: no provider named "z"');
     expect(checkReportHasWarnings(report)).toBe(true);
+  });
+});
+
+describe("runCheck credential cache", () => {
+  const SECRET = "cached-token-that-must-never-be-reported";
+  const HOUR_MS = 3_600_000;
+  const THREE_HOURS_MS = 10_800_000;
+  const NINE_HOURS_MS = 32_400_000;
+  const TWO_HOURS_MS = 7_200_000;
+  const cachedAt = (offsetMs: number): CredentialCacheEnv => ({
+    port: { read: () => ({ token: SECRET, fetchedAt: FAKE_NOW_MS + offsetMs, source: { env: "X" } }), write: () => undefined, remove: () => undefined },
+    platform: "linux",
+    now: () => FAKE_NOW_MS,
+  });
+  const caching: Credential = { sources: [{ op: "op://vault/claude-work/token" }], target: "oauthToken", cache: { ttl: "12h" } };
+  const identity = { name: "work", allowAmbientCredential: false, credential: caching };
+
+  it("reports the age and remaining time of the identity's cached credential, in the text and the JSON, without the token", () => {
+    const report = runCheck(baseParams({ identityName: "work", identity, credentialCache: cachedAt(-THREE_HOURS_MS) }));
+    expect(formatCheckReport(report)).toContain("  Identity work: oauthToken from op op://vault/claude-work/token, cached for 12h; cached 3h ago, expires in 9h");
+    expect(checkReportToJson(report)).toMatchObject({ credential: { identityCached: { status: "fresh", ageMs: THREE_HOURS_MS, expiresInMs: NINE_HOURS_MS } } });
+    expect(formatCheckReport(report).join("\n") + JSON.stringify(checkReportToJson(report))).not.toContain(SECRET);
+  });
+
+  it("reports a selected provider's cached credential too", () => {
+    const report = runCheck(baseParams({ provider: { name: "z", definition: { displayName: "z", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z_API_TOKEN" }], cache: { ttl: "1h" } } } }, credentialCache: cachedAt(-TWO_HOURS_MS) }));
+    expect(formatCheckReport(report).join("\n")).toContain("cached 2h ago, expired 1h ago");
+  });
+
+  it("says nothing about a cache when the block does not cache, or no cache port was given", () => {
+    const plain = runCheck(baseParams({ identityName: "work", identity: { ...identity, credential: { sources: caching.sources, target: "oauthToken" } }, credentialCache: cachedAt(-HOUR_MS) }));
+    expect(plain.credential.identityCached).toBeUndefined();
+    const noPort = runCheck(baseParams({ identityName: "work", identity }));
+    expect(noPort.credential.identityCached).toBeUndefined();
+    expect(formatCheckReport(noPort).join("\n")).not.toContain("ago");
   });
 });
 
