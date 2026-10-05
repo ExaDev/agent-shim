@@ -7,9 +7,9 @@ import type { RcStreamEnvelope, RcStreamEvent } from "./rcSchemas";
  *
  * The attachment is the half the door was missing. The CLI routes permission approvals only toward attached clients, and nothing is attached until something holds the stream open, so with no subscriber the CLI falls back to asking locally and the approval never crosses the door. The door therefore plays one client itself: per tracked session it announces a stable client id through the presence endpoint and holds one stream open over its own interception-proof dials, authenticated by the same OAuth-kind bearer the write path replays (the tracker's credential). One stream serves every consumer (a singleton per session, not per consumer): each event is filed with the tracker (whose cursor and pending list it advances) and handed to the fan-out, which the typed API's subscription and the `frontdoor rc watch` verb read.
  *
- * Reconnection follows the protocol's documented resume rule: the query parameter `from_sequence_num` and the `Last-Event-ID` header are sent together, naming the highest sequence number the door has seen for the session (stream events and its own confirmed writes both advance it). A drop reconnects immediately with that pair. A 401 re-reads the tracker's credential and retries once, since the observed bearer may simply have gone stale; a failure past that backs off to the session's own liveness bound, because retrying harder than the protocol's own give-up cadence would only hammer a session the protocol may have abandoned, and the next observed exchange for the session re-pokes the attachment anyway.
+ * Reconnection follows the protocol's documented resume rule: the query parameter `from_sequence_num` and the `Last-Event-ID` header are sent together, naming the highest sequence number the door has seen for the session (stream events and its own confirmed writes both advance it). A generation whose memory holds no number yet, because it started after the session's traffic, names the persisted cursor instead (the injected fallback read), so a restarted door resumes where the last generation left off rather than at the stream's head. A drop reconnects immediately with that pair. A 401 re-reads the tracker's credential and retries once, since the observed bearer may simply have gone stale; a failure past that backs off to the session's own liveness bound, because retrying harder than the protocol's own give-up cadence would only hammer a session the protocol may have abandoned, and the next observed exchange for the session re-pokes the attachment anyway.
  *
- * Everything here is in memory only: nothing is written to a log, to the capture, or to disk, and the bearer is used on the dial and never surfaced. The capture's redaction is untouched; a capture and this attachment observe entirely separate paths.
+ * Everything here is in memory only: nothing is written to a log, to the capture, or to disk, and the bearer is used on the dial and never surfaced. The one exception is injected, not this module's own effect: the caller may hand the hub a cursor persistence port, and then the session's sequence number alone (never an event payload, never a credential) is handed to it at attachment boundaries, at exactly the cadence the native client persists its own cursor at. The capture's redaction is untouched; a capture and this attachment observe entirely separate paths.
  */
 
 /** The SSE event name the protocol's client stream dispatches its envelopes under; every other event on the wire is not a client event and is skipped. */
@@ -220,6 +220,10 @@ export interface RcStreamHubDeps {
   readonly fileStreamEvent: (sessionId: string, event: RcStreamEnvelope) => void;
   /** Reads the session's sequence cursor: the highest number the door has seen, from the stream or from its own confirmed writes. */
   readonly sequenceNumOf: (sessionId: string) => number | undefined;
+  /** Reads the session's persisted sequence cursor, consulted only when the tracker's in-memory cursor is undefined at attach time (a door generation that started after the session's traffic, the same fresh-generation case the persisted credential solves for attaching at all), so that generation's first stream resumes where the last one left off instead of at the stream's head. */
+  readonly storedSequenceNumOf?: (sessionId: string) => number | undefined;
+  /** Persists the session's sequence cursor at an attachment boundary (a stream drop, a failed attempt, the attachment's end), never per stream event: the native client persists its own cursor at bridge-session boundaries, and so does this. */
+  readonly saveSequenceNum?: (sessionId: string, sequenceNum: number) => void;
   readonly dial: RcStreamDial;
   readonly fanout: RcEventFanout;
   /** Mints the stable client id one session's attachment announces: a v4 UUID or better in production. Stable means it survives reconnects, so the host sees one client, not a new one per drop. */
@@ -253,6 +257,22 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
     readonly stop: () => void;
   }
   const attachments = new Map<string, Attachment>();
+  /** The last cursor this hub persisted per session, so a boundary that moved nothing writes nothing: one write per boundary that advanced the cursor, not one per boundary. */
+  const lastSavedSequenceNums = new Map<string, number>();
+
+  /** Persists the session's cursor at an attachment boundary: the tracker's own accessor is the value, and a value this hub already persisted is not written again. */
+  const persistCursor = (sessionId: string): void => {
+    if (deps.saveSequenceNum === undefined) {
+      return;
+    }
+    const cursor = deps.sequenceNumOf(sessionId);
+    if (cursor === undefined || cursor === lastSavedSequenceNums.get(sessionId)) {
+      return;
+    }
+    deps.saveSequenceNum(sessionId, cursor);
+    // Recorded only once the port accepted it, so a write that throws is retried at the next boundary rather than remembered as done.
+    lastSavedSequenceNums.set(sessionId, cursor);
+  };
 
   const birth = (sessionId: string): Attachment => {
     const controller = new AbortController();
@@ -293,7 +313,8 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
     if (!isSuccessful(presence.status)) {
       throw new Error(`the presence call answered HTTP ${String(presence.status)}: ${presence.body}`);
     }
-    const cursor = deps.sequenceNumOf(attachment.sessionId);
+    // The tracker's in-memory cursor is the primary source; the persisted one is the fallback a fresh generation needs, because its memory starts empty while the channel left off mid-stream.
+    const cursor = deps.sequenceNumOf(attachment.sessionId) ?? deps.storedSequenceNumOf?.(attachment.sessionId);
     const resume = cursor === undefined ? undefined : { fromSequenceNum: cursor };
     const answer = await deps.dial.openStream(attachment.sessionId, headers, resume, attachment.controller.signal);
     if (answer.status === HTTP_STATUS.unauthorized) {
@@ -330,6 +351,7 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
       if (!live || credential?.authorization === undefined) {
         // The tracker gave up on the session, or only worker calls were observed from here on (the worker JWT they carry does not authorise the client half). The attachment ends; a later observed exchange whose credential is usable re-attaches through reconcile.
         deps.log?.(`rc stream ${attachment.sessionId}: the attachment ended (${live ? "the session's client credential is no longer known" : "the tracker gave up on the session"})`);
+        persistCursor(attachment.sessionId);
         if (attachments.get(attachment.sessionId) === attachment) {
           attachments.delete(attachment.sessionId);
         }
@@ -339,6 +361,8 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
       try {
         outcome = await attempt(attachment, credential);
       } catch (error) {
+        // The attempt's connection is over whether it failed on its own or was stopped: a boundary passed, so the cursor it reached is persisted before anything else happens to the attachment.
+        persistCursor(attachment.sessionId);
         if (attachment.isStopped()) {
           return;
         }
@@ -351,7 +375,8 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
         return;
       }
       if (outcome === "dropped") {
-        // The stream ended of its own accord: reconnect at once, resuming from whatever cursor the tracker holds by then.
+        // The stream ended of its own accord: the boundary it reached is persisted, then the attachment reconnects at once, resuming from whatever cursor the tracker holds by then.
+        persistCursor(attachment.sessionId);
         deps.log?.(`rc stream ${attachment.sessionId}: the stream ended of its own accord, reconnecting`);
         retriedUnauthorized = false;
         continue;
@@ -391,6 +416,8 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
     },
     close: () => {
       for (const attachment of attachments.values()) {
+        // Persisted before the stop, synchronously: this is the one boundary the hub itself owns outright, so it never depends on a dial's teardown racing the process's exit.
+        persistCursor(attachment.sessionId);
         attachment.stop();
       }
       attachments.clear();

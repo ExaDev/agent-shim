@@ -9,6 +9,9 @@ const DIR = "/state/frontdoor/rc-credentials";
 /** The owner-only modes the store's directory and files must carry: they hold a bearer the identity's own store protects the same way. */
 const PRIVATE_DIR_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
+/** The cursors the round-trip writes: an arbitrary number the store holds, then the replacement that proves a later write supersedes it rather than accumulating. */
+const FIRST_CURSOR_SEQUENCE_NUM = 6;
+const REPLACED_CURSOR_SEQUENCE_NUM = 9;
 
 describe("the Remote Control credential store", () => {
   it("writes one owner-only JSON file per session and reads the credential back", () => {
@@ -50,8 +53,45 @@ describe("the Remote Control credential store", () => {
     const fs = createFakeFarmFs();
     const store = createRcCredentialStore(fs, DIR);
     expect(store.read("../escape")).toBeUndefined();
+    expect(store.readCursor("../escape")).toBeUndefined();
     store.write("../escape", { authorization: "Bearer sk-ant-oat", anthropicVersion: undefined, anthropicClientPlatform: undefined });
+    store.writeCursor("../escape", FIRST_CURSOR_SEQUENCE_NUM);
     store.remove("../escape");
     expect(fs.readdir(DIR)).toEqual([]);
+  });
+
+  it("round-trips the sequence cursor beside the credential, each half's writes keeping the other", () => {
+    const fs = createFakeFarmFs();
+    const store = createRcCredentialStore(fs, DIR);
+    expect(store.readCursor(SESSION_ID)).toBeUndefined();
+    // The cursor can be persisted for a session whose credential no generation observed through this store, and the credential half still reads undefined.
+    store.writeCursor(SESSION_ID, FIRST_CURSOR_SEQUENCE_NUM);
+    expect(store.readCursor(SESSION_ID)).toBe(FIRST_CURSOR_SEQUENCE_NUM);
+    expect(store.read(SESSION_ID)).toBeUndefined();
+    // A credential write keeps the cursor...
+    store.write(SESSION_ID, { authorization: "Bearer sk-ant-oat", anthropicVersion: "2023-06-01", anthropicClientPlatform: undefined });
+    expect(store.read(SESSION_ID)).toEqual({ authorization: "Bearer sk-ant-oat", anthropicVersion: "2023-06-01", anthropicClientPlatform: undefined });
+    expect(store.readCursor(SESSION_ID)).toBe(FIRST_CURSOR_SEQUENCE_NUM);
+    // ...and a cursor write keeps the credential, replacing the number it held.
+    store.writeCursor(SESSION_ID, REPLACED_CURSOR_SEQUENCE_NUM);
+    expect(store.readCursor(SESSION_ID)).toBe(REPLACED_CURSOR_SEQUENCE_NUM);
+    expect(store.read(SESSION_ID)?.authorization).toBe("Bearer sk-ant-oat");
+    // Remove forgets both halves together, the session's one file.
+    store.remove(SESSION_ID);
+    expect(store.readCursor(SESSION_ID)).toBeUndefined();
+    expect(store.read(SESSION_ID)).toBeUndefined();
+  });
+
+  it("answers undefined for a cursor that is not a non-negative integer, keeping the credential readable beside it", () => {
+    const fs = createFakeFarmFs();
+    const store = createRcCredentialStore(fs, DIR);
+    fs.writeFileUtf8(`${DIR}/cse_a.json`, JSON.stringify({ authorization: "Bearer sk-ant-oat", highestSequenceNum: 1.5 }));
+    fs.writeFileUtf8(`${DIR}/cse_b.json`, JSON.stringify({ authorization: "Bearer sk-ant-oat", highestSequenceNum: -1 }));
+    fs.writeFileUtf8(`${DIR}/cse_c.json`, JSON.stringify({ authorization: "Bearer sk-ant-oat", highestSequenceNum: "6" }));
+    expect(store.readCursor("cse_a")).toBeUndefined();
+    expect(store.readCursor("cse_b")).toBeUndefined();
+    // The store writes the cursor as a JSON number, so a numeric string is a file this process did not write.
+    expect(store.readCursor("cse_c")).toBeUndefined();
+    expect(store.read("cse_c")?.authorization).toBe("Bearer sk-ant-oat");
   });
 });
