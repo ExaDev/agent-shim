@@ -255,6 +255,41 @@ const NO_CHUNKS: AsyncIterable<Uint8Array> = {
   }),
 };
 
+/**
+ * A write dial whose target is resolved at call time rather than construction: the self-hosted Remote Control mode points the door's client half at the door's own transparent surface, whose port is known only once the connect listener has bound, and every other caller keeps the construction-time target (or the default real host when the resolver has nothing yet). The underlying dial is built once per resolved target and reused, so the connection pooling a dial exists for is preserved.
+ */
+export function lateRcEventDial(resolve: () => RcDialTarget | undefined): RcEventDial {
+  let built: { readonly for: RcDialTarget | undefined; readonly dial: RcEventDial } | undefined;
+  const dialFor = (): RcEventDial => {
+    const target = resolve();
+    if (built === undefined || built.for !== target) {
+      built = { for: target, dial: realRcEventDial(target) };
+    }
+    return built.dial;
+  };
+  return {
+    writeEvents: async (sessionId, headers, body) => await dialFor().writeEvents(sessionId, headers, body),
+  };
+}
+
+/**
+ * The stream dial's own late-targeted sibling, for the same reason: the self-hosted mode's attachment stream dials the door's own transparent surface once its port is bound.
+ */
+export function lateRcStreamDial(resolve: () => RcDialTarget | undefined): RcStreamDial {
+  let built: { readonly for: RcDialTarget | undefined; readonly dial: RcStreamDial } | undefined;
+  const dialFor = (): RcStreamDial => {
+    const target = resolve();
+    if (built === undefined || built.for !== target) {
+      built = { for: target, dial: realRcStreamDial(target) };
+    }
+    return built.dial;
+  };
+  return {
+    announcePresence: async (sessionId, headers, clientId) => await dialFor().announcePresence(sessionId, headers, clientId),
+    openStream: async (sessionId, headers, resume, signal) => await dialFor().openStream(sessionId, headers, resume, signal),
+  };
+}
+
 export function realRcStreamDial(target: RcDialTarget = { host: CONNECT_INTERCEPT_HOST, port: HTTPS_PORT }): RcStreamDial {
   const agent = new ExemptTlsAgent();
   const request = async (method: "GET" | "POST", path: string, headers: Readonly<Record<string, string>>, body: string | undefined, signal: AbortSignal): Promise<{ readonly status: number; readonly response: http.IncomingMessage }> =>
