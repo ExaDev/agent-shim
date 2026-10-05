@@ -16,7 +16,8 @@ import { createFrontDoorServer, frontDoorHealthy, listenFrontDoor } from "./serv
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 const POLL_MS = 10;
 const SETTLE_MS = 30;
-const STREAM_GAP_MS = 30;
+/** How long the streaming route waits for the client to report its first chunk before pushing the second regardless: far longer than a loaded machine delays a read, since it is only ever waited out when the door buffers. */
+const STREAM_FALLBACK_MS = 5000;
 const TICK_MS = 10;
 const ABORT_TIMEOUT_MS = 2_000;
 /** The per-launch capability token the door accepts in these tests. */
@@ -184,6 +185,10 @@ describe("createFrontDoorServer", () => {
 
   it("streams a response chunk by chunk as the route produces it, not buffered until it ends", async () => {
     const routeState = { secondChunkPushed: false };
+    let firstChunkReceived: () => void = () => undefined;
+    const clientHasFirstChunk = new Promise<void>((resolve) => {
+      firstChunkReceived = resolve;
+    });
     const streamer: FrontDoorRoute = {
       name: "streamer",
       headroomEligible: false,
@@ -191,9 +196,13 @@ describe("createFrontDoorServer", () => {
       serve: async (_request, response) => {
         response.start(HTTP_STATUS.ok, { "Content-Type": "text/event-stream" });
         await response.write("data: first\n\n");
-        await new Promise((resolve) => {
-          setTimeout(resolve, STREAM_GAP_MS);
-        });
+        // Held back until the client reports it has read the first chunk, so the second can only follow incremental delivery; a door that buffered until the end never delivers the first chunk, and the fallback then lets the second go so the assertion below catches it. The fallback is long on purpose: a timer short enough to race the client's read is what failed under load.
+        await Promise.race([
+          clientHasFirstChunk,
+          new Promise((resolve) => {
+            setTimeout(resolve, STREAM_FALLBACK_MS);
+          }),
+        ]);
         routeState.secondChunkPushed = true;
         await response.write("data: second\n\n");
         response.end();
@@ -220,6 +229,7 @@ describe("createFrontDoorServer", () => {
         // The first chunk must have arrived while the route was still mid-stream, proving incremental delivery rather than a buffered whole.
         if (received.includes("first")) {
           expect(routeState.secondChunkPushed).toBe(false);
+          firstChunkReceived();
           break;
         }
       }

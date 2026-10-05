@@ -15,7 +15,6 @@ setInterval(() => {}, 1000);
 
 const POLL_MS = 20;
 const EXIT_TIMEOUT_MS = 2000;
-const SETTLE_MS = 200;
 const LOG_FD = 7;
 
 function isAlive(pid: number): boolean {
@@ -58,10 +57,8 @@ async function daemonSurvivesHangup(detached: boolean): Promise<boolean> {
   try {
     process.kill(-launcherPid, "SIGHUP");
     expect(await waitFor(() => !isAlive(launcherPid), EXIT_TIMEOUT_MS)).toBe(true);
-    // Give a hung-up daemon time to die before reading its fate.
-    await new Promise((resolve) => {
-      setTimeout(resolve, SETTLE_MS);
-    });
+    // A hung-up daemon dies as soon as the signal is delivered, which on a loaded machine can take well beyond any fixed pause, so wait for its death (up to the same budget the launcher's exit gets) and read its fate only then; a detached one never dies and costs the whole budget.
+    await waitFor(() => !isAlive(daemonPid), EXIT_TIMEOUT_MS);
     return isAlive(daemonPid);
   } finally {
     for (const pid of [daemonPid, launcherPid]) {
