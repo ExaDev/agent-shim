@@ -12,7 +12,7 @@
  *
  * - `check` and `doctor` as data: `collectCheckReport` and `collectDoctorReport` read this machine and return the report, and the pure `runCheck` and `runDoctor` take the facts as parameters.
  *
- * - launching: `prepareClaudeLaunch` resolves a launch for a directory on this machine and returns the binary, arguments and environment to spawn (performing the farm resync and daemon registration the child depends on), and `prepareLaunch` does the same over injected ports.
+ * - launching: `prepareClaudeLaunch` resolves a launch for a directory on this machine and returns the binary, arguments and environment to spawn (performing the farm resync and daemon registration the child depends on), `prepareLaunch` does the same over injected ports, and `runLauncher` and `spawnClaude` are the spawn step itself: the former plans and releases in one call, the latter takes a plan's parts with the release-on-exit ordering an embedder would otherwise get wrong.
  *
  * Everything the CLI alone needs (commander wiring and prompts) is deliberately not exported here.
  */
@@ -295,6 +295,7 @@ export {
   type DoctorReport,
   type RunDoctorParams,
 } from "./doctorReport";
-export { prepareLaunch, type LaunchPlan, type PrepareLaunchParams } from "./launcher";
+export { prepareLaunch, runLauncher, type LaunchPlan, type PrepareLaunchParams, type RunLauncherParams } from "./launcher";
+export { spawnClaude, type SpawnClaudeParams } from "./launcher/spawn";
 export { LaunchRefusedError, prepareClaudeLaunch, type PrepareClaudeLaunchOptions } from "./launchWiring";
 
