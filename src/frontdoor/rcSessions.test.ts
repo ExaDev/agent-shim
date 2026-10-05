@@ -331,7 +331,8 @@ describe("the Remote Control session status", () => {
 
   it("reports the worker state from the latest registration and the idle from the latest heartbeat, each with its instant", () => {
     const { tracker, advance } = trackerWithClock();
-    exchange(tracker, { method: "PUT", url: WORKER_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ status: "WORKER_STATUS_RUNNING" }) }).respond(HTTP_STATUS.ok);
+    // The registration body carries the field the CLI's own worker state update sends (`worker_status`, per the 2.1.88 source dump and the 2.1.289 bundle's strings).
+    exchange(tracker, { method: "PUT", url: WORKER_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ worker_status: "WORKER_STATUS_RUNNING", worker_epoch: 1 }) }).respond(HTTP_STATUS.ok);
     advance(HEARTBEAT_INTERVAL_MS);
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer b", requestBody: JSON.stringify({ session_id: SESSION_ID, worker_epoch: 1, supports_heartbeat_probe: true, current_interval_seconds: 20, idle_seconds: 7 }) }).respond(HTTP_STATUS.ok);
     const status = tracker.statusOf()[0];

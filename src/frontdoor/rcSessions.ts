@@ -334,7 +334,8 @@ function parseRcRequestBody(kind: RcRequestBodyKind, body: string): RcRequestBod
     return { controlRequests: [], answeredRequestIds: [], idleSeconds: finiteNumber(parseJsonObject(body), "idle_seconds"), workerStatus: undefined };
   }
   if (kind === "worker-registration") {
-    return { controlRequests: [], answeredRequestIds: [], idleSeconds: undefined, workerStatus: nonEmptyString(parseJsonObject(body), "status") };
+    // The field the CLI's own worker state update sends is `worker_status` (its `UpdateSessionWorkerState` call, verified in the 2.1.88 source dump and the 2.1.289 bundle's strings), so that is the field the tracker reads.
+    return { controlRequests: [], answeredRequestIds: [], idleSeconds: undefined, workerStatus: nonEmptyString(parseJsonObject(body), "worker_status") };
   }
   const controlRequests: Omit<RcPendingRequestRecord, "sessionId" | "observedAt">[] = [];
   const answeredRequestIds: string[] = [];
