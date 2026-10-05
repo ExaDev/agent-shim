@@ -6,7 +6,7 @@ import * as net from "node:net";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { ExemptHttpAgent, realConnectEffects, UPSTREAM_LOCAL_PORT_END, UPSTREAM_LOCAL_PORT_START } from "./connectEffects";
+import { ExemptHttpAgent, realConnectEffects, SourcePortRange } from "./connectEffects";
 import { HTTP_OK } from "./connectTestWorld";
 
 /** The name every dial in this file resolves: a documentation-reserved TLD, so nothing but this file's resolver stand-in can ever answer it, and a dial through the exempt agent takes the real-name path (reserved source port, DNS lookup) rather than the address-literal shortcut. */
@@ -15,8 +15,17 @@ const DIAL_NAME = "reserved-range-test.invalid";
 /** How many of the range's ports the retry test holds before the dial under test: enough to prove the dial walks past several held ports, few enough to leave the range mostly free. */
 const HELD_PORTS = 3;
 
-/** The reserved range's width, derived from the same bounds the dial derives its retry bound from. */
-const RANGE_WIDTH = UPSTREAM_LOCAL_PORT_END - UPSTREAM_LOCAL_PORT_START + 1;
+/** The first port of the private range every test in this file dials from: just above the door's own range, which no other test file dials from either, so pinning every port of it cannot race another worker for the door's real range. */
+const PRIVATE_RANGE_START = 47920;
+
+/** How many of the private range's ports stay free for the retry test's dial to land on after the held ones. */
+const FREE_PORTS_TO_RETRY_ONTO = 3;
+
+/** The private range's width: a few more ports than the retry test holds, so the dial has free ports to retry onto. */
+const PRIVATE_RANGE_WIDTH = HELD_PORTS + FREE_PORTS_TO_RETRY_ONTO;
+
+/** The range every dial in this file draws its source ports from, one rotation shared across the file's agents the way the door's own shares its range. */
+const PRIVATE_RANGE = new SourcePortRange(PRIVATE_RANGE_START, PRIVATE_RANGE_START + PRIVATE_RANGE_WIDTH - 1);
 
 /** The bind-phase errnos the retried dial must surface when it cannot: EADDRINUSE on most platforms, and the EADDRNOTAVAIL a held port produced in the live observation. */
 const HELD_PORT_ERRNOS: ReadonlySet<string> = new Set(["EADDRINUSE", "EADDRNOTAVAIL"]);
@@ -44,7 +53,7 @@ const DNS_IPV4_OCTETS = 4;
 
 /** The port `steps` ahead of `from` in the reserved range, wrapping with the range the way the rotation itself does. */
 function reservedPortAhead(from: number, steps: number): number {
-  return UPSTREAM_LOCAL_PORT_START + ((from - UPSTREAM_LOCAL_PORT_START + steps) % RANGE_WIDTH);
+  return PRIVATE_RANGE.start + ((from - PRIVATE_RANGE.start + steps) % PRIVATE_RANGE.count);
 }
 
 /** The offset just past a DNS query's question section, which is where an answer's own records begin. */
@@ -94,7 +103,7 @@ async function startUpstream(): Promise<{ readonly port: number; readonly arriva
 /** Performs one real request through a fresh exempt agent against the stand-in, resolving with the answer body and the source port the request left from. */
 async function requestThrough(port: number): Promise<{ readonly body: string; readonly sourcePort: number }> {
   return await new Promise((resolve, reject) => {
-    const request = http.request({ host: DIAL_NAME, port, method: "GET", path: "/", agent: new ExemptHttpAgent() }, (response) => {
+    const request = http.request({ host: DIAL_NAME, port, method: "GET", path: "/", agent: new ExemptHttpAgent(PRIVATE_RANGE) }, (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
@@ -199,8 +208,8 @@ describe("the exempt agents' reserved source-port rotation", () => {
       // The discovery request names the rotation's current position, wherever earlier dials in this process left it, so the held ports below are exactly the next ones the retrying dial would take.
       const discovery = await requestThrough(upstream.port);
       expect(discovery.body).toBe("stand-in-answer");
-      expect(discovery.sourcePort).toBeGreaterThanOrEqual(UPSTREAM_LOCAL_PORT_START);
-      expect(discovery.sourcePort).toBeLessThanOrEqual(UPSTREAM_LOCAL_PORT_END);
+      expect(discovery.sourcePort).toBeGreaterThanOrEqual(PRIVATE_RANGE.start);
+      expect(discovery.sourcePort).toBeLessThanOrEqual(PRIVATE_RANGE.end);
 
       try {
         const heldPorts = new Set<number>();
@@ -214,8 +223,8 @@ describe("the exempt agents' reserved source-port rotation", () => {
         }
         const retried = await requestThrough(upstream.port);
         expect(retried.body).toBe("stand-in-answer");
-        expect(retried.sourcePort).toBeGreaterThanOrEqual(UPSTREAM_LOCAL_PORT_START);
-        expect(retried.sourcePort).toBeLessThanOrEqual(UPSTREAM_LOCAL_PORT_END);
+        expect(retried.sourcePort).toBeGreaterThanOrEqual(PRIVATE_RANGE.start);
+        expect(retried.sourcePort).toBeLessThanOrEqual(PRIVATE_RANGE.end);
         expect(retried.sourcePort).not.toBe(discovery.sourcePort);
         // The retried dial skipped the held ports: the request left from a reserved source port outside the held set.
         expect(heldPorts.has(retried.sourcePort)).toBe(false);
@@ -233,7 +242,7 @@ describe("the exempt agents' reserved source-port rotation", () => {
     const upstream = await startUpstream();
     const held: net.Socket[] = [];
     try {
-      for (let port = UPSTREAM_LOCAL_PORT_START; port <= UPSTREAM_LOCAL_PORT_END; port += 1) {
+      for (let port = PRIVATE_RANGE.start; port <= PRIVATE_RANGE.end; port += 1) {
         const socket = await holdReservedPort(port, upstream.port);
         if (socket !== undefined) {
           held.push(socket);
@@ -254,13 +263,13 @@ describe("the exempt agents' reserved source-port rotation", () => {
     const upstream = await startUpstream();
     const held: net.Socket[] = [];
     try {
-      for (let port = UPSTREAM_LOCAL_PORT_START; port <= UPSTREAM_LOCAL_PORT_END; port += 1) {
+      for (let port = PRIVATE_RANGE.start; port <= PRIVATE_RANGE.end; port += 1) {
         const socket = await holdReservedPort(port, upstream.port);
         if (socket !== undefined) {
           held.push(socket);
         }
       }
-      const failureCode = await realConnectEffects()
+      const failureCode = await realConnectEffects(PRIVATE_RANGE)
         .connectTlsUpstream(DIAL_NAME, upstream.port, undefined)
         .then(
           () => {
