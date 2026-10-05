@@ -321,6 +321,7 @@ function startPage(heldToken) {
   refreshPending();
   window.setInterval(function () { refreshSessions(); refreshPending(); }, 4000);
   runFeed();
+  document.getElementById('door-state').textContent = 'connected';
 }
 
 function boot() {
@@ -399,7 +400,7 @@ export const RC_CLIENT_PAGE_HTML = `<!doctype html>
 <body data-agent-shim-rc-client>
 <header>
   <h1>agent-shim Remote Control</h1>
-  <span class="state" id="door-state">not connected</span>
+  <span class="state" id="door-state">connecting</span>
   <span class="state" id="stream-state"></span>
 </header>
 <div id="token-form">
