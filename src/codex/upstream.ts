@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { CodexAuthStore, CodexCredentials } from "./auth";
 import { HTTP_STATUS } from "./http";
+import { SIWC_RESPONSES_URL } from "./siwc";
 import type { ResponsesRequest } from "./translate";
 import type { UpstreamFetch, UpstreamResponse } from "./upstreamPort";
 
@@ -73,17 +74,32 @@ export function sessionIdFor(userId: string | undefined, randomId: () => string)
   return UUID_TEMPLATE.replace(/x/g, () => hex.charAt(next++));
 }
 
+/** How one login's requests are addressed and labelled: where they go and which headers they carry. */
+export interface CodexUpstreamTarget {
+  readonly url: string;
+  readonly headers: (credentials: CodexCredentials, sessionId: string) => Record<string, string>;
+}
+
 /** Everything a call to the backend depends on. */
 export interface CodexUpstreamPorts {
   readonly fetch: UpstreamFetch;
   readonly auth: CodexAuthStore;
   readonly timers: UpstreamTimers;
   readonly randomId: () => string;
-  /** Overrides `CODEX_RESPONSES_URL`; tests and a local stand-in backend use it. */
-  readonly url?: string;
+  /** Overrides the Codex backend target; tests and a local stand-in backend use it. */
+  readonly target?: CodexUpstreamTarget;
 }
 
-function headersFor(credentials: CodexCredentials, sessionId: string): Record<string, string> {
+/** The Codex backend, addressed the way the Codex CLI does: its account routing and client labels travel as headers. */
+export const CODEX_BACKEND_TARGET: CodexUpstreamTarget = { url: CODEX_RESPONSES_URL, headers: codexBackendHeaders };
+
+/** OpenAI's public Responses API, which a Sign in with ChatGPT grant is audience-bound to: a bearer token and nothing else, since the grant carries the account. */
+export const RESPONSES_API_TARGET: CodexUpstreamTarget = {
+  url: SIWC_RESPONSES_URL,
+  headers: (credentials) => ({ "Content-Type": "application/json", Accept: "text/event-stream", Authorization: `Bearer ${credentials.accessToken}` }),
+};
+
+function codexBackendHeaders(credentials: CodexCredentials, sessionId: string): Record<string, string> {
   return {
     "Content-Type": "application/json",
     Accept: "text/event-stream",
@@ -99,12 +115,12 @@ function headersFor(credentials: CodexCredentials, sessionId: string): Record<st
  * Sends one translated request to the backend. A 401 refreshes the login once (through the auth store's single in-flight refresh) and resends; anything else is returned as it came. `signal` is the client's: aborting it (the client disconnected) aborts the upstream call, and `CODEX_UPSTREAM_TIMEOUT_MS` bounds it regardless.
  */
 export async function callCodex(ports: CodexUpstreamPorts, request: ResponsesRequest, sessionId: string, signal: AbortSignal): Promise<UpstreamResponse> {
-  const url = ports.url ?? CODEX_RESPONSES_URL;
+  const target = ports.target ?? CODEX_BACKEND_TARGET;
   const body = JSON.stringify(request);
   const send = async (credentials: CodexCredentials): Promise<UpstreamResponse> =>
-    await fetchUntilHeaders(ports.fetch, ports.timers, url, {
+    await fetchUntilHeaders(ports.fetch, ports.timers, target.url, {
       method: "POST",
-      headers: headersFor(credentials, sessionId),
+      headers: target.headers(credentials, sessionId),
       body,
       signal: AbortSignal.any([signal, AbortSignal.timeout(CODEX_UPSTREAM_TIMEOUT_MS)]),
     });

@@ -208,6 +208,15 @@ export type CodexTier = (typeof CODEX_TIERS)[number];
 export const CODEX_EFFORTS = ["none", "low", "medium", "high"] as const;
 export type CodexEffort = (typeof CODEX_EFFORTS)[number];
 
+/**
+ * Where a codex provider's upstream credential comes from. `codex-cli` replays the Codex CLI's own login (`~/.codex/auth.json`) against ChatGPT's Codex backend; `chatgpt-sign-in` uses the Sign in with ChatGPT grant that `agent-shim codex login` creates, spent against OpenAI's public Responses API.
+ */
+export const CODEX_LOGINS = ["codex-cli", "chatgpt-sign-in"] as const;
+export type CodexLogin = (typeof CODEX_LOGINS)[number];
+
+/** The login a codex provider uses when its `codex` block names none. */
+export const CODEX_DEFAULT_LOGIN: CodexLogin = "codex-cli";
+
 /** The codex model every tier maps to when neither its own tier entry nor `defaultModel` says otherwise. */
 export const CODEX_DEFAULT_MODEL = "gpt-5.6-sol";
 
@@ -239,6 +248,8 @@ export const CodexProviderConfigSchema = z.strictObject({
     .optional(),
   /** The reasoning effort used when the request's own `output_config.effort` is not one the backend accepts. */
   effort: z.enum(CODEX_EFFORTS).optional(),
+  /** Which login the upstream call is made with; see `CODEX_LOGINS`. */
+  login: z.enum(CODEX_LOGINS).optional(),
 });
 export type CodexProviderConfig = z.infer<typeof CodexProviderConfigSchema>;
 

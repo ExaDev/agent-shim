@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CODEX_DEFAULT_EFFORT, CODEX_DEFAULT_MODEL, CODEX_DEFAULT_TIER_MODELS } from "../config/schema";
+import { CODEX_DEFAULT_EFFORT, CODEX_DEFAULT_LOGIN, CODEX_DEFAULT_MODEL, CODEX_DEFAULT_TIER_MODELS } from "../config/schema";
 import { MessagesRequestSchema, type MessagesRequest } from "./anthropic";
 import {
   CODEX_TOOL_NAME_LIMIT,
@@ -21,10 +21,15 @@ function request(body: unknown): MessagesRequest {
 
 describe("resolveCodexConfig", () => {
   it("applies the shipped mapping, matching the script it replaces", () => {
-    expect(defaults).toEqual({ defaultModel: CODEX_DEFAULT_MODEL, models: CODEX_DEFAULT_TIER_MODELS, effort: CODEX_DEFAULT_EFFORT });
+    expect(defaults).toEqual({ defaultModel: CODEX_DEFAULT_MODEL, models: CODEX_DEFAULT_TIER_MODELS, effort: CODEX_DEFAULT_EFFORT, login: CODEX_DEFAULT_LOGIN });
+    expect(CODEX_DEFAULT_LOGIN).toBe("codex-cli");
     expect(CODEX_DEFAULT_TIER_MODELS).toEqual({ fable: "gpt-5.6-sol", opus: "gpt-5.6-sol", sonnet: "gpt-5.6-terra", haiku: "gpt-5.6-luna" });
     expect(CODEX_DEFAULT_MODEL).toBe("gpt-5.6-sol");
     expect(CODEX_DEFAULT_EFFORT).toBe("low");
+  });
+
+  it("takes the login a provider names", () => {
+    expect(resolveCodexConfig({ login: "chatgpt-sign-in" }).login).toBe("chatgpt-sign-in");
   });
 
   it("overrides only the tiers a provider names", () => {

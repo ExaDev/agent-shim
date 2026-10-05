@@ -78,7 +78,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   // The self-hosted Remote Control mode, decided at door start like the transparent surface and the capture are: the door is one process, so the mode is the door's own. When it is on, the door serves the CCR session family itself (see rcSelfHost.ts) and points its own client-half dials at its own transparent surface; the record the surface authenticates against is read fresh on every call, so a re-mint applies without a restart.
   const rcSelfHost = rcSelfHostFromEnv(process.env);
   // Built once for the process, not per request: the codex translation's upstream agent and auth store hold pooled connections and refresh state that must survive across requests.
-  const codexPorts = createCodexRoutePorts(log);
+  const codexPorts = createCodexRoutePorts(log, paths.chatgptSignInFile);
 
   // The CA is generated once on this machine's first front-door start and reused after: regenerating it would strand every child still pointing NODE_EXTRA_CA_CERTS at the old certificate. Loaded on first use by whichever listener starts first, and shared by both TLS-serving listeners.
   let ca: CaMaterial | undefined;

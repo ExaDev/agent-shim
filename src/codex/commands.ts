@@ -14,7 +14,9 @@ import { createUpstreamAgent, createUpstreamFetch } from "./agent";
 import { createCodexAuthStore, type CodexAuthFs } from "./auth";
 import type { UsageSnapshot } from "./quota";
 import type { CodexRoutePorts } from "./route";
-import { realTimers } from "./upstream";
+import { realSiwcPorts } from "./siwcPorts";
+import { createSiwcStore } from "./siwcStore";
+import { realTimers, RESPONSES_API_TARGET } from "./upstream";
 
 /** The Codex CLI's home: `CODEX_HOME` when set, as the Codex CLI itself reads it, otherwise `~/.codex`. */
 export function codexHome(env: Readonly<Record<string, string | undefined>>, home: string): string {
@@ -72,17 +74,22 @@ function writeUsageSnapshot(log: (line: string) => void, snapshot: UsageSnapshot
 /**
  * The ports the translation route needs, wired to the real auth store and upstream fetch, for the process that mounts the route: the front-door supervisor, which serves codex providers in process. The undici agent's keep-alive ceiling (the fix for the idle-socket hang) applies to every upstream call this process makes.
  */
-export function createCodexRoutePorts(log: (line: string) => void): Omit<CodexRoutePorts, "loadProvider"> {
+export function createCodexRoutePorts(log: (line: string) => void, signInFile: string): Omit<CodexRoutePorts, "loadProvider"> {
   const agent = createUpstreamAgent();
   const upstreamFetch = createUpstreamFetch(agent);
+  const tempSuffix = `${String(process.pid)}.${randomUUID()}`;
   const auth = createCodexAuthStore(path.join(codexHome(process.env, os.homedir()), "auth.json"), {
     fs: realCodexAuthFs,
     fetch: upstreamFetch,
     now: () => new Date(),
-    tempSuffix: `${String(process.pid)}.${randomUUID()}`,
+    tempSuffix,
   });
+  const signIn = createSiwcStore(signInFile, { fs: realCodexAuthFs, siwc: realSiwcPorts(upstreamFetch), tempSuffix });
   return {
-    upstream: { fetch: upstreamFetch, auth, timers: realTimers, randomId: randomUUID },
+    upstreams: {
+      "codex-cli": { fetch: upstreamFetch, auth, timers: realTimers, randomId: randomUUID },
+      "chatgpt-sign-in": { fetch: upstreamFetch, auth: signIn.auth, timers: realTimers, randomId: randomUUID, target: RESPONSES_API_TARGET },
+    },
     writeUsageSnapshot: (snapshot) => {
       writeUsageSnapshot(log, snapshot);
     },

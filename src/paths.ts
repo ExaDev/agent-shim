@@ -53,6 +53,8 @@ export interface LayoutPaths {
   readonly frontdoorCaKeyFile: string;
   /** Directory of combined CA bundles: a parent environment's own NODE_EXTRA_CA_CERTS (for a routed child) or HEADROOM_CA_BUNDLE (for the headroom daemon) file plus the front door's CA, one file per distinct combination, for processes that must keep trusting both. */
   readonly frontdoorCaBundlesDir: string;
+  /** Path to the Sign in with ChatGPT file (the host id and, once signed in, the grant, mode 0600): whoever can read it can spend the person's ChatGPT plan until it is signed out. */
+  readonly chatgptSignInFile: string;
   /** Path to the front door's state.json: its supervisor pid, its port, and the sticky port it last served on. */
   readonly frontdoorStateFile: string;
   /** Path to the exclusive-create marker guarding "who spawns the front-door supervisor" so concurrent launches start at most one. */
@@ -135,6 +137,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     frontdoorCaCertFile: path.join(root, "frontdoor", "ca", "ca.pem"),
     frontdoorCaKeyFile: path.join(root, "frontdoor", "ca", "ca.key"),
     frontdoorCaBundlesDir: path.join(root, "frontdoor", "ca", "bundles"),
+    chatgptSignInFile: path.join(root, "codex", "chatgpt-sign-in.json"),
     frontdoorStateFile: path.join(root, "frontdoor", "state.json"),
     frontdoorLockFile: path.join(root, "frontdoor", "start.lock"),
     frontdoorControlTokenFile: path.join(root, "frontdoor", "control-token"),
