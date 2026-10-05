@@ -214,7 +214,6 @@ function realSiwcLoginPorts(paths: LayoutPaths): SiwcLoginPorts {
   return {
     store,
     siwc,
-    randomUuid: randomUUID,
     listen: listenForCallback,
     openBrowser: openInBrowser,
     print: (line) => {

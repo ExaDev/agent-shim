@@ -59,7 +59,7 @@ describe("codex status", () => {
     ]);
   });
 
-  const signInFile = (grant: unknown): Record<string, string> => ({ [paths.chatgptSignInFile]: JSON.stringify({ hostId: "urn:uuid:x", ...(grant === undefined ? {} : { grant }) }) });
+  const signInFile = (grant: unknown): Record<string, string> => ({ [paths.chatgptSignInFile]: JSON.stringify({ registeredClientId: "c", ...(grant === undefined ? {} : { grant }) }) });
   const grant = { clientId: "c", sub: "s", email: "person@example.com", idToken: "i", accessToken: "a", refreshToken: "r", scopes: ["openid", "chatgpt.tokens.use.direct"], expiresAt: 5 };
 
   it("reports a Sign in with ChatGPT login by who it is, never by its tokens", () => {

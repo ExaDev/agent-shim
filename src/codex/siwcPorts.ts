@@ -4,7 +4,7 @@ import http from "node:http";
 
 import { HTTP_STATUS } from "./http";
 import type { CallbackListener } from "./siwcLogin";
-import type { SiwcPorts } from "./siwc";
+import { SIWC_CALLBACK_PATH, type SiwcPorts } from "./siwc";
 import type { UpstreamFetch } from "./upstreamPort";
 
 /** The real primitives the Sign in with ChatGPT flow draws on: the process's own fetch, the operating system's random source and the wall clock. */
@@ -16,17 +16,23 @@ export function realSiwcPorts(fetch: UpstreamFetch): SiwcPorts {
 const CALLBACK_PAGE = "<!doctype html><meta charset=utf-8><title>Signed in</title><p>You can close this tab and return to the terminal.</p>";
 
 /**
- * Listens on a loopback port for the browser's redirect and resolves with its URL. Bound to 127.0.0.1 only, so nothing else on the network can deliver a callback, and it answers every path (the flow checks the state, not the path).
+ * Listens on a loopback port for the browser's redirect and resolves with its URL. Bound to 127.0.0.1 only, so nothing else on the network can deliver a callback, and it answers only the callback path carrying this sign-in's state.
  */
-export async function listenForCallback(port: number): Promise<CallbackListener> {
+export async function listenForCallback(port: number, state: string): Promise<CallbackListener> {
   let deliver: ((url: URL) => void) | undefined;
   const arrived = new Promise<URL>((resolve) => {
     deliver = resolve;
   });
   const server = http.createServer((request, response) => {
+    const url = new URL(request.url ?? "/", `http://127.0.0.1:${String(port)}`);
+    // A request that is not this sign-in's callback (a stale tab's older state, a favicon fetch) is refused and leaves the sign-in waiting.
+    if (request.method !== "GET" || url.pathname !== SIWC_CALLBACK_PATH || url.searchParams.getAll("state").length !== 1 || url.searchParams.get("state") !== state) {
+      response.writeHead(HTTP_STATUS.notFound).end("Not found");
+      return;
+    }
     response.writeHead(HTTP_STATUS.ok, { "Content-Type": "text/html; charset=utf-8" });
     response.end(CALLBACK_PAGE);
-    deliver?.(new URL(request.url ?? "/", `http://127.0.0.1:${String(port)}`));
+    deliver?.(url);
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", (error: NodeJS.ErrnoException) => {
