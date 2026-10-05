@@ -346,28 +346,20 @@ export function realConnectEffects(): ConnectEffects {
         },
       };
     },
-    connectTlsUpstream: async (host, port, clientAlpn) =>
-      await new Promise((resolve, reject) => {
-        // The upstream half of a tap session speaks TLS to the real host, offering exactly the protocol the client negotiated with the tap's front (and nothing when the client negotiated nothing), so the channel's protocol is the client's choice, never ours. The raw socket is bound into the door's reserved source-port range (the pf exemption an interception deployment loads) before TLS wraps it, because tls.connect's own options carry no localPort.
-        const dial = (localPort: number): tls.TLSSocket => {
-          const raw = net.connect({ host, port, localPort, lookup: realAddressLookup });
-          return tls.connect({ socket: raw, servername: host, ...(clientAlpn === undefined ? {} : { ALPNProtocols: [clientAlpn] }) });
-        };
-        const settle = (candidate: tls.TLSSocket): void => {
-          candidate.once("secureConnect", () => {
-            resolve(candidate);
-          });
-          candidate.once("error", (error: Error) => {
-            if ("code" in error && error.code === "EADDRINUSE") {
-              // A rotation sibling still holds this port; the next one is free by construction of the range's width.
-              settle(dial(upstreamLocalPort()));
-              return;
-            }
-            reject(error);
-          });
-        };
-        settle(dial(upstreamLocalPort()));
-      }),
+    connectTlsUpstream: async (host, port, clientAlpn) => {
+      // The upstream half of a tap session speaks TLS to the real host, offering exactly the protocol the client negotiated with the tap's front (and nothing when the client negotiated nothing), so the channel's protocol is the client's choice, never ours. The raw socket is dialled by `reservedDial`, so it is bound into the door's reserved source-port range (the pf exemption an interception deployment loads) before TLS wraps it, because tls.connect's own options carry no localPort.
+      const dialled = await reservedDial({ host, port });
+      if (dialled.error !== null) {
+        throw dialled.error;
+      }
+      return await new Promise((resolve, reject) => {
+        const secure = tls.connect({ socket: dialled.socket, servername: host, ...(clientAlpn === undefined ? {} : { ALPNProtocols: [clientAlpn] }) });
+        secure.once("secureConnect", () => {
+          resolve(secure);
+        });
+        secure.once("error", reject);
+      });
+    },
     connectTcp: async (host, port) =>
       await new Promise((resolve, reject) => {
         const socket = net.connect({ host, port });
