@@ -45,6 +45,11 @@ const CASES: readonly (readonly [string, CascadeInput])[] = [
   ["a branch condition beside an unconditional rule", cascade({ "knowledge/skills": { value: false, when: { branch: "main" } }, "knowledge/skills/review": true })],
 ];
 
+/**
+ * A guard against a hang, not a bound on the work: the enumeration below resolves every combination of the rule pool twice and is CPU-bound, taking about a second on a quiet machine, but vitest's default five seconds is exceeded when the machine has far more runnable processes than cores, which a shared development machine routinely does.
+ */
+const EXHAUSTIVE_TIMEOUT_MS = 120_000;
+
 describe("descendPolicy", () => {
   it.each(CASES)("resolves the same farm and the same decisions for top-level entries as the full walk: %s", (_name, input) => {
     const full = resolveDecisions({ facts: factsWith(input, () => true), cascade: input, classification: { defaults: shippedClassification } });
@@ -84,7 +89,7 @@ describe("descendPolicy", () => {
       }
     }
     expect(compared).toBe(1 << (pool.length + 1));
-  });
+  }, EXHAUSTIVE_TIMEOUT_MS);
 
   it("records only top-level entries when no rule reaches inside a directory", () => {
     const input = cascade();
