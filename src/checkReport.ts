@@ -8,13 +8,14 @@ import { collectPoolPick } from "./poolPickReport";
 import { PoolNotFoundError } from "./poolStore";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { cascadeProviderName } from "./providersStore";
-import { realFarmFs, realFsPort, realRunPort, resolveGitBranch } from "./realPorts";
+import { realFarmFs, realFsPort, realInstalledClaudeVersions, realRunPort, resolveGitBranch } from "./realPorts";
 import path from "node:path";
 import { z } from "zod";
 import { parseEnvBool } from "./cli/envBool";
 import { ConfigValidationError } from "./config/load";
 import { SHIPPED_CATEGORY_DEFAULTS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type Identity, type Provider } from "./config/schema";
 import { formatCredentialSummary, summariseCredential, type CredentialCacheEnv, type CredentialSummary } from "./credential";
+import { resolveClaudeVersion, type PinnedClaudeVersion } from "./launcher/claudeVersion";
 import { describeCachedCredential, formatCachedCredentialState, type CachedCredentialState } from "./credentialCache";
 import { buildEntryFacts } from "./launcher/farm";
 import { AMBIENT_CREDENTIAL_VARS, evaluateAmbientCredentialGuard, type AmbientCredentialGuardResult } from "./launcher/guard";
@@ -301,6 +302,8 @@ export interface RunCheckParams {
   readonly platform: string;
   /** The provider a launch here would route through (`launch.provider` in the cascade), when one is selected. */
   readonly provider?: CheckProviderInput;
+  /** The Claude Code versions installed here, oldest first. Omit to leave the Claude Code version out of the report; with it, `check` says which version a launch here runs and whether a pin is installed. */
+  readonly installedClaudeVersions?: readonly string[];
   /** Where cached credentials live. Omit to skip reporting a credential cache's age; with it, a block that caches reports whether it holds an entry, how old it is and whether it has expired, never the token. */
   readonly credentialCache?: CredentialCacheEnv;
 }
@@ -319,6 +322,29 @@ export interface CheckReport {
   readonly keychain?: KeychainLookupResult;
   readonly settingsExposure: readonly SettingsExposureReport[];
   readonly credential: CredentialReport;
+  /** The Claude Code version a launch here would run, when the installed versions were given. */
+  readonly claudeVersion?: ClaudeVersionReport;
+}
+
+/** Which Claude Code version a launch would run: the pin and where it comes from, with whether it is installed, or the highest installed version when nothing pins one. */
+interface ClaudeVersionReport {
+  readonly pinned?: PinnedClaudeVersion & { readonly installed: boolean };
+  readonly highestInstalled?: string;
+  readonly installed: readonly string[];
+}
+
+function buildClaudeVersionReport(params: Pick<RunCheckParams, "env" | "installedClaudeVersions">, cascadePin: string | undefined): ClaudeVersionReport | undefined {
+  const installed = params.installedClaudeVersions;
+  if (installed === undefined) {
+    return undefined;
+  }
+  const pin = resolveClaudeVersion({ env: params.env, ...(cascadePin === undefined ? {} : { cascade: cascadePin }) });
+  const highestInstalled = installed.at(-1);
+  return {
+    ...(pin === undefined ? {} : { pinned: { ...pin, installed: installed.includes(pin.version) } }),
+    ...(highestInstalled === undefined ? {} : { highestInstalled }),
+    installed,
+  };
 }
 
 /**
@@ -364,6 +390,8 @@ export function runCheck(params: RunCheckParams): CheckReport {
       ? lookupKeychainService(params.run, params.farmRoot)
       : undefined;
 
+  const claudeVersion = buildClaudeVersionReport(params, resolved.flattened.launch.claudeVersion);
+
   return {
     ...(params.identityName === undefined ? {} : { identityName: params.identityName }),
     identitySource: params.identitySource,
@@ -377,6 +405,7 @@ export function runCheck(params: RunCheckParams): CheckReport {
     ...(keychain === undefined ? {} : { keychain }),
     settingsExposure,
     credential: buildCredentialReport(params.provider, params.identity, params.identityName, params.credentialCache),
+    ...(claudeVersion === undefined ? {} : { claudeVersion }),
   };
 }
 
@@ -431,6 +460,20 @@ export function formatCheckReport(report: CheckReport): string[] {
   }
   if (credential.applies === "stored-login") {
     lines.push("  The identity's stored login (no credential block applies).");
+  }
+
+  if (report.claudeVersion !== undefined) {
+    lines.push("", "Claude Code version:");
+    const { pinned, highestInstalled, installed } = report.claudeVersion;
+    if (pinned !== undefined) {
+      lines.push(
+        pinned.installed
+          ? `  ${pinned.version}, pinned by the ${pinned.source} (installed)`
+          : `  ${pinned.version}, pinned by the ${pinned.source}, but NOT installed; a launch here fails. Installed: ${installed.length === 0 ? "none" : installed.join(", ")}`,
+      );
+    } else {
+      lines.push(highestInstalled === undefined ? "  none installed in the versions directory (a launch falls back to a claude on PATH)" : `  ${highestInstalled} (the highest installed; nothing pins a version)`);
+    }
   }
 
   lines.push("", "Ambient-credential exposure:");
@@ -490,6 +533,7 @@ export function checkReportToJson(report: CheckReport): Record<string, unknown> 
     ...(report.keychain === undefined ? {} : { keychain: report.keychain }),
     settingsExposure: report.settingsExposure,
     credential: report.credential,
+    ...(report.claudeVersion === undefined ? {} : { claudeVersion: report.claudeVersion }),
   };
 }
 
@@ -501,7 +545,8 @@ export function checkReportHasWarnings(report: CheckReport): boolean {
     report.resolved.diagnostics.some((diagnostic) => diagnostic.severity !== "info") ||
     report.projectEncodingAmbiguities.length > 0 ||
     !report.ambientCredential.ok ||
-    report.credential.provider?.problem !== undefined
+    report.credential.provider?.problem !== undefined ||
+    report.claudeVersion?.pinned?.installed === false
   );
 }
 
@@ -616,6 +661,7 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
     settingsFiles,
     run: realRunPort,
     credentialCache: realCredentialCacheEnv(paths),
+    installedClaudeVersions: realInstalledClaudeVersions(),
     ...(farmRoot === undefined ? {} : { farmRoot }),
     platform: process.platform,
     ...(provider === undefined ? {} : { provider }),
