@@ -351,6 +351,10 @@ export interface ConnectServerConfig {
   readonly transparentCapability?: string;
   /** The intercept hosts that are never HTTP-parsed: terminated, tapped at the byte level, and pumped to their real host. */
   readonly tapHosts: readonly string[];
+  /**
+   * The door's local answer surface, consulted before routing or piping on every parsed host's session, and given the parsing of the tap hosts it names: absent (the default, and every door that has not asked for the self-hosted Remote Control mode) nothing about the surface's behaviour changes.
+   */
+  readonly localSurface?: ConnectLocalSurface;
   /** The connection deadlines and caps; production passes `CONNECT_LIMITS`. */
   readonly limits: ConnectLimits;
   /** The diagnostic tap, when capturing is enabled; absent means nothing is recorded. */
@@ -364,6 +368,18 @@ export interface ConnectServerHandle {
   readonly transparentPort?: number;
   /** Stops the listener, drops every live tunnel and terminated session, and resolves once the port is released. */
   readonly close: () => Promise<void>;
+}
+
+/**
+ * A surface the connect layer consults before it routes or pipes anything: the door's self-hosted Remote Control answers (see `rcSelfHost.ts`), which own a fixed set of non-pipeline paths on the API host and the OAuth refresh on the control-plane host. Absent, every request keeps exactly the behaviour it has today.
+ *
+ * A host this surface needs to parse (`parsesHost`) is served as ordinary HTTP even when it is named as a tap host: the tap exists because that host's channel could not be safely parsed, so taking it over is the surface's own explicit decision, made only for the mode whose contract already excludes the traffic the tap protects.
+ */
+export interface ConnectLocalSurface {
+  /** Whether this surface needs one host's terminated sessions parsed as HTTP rather than byte-tapped. */
+  readonly parsesHost: (host: string) => boolean;
+  /** Serves one request locally; resolves false when the surface does not own the path, so routing or piping continues unchanged. */
+  readonly serve: (host: string, request: IncomingMessage, response: ServerResponse) => Promise<boolean>;
 }
 
 /** The ALPN protocols a tap host's TLS offers: HTTP/2 first, because that is what its real server negotiates and what the channel has proved to be, with HTTP/1.1 still allowed so a client that speaks it is served rather than refused. */
@@ -392,7 +408,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
     pumpTapSession(socket, async (clientAlpn) => await effects.connectTlsUpstream(host, HTTPS_PORT, clientAlpn), config.capture?.tapStream?.(host), Buffer.from(headText, "utf8"));
   };
   const sessions = config.interceptHosts.map((host) => {
-    if (config.tapHosts.includes(host)) {
+    if (config.tapHosts.includes(host) && !(config.localSurface?.parsesHost(host) ?? false)) {
       const serveSecure = (secure: net.Socket): void => {
         pumpTapSession(secure, async (clientAlpn) => await effects.connectTlsUpstream(host, HTTPS_PORT, clientAlpn), config.capture?.tapStream?.(host));
       };
@@ -400,7 +416,11 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
       return { host, serveSecure, tlsAcceptor };
     }
 
-    const handler: ConnectRequestHandler = (request, response) => {
+    // The local surface is consulted first and awaited, because serving a path it owns means the whole response has been written by the time it resolves; a miss falls through to routing or piping unchanged. The parser's handler shape returns void, so the awaited body runs as its own helper.
+    const handleHostRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+      if (config.localSurface !== undefined && (await config.localSurface.serve(host, request, response))) {
+        return;
+      }
       if (host === config.routedHost && servedByPipeline(request.url)) {
         const tunnelToken = tunnelTokens.get(request.socket);
         if (tunnelToken !== undefined && request.headers[AUTH_HEADER] === undefined) {
@@ -410,6 +430,9 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
         return;
       }
       effects.forwardHttp(config.upstreamFor(host), request, response, config.capture?.observePassthrough(request));
+    };
+    const handler: ConnectRequestHandler = (request, response) => {
+      void handleHostRequest(request, response);
     };
     const httpSession = effects.createHttpSession(handler, onUpgrade(host));
     const serveSecure = (secure: net.Socket, capability: string): void => {
