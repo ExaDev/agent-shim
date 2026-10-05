@@ -6,7 +6,7 @@ import * as net from "node:net";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { ExemptHttpAgent, UPSTREAM_LOCAL_PORT_END, UPSTREAM_LOCAL_PORT_START } from "./connectEffects";
+import { ExemptHttpAgent, realConnectEffects, UPSTREAM_LOCAL_PORT_END, UPSTREAM_LOCAL_PORT_START } from "./connectEffects";
 import { HTTP_OK } from "./connectTestWorld";
 
 /** The name every dial in this file resolves: a documentation-reserved TLD, so nothing but this file's resolver stand-in can ever answer it, and a dial through the exempt agent takes the real-name path (reserved source port, DNS lookup) rather than the address-literal shortcut. */
@@ -229,6 +229,30 @@ describe("the exempt agents' reserved source-port rotation", () => {
       const failureCode = await requestFailureCode(upstream.port);
       expect(failureCode !== undefined && HELD_PORT_ERRNOS.has(failureCode)).toBe(true);
       // No dial of the fully-held range ever connected, so the stand-in saw no request at all.
+      expect(upstream.arrivals).toHaveLength(0);
+    } finally {
+      for (const socket of held) {
+        socket.destroy();
+      }
+      await upstream.close();
+    }
+  });
+  it("surfaces the bind error from a tap session's upstream dial when every port of the range is held, instead of redialling forever", async () => {
+    const upstream = await startUpstream();
+    const held: net.Socket[] = [];
+    try {
+      for (let port = UPSTREAM_LOCAL_PORT_START; port <= UPSTREAM_LOCAL_PORT_END; port += 1) {
+        held.push(await holdReservedPort(port, upstream.port));
+      }
+      const failureCode = await realConnectEffects()
+        .connectTlsUpstream(DIAL_NAME, upstream.port, undefined)
+        .then(
+          () => {
+            throw new Error("a held range unexpectedly served the tap's upstream dial");
+          },
+          (error: unknown) => (error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : undefined),
+        );
+      expect(failureCode !== undefined && HELD_PORT_ERRNOS.has(failureCode)).toBe(true);
       expect(upstream.arrivals).toHaveLength(0);
     } finally {
       for (const socket of held) {
