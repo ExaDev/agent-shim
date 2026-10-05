@@ -19,7 +19,7 @@ export type FrontDoorSession = z.infer<typeof FrontDoorSessionSchema>;
 /**
  * The front-door supervisor's state.json under `<home>/frontdoor/`. Every field is optional because the file exists in stages, exactly like headroom's and the old codex daemon's: a fresh supervisor writes its own pid before the listener is up, and a shut-down front door leaves only the sticky `lastPort` and any `lastError` worth surfacing.
  */
-const FrontDoorStateSchema = z.strictObject({
+export const FrontDoorStateSchema = z.strictObject({
   /**
    * The launcher-to-door wire protocol this supervisor speaks, written once it is serving; absent in state written by a release that predates the field, which `ensureFrontDoor` reads as protocol 0. A launcher replaces a door whose protocol is lower than its own (see `FRONT_DOOR_PROTOCOL`).
    */

@@ -16,7 +16,7 @@ import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { realFarmFs, realHeadroomSocketTrust } from "../realPorts";
 import { FAKE_HOME, fakeFs } from "../test-helpers";
 import { createDoorPipelines } from "./assembly";
-import { headroomSocketTarget } from "./commands";
+import { headroomSocketTarget } from "./status";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
 import { SEQUESTERED_CREDENTIAL, createCredentialCustody } from "./custody";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, IDENTITY_HEADER, SESSION_HEADER } from "./route";
