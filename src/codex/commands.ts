@@ -14,8 +14,10 @@ import { createUpstreamAgent, createUpstreamFetch } from "./agent";
 import { createCodexAuthStore, type CodexAuthFs } from "./auth";
 import type { UsageSnapshot } from "./quota";
 import type { CodexRoutePorts } from "./route";
-import { realSiwcPorts } from "./siwcPorts";
-import { createSiwcStore } from "./siwcStore";
+import { SIWC_PLAN_SCOPE } from "./siwc";
+import { runSiwcLogin, runSiwcLogout, type SiwcLoginPorts } from "./siwcLogin";
+import { listenForCallback, openInBrowser, realSiwcPorts } from "./siwcPorts";
+import { createSiwcStore, parseSiwcFile } from "./siwcStore";
 import { realTimers, RESPONSES_API_TARGET } from "./upstream";
 
 /** The Codex CLI's home: `CODEX_HOME` when set, as the Codex CLI itself reads it, otherwise `~/.codex`. */
@@ -49,6 +51,7 @@ const realCodexAuthFs: CodexAuthFs = {
     }
   },
   writePrivate: (filePath, contents) => {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, contents, { encoding: "utf8", mode: PRIVATE_FILE_MODE });
     // `mode` applies only when the file is created; a leftover temporary file from a crashed refresh keeps whatever mode it had.
     fs.chmodSync(filePath, PRIVATE_FILE_MODE);
@@ -103,6 +106,27 @@ interface CodexSessionStatus extends FrontDoorSessionSummary {
   readonly alive: boolean;
 }
 
+/** The Sign in with ChatGPT login's state: no sign-in yet, signed in (with who and when the access token lapses), or a file that cannot be read. */
+export type SignInStatus =
+  | { readonly state: "none" }
+  | { readonly state: "signed-in"; readonly email: string | undefined; readonly planScope: boolean; readonly accessTokenExpiresAt: number }
+  | { readonly state: "unreadable"; readonly message: string };
+
+function readSignInStatus(fsPort: HeadroomFs, filePath: string): SignInStatus {
+  const raw = fsPort.readFileUtf8(filePath);
+  if (raw === undefined) {
+    return { state: "none" };
+  }
+  try {
+    const file = parseSiwcFile(raw, filePath);
+    return file.grant === undefined
+      ? { state: "none" }
+      : { state: "signed-in", email: file.grant.email, planScope: file.grant.scopes.includes(SIWC_PLAN_SCOPE), accessTokenExpiresAt: file.grant.expiresAt };
+  } catch (error) {
+    return { state: "unreadable", message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 /** Everything `agent-shim codex status` reports, collected read-only. */
 export interface CodexStatus {
   /** The front door's state: the codex translation is one route inside the front-door daemon, so its availability is the front door's. */
@@ -112,6 +136,8 @@ export interface CodexStatus {
   /** The codex provider files this AGENT_SHIM_HOME defines. */
   readonly codexProviders: readonly string[];
   /** Where the statusline usage snapshot lives. */
+  /** The Sign in with ChatGPT login a provider with `codex.login: "chatgpt-sign-in"` spends. */
+  readonly signIn: SignInStatus;
   readonly usageSnapshotPath: string;
   readonly usageSnapshotExists: boolean;
   readonly logPath: string;
@@ -134,11 +160,22 @@ export function collectCodexStatus(fsPort: HeadroomFs, paths: LayoutPaths, isRun
     supervisorAlive: state.supervisorPid !== undefined && isRunning(state.supervisorPid),
     sessions: listFrontDoorSessions(fsPort, paths.frontdoorSessionsDir).map((session) => ({ ...session, alive: isRunning(session.pid) })),
     codexProviders: codexProviderNames(fsPort, paths.providersDir),
+    signIn: readSignInStatus(fsPort, paths.chatgptSignInFile),
     usageSnapshotPath: codexUsageSnapshotPath(),
     usageSnapshotExists: fsPort.readFileUtf8(codexUsageSnapshotPath()) !== undefined,
     logPath: paths.frontdoorLogPath,
     logExists: fsPort.readFileUtf8(paths.frontdoorLogPath) !== undefined,
   };
+}
+
+function formatSignIn(signIn: SignInStatus): string {
+  if (signIn.state === "none") {
+    return "chatgpt sign-in: not signed in (run `agent-shim codex login`)";
+  }
+  if (signIn.state === "unreadable") {
+    return `chatgpt sign-in: ${signIn.message}`;
+  }
+  return `chatgpt sign-in: signed in${signIn.email === undefined ? "" : ` as ${signIn.email}`}${signIn.planScope ? "" : ", WITHOUT permission to use your ChatGPT plan (run `agent-shim codex login` again and allow it)"}`;
 }
 
 /** Formats `agent-shim codex status`, one line per entry. */
@@ -164,9 +201,26 @@ export function formatCodexStatus(status: CodexStatus): string[] {
   if (status.frontDoor.lastError !== undefined) {
     lines.push(`last error: ${status.frontDoor.lastError}`);
   }
+  lines.push(formatSignIn(status.signIn));
   lines.push(`usage snapshot: ${status.usageSnapshotPath}${status.usageSnapshotExists ? "" : " (not created yet)"}`);
   lines.push(`daemon log: ${status.logPath}${status.logExists ? "" : " (not created yet)"}`);
   return lines;
+}
+
+/** The real ports for a sign-in: the sign-in file, the process's own fetch, a loopback listener and the system browser. */
+function realSiwcLoginPorts(paths: LayoutPaths): SiwcLoginPorts {
+  const siwc = realSiwcPorts(createUpstreamFetch(createUpstreamAgent()));
+  const store = createSiwcStore(paths.chatgptSignInFile, { fs: realCodexAuthFs, siwc, tempSuffix: `${String(process.pid)}.${randomUUID()}` });
+  return {
+    store,
+    siwc,
+    randomUuid: randomUUID,
+    listen: listenForCallback,
+    openBrowser: openInBrowser,
+    print: (line) => {
+      console.log(line);
+    },
+  };
 }
 
 /** Registers `agent-shim codex status`: the codex translation's read-only status through the front door that serves it. */
@@ -190,5 +244,44 @@ export function registerCodexCommand(program: Command, deps: CommandDeps): void 
         }
       }),
     ["agent-shim codex status", "agent-shim codex status --json"],
+  );
+
+  withExamples(
+    codex
+      .command("login")
+      .description("Sign in with ChatGPT so a codex provider with `codex.login` set to `chatgpt-sign-in` can spend your ChatGPT plan on OpenAI's public Responses API. Opens your browser.")
+      .option("--no-open", "Print the sign-in address instead of opening the browser.")
+      .option("--json", "Print the result as JSON.")
+      .action(async (options: Readonly<{ open: boolean; json?: boolean }>) => {
+        const ports = realSiwcLoginPorts(paths);
+        const result = await runSiwcLogin(options.json === true ? { ...ports, print: () => undefined } : ports, { open: options.open });
+        if (options.json === true) {
+          printJson({ action: "login", email: result.email ?? null, sub: result.sub });
+          return;
+        }
+        console.log(`Signed in${result.email === undefined ? "" : ` as ${result.email}`}. Set "codex": { "login": "chatgpt-sign-in" } on a codex provider to use it.`);
+      }),
+    ["agent-shim codex login", "agent-shim codex login --no-open"],
+  );
+
+  withExamples(
+    codex
+      .command("logout")
+      .description("Revoke the Sign in with ChatGPT login and remove it from this machine.")
+      .option("--json", "Print the result as JSON.")
+      .action(async (options: Readonly<{ json?: boolean }>) => {
+        const ports = realSiwcLoginPorts(paths);
+        const result = await runSiwcLogout(ports);
+        if (options.json === true) {
+          printJson({ action: "logout", ...result });
+          return;
+        }
+        if (!result.hadGrant) {
+          console.log("Not signed in.");
+          return;
+        }
+        console.log(result.revoked ? "Signed out and revoked the login at OpenAI." : "Signed out here, but OpenAI could not be told to revoke the login: revoke it in ChatGPT settings.");
+      }),
+    ["agent-shim codex logout"],
   );
 }
