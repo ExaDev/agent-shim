@@ -1,3 +1,13 @@
+## [8.11.0](https://github.com/ExaDev/agent-shim/compare/v8.10.0...v8.11.0) (2026-10-05)
+
+### Features
+
+* **frontdoor:** log the RC stream attachment's lifecycle ([cb10beb](https://github.com/ExaDev/agent-shim/commit/cb10bebbeae0b907bb2c2757286c377773e81be5))
+
+### Bug Fixes
+
+* **frontdoor:** persist the Remote Control client credential across door generations ([1d2289b](https://github.com/ExaDev/agent-shim/commit/1d2289b3daf2e767767372bf88602a3cfab6afb5))
+
 ## [8.10.0](https://github.com/ExaDev/agent-shim/compare/v8.9.0...v8.10.0) (2026-10-05)
 
 ### Features
