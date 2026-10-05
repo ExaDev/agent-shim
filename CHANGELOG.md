@@ -1,3 +1,27 @@
+## [8.16.0](https://github.com/ExaDev/agent-shim/compare/v8.15.0...v8.16.0) (2026-10-05)
+
+### Features
+
+* **codex:** add codex login and logout and report the sign-in in codex status ([30916e7](https://github.com/ExaDev/agent-shim/commit/30916e7e28ce4eba6b718c0552645c328304e59d))
+* **codex:** add the Sign in with ChatGPT protocol and grant store ([cf8d73b](https://github.com/ExaDev/agent-shim/commit/cf8d73bcb147f83517adaa4a45c843516f2cefb0))
+* **codex:** choose a codex provider's login and upstream per provider ([a2003cc](https://github.com/ExaDev/agent-shim/commit/a2003cc58e479f3de313ce1a8d7fbdf9ee85f5d1))
+* **codex:** set a provider's login from the CLI and warn in doctor when no sign-in exists ([77b9aad](https://github.com/ExaDev/agent-shim/commit/77b9aad479ef44d8e0517f8670d41aaa993c9815))
+* **frontdoor:** generalise the door's event fan-out into an event backbone ([1cd97e7](https://github.com/ExaDev/agent-shim/commit/1cd97e709b7e5f828d2f5d792f5d74b98e8d58a2))
+
+### Bug Fixes
+
+* **codex:** follow the Sign in with ChatGPT SDK's registration behaviour ([7706d1d](https://github.com/ExaDev/agent-shim/commit/7706d1dc9549e62ec68a67a50fa64be1229684f5))
+
+### Documentation
+
+* describe Sign in with ChatGPT as a codex provider login ([1ae85f8](https://github.com/ExaDev/agent-shim/commit/1ae85f8e65f5000c7cebadd0277b669912b557f9))
+* mark the chatgpt-sign-in login experimental ([a95df2b](https://github.com/ExaDev/agent-shim/commit/a95df2b2ee1179e3e7f523c0fdd428e56fd970d7))
+* note that a managed ChatGPT workspace can refuse the Sign in with ChatGPT consent ([d6e1541](https://github.com/ExaDev/agent-shim/commit/d6e1541ec223063eba661049e0829f5d1f083c4a))
+
+### Tests
+
+* pass the sign-in file to the e2e route ports and scope the sign-in doctor findings ([b147e09](https://github.com/ExaDev/agent-shim/commit/b147e09329057002ee04e1580f4fc2ac36c5e8ac))
+
 ## [8.15.0](https://github.com/ExaDev/agent-shim/compare/v8.14.1...v8.15.0) (2026-10-05)
 
 ### Features
