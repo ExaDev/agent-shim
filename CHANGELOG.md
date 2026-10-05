@@ -1,3 +1,17 @@
+## [8.8.0](https://github.com/ExaDev/agent-shim/compare/v8.7.0...v8.8.0) (2026-10-05)
+
+### Features
+
+* **library:** export the pool ranking, effectiveWindow and the condition evaluator ([3677a5f](https://github.com/ExaDev/agent-shim/commit/3677a5fdbc83b3d81ae382320a4096336276baa4))
+
+### Bug Fixes
+
+* **frontdoor:** dial a tap session's upstream through the bounded reserved dial ([c595c35](https://github.com/ExaDev/agent-shim/commit/c595c35bec77a1c7c315df30a0bb569d71bc8276))
+
+### Code Refactoring
+
+* **usage:** define the pool pick report and plan class as schemas ([24efbfc](https://github.com/ExaDev/agent-shim/commit/24efbfc11a62c4c892e562346fc22e289d4512ed))
+
 ## [8.7.0](https://github.com/ExaDev/agent-shim/compare/v8.6.0...v8.7.0) (2026-10-05)
 
 ### Features
