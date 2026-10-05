@@ -1,4 +1,4 @@
-import type { Credential, CredentialSource, CredentialTarget, CredentialTargetVar } from "./config/schema";
+import type { Credential, CredentialCache, CredentialSource, CredentialTarget, CredentialTargetVar } from "./config/schema";
 import { effectiveStore, isFresh, type CredentialCachePort } from "./credentialCache";
 
 /** The exit status for a launch whose selected provider or identity has a credential block none of whose sources yields a token: 64, the conventional `EX_USAGE`, because the invocation asked for a credential the environment cannot supply. */
@@ -92,8 +92,8 @@ type CredentialSourceSummary =
 export interface CredentialSummary {
   readonly target: CredentialTarget;
   readonly sources: readonly CredentialSourceSummary[];
-  /** The block's cache setting when it asks for caching: how long a token is kept (absent for no expiry) and where. */
-  readonly cache?: { readonly ttl?: string; readonly store?: string };
+  /** The block's cache setting when it asks for caching: how long a token is kept (absent for no expiry) and where. Carried as the config schema's own type, since the summary passes the parsed block's setting through unchanged. */
+  readonly cache?: CredentialCache;
 }
 
 function summariseSource(source: CredentialSource): CredentialSourceSummary {
