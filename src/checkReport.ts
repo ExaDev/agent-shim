@@ -19,7 +19,7 @@ import { AMBIENT_CREDENTIAL_VARS, evaluateAmbientCredentialGuard, type AmbientCr
 import type { ConfigProfileDecisionSource, IdentityDecisionSource } from "./launcher/identity";
 import type { FarmFs, RunPort } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
-import type { PoolPickReport } from "./poolPickReport";
+import type { PoolPickReport } from "./usage/pickReportSchema";
 import { LegacyProviderFileError, readProvider } from "./providersStore";
 import { detectEncodingAmbiguity, type EncodingAmbiguity } from "./resolve/projects";
 import { descendPolicyFor, resolveDecisions, type ResolvedState } from "./resolve/pipeline";

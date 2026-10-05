@@ -1,0 +1,140 @@
+{
+  "$id": "https://github.com/ExaDev/agent-shim/schema/PoolPickReport.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "pool": {
+      "type": "string"
+    },
+    "directory": {
+      "type": "string"
+    },
+    "pick": {
+      "type": "string"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "identity": {
+            "type": "string"
+          },
+          "class": {
+            "type": "string",
+            "enum": [
+              "scored",
+              "unknown",
+              "pay-per-use",
+              "ineligible"
+            ]
+          },
+          "score": {
+            "type": "number"
+          },
+          "feasible": {
+            "type": "boolean"
+          },
+          "blockedUntil": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "subscription"
+                  },
+                  "capacity": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "recognised": {
+                    "type": "boolean"
+                  },
+                  "tier": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "capacity",
+                  "recognised"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "pay-per-use"
+                  },
+                  "tier": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "identity",
+          "class",
+          "feasible",
+          "plan",
+          "reasons"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "earliestReturn": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        }
+      },
+      "required": [
+        "identity",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "stickyProblem": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "pool",
+    "directory",
+    "candidates",
+    "missing"
+  ],
+  "additionalProperties": false
+}

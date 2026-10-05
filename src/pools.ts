@@ -8,7 +8,8 @@ import type { LayoutPaths } from "./paths";
 import { addPool, readPools, removePool, requirePool, setPool } from "./poolStore";
 import { realFarmFs, realFsPort } from "./realPorts";
 import { formatAge } from "./usage/preflight";
-import { type PoolPickReport, collectPoolPick } from "./poolPickReport";
+import { collectPoolPick } from "./poolPickReport";
+import type { PoolPickReport } from "./usage/pickReportSchema";
 
 function formatPoolPick(report: PoolPickReport, nowMs: number): string[] {
   const head =
