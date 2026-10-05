@@ -783,3 +783,36 @@ describe("runDoctor: pinned Claude Code versions", () => {
     expect(noList.findings.filter((finding) => finding.severity === "warn")).toEqual([]);
   });
 });
+
+describe("runDoctor: Sign in with ChatGPT provider", () => {
+  const SIGN_IN_PATH = "/agent-shim/codex/chatgpt-sign-in.json";
+  const signInProvider = provider("codex", { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] }, codex: { login: "chatgpt-sign-in" } });
+  const grant = { clientId: "c", sub: "s", idToken: "i", accessToken: "a", refreshToken: "r", scopes: ["openid", "chatgpt.tokens.use.direct"], expiresAt: 0 };
+  const warnings = (chatgptSignIn: RunDoctorParams["chatgptSignIn"]) =>
+    findingsFor(runDoctor(baseParams({ providers: [signInProvider], chatgptSignIn })), "provider").filter((finding) => finding.severity === "warn");
+
+  it("warns, naming the login command, when nobody is signed in", () => {
+    expect(warnings({ path: SIGN_IN_PATH, raw: undefined })).toEqual([
+      { section: "provider", subject: "codex", severity: "warn", message: "codex uses the Sign in with ChatGPT login, but nobody is signed in: run `agent-shim codex login`." },
+    ]);
+    expect(warnings({ path: SIGN_IN_PATH, raw: JSON.stringify({ hostId: "urn:uuid:x" }) })).toHaveLength(1);
+  });
+
+  it("is quiet when a grant with the plan scope exists", () => {
+    expect(warnings({ path: SIGN_IN_PATH, raw: JSON.stringify({ hostId: "urn:uuid:x", grant }) })).toEqual([]);
+  });
+
+  it("warns when the grant was not given permission to use the plan", () => {
+    expect(warnings({ path: SIGN_IN_PATH, raw: JSON.stringify({ hostId: "urn:uuid:x", grant: { ...grant, scopes: ["openid"] } }) })[0]?.message).toMatch(/not given permission to use your ChatGPT plan/);
+  });
+
+  it("reports an unreadable sign-in file instead of failing", () => {
+    expect(warnings({ path: SIGN_IN_PATH, raw: "{not json" })[0]?.message).toMatch(/not valid JSON/);
+  });
+
+  it("leaves the sign-in out when the file is not supplied, and for a provider on the Codex CLI login", () => {
+    expect(warnings(undefined)).toEqual([]);
+    const cliProvider = provider("codex", { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } });
+    expect(findingsFor(runDoctor(baseParams({ providers: [cliProvider], chatgptSignIn: { path: SIGN_IN_PATH, raw: undefined } })), "provider").filter((finding) => finding.severity === "warn")).toEqual([]);
+  });
+});

@@ -107,7 +107,7 @@ interface CodexSessionStatus extends FrontDoorSessionSummary {
 }
 
 /** The Sign in with ChatGPT login's state: no sign-in yet, signed in (with who and when the access token lapses), or a file that cannot be read. */
-export type SignInStatus =
+type SignInStatus =
   | { readonly state: "none" }
   | { readonly state: "signed-in"; readonly email: string | undefined; readonly planScope: boolean; readonly accessTokenExpiresAt: number }
   | { readonly state: "unreadable"; readonly message: string };
