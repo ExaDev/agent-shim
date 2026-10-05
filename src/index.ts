@@ -146,6 +146,25 @@ export {
 } from "./frontdoor/controlSchemas";
 export { collectFrontDoorStatus, formatFrontDoorStatus, headroomSocketTarget, type FrontDoorSessionStatus, type FrontDoorStatus } from "./frontdoor/status";
 export { FrontDoorStateSchema } from "./frontdoor/state";
+export { createEventsApiRouter, type DoorEventsApiDeps } from "./frontdoor/eventsApi";
+export {
+  DOOR_EVENT_BUFFER_EVENTS,
+  createDoorEventHub,
+  rcFanoutOnDoorHub,
+  type DoorEventHub,
+  type DoorEventPublisher,
+  type DoorEventStream,
+} from "./frontdoor/eventHub";
+export {
+  DOOR_EVENT_SOURCE_RC,
+  LAUNCH_EVENT_SOURCE,
+  DoorEventSchema,
+  DoorEventSourceQuerySchema,
+  LaunchLifecycleEventSchema,
+  type DoorEvent,
+  type LaunchLifecycleEvent,
+} from "./frontdoor/eventSchemas";
+export { createLaunchEventPublisher, type LaunchEventPublisher } from "./frontdoor/launchEvents";
 export {
   RcPermissionModeSchema,
   RcStreamEnvelopeSchema,

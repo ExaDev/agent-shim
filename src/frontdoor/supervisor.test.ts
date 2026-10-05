@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { HeadroomFs } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { type DoorEvent } from "./eventSchemas";
+import { createDoorEventHub } from "./eventHub";
+import { createLaunchEventPublisher } from "./launchEvents";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
 import { FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
@@ -47,6 +50,9 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
   let failConnect = false;
   let failDirect = false;
   let onSleep: (() => void) | undefined;
+  // The door's event backbone and its launch lifecycle publisher, the same pairing the real ports wire: the tick's registry facts go in through the port below and come out as source-tagged events a test subscribes for.
+  const doorEvents = createDoorEventHub();
+  const launchEvents = createLaunchEventPublisher(doorEvents, () => clock);
 
   const ports: FrontDoorSupervisorPorts = {
     fs,
@@ -108,6 +114,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
       hubCloses += 1;
       stopOrder.push("hub");
     },
+    observeLaunchRegistry: launchEvents.observe,
     log: (line) => {
       logs.push(line);
     },
@@ -123,6 +130,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
     closes,
     stopOrder,
     hubCloses: () => hubCloses,
+    doorEvents,
     logs,
     clock: () => clock,
     set failListener(value: boolean) {
@@ -274,5 +282,43 @@ describe("runFrontDoorSupervisor", () => {
     };
     expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
     expect(world.closes).toEqual([]);
+  });
+
+  it("publishes the launch lifecycle on the event backbone as the registry changes between ticks, and nothing for the baseline a generation inherits", async () => {
+    const world = makeWorld();
+    const received: DoorEvent[] = [];
+    const detach = world.doorEvents.subscribe(undefined, (event) => {
+      received.push(event);
+    });
+    // The clock instants the driven changes are observed at, one sleep apart: the world's clock only moves when the supervisor sleeps, so each is the tick's own reading.
+    const endedAtMs = FRONTDOOR_POLL_MS + FRONTDOOR_POLL_MS;
+    const prunedAtMs = endedAtMs + FRONTDOOR_POLL_MS;
+    // A session the registry already holds when the door starts: this generation never observed its registration, so the baseline observation publishes nothing rather than claiming a moment it did not see.
+    world.alive.add(LIVE_SESSION);
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0, token: SESSION_TOKEN });
+    let ticks = 0;
+    const registerNewSessionOn = 1;
+    const endNewSessionOn = 2;
+    const killLiveSessionOn = 3;
+    world.onSleep = () => {
+      ticks += 1;
+      if (ticks === registerNewSessionOn) {
+        world.alive.add(NEW_SESSION);
+        writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: NEW_SESSION, startedAt: world.clock(), token: SESSION_TOKEN });
+      }
+      if (ticks === endNewSessionOn) {
+        removeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, NEW_SESSION);
+      }
+      if (ticks === killLiveSessionOn) {
+        world.alive.delete(LIVE_SESSION);
+      }
+    };
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: SLACK_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
+    detach();
+    expect(received).toEqual([
+      { source: "launch", sequence: 1, payload: { kind: "registered", pid: NEW_SESSION, startedAt: FRONTDOOR_POLL_MS, observedAt: FRONTDOOR_POLL_MS } },
+      { source: "launch", sequence: 2, payload: { kind: "ended", pid: NEW_SESSION, startedAt: FRONTDOOR_POLL_MS, observedAt: endedAtMs } },
+      { source: "launch", sequence: 3, payload: { kind: "pruned", pid: LIVE_SESSION, startedAt: 0, observedAt: prunedAtMs } },
+    ]);
   });
 });
