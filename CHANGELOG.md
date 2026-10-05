@@ -1,3 +1,15 @@
+## [8.14.1](https://github.com/ExaDev/agent-shim/compare/v8.14.0...v8.14.1) (2026-10-05)
+
+### Bug Fixes
+
+* **frontdoor:** close the RC stream hub when the supervisor stops ([20f14ea](https://github.com/ExaDev/agent-shim/commit/20f14ea5fe74efc4bcc32113adb239d05bf82ddd)), closes [#243](https://github.com/ExaDev/agent-shim/issues/243)
+
+### Tests
+
+* give every test and hook a hang-guard timeout sized for a loaded machine ([7e097ce](https://github.com/ExaDev/agent-shim/commit/7e097cee1da283c13a077ca3c9cbce67e0366036))
+* keep the latency and walk-policy tests valid on a loaded machine ([c42573b](https://github.com/ExaDev/agent-shim/commit/c42573bfc44f6d793ad492b12bc78b24318eff65))
+* remove the fixed pauses from the detach and streaming tests ([9071e63](https://github.com/ExaDev/agent-shim/commit/9071e63300ff4679ce1449688b077045b3a2d5d1))
+
 ## [8.14.0](https://github.com/ExaDev/agent-shim/compare/v8.13.0...v8.14.0) (2026-10-05)
 
 ### Features
