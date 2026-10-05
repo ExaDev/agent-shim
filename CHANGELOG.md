@@ -1,3 +1,18 @@
+## [8.15.0](https://github.com/ExaDev/agent-shim/compare/v8.14.1...v8.15.0) (2026-10-05)
+
+### Features
+
+* **check:** define the report's JSON form as a Zod schema ([9a7c775](https://github.com/ExaDev/agent-shim/commit/9a7c775a52a7e6faeace7640c2f994d9e973dcd1))
+* **frontdoor:** serve the door's control plane on the typed API mount ([d6cc022](https://github.com/ExaDev/agent-shim/commit/d6cc0225a53806172d444ca86545c98b08903ae5))
+
+### Code Refactoring
+
+* **report:** derive the report vocabularies from shared const arrays ([04140a7](https://github.com/ExaDev/agent-shim/commit/04140a711bb52455fc7c390532b7d565307ae2f3))
+
+### Documentation
+
+* **frontdoor:** document the door's control plane ([ef1d2b9](https://github.com/ExaDev/agent-shim/commit/ef1d2b9aa663487cb5d58202ed2aa30289cc1c53))
+
 ## [8.14.1](https://github.com/ExaDev/agent-shim/compare/v8.14.0...v8.14.1) (2026-10-05)
 
 ### Bug Fixes
