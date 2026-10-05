@@ -6,14 +6,16 @@ import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/id
 import { resolveClaudeHome } from "./paths";
 import { collectPoolPick } from "./poolPickReport";
 import { PoolNotFoundError } from "./poolStore";
+import { realCredentialCacheEnv } from "./realCredentialCache";
 import { cascadeProviderName } from "./providersStore";
 import { realFarmFs, realFsPort, realRunPort, resolveGitBranch } from "./realPorts";
 import path from "node:path";
 import { z } from "zod";
 import { parseEnvBool } from "./cli/envBool";
 import { ConfigValidationError } from "./config/load";
-import { SHIPPED_CATEGORY_DEFAULTS, type CategoryClassification, type CategoryClassificationOverlay, type Identity, type Provider } from "./config/schema";
-import { formatCredentialSummary, summariseCredential, type CredentialSummary } from "./credential";
+import { SHIPPED_CATEGORY_DEFAULTS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type Identity, type Provider } from "./config/schema";
+import { formatCredentialSummary, summariseCredential, type CredentialCacheEnv, type CredentialSummary } from "./credential";
+import { describeCachedCredential, formatCachedCredentialState, type CachedCredentialState } from "./credentialCache";
 import { buildEntryFacts } from "./launcher/farm";
 import { AMBIENT_CREDENTIAL_VARS, evaluateAmbientCredentialGuard, type AmbientCredentialGuardResult } from "./launcher/guard";
 import type { ConfigProfileDecisionSource, IdentityDecisionSource } from "./launcher/identity";
@@ -235,12 +237,24 @@ type CheckProviderInput =
  */
 interface CredentialReport {
   readonly applies: "provider" | "identity" | "stored-login";
-  readonly provider?: { readonly name: string; readonly credential?: CredentialSummary; readonly problem?: string };
+  readonly provider?: { readonly name: string; readonly credential?: CredentialSummary; readonly problem?: string; readonly cached?: CachedCredentialState };
   readonly identity?: CredentialSummary;
+  /** What the identity's own credential cache holds, when its block caches and the cache could be read. */
+  readonly identityCached?: CachedCredentialState;
 }
 
-function buildCredentialReport(provider: CheckProviderInput | undefined, identity: Identity | undefined): CredentialReport {
+/** The cache state for one credential block that asks for caching, or undefined when it does not or no cache port was given. Never carries the token. */
+function cachedState(cacheEnv: CredentialCacheEnv | undefined, owner: string, block: Credential): CachedCredentialState | undefined {
+  if (cacheEnv === undefined || block.cache === undefined) {
+    return undefined;
+  }
+  return describeCachedCredential({ port: cacheEnv.port, platform: cacheEnv.platform, owner, cache: block.cache, nowMs: cacheEnv.now() });
+}
+
+function buildCredentialReport(provider: CheckProviderInput | undefined, identity: Identity | undefined, identityName: string | undefined, cacheEnv: CredentialCacheEnv | undefined): CredentialReport {
   const identityCredential = identity?.credential === undefined ? undefined : summariseCredential(identity.credential);
+  const identityCached = identity?.credential === undefined || identityName === undefined ? undefined : cachedState(cacheEnv, `identity ${identityName}`, identity.credential);
+  const providerCached = provider?.definition === undefined ? undefined : cachedState(cacheEnv, `provider ${provider.name}`, provider.definition.credential);
   return {
     applies: provider !== undefined ? "provider" : identityCredential !== undefined ? "identity" : "stored-login",
     ...(provider === undefined
@@ -248,10 +262,11 @@ function buildCredentialReport(provider: CheckProviderInput | undefined, identit
       : {
           provider:
             provider.problem === undefined
-              ? { name: provider.name, credential: summariseCredential(provider.definition.credential) }
+              ? { name: provider.name, credential: summariseCredential(provider.definition.credential), ...(providerCached === undefined ? {} : { cached: providerCached }) }
               : { name: provider.name, problem: provider.problem },
         }),
     ...(identityCredential === undefined ? {} : { identity: identityCredential }),
+    ...(identityCached === undefined ? {} : { identityCached }),
   };
 }
 
@@ -286,6 +301,8 @@ export interface RunCheckParams {
   readonly platform: string;
   /** The provider a launch here would route through (`launch.provider` in the cascade), when one is selected. */
   readonly provider?: CheckProviderInput;
+  /** Where cached credentials live. Omit to skip reporting a credential cache's age; with it, a block that caches reports whether it holds an entry, how old it is and whether it has expired, never the token. */
+  readonly credentialCache?: CredentialCacheEnv;
 }
 
 /** Everything `agent-shim check` reports about one directory/identity, without touching the farm or spawning anything. */
@@ -359,7 +376,7 @@ export function runCheck(params: RunCheckParams): CheckReport {
     ambientCredential,
     ...(keychain === undefined ? {} : { keychain }),
     settingsExposure,
-    credential: buildCredentialReport(params.provider, params.identity),
+    credential: buildCredentialReport(params.provider, params.identity, params.identityName, params.credentialCache),
   };
 }
 
@@ -404,12 +421,12 @@ export function formatCheckReport(report: CheckReport): string[] {
   const { credential } = report;
   if (credential.provider !== undefined) {
     lines.push(
-      `  Provider ${credential.provider.name}: ${credential.provider.credential === undefined ? `unusable: ${credential.provider.problem ?? ""}` : formatCredentialSummary(credential.provider.credential)}`,
+      `  Provider ${credential.provider.name}: ${credential.provider.credential === undefined ? `unusable: ${credential.provider.problem ?? ""}` : formatCredentialSummary(credential.provider.credential)}${credential.provider.cached === undefined ? "" : `; ${formatCachedCredentialState(credential.provider.cached)}`}`,
     );
   }
   if (credential.identity !== undefined) {
     lines.push(
-      `  Identity ${report.identityName ?? "(none)"}: ${formatCredentialSummary(credential.identity)}${credential.applies === "provider" ? " (not used: the provider's credential applies)" : ""}`,
+      `  Identity ${report.identityName ?? "(none)"}: ${formatCredentialSummary(credential.identity)}${credential.identityCached === undefined ? "" : `; ${formatCachedCredentialState(credential.identityCached)}`}${credential.applies === "provider" ? " (not used: the provider's credential applies)" : ""}`,
     );
   }
   if (credential.applies === "stored-login") {
@@ -598,6 +615,7 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
     ...(loadedIdentity === undefined ? {} : { identity: loadedIdentity.config }),
     settingsFiles,
     run: realRunPort,
+    credentialCache: realCredentialCacheEnv(paths),
     ...(farmRoot === undefined ? {} : { farmRoot }),
     platform: process.platform,
     ...(provider === undefined ? {} : { provider }),

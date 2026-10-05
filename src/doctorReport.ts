@@ -8,8 +8,10 @@ import path from "node:path";
 import type { z } from "zod";
 import { lookupKeychainService } from "./checkReport";
 import { ConfigValidationError } from "./config/load";
-import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, ProviderSchema } from "./config/schema";
-import { describeCredential } from "./credential";
+import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, ProviderSchema, type Credential } from "./config/schema";
+import { describeCredential, type CredentialCacheEnv } from "./credential";
+import { describeCachedCredential, formatCachedCredentialState } from "./credentialCache";
+import { realCredentialCacheEnv } from "./realCredentialCache";
 import { isMovingGitSource } from "./headroom/source";
 import { HeadroomStateSchema } from "./headroom/state";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
@@ -117,6 +119,8 @@ export function refinePathShadow(
 /** Everything `runDoctor` needs, all of it already loaded/injected — nothing in `runDoctor` itself reads a file, shells out, or touches the farm. */
 export interface RunDoctorParams {
   readonly env: Readonly<Record<string, string | undefined>>;
+  /** Where cached credentials live. Omit to leave a credential cache's age out of the identity and provider findings; with it, a block that caches reports whether it holds an entry, how old it is and whether it has expired, never the token. */
+  readonly credentialCache?: CredentialCacheEnv;
   readonly identities: readonly DoctorIdentityInput[];
   readonly configProfiles: readonly DoctorConfigProfileInput[];
   readonly providers: readonly DoctorProviderInput[];
@@ -223,9 +227,20 @@ function pushPathResolution(
 }
 
 /**
+ * What a credential block's cache holds, as a clause for a finding and whether it should fail the check: a block that does not cache, or a run with no cache port, adds nothing, and a store this platform cannot read fails because every launch using the credential would fail the same way.
+ */
+function cacheClause(cacheEnv: CredentialCacheEnv | undefined, owner: string, block: Credential): { readonly text: string; readonly unreadable: boolean } {
+  if (cacheEnv === undefined || block.cache === undefined) {
+    return { text: "", unreadable: false };
+  }
+  const state = describeCachedCredential({ port: cacheEnv.port, platform: cacheEnv.platform, owner, cache: block.cache, nowMs: cacheEnv.now() });
+  return { text: `; ${formatCachedCredentialState(state)}`, unreadable: state.status === "unreadable" };
+}
+
+/**
  * Reports one provider file: an old-format file (before the credential block) fails with the old fields named and the whole file rewritten in the current format, since that is the one change converting it needs; any other invalid file fails with its validation errors; a valid one passes with its credential described by source kind and target.
  */
-function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, entry: DoctorProviderInput): void {
+function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void, entry: DoctorProviderInput, cacheEnv: CredentialCacheEnv | undefined): void {
   if (entry.raw === undefined) {
     push("provider", "fail", `${entry.path} is missing.`, entry.name);
     return;
@@ -247,7 +262,8 @@ function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, m
     push("provider", "fail", new ConfigValidationError(entry.path, validated.error.issues).message, entry.name);
     return;
   }
-  push("provider", "pass", `${entry.name} is valid (${describeProviderEndpoint(validated.data)}, credential ${describeCredential(validated.data.credential)}).`, entry.name);
+  const cache = cacheClause(cacheEnv, `provider ${entry.name}`, validated.data.credential);
+  push("provider", cache.unreadable ? "fail" : "pass", `${entry.name} is valid (${describeProviderEndpoint(validated.data)}, credential ${describeCredential(validated.data.credential)})${cache.text}.`, entry.name);
 }
 
 /**
@@ -365,10 +381,11 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
       );
     } else {
       const credential = validated.data.credential;
+      const cache = credential === undefined ? { text: "", unreadable: false } : cacheClause(params.credentialCache, `identity ${entry.name}`, credential);
       push(
         "identity",
-        "pass",
-        `${entry.name} is valid and authenticates with ${credential === undefined ? "its stored login" : `credential ${describeCredential(credential)}`}.`,
+        cache.unreadable ? "fail" : "pass",
+        `${entry.name} is valid and authenticates with ${credential === undefined ? "its stored login" : `credential ${describeCredential(credential)}`}${cache.text}.`,
         entry.name,
       );
     }
@@ -391,7 +408,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   };
 
   for (const entry of params.providers) {
-    pushProvider(push, entry);
+    pushProvider(push, entry, params.credentialCache);
   }
 
   if (params.platform !== "darwin" || params.run === undefined) {
@@ -684,6 +701,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
 
   const report = runDoctor({
     env: params.env,
+    credentialCache: realCredentialCacheEnv(paths),
     identities,
     configProfiles,
     providers,

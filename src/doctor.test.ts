@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { collectDoctorReport, formatDoctorReport, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type DoctorIdentityInput, type DoctorProviderInput, type RunDoctorParams } from "./doctorReport";
+import type { CredentialCacheEnv } from "./credential";
 import type { RunPort } from "./launcher/ports";
 import { buildLayoutPaths } from "./paths";
 
@@ -704,5 +705,43 @@ describe("collectDoctorReport: binary discovery", () => {
       fs.rmSync(home, { recursive: true, force: true });
       fs.rmSync(prefixBin, { recursive: true, force: true });
     }
+  });
+});
+
+describe("runDoctor: credential cache", () => {
+  const HOUR_MS = 3_600_000;
+  const THREE_HOURS_MS = 10_800_000;
+  const NOW_MS = 1_000_000_000_000;
+  const SECRET = "cached-token-that-must-never-be-reported";
+  const cacheEnv = (read: CredentialCacheEnv["port"]["read"]): CredentialCacheEnv => ({ port: { read, write: () => undefined, remove: () => undefined }, platform: "linux", now: () => NOW_MS });
+  const cachedEntry = (offsetMs: number) => cacheEnv(() => ({ token: SECRET, fetchedAt: NOW_MS + offsetMs, source: { env: "X" } }));
+  const cachingIdentity = identity("work", { raw: JSON.stringify({ name: "work", allowAmbientCredential: false, credential: { sources: [{ op: "op://vault/claude-work/token" }], cache: { ttl: "12h" } } }) });
+
+  it("adds the age and remaining time of an identity's cached credential to its finding, never the token", () => {
+    const report = runDoctor(baseParams({ identities: [cachingIdentity], credentialCache: cachedEntry(-THREE_HOURS_MS) }));
+    const [finding] = findingsFor(report, "identity");
+    expect(finding).toMatchObject({ severity: "pass" });
+    expect(finding?.message).toContain("; cached 3h ago, expires in 9h.");
+    expect(JSON.stringify(report)).not.toContain(SECRET);
+  });
+
+  it("adds a provider's cached credential state to its finding", () => {
+    const report = runDoctor(baseParams({ providers: [provider("z", { displayName: "z", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z_API_TOKEN" }], cache: { ttl: "1h" } } })], credentialCache: cacheEnv(() => undefined) }));
+    expect(findingsFor(report, "provider")[0]?.message).toContain("; no cached entry in the file store yet.");
+  });
+
+  it("fails an identity whose configured cache store cannot be read on this platform, since every launch would fail the same way", () => {
+    const unreadable = cacheEnv(() => {
+      throw new Error("the keychain credential store needs macOS");
+    });
+    const report = runDoctor(baseParams({ identities: [cachingIdentity], credentialCache: unreadable }));
+    expect(findingsFor(report, "identity")[0]).toMatchObject({ severity: "fail" });
+    expect(report.ok).toBe(false);
+  });
+
+  it("leaves a block that does not cache, and a run with no cache port, exactly as before", () => {
+    expect(findingsFor(runDoctor(baseParams({ identities: [cachingIdentity] })), "identity")[0]?.message).not.toContain("ago");
+    const plain = identity("plain", { raw: JSON.stringify({ name: "plain", allowAmbientCredential: false, credential: { sources: [{ env: "X" }] } }) });
+    expect(findingsFor(runDoctor(baseParams({ identities: [plain], credentialCache: cachedEntry(-HOUR_MS) })), "identity")[0]?.message).not.toContain("ago");
   });
 });
