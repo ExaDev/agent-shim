@@ -2,7 +2,7 @@ import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnBinar
 import type { LayoutPaths } from "./paths";
 import { readJson } from "./config/store";
 import { isIdentityDirectoryName } from "./identityStore";
-import { findExecutableInDir, realContentSourcePath, realFsPort, realIsProcessRunning, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
+import { findExecutableInDir, realContentSourcePath, realFsPort, realInstalledClaudeVersions, realIsProcessRunning, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
 import fs from "node:fs";
 import path from "node:path";
 import type { z } from "zod";
@@ -119,6 +119,8 @@ export function refinePathShadow(
 /** Everything `runDoctor` needs, all of it already loaded/injected — nothing in `runDoctor` itself reads a file, shells out, or touches the farm. */
 export interface RunDoctorParams {
   readonly env: Readonly<Record<string, string | undefined>>;
+  /** The Claude Code versions installed here, oldest first. Omit to skip checking that a pinned version (`launch.claudeVersion`) is installed; with it, a profile, directory rule or global config pinning a version that is not installed is a warning. */
+  readonly installedClaudeVersions?: readonly string[];
   /** Where cached credentials live. Omit to leave a credential cache's age out of the identity and provider findings; with it, a block that caches reports whether it holds an entry, how old it is and whether it has expired, never the token. */
   readonly credentialCache?: CredentialCacheEnv;
   readonly identities: readonly DoctorIdentityInput[];
@@ -305,6 +307,15 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     findings.push({ section, severity, message, ...(subject === undefined ? {} : { subject }) });
   };
 
+  /** Warns when `version` is a pin that is not installed: a launch that resolves to it fails rather than falling back, so the pin is worth fixing before it is hit. */
+  const checkPin = (section: DoctorSection, subject: string | undefined, where: string, version: string | undefined): void => {
+    const installed = params.installedClaudeVersions;
+    if (version === undefined || installed === undefined || installed.includes(version)) {
+      return;
+    }
+    push(section, "warn", `${where} pins Claude Code ${version}, which is not installed (installed: ${installed.length === 0 ? "none" : installed.join(", ")}); a launch that resolves to it fails.`, subject);
+  };
+
   const ambient = detectAmbientCredential(params.env);
   if (ambient === undefined) {
     push("ambient-credential", "pass", "No ambient-credential environment variable is set.");
@@ -349,6 +360,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
       continue;
     }
     profileSources.set(entry.name, { name: entry.name, profile: validated.data });
+    checkPin("config-profile", entry.name, `Configuration profile "${entry.name}"`, validated.data.launch?.claudeVersion);
   }
   const loadProfile: ProfileLoader = (name) => profileSources.get(name);
   for (const name of profileSources.keys()) {
@@ -436,6 +448,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
         if (rule.configProfile !== undefined && !validProfileNames.has(rule.configProfile)) {
           badRefs.push(`configuration profile "${rule.configProfile}"`);
         }
+        checkPin("directory-rules", rule.path, `Rule for "${rule.path}"`, rule.launch?.claudeVersion);
         if (badRefs.length > 0) {
           push("directory-rules", "fail", `Rule for "${rule.path}" names ${badRefs.join(" and ")}, which do not exist.`, rule.path);
         } else {
@@ -461,6 +474,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
         );
       } else {
         push("global-config", "pass", `${params.globalConfig.path} is valid.`);
+        checkPin("global-config", undefined, "config.json", validated.data.launch?.claudeVersion);
       }
     }
   }
@@ -702,6 +716,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
   const report = runDoctor({
     env: params.env,
     credentialCache: realCredentialCacheEnv(paths),
+    installedClaudeVersions: realInstalledClaudeVersions(),
     identities,
     configProfiles,
     providers,

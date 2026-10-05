@@ -404,6 +404,42 @@ describe("runCheck credential report", () => {
   });
 });
 
+describe("runCheck Claude Code version", () => {
+  const INSTALLED = ["2.1.287", "2.1.289"];
+  const pinnedBy = (version: string): CascadeInput => ({ ...emptyCascade(), cliOverride: { launch: { claudeVersion: version } } });
+  const text = (report: ReturnType<typeof runCheck>): string => formatCheckReport(report).join("\n");
+
+  it("names the highest installed version when nothing pins one", () => {
+    const report = runCheck(baseParams({ installedClaudeVersions: INSTALLED }));
+    expect(text(report)).toContain("Claude Code version:\n  2.1.289 (the highest installed; nothing pins a version)");
+    expect(report.claudeVersion).toEqual({ highestInstalled: "2.1.289", installed: INSTALLED });
+  });
+
+  it("reports an installed pin and where it came from", () => {
+    const report = runCheck(baseParams({ cascade: pinnedBy("2.1.287"), installedClaudeVersions: INSTALLED }));
+    expect(text(report)).toContain("  2.1.287, pinned by the cascade (installed)");
+    expect(checkReportToJson(report)).toMatchObject({ claudeVersion: { pinned: { version: "2.1.287", source: "cascade", installed: true } } });
+    expect(checkReportHasWarnings(report)).toBe(false);
+  });
+
+  it("reports a pin that is not installed as a failing launch with the installed versions, and counts it as a warning for --strict", () => {
+    const report = runCheck(baseParams({ cascade: pinnedBy("2.1.200"), installedClaudeVersions: INSTALLED }));
+    expect(text(report)).toContain("  2.1.200, pinned by the cascade, but NOT installed; a launch here fails. Installed: 2.1.287, 2.1.289");
+    expect(checkReportHasWarnings(report)).toBe(true);
+  });
+
+  it("lets AGENT_SHIM_CLAUDE_VERSION outrank the cascade, as a launch does", () => {
+    const report = runCheck(baseParams({ cascade: pinnedBy("2.1.200"), env: { AGENT_SHIM_CLAUDE_VERSION: "2.1.289" }, installedClaudeVersions: INSTALLED }));
+    expect(report.claudeVersion?.pinned).toEqual({ version: "2.1.289", source: "environment", installed: true });
+  });
+
+  it("says so when nothing is installed, and leaves the section out when no installed list was given", () => {
+    expect(text(runCheck(baseParams({ installedClaudeVersions: [] })))).toContain("none installed in the versions directory");
+    expect(runCheck(baseParams({})).claudeVersion).toBeUndefined();
+    expect(text(runCheck(baseParams({})))).not.toContain("Claude Code version:");
+  });
+});
+
 describe("runCheck credential cache", () => {
   const SECRET = "cached-token-that-must-never-be-reported";
   const HOUR_MS = 3_600_000;

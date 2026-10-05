@@ -745,3 +745,29 @@ describe("runDoctor: credential cache", () => {
     expect(findingsFor(runDoctor(baseParams({ identities: [plain], credentialCache: cachedEntry(-HOUR_MS) })), "identity")[0]?.message).not.toContain("ago");
   });
 });
+
+describe("runDoctor: pinned Claude Code versions", () => {
+  const INSTALLED = ["2.1.287", "2.1.289"];
+
+  it("warns, without failing the report, about a profile, a directory rule and the global config that pin a version that is not installed", () => {
+    const report = runDoctor(
+      baseParams({
+        installedClaudeVersions: INSTALLED,
+        configProfiles: [profile("acme", { launch: { claudeVersion: "2.1.200" } })],
+        directoryRules: { path: "/x/directory-rules.json", raw: JSON.stringify({ rules: [{ path: "/work", launch: { claudeVersion: "2.1.201" } }] }) },
+        globalConfig: { path: "/claude-use/config.json", raw: JSON.stringify({ launch: { claudeVersion: "2.1.202" } }) },
+      }),
+    );
+    expect(findingsFor(report, "config-profile").find((finding) => finding.severity === "warn")?.message).toContain('Configuration profile "acme" pins Claude Code 2.1.200, which is not installed (installed: 2.1.287, 2.1.289)');
+    expect(findingsFor(report, "directory-rules").find((finding) => finding.severity === "warn")?.message).toContain('Rule for "/work" pins Claude Code 2.1.201');
+    expect(findingsFor(report, "global-config").find((finding) => finding.severity === "warn")?.message).toContain("config.json pins Claude Code 2.1.202");
+    expect(report.ok).toBe(true);
+  });
+
+  it("is quiet about an installed pin, and when no installed list was given", () => {
+    const installedPin = runDoctor(baseParams({ installedClaudeVersions: INSTALLED, configProfiles: [profile("acme", { launch: { claudeVersion: "2.1.289" } })] }));
+    expect(installedPin.findings.filter((finding) => finding.severity === "warn")).toEqual([]);
+    const noList = runDoctor(baseParams({ configProfiles: [profile("acme", { launch: { claudeVersion: "2.1.200" } })] }));
+    expect(noList.findings.filter((finding) => finding.severity === "warn")).toEqual([]);
+  });
+});
