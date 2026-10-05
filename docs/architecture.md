@@ -85,9 +85,11 @@ src/
     anthropic.ts, translate.ts, events.ts   # the pure core: Zod-validated Anthropic Messages and Codex Responses shapes, the translation between them, and the Codex SSE events translated back to Anthropic SSE
     relay.ts, route.ts        # the request/response relay, transport-neutral so the front door serves it as one route among several
     auth.ts, agent.ts         # the ~/.codex/auth.json store (one refresh in flight, re-read before refresh, atomic write, rotated token persisted before use) and the undici agent with the 10s keep-alive ceiling
-    upstream.ts, upstreamPort.ts   # the upstream client (per-session `session_id` derived from `metadata.user_id`) and its injected port
+    upstream.ts, upstreamPort.ts   # the upstream client (per-session `session_id` derived from `metadata.user_id`), the two upstream targets (the Codex backend and the public Responses API) a provider's `codex.login` chooses between, and its injected port
     http.ts, quota.ts         # named HTTP statuses, and upstream quota/limit responses forwarded as Anthropic-shaped errors
-    commands.ts               # the real translation ports (auth store, upstream fetch, usage snapshot) the front door mounts, and `codex status` reporting through it
+    siwc.ts, siwcStore.ts     # Sign in with ChatGPT: the OAuth/PKCE protocol steps and ID-token verification, and the grant file whose store implements the same credentials interface as the Codex CLI login
+    siwcLogin.ts, siwcPorts.ts   # the `codex login` and `codex logout` flows over injected ports, and the real loopback listener and browser opener
+    commands.ts               # the real translation ports (both logins' auth stores, upstream fetch, usage snapshot) the front door mounts, and `codex status`, `codex login` and `codex logout`
   directoryRules.ts       # the `rule` noun: add/set/list/show/remove
   configure.ts            # `agent-shim configure` interactive picker (@clack/prompts)
   check.ts                # the `agent-shim check` command: parses options and prints the report `collectCheckReport` returns

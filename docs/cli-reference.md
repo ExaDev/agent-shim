@@ -81,10 +81,10 @@ agent-shim pool use <name>                   # the active selection becomes pool
 agent-shim pool pick <name> [--json]         # the ranking a launch from here would act on; records nothing
 
 agent-shim provider add <name> --display-name <name> (--base-url <url> | --kind codex) (--credential <source>)... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]...
-                                              [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>]
+                                              [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>] [--codex-login <codex-cli|chatgpt-sign-in>]
 agent-shim provider set <name> [--display-name <name>] ([--base-url <url>] | --kind codex) [--credential <source>]... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]...
 agent-shim provider set <name> [--credential-cache] [--credential-cache-ttl <ttl>] [--credential-cache-store <keychain|file>] [--no-credential-cache]
-                                              [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>]
+                                              [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>] [--codex-login <codex-cli|chatgpt-sign-in>]
 agent-shim provider list [--json]
 agent-shim provider show <name> [--json]
 agent-shim provider remove <name> [--yes]
@@ -105,6 +105,8 @@ agent-shim check [path] [--identity <identity>] [--json] [--strict]
 agent-shim doctor [--json]
 agent-shim headroom status [--json]
 agent-shim codex status [--json]
+agent-shim codex login [--no-open] [--json]       # Sign in with ChatGPT, for providers with `codex.login: chatgpt-sign-in`
+agent-shim codex logout [--json]
 agent-shim frontdoor status [--json]
 agent-shim frontdoor rc list [--json]
 agent-shim frontdoor rc status [<cse_id>] [--json]
