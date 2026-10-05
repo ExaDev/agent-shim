@@ -1,3 +1,23 @@
+## [8.12.0](https://github.com/ExaDev/agent-shim/compare/v8.11.3...v8.12.0) (2026-10-05)
+
+### Features
+
+* **frontdoor:** answer the CLI's startup token validation locally ([944759b](https://github.com/ExaDev/agent-shim/commit/944759b53a985bd1adabcf46d0663b2faad2bd7a))
+* **frontdoor:** mint the local credential and wire the door's self-hosted mode ([79d6852](https://github.com/ExaDev/agent-shim/commit/79d68529bd060a3139f01addeec4f520a5204402))
+* **frontdoor:** serve the Remote Control session family on the door itself ([1e454d4](https://github.com/ExaDev/agent-shim/commit/1e454d478bb414acf9d97342e02e6676cd1d021f))
+
+### Bug Fixes
+
+* **frontdoor:** read the worker state from the field the CLI sends ([99741f7](https://github.com/ExaDev/agent-shim/commit/99741f7d566a4ece28e930a6240550f114b51790))
+
+### Documentation
+
+* describe the self-hosted proof on the interception rig ([11e25ab](https://github.com/ExaDev/agent-shim/commit/11e25abd93ab6e672e1ca8a9c6d066a8459ae7de))
+
+### Tests
+
+* **frontdoor:** cover the self-hosted surface and its end-to-end assembly ([a968615](https://github.com/ExaDev/agent-shim/commit/a968615738212c8b4f104a164948ac24e40016f7))
+
 ## [8.11.3](https://github.com/ExaDev/agent-shim/compare/v8.11.2...v8.11.3) (2026-10-05)
 
 ### Documentation
