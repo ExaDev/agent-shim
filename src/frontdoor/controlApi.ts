@@ -13,18 +13,22 @@ import {
   FrontDoorSessionsOutputSchema,
   FrontDoorStatusOutputSchema,
   UsageListOutputSchema,
+  UsageLiveOutputSchema,
   UsageWindowsInputSchema,
   UsageWindowsOutputSchema,
 } from "./controlSchemas";
 import { createEventsApiRouter, type DoorEventsApiDeps } from "./eventsApi";
 import { createRcApiRouter, doorApiAuth, doorApiNodeHandlerOf, frontDoorApiLink, type RcApiDeps } from "./rcApi";
+import { RcSessionQuerySchema, type RcLiveRateLimit } from "./rcSchemas";
+import type { RcSessionSummary } from "./rcSessions";
+import { rcSessionNotObservedMessage } from "./rcWrites";
 import type { FrontDoorStatus } from "./status";
 import type { PrePipelineApi } from "./server";
 
 /**
  * The door's general control plane as a typed oRPC API: the read-only surfaces a programmatic consumer (automation, a dashboard, another of this user's tools) needs beyond Remote Control, one router per domain, every procedure behind the same per-generation control token as `rc.*` and validating through the Zod schemas of `controlSchemas.ts`.
  *
- * - `usage.*` reads the per-identity usage snapshots the door's own middleware writes, and reads a provider's quota windows the way every in-process consumer does (`effectiveWindow`: a window past its reset is empty and carries no status).
+ * - `usage.*` reads the per-identity usage snapshots the door's own middleware writes, reads a provider's quota windows the way every in-process consumer does (`effectiveWindow`: a window past its reset is empty and carries no status), and reads the live rate-limit observations the event backbone files off the Remote Control client stream (`live`: per-session latest state, exactly as fresh as the last turn a session completed, never a timer's derivation of it).
  * - `frontdoor.*` returns what `agent-shim frontdoor status` returns: the supervisor state, its liveness, the session registry's launches and the headroom hop.
  * - `check.run` and `doctor.run` return the reports `agent-shim check` and `agent-shim doctor` print, as data, `check.run` parameterised by an absolute directory path.
  *
@@ -39,6 +43,12 @@ export interface ControlApiDeps {
   readonly usageSnapshots: () => readonly UsageSnapshot[];
   /** One identity's usage snapshot, as `readUsageSnapshot` reads it: undefined when the identity has none yet. */
   readonly usageSnapshotOf: (identity: string) => UsageSnapshot | undefined;
+  /** The observed Remote Control sessions as the tracker lists them, so the live quota read can tell a session that never crossed this door from one that has completed no turn through it yet. */
+  readonly list: () => readonly RcSessionSummary[];
+  /** The live rate-limit observations the door's event backbone has filed, as the live usage state reads them, filtered to one session when named. */
+  readonly liveRateLimits: (sessionId?: string) => readonly RcLiveRateLimit[];
+  /** The freshest live rate-limit observation across every session, as the live usage state reads it: undefined while no rate_limit_event has been filed at all. */
+  readonly latestRateLimit: () => RcLiveRateLimit | undefined;
   /** The clock the window semantics read a recorded window at. */
   readonly now: () => number;
   /** The door's read-only status, as `collectFrontDoorStatus` collects it. */
@@ -76,6 +86,20 @@ export function createControlApiRouter(deps: ControlApiDeps) {
             ...(unified?.fiveHour === undefined ? {} : { fiveHour: effectiveWindow(unified.fiveHour, now) }),
             ...(unified?.sevenDay === undefined ? {} : { sevenDay: effectiveWindow(unified.sevenDay, now) }),
           };
+        }),
+      live: authed
+        .input(RcSessionQuerySchema)
+        .output(UsageLiveOutputSchema)
+        .handler(({ input }) => {
+          const sessions = deps.liveRateLimits(input.session);
+          if (input.session !== undefined && sessions.length === 0) {
+            // The same refusal rule the snapshot reads keep: a named session answered as empty would read as "observed, no quota", so the two causes are named instead, using the tracker's list to tell them apart.
+            if (deps.list().some((session) => session.id === input.session)) {
+              throw new ORPCError("NOT_FOUND", { message: `session ${input.session} has filed no rate_limit_event on its stream yet: the worker emits one only once a turn has completed, so retry after this session's next turn` });
+            }
+            throw new ORPCError("NOT_FOUND", { message: rcSessionNotObservedMessage(input.session) });
+          }
+          return { latest: deps.latestRateLimit(), sessions };
         }),
     },
     frontdoor: {

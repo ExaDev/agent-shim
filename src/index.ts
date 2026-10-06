@@ -173,6 +173,7 @@ export {
   FrontDoorStatusOutputSchema,
   HeadroomSocketTargetSchema,
   UsageListOutputSchema,
+  UsageLiveOutputSchema,
   UsageWindowsInputSchema,
   UsageWindowsOutputSchema,
 } from "./frontdoor/controlSchemas";
@@ -198,12 +199,19 @@ export {
 } from "./frontdoor/eventSchemas";
 export { createLaunchEventPublisher, type LaunchEventPublisher } from "./frontdoor/launchEvents";
 export {
+  RcLiveRateLimitSchema,
   RcPermissionModeSchema,
+  RcRateLimitInfoSchema,
+  RcRateLimitWindowSchema,
   RcStreamEnvelopeSchema,
   RcStreamEventSchema,
+  type RcLiveRateLimit,
+  type RcRateLimitInfo,
+  type RcRateLimitWindow,
   type RcStreamEnvelope,
   type RcStreamEvent,
 } from "./frontdoor/rcSchemas";
+export { createRcLiveUsage, rcRateLimitInfoOf, type RcLiveUsage, type RcLiveUsageDeps } from "./frontdoor/rcLiveUsage";
 export {
   RC_STREAM_BACKOFF_MS,
   createRcEventFanout,

@@ -86,12 +86,61 @@ function sketch(value, cap) {
   return text.length > cap ? text.slice(0, cap) + '...' : text;
 }
 
-// The headline text of one Remote Control stream event: the assistant and user payloads that carry a content array of text blocks render as their prose, everything else as its type plus a sketch.
+// One utilization fraction as a whole percentage, the same rounding the CLI's own watch line applies.
+function percentOf(fraction) { return String(Math.round(fraction * 100)) + '%'; }
+
+// The reset instant a rate-limit payload states (unix epoch seconds) as an ISO instant; no countdown is derived from it, because a ticking derivation would claim a freshness the event stream never promised.
+function resetInstantOf(epochSeconds) { return new Date(epochSeconds * 1000).toISOString(); }
+
+// Whether one rate-limit payload is readable, narrowed the same way the door's live usage state narrows it: the event type and a rate_limit_info object.
+function rateLimitInfoOf(payload) {
+  if (payload === undefined || payload === null || typeof payload !== 'object' || payload.type !== 'rate_limit_event') { return undefined; }
+  var info = payload.rate_limit_info;
+  if (info === undefined || info === null || typeof info !== 'object' || typeof info.status !== 'string') { return undefined; }
+  return info;
+}
+
+// One rate-limit payload's facts as the quota summary the feed and the header render: the limiting window's status and utilisation, each subscription window, and the overage state, every value the payload's own words.
+function quotaSummary(info) {
+  var parts = [info.status];
+  if (info.rateLimitType !== undefined) { parts.push(info.rateLimitType); }
+  if (typeof info.utilization === 'number') { parts.push(percentOf(info.utilization)); }
+  if (typeof info.resetsAt === 'number') { parts.push('resets ' + resetInstantOf(info.resetsAt)); }
+  if (info.unifiedWindows !== undefined && info.unifiedWindows !== null && typeof info.unifiedWindows === 'object') {
+    var names = ['five_hour', 'seven_day', 'seven_day_overage_included'];
+    var windows = [];
+    for (var i = 0; i < names.length; i++) {
+      var window = info.unifiedWindows[names[i]];
+      if (window === undefined || window === null) { continue; }
+      var bits = [];
+      if (typeof window.utilization === 'number') { bits.push(percentOf(window.utilization)); }
+      if (typeof window.resetsAt === 'number') { bits.push('resets ' + resetInstantOf(window.resetsAt)); }
+      windows.push(bits.length === 0 ? names[i] : names[i] + ' ' + bits.join(' '));
+    }
+    if (windows.length > 0) { parts.push('windows ' + windows.join(', ')); }
+  }
+  if (info.isUsingOverage === true) { parts.push('overage in use'); }
+  else if (typeof info.overageStatus === 'string') { parts.push('overage ' + info.overageStatus); }
+  return parts.join(' ');
+}
+
+// The header's quota text from the door's freshest live observation: the quota summary plus when the door observed it, or the plain statement that none has arrived yet.
+function quotaText(latest) {
+  if (latest === undefined || latest === null) { return 'quota: not observed yet'; }
+  var info = rateLimitInfoOf({ type: 'rate_limit_event', rate_limit_info: latest.rateLimit });
+  if (info === undefined) { return 'quota: not readable'; }
+  return 'quota: ' + quotaSummary(info) + '  observed ' + new Date(latest.observedAt).toLocaleTimeString();
+}
+
+// The headline text of one Remote Control stream event: a rate-limit payload renders as its quota summary, the assistant and user payloads that carry a content array of text blocks render as their prose, everything else as its type plus a sketch.
 function rcLine(event) {
   var envelope = event.envelope;
   var payload = envelope.payload;
   var headline = '';
-  if (payload !== undefined && payload !== null && typeof payload === 'object' && Array.isArray(payload.content)) {
+  var rateLimit = rateLimitInfoOf(payload);
+  if (rateLimit !== undefined) {
+    headline = quotaSummary(rateLimit);
+  } else if (payload !== undefined && payload !== null && typeof payload === 'object' && Array.isArray(payload.content)) {
     var parts = [];
     for (var i = 0; i < payload.content.length; i++) {
       var block = payload.content[i];
@@ -220,6 +269,13 @@ function refreshPending() {
   rpc('rc/pending', ui !== null && ui.selected !== null ? { session: ui.selected } : {}).then(function (result) { renderPending(result.pending); }, authOrReport('rc/pending'));
 }
 
+// The header's quota span, fed by the door's live read on the same refresh cycle as the session and pending lists: the freshest rate-limit observation any session's stream has filed, with its observation time so its freshness reads at a glance.
+function refreshQuota() {
+  rpc('usage/live', {}).then(function (result) {
+    if (ui !== null) { ui.quotaState.textContent = quotaText(result.latest); }
+  }, authOrReport('usage/live'));
+}
+
 // The one error path every call shares: a 401 means this token is not this generation's, so the page says so and asks for it again; anything else is reported in the feed.
 function authOrReport(what) {
   return function (error) {
@@ -307,11 +363,12 @@ function startPage(heldToken) {
     promptTarget: document.getElementById('prompt-target'),
     send: document.getElementById('send'),
     streamState: document.getElementById('stream-state'),
+    quotaState: document.getElementById('quota-state'),
     selected: null,
   };
   document.getElementById('token-form').classList.add('hidden');
   ui.main.classList.remove('hidden');
-  document.getElementById('refresh').addEventListener('click', function () { refreshSessions(); refreshPending(); });
+  document.getElementById('refresh').addEventListener('click', function () { refreshSessions(); refreshPending(); refreshQuota(); });
   document.getElementById('send').addEventListener('click', sendPrompt);
   document.getElementById('source-filter').addEventListener('change', function () { runFeed(); });
   ui.prompt.addEventListener('keydown', function (event) {
@@ -319,7 +376,8 @@ function startPage(heldToken) {
   });
   refreshSessions();
   refreshPending();
-  window.setInterval(function () { refreshSessions(); refreshPending(); }, 4000);
+  refreshQuota();
+  window.setInterval(function () { refreshSessions(); refreshPending(); refreshQuota(); }, 4000);
   runFeed();
   document.getElementById('door-state').textContent = 'connected';
 }
@@ -402,6 +460,7 @@ export const RC_CLIENT_PAGE_HTML = `<!doctype html>
   <h1>agent-shim Remote Control</h1>
   <span class="state" id="door-state">connecting</span>
   <span class="state" id="stream-state"></span>
+  <span class="state" id="quota-state">quota: not observed yet</span>
 </header>
 <div id="token-form">
   <h2>This door's control token</h2>

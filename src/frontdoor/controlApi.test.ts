@@ -11,6 +11,8 @@ import type { CascadeInput } from "../resolve/walk";
 import { createFakeFarmFs, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, shippedClassification } from "../test-helpers";
 import { USAGE_SCHEMA_VERSION, type UsageSnapshot } from "../usage/schema";
 import { type ControlApiClient, createControlApiRouter, type ControlApiDeps } from "./controlApi";
+import type { RcLiveRateLimit } from "./rcSchemas";
+import { rcSessionNotObservedMessage } from "./rcWrites";
 import { RC_ORPC_PATH_PREFIX, doorApiNodeHandlerOf } from "./rcApi";
 import type { FrontDoorStatus } from "./status";
 
@@ -20,6 +22,8 @@ const CONTROL_TOKEN = "unit-control-token";
 const NOW_MS = Date.parse("2026-10-05T12:00:00.000Z");
 /** One hour in milliseconds, the unit the reset boundaries below are stated in. */
 const HOUR_MS = 3_600_000;
+/** The milliseconds in one second, the unit that converts the fixed ISO instants into the unix epoch seconds the payload states. */
+const MS_PER_SECOND = 1_000;
 /** How much of each window the fixed snapshot reports as used, so the assertions name fractions rather than bare numbers. */
 const FIVE_HOUR_UTILIZATION = 0.4;
 const SEVEN_DAY_UTILIZATION = 0.9;
@@ -107,6 +111,9 @@ const CHECK: CheckReport = runCheck(baseCheckParams());
 /** The deps every procedure in these tests runs against, each read answered by a fixed value the assertions name. */
 const DEPS: ControlApiDeps = {
   expectedToken: CONTROL_TOKEN,
+  list: () => [],
+  liveRateLimits: () => [],
+  latestRateLimit: () => undefined,
   usageSnapshots: () => SNAPSHOTS,
   usageSnapshotOf: (identity) => SNAPSHOTS.find((snapshot) => snapshot.identity === identity),
   now: () => NOW_MS,
@@ -199,8 +206,56 @@ describe("the door's control-plane API", () => {
       await expect(client.usage.effectiveWindow({ identity: "nobody" })).rejects.toMatchObject({ code: "NOT_FOUND" });
     });
 
+    it("reads the live rate-limit observations the event backbone has filed, the door-wide latest beside the per-session list", async () => {
+      const FIVE_HOUR_RESETS_AT = Date.parse("2025-10-06T16:00:00.000Z") / MS_PER_SECOND;
+      const observation: RcLiveRateLimit = {
+        session: "cse_live",
+        observedAt: NOW_MS,
+        rateLimit: {
+          status: "allowed_warning",
+          rateLimitType: "five_hour",
+          resetsAt: FIVE_HOUR_RESETS_AT,
+          utilization: 0.42,
+          unifiedWindows: { five_hour: { utilization: 0.42, resetsAt: FIVE_HOUR_RESETS_AT } },
+          overageStatus: "allowed",
+        },
+      };
+      const mounted = await mountClient(
+        {
+          ...DEPS,
+          liveRateLimits: (sessionId) => (sessionId === undefined || sessionId === observation.session ? [observation] : []),
+          latestRateLimit: () => observation,
+        },
+        CONTROL_TOKEN,
+      );
+      try {
+        // The read's own output validation is the proof the observation satisfies the contract: the payload's own fields, carried verbatim, survive the round trip.
+        expect(await mounted.client.usage.live({})).toEqual({ latest: observation, sessions: [observation] });
+        expect(await mounted.client.usage.live({ session: "cse_live" })).toEqual({ latest: observation, sessions: [observation] });
+      } finally {
+        await mounted.close();
+      }
+    });
+
+    it("answers the live read as empty while no rate_limit_event has been filed, and refuses a named session rather than answering it as empty", async () => {
+      expect(await client.usage.live({})).toEqual({ sessions: [] });
+      // A session the door never observed is refused with the Remote Control family's own message for one.
+      await expect(client.usage.live({ session: "cse_never" })).rejects.toMatchObject({ code: "NOT_FOUND", message: rcSessionNotObservedMessage("cse_never") });
+      // A session the tracker lists but whose stream has filed no rate_limit_event yet is refused naming exactly that cause, because the worker emits one only once a turn has completed.
+      const mounted = await mountClient({ ...DEPS, list: () => [{ id: "cse_quiet", createdAt: NOW_MS, lastSeenAt: NOW_MS }] }, CONTROL_TOKEN);
+      try {
+        await expect(mounted.client.usage.live({ session: "cse_quiet" })).rejects.toMatchObject({
+          code: "NOT_FOUND",
+          message: "session cse_quiet has filed no rate_limit_event on its stream yet: the worker emits one only once a turn has completed, so retry after this session's next turn",
+        });
+      } finally {
+        await mounted.close();
+      }
+    });
+
     it("refuses a caller without this generation's control token", async () => {
       await expect(refused.usage.list()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      await expect(refused.usage.live({})).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     });
   });
 

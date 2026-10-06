@@ -4,12 +4,14 @@ import { writeHeadroomState } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
 import { RC_PENDING_SUMMARY_EXCERPT_CHARS } from "./rcSessions";
-import { formatRcPendingList, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./rcCommands";
+import { formatRcPendingList, formatRcRateLimitInfo, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./rcCommands";
 import { collectFrontDoorStatus, formatFrontDoorStatus } from "./status";
 import { writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 const SUPERVISOR = 10;
+/** The milliseconds in one second, the unit that converts the fixed ISO instants into the unix epoch seconds the payload states. */
+const MS_PER_SECOND = 1_000;
 /** A stand-in capability: front-door registry records carry one per launch. */
 const SESSION_TOKEN = "test-capability";
 const LIVE_SESSION = 20;
@@ -160,6 +162,59 @@ describe("frontdoor rc", () => {
     const long = "x".repeat(RC_PENDING_SUMMARY_EXCERPT_CHARS);
     expect(formatRcStreamEvent({ session: "cse_1", envelope: { event_type: "user", sequence_num: 14, source: "worker", payload: long } })).toBe(
       `cse_1  user  sequence_num 14  source worker  "${"x".repeat(RC_PENDING_SUMMARY_EXCERPT_CHARS - 1)}...`,
+    );
+  });
+
+  it("formats one stream event with its session, identification and a bounded payload sketch, and omits the sketch when the envelope carried no payload", () => {
+    expect(
+      formatRcStreamEvent({
+        session: "cse_1",
+        envelope: { event_type: "control_request", sequence_num: 12, source: "worker", payload: { type: "control_request", request_id: "req_1", request: { subtype: "can_use_tool", tool_name: "Bash" } } },
+      }),
+    ).toBe('cse_1  control_request  sequence_num 12  source worker  {"type":"control_request","request_id":"req_1","request":{"subtype":"can_use_tool","tool_name":"Bash"}}');
+    expect(formatRcStreamEvent({ session: "cse_1", envelope: { event_type: "user", sequence_num: 13, source: "worker" } })).toBe("cse_1  user  sequence_num 13  source worker");
+    // The sketch is the excerpt budget applied to the payload's JSON form, quotes included: one opening quote and all but one of the payload's x's fit inside it.
+    const long = "x".repeat(RC_PENDING_SUMMARY_EXCERPT_CHARS);
+    expect(formatRcStreamEvent({ session: "cse_1", envelope: { event_type: "user", sequence_num: 14, source: "worker", payload: long } })).toBe(
+      `cse_1  user  sequence_num 14  source worker  "${"x".repeat(RC_PENDING_SUMMARY_EXCERPT_CHARS - 1)}...`,
+    );
+  });
+
+  it("formats a rate_limit_event as the account's quota state: the payload's own words, resets as the instants it names, never a countdown of the door's making", () => {
+    const FIVE_HOUR_RESETS_AT = Date.parse("2025-10-06T16:00:00.000Z") / MS_PER_SECOND;
+    const SEVEN_DAY_RESETS_AT = Date.parse("2025-10-13T16:00:00.000Z") / MS_PER_SECOND;
+    expect(
+      formatRcStreamEvent({
+        session: "cse_1",
+        envelope: {
+          event_type: "rate_limit_event",
+          sequence_num: 15,
+          source: "worker",
+          payload: {
+            type: "rate_limit_event",
+            rate_limit_info: {
+              status: "allowed_warning",
+              rateLimitType: "five_hour",
+              resetsAt: FIVE_HOUR_RESETS_AT,
+              utilization: 0.42,
+              overageStatus: "allowed",
+              isUsingOverage: false,
+              unifiedWindows: { five_hour: { utilization: 0.42, resetsAt: FIVE_HOUR_RESETS_AT }, seven_day: { utilization: 0.12, resetsAt: SEVEN_DAY_RESETS_AT } },
+            },
+            uuid: "00000000-0000-4000-8000-000000000000",
+            session_id: "cse_1",
+          },
+        },
+      }),
+    ).toBe(
+      "cse_1  rate_limit_event  sequence_num 15  source worker  allowed_warning five_hour 42% resets 2025-10-06T16:00:00.000Z windows five_hour 42% resets 2025-10-06T16:00:00.000Z, seven_day 12% resets 2025-10-13T16:00:00.000Z overage allowed",
+    );
+    // The summary states only what the payload states: a bare status alone, and overage in use named as the payload's own flag.
+    expect(formatRcRateLimitInfo({ status: "rejected" })).toBe("rejected");
+    expect(formatRcRateLimitInfo({ status: "allowed", isUsingOverage: true })).toBe("allowed overage in use");
+    // A rate_limit_event the narrowing cannot read keeps the bounded JSON sketch, the fallback every other payload takes.
+    expect(formatRcStreamEvent({ session: "cse_1", envelope: { event_type: "rate_limit_event", sequence_num: 16, source: "worker", payload: { type: "rate_limit_event", rate_limit_info: { utilization: 0.5 } } } })).toBe(
+      'cse_1  rate_limit_event  sequence_num 16  source worker  {"type":"rate_limit_event","rate_limit_info":{"utilization":0.5}}',
     );
   });
 

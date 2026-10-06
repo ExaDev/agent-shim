@@ -66,6 +66,54 @@ export type RcStreamEnvelope = z.output<typeof RcStreamEnvelopeSchema>;
 /** One fan-out event, as the TypeScript every in-process consumer handles it. */
 export type RcStreamEvent = z.output<typeof RcStreamEventSchema>;
 
+/**
+ * One subscription window inside a `rate_limit_event` payload's `unifiedWindows`: the fraction of the window used and when it resets, as the CLI read them from the `anthropic-ratelimit-unified-*` response headers. Loose because the payload family grows: the door asserts the two fields it renders and carries anything else verbatim.
+ */
+export const RcRateLimitWindowSchema = z.looseObject({
+  /** The fraction of the window used, usually between 0 and 1, above 1 when usage legitimately runs past the window's cap (the CLI's own field description states both). */
+  utilization: z.number().optional(),
+  /** When the window resets, in unix epoch seconds: the unit is the CLI's own field description, stated in the 2.1.289 bundle's schema. */
+  resetsAt: z.number().optional(),
+});
+
+/** One subscription window's usage, as the TypeScript the renderers handle it. */
+export type RcRateLimitWindow = z.output<typeof RcRateLimitWindowSchema>;
+
+/**
+ * The `rate_limit_info` a worker's `rate_limit_event` payload carries: the SDK's own `SDKRateLimitInfo`, read through the 2.1.289 bundle's schema, which is the fuller source because it adds `unifiedWindows` (the published d.ts omits it). The top-level fields describe the currently limiting window, with `rateLimitType` naming which one it is, while `unifiedWindows` carries each subscription window beside them; every `resetsAt` is unix epoch seconds. The fields the door renders are typed here and the overage trio beside them because the watch line and the page summary state them; everything else the family carries rides through verbatim. Loose for the same reason the envelope is: the family grows, the door asserts the fields it renders, and a field it does not know still reaches consumers rather than being stripped. `status` is asserted present because it is the payload's own one required field, so a payload without it is not this family and is not filed.
+ */
+export const RcRateLimitInfoSchema = z.looseObject({
+  /** The limiting window's own status (`allowed`, `allowed_warning`, `rejected`), asserted only as a string because the vocabulary grows with the CLI. */
+  status: z.string(),
+  /** When the limiting window resets, in unix epoch seconds. */
+  resetsAt: z.number().optional(),
+  /** Which window the top-level fields describe (`five_hour`, `seven_day`, and kin), the payload's own name for it. */
+  rateLimitType: z.string().optional(),
+  /** The fraction of the limiting window used, on the same scale the per-window utilizations carry. */
+  utilization: z.number().optional(),
+  /** Whether usage beyond the plan (extra usage) is currently covering the overflow, the payload's own flag for it. */
+  isUsingOverage: z.boolean().optional(),
+  /** The overage's own status, the same vocabulary the limiting window's `status` carries. */
+  overageStatus: z.string().optional(),
+  /** When the overage window resets, in unix epoch seconds. */
+  overageResetsAt: z.number().optional(),
+  /** Each subscription window the account's response headers carried: the session (five-hour), weekly (seven-day), and overage-included weekly windows, each present only when the account's responses carry it. */
+  unifiedWindows: z.looseObject({ five_hour: RcRateLimitWindowSchema.optional(), seven_day: RcRateLimitWindowSchema.optional(), seven_day_overage_included: RcRateLimitWindowSchema.optional() }).optional(),
+});
+
+/** One rate-limit payload's facts, as the TypeScript the live usage state and the renderers handle it. */
+export type RcRateLimitInfo = z.output<typeof RcRateLimitInfoSchema>;
+
+/** One live rate-limit observation as the live usage surface reports it: the session whose stream filed it, when the door observed it (the door's own clock, epoch milliseconds), and the payload's `rate_limit_info`. */
+export const RcLiveRateLimitSchema = z.strictObject({
+  session: z.string(),
+  observedAt: z.number(),
+  rateLimit: RcRateLimitInfoSchema,
+});
+
+/** One live rate-limit observation, as the TypeScript every in-process consumer handles it. */
+export type RcLiveRateLimit = z.output<typeof RcLiveRateLimitSchema>;
+
 /** The query every session-filtered read takes: optionally one `cse_` session id, every tracked session when omitted. */
 export const RcSessionQuerySchema = z.strictObject({
   session: z.string().min(1).optional(),

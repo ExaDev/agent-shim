@@ -8,6 +8,8 @@ import type { LayoutPaths } from "../paths";
 import { realFarmFs } from "../realPorts";
 import { frontDoorRcApiClient, type RcApiClient } from "./rcApi";
 import { frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
+import { rcRateLimitInfoOf } from "./rcLiveUsage";
+import type { RcRateLimitInfo } from "./rcSchemas";
 import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHostMint";
 import { RC_PENDING_SUMMARY_EXCERPT_CHARS, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
@@ -82,10 +84,65 @@ function eventExcerpt(text: string): string {
   return text.length <= RC_PENDING_SUMMARY_EXCERPT_CHARS ? text : `${text.slice(0, RC_PENDING_SUMMARY_EXCERPT_CHARS)}...`;
 }
 
-/** Formats one client read stream event, as `frontdoor rc watch` prints each line of it: the session, the envelope's own identification, and a bounded sketch of the payload. */
+/** The percent scale, the one unit a whole-percentage rendering divides by. */
+const PERCENT_SCALE = 100;
+
+/** The milliseconds in one second, the unit that converts the payload's own unix-epoch-second reset instants into the epoch milliseconds `Date` reads. */
+const MS_PER_SECOND = 1_000;
+
+/** One utilization fraction as a whole percentage, rounded: the fraction the payload reports (which may exceed 1 when usage runs past a window's cap) stated at the precision a one-line read wants. */
+function percentOf(fraction: number): string {
+  return `${String(Math.round(fraction * PERCENT_SCALE))}%`;
+}
+
+/** One reset instant the payload states (unix epoch seconds) as the ISO instant it names; no countdown is derived from it, because a ticking derivation would claim a freshness the event stream never promised. */
+function resetInstantOf(epochSeconds: number): string {
+  return new Date(epochSeconds * MS_PER_SECOND).toISOString();
+}
+
+/** Formats one rate-limit payload's facts as the quota summary `frontdoor rc watch` prints beside a `rate_limit_event`: the limiting window's own status and utilisation, each subscription window the payload carries, and the overage state, every value the payload's own words. */
+export function formatRcRateLimitInfo(info: RcRateLimitInfo): string {
+  const parts: string[] = [info.status];
+  if (info.rateLimitType !== undefined) {
+    parts.push(info.rateLimitType);
+  }
+  if (info.utilization !== undefined) {
+    parts.push(percentOf(info.utilization));
+  }
+  if (info.resetsAt !== undefined) {
+    parts.push(`resets ${resetInstantOf(info.resetsAt)}`);
+  }
+  const windows: string[] = [];
+  for (const name of ["five_hour", "seven_day", "seven_day_overage_included"] as const) {
+    const window = info.unifiedWindows?.[name];
+    if (window === undefined) {
+      continue;
+    }
+    const bits: string[] = [];
+    if (window.utilization !== undefined) {
+      bits.push(percentOf(window.utilization));
+    }
+    if (window.resetsAt !== undefined) {
+      bits.push(`resets ${resetInstantOf(window.resetsAt)}`);
+    }
+    windows.push(bits.length === 0 ? name : `${name} ${bits.join(" ")}`);
+  }
+  if (windows.length > 0) {
+    parts.push(`windows ${windows.join(", ")}`);
+  }
+  if (info.isUsingOverage === true) {
+    parts.push("overage in use");
+  } else if (info.overageStatus !== undefined) {
+    parts.push(`overage ${info.overageStatus}`);
+  }
+  return parts.join(" ");
+}
+
+/** Formats one client read stream event, as `frontdoor rc watch` prints each line of it: the session, the envelope's own identification, and beside a rate-limit event its quota summary (the payload read through the live usage surface's own narrowing) or otherwise a bounded sketch of the payload. */
 export function formatRcStreamEvent(event: RcStreamEvent): string {
   const { envelope } = event;
-  const sketch = envelope.payload === undefined ? "" : `  ${eventExcerpt(JSON.stringify(envelope.payload))}`;
+  const rateLimit = rcRateLimitInfoOf(event);
+  const sketch = rateLimit !== undefined ? `  ${formatRcRateLimitInfo(rateLimit)}` : envelope.payload === undefined ? "" : `  ${eventExcerpt(JSON.stringify(envelope.payload))}`;
   return `${event.session}  ${envelope.event_type}  sequence_num ${String(envelope.sequence_num)}  source ${envelope.source}${sketch}`;
 }
 
@@ -458,7 +515,7 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
   withExamples(
     rc
       .command("watch")
-      .description("Print the observed sessions' client read stream events as they arrive, the approvals the door's held stream receives above all, until Ctrl-C leaves. Read-only.")
+      .description("Print the observed sessions' client read stream events as they arrive, the approvals the door's held stream receives above all, with each rate_limit_event rendered as the account's quota state. Read-only, until Ctrl-C leaves.")
       .argument("[session]", "One cse_ session id, as `frontdoor rc list` shows it; every observed session when omitted.")
       .option("--json", "Print each event as one JSON line as it arrives.")
       .action(async (session: string | undefined, options: Readonly<{ json?: boolean }>) => {
