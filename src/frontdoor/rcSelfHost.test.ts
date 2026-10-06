@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import { serveRouted } from "./pipeline";
-import { RC_SELF_HOST_KEEPALIVE_MS, createRcSelfHostSurface, type RcSelfHostCredentialRecord } from "./rcSelfHost";
+import { RC_SELF_HOST_KEEPALIVE_MS, createRcSelfHostSurface, type RcSelfHostCredentialRecord, type RcWebSearchBackend } from "./rcSelfHost";
+import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetchOutcome, type RcWebFetcher } from "./rcWebFetch";
 import { mintRcSelfHostCredential, readRcSelfHostRecord } from "./rcSelfHostMint";
 import { createFakeFarmFs } from "../test-helpers";
 
@@ -65,13 +66,23 @@ interface TestWorld {
   readonly surface: ReturnType<typeof createRcSelfHostSurface>;
   readonly server: http.Server;
   readonly port: number;
+  /** The URLs the injected fetch was asked for, in arrival order. */
+  readonly fetchedUrls: string[];
   readonly close: () => Promise<void>;
 }
 
-/** Builds the surface behind a real loopback HTTP server wired through `serveRouted`, exactly the way the door serves a resolved route. Pass `null` for "no minted credential". */
-async function makeWorld(record: RcSelfHostCredentialRecord | null = RECORD): Promise<TestWorld> {
+/** The fixed outcome the injected fetch answers with unless a test overrides it: a stand-in fetched page. */
+const FETCHED_PAGE: RcWebFetchOutcome = { kind: "fetched", url: "", destinationUrl: "", contentType: "text/html", text: "<html><body>the stand-in page</body></html>" };
+
+/** Builds the surface behind a real loopback HTTP server wired through `serveRouted`, exactly the way the door serves a resolved route. Pass `null` for "no minted credential", and a fetch or search backend to control the web proxies' answers. */
+async function makeWorld(record: RcSelfHostCredentialRecord | null = RECORD, options: Readonly<{ webFetch?: RcWebFetcher; webSearch?: RcWebSearchBackend }> = {}): Promise<TestWorld> {
   const held: RcSelfHostCredentialRecord | undefined = record ?? undefined;
   const clock = new FakeClock();
+  const fetchedUrls: string[] = [];
+  const webFetch: RcWebFetcher = options.webFetch ?? (async (url) => {
+    fetchedUrls.push(url);
+    return await Promise.resolve({ ...FETCHED_PAGE, url, destinationUrl: url });
+  });
   const surface = createRcSelfHostSurface({
     now: clock.now,
     newUuid: (() => {
@@ -83,6 +94,8 @@ async function makeWorld(record: RcSelfHostCredentialRecord | null = RECORD): Pr
     })(),
     randomToken: () => "random-token-material",
     credentialRecord: () => held,
+    webFetch,
+    ...(options.webSearch === undefined ? {} : { webSearch: options.webSearch }),
   });
   const server = http.createServer((request, response) => {
     const abort = new AbortController();
@@ -115,6 +128,7 @@ async function makeWorld(record: RcSelfHostCredentialRecord | null = RECORD): Pr
     surface,
     server,
     port: address.port,
+    fetchedUrls,
     close: async () => {
       surface.close();
       await new Promise<void>((resolve) => {
@@ -443,6 +457,77 @@ describe("the self-hosted local answers", () => {
       });
       oauthServer.closeAllConnections();
     });
+  });
+});
+
+describe("the self-hosted Remote Control web proxies", () => {
+  it("serves the worker web-fetch: one url in, the fetched facts out, and only the bridge's own JWT may ask", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const { id, workerJwt } = await createSession(world);
+    const withOauth = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/web-fetch`, { url: "https://example.com/page" }, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` });
+    expect(withOauth.status).toBe(HTTP_STATUS.unauthorized);
+    expect(world.fetchedUrls).toEqual([]);
+    const noUrl = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/web-fetch`, {}, { authorization: `Bearer ${workerJwt}` });
+    expect(noUrl.status).toBe(HTTP_STATUS.badRequest);
+    const answered = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/web-fetch`, { url: "https://example.com/page" }, { authorization: `Bearer ${workerJwt}`, "anthropic-version": "2023-06-01" });
+    expect(answered.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(answered.body)).toEqual({ url: "https://example.com/page", destination_url: "https://example.com/page", text: FETCHED_PAGE.text, content_type: "text/html" });
+    // The fetch was handed exactly the request's url: the wiring between the served path and the injected fetch is what the assertion pair checks.
+    expect(world.fetchedUrls).toEqual(["https://example.com/page"]);
+  });
+
+  it("answers a web-fetch refusal as a 200 error object, the shape the CLI surfaces as the tool's own failure", async () => {
+    const world = await makeWorld(RECORD, { webFetch: async () => await Promise.resolve({ kind: "refused" as const, errorType: "web_fetch_private_address", errorMessage: "refused" }) });
+    worlds.push(world);
+    const { id, workerJwt } = await createSession(world);
+    const refused = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/web-fetch`, { url: "http://192.168.1.5/" }, { authorization: `Bearer ${workerJwt}` });
+    expect(refused.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(refused.body)).toEqual({ error: { error_type: "web_fetch_private_address", error_message: "refused" } });
+  });
+
+  it("refuses a fetched page whose framed answer escapes the CLI's reader cap", async () => {
+    // NUL bytes each escape to six characters of JSON, so a body under the byte cap still frames past the reader cap the answer must fit.
+    const world = await makeWorld(RECORD, { webFetch: async (url) => await Promise.resolve({ kind: "fetched" as const, url, destinationUrl: url, contentType: "text/plain", text: "\u0000".repeat(RC_WEB_FETCH_MAX_BYTES) }) });
+    worlds.push(world);
+    const { id, workerJwt } = await createSession(world);
+    const answered = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/web-fetch`, { url: "https://example.com/big" }, { authorization: `Bearer ${workerJwt}` });
+    expect(answered.status).toBe(HTTP_STATUS.ok);
+    const error = (JSON.parse(answered.body) as { error: { error_type: string } }).error;
+    expect(error.error_type).toBe("web_fetch_too_large");
+  });
+
+  it("serves the worker web-search as a clear refusal while no backend is wired, and a backend's answers when one is", async () => {
+    const bare = await makeWorld();
+    worlds.push(bare);
+    const first = await createSession(bare);
+    const refused = await call(bare.port, "POST", `/v1/code/sessions/${first.id}/worker/web-search`, { query: "the rig proof" }, { authorization: `Bearer ${first.workerJwt}` });
+    expect(refused.status).toBe(HTTP_STATUS.ok);
+    const refusal = JSON.parse(refused.body) as { results: unknown[]; error: { error_type: string; error_message: string } };
+    expect(refusal.results).toEqual([]);
+    expect(refusal.error.error_type).toBe("web_search_unavailable");
+    expect(refusal.error.error_message).toContain("without a search backend");
+    const noQuery = await call(bare.port, "POST", `/v1/code/sessions/${first.id}/worker/web-search`, {}, { authorization: `Bearer ${first.workerJwt}` });
+    expect(noQuery.status).toBe(HTTP_STATUS.badRequest);
+
+    const seen: { query: string; allowedDomains?: readonly string[]; blockedDomains?: readonly string[]; searchProfile?: string }[] = [];
+    const world = await makeWorld(RECORD, {
+      webSearch: async (request) => {
+        seen.push(request);
+        return await Promise.resolve([{ title: "The Rig", url: "https://rig.example/probe", snippet: "a stand-in hit" }]);
+      },
+    });
+    worlds.push(world);
+    const second = await createSession(world);
+    const answered = await call(world.port, "POST", `/v1/code/sessions/${second.id}/worker/web-search`, { query: "the rig proof", allowed_domains: ["example.com"], blocked_domains: ["tracker.io"], search_profile: "deep" }, { authorization: `Bearer ${second.workerJwt}` });
+    expect(answered.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(answered.body)).toEqual({ results: [{ title: "The Rig", url: "https://rig.example/probe", snippet: "a stand-in hit" }] });
+    expect(seen).toEqual([{ query: "the rig proof", allowedDomains: ["example.com"], blockedDomains: ["tracker.io"], searchProfile: "deep" }]);
+    const refusedBackend = await makeWorld(RECORD, { webSearch: async () => await Promise.resolve({ errorType: "search_backend_down", errorMessage: "the backend refused" }) });
+    worlds.push(refusedBackend);
+    const third = await createSession(refusedBackend);
+    const failure = await call(refusedBackend.port, "POST", `/v1/code/sessions/${third.id}/worker/web-search`, { query: "anything" }, { authorization: `Bearer ${third.workerJwt}` });
+    expect(JSON.parse(failure.body)).toEqual({ results: [], error: { error_type: "search_backend_down", error_message: "the backend refused" } });
   });
 });
 
