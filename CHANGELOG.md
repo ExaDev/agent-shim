@@ -1,3 +1,13 @@
+## [8.24.0](https://github.com/ExaDev/agent-shim/compare/v8.23.0...v8.24.0) (2026-10-06)
+
+### Features
+
+* **rc:** send every remaining SDK control verb as a door client-half write ([ddb3901](https://github.com/ExaDev/agent-shim/commit/ddb39017fe84b7f09662b046f831d88c87be8df5))
+
+### Code Refactoring
+
+* **rc:** inline the detail and encoding enum schemas into their inputs ([65cef8f](https://github.com/ExaDev/agent-shim/commit/65cef8f58cf115d973c654bf5c0c2163e0503372))
+
 ## [8.23.0](https://github.com/ExaDev/agent-shim/compare/v8.22.0...v8.23.0) (2026-10-06)
 
 ### Features
