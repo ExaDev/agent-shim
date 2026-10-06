@@ -355,12 +355,12 @@ describe("runDoctor: provider", () => {
     const findings = findingsFor(report, "provider");
     expect(findings).toEqual([
       { section: "provider", subject: "codex", severity: "pass", message: "codex is valid (http://127.0.0.1:18789, credential bearer from literal (non-secret placeholder))." },
-      { section: "provider", subject: "codex", severity: "warn", message: "codex does not set ENABLE_TOOL_SEARCH: a session on this provider loads MCP tools upfront rather than deferring them, because its base URL is the front door, which Claude Code treats as a non-first-party host. Set ENABLE_TOOL_SEARCH in the provider's env block to restore deferred loading, when the upstream backend supports the tool_reference payloads it sends." },
+      { section: "provider", subject: "codex", severity: "warn", message: "codex does not set ENABLE_TOOL_SEARCH: a session on this provider keeps Claude Code's own API as its base URL, so it defers MCP tool loading and sends tool_reference payloads the upstream backend must understand. Set ENABLE_TOOL_SEARCH=false in the provider's env block to load tools upfront instead, when the backend does not support them." },
     ]);
     expect(report.ok).toBe(true);
   });
 
-  it("passes a provider that opts into deferred tool loading without the eager-loading note", () => {
+  it("passes a provider that sets the tool-loading lever without the default note", () => {
     const report = runDoctor(
       baseParams({ providers: [provider("codex", { displayName: "Codex", baseUrl: "http://127.0.0.1:18789", credential: { sources: [{ literal: "placeholder-value" }] }, env: { ENABLE_TOOL_SEARCH: "true" } })] }),
     );
