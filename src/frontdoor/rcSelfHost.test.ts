@@ -6,12 +6,11 @@ import { HTTP_STATUS } from "../codex/http";
 import { serveRouted } from "./pipeline";
 import { RC_SELF_HOST_KEEPALIVE_MS, createRcSelfHostSurface, type RcSelfHostCredentialRecord, type RcWebSearchBackend } from "./rcSelfHost";
 import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetchOutcome, type RcWebFetcher } from "./rcWebFetch";
-import { mintRcSelfHostCredential, readRcSelfHostRecord } from "./rcSelfHostMint";
 import { createRcCredentialStore } from "./rcCredentialStore";
 import { createFakeFarmFs } from "../test-helpers";
 
 /**
- * The self-hosted Remote Control surface's own semantics, driven over real loopback HTTP through the same `serveRouted` the door hands routes to: envelope shape, one sequence space per session, the two streams' delivery rules, resume, the epoch refusal, the local answers, and the minting's file shapes. The end-to-end assembly (door, tracker, client half, transparent surface) is `rcSelfHost.e2e.test.ts`'s.
+ * The self-hosted Remote Control surface's own semantics, driven over real loopback HTTP through the same `serveRouted` the door hands routes to: envelope shape, the conversation-keyed sequence space its sessions attach to, the two streams' delivery rules, resume, the epoch refusal, the local answers, and the web proxies. The minting's file shapes are `rcSelfHostMint.test.ts`'s, and the end-to-end assembly (door, tracker, client half, transparent surface) is `rcSelfHost.e2e.test.ts`'s.
  */
 
 /** Where the fake clock starts: any fixed epoch instant, far enough from zero that a computed ISO date never surprises. */
@@ -44,12 +43,6 @@ const RECEIPT_FANOUT_EVENTS = 4;
 
 /** How many announcements the presence test's log names a two-client count for: tui-2's arrival, web-1's repeat pulse, and web-1's re-announcement after the clear. */
 const ANNOUNCED_COUNT_LINES_TOTAL = 3;
-
-/** Where the minting test's clock starts: any fixed epoch instant. */
-const MINT_CLOCK_START_MS = 1_700_000_000_000;
-
-/** The owner-only mode the minted files must carry, the same mode the credential store's own test asserts. */
-const PRIVATE_FILE_MODE = 0o600;
 
 /** The guard every parsed-answer narrowing goes through, per the codebase's `unknown` discipline. */
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -596,6 +589,179 @@ describe("the self-hosted compatibility session family", () => {
 });
 
 
+describe("the self-hosted conversation layer", () => {
+  /** Creates one session, naming a conversation to attach to when given, and returns its id, worker credential and the conversation the create named or minted. */
+  const createAttachedSession = async (world: TestWorld, conversation?: string): Promise<{ readonly id: string; readonly workerJwt: string; readonly conversationId: string }> => {
+    const created = await call(world.port, "POST", "/v1/code/sessions", { title: "test", bridge: {}, ...(conversation === undefined ? {} : { conversation }) }, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` });
+    expect(created.status).toBe(HTTP_STATUS.ok);
+    const session = JSON.parse(created.body) as { session: { id: string; conversation_id: string } };
+    const bridged = await call(world.port, "POST", `/v1/code/sessions/${session.session.id}/bridge`, {}, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` });
+    expect(bridged.status).toBe(HTTP_STATUS.ok);
+    return { id: session.session.id, workerJwt: (JSON.parse(bridged.body) as { worker_jwt: string }).worker_jwt, conversationId: session.session.conversation_id };
+  };
+
+  it("numbers every attachment's writes in one shared sequence space, whatever half or family they rode", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const auth = { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` };
+    const first = await createAttachedSession(world);
+    const second = await createAttachedSession(world, first.conversationId);
+    const workerWrite = await call(world.port, "POST", `/v1/code/sessions/${first.id}/worker/events`, { worker_epoch: 1, events: [{ payload: { type: "assistant", uuid: "w1" } }] }, { authorization: `Bearer ${first.workerJwt}` });
+    expect(JSON.parse(workerWrite.body)).toEqual({ results: [{ event_id: "w1", sequence_num: "1" }] });
+    const clientWrite = await call(world.port, "POST", `/v1/code/sessions/${second.id}/events`, { events: [{ payload: { type: "user", uuid: "c1" } }] }, auth);
+    expect(JSON.parse(clientWrite.body)).toEqual({ results: [{ sequence_num: "2", duplicate: false }] });
+    const conversationWrite = await call(world.port, "POST", `/v1/code/conversations/${first.conversationId}/events`, { events: [{ payload: { type: "user", uuid: "k1" } }] }, auth);
+    expect(JSON.parse(conversationWrite.body)).toEqual({ results: [{ sequence_num: "3", duplicate: false }] });
+    // A payload uuid written through one attachment is a duplicate through any other, because the dedup window is the conversation's.
+    const repeated = await call(world.port, "POST", `/v1/code/sessions/${second.id}/events`, { events: [{ payload: { type: "user", uuid: "w1" } }] }, auth);
+    expect(JSON.parse(repeated.body)).toEqual({ results: [{ sequence_num: "4", duplicate: true }] });
+    // Every attachment reads the same log, whichever session's read is used.
+    for (const id of [first.id, second.id]) {
+      const rows = JSON.parse((await call(world.port, "GET", `/v1/code/sessions/${id}/events`, undefined, auth)).body) as { data: { payload: Record<string, unknown> }[] };
+      expect(rows.data.map((row) => row.payload.uuid)).toEqual(["w1", "c1", "k1", "w1"]);
+    }
+  });
+
+  it("delivers one attachment's writes to every other attachment's stream, and never a worker's own writes back to it", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const auth = { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` };
+    const first = await createAttachedSession(world);
+    const second = await createAttachedSession(world, first.conversationId);
+    const workerOfFirst = new SseStream(world.port, `/v1/code/sessions/${first.id}/worker/events/stream`, { authorization: `Bearer ${first.workerJwt}` });
+    const workerOfSecond = new SseStream(world.port, `/v1/code/sessions/${second.id}/worker/events/stream`, { authorization: `Bearer ${second.workerJwt}` });
+    const clientOfSecond = new SseStream(world.port, `/v1/code/sessions/${second.id}/events/stream`, auth);
+    expect((await workerOfFirst.response()).statusCode).toBe(HTTP_STATUS.ok);
+    expect((await workerOfSecond.response()).statusCode).toBe(HTTP_STATUS.ok);
+    expect((await clientOfSecond.response()).statusCode).toBe(HTTP_STATUS.ok);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, DELIVERY_SETTLE_MS);
+    });
+
+    // A client write through the first session reaches every stream the conversation holds.
+    await call(world.port, "POST", `/v1/code/sessions/${first.id}/events`, { events: [{ payload: { type: "user", uuid: "cu" } }] }, auth);
+    await workerOfFirst.waitForEvents(1);
+    await workerOfSecond.waitForEvents(1);
+    await clientOfSecond.waitForEvents(1);
+
+    // The first worker's own reply reaches the second attachment's worker (the other TUI's half of the conversation) and never its own stream.
+    await call(world.port, "POST", `/v1/code/sessions/${first.id}/worker/events`, { worker_epoch: 1, events: [{ payload: { type: "assistant", uuid: "wa" } }] }, { authorization: `Bearer ${first.workerJwt}` });
+    await workerOfSecond.waitForEvents(2);
+    await clientOfSecond.waitForEvents(2);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, DELIVERY_SETTLE_MS);
+    });
+    expect(envelopesOf(workerOfFirst).map((event) => event.envelope.event_type)).toEqual(["user"]);
+    expect(envelopesOf(workerOfSecond).map((event) => event.envelope.event_type)).toEqual(["user", "assistant"]);
+    expect(envelopesOf(clientOfSecond).map((event) => event.envelope.event_type)).toEqual(["user", "assistant"]);
+
+    // And the second worker's reply reaches the first worker's stream, the same rule read from the other side.
+    await call(world.port, "POST", `/v1/code/sessions/${second.id}/worker/events`, { worker_epoch: 1, events: [{ payload: { type: "assistant", uuid: "wb" } }] }, { authorization: `Bearer ${second.workerJwt}` });
+    await workerOfFirst.waitForEvents(2);
+    expect(envelopesOf(workerOfFirst).map((event) => event.envelope.event_type)).toEqual(["user", "assistant"]);
+    expect(envelopesOf(workerOfSecond).map((event) => event.envelope.event_type)).toEqual(["user", "assistant"]);
+    workerOfFirst.close();
+    workerOfSecond.close();
+    clientOfSecond.close();
+  });
+
+  it("attaches a create that names a conversation, refuses one naming none this door holds, and numbers an unjoined create independently", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const auth = { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` };
+    const first = await createAttachedSession(world);
+    const unknown = await call(world.port, "POST", "/v1/code/sessions", { bridge: {}, conversation: "conv_00000000-0000-4000-8000-0000000000ff" }, auth);
+    expect(unknown.status).toBe(HTTP_STATUS.notFound);
+    const second = await createAttachedSession(world, first.conversationId);
+    expect(second.conversationId).toBe(first.conversationId);
+    const conversation = JSON.parse((await call(world.port, "GET", `/v1/code/conversations/${first.conversationId}`, undefined, auth)).body) as { conversation: { id: string; sessions: string[] } };
+    expect(conversation.conversation.id).toBe(first.conversationId);
+    expect([...conversation.conversation.sessions].sort()).toEqual([first.id, second.id].sort());
+    const list = JSON.parse((await call(world.port, "GET", "/v1/code/sessions", undefined, auth)).body) as { data: { id: string; conversation_id: string }[] };
+    expect(list.data.find((row) => row.id === first.id)?.conversation_id).toBe(first.conversationId);
+    expect(list.data.find((row) => row.id === second.id)?.conversation_id).toBe(first.conversationId);
+
+    // The discrimination the shared space rests on: a create that names no conversation is a conversation of its own, numbering from one and invisible to the first's log.
+    const stranger = await createAttachedSession(world);
+    expect(stranger.conversationId).not.toBe(first.conversationId);
+    await call(world.port, "POST", `/v1/code/sessions/${first.id}/worker/events`, { worker_epoch: 1, events: [{ payload: { type: "assistant", uuid: "w1" } }] }, { authorization: `Bearer ${first.workerJwt}` });
+    const strangerWrite = await call(world.port, "POST", `/v1/code/sessions/${stranger.id}/events`, { events: [{ payload: { type: "user", uuid: "s1" } }] }, auth);
+    expect(JSON.parse(strangerWrite.body)).toEqual({ results: [{ sequence_num: "1", duplicate: false }] });
+    const firstRows = JSON.parse((await call(world.port, "GET", `/v1/code/sessions/${first.id}/events`, undefined, auth)).body) as { data: { payload: Record<string, unknown> }[] };
+    expect(firstRows.data.map((row) => row.payload.uuid)).toEqual(["w1"]);
+  });
+
+  it("serves the conversation family a sessionless client joins through: reads, the shared stream, writes, presence and receipts", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const auth = { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` };
+    const first = await createAttachedSession(world);
+    const workerStream = new SseStream(world.port, `/v1/code/sessions/${first.id}/worker/events/stream`, { authorization: `Bearer ${first.workerJwt}` });
+    expect((await workerStream.response()).statusCode).toBe(HTTP_STATUS.ok);
+    const conversationStream = new SseStream(world.port, `/v1/code/conversations/${first.conversationId}/events/stream`, auth);
+    expect((await conversationStream.response()).statusCode).toBe(HTTP_STATUS.ok);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, DELIVERY_SETTLE_MS);
+    });
+
+    // A sessionless client announces itself on the conversation's own presence registry.
+    const presence = await call(world.port, "POST", `/v1/code/conversations/${first.conversationId}/client/presence`, { client_id: "web-9" }, auth);
+    expect(presence.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(presence.body)).toEqual({ refresh_after_seconds: PRESENCE_REFRESH_SECONDS });
+
+    // Its write joins the shared sequence space and reaches the worker exactly a session's client write does.
+    const write = await call(world.port, "POST", `/v1/code/conversations/${first.conversationId}/events`, { events: [{ payload: { type: "user", uuid: "ku", message: { role: "user", content: "from the web" } } }] }, auth);
+    expect(JSON.parse(write.body)).toEqual({ results: [{ sequence_num: "1", duplicate: false }] });
+    await workerStream.waitForEvents(1);
+    await conversationStream.waitForEvents(1);
+    expect(envelopesOf(workerStream).map((event) => (event.envelope.payload as Record<string, unknown>).message)).toEqual([{ role: "user", content: "from the web" }]);
+    expect(envelopesOf(conversationStream).map((event) => event.id)).toEqual(["1"]);
+
+    // Its receipt fans to the worker as a mark_read sourced to the named client, the session channels' own shape.
+    const eventId = (JSON.parse(write.body) as { results: { event_id?: string }[] }).results[0]?.event_id ?? "ku";
+    expect((await call(world.port, "POST", `/v1/code/conversations/${first.conversationId}/mark_read`, { event_id: eventId, client_id: "web-9" }, auth)).status).toBe(HTTP_STATUS.ok);
+    await workerStream.waitForEvents(2);
+    await conversationStream.waitForEvents(2);
+    expect(envelopesOf(workerStream).map((event) => event.envelope.source)).toEqual(["client", "web-9"]);
+    expect(envelopesOf(conversationStream).map((event) => event.envelope.event_type)).toEqual(["user", "mark_read"]);
+
+    // The family's reads: the list answers the door's conversations, a resumed stream replays after the named cursor, and the family has no create.
+    const list = JSON.parse((await call(world.port, "GET", "/v1/code/conversations", undefined, auth)).body) as { data: { id: string; sessions: string[] }[] };
+    expect(list.data.map((row) => row.id)).toEqual([first.conversationId]);
+    const resumed = new SseStream(world.port, `/v1/code/conversations/${first.conversationId}/events/stream?from_sequence_num=1`, { ...auth, "last-event-id": "1" });
+    await resumed.waitForEvents(1);
+    expect(envelopesOf(resumed).map((event) => event.id)).toEqual(["2"]);
+    resumed.close();
+    expect((await call(world.port, "GET", "/v1/code/conversations/conv_none", undefined, auth)).status).toBe(HTTP_STATUS.notFound);
+    expect((await call(world.port, "POST", "/v1/code/conversations", {}, auth)).status).toBe(HTTP_STATUS.methodNotAllowed);
+    workerStream.close();
+    conversationStream.close();
+  });
+
+  it("keeps a conversation's log and second attachment alive through the first attachment's archive", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const auth = { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` };
+    const first = await createAttachedSession(world);
+    const second = await createAttachedSession(world, first.conversationId);
+    const clientOfSecond = new SseStream(world.port, `/v1/code/sessions/${second.id}/events/stream`, auth);
+    expect((await clientOfSecond.response()).statusCode).toBe(HTTP_STATUS.ok);
+    await call(world.port, "POST", `/v1/code/sessions/${first.id}/worker/events`, { worker_epoch: 1, events: [{ payload: { type: "assistant", uuid: "w1" } }] }, { authorization: `Bearer ${first.workerJwt}` });
+    await clientOfSecond.waitForEvents(1);
+
+    // The archive ends the first session, not the conversation: the log, its numbering and the second attachment's stream live on.
+    expect((await call(world.port, "POST", `/v1/code/sessions/${first.id}/archive`, {}, auth)).status).toBe(HTTP_STATUS.ok);
+    const afterArchive = await call(world.port, "POST", `/v1/code/sessions/${second.id}/events`, { events: [{ payload: { type: "user", uuid: "c1" } }] }, auth);
+    expect(JSON.parse(afterArchive.body)).toEqual({ results: [{ sequence_num: "2", duplicate: false }] });
+    await clientOfSecond.waitForEvents(2);
+    expect(envelopesOf(clientOfSecond).map((event) => event.id)).toEqual(["1", "2"]);
+    clientOfSecond.close();
+    const conversation = JSON.parse((await call(world.port, "GET", `/v1/code/conversations/${first.conversationId}`, undefined, auth)).body) as { conversation: { sessions: string[] } };
+    expect(conversation.conversation.sessions).toEqual([second.id]);
+  });
+});
+
+
 describe("the self-hosted local answers", () => {
   it("serves the feature eval, the profile, the telemetry no-ops and the OAuth refresh echo", async () => {
     const world = await makeWorld();
@@ -740,70 +906,5 @@ describe("the self-hosted Remote Control web proxies", () => {
     const third = await createSession(refusedBackend);
     const failure = await call(refusedBackend.port, "POST", `/v1/code/sessions/${third.id}/worker/web-search`, { query: "anything" }, { authorization: `Bearer ${third.workerJwt}` });
     expect(JSON.parse(failure.body)).toEqual({ results: [], error: { error_type: "search_backend_down", error_message: "the backend refused" } });
-  });
-});
-
-describe("the self-hosted credential minting", () => {
-  /** Builds the minting over a fake filesystem and returns the fs with the result. */
-  const mint = (fs: ReturnType<typeof createFakeFarmFs>, options: Readonly<{ identity?: string; force?: boolean }> = {}) =>
-    mintRcSelfHostCredential({
-      fs,
-      identitiesDir: "/state/identities",
-      frontdoorDir: "/state/frontdoor",
-      identity: options.identity ?? "rig",
-      newUuid: (() => {
-        let next = 0;
-        return () => {
-          next += 1;
-          return `00000000-0000-4000-8000-${String(next).padStart(UUID_TAIL_WIDTH, "0")}`;
-        };
-      })(),
-      randomToken: () => "randomtokenmaterial",
-      force: options.force ?? false,
-      now: () => MINT_CLOCK_START_MS,
-    });
-
-  it("writes the credential, the account block and the feature seed, and the door's record", () => {
-    const fs = createFakeFarmFs();
-    const result = mint(fs);
-    expect(result.identity).toBe("rig");
-    expect(result.replaced).toBe(false);
-    const credentials = JSON.parse(fs.readFileUtf8("/state/identities/rig/.credentials.json") ?? "{}") as { claudeAiOauth: Record<string, unknown> };
-    // The access token is never part of any result or log the minting returns; the file's shape is what the assertions read.
-    expect(String(credentials.claudeAiOauth.accessToken).startsWith("sk-ant-oat")).toBe(true);
-    expect(credentials.claudeAiOauth.expiresAt).toBeNull();
-    expect(credentials.claudeAiOauth.scopes).toEqual(["user:profile", "user:inference", "user:sessions:claude_code", "user:mcp_servers", "user:file_upload"]);
-    expect(credentials.claudeAiOauth.subscriptionType).toBe("max");
-    const claudeJson = JSON.parse(fs.readFileUtf8("/state/identities/rig/.claude.json") ?? "{}") as { oauthAccount: Record<string, unknown>; cachedGrowthBookFeatures: Record<string, boolean> };
-    expect(claudeJson.oauthAccount.organizationUuid).toBe(result.organizationUuid);
-    expect(claudeJson.cachedGrowthBookFeatures).toMatchObject({ tengu_ccr_bridge: true, tengu_bridge_repl_v2: true });
-    const record = readRcSelfHostRecord(fs, "/state/frontdoor");
-    expect(record?.accessToken).toBe(credentials.claudeAiOauth.accessToken);
-    expect(fs.modeOf("/state/identities/rig/.credentials.json")).toBe(PRIVATE_FILE_MODE);
-    expect(fs.modeOf("/state/frontdoor/rc-selfhost/credential.json")).toBe(PRIVATE_FILE_MODE);
-  });
-
-  it("merges into an existing .claude.json without disturbing its other keys", () => {
-    const fs = createFakeFarmFs();
-    fs.mkdirp("/state/identities/rig");
-    fs.writeFileUtf8("/state/identities/rig/.claude.json", JSON.stringify({ projects: { "/work": { history: ["one"] } }, cachedGrowthBookFeatures: { unrelated_flag: true } }));
-    mint(fs);
-    const claudeJson = JSON.parse(fs.readFileUtf8("/state/identities/rig/.claude.json") ?? "{}") as Record<string, unknown>;
-    expect((claudeJson.projects as Record<string, unknown>)["/work"]).toBeDefined();
-    expect((claudeJson.cachedGrowthBookFeatures as Record<string, boolean>).unrelated_flag).toBe(true);
-  });
-
-  it("refuses to replace a real login, allows replacing its own previous mint, and forces when told", () => {
-    const fs = createFakeFarmFs();
-    fs.mkdirp("/state/identities/rig");
-    fs.writeFileUtf8("/state/identities/rig/.credentials.json", JSON.stringify({ claudeAiOauth: { accessToken: "sk-ant-oat2", refreshToken: "r", expiresAt: null, scopes: ["user:profile"] } }));
-    expect(() => mint(fs)).toThrow("already holds an OAuth credential");
-    // A forced mint overwrites the foreign credential and records itself as the door's own.
-    mint(fs, { force: true });
-    expect(readRcSelfHostRecord(fs, "/state/frontdoor")?.accessToken).not.toBe("sk-ant-oat2");
-    // Re-minting over this door's own previous mint needs no force.
-    const again = mint(fs);
-    expect(again.replaced).toBe(true);
-    expect(() => mint(fs, { identity: "../escape" })).toThrow("not a valid identity name");
   });
 });

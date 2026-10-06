@@ -3,7 +3,7 @@ import path from "node:path";
 import { isIdentityName } from "../usage/account";
 import type { FarmFs } from "../launcher/ports";
 import type { RcSelfHostCredentialRecord } from "./rcSelfHost";
-import { RC_SELF_HOST_SCOPE_LIST } from "./rcSelfHost";
+import { RC_SELF_HOST_SCOPE_LIST } from "./rcSelfHostLocal";
 
 /**
  * The minting half of the self-hosted Remote Control mode (ExaDev/agent-shim#207): the local credential that lets a Claude Code session activate Remote Control against the door's own served surface with no claude.ai login anywhere.

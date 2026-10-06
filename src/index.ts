@@ -230,7 +230,6 @@ export {
   RC_SELF_HOST_ENV,
   RC_SELF_HOST_KEEPALIVE_MS,
   RC_SELF_HOST_RETENTION_MS,
-  RC_SELF_HOST_SCOPE_LIST,
   RC_SELF_HOST_WORKER_JWT_TTL_SECONDS,
   createRcSelfHostSurface,
   rcSelfHostFromEnv,
@@ -238,6 +237,7 @@ export {
   type RcSelfHostDeps,
   type RcSelfHostSurface,
 } from "./frontdoor/rcSelfHost";
+export { RC_SELF_HOST_SCOPE_LIST } from "./frontdoor/rcSelfHostLocal";
 export { mintRcSelfHostCredential, readRcSelfHostRecord, RC_SELF_HOST_RECORD_DIR, RC_SELF_HOST_RECORD_FILE, type RcSelfHostMintResult } from "./frontdoor/rcSelfHostMint";
 export { fetchThroughWebProxy, isPrivateAddress, realRcWebFetch, rcWebFetchAllowsPrivateFromEnv, RC_WEB_FETCH_ALLOW_PRIVATE_ENV, RC_WEB_FETCH_DEADLINE_MS, RC_WEB_FETCH_MAX_BYTES, RC_WEB_FETCH_MAX_REDIRECTS, type RcWebFetchDeps, type RcWebFetchHop, type RcWebFetchOutcome, type RcWebFetcher } from "./frontdoor/rcWebFetch";
 export { ensureFrontDoor, FrontDoorStartError, type EnsureFrontDoorPorts } from "./frontdoor/ensure";
