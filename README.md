@@ -57,7 +57,7 @@ That's it — with no further configuration, everything in `~/.claude` that isn'
 - **An identity** is a login: the thing that owns credentials and daemon state, selected with `agent-shim run @<name>` or, once `agent-shim shim enable` has run, `claude @<name>`.
 - **A configuration profile** is a reusable, named bundle of sharing rules, independent of any identity, resolved per working directory via directory rules or a committed `.agent-shim.json`.
 
-A third, optional thing sits on top of identities: **a pool** is a named list of them. Select `pool:<name>` where an identity name goes (`claude @pool:subs`) and agent-shim picks the member whose unused quota is closest to expiring, skipping any that are refused right now, using the usage it already records. A pool can instead declare `--preference listed`, which tries the members in the order the pool lists them, skipping only one that is refused right now. See [docs/configuration-model.md](docs/configuration-model.md#pools-picking-an-account-at-launch).
+A third, optional thing sits on top of identities: **a pool** is a named list of them. Select `pool:<name>` where an identity name goes (`claude @pool:subs`) and agent-shim picks the member whose unused quota is closest to expiring, skipping any that are refused right now, using the usage it already records. A pool can instead declare `--preference listed`, which tries the members in the order the pool lists them, skipping only one that is refused right now. A member entry may itself name another pool (`pool:<name>`), which is ranked with its own policy and contributes its pick at that position, so "this identity first, then the fleet" nests the fleet rather than copying its member list; cycles are refused. See [docs/configuration-model.md](docs/configuration-model.md#pools-picking-an-account-at-launch).
 
 Every top-level entry in `~/.claude` is classified into one of five categories, shipped as a default map (`config/categories.default.json`):
 
@@ -103,8 +103,8 @@ agent-shim profile show <name> [--json]
 agent-shim profile remove <name> [--yes] [--json]
 agent-shim profile use <name>               # the global default configuration profile [--json]
 
-agent-shim pool add <name> --identity <identity>... [--preference <score|listed>] [--json]
-agent-shim pool set <name> [--identity <identity>...] [--preference <score|listed> | --no-preference] [--json]
+agent-shim pool add <name> --identity <member>... [--preference <score|listed>] [--json]
+agent-shim pool set <name> [--identity <member>...] [--preference <score|listed> | --no-preference] [--json]
 agent-shim pool list [--json]
 agent-shim pool show <name> [--json]
 agent-shim pool remove <name> [--yes] [--json]

@@ -157,6 +157,48 @@ describe("agent-shim pool", () => {
     expect((await cli(["pool", "add", "other", "--identity", "personal", "--preference", "random"])).code).toBe(EXIT_USAGE);
   });
 
+  describe("nested members", () => {
+    it("accepts a pool:<name> member, and shows and lists it as written", async () => {
+      await cli(["pool", "add", "fleet", "--identity", "work", "--identity", "personal"]);
+      expect((await cli(["pool", "add", "subs", "--identity", "personal", "--identity", "pool:fleet"])).code).toBe(0);
+      expect((await cli(["pool", "show", "subs"])).stdout).toContain("Members: personal, pool:fleet");
+      expect((await cli(["pool", "list"])).stdout).toContain("subs: personal, pool:fleet");
+      expect(JSON.parse((await cli(["pool", "show", "subs", "--json"])).stdout)).toEqual({ name: "subs", identities: ["personal", "pool:fleet"] });
+    });
+
+    it("refuses a nested member naming a pool that is not defined", async () => {
+      const missing = await cli(["pool", "add", "subs", "--identity", "pool:nope"]);
+      expect(missing.code).toBe(EXIT_USAGE);
+      expect(missing.stderr).toContain("pool:nope");
+      expect(missing.stderr).toContain("is not defined");
+    });
+
+    it("refuses a self-nesting member at add, and a cycle at set, naming the chain", async () => {
+      const self = await cli(["pool", "add", "loop", "--identity", "pool:loop"]);
+      expect(self.code).toBe(EXIT_USAGE);
+      expect(self.stderr).toContain("loop -> loop");
+      await cli(["pool", "add", "a", "--identity", "work"]);
+      await cli(["pool", "add", "b", "--identity", "pool:a"]);
+      const cycle = await cli(["pool", "set", "a", "--identity", "pool:b"]);
+      expect(cycle.code).toBe(EXIT_USAGE);
+      expect(cycle.stderr).toContain("a -> b -> a");
+    });
+
+    it("ranks a nested pool's pick as part of the outer pool's report", async () => {
+      seedSnapshot("work", { utilization: U60, resetsInMs: HOUR_MS });
+      seedSnapshot("personal", { utilization: FULL, resetsInMs: HOUR_MS, status: "rejected" });
+      await cli(["pool", "add", "fleet", "--identity", "work"]);
+      await cli(["pool", "add", "subs", "--identity", "personal", "--identity", "pool:fleet", "--preference", "listed"]);
+      const report = JSON.parse((await cli(["pool", "pick", "subs", "--json"])).stdout) as { pick: string; candidates: { identity: string; reasons: string[] }[] };
+      expect(report.pick).toBe("work");
+      expect(report.candidates.map((candidate) => candidate.identity)).toEqual(["personal", "work"]);
+      expect(report.candidates[1]?.reasons[0]).toContain('picked by pool "fleet"');
+      const text = (await cli(["pool", "pick", "subs"])).stdout;
+      expect(text).toContain("would run as work");
+      expect(text).toContain('picked by pool "fleet"');
+    });
+  });
+
   it("selects a pool as the active selection through `pool use`, `identity use` and the @ shortcut, and marks it in the list", async () => {
     await cli(["pool", "add", "subs", "--identity", "work"]);
     expect((await cli(["pool", "use", "subs"])).code).toBe(0);

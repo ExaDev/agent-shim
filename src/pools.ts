@@ -7,6 +7,7 @@ import { POOL_PREFERENCES, POOL_SELECTOR_PREFIX, type PoolPreference } from "./c
 import { listIdentities, readActiveIdentity, useIdentity, IdentityNotFoundError } from "./identityStore";
 import type { LayoutPaths } from "./paths";
 import { addPool, readPools, removePool, requirePool, setPool } from "./poolStore";
+import { poolNameOf } from "./launcher/identity";
 import { realFarmFs, realFsPort } from "./realPorts";
 import { formatAge } from "./usage/preflight";
 import { collectPoolPick } from "./poolPickReport";
@@ -25,11 +26,11 @@ function formatPoolPick(report: PoolPickReport, nowMs: number): string[] {
   return [head, ...rows, ...report.missing.map((name) => `  (skipped: ${name} is not an identity)`), ...(report.stickyProblem === undefined ? [] : [`Note: ${report.stickyProblem}; the last-pick record was ignored.`])];
 }
 
-/** Throws `IdentityNotFoundError` for any of `names` that is not an identity, so a pool never starts with a member nothing can load. */
+/** Throws `IdentityNotFoundError` for any of `names` that is a direct member but not an identity, so a pool never starts with a member nothing can load. `pool:<name>` members are the store's concern: `addPool` and `setPool` check them against the pool map. */
 function requireIdentities(paths: LayoutPaths, names: readonly string[]): void {
   const existing = new Set(listIdentities(paths).map((entry) => entry.name));
   for (const name of names) {
-    if (!existing.has(name)) {
+    if (poolNameOf(name) === undefined && !existing.has(name)) {
       throw new IdentityNotFoundError(name);
     }
   }
@@ -69,7 +70,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
     pool
       .command("add <name>")
       .description("Define a pool. Fails if one with this name already exists.")
-      .option("--identity <name>", "A member identity (repeatable).", collectRepeated)
+      .option("--identity <name>", "A member: an identity name, or pool:<name> to nest another pool with its own policy (repeatable).", collectRepeated)
       .addOption(new Option("--preference <mode>", PREFERENCE_DESCRIPTION).choices(POOL_PREFERENCES))
       .option("--json", "Print the result as JSON.")
       .action((name: string, options: Readonly<PoolMembersOptions>) => {
@@ -87,7 +88,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
     pool
       .command("set <name>")
       .description("Replace a pool's members, its preference, or both.")
-      .option("--identity <name>", "A member identity (repeatable); the full new list. Kept as-is when this option is absent.", collectRepeated)
+      .option("--identity <name>", "A member: an identity name, or pool:<name> to nest another pool with its own policy (repeatable); the full new list. Kept as-is when this option is absent.", collectRepeated)
       .addOption(new Option("--preference <mode>", PREFERENCE_DESCRIPTION).choices(POOL_PREFERENCES))
       .option("--no-preference", "Clear the preference back to the default, score.")
       .option("--json", "Print the result as JSON.")
@@ -192,7 +193,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .option("--json", "Print the ranking as JSON.")
       .action((name: string, options: Readonly<{ json?: boolean }>) => {
         const nowMs = Date.now();
-        const report = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: name, pool: requirePool(paths, name), directory: process.cwd(), nowMs });
+        const report = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: name, pools: readPools(paths), directory: process.cwd(), nowMs });
         if (options.json === true) {
           printJson(report);
           return;

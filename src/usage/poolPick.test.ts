@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import type { Pool } from "../config/schema";
 import { FAKE_NOW_MS, createFakeFarmFs, paths } from "../test-helpers";
-import { loadPoolMembers, readStickyPick, recordStickyPick } from "./poolPick";
+import { loadPoolMembers, PoolGraphError, rankPoolGraph, readStickyPick, recordStickyPick } from "./poolPick";
+import { PROMPT_CACHE_TTL_MS } from "./pick";
 import { USAGE_RETENTION_MS } from "./store";
 
 const HOUR_MS = 3_600_000;
@@ -65,5 +67,109 @@ describe("last-pick record", () => {
     expect(readStickyPick(fs, paths.usagePicksFile, DIRECTORY).problem).toContain("not valid JSON");
     recordStickyPick(fs, paths.usagePicksFile, DIRECTORY, "work", FAKE_NOW_MS);
     expect(readStickyPick(fs, paths.usagePicksFile, DIRECTORY).sticky?.identity).toBe("work");
+  });
+});
+
+describe("rankPoolGraph", () => {
+  const SIX_DAYS_MS = 518_400_000;
+  const THREE_HOURS_MS = 10_800_000;
+  const MAX_20X = "default_claude_max_20x";
+  const U10 = 0.1;
+  const U60 = 0.6;
+  const FULL = 1;
+
+  const snapshotPath = (identity: string): string => `${paths.usageSnapshotsDir}/${identity}.json`;
+
+  function snapshotOf(identity: string, window: { readonly utilization: number; readonly resetsInMs: number; readonly status?: string }): string {
+    const seen = iso(-HOUR_MS);
+    return JSON.stringify({
+      schemaVersion: 1,
+      identity,
+      updatedAt: seen,
+      account: { organizationRateLimitTier: MAX_20X },
+      providers: {
+        anthropic: {
+          lastRequestAt: seen,
+          lastStatus: 200,
+          rateLimit: { observedAt: seen, headers: {}, unified: { sevenDay: { utilization: window.utilization, resetsAt: iso(window.resetsInMs), ...(window.status === undefined ? {} : { status: window.status }) } } },
+        },
+      },
+    });
+  }
+
+  /** Ranks `pools`' entry `poolName` over the given snapshots, with every identity present on disk. */
+  function graph(pools: Readonly<Record<string, Pool>>, poolName: string, snapshots: Readonly<Record<string, { utilization: number; resetsInMs: number; status?: string }>>, extra: Readonly<{ sticky?: { identity: string; atMs: number } }> = {}) {
+    return rankPoolGraph({
+      fs: createFakeFarmFs(Object.fromEntries(Object.entries(snapshots).map(([identity, window]) => [snapshotPath(identity), snapshotOf(identity, window)]))),
+      paths,
+      pools,
+      poolName,
+      nowMs: FAKE_NOW_MS,
+      resuming: false,
+      identityExists: () => true,
+      ...(extra.sticky === undefined ? {} : { sticky: { identity: extra.sticky.identity, at: iso(extra.sticky.atMs) } }),
+    });
+  }
+
+  it("falls back to a nested pool's pick, ranked with its own preference, when a listed pool's first member is refused", () => {
+    const pools: Record<string, Pool> = {
+      outer: { identities: ["client", "pool:fleet"], preference: "listed" },
+      fleet: { identities: ["a", "b"] },
+    };
+    const { ranking } = graph(pools, "outer", { client: { utilization: FULL, resetsInMs: THREE_HOURS_MS, status: "rejected" }, a: { utilization: U60, resetsInMs: HOUR_MS }, b: { utilization: U10, resetsInMs: SIX_DAYS_MS } });
+    expect(ranking.pick).toMatchObject({ identity: "a" });
+    expect(ranking.candidates.map((candidate) => candidate.identity)).toEqual(["client", "a"]);
+    expect(ranking.pick?.reasons[0]).toContain('picked by pool "fleet": 7d 60% used, resets in 1h');
+  });
+
+  it("makes an entry whose nested pool is entirely refused ineligible, propagating that pool's earliest return", () => {
+    const pools: Record<string, Pool> = { outer: { identities: ["pool:fleet"] }, fleet: { identities: ["a", "b"] } };
+    const { ranking } = graph(pools, "outer", { a: { utilization: FULL, resetsInMs: THREE_HOURS_MS, status: "rejected" }, b: { utilization: FULL, resetsInMs: HOUR_MS, status: "rejected" } });
+    expect(ranking.pick).toBeUndefined();
+    expect(ranking.candidates[0]).toMatchObject({ identity: "b", class: "ineligible", blockedUntilMs: FAKE_NOW_MS + HOUR_MS });
+    expect(ranking.candidates[0]?.reasons[0]).toContain('every member of pool "fleet" is refused; b returns at');
+    expect(ranking.earliestReturn).toEqual({ identity: "b", atMs: FAKE_NOW_MS + HOUR_MS });
+  });
+
+  it("treats a nested pool's pick as one candidate in a scored outer pool", () => {
+    const pools: Record<string, Pool> = { outer: { identities: ["far", "pool:fleet"] }, fleet: { identities: ["soon"] } };
+    const { ranking } = graph(pools, "outer", { far: { utilization: U10, resetsInMs: SIX_DAYS_MS }, soon: { utilization: U60, resetsInMs: HOUR_MS } });
+    expect(ranking.pick).toMatchObject({ identity: "soon" });
+    expect(ranking.candidates.map((candidate) => candidate.identity)).toEqual(["soon", "far"]);
+  });
+
+  it("honours the sticky pick inside a nested pool, at depth", () => {
+    const pools: Record<string, Pool> = { outer: { identities: ["pool:mid"] }, mid: { identities: ["old", "better"] } };
+    const { ranking } = graph(pools, "outer", { old: { utilization: U60, resetsInMs: SIX_DAYS_MS }, better: { utilization: U10, resetsInMs: HOUR_MS } }, { sticky: { identity: "old", atMs: -(PROMPT_CACHE_TTL_MS - MINUTE_MS) } });
+    expect(ranking.pick).toMatchObject({ identity: "old" });
+    expect(ranking.pick?.reasons.join(" ")).toContain('picked by pool "mid"');
+    expect(ranking.pick?.reasons.join(" ")).toContain("prompt cache still warm");
+  });
+
+  it("reports the missing identities a walk skipped, with the pool that names them", () => {
+    const pools: Record<string, Pool> = { outer: { identities: ["pool:fleet"] }, fleet: { identities: ["gone", "kept"] } };
+    const { ranking, missing } = rankPoolGraph({
+      fs: createFakeFarmFs({ [snapshotPath("kept")]: snapshotOf("kept", { utilization: U60, resetsInMs: HOUR_MS }) }),
+      paths,
+      pools,
+      poolName: "outer",
+      nowMs: FAKE_NOW_MS,
+      resuming: false,
+      identityExists: (name) => name !== "gone",
+    });
+    expect(missing).toEqual([{ pool: "fleet", identity: "gone" }]);
+    expect(ranking.pick).toMatchObject({ identity: "kept" });
+  });
+
+  it("refuses a nested member naming a pool that is not defined", () => {
+    expect(() => graph({ outer: { identities: ["pool:nope"] } }, "outer", {})).toThrow(PoolGraphError);
+    expect(() => graph({ outer: { identities: ["pool:nope"] } }, "outer", {})).toThrow('names a pool that is not defined');
+  });
+
+  it("refuses a cycle, naming the chain", () => {
+    const cyclic: Record<string, Pool> = { a: { identities: ["pool:b"] }, b: { identities: ["pool:a"] } };
+    expect(() => graph(cyclic, "a", {})).toThrow(PoolGraphError);
+    expect(() => graph(cyclic, "a", {})).toThrow("a -> b -> a");
+    expect(() => graph({ loop: { identities: ["pool:loop"] } }, "loop", {})).toThrow("loop -> loop");
   });
 });

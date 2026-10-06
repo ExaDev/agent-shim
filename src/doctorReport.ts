@@ -20,6 +20,7 @@ import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providersStore";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
 import { poolNameOf } from "./launcher/identity";
+import { poolCycleOf } from "./poolStore";
 import type { RunPort } from "./launcher/ports";
 import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./resolve/extends";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
@@ -439,12 +440,34 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   const validatedGlobalConfig = params.globalConfig.raw === undefined ? undefined : validateJson(GlobalConfigSchema, params.globalConfig);
   const pools = validatedGlobalConfig?.ok === true ? (validatedGlobalConfig.data.pools ?? {}) : {};
   for (const [poolName, pool] of Object.entries(pools)) {
-    const missing = pool.identities.filter((member) => !validIdentityNames.has(member));
-    if (missing.length === 0) {
+    const missing = pool.identities.filter((member) => poolNameOf(member) === undefined && !validIdentityNames.has(member));
+    const undefinedPools = pool.identities.flatMap((member) => {
+      const nested = poolNameOf(member);
+      return nested === undefined || nested in pools ? [] : [nested];
+    });
+    if (missing.length === 0 && undefinedPools.length === 0) {
       push("pool", "pass", `${poolName} is valid (${pool.identities.join(", ")}).`, poolName);
     } else {
-      push("pool", "fail", `Pool "${poolName}" names ${missing.map((member) => `identity "${member}"`).join(" and ")}, which ${missing.length === 1 ? "does" : "do"} not exist.`, poolName);
+      const problems = [
+        ...missing.map((member) => `identity "${member}", which does not exist`),
+        ...undefinedPools.map((nested) => `pool "${nested}", which is not defined`),
+      ];
+      push("pool", "fail", `Pool "${poolName}" names ${problems.join(" and ")}.`, poolName);
     }
+  }
+  // A cycle can only appear by editing config.json by hand (add and set refuse one), and every pool on it is reported once.
+  const reportedCycles = new Set<string>();
+  for (const poolName of Object.keys(pools).sort()) {
+    const chain = poolCycleOf(pools, poolName);
+    if (chain === undefined) {
+      continue;
+    }
+    const key = [...chain].slice(0, -1).sort().join(">");
+    if (reportedCycles.has(key)) {
+      continue;
+    }
+    reportedCycles.add(key);
+    push("pool", "fail", `Pool cycle: ${chain.join(" -> ")}. A pool cannot nest itself, directly or through another pool.`, chain[0]);
   }
   /** Whether what a rule or the active-identity file selects (an identity, or `pool:<name>`) exists. */
   const selectionExists = (selector: string): boolean => {

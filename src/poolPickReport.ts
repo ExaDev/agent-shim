@@ -1,8 +1,8 @@
 import type { Pool } from "./config/schema";
-import { splitMembers } from "./launcher/pool";
+import { loadIdentity } from "./launcher/identity";
 import type { FarmFs, FsPort } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
-import { rankPoolFromStore, readStickyPick } from "./usage/poolPick";
+import { rankPoolGraph, readStickyPick } from "./usage/poolPick";
 import type { Candidate, PoolRanking } from "./usage/pick";
 import type { PoolPickReport } from "./usage/pickReportSchema";
 
@@ -21,18 +21,18 @@ function candidateView(candidate: Candidate): PoolPickCandidateView {
 }
 
 /**
- * Ranks a pool exactly as a launch from `directory` would right now, without recording a pick. Shares `rankPoolFromStore` with the launcher, so what this prints is what a launch does.
+ * Ranks a pool exactly as a launch from `directory` would right now, without recording a pick. Shares `rankPoolGraph` with the launcher, so what this prints is what a launch does.
  */
-export function collectPoolPick(params: Readonly<{ paths: LayoutPaths; fs: FsPort; usageFs: FarmFs; poolName: string; pool: Pool; directory: string; nowMs: number }>): PoolPickReport {
-  const { present, missing } = splitMembers(params.pool, params.paths, params.fs);
+export function collectPoolPick(params: Readonly<{ paths: LayoutPaths; fs: FsPort; usageFs: FarmFs; poolName: string; pools: Readonly<Record<string, Pool>>; directory: string; nowMs: number }>): PoolPickReport {
   const sticky = readStickyPick(params.usageFs, params.paths.usagePicksFile, params.directory);
-  const ranking: PoolRanking = rankPoolFromStore({
+  const { ranking, missing }: { ranking: PoolRanking; missing: readonly { pool: string; identity: string }[] } = rankPoolGraph({
     fs: params.usageFs,
     paths: params.paths,
-    identities: present,
+    pools: params.pools,
+    poolName: params.poolName,
     nowMs: params.nowMs,
     resuming: false,
-    ...(params.pool.preference === undefined ? {} : { preference: params.pool.preference }),
+    identityExists: (name) => loadIdentity(params.paths.identitiesDir, name, params.fs) !== undefined,
     ...(sticky.sticky === undefined ? {} : { sticky: sticky.sticky }),
   });
   return {
@@ -40,7 +40,7 @@ export function collectPoolPick(params: Readonly<{ paths: LayoutPaths; fs: FsPor
     directory: params.directory,
     ...(ranking.pick === undefined ? {} : { pick: ranking.pick.identity }),
     candidates: ranking.candidates.map(candidateView),
-    missing: [...missing],
+    missing: missing.map(({ identity }) => identity),
     ...(ranking.earliestReturn === undefined ? {} : { earliestReturn: { identity: ranking.earliestReturn.identity, at: new Date(ranking.earliestReturn.atMs).toISOString() } }),
     ...(sticky.problem === undefined ? {} : { stickyProblem: sticky.problem }),
   };

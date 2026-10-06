@@ -95,6 +95,28 @@ describe("runLauncher with a pool selector", () => {
     expect(spawnedEnv(listed.spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/personal`);
   });
 
+  it("falls back to a nested pool's pick when a listed pool's first member is refused", () => {
+    const seed = {
+      [snapshotPath("personal")]: snapshotOf("personal", { utilization: FULL, resetsInMs: TWO_HOURS_MS, status: "rejected" }),
+      [snapshotPath("work")]: snapshotOf("work", { utilization: U60, resetsInMs: HOUR_MS }),
+    };
+    const nested = launch({ seed, pools: { main: { identities: ["personal", "pool:fleet"], preference: "listed" }, fleet: { identities: ["work"] } } });
+    expect(nested.code).toBe(0);
+    expect(spawnedEnv(nested.spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
+    const decision = nested.log.infos.find((line) => line.includes("identity work"));
+    expect(decision).toContain("pool main:");
+    expect(decision).toContain('picked by pool "fleet"');
+  });
+
+  it("refuses a launch whose pool graph is a cycle or names an undefined pool", () => {
+    const cycle = launch({ pools: { main: { identities: ["pool:main"] } } });
+    expect(cycle.code).toBe(1);
+    expect(cycle.log.errors[0]).toContain("main -> main");
+    const missing = launch({ pools: { main: { identities: ["pool:fleet"] }, other: { identities: ["work"] } } });
+    expect(missing.code).toBe(1);
+    expect(missing.log.errors[0]).toContain('names a pool that is not defined');
+  });
+
   it("takes a pool from the active-identity file", () => {
     const active = launch({ argv: ["--print"], files: { [paths.activeIdentityFile]: "pool:main\n" } });
     expect(spawnedEnv(active.spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);

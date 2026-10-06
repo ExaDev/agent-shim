@@ -23,6 +23,7 @@ const MAX_20X_CAPACITY = 20;
 const U10 = 0.1;
 const U30 = 0.3;
 const U50 = 0.5;
+const U60 = 0.6;
 const U80 = 0.8;
 const U90 = 0.9;
 const U09 = 0.09;
@@ -282,5 +283,37 @@ describe("rankPool", () => {
     const ranking = rank([member("a", { five: { status: "rejected", resetsInMs: THREE_HOURS_MS } }), member("b", { five: { status: "rejected", resetsInMs: HOUR_MS } })], { preference: "listed" });
     expect(ranking.pick).toBeUndefined();
     expect(ranking.earliestReturn).toEqual({ identity: "b", atMs: NOW_MS + HOUR_MS });
+  });
+
+  describe("nested members", () => {
+    /** A member standing for a nested pool entry that has a pick: the picked identity, re-ranked from its own snapshot with the composition in its reasons. */
+    function nestedPick(pool: string, identity: string, nestedReasons: readonly string[], windows: Windows): PoolMember {
+      return { ...member(identity, windows), nested: { kind: "pick", pool, reasons: nestedReasons } };
+    }
+
+    it("contributes the nested pick at its entry's position, with the composition first among its reasons", () => {
+      const ranking = rank(
+        [member("refused", { five: { status: "rejected", resetsInMs: THREE_HOURS_MS } }), nestedPick("fleet", "spare", ["7d 60% used", "resets in 1h"], { seven: { utilization: U60, resetsInMs: HOUR_MS } })],
+        { preference: "listed" },
+      );
+      expect(ranking.pick).toMatchObject({ identity: "spare" });
+      expect(ranking.pick?.reasons[0]).toBe('picked by pool "fleet": 7d 60% used; resets in 1h');
+    });
+
+    it("makes an entry whose nested pool is entirely refused ineligible, carrying that pool's earliest return", () => {
+      const refused: PoolMember = { identity: "b", records: [], nested: { kind: "refused", pool: "fleet", earliestReturn: { identity: "b", atMs: NOW_MS + HOUR_MS } } };
+      const withFallback = rank([refused, member("direct", { seven: { utilization: U50, resetsInMs: DAY_MS } })]);
+      expect(withFallback.pick).toMatchObject({ identity: "direct" });
+      expect(withFallback.candidates.find((candidate) => candidate.identity === "b")).toMatchObject({ class: "ineligible", blockedUntilMs: NOW_MS + HOUR_MS });
+      expect(withFallback.candidates.find((candidate) => candidate.identity === "b")?.reasons[0]).toContain('every member of pool "fleet" is refused; b returns at');
+      const alone = rank([refused]);
+      expect(alone.pick).toBeUndefined();
+      expect(alone.earliestReturn).toEqual({ identity: "b", atMs: NOW_MS + HOUR_MS });
+    });
+
+    it("treats a nested pick in a scored pool as one candidate, scored by its own snapshot", () => {
+      const nested = nestedPick("fleet", "soon", ["7d 60% used"], { seven: { utilization: U60, resetsInMs: HOUR_MS } });
+      expect(order(rank([member("far", { seven: { utilization: U10, resetsInMs: SIX_DAYS_MS } }), nested]))).toEqual(["soon", "far"]);
+    });
   });
 });

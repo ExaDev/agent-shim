@@ -29,7 +29,7 @@ export const PoolPickReportSchema = z.strictObject({
   /** The member a launch would run as, absent when every member is refused. */
   pick: z.string().optional(),
   candidates: z.array(PoolPickCandidateViewSchema),
-  /** Members that name an identity that does not exist; a launch skips them. */
+  /** Identity members anywhere in the pool's graph that do not exist; a launch skips them. */
   missing: z.array(z.string()),
   /** When nothing can be picked, the soonest any member returns. */
   earliestReturn: z.strictObject({ identity: z.string(), at: z.iso.datetime() }).optional(),
