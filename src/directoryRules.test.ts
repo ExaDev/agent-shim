@@ -1,10 +1,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { ConfigValidationError } from "./config/load";
+import { reportFatalError } from "./cliReport";
+import { buildProgram } from "./program";
+import { addPool } from "./poolStore";
+import { fakeCommandDeps } from "./test-helpers";
 import { DirectoryRuleAlreadyExistsError, DirectoryRuleMissingTargetError, DirectoryRuleNotFoundError, addDirectoryRule, listDirectoryRules, readDirectoryRules, removeDirectoryRule, updateDirectoryRule, writeDirectoryRules } from "./directoryRulesStore";
 
 describe("directoryRules", () => {
@@ -116,6 +120,53 @@ describe("directoryRules", () => {
 
     it("throws DirectoryRuleNotFoundError when the file does not exist at all", () => {
       expect(() => { removeDirectoryRule(paths, "~/nonexistent"); }).toThrow(DirectoryRuleNotFoundError);
+    });
+  });
+
+  describe("pool selectors as the pinned identity (the command layer)", () => {
+    /** Runs one `agent-shim rule` invocation against the throwaway layout the way `src/cli.ts` does. */
+    async function ruleCli(argv: readonly string[]): Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }> {
+      const out: string[] = [];
+      const err: string[] = [];
+      const log = vi.spyOn(console, "log").mockImplementation((...args: readonly unknown[]) => {
+        out.push(`${args.map(String).join(" ")}\n`);
+      });
+      const error = vi.spyOn(console, "error").mockImplementation((...args: readonly unknown[]) => {
+        err.push(`${args.map(String).join(" ")}\n`);
+      });
+      let code: number;
+      try {
+        await buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn() }).parseAsync(["rule", ...argv], { from: "user" });
+        code = typeof process.exitCode === "number" ? process.exitCode : 0;
+      } catch (thrown) {
+        code = reportFatalError(thrown, { env: process.env, writeErr: (line) => { err.push(`${line}\n`); } });
+      } finally {
+        log.mockRestore();
+        error.mockRestore();
+        process.exitCode = undefined;
+      }
+      return { code, stdout: out.join(""), stderr: err.join("") };
+    }
+
+    it("accepts pool:<name> when the pool exists", async () => {
+      addPool(paths, "subs", ["work"]);
+      const result = await ruleCli(["add", "~/work/clients/acme", "--identity", "pool:subs"]);
+      expect(result.code).toBe(0);
+      expect(readDirectoryRules(paths).rules).toContainEqual({ path: "~/work/clients/acme", identity: "pool:subs" });
+    });
+
+    it("refuses pool:<name> when no pool of that name exists", async () => {
+      const result = await ruleCli(["add", "~/work/clients/acme", "--identity", "pool:subs"]);
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('No pool named "subs"');
+    });
+
+    it("rule set accepts a pool selector for an existing rule", async () => {
+      addPool(paths, "subs", ["work"]);
+      addDirectoryRule(paths, "~/work/clients/acme", { identity: "work" });
+      const result = await ruleCli(["set", "~/work/clients/acme", "--identity", "pool:subs"]);
+      expect(result.code).toBe(0);
+      expect(readDirectoryRules(paths).rules).toContainEqual({ path: "~/work/clients/acme", identity: "pool:subs" });
     });
   });
 });
