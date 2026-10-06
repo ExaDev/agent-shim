@@ -323,18 +323,19 @@ describe("the headroom hop", () => {
     }
   });
 
-  it("re-sets the project identity on the hop and forwards no session header to it, or beyond", async () => {
+  it("re-sets the project identity and the session attribution id on the hop, replacing any inbound copy, and forwards no launcher session header beyond it", async () => {
     const headroom = await fakeHeadroom();
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
     try {
       await fetch(`${door.url}/providers/codex/v1/messages`, {
         dispatcher: trusting,
         method: "POST",
-        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN, "x-headroom-project-id": "/repo" },
+        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN, "x-headroom-project-id": "/repo", "x-headroom-session-id": "spoofed-by-the-client" },
         body: MESSAGES_BODY,
       });
       const seen = headroom.seen()[0];
       expect(seen?.headers["x-headroom-project-id"]).toBe("/repo");
+      expect(seen?.headers["x-headroom-session-id"]).toBe("session-1");
       expect(seen?.headers[IDENTITY_HEADER]).toBeUndefined();
       expect(seen?.headers[SESSION_HEADER]).toBeUndefined();
     } finally {

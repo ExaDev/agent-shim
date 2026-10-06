@@ -12,6 +12,7 @@ export const INTERNAL_HEADER_NAMES = [
   "x-agent-shim-hop",
   "x-agent-shim-hop-id",
   "x-headroom-project-id",
+  "x-headroom-session-id",
   "x-headroom-base-url",
 ] as const;
 
@@ -31,6 +32,11 @@ export const HEADROOM_FLAG_HEADER = "x-agent-shim-headroom";
  * Carries the project identity headroom scopes its memory state to (the git repository root of the launch directory). Also injected by the launcher and stripped at the door: the headroom hop re-sets it on its own request, so it reaches headroom and nowhere else.
  */
 export const PROJECT_ID_HEADER = "x-headroom-project-id";
+
+/**
+ * Headroom's per-session attribution id, the key its `/stats/sessions/<id>` serves: the daemon attributes a request only when it carries this header (or the client's own `x-claude-code-session-id`, which no routed client sends). Re-set by the headroom hop from the launch's own session id, so the daemon attributes traffic the client itself never identifies; inbound copies are stripped at the identity step like every other internal header.
+ */
+export const SESSION_ATTRIBUTION_HEADER = "x-headroom-session-id";
 
 /**
  * Headroom's per-request upstream selector, which the child used to carry and the door now owns: the door strips any inbound copy (a leftover from an older launcher's environment would otherwise redirect the daemon behind the door's back) and its hop sets it fresh when a route names an upstream.
