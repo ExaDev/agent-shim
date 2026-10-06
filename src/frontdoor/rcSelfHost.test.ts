@@ -7,6 +7,7 @@ import { serveRouted } from "./pipeline";
 import { RC_SELF_HOST_KEEPALIVE_MS, createRcSelfHostSurface, type RcSelfHostCredentialRecord, type RcWebSearchBackend } from "./rcSelfHost";
 import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetchOutcome, type RcWebFetcher } from "./rcWebFetch";
 import { mintRcSelfHostCredential, readRcSelfHostRecord } from "./rcSelfHostMint";
+import { createRcCredentialStore } from "./rcCredentialStore";
 import { createFakeFarmFs } from "../test-helpers";
 
 /**
@@ -266,6 +267,52 @@ describe("the self-hosted Remote Control session family", () => {
     worlds.push(world);
     const created = await call(world.port, "POST", "/v1/code/sessions", { bridge: {} }, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` });
     expect(created.status).toBe(HTTP_SERVICE_UNAVAILABLE);
+  });
+
+  it("names the presentation's shape in its refusal, so a malformed one is never mistaken for a wrong credential", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const messageOf = (body: string): string => (JSON.parse(body) as { error: { message: string } }).error.message;
+    // The #264 shape: a caller that prefixes the scheme word onto the whole header value a persisted session record holds sends "Bearer Bearer <token>", which strips to "Bearer <token>" and matches nothing, so the refusal must name the doubled scheme word rather than a mismatch.
+    const doubled = await call(world.port, "POST", "/v1/code/sessions", { bridge: {} }, { authorization: `Bearer Bearer ${MINTED_OAUTH_TOKEN}` });
+    expect(doubled.status).toBe(HTTP_STATUS.unauthorized);
+    expect(messageOf(doubled.body)).toContain("carried it twice");
+    const bare = await call(world.port, "POST", "/v1/code/sessions", { bridge: {} }, { authorization: MINTED_OAUTH_TOKEN });
+    expect(bare.status).toBe(HTTP_STATUS.unauthorized);
+    expect(messageOf(bare.body)).toContain("did not carry the Bearer scheme word");
+    const anonymous = await call(world.port, "POST", "/v1/code/sessions", { bridge: {} });
+    expect(anonymous.status).toBe(HTTP_STATUS.unauthorized);
+    expect(messageOf(anonymous.body)).toContain("carried none");
+    // The plain mismatch keeps the message it always had: a well-formed bearer that is not the minted credential.
+    const stranger = await call(world.port, "POST", "/v1/code/sessions", { bridge: {} }, { authorization: "Bearer someone-else" });
+    expect(stranger.status).toBe(HTTP_STATUS.unauthorized);
+    expect(messageOf(stranger.body)).toBe("the self-hosted Remote Control surface did not recognise the presented credential");
+  });
+
+  it("authenticates the persisted session record replayed verbatim, the whole header value the tracker observes", async () => {
+    // The released-code proof (#264 again) drives the surface with the door's own persisted record for a session, whose authorization field is the whole header value, scheme word included; this is that record's journey, written and read back through the store the tracker itself uses rather than a header built by hand.
+    const fs = createFakeFarmFs();
+    const store = createRcCredentialStore(fs, "/state/frontdoor/rc-credentials");
+    store.write("cse_persisted", { authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, anthropicVersion: "2023-06-01", anthropicClientPlatform: "cli" });
+    const persisted = store.read("cse_persisted");
+    if (persisted?.authorization === undefined) {
+      throw new Error("the credential store did not read back what it wrote");
+    }
+    const world = await makeWorld();
+    worlds.push(world);
+    const headers = { authorization: persisted.authorization, ...(persisted.anthropicVersion === undefined ? {} : { "anthropic-version": persisted.anthropicVersion }) };
+    const created = await call(world.port, "POST", "/v1/code/sessions", { bridge: {} }, headers);
+    expect(created.status).toBe(HTTP_STATUS.ok);
+    const id = (JSON.parse(created.body) as { session: { id: string } }).session.id;
+    const bridged = await call(world.port, "POST", `/v1/code/sessions/${id}/bridge`, {}, headers);
+    expect(bridged.status).toBe(HTTP_STATUS.ok);
+    expect(typeof (JSON.parse(bridged.body) as { worker_jwt: string }).worker_jwt).toBe("string");
+    const fetched = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/web-fetch`, { url: "https://example.com/persisted" }, headers);
+    expect(fetched.status).toBe(HTTP_STATUS.ok);
+    expect(world.fetchedUrls).toEqual(["https://example.com/persisted"]);
+    const searched = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/web-search`, { query: "persisted" }, headers);
+    expect(searched.status).toBe(HTTP_STATUS.ok);
+    expect((JSON.parse(searched.body) as { error: { error_type: string } }).error.error_type).toBe("web_search_unavailable");
   });
 
   it("serves worker operations only to the JWT its own bridge minted", async () => {
