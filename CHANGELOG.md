@@ -1,3 +1,9 @@
+## [8.25.0](https://github.com/ExaDev/agent-shim/compare/v8.24.0...v8.25.0) (2026-10-06)
+
+### Features
+
+* **rc:** serve every undriven Remote Control endpoint on the door ([08be766](https://github.com/ExaDev/agent-shim/commit/08be7665b811bc8dbf213ab7a549174187a101ff))
+
 ## [8.24.0](https://github.com/ExaDev/agent-shim/compare/v8.23.0...v8.24.0) (2026-10-06)
 
 ### Features
