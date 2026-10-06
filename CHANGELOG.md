@@ -1,3 +1,9 @@
+## [8.19.0](https://github.com/ExaDev/agent-shim/compare/v8.18.0...v8.19.0) (2026-10-06)
+
+### Features
+
+* **rig:** let the mock provider dump request bodies and drive the tool-search flow ([30ab0f6](https://github.com/ExaDev/agent-shim/commit/30ab0f6928369ced6275dc92dc8629db46d7883c)), references [#226](https://github.com/ExaDev/agent-shim/issues/226)
+
 ## [8.18.0](https://github.com/ExaDev/agent-shim/compare/v8.17.1...v8.18.0) (2026-10-06)
 
 ### Features
