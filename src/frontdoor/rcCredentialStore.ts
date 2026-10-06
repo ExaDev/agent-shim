@@ -1,7 +1,7 @@
 import path from "node:path";
 
 import type { FarmFs } from "../launcher/ports";
-import type { RcObservedCredential } from "./rcSessions";
+import type { RcObservedCredential } from "./rcWrites";
 
 /**
  * The persisted half of the tracker's client credential and of its sequence cursor: the OAuth-kind bearer and protocol headers a Remote Control session's client-half calls were last observed with, and the highest sequence number the door's stream attachment had confirmed when its last attachment boundary passed, written per session id so a later door generation can still attach to a session whose create crossed an earlier one and resume its read stream from where the last generation left off.

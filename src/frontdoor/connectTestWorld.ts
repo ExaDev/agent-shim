@@ -18,7 +18,8 @@ import {
   type ConnectLimits,
 } from "./connect";
 import { realConnectEffects, realRcEventDial, realRcStreamDial } from "./connectEffects";
-import { rcObserverAsPassthrough, type RcEventDial, type RcSessionTracker } from "./rcSessions";
+import { rcObserverAsPassthrough, type RcSessionTracker } from "./rcSessions";
+import type { RcEventDial } from "./rcWrites";
 import type { RcStreamDial } from "./rcStream";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates in `beforeAll`. */

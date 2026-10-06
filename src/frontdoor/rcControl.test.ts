@@ -6,7 +6,8 @@ import { HTTP_STATUS } from "../codex/http";
 import { CONTROL_PATH_PREFIX, createRcControlHandler, frontDoorRcControl, realRcControlTransport, type RcControlTransport } from "./rcControl";
 import { generateCa, mintLeaf, LOOPBACK_LEAF_NAMES, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
-import type { RcEventWriteResult, RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
+import type { RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
+import type { RcEventWriteResult } from "./rcWrites";
 
 const TOKEN = "control-token-under-test";
 /** The sequence number the scripted inject answers with, named so the literal never reads as a magic number. */
@@ -20,6 +21,8 @@ const SESSIONS: readonly RcSessionSummary[] = [
 ];
 /** The request id the scripted pending entry carries, of the shape the protocol's own requests echo. */
 const REQUEST_ID = "req_00000000-0000-4000-8000-00000000000a";
+/** The minted request id the scripted control writes answer with, so a route's answer naming it proves the id travels from the operation to the caller. */
+const MINTED_REQUEST_ID = "minted-00000000-0000-4000-8000-00000000000b";
 const PENDING: readonly RcPendingRequestSummary[] = [{ sessionId: SESSION_ID, requestId: REQUEST_ID, type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: 1_500 }];
 const STATUSES: readonly RcSessionStatus[] = [
   { id: SESSION_ID, createdAt: 1_000, lastSeenAt: 2_000, workerState: { value: "WORKER_STATUS_RUNNING", observedAt: 1_200 }, workerIdleSeconds: { value: 7, observedAt: 2_000 }, pending: [...PENDING] },
@@ -90,6 +93,16 @@ function handlerDeps(overrides: Readonly<Partial<Parameters<typeof createRcContr
     interrupt: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
     setModel: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
     setPermissionMode: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
+    endSession: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
+    getUsage: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
+    getContextUsage: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
+    readFile: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
+    fileSuggestions: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
+    keepAlive: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM] }),
+    mcpStatus: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
+    mcpReconnect: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
+    mcpAuthenticate: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
+    mcpOAuthCallbackUrl: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
     ...overrides,
   };
 }
@@ -226,7 +239,7 @@ describe("the Remote Control control handler", () => {
     expect(seen).toEqual([{ session: SESSION_ID, text: "run the tests" }]);
   });
 
-  it("carries the three client-originated control requests out, echoing each body's own fields, and refuses a malformed body and a mode the SDK's own type does not permit", async () => {
+  it("carries the three client-originated control requests out with each body's own fields, and refuses a malformed body and a mode the SDK's own type does not permit", async () => {
     const seen: { interrupt: string[]; setModel: [string, string][]; setPermissionMode: [string, string][] } = { interrupt: [], setModel: [], setPermissionMode: [] };
     const started = await serve(
       createRcControlHandler(
@@ -254,10 +267,10 @@ describe("the Remote Control control handler", () => {
     expect(JSON.parse(interrupted.body)).toEqual({ session: SESSION_ID, sequenceNums: [SEQUENCE_NUM] });
     const modelSet = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/set-model`, headers, body: JSON.stringify({ session: SESSION_ID, model: "claude-opus-5-5" }) });
     expect(modelSet.status).toBe(HTTP_STATUS.ok);
-    expect(JSON.parse(modelSet.body)).toEqual({ session: SESSION_ID, model: "claude-opus-5-5", sequenceNums: [SEQUENCE_NUM] });
+    expect(JSON.parse(modelSet.body)).toEqual({ session: SESSION_ID, sequenceNums: [SEQUENCE_NUM] });
     const modeSet = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/set-permission-mode`, headers, body: JSON.stringify({ session: SESSION_ID, mode: "plan" }) });
     expect(modeSet.status).toBe(HTTP_STATUS.ok);
-    expect(JSON.parse(modeSet.body)).toEqual({ session: SESSION_ID, mode: "plan", sequenceNums: [SEQUENCE_NUM] });
+    expect(JSON.parse(modeSet.body)).toEqual({ session: SESSION_ID, sequenceNums: [SEQUENCE_NUM] });
     expect(seen).toEqual({ interrupt: [SESSION_ID], setModel: [[SESSION_ID, "claude-opus-5-5"]], setPermissionMode: [[SESSION_ID, "plan"]] });
     // Every malformed shape is refused before the operation runs: unreadable JSON, a missing or empty field, and a mode outside the SDK's own enum.
     for (const [path, body] of [
@@ -282,6 +295,82 @@ describe("the Remote Control control handler", () => {
     expect(verbose.status).toBe(HTTP_STATUS.badGateway);
     expect(errorTextOf(verbose.body)).toContain("has not observed Remote Control session");
   });
+
+  it("carries each verb of the wider control family out with its body's own fields, answering with the minted request id, and refuses each malformed shape before the operation runs", async () => {
+    const seen: Record<string, readonly unknown[]> = {};
+    const recording = (name: string) => async (...args: readonly unknown[]): Promise<RcEventWriteResult> => {
+      seen[name] = args;
+      return await Promise.resolve({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID });
+    };
+    const started = await serve(
+      createRcControlHandler(
+        handlerDeps({
+          endSession: recording("endSession"),
+          getUsage: recording("getUsage"),
+          getContextUsage: recording("getContextUsage"),
+          readFile: recording("readFile"),
+          fileSuggestions: recording("fileSuggestions"),
+          keepAlive: recording("keepAlive"),
+          mcpStatus: recording("mcpStatus"),
+          mcpReconnect: recording("mcpReconnect"),
+          mcpAuthenticate: recording("mcpAuthenticate"),
+          mcpOAuthCallbackUrl: recording("mcpOAuthCallbackUrl"),
+        }),
+      ),
+    );
+    running = started;
+    const transport = plainTransport(started.port);
+    const headers = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
+    const withRequest = { session: SESSION_ID, request: MINTED_REQUEST_ID, sequenceNums: [SEQUENCE_NUM] };
+    const cases: readonly { readonly path: string; readonly body: unknown; readonly expectArgs: readonly unknown[] }[] = [
+      { path: "end-session", body: { session: SESSION_ID, reason: "done for today" }, expectArgs: [SESSION_ID, "done for today"] },
+      { path: "end-session", body: { session: SESSION_ID }, expectArgs: [SESSION_ID, undefined] },
+      { path: "get-usage", body: { session: SESSION_ID, skipBehaviors: true }, expectArgs: [SESSION_ID, true] },
+      { path: "get-usage", body: { session: SESSION_ID }, expectArgs: [SESSION_ID, undefined] },
+      { path: "get-context-usage", body: { session: SESSION_ID, detail: "summary" }, expectArgs: [SESSION_ID, "summary"] },
+      { path: "get-context-usage", body: { session: SESSION_ID }, expectArgs: [SESSION_ID, undefined] },
+      { path: "read-file", body: { session: SESSION_ID, path: "src/index.ts", maxBytes: 4096, encoding: "base64" }, expectArgs: [SESSION_ID, "src/index.ts", { maxBytes: 4096, encoding: "base64" }] },
+      { path: "read-file", body: { session: SESSION_ID, path: "src/index.ts" }, expectArgs: [SESSION_ID, "src/index.ts", undefined] },
+      { path: "file-suggestions", body: { session: SESSION_ID, query: "src/front" }, expectArgs: [SESSION_ID, "src/front"] },
+      { path: "file-suggestions", body: { session: SESSION_ID, query: "" }, expectArgs: [SESSION_ID, ""] },
+      { path: "keep-alive", body: { session: SESSION_ID }, expectArgs: [SESSION_ID] },
+      { path: "mcp-status", body: { session: SESSION_ID }, expectArgs: [SESSION_ID] },
+      { path: "mcp-reconnect", body: { session: SESSION_ID, serverName: "github" }, expectArgs: [SESSION_ID, "github"] },
+      { path: "mcp-authenticate", body: { session: SESSION_ID, serverName: "github", redirectUri: "https://example.com/cb" }, expectArgs: [SESSION_ID, "github", "https://example.com/cb"] },
+      { path: "mcp-oauth-callback-url", body: { session: SESSION_ID, serverName: "github", callbackUrl: "https://example.com/cb?code=x" }, expectArgs: [SESSION_ID, "github", "https://example.com/cb?code=x"] },
+    ];
+    for (const testCase of cases) {
+      const answered = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/${testCase.path}`, headers, body: JSON.stringify(testCase.body) });
+      expect(answered.status).toBe(HTTP_STATUS.ok);
+      expect(JSON.parse(answered.body)).toEqual(withRequest);
+    }
+    expect(Object.keys(seen).sort()).toEqual(["endSession", "fileSuggestions", "getContextUsage", "getUsage", "keepAlive", "mcpAuthenticate", "mcpOAuthCallbackUrl", "mcpReconnect", "mcpStatus", "readFile"]);
+    // Every malformed shape is refused before the operation runs: an empty reason, a non-boolean skipBehaviors, a detail outside the SDK's enum, an empty path, a non-positive or fractional maxBytes, an encoding outside the enum, and an empty server name or URI.
+    for (const [path, body] of [
+      [`${CONTROL_PATH_PREFIX}/end-session`, JSON.stringify({ session: SESSION_ID, reason: "" })],
+      [`${CONTROL_PATH_PREFIX}/get-usage`, JSON.stringify({ session: SESSION_ID, skipBehaviors: "yes" })],
+      [`${CONTROL_PATH_PREFIX}/get-context-usage`, JSON.stringify({ session: SESSION_ID, detail: "quick" })],
+      [`${CONTROL_PATH_PREFIX}/read-file`, JSON.stringify({ session: SESSION_ID })],
+      [`${CONTROL_PATH_PREFIX}/read-file`, JSON.stringify({ session: SESSION_ID, path: "" })],
+      [`${CONTROL_PATH_PREFIX}/read-file`, JSON.stringify({ session: SESSION_ID, path: "src/index.ts", maxBytes: 0 })],
+      [`${CONTROL_PATH_PREFIX}/read-file`, JSON.stringify({ session: SESSION_ID, path: "src/index.ts", maxBytes: 1.5 })],
+      [`${CONTROL_PATH_PREFIX}/read-file`, JSON.stringify({ session: SESSION_ID, path: "src/index.ts", encoding: "hex" })],
+      [`${CONTROL_PATH_PREFIX}/file-suggestions`, JSON.stringify({ session: SESSION_ID })],
+      [`${CONTROL_PATH_PREFIX}/mcp-reconnect`, JSON.stringify({ session: SESSION_ID, serverName: "" })],
+      [`${CONTROL_PATH_PREFIX}/mcp-authenticate`, JSON.stringify({ session: SESSION_ID, serverName: "github" })],
+      [`${CONTROL_PATH_PREFIX}/mcp-oauth-callback-url`, JSON.stringify({ session: SESSION_ID, serverName: "github", callbackUrl: "" })],
+    ] as const) {
+      const refused = await transport.request({ method: "POST", path, headers, body });
+      expect(refused.status).toBe(HTTP_STATUS.badRequest);
+    }
+    const wrongMethod = await transport.request({ method: "GET", path: `${CONTROL_PATH_PREFIX}/mcp-status`, headers: { authorization: `Bearer ${TOKEN}` } });
+    expect(wrongMethod.status).toBe(HTTP_STATUS.methodNotAllowed);
+    const failed = await serve(createRcControlHandler(handlerDeps({ mcpStatus: writeAnswering({ ok: false, message: "the front door has not observed Remote Control session cse_missing" }) })));
+    running = failed;
+    const verbose = await plainTransport(failed.port).request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/mcp-status`, headers, body: JSON.stringify({ session: SESSION_ID }) });
+    expect(verbose.status).toBe(HTTP_STATUS.badGateway);
+    expect(errorTextOf(verbose.body)).toContain("has not observed Remote Control session");
+  });
 });
 
 describe("the control client", () => {
@@ -302,10 +391,22 @@ describe("the control client", () => {
     expect(await control.pendingOf()).toEqual(PENDING);
     expect(await control.pendingOf(QUIET_SESSION_ID)).toEqual([]);
     expect(await control.sendPrompt(SESSION_ID, "run the tests")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
-    expect(await control.answerRequest(SESSION_ID, REQUEST_ID, { approve: false, message: "not today" })).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+    // The answer route's own answer names the request it answered, so the client surfaces the same id back.
+    expect(await control.answerRequest(SESSION_ID, REQUEST_ID, { approve: false, message: "not today" })).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: REQUEST_ID });
     expect(await control.interruptSession(SESSION_ID)).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
     expect(await control.setModel(SESSION_ID, "claude-opus-5-5")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
     expect(await control.setPermissionMode(SESSION_ID, "dontAsk")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+    // The wider family's scripted deps answer with the minted request id, so each client method surfaces it beside the sequence numbers; the keep-alive dep names none, and its result carries no request id, exactly as the payload's own contract says.
+    expect(await control.endSession(SESSION_ID, "done for today")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID });
+    expect(await control.getUsage(SESSION_ID, true)).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID });
+    expect(await control.getContextUsage(SESSION_ID, "summary")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID });
+    expect(await control.readFile(SESSION_ID, "src/index.ts", { maxBytes: 4096, encoding: "base64" })).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID });
+    expect(await control.fileSuggestions(SESSION_ID, "src/front")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID });
+    expect(await control.keepAlive(SESSION_ID)).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM] });
+    expect(await control.mcpStatus(SESSION_ID)).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID });
+    expect(await control.mcpReconnect(SESSION_ID, "github")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID });
+    expect(await control.mcpAuthenticate(SESSION_ID, "github", "https://example.com/cb")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID });
+    expect(await control.mcpOAuthCallbackUrl(SESSION_ID, "github", "https://example.com/cb?code=x")).toEqual({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID });
     await expect(control.statusOf("cse_00000000-0000-4000-8000-0000000000ff")).rejects.toThrow("has not observed Remote Control session");
     await started.stop();
     const unreachable = await frontDoorRcControl(plainTransport(started.port), TOKEN).sendPrompt(SESSION_ID, "hello");

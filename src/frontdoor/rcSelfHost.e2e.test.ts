@@ -15,7 +15,8 @@ import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_TAP_HOSTS, cre
 import { lateRcEventDial, lateRcStreamDial, realConnectEffects, type RcDialTarget } from "./connectEffects";
 import { createProviderRouteResolver } from "./providerRoute";
 import { serveRouted } from "./pipeline";
-import { observingRoutedRoute, createRcSessionTracker, answerRcControlRequest, injectRcUserMessage, type RcSessionTracker } from "./rcSessions";
+import { observingRoutedRoute, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
+import { answerRcControlRequest, endRcSession, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, sendRcKeepAlive } from "./rcWrites";
 import { createRcSelfHostSurface, type RcSelfHostCredentialRecord } from "./rcSelfHost";
 import { realRcWebFetch } from "./rcWebFetch";
 import { createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
@@ -129,6 +130,8 @@ describe("the self-hosted Remote Control mode end to end", () => {
   let dialTarget: RcDialTarget | undefined;
   /** The door's own client-half write dial, resolved per call at the door's own surface, exactly the production wiring. */
   let writeDial: ReturnType<typeof lateRcEventDial>;
+  /** The fan-out the door's held client stream publishes to, hoisted so a test can subscribe the way `frontdoor rc watch` does. */
+  let fanout: ReturnType<typeof createRcEventFanout>;
 
   beforeAll(async () => {
     ca = generateCa(new Date());
@@ -151,7 +154,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
       webFetch: realRcWebFetch({ allowPrivate: true }),
     });
     tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: 45_000 });
-    const fanout = createRcEventFanout();
+    fanout = createRcEventFanout();
     /** The door's own client half dials the door's own transparent surface: the target is known only once the listener has bound, exactly the production wiring. */
     const resolveTarget = (): RcDialTarget | undefined => dialTarget;
     hub = createRcStreamHub({
@@ -320,6 +323,119 @@ describe("the self-hosted Remote Control mode end to end", () => {
     workerStream.destroy();
   }, TEST_TIMEOUT_MS);
 
+  it("delivers the wider control-verb family to the worker through the door's own surface, and the worker's answers flow back on the held client stream", async () => {
+    // The fake CLI worker: create, bridge, register, then hold its read stream open, exactly as the whole-session test stands the world up.
+    const createSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const created = await requestOn(createSocket, rawRequest("POST", "/v1/code/sessions", { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "Content-Type": "application/json", "anthropic-version": "2023-06-01" }, JSON.stringify({ title: "verbs", bridge: {} })));
+    expect(created.statusLine).toContain("200");
+    const sessionId = (JSON.parse(created.body) as { session: { id: string } }).session.id;
+    createSocket.destroy();
+    await waitUntil(() => tracker.list().some((session) => session.id === sessionId));
+
+    const bridgeSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const bridged = await requestOn(bridgeSocket, rawRequest("POST", `/v1/code/sessions/${sessionId}/bridge`, { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "Content-Type": "application/json" }, "{}"));
+    const bridge = JSON.parse(bridged.body) as { worker_jwt: string };
+    bridgeSocket.destroy();
+
+    const registerSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const putWorker = await requestOn(registerSocket, rawRequest("PUT", `/v1/code/sessions/${sessionId}/worker`, { Authorization: `Bearer ${bridge.worker_jwt}`, "Content-Type": "application/json" }, JSON.stringify({ worker_status: "idle", worker_epoch: 1 })));
+    expect(putWorker.statusLine).toContain("200");
+    registerSocket.destroy();
+
+    const workerStream = openStream(transparentPort, ca.certPem, `/v1/code/sessions/${sessionId}/worker/events/stream`, { Authorization: `Bearer ${bridge.worker_jwt}`, "anthropic-version": "2023-06-01" });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, ATTACH_SETTLE_MS);
+    });
+    hub.reconcile();
+
+    /** The door's client-half operations dial the door's own surface, minting request ids from this sequence so the assertions name exactly what went out. */
+    const mintedIds = randomUuidSequence();
+    const opDeps = { credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: writeDial, newUuid: mintedIds };
+
+    // The keep-alive group: the bare payload, with no request envelope, arrives on the worker stream.
+    const kept = await sendRcKeepAlive(opDeps, sessionId);
+    expect(kept.ok).toBe(true);
+    if (!kept.ok) {
+      throw new Error(kept.message);
+    }
+    await waitForFrames(workerStream, (frames) => frames.some((frame) => frame.includes("keep_alive")));
+    const keptEnvelope = envelopesOf(workerStream).find((event) => isPayloadRecord(event.envelope.payload) && event.envelope.payload.type === "keep_alive");
+    expect(keptEnvelope?.envelope.payload).toMatchObject({ type: "keep_alive" });
+    if (!isPayloadRecord(keptEnvelope?.envelope.payload)) {
+      throw new Error("the worker stream delivered no keep-alive payload");
+    }
+    expect(typeof keptEnvelope.envelope.payload.server_received_wall_ms).toBe("number");
+
+    // The query group: a get_usage control request carries the SDK's envelope, and the worker's control_response answer, echoing the minted id, reaches the door's held client stream and its fan-out.
+    const received: { readonly envelope: Record<string, unknown> }[] = [];
+    const detach = fanout.subscribe(sessionId, (event) => {
+      received.push({ envelope: event.envelope });
+    });
+    const usageAsked = await getRcSessionUsage(opDeps, sessionId, true);
+    expect(usageAsked.ok).toBe(true);
+    if (!usageAsked.ok) {
+      throw new Error(usageAsked.message);
+    }
+    const usageRequestId = usageAsked.requestId;
+    if (usageRequestId === undefined) {
+      throw new Error("the get-usage write surfaced no minted request id");
+    }
+    await waitForFrames(workerStream, (frames) => frames.some((frame) => frame.includes("get_usage")));
+    const askedEnvelope = envelopesOf(workerStream).find((event) => isPayloadRecord(event.envelope.payload) && isPayloadRecord(event.envelope.payload.request) && event.envelope.payload.request.subtype === "get_usage");
+    expect(askedEnvelope?.envelope.payload).toMatchObject({
+      type: "control_request",
+      request_id: usageRequestId,
+      request: { subtype: "get_usage", skip_behaviors: true },
+    });
+    if (!isPayloadRecord(askedEnvelope?.envelope.payload)) {
+      throw new Error("the worker stream delivered no get_usage payload");
+    }
+    expect(typeof askedEnvelope.envelope.payload.server_received_wall_ms).toBe("number");
+    // The fake worker answers as the CLI's half does: a worker event write carrying the control_response that echoes the id.
+    const answerSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const answered = await requestOn(
+      answerSocket,
+      rawRequest("POST", `/v1/code/sessions/${sessionId}/worker/events`, { Authorization: `Bearer ${bridge.worker_jwt}`, "Content-Type": "application/json" }, JSON.stringify({ worker_epoch: 1, events: [
+        { payload: { type: "control_response", response: { subtype: "success", request_id: usageRequestId, response: { sessions: [] } } } },
+      ] })),
+    );
+    expect(answered.statusLine).toContain("200");
+    answerSocket.destroy();
+    await waitUntil(() => received.some((event) => isPayloadRecord(event.envelope.payload) && event.envelope.payload.type === "control_response"));
+    const answerPayload = received.find((event) => isPayloadRecord(event.envelope.payload) && event.envelope.payload.type === "control_response")?.envelope.payload;
+    if (!isPayloadRecord(answerPayload)) {
+      throw new Error("the held client stream delivered no control_response payload");
+    }
+    const answerResponse = isPayloadRecord(answerPayload.response) ? answerPayload.response : {};
+    expect(answerResponse.request_id).toBe(usageRequestId);
+    detach();
+
+    // The mcp_* group and the session-end verb: one representative each, both delivered with their own fields intact.
+    const mcpAsked = await getRcSessionMcpStatus(opDeps, sessionId);
+    if (!mcpAsked.ok) {
+      throw new Error(mcpAsked.message);
+    }
+    const ended = await endRcSession(opDeps, sessionId, "done for today");
+    if (!ended.ok) {
+      throw new Error(ended.message);
+    }
+    await waitForFrames(workerStream, (frames) => frames.some((frame) => frame.includes("end_session")));
+    const mcpEnvelope = envelopesOf(workerStream).find((event) => isPayloadRecord(event.envelope.payload) && isPayloadRecord(event.envelope.payload.request) && event.envelope.payload.request.subtype === "mcp_status");
+    expect(mcpEnvelope?.envelope.payload).toMatchObject({
+      type: "control_request",
+      request_id: mcpAsked.requestId,
+      request: { subtype: "mcp_status" },
+    });
+    const endEnvelope = envelopesOf(workerStream).find((event) => isPayloadRecord(event.envelope.payload) && isPayloadRecord(event.envelope.payload.request) && event.envelope.payload.request.subtype === "end_session");
+    expect(endEnvelope?.envelope.payload).toMatchObject({
+      type: "control_request",
+      request_id: ended.requestId,
+      request: { subtype: "end_session", reason: "done for today" },
+    });
+
+    workerStream.destroy();
+  }, TEST_TIMEOUT_MS);
+
   it("serves the activation neighbours through the transparent surface: the eval, the profile, and the control-plane refresh", async () => {
     const apiSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
     const evalAnswer = await requestOn(apiSocket, rawRequest("POST", "/api/eval/sdk-selfhost", { "Content-Type": "application/json" }, JSON.stringify({ attributes: {} })));
@@ -409,6 +525,11 @@ describe("the self-hosted Remote Control mode end to end", () => {
     });
   }, TEST_TIMEOUT_MS);
 });
+
+/** Whether one envelope's payload is a plain JSON object, the narrowing every payload assertion in the verbs test reads through. */
+function isPayloadRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 /** A uuid sequence unique per call, for stable ids in assertions. */
 function randomUuidSequence(): () => string {

@@ -8,13 +8,25 @@ import { Agent, fetch as undiciFetch } from "undici";
 
 import { isLiveCapability } from "./capability";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
-import { rcSessionNotObservedMessage, type RcAnswerDecision, type RcEventWriteResult, type RcPermissionMode, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import type { RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
+import { rcSessionNotObservedMessage, type RcAnswerDecision, type RcContextUsageDetail, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import {
   RcAnswerInputSchema,
   RcAnswerOutputSchema,
+  RcControlWriteOutputSchema,
+  RcEndSessionInputSchema,
+  RcFileSuggestionsInputSchema,
+  RcGetContextUsageInputSchema,
+  RcGetUsageInputSchema,
   RcInterruptInputSchema,
+  RcKeepAliveInputSchema,
   RcListOutputSchema,
+  RcMcpAuthenticateInputSchema,
+  RcMcpOAuthCallbackUrlInputSchema,
+  RcMcpReconnectInputSchema,
+  RcMcpStatusInputSchema,
   RcPendingOutputSchema,
+  RcReadFileInputSchema,
   RcSendInputSchema,
   RcSessionQuerySchema,
   RcSetModelInputSchema,
@@ -63,6 +75,26 @@ export interface RcApiDeps {
   readonly setModel: (sessionId: string, model: string) => Promise<RcEventWriteResult>;
   /** The set-permission-mode operation, already wired to the tracker and the door's API-host dial. */
   readonly setPermissionMode: (sessionId: string, mode: RcPermissionMode) => Promise<RcEventWriteResult>;
+  /** The end-session operation, already wired to the tracker and the door's API-host dial. */
+  readonly endSession: (sessionId: string, reason: string | undefined) => Promise<RcEventWriteResult>;
+  /** The get-usage operation, already wired to the tracker and the door's API-host dial. */
+  readonly getUsage: (sessionId: string, skipBehaviors: boolean | undefined) => Promise<RcEventWriteResult>;
+  /** The get-context-usage operation, already wired to the tracker and the door's API-host dial. */
+  readonly getContextUsage: (sessionId: string, detail: RcContextUsageDetail | undefined) => Promise<RcEventWriteResult>;
+  /** The read-file operation, already wired to the tracker and the door's API-host dial. */
+  readonly readFile: (sessionId: string, path: string, options: RcReadFileOptions | undefined) => Promise<RcEventWriteResult>;
+  /** The file-suggestions operation, already wired to the tracker and the door's API-host dial. */
+  readonly fileSuggestions: (sessionId: string, query: string) => Promise<RcEventWriteResult>;
+  /** The keep-alive operation, already wired to the tracker and the door's API-host dial. */
+  readonly keepAlive: (sessionId: string) => Promise<RcEventWriteResult>;
+  /** The mcp-status operation, already wired to the tracker and the door's API-host dial. */
+  readonly mcpStatus: (sessionId: string) => Promise<RcEventWriteResult>;
+  /** The mcp-reconnect operation, already wired to the tracker and the door's API-host dial. */
+  readonly mcpReconnect: (sessionId: string, serverName: string) => Promise<RcEventWriteResult>;
+  /** The mcp-authenticate operation, already wired to the tracker and the door's API-host dial. */
+  readonly mcpAuthenticate: (sessionId: string, serverName: string, redirectUri: string) => Promise<RcEventWriteResult>;
+  /** The mcp-oauth-callback-url operation, already wired to the tracker and the door's API-host dial. */
+  readonly mcpOAuthCallbackUrl: (sessionId: string, serverName: string, callbackUrl: string) => Promise<RcEventWriteResult>;
   /** The client attachment's fan-out, whose events the subscription yields. */
   readonly fanout: RcEventFanout;
 }
@@ -96,6 +128,16 @@ export function createRcApiRouter(deps: RcApiDeps) {
       throw new ORPCError("BAD_GATEWAY", { message: result.message });
     }
     return result.sequenceNums;
+  };
+  // The same refusal for a control-request write, whose answer also names the minted request id the worker's `control_response` echoes, so a consumer of `rc.subscribe` can match the answer to the ask.
+  const deliveredControl = (sessionId: string, result: RcEventWriteResult): { readonly request: string; readonly sequenceNums: readonly number[] } => {
+    if (!result.ok) {
+      throw new ORPCError("BAD_GATEWAY", { message: result.message });
+    }
+    if (result.requestId === undefined) {
+      throw new ORPCError("INTERNAL_SERVER_ERROR", { message: "the control request was delivered but the door cannot name the request id it minted, so the worker's answer cannot be matched" });
+    }
+    return { request: result.requestId, sequenceNums: result.sequenceNums };
   };
   return {
     rc: {
@@ -134,16 +176,56 @@ export function createRcApiRouter(deps: RcApiDeps) {
         }),
       interrupt: authed
         .input(RcInterruptInputSchema)
-        .output(RcWriteOutputSchema)
-        .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.interrupt(input.session)) })),
+        .output(RcControlWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.interrupt(input.session)) })),
       setModel: authed
         .input(RcSetModelInputSchema)
-        .output(RcWriteOutputSchema)
-        .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.setModel(input.session, input.model)) })),
+        .output(RcControlWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.setModel(input.session, input.model)) })),
       setPermissionMode: authed
         .input(RcSetPermissionModeInputSchema)
+        .output(RcControlWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.setPermissionMode(input.session, input.mode)) })),
+      endSession: authed
+        .input(RcEndSessionInputSchema)
+        .output(RcControlWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.endSession(input.session, input.reason)) })),
+      getUsage: authed
+        .input(RcGetUsageInputSchema)
+        .output(RcControlWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.getUsage(input.session, input.skipBehaviors)) })),
+      getContextUsage: authed
+        .input(RcGetContextUsageInputSchema)
+        .output(RcControlWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.getContextUsage(input.session, input.detail)) })),
+      readFile: authed
+        .input(RcReadFileInputSchema)
+        .output(RcControlWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.readFile(input.session, input.path, { ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }), ...(input.encoding === undefined ? {} : { encoding: input.encoding }) })) })),
+      fileSuggestions: authed
+        .input(RcFileSuggestionsInputSchema)
+        .output(RcControlWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.fileSuggestions(input.session, input.query)) })),
+      keepAlive: authed
+        .input(RcKeepAliveInputSchema)
         .output(RcWriteOutputSchema)
-        .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.setPermissionMode(input.session, input.mode)) })),
+        .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.keepAlive(input.session)) })),
+      mcpStatus: authed
+        .input(RcMcpStatusInputSchema)
+        .output(RcControlWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpStatus(input.session)) })),
+      mcpReconnect: authed
+        .input(RcMcpReconnectInputSchema)
+        .output(RcControlWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpReconnect(input.session, input.serverName)) })),
+      mcpAuthenticate: authed
+        .input(RcMcpAuthenticateInputSchema)
+        .output(RcControlWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpAuthenticate(input.session, input.serverName, input.redirectUri)) })),
+      mcpOAuthCallbackUrl: authed
+        .input(RcMcpOAuthCallbackUrlInputSchema)
+        .output(RcControlWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpOAuthCallbackUrl(input.session, input.serverName, input.callbackUrl)) })),
       subscribe: authed
         .input(RcSessionQuerySchema)
         .output(eventIterator(RcStreamEventSchema))

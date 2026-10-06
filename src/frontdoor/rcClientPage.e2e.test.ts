@@ -7,7 +7,8 @@ import { createDoorApiNodeHandler } from "./controlApi";
 import { DOOR_EVENT_SOURCE_RC, LAUNCH_EVENT_SOURCE } from "./eventSchemas";
 import { createDoorEventHub } from "./eventHub";
 import { RC_CLIENT_PAGE_HTML, RC_CLIENT_PAGE_SCRIPT, RC_CLIENT_PATH, createRcClientPage } from "./rcClientPage";
-import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, type RcEventWriteResult } from "./rcSessions";
+import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "./rcSessions";
+import type { RcEventWriteResult } from "./rcWrites";
 import { generateCa, LOOPBACK_LEAF_NAMES, mintLeaf, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
 import { createFrontDoorServer, listenFrontDoor, type PrePipelineApi } from "./server";
@@ -113,6 +114,16 @@ describe("the door's web client page and its API calls over the door's own TLS",
       interrupt: unexercised,
       setModel: unexercised,
       setPermissionMode: unexercised,
+      endSession: unexercised,
+      getUsage: unexercised,
+      getContextUsage: unexercised,
+      readFile: unexercised,
+      fileSuggestions: unexercised,
+      keepAlive: unexercised,
+      mcpStatus: unexercised,
+      mcpReconnect: unexercised,
+      mcpAuthenticate: unexercised,
+      mcpOAuthCallbackUrl: unexercised,
       fanout: { publish: () => undefined, subscribe: () => () => undefined },
       events: doorEvents,
       usageSnapshots: () => [],

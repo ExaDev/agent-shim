@@ -4,7 +4,7 @@ import { writeHeadroomState } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
 import { RC_PENDING_SUMMARY_EXCERPT_CHARS } from "./rcSessions";
-import { formatRcPendingList, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./commands";
+import { formatRcPendingList, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./rcCommands";
 import { collectFrontDoorStatus, formatFrontDoorStatus } from "./status";
 import { writeFrontDoorSession, writeFrontDoorState } from "./state";
 

@@ -1,5 +1,5 @@
 import { HTTP_STATUS } from "../codex/http";
-import type { RcObservedCredential } from "./rcSessions";
+import type { RcObservedCredential } from "./rcWrites";
 import type { RcStreamEnvelope, RcStreamEvent } from "./rcSchemas";
 
 /**

@@ -5,7 +5,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { HTTP_STATUS } from "../codex/http";
 import { RC_CLIENT_PATH, RC_CLIENT_PAGE_HTML, RC_CLIENT_PAGE_SCRIPT, createRcClientPage } from "./rcClientPage";
 import { RC_ORPC_PATH_PREFIX, createRcApiNodeHandler } from "./rcApi";
-import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, type RcEventWriteResult } from "./rcSessions";
+import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "./rcSessions";
+import type { RcEventWriteResult } from "./rcWrites";
 import { createFrontDoorServer } from "./server";
 
 /** The token the mounted page accepts, standing in for the per-generation value the real door writes owner-only. */
@@ -231,6 +232,16 @@ describe("the page's script against the door's protocol", () => {
       interrupt: unexercised,
       setModel: unexercised,
       setPermissionMode: unexercised,
+      endSession: unexercised,
+      getUsage: unexercised,
+      getContextUsage: unexercised,
+      readFile: unexercised,
+      fileSuggestions: unexercised,
+      keepAlive: unexercised,
+      mcpStatus: unexercised,
+      mcpReconnect: unexercised,
+      mcpAuthenticate: unexercised,
+      mcpOAuthCallbackUrl: unexercised,
       fanout: { publish: () => undefined, subscribe: () => () => undefined },
     });
     const server = http.createServer((request, response) => {

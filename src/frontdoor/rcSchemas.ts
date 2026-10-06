@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { RC_PERMISSION_MODES } from "./rcSessions";
+import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS } from "./rcWrites";
 
 /**
  * The Zod schemas of the Remote Control surfaces: one definition each for the summaries, statuses and pending lists the tracker produces, the stream events the door's client attachment fans out, and every input and output the typed API accepts. The tracker's own TypeScript interfaces in `rcSessions.ts` stay the implementations' types; these schemas are what the oRPC contract validates through, and because the procedures wrap the very operations that produce those interfaces' values, a drift between a schema and its interface fails the API's own output validation (exercised by its tests) rather than shipping silently. This module deliberately imports nothing from oRPC: it is a plain Zod leaf, so the tracker and the stream half can share it without either depending on the API layer.
@@ -106,6 +106,74 @@ export const RcSetPermissionModeInputSchema = z.strictObject({
   mode: RcPermissionModeSchema,
 });
 
+/** The end-session operation's input: one non-empty session id and the optional reason the worker's own log names (an omitted reason is the protocol's unspecified form, so an empty string is refused rather than sent). */
+export const RcEndSessionInputSchema = z.strictObject({
+  session: z.string().min(1),
+  reason: z.string().min(1).optional(),
+});
+
+/** The get-usage operation's input: one non-empty session id and the optional flag that skips the worker's local-transcript scan for the response's behaviours section. */
+export const RcGetUsageInputSchema = z.strictObject({
+  session: z.string().min(1),
+  skipBehaviors: z.boolean().optional(),
+});
+
+/** The context-usage detail levels the SDK's own `get_context_usage` field declares, as the input schema's enum. */
+export const RcContextUsageDetailSchema = z.enum(RC_CONTEXT_USAGE_DETAILS);
+
+/** The get-context-usage operation's input: one non-empty session id and the optional detail level from the SDK's own enum. */
+export const RcGetContextUsageInputSchema = z.strictObject({
+  session: z.string().min(1),
+  detail: RcContextUsageDetailSchema.optional(),
+});
+
+/** The read-file encodings the SDK's own `encoding` field declares, as the input schema's enum. */
+export const RcReadFileEncodingSchema = z.enum(RC_READ_FILE_ENCODINGS);
+
+/** The read-file operation's input: one non-empty session id, the file's path as the worker resolves it, and the optional byte cap and encoding from the SDK's own fields. */
+export const RcReadFileInputSchema = z.strictObject({
+  session: z.string().min(1),
+  path: z.string().min(1),
+  maxBytes: z.number().int().positive().optional(),
+  encoding: RcReadFileEncodingSchema.optional(),
+});
+
+/** The file-suggestions operation's input: one non-empty session id and the query prefix; the query itself may be empty, because the SDK's own field imposes no minimum and an empty prefix is the autocomplete's root listing. */
+export const RcFileSuggestionsInputSchema = z.strictObject({
+  session: z.string().min(1),
+  query: z.string(),
+});
+
+/** The keep-alive operation's input: one non-empty session id; the payload itself carries nothing, which is the SDK's own shape for it. */
+export const RcKeepAliveInputSchema = z.strictObject({
+  session: z.string().min(1),
+});
+
+/** The mcp-status operation's input: one non-empty session id; the request's own shape declares no fields. */
+export const RcMcpStatusInputSchema = z.strictObject({
+  session: z.string().min(1),
+});
+
+/** The mcp-reconnect operation's input: one non-empty session id and the server name exactly as mcp_status reports it. */
+export const RcMcpReconnectInputSchema = z.strictObject({
+  session: z.string().min(1),
+  serverName: z.string().min(1),
+});
+
+/** The mcp-authenticate operation's input: one non-empty session id, the server name, and the redirect URI the server's OAuth flow redirects back to. */
+export const RcMcpAuthenticateInputSchema = z.strictObject({
+  session: z.string().min(1),
+  serverName: z.string().min(1),
+  redirectUri: z.string().min(1),
+});
+
+/** The mcp-oauth-callback-url operation's input: one non-empty session id, the server name, and the callback URL the browser landed on. */
+export const RcMcpOAuthCallbackUrlInputSchema = z.strictObject({
+  session: z.string().min(1),
+  serverName: z.string().min(1),
+  callbackUrl: z.string().min(1),
+});
+
 /** The session list's answer shape. */
 export const RcListOutputSchema = z.strictObject({ sessions: z.readonly(z.array(RcSessionSummarySchema)) });
 
@@ -118,6 +186,15 @@ export const RcPendingOutputSchema = z.strictObject({ pending: z.readonly(z.arra
 /** The write operations' answer shape: the session the write went to and the sequence numbers the real service assigned. */
 export const RcWriteOutputSchema = z.strictObject({
   session: z.string(),
+  sequenceNums: z.readonly(z.array(z.number())),
+});
+
+/**
+ * The control-request operations' answer shape: the write result plus the request id the operation minted, because the worker's `control_response` echoes exactly that id on the stream the door already fans out, and only the door ever knew it.
+ */
+export const RcControlWriteOutputSchema = z.strictObject({
+  session: z.string(),
+  request: z.string(),
   sequenceNums: z.readonly(z.array(z.number())),
 });
 
