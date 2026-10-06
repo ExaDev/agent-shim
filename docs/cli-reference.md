@@ -72,8 +72,8 @@ agent-shim profile show <name> [--json]
 agent-shim profile remove <name> [--yes]
 agent-shim profile use <name>               # the global default configuration profile
 
-agent-shim pool add <name> --identity <identity>...
-agent-shim pool set <name> --identity <identity>...
+agent-shim pool add <name> --identity <identity>... [--preference <score|listed>]
+agent-shim pool set <name> [--identity <identity>...] [--preference <score|listed> | --no-preference]
 agent-shim pool list [--json]
 agent-shim pool show <name> [--json]
 agent-shim pool remove <name> [--yes]

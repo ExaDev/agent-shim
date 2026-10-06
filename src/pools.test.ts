@@ -126,6 +126,37 @@ describe("agent-shim pool", () => {
     expect(JSON.parse((await cli(["pool", "list", "--json"])).stdout)).toEqual([{ name: "b", identities: ["personal"], active: false }]);
   });
 
+  it("stores a listed preference on add, round-trips it, keeps it across a member change, and clears it", async () => {
+    expect((await cli(["pool", "add", "subs", "--identity", "work", "--identity", "personal", "--preference", "listed"])).code).toBe(0);
+    expect((await cli(["pool", "list"])).stdout).toContain("subs: work, personal (preference: listed)");
+    expect((await cli(["pool", "show", "subs"])).stdout).toContain("Members: work, personal");
+    expect((await cli(["pool", "show", "subs"])).stdout).toContain("Preference: listed");
+    expect(JSON.parse((await cli(["pool", "show", "subs", "--json"])).stdout)).toEqual({ name: "subs", identities: ["work", "personal"], preference: "listed" });
+    const stored = JSON.parse(fs.readFileSync(paths.globalConfigFile, "utf8")) as { pools: Record<string, unknown> };
+    expect(stored.pools).toEqual({ subs: { identities: ["work", "personal"], preference: "listed" } });
+    // Setting the preference alone keeps the members; setting the members alone keeps the preference.
+    expect((await cli(["pool", "set", "subs", "--preference", "score"])).code).toBe(0);
+    expect(JSON.parse((await cli(["pool", "show", "subs", "--json"])).stdout)).toEqual({ name: "subs", identities: ["work", "personal"], preference: "score" });
+    expect((await cli(["pool", "set", "subs", "--identity", "work"])).code).toBe(0);
+    expect(JSON.parse((await cli(["pool", "show", "subs", "--json"])).stdout)).toEqual({ name: "subs", identities: ["work"], preference: "score" });
+    expect((await cli(["pool", "set", "subs", "--no-preference"])).code).toBe(0);
+    expect((await cli(["pool", "show", "subs"])).stdout).not.toContain("Preference:");
+    expect((await cli(["pool", "list"])).stdout).toContain("subs: work");
+    expect((await cli(["pool", "list"])).stdout).not.toContain("(preference:");
+    const cleared = JSON.parse(fs.readFileSync(paths.globalConfigFile, "utf8")) as { pools: Record<string, unknown> };
+    expect(cleared.pools).toEqual({ subs: { identities: ["work"] } });
+  });
+
+  it("refuses a pool set with nothing to change, and an unknown preference mode", async () => {
+    await cli(["pool", "add", "subs", "--identity", "work"]);
+    const nothing = await cli(["pool", "set", "subs"]);
+    expect(nothing.code).toBe(EXIT_USAGE);
+    expect(nothing.stderr).toContain("Nothing to change");
+    const bad = await cli(["pool", "set", "subs", "--preference", "random"]);
+    expect(bad.code).toBe(EXIT_USAGE);
+    expect((await cli(["pool", "add", "other", "--identity", "personal", "--preference", "random"])).code).toBe(EXIT_USAGE);
+  });
+
   it("selects a pool as the active selection through `pool use`, `identity use` and the @ shortcut, and marks it in the list", async () => {
     await cli(["pool", "add", "subs", "--identity", "work"]);
     expect((await cli(["pool", "use", "subs"])).code).toBe(0);
@@ -150,6 +181,15 @@ describe("agent-shim pool", () => {
       expect(text).toContain("would run as work");
       expect(text).toContain("7d 60% used");
       expect(fs.existsSync(paths.usagePicksFile)).toBe(false);
+    });
+
+    it("ranks a listed pool in member order rather than by score", async () => {
+      seedSnapshot("work", { utilization: U60, resetsInMs: HOUR_MS });
+      seedSnapshot("personal", { utilization: U10, resetsInMs: SIX_DAYS_MS });
+      await cli(["pool", "add", "subs", "--identity", "personal", "--identity", "work", "--preference", "listed"]);
+      const report = JSON.parse((await cli(["pool", "pick", "subs", "--json"])).stdout) as { pick: string; candidates: { identity: string }[] };
+      expect(report.pick).toBe("personal");
+      expect(report.candidates.map((candidate) => candidate.identity)).toEqual(["personal", "work"]);
     });
 
     it("says when every member is refused and when it clears", async () => {

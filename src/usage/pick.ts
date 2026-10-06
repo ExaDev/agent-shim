@@ -7,7 +7,7 @@ import type { AccountMetadata, ProviderUsageState, QuotaWindow, UnifiedRateLimit
 /**
  * Ranks the members of a pool for a launch, from what the usage store recorded. Pure: snapshots, account metadata, log records and the clock all come in as values, so the launcher, `agent-shim pool pick` and the tests share one ranking.
  *
- * The idea is use-it-or-lose-it. A subscription's window empties on a schedule whatever happens, so unused quota in a window that resets soon is wasted, while unused quota in a window that resets in days can still be spent later. The account to launch on is therefore the one whose remaining quota, in plan-size terms, expires soonest per hour of runway, provided its five-hour window will not run dry at the pace the person has been working, and provided it is not currently refused.
+ * The default idea is use-it-or-lose-it. A subscription's window empties on a schedule whatever happens, so unused quota in a window that resets soon is wasted, while unused quota in a window that resets in days can still be spent later. The account to launch on is therefore the one whose remaining quota, in plan-size terms, expires soonest per hour of runway, provided its five-hour window will not run dry at the pace the person has been working, and provided it is not currently refused. A pool can instead ask for `listed` preference, which ranks members strictly in the order the pool lists them, skipping only a member that is currently refused.
  */
 
 const MS_PER_SECOND = 1000;
@@ -49,6 +49,8 @@ export interface RankPoolInput {
   readonly sticky?: StickyPick;
   /** True when the launch continues or resumes a conversation, which belongs on the account it started on whatever the cache lifetime. */
   readonly resuming: boolean;
+  /** How members are ordered: "score" (the default when absent) by the use-it-or-lose-it ranking, "listed" strictly in `members` order. */
+  readonly preference?: "score" | "listed";
 }
 
 /** In pick order. `scored` has usable quota data; `unknown` has none (never recorded, or unreadable); `pay-per-use` bills by use instead of drawing on a plan; `ineligible` is refused right now. */
@@ -220,6 +222,8 @@ function assess(member: PoolMember, nowMs: number): Assessment {
  * Ranks `members` for a launch.
  *
  * A member is `ineligible` while a window of its plan, or a refusal it last hit, still binds; it is `unknown` without recorded quota, `pay-per-use` when its usage bills by use, and otherwise `scored`. Scored members order by how much plan-size-weighted quota would expire unused per hour of runway, with any whose five-hour window would run dry at the observed pace (their own, or the person's pace on another member rescaled by plan size) placed behind those that would not. The member last picked for this directory then moves to the front if it is still usable and either the launch resumes a conversation or its prompt cache is still warm.
+ *
+ * How members are ordered depends on `preference`. The default, "score", is the order above: class first, then feasibility, then score, with ties by name. "listed" keeps the order of `members`, which callers build in pool member order, so member order, not class, decides: an `unknown` (no usage recorded) or `pay-per-use` member can be picked before a later `scored` one, which is the list owner's stated preference, and a `scored` member that is not feasible keeps its place and its reason line rather than being demoted. In both modes the pick is the first non-`ineligible` candidate, `earliestReturn` still reports the soonest returning refused member, and the sticky-pick promotion applies unchanged.
  */
 export function rankPool(input: RankPoolInput): PoolRanking {
   const { members, nowMs } = input;
@@ -242,13 +246,17 @@ export function rankPool(input: RankPoolInput): PoolRanking {
     return { ...candidate, feasible: false, reasons: [`5h window would run dry in ${formatAge(runsDryInMs)}, before it resets in ${formatAge(fiveHour.untilResetMs)}`, ...candidate.reasons] };
   });
 
-  const ordered = [...candidates].sort(
-    (left, right) =>
-      CLASS_ORDER[left.class] - CLASS_ORDER[right.class] ||
-      Number(right.feasible) - Number(left.feasible) ||
-      (right.score ?? 0) - (left.score ?? 0) ||
-      left.identity.localeCompare(right.identity),
-  );
+  // "listed" keeps the members' own order, which is the pool's stated preference; "score" (the default) is the use-it-or-lose-it order.
+  const ordered =
+    input.preference === "listed"
+      ? [...candidates]
+      : [...candidates].sort(
+          (left, right) =>
+            CLASS_ORDER[left.class] - CLASS_ORDER[right.class] ||
+            Number(right.feasible) - Number(left.feasible) ||
+            (right.score ?? 0) - (left.score ?? 0) ||
+            left.identity.localeCompare(right.identity),
+        );
 
   const sticky = input.sticky;
   const stickyIndex = sticky === undefined ? -1 : ordered.findIndex((candidate) => candidate.identity === sticky.identity);

@@ -316,12 +316,24 @@ export const PoolNameSchema = z.string().min(1).regex(new RegExp(`^${POOL_NAME_P
 /** What a directory rule, a portable config or the active-identity file may name: a concrete identity, or `pool:<name>` to have agent-shim pick one member of a pool at launch. */
 const IdentitySelectorSchema = z.string().min(1).regex(new RegExp(`^(${POOL_SELECTOR_PREFIX}${POOL_NAME_PATTERN}|${IDENTITY_NAME_PATTERN})$`));
 
-/** A named, explicit set of identities to choose among at launch. Never implicit: a pool lists its members, so an identity that bills a client is only ever picked when someone put it there. */
+/** The preference modes a pool may choose among its members with. */
+export const POOL_PREFERENCES = ["score", "listed"] as const;
+
+/** How a pool chooses the member a launch runs as: "score" by remaining quota, "listed" in the order the pool names its members. */
+export const PoolPreferenceSchema = z.enum(POOL_PREFERENCES);
+export type PoolPreference = z.infer<typeof PoolPreferenceSchema>;
+
+/**
+ * A named, explicit set of identities to choose among at launch. Never implicit: a pool lists its members, so an identity that bills a client is only ever picked when someone put it there.
+ *
+ * `preference` decides how the member is chosen, and an absent field means "score". "score" ranks members by plan-size-weighted remaining quota per hour until reset, so the quota closest to expiring is spent first (use-it-or-lose-it). "listed" ranks members strictly in the order the pool lists them, skipping only a member that is currently refused, so a pool can pin one identity first and fall back to the others only while that one is refused.
+ */
 export const PoolSchema = z.strictObject({
   identities: z
     .array(z.string().min(1).regex(new RegExp(`^${IDENTITY_NAME_PATTERN}$`)))
     .min(1)
     .refine((names) => new Set(names).size === names.length, { message: "pool members must be unique" }),
+  preference: PoolPreferenceSchema.optional(),
 });
 export type Pool = z.infer<typeof PoolSchema>;
 

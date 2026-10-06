@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { Pool } from "./config/schema";
 import type { FarmRuntime } from "./launcher";
 import { PROMPT_CACHE_TTL_MS } from "./usage/pick";
 import { FAKE_NOW_MS, createFakeFarmFs, discovered, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
@@ -53,7 +54,7 @@ interface Launch {
   readonly farmFs: ReturnType<typeof createFakeFarmFs>;
 }
 
-function launch(options: { readonly seed?: Readonly<Record<string, string>>; readonly argv?: readonly string[]; readonly env?: Record<string, string>; readonly pools?: typeof POOLS | undefined; readonly farm?: (base: FarmRuntime) => FarmRuntime; readonly farmFs?: ReturnType<typeof createFakeFarmFs>; readonly files?: Record<string, unknown> } = {}): Launch {
+function launch(options: { readonly seed?: Readonly<Record<string, string>>; readonly argv?: readonly string[]; readonly env?: Record<string, string>; readonly pools?: Readonly<Record<string, Pool>> | undefined; readonly farm?: (base: FarmRuntime) => FarmRuntime; readonly farmFs?: ReturnType<typeof createFakeFarmFs>; readonly files?: Record<string, unknown> } = {}): Launch {
   const farmFs = options.farmFs ?? createFakeFarmFs(options.seed ?? WORK_SOON);
   const log = fakeLog();
   const spawn = fakeSpawn();
@@ -86,6 +87,12 @@ describe("runLauncher with a pool selector", () => {
   it("takes a pool from AGENT_SHIM_IDENTITY and from --identity", () => {
     expect(spawnedEnv(launch({ argv: ["--print"], env: { AGENT_SHIM_IDENTITY: "pool:main" } }).spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
     expect(spawnedEnv(launch({ argv: ["--identity", "pool:main", "--print"] }).spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
+  });
+
+  it("launches as the first listed member when the pool prefers listed order", () => {
+    const listed = launch({ pools: { main: { identities: ["personal", "work"], preference: "listed" } } });
+    expect(listed.code).toBe(0);
+    expect(spawnedEnv(listed.spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/personal`);
   });
 
   it("takes a pool from the active-identity file", () => {
