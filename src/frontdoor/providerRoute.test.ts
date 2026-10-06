@@ -37,7 +37,7 @@ function resolver(files: Record<string, unknown>, directPort = OWN_PORT): Return
 }
 
 function request(url: string): RoutedRequest {
-  return { method: "POST", url, headers: {}, body: Readable.from(["{}"]) as unknown as RoutedRequest["body"], signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, headroom: false, projectId: undefined } };
+  return { method: "POST", url, headers: {}, body: Readable.from(["{}"]) as unknown as RoutedRequest["body"], signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined } };
 }
 
 describe("createProviderRouteResolver", () => {

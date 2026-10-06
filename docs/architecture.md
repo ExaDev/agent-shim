@@ -63,7 +63,7 @@ src/
     assembly.ts             # builds both listeners' pipelines from one place: launch-capability admission for the client-facing ones, hop-secret and custody admission for the direct one
     headroomHop.ts, passthrough.ts   # the hop that forwards an Anthropic-shaped request to the daemon and back, and the pass-through route that streams to an Anthropic-compatible upstream
     custody.ts              # holds a provider session's real credential headers in memory while its request crosses headroom, behind a hop id the direct listener redeems
-    providerRoute.ts        # resolves /providers/<name> requests to a route by reading the provider file fresh per request
+    providerRoute.ts        # resolves /providers/<name> requests to a route by reading the provider file fresh per request, attaching an http provider's own credential in place of whatever the child presented; a bare /v1/ request whose session names a provider is rewritten under that provider's path first
     codexMount.ts           # the codex translation mounted as one route (an adapter over createCodexRoute, not a second implementation)
     x509.ts                 # certificate issuance for the local CA and its leaves: a small DER encoder for the TBSCertificate, with key generation, signing and parsing left to `node:crypto`
     server.ts, connect.ts   # the listener transport (HTTPS for the provider listener, plain HTTP for the direct one, and the CA-verified health probe), and the CONNECT surface OAuth launches point HTTPS_PROXY at: CA/leaf minting (the loopback leaf included), proxy-credential authentication and connection limits, TLS termination, blind tunnels, and the same pipeline for /v1/
