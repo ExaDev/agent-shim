@@ -1,3 +1,9 @@
+## [8.22.0](https://github.com/ExaDev/agent-shim/compare/v8.21.1...v8.22.0) (2026-10-06)
+
+### Features
+
+* **cli:** add agent-shim update to install the newest release binary ([f2121fe](https://github.com/ExaDev/agent-shim/commit/f2121feb1e44e02127ec6b36607620683fc90db2))
+
 ## [8.21.1](https://github.com/ExaDev/agent-shim/compare/v8.21.0...v8.21.1) (2026-10-06)
 
 ### Bug Fixes
