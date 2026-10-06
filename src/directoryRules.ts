@@ -3,7 +3,9 @@ import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDe
 import type { DirectoryRule } from "./config/schema";
 import { UsageError } from "./cliError";
 import { ensureProfileExists } from "./configProfiles";
+import { POOL_SELECTOR_PREFIX } from "./config/schema";
 import { IdentityNotFoundError, readIdentity } from "./identityStore";
+import { PoolNotFoundError, readPools } from "./poolStore";
 import { DirectoryRuleNotFoundError, listDirectoryRules, addDirectoryRule, updateDirectoryRule, removeDirectoryRule } from "./directoryRulesStore";
 
 /** Renders a rule's own settings as `key=value` parts, for `rule list` and `rule show`. */
@@ -14,10 +16,17 @@ function describeRule(rule: DirectoryRule): string {
   return parts.length === 0 ? "(nothing)" : parts.join(", ");
 }
 
-/** Checks the targets a `rule add`/`rule set` names before the rule is written: a missing profile is offered for creation on a terminal (`ensureProfileExists`), and a missing identity is refused, since pinning a path to an identity that does not exist would fail every launch there. */
+/** Checks the targets a `rule add`/`rule set` names before the rule is written: a missing profile is offered for creation on a terminal (`ensureProfileExists`), and a missing identity or pool is refused, since pinning a path to a selector that names nothing would fail every launch there. The identity may be `pool:<name>`, the selector form the schema and the launcher both accept. */
 async function checkRuleTargets(deps: CommandDeps, options: Readonly<{ configProfile?: string | false; identity?: string | false }>): Promise<void> {
-  if (typeof options.identity === "string" && readIdentity(deps.paths, options.identity) === undefined) {
-    throw new IdentityNotFoundError(options.identity);
+  if (typeof options.identity === "string") {
+    if (options.identity.startsWith(POOL_SELECTOR_PREFIX)) {
+      const poolName = options.identity.slice(POOL_SELECTOR_PREFIX.length);
+      if (readPools(deps.paths)[poolName] === undefined) {
+        throw new PoolNotFoundError(poolName);
+      }
+    } else if (readIdentity(deps.paths, options.identity) === undefined) {
+      throw new IdentityNotFoundError(options.identity);
+    }
   }
   if (typeof options.configProfile === "string") {
     await ensureProfileExists(deps, options.configProfile);

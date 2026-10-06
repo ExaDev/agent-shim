@@ -187,7 +187,7 @@ function assessRefusedNested(member: PoolMember, nested: Extract<NestedContribut
   };
 }
 
-/** Assesses one member, unfolding what a nested `pool:<name>` entry contributes: its pool's pick is re-ranked from the picked identity's own snapshot (so it competes in a scored outer pool like any member) with the composition named first among the reasons. */
+/** Assesses one member, unfolding what a nested `pool:<name>` entry contributes: its pool's pick is re-ranked from the picked identity's own snapshot (so it competes in a scored outer pool like any member). The nested pool's own reasons stand in for the member's window and plan lines rather than sitting beside a second copy re-derived from the same snapshot, with the composition named first. */
 function assess(member: PoolMember, nowMs: number): Assessment {
   const nested = member.nested;
   if (nested === undefined) {
@@ -197,7 +197,7 @@ function assess(member: PoolMember, nowMs: number): Assessment {
     return assessRefusedNested(member, nested, nowMs);
   }
   const assessment = assessIdentity(member, nowMs);
-  return { ...assessment, candidate: { ...assessment.candidate, reasons: [`picked by pool "${nested.pool}": ${nested.reasons.join("; ")}`, ...assessment.candidate.reasons] } };
+  return { ...assessment, candidate: { ...assessment.candidate, reasons: [`picked by pool "${nested.pool}"`, ...nested.reasons] } };
 }
 
 function assessIdentity(member: PoolMember, nowMs: number): Assessment {

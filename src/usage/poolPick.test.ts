@@ -119,7 +119,8 @@ describe("rankPoolGraph", () => {
     const { ranking } = graph(pools, "outer", { client: { utilization: FULL, resetsInMs: THREE_HOURS_MS, status: "rejected" }, a: { utilization: U60, resetsInMs: HOUR_MS }, b: { utilization: U10, resetsInMs: SIX_DAYS_MS } });
     expect(ranking.pick).toMatchObject({ identity: "a" });
     expect(ranking.candidates.map((candidate) => candidate.identity)).toEqual(["client", "a"]);
-    expect(ranking.pick?.reasons[0]).toContain('picked by pool "fleet": 7d 60% used, resets in 1h');
+    expect(ranking.pick?.reasons[0]).toBe('picked by pool "fleet"');
+    expect(ranking.pick?.reasons.join(" ").split("7d 60% used, resets in 1h")).toHaveLength(2);
   });
 
   it("makes an entry whose nested pool is entirely refused ineligible, propagating that pool's earliest return", () => {

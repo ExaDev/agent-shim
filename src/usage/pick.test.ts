@@ -291,13 +291,14 @@ describe("rankPool", () => {
       return { ...member(identity, windows), nested: { kind: "pick", pool, reasons: nestedReasons } };
     }
 
-    it("contributes the nested pick at its entry's position, with the composition first among its reasons", () => {
+    it("contributes the nested pick at its entry's position, with the composition first and the nested reasons standing in for the member's own", () => {
       const ranking = rank(
         [member("refused", { five: { status: "rejected", resetsInMs: THREE_HOURS_MS } }), nestedPick("fleet", "spare", ["7d 60% used", "resets in 1h"], { seven: { utilization: U60, resetsInMs: HOUR_MS } })],
         { preference: "listed" },
       );
       expect(ranking.pick).toMatchObject({ identity: "spare" });
-      expect(ranking.pick?.reasons[0]).toBe('picked by pool "fleet": 7d 60% used; resets in 1h');
+      expect(ranking.pick?.reasons[0]).toBe('picked by pool "fleet"');
+      expect(ranking.pick?.reasons).toEqual(["picked by pool \"fleet\"", "7d 60% used", "resets in 1h"]);
     });
 
     it("makes an entry whose nested pool is entirely refused ineligible, carrying that pool's earliest return", () => {
