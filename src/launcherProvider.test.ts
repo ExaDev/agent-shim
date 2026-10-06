@@ -44,14 +44,12 @@ describe("runLauncher provider selection", () => {
     const env = call?.[2]?.env;
     expect(env).toMatchObject({
       Z_API_TOKEN: "tok-z",
-      ANTHROPIC_BASE_URL: "https://127.0.0.1:4100/providers/z",
-      ANTHROPIC_AUTH_TOKEN: "tok-z",
       ANTHROPIC_MODEL: "glm-4.6",
       AGENT_SHIM_PROVIDER: "GLM",
     });
     expect(env?.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(env?.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-agent-shim-session: [0-9a-f-]{36}\nx-agent-shim-auth: launch-token-for-tests$/);
+    expect(env?.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-agent-shim-session: [0-9a-f-]{36}\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-provider: z$/);
   });
 
   it("refuses with exit 1 and names the known providers when the provider is unknown", () => {
@@ -113,8 +111,8 @@ describe("runLauncher provider selection", () => {
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/codex");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("codex-subscription-local");
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.AGENT_SHIM_PROVIDER).toBe("Codex");
   });
 
@@ -134,12 +132,12 @@ describe("runLauncher provider selection", () => {
 
     const env = spawnedEnv(spawn);
     expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.agent-shim/identities/work`);
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/o");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-o");
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.AGENT_SHIM_PROVIDER).toBe("OpenRouter");
   });
 
-  it("launches --identity plus --provider: the identity's own farm directory, the provider's endpoint and token", () => {
+  it("launches --identity plus --provider: the identity's own farm directory and the provider's endpoint, with no credential handed to the child", () => {
     const spawn = fakeSpawn();
 
     launch({
@@ -154,8 +152,8 @@ describe("runLauncher provider selection", () => {
     expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["-p", "say hi"]);
     const env = spawnedEnv(spawn);
     expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.agent-shim/identities/work`);
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/z");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
   });
 
   it("lets --no-provider opt one launch out of the cascade's provider selection", () => {
@@ -195,11 +193,11 @@ describe("runLauncher provider selection", () => {
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/z");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
   });
 
-  it("does not trip the ambient-credential guard when a provider supplies the child's token", () => {
+  it("does not trip the ambient-credential guard when a provider is selected, and leaves none of the ambient credential in the child", () => {
     const spawn = fakeSpawn();
 
     const code = launch({
@@ -213,7 +211,7 @@ describe("runLauncher provider selection", () => {
 
     expect(code).toBe(0);
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 
@@ -224,7 +222,7 @@ describe("runLauncher provider selection", () => {
       credential: { sources: [{ op: "op://vault/item/field" }], target: "apiKey" },
     };
 
-    it("launches with the command's token as ANTHROPIC_API_KEY and only the child holding it, despite ambient credentials", () => {
+    it("launches with the command's token resolved (so the launch log names it) but held by nobody: the door attaches it, and ambient credentials reach no child", () => {
       const spawn = fakeSpawn();
       const credentials = fakeCredentials({ command: { stdout: "sk-ant-REDACTED\n" } });
       const log = fakeLog();
@@ -244,14 +242,14 @@ describe("runLauncher provider selection", () => {
       expect(credentials.runCommand.mock.calls[0]?.[0]).toEqual(["op", "read", "op://vault/item/field"]);
       expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["--print"]);
       const env = spawnedEnv(spawn);
-      expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/anthropic-api");
-      expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
+      expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
       expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
       expect([...log.infos, ...log.warns, ...log.errors].join("\n")).not.toContain("sk-ant-REDACTED");
       expect(log.infos.join("\n")).toContain("provider anthropic-api (credential apiKey from op op://vault/item/field)");
     });
 
-    it("keeps a bearer provider's command output in ANTHROPIC_AUTH_TOKEN", () => {
+    it("resolves a bearer provider's command output for the launch log while the child still carries no credential variable", () => {
       const spawn = fakeSpawn();
 
       launch({
@@ -271,7 +269,7 @@ describe("runLauncher provider selection", () => {
       });
 
       const env = spawnedEnv(spawn);
-      expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
       expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { InvalidEnvBoolError } from "../cli/envBool";
-import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type RoutedProvider } from "./flags";
+import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider } from "./flags";
 
 describe("resolveLaunchFlags", () => {
   it("defaults both flags to off when nothing sets them — a deliberate change from the legacy always-on script", () => {
@@ -195,15 +195,14 @@ describe("buildEnv", () => {
 
   const identitiesDir = "/home/testuser/.agent-shim/identities";
 
-  /** A resolved provider as the launcher hands it to buildEnv: its definition, the base URL it routes to, and a credential resolved to `token` under `target`. */
+  /** A resolved provider as the launcher hands it to buildEnv: its definition and a credential resolved to `token` under `target`. */
   function resolvedProvider(
     overrides: Readonly<{ name?: string; displayName?: string; baseUrl?: string; env?: Record<string, string>; target?: "bearer" | "apiKey"; token?: string }> = {},
-  ): RoutedProvider {
+  ): ResolvedProvider {
     const target = overrides.target ?? "bearer";
     const baseUrl = overrides.baseUrl ?? "https://api.z.ai/api/anthropic";
     return {
       name: overrides.name ?? "z",
-      baseUrl,
       definition: {
         displayName: overrides.displayName ?? "GLM",
         baseUrl,
@@ -217,39 +216,40 @@ describe("buildEnv", () => {
   it("applies a resolved provider on top of the identity's CLAUDE_CONFIG_DIR", () => {
     const env = buildEnv({ sessionId: "session-test", baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider() });
     expect(env.CLAUDE_CONFIG_DIR).toBe("/home/testuser/.agent-shim/identities/work");
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
+    // The child keeps the OAuth shape: no base URL (it believes it talks to api.anthropic.com through the door's CONNECT surface), and no credential variable at all (the door attaches the provider's own at its route).
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.AGENT_SHIM_PROVIDER).toBe("GLM");
   });
 
   it("applies a resolved provider even when no identity was resolved, since it selects an endpoint, not a login", () => {
     const env = buildEnv({ sessionId: "session-test", baseEnv, configDirEscapeHatch: false, identitiesDir, provider: resolvedProvider() });
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
   });
 
-  it("removes every ambient credential variable other than the bearer target, so the provider's token takes effect", () => {
+  it("removes every ambient credential variable for a provider session, so the child presents nothing and stays in the auth mode Remote Control needs", () => {
     const env = buildEnv({ sessionId: "session-test",
-      baseEnv: { ...baseEnv, ANTHROPIC_API_KEY: "sk-ambient", CLAUDE_CODE_OAUTH_TOKEN: "oauth-ambient" },
+      baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "tok-ambient", ANTHROPIC_API_KEY: "sk-ambient", CLAUDE_CODE_OAUTH_TOKEN: "oauth-ambient" },
       configDirEscapeHatch: false,
       identitiesDir,
       provider: resolvedProvider(),
     });
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
-  it("exports the token as ANTHROPIC_API_KEY and removes an ambient ANTHROPIC_AUTH_TOKEN under target apiKey", () => {
+  it("keeps an apiKey-target provider's session credential-free too: the door attaches the key whatever the target", () => {
     const env = buildEnv({ sessionId: "session-test",
       baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "sk-ambient-bearer", ANTHROPIC_API_KEY: "sk-ambient-key" },
       configDirEscapeHatch: false,
       identitiesDir,
       provider: resolvedProvider({ baseUrl: "https://api.anthropic.com", target: "apiKey", token: "sk-ant-REDACTED" }),
     });
-    expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
   });
 
   it("exports an identity's own credential as its target when no provider was selected", () => {
@@ -274,7 +274,7 @@ describe("buildEnv", () => {
       provider: resolvedProvider(),
       identityCredential: { target: "oauthToken", token: "oauth-work", source: { op: "op://v/work/token" }, warnings: [] },
     });
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
@@ -289,68 +289,49 @@ describe("buildEnv", () => {
     expect(env.API_TIMEOUT_MS).toBe("600000");
   });
 
-  it("routes a provider session through the front door over TLS: the child's base URL is the door's HTTPS provider path, it trusts the door's CA bundle, and the session headers are injected", () => {
+  it("routes a provider session through the door's CONNECT surface exactly like an OAuth one: no base URL, the proxy carrying the capability, the CA bundle trusted, and the provider named in the session headers", () => {
     const env = buildEnv({
       sessionId: "session-test",
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
       identitiesDir: "/home/testuser/.agent-shim/identities",
-      provider: resolvedProvider({ baseUrl: "https://127.0.0.1:4100/providers/z" }),
+      provider: resolvedProvider(),
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/home/testuser/.agent-shim/frontdoor/ca/bundles/0123abcd.pem", sessionToken: "launch-token-for-tests" },
       headroom: { socketPath: "/home/testuser/.agent-shim/headroom/run/8123.sock", projectId: "/home/testuser/work/repo" },
     });
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/z");
-    expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
     expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.agent-shim/frontdoor/ca/bundles/0123abcd.pem");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-from-z");
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-provider: z\nx-agent-shim-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
   });
 
-  it("exempts loopback from an inherited proxy for a provider session, keeping what the parent already exempted", () => {
-    const launch = (parent: Readonly<Record<string, string>>) =>
-      buildEnv({
-        sessionId: "session-test",
-        baseEnv: { ...baseEnv, HTTPS_PROXY: "http://agent-shim:parent-token@127.0.0.1:4200", ...parent },
-        configDirEscapeHatch: false,
-        resolvedIdentityName: "work",
-        identitiesDir: "/home/testuser/.agent-shim/identities",
-        provider: resolvedProvider({ baseUrl: "https://127.0.0.1:4100/providers/z" }),
-        frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/bundle.pem", sessionToken: "launch-token-for-tests" },
-      });
-    const inherited = launch({});
-    expect(inherited.HTTPS_PROXY).toBe("http://agent-shim:parent-token@127.0.0.1:4200");
-    expect(inherited.NO_PROXY).toBe("127.0.0.1,localhost,::1");
-    expect(inherited.no_proxy).toBe("127.0.0.1,localhost,::1");
-    const merged = launch({ NO_PROXY: "corp.example,localhost", no_proxy: ".internal" });
-    expect(merged.NO_PROXY).toBe("corp.example,localhost,127.0.0.1,::1");
-    expect(merged.no_proxy).toBe(".internal,127.0.0.1,localhost,::1");
-  });
-
-  it("leaves NO_PROXY alone when the provider's base URL is not loopback", () => {
+  it("replaces a proxy inherited from the parent with the door's own for a provider session, since the child no longer dials any address directly", () => {
     const env = buildEnv({
       sessionId: "session-test",
-      baseEnv: { ...baseEnv, NO_PROXY: "corp.example" },
+      baseEnv: { ...baseEnv, HTTPS_PROXY: "http://agent-shim:parent-token@127.0.0.1:4200", NO_PROXY: "corp.example" },
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
       identitiesDir: "/home/testuser/.agent-shim/identities",
-      provider: resolvedProvider({ baseUrl: "https://api.z.ai/api/anthropic" }),
+      provider: resolvedProvider(),
+      frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/bundle.pem", sessionToken: "launch-token-for-tests" },
     });
+    expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
     expect(env.NO_PROXY).toBe("corp.example");
-    expect(env.no_proxy).toBeUndefined();
   });
 
-  it("injects only the identity and session headers when the door is engaged without headroom", () => {
+  it("injects the identity, session and provider headers when the door is engaged without headroom, and nothing else of the door's own", () => {
     const env = buildEnv({
       sessionId: "session-test",
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
       identitiesDir,
-      provider: resolvedProvider({ baseUrl: "https://127.0.0.1:4100/providers/z" }),
+      provider: resolvedProvider(),
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" },
     });
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-provider: z");
   });
 
   it("routes an OAuth launch (no provider) through the door's CONNECT surface: HTTPS_PROXY (carrying the launch's capability as its proxy credential) and the CA are set, ANTHROPIC_BASE_URL stays unset so Remote Control keeps working", () => {
@@ -387,10 +368,10 @@ describe("buildEnv", () => {
       baseEnv: { ...baseEnv, ANTHROPIC_CUSTOM_HEADERS: "x-from-parent: yes" },
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.agent-shim/identities",
-      provider: resolvedProvider({ name: "o", displayName: "OpenRouter", baseUrl: "https://127.0.0.1:4100/providers/o", env: { ANTHROPIC_CUSTOM_HEADERS: "x-from-provider: indeed" } }),
+      provider: resolvedProvider({ name: "o", displayName: "OpenRouter", env: { ANTHROPIC_CUSTOM_HEADERS: "x-from-provider: indeed" } }),
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" },
     });
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-from-parent: yes\nx-from-provider: indeed\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests");
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-from-parent: yes\nx-from-provider: indeed\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-provider: o");
   });
 
   it("sets no session headers and no proxy when no front door is engaged", () => {

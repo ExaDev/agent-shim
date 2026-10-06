@@ -138,7 +138,7 @@ describe("runLauncher identity credential", () => {
 
     expect(credentials.runCommand).not.toHaveBeenCalled();
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 

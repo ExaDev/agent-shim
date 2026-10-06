@@ -29,7 +29,7 @@ function recordInto(order: Readonly<{ push: (daemon: string) => number }>): (dae
 }
 
 describe("runLauncher with a provider", () => {
-  it("brings the front door up and points the child at its provider-scoped address", () => {
+  it("brings the front door up and routes the provider session through its CONNECT surface, the provider named in the session headers", () => {
     const spawn = fakeSpawn();
     const order: string[] = [];
     const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
@@ -45,14 +45,15 @@ describe("runLauncher with a provider", () => {
     });
     const env = spawnedEnv(spawn);
     expect(order).toEqual([]);
-    expect(env.ANTHROPIC_BASE_URL).toBe(`https://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("codex-placeholder");
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.AGENT_SHIM_PROVIDER).toBe("Codex");
-    expect(env.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-agent-shim-session: [0-9a-f-]{36}\nx-agent-shim-auth: launch-token-for-tests$/);
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-agent-shim-session: [0-9a-f-]{36}\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-provider: codex$/);
     expect(frontdoor.releases()).toBeGreaterThan(0);
   });
 
-  it("brings an http provider's launch through the door too, on the same provider-scoped address", () => {
+  it("brings an http provider's launch through the door too, on the same CONNECT surface", () => {
     const spawn = fakeSpawn();
     const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
     runAndCaptureExit({
@@ -66,7 +67,8 @@ describe("runLauncher with a provider", () => {
       credentials: fakeCredentials(),
     });
     expect(frontdoor.ensures()).toBe(1);
-    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBe(`https://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/z`);
+    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(spawnedEnv(spawn).HTTPS_PROXY).toContain(`127.0.0.1:`);
     // The base URL is HTTPS with a leaf from agent-shim's CA, so the child must trust that CA.
     expect(spawnedEnv(spawn).NODE_EXTRA_CA_CERTS).toBe(FAKE_TRUST_BUNDLE);
   });
@@ -108,7 +110,7 @@ describe("runLauncher with a provider", () => {
     });
     const env = spawnedEnv(spawn);
     expect(order).toEqual(["frontdoor", "headroom"]);
-    expect(env.ANTHROPIC_BASE_URL).toBe(`https://127.0.0.1:${String(FRONTDOOR_PORT)}/providers/codex`);
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     // The child names no upstream for headroom: the door's hop decides where headroom forwards, so no x-headroom-base-url exists any more.
     expect(env.ANTHROPIC_CUSTOM_HEADERS).not.toContain("x-headroom-base-url");
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toContain("x-agent-shim-headroom: 1");

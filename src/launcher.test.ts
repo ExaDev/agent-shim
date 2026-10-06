@@ -423,7 +423,7 @@ describe("runLauncher headroom routing", () => {
     expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe("/somewhere/explicit");
   });
 
-  it("routes a provider through the door with headroom: the door is the base URL, the session headers carry the project identity, and the token comes from the provider", () => {
+  it("routes a provider through the door with headroom: the door is the base URL, the session headers carry the project identity, and the child carries no credential for the door to attach", () => {
     const spawn = fakeSpawn();
     const headroom = fakeHeadroomPort();
 
@@ -446,10 +446,11 @@ describe("runLauncher headroom routing", () => {
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/z");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("tok-z");
-    expect(env.HTTPS_PROXY).toBeUndefined();
-    expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    // The provider session rides the door's CONNECT surface exactly like an OAuth one; the provider header is what tells the door where its inference goes.
+    expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
+    expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-provider: z", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
     // The daemon has to admit the door's address for this launch's requests to be accepted, so the ensure step is told a provider is routed.
     expect(headroom.routesProvider).toEqual([true]);
   });
@@ -461,7 +462,7 @@ describe("runLauncher headroom routing", () => {
     expect(headroom.routesProvider).toEqual([false]);
   });
 
-  it("routes an apiKey provider on api.anthropic.com through the door with headroom: the token becomes the API key and the door is the base URL", () => {
+  it("routes an apiKey provider on api.anthropic.com through the door with headroom: the door attaches the key and the child still carries no credential", () => {
     const spawn = fakeSpawn();
     const headroom = fakeHeadroomPort();
 
@@ -484,11 +485,11 @@ describe("runLauncher headroom routing", () => {
     });
 
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_BASE_URL).toBe("https://127.0.0.1:4100/providers/anthropic-api");
-    expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-REDACTED");
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
-    expect(env.HTTPS_PROXY).toBeUndefined();
-    expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
+    expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
+    expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-provider: anthropic-api", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
   });
 
   it("refuses loudly when headroom resolved on but no front-door port was wired", () => {

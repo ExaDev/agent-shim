@@ -716,7 +716,7 @@ describe("the RoutedResponse tee the door's resolver applies", () => {
       // A real IncomingMessage over an unconnected socket, fed by hand: the additive listeners must see exactly these bytes, and the route's own flow must be unchanged.
       body,
       signal: new AbortController().signal,
-      session: { identity: undefined, sessionId: undefined, headroom: false, projectId: undefined },
+      session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined },
     };
     const served = observingRoutedRoute(route, tracker).serve(request, recordingResponse);
     body.push(JSON.stringify({ worker_epoch: 1, events: [{ payload: { type: "control_request", request_id: "req-tee-1", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "pnpm test" } } } }] }));
@@ -774,7 +774,7 @@ describe("the RoutedResponse tee the door's resolver applies", () => {
       // A real IncomingMessage over an unconnected socket: the stand-in route never reads the body, and constructing the genuine type keeps the request honest.
       body: new IncomingMessage(new Socket()),
       signal: new AbortController().signal,
-      session: { identity: undefined, sessionId: undefined, headroom: false, projectId: undefined },
+      session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined },
     };
     await observingRoutedRoute(route, tracker).serve(request, recordingResponse);
     expect(writes).toEqual([Buffer.from(JSON.stringify({ session: { id: SESSION_ID } }), "utf8")]);
