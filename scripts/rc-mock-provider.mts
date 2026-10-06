@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // A deterministic Anthropic-messages provider for the Remote Control interception rig: no model, no credential of its own, loopback only. The rig's self-hosted proof needs somewhere for inference to land ("a provider of your own", docs/rc-interception-rig.md), and this server also verifies the one property that proof is about: every request must arrive carrying the provider file's own credential (the front door attaches it at the provider route, whatever the CLI presented), so a wrong or missing credential is answered with the 401 a real provider would give and the mismatch is logged.
 //
-// Behaviour: the first turn of a conversation answers with a Bash tool_use running PROOF_COMMAND, which makes a real CLI raise a real permission request for an attached Remote Control client to answer; once the tool result comes back it answers with final text naming what the tool printed. With RC_MOCK_TOOLSEARCH=1 the driver instead walks the deferred-tool-loading flow: a ToolSearch tool_use first, then a tool_use for the rig MCP tool once the search result is in the history, then final text, which is what drives a real CLI through the tool_reference capture behind issue #226. Both streaming and non-streaming shapes are answered. Usage: node scripts/rc-mock-provider.mts [--port 47474] [--token <expected credential>] [--target bearer|apiKey]; the token defaults to RC_MOCK_TOKEN so it never has to appear in a process listing, and RC_MOCK_DUMP=<file> additionally appends every request body verbatim as JSON lines (bodies only, never headers, so the credential never reaches the dump).
+// Behaviour: the first turn of a conversation answers with a Bash tool_use running PROOF_COMMAND, which makes a real CLI raise a real permission request for an attached Remote Control client to answer; once the tool result comes back it answers with final text naming what the tool printed. With RC_MOCK_TOOLSEARCH=1 the driver instead walks the deferred-tool-loading flow: a ToolSearch tool_use first, then a tool_use for the rig MCP tool once the search result is in the history, then final text, which is what drives a real CLI through the tool_reference capture behind issue #226. With RC_MOCK_WEBFETCH=1 it walks the web proxy flow instead: a WebFetch tool_use for RC_MOCK_WEBFETCH_URL (https://example.com/ unless overridden) first, then final text naming what the fetch returned, which is what drives a real CLI through the door's served worker web-fetch endpoint when its environment sets CLAUDE_CODE_WEBFETCH_USE_CCR_PROXY. Both streaming and non-streaming shapes are answered. Usage: node scripts/rc-mock-provider.mts [--port 47474] [--token <expected credential>] [--target bearer|apiKey]; the token defaults to RC_MOCK_TOKEN so it never has to appear in a process listing, and RC_MOCK_DUMP=<file> additionally appends every request body verbatim as JSON lines (bodies only, never headers, so the credential never reaches the dump).
 
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
@@ -14,6 +14,9 @@ const DEFAULT_PORT = 47474;
 const FINGERPRINT_CHARS = 12;
 /** The characters-per-token estimate count_tokens answers with; a rough estimate is all compaction heuristics needs. */
 const CHARS_PER_TOKEN = 4;
+
+/** How many characters of the fetched page the summarisation head's answer echoes: enough to name the page in the pane, short enough to stay a citation. */
+const SUMMARISED_EXCERPT_CHARS = 120;
 const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
@@ -78,6 +81,9 @@ const expectedToken = argument("token", process.env.RC_MOCK_TOKEN ?? "");
 const target = argument("target", "bearer");
 const dumpFile = process.env.RC_MOCK_DUMP ?? "";
 const toolSearchDriver = process.env.RC_MOCK_TOOLSEARCH === "1";
+const webFetchDriver = process.env.RC_MOCK_WEBFETCH === "1";
+/** The URL the web-fetch driver tells the CLI to fetch: a real public page by default, because the CLI rewrites any http URL to https before it reaches the door's proxy, so the rig's loopback stand-ins cannot serve it and the public internet is the honest target. */
+const WEBFETCH_URL = process.env.RC_MOCK_WEBFETCH_URL ?? "https://example.com/";
 
 /** Appends one request body to the dump as a JSON line. The body is stored verbatim (never headers), and the file is disposable rig evidence, never committed. */
 function dumpRequest(method: string, url: string, body: string): void {
@@ -185,6 +191,47 @@ function messageFor(body: MessagesRequest): { id: string; type: "message"; role:
       content: [
         { type: "text", text: "searching for the rig tool first" },
         { type: "tool_use", id: `toolu_mock_${String(Date.now())}`, name: "ToolSearch", input: { query: `select:${RIG_TOOL_NAME}`, max_results: 5 } },
+      ],
+      stop_reason: "tool_use",
+      stop_sequence: null,
+      usage: usage(),
+    };
+  }
+  if (webFetchDriver) {
+    // The CLI's fetch pipeline summarises the fetched page with a small-model head before the tool result is due, a one-shot conversation whose user message is the page itself (a plain string or one text block); answering it with plain text (rather than another tool_use) is what makes the tool result readable in the pane, so the driver picks it out by that head's model family and echoes the page's opening.
+    const pageText = last === undefined ? undefined : typeof last.content === "string" ? last.content : last.content.every((block) => block.type === "text") ? last.content.map((block) => block.text ?? "").join("") : undefined;
+    if (body.model.startsWith("claude-haiku") && pageText !== undefined) {
+      return {
+        id: `msg_mock_${String(Date.now())}`,
+        type: "message",
+        role: "assistant",
+        model: body.model,
+        content: [{ type: "text", text: `the fetched page opens with: ${pageText.slice(0, SUMMARISED_EXCERPT_CHARS)}` }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: usage(),
+      };
+    }
+    if (last !== undefined && sawToolResult(body)) {
+      return {
+        id: `msg_mock_${String(Date.now())}`,
+        type: "message",
+        role: "assistant",
+        model: body.model,
+        content: [{ type: "text", text: `the fetch came back with: ${typeof last.content === "string" ? last.content : toolResultText(last.content)}` }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: usage(),
+      };
+    }
+    return {
+      id: `msg_mock_${String(Date.now())}`,
+      type: "message",
+      role: "assistant",
+      model: body.model,
+      content: [
+        { type: "text", text: "fetching the page through the door's web proxy now" },
+        { type: "tool_use", id: `toolu_mock_${String(Date.now())}`, name: "WebFetch", input: { url: WEBFETCH_URL, prompt: "Describe what this page says." } },
       ],
       stop_reason: "tool_use",
       stop_sequence: null,

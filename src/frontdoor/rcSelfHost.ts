@@ -14,7 +14,7 @@ import type { RcStreamEnvelope } from "./rcSchemas";
  *
  * Division of the surface: the session family (`/v1/code/sessions...` and the `/v1/sessions` compatibility list) rides the routed pipeline as a `FrontDoorRoute`, so it flows through the same admission and middleware as any routed request and, above all, through the same observation wrapper that feeds the tracker (the door's own client half learns each session's credential precisely because the create is observed like any other exchange). The non-`/v1/` answers the CLI needs around activation (feature eval, profile, telemetry no-ops) and the OAuth refresh on the control-plane host have no pipeline to ride, so they are served by `local`, which the connect surface consults before routing or piping; that surface also takes over the control-plane host's terminated session as ordinary HTTP (it is normally byte-tapped) because answering `/v1/oauth/token` requires parsing it.
  *
- * The worker family includes the two web proxies the CLI dials only when its environment opts in (`CLAUDE_CODE_WEBFETCH_USE_CCR_PROXY` and `CLAUDE_CODE_WEBSEARCH_USE_CCR_PROXY`, both unset by default and both verified absent from the rig session, so the default session fetches directly and never dials them): `/{cse}/worker/web-fetch` carries the CLI's URL fetch (a POST of `{url}` answered with the fetched facts or a target refusal, both shapes the 2.1.289 client's own schema reads), and `/{cse}/worker/web-search` carries its search. The fetch's bounds live in `rcWebFetch.ts`; the search is served as a clear refusal naming that no backend ships, with the injection point a real backend answers through.
+ * The worker family includes the two web proxies the CLI dials only when its environment opts in (`CLAUDE_CODE_WEBFETCH_USE_CCR_PROXY` and `CLAUDE_CODE_WEBSEARCH_USE_CCR_PROXY`, both unset by default and both verified absent from the rig session, so the default session fetches directly and never dials them): `/{cse}/worker/web-fetch` carries the CLI's URL fetch (a POST of `{url}` answered with the fetched facts or a target refusal, both shapes the 2.1.289 client's own schema reads), and `/{cse}/worker/web-search` carries its search. The wire facts the live rig settled beside the source: the session id the proxy URL names comes from a `CLAUDE_CODE_SESSION_ID` latch that only the cloud worker shape provisions (a locally launched bridge never sets it), and the credential the client presents is the session ingress token read from `CLAUDE_SESSION_INGRESS_TOKEN_FILE` or the well-known remote directory, which locally is nothing at all, so a bare local launch sends no Authorization and is refused; when the ingress token is one of this surface's own worker JWTs it authenticates exactly as the worker family's other paths do. The paths also accept the minted credential itself, the shape the client's login-bearer fallback presents, whose principal is the same credential that created the session. The fetch's bounds live in `rcWebFetch.ts`; the search is served as a clear refusal naming that no backend ships, with the injection point a real backend answers through.
  *
  * The one network lever this uses is the bridge response's `api_base_url`: the protocol lets the server name where the worker dials, so the door names the API host it itself terminates, and the worker's `/worker/...` calls arrive straight back at this surface over the same interception that carried the create.
  *
@@ -514,11 +514,13 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     }
 
     if (tail === "worker" || tail.startsWith("worker/")) {
-      if (!presentsWorkerJwt(request.headers, session)) {
+      const workerTail = tail === "worker" ? "" : tail.slice("worker/".length);
+      // The two web proxies are the one worker family the CLI's own half dials as well: its proxy client presents the login bearer whenever it holds no worker session url (the 2.1.289 source sets `ccrSessionUrl` from nowhere a local bridge reaches, and its auth falls back to the session credential), so these paths accept the minted credential beside the bridge's own worker JWT. The principal is the same either way: the credential that created the session.
+      const webProxy = workerTail === "web-fetch" || workerTail === "web-search";
+      if (!(webProxy ? presentsCredential(request.headers) || presentsWorkerJwt(request.headers, session) : presentsWorkerJwt(request.headers, session))) {
         await unauthorized(response);
         return;
       }
-      const workerTail = tail === "worker" ? "" : tail.slice("worker/".length);
 
       if (workerTail === "" && method === "GET") {
         await answerJson(response, HTTP_STATUS.ok, { worker: { external_metadata: session.externalMetadata ?? null } });

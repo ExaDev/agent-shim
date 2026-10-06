@@ -461,20 +461,24 @@ describe("the self-hosted local answers", () => {
 });
 
 describe("the self-hosted Remote Control web proxies", () => {
-  it("serves the worker web-fetch: one url in, the fetched facts out, and only the bridge's own JWT may ask", async () => {
+  it("serves the worker web-fetch: one url in, the fetched facts out, to the worker JWT and the session's own credential alike", async () => {
     const world = await makeWorld();
     worlds.push(world);
     const { id, workerJwt } = await createSession(world);
-    const withOauth = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/web-fetch`, { url: "https://example.com/page" }, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` });
-    expect(withOauth.status).toBe(HTTP_STATUS.unauthorized);
-    expect(world.fetchedUrls).toEqual([]);
+    // The CLI's proxy client presents the login bearer when it holds no worker session url (the 2.1.289 shape the rig captured), so the minted credential serves these paths beside the bridge's own JWT.
+    const withOauth = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/web-fetch`, { url: "https://example.com/oauth-shape" }, { authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "anthropic-version": "2023-06-01" });
+    expect(withOauth.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(withOauth.body)).toEqual({ url: "https://example.com/oauth-shape", destination_url: "https://example.com/oauth-shape", text: FETCHED_PAGE.text, content_type: "text/html" });
+    const stranger = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/web-fetch`, { url: "https://example.com/page" }, { authorization: "Bearer someone-else" });
+    expect(stranger.status).toBe(HTTP_STATUS.unauthorized);
+    expect(world.fetchedUrls).toEqual(["https://example.com/oauth-shape"]);
     const noUrl = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/web-fetch`, {}, { authorization: `Bearer ${workerJwt}` });
     expect(noUrl.status).toBe(HTTP_STATUS.badRequest);
     const answered = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/web-fetch`, { url: "https://example.com/page" }, { authorization: `Bearer ${workerJwt}`, "anthropic-version": "2023-06-01" });
     expect(answered.status).toBe(HTTP_STATUS.ok);
     expect(JSON.parse(answered.body)).toEqual({ url: "https://example.com/page", destination_url: "https://example.com/page", text: FETCHED_PAGE.text, content_type: "text/html" });
-    // The fetch was handed exactly the request's url: the wiring between the served path and the injected fetch is what the assertion pair checks.
-    expect(world.fetchedUrls).toEqual(["https://example.com/page"]);
+    // The fetch was handed exactly the requests' urls, in order: the wiring between the served path and the injected fetch is what the assertion pair checks.
+    expect(world.fetchedUrls).toEqual(["https://example.com/oauth-shape", "https://example.com/page"]);
   });
 
   it("answers a web-fetch refusal as a 200 error object, the shape the CLI surfaces as the tool's own failure", async () => {
