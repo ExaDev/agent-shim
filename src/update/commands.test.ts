@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import packageJson from "../../package.json";
 import type * as realPortsModule from "../realPorts";
-import { EXIT_FAILURE } from "../cliError";
+import { EXIT_FAILURE, EXIT_USAGE } from "../cliError";
 import { reportFatalError } from "../cliReport";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { buildProgram } from "../program";
@@ -176,11 +176,11 @@ async function cli(argv: readonly string[], updatePorts: UpdatePorts = fakePorts
 }
 
 describe("agent-shim update", () => {
-  it("is registered on the program with --check and --json", () => {
+  it("is registered on the program with --check, --mode and --json", () => {
     const built = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn<(args: readonly string[]) => Promise<void>>() });
     const command = built.commands.find((candidate) => candidate.name() === "update");
     expect(command).toBeDefined();
-    expect(command?.options.map((option) => option.long)).toEqual(["--check", "--json"]);
+    expect(command?.options.map((option) => option.long)).toEqual(["--check", "--mode", "--json"]);
   });
 
   it("reports already being at the latest release and exits 0, downloading nothing and writing no lock", async () => {
@@ -206,6 +206,41 @@ describe("agent-shim update", () => {
     const result = await cli(["update", "--check", "--json"]);
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ current: CURRENT, latest: LATEST, action: "available" });
+  });
+
+  it("--mode persists each value to the global config, prints it, and touches nothing else", async () => {
+    for (const mode of ["notify", "auto", "off"] as const) {
+      fs.rmSync(paths.globalConfigFile, { force: true });
+      const ports = fakePorts();
+      const result = await cli(["update", "--mode", mode], ports);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toBe(`update mode set to ${mode}\n`);
+      expect(JSON.parse(fs.readFileSync(paths.globalConfigFile, "utf8"))).toEqual({ update: { mode } });
+      expect(ports.downloaded).toEqual([]);
+      expect(fs.readFileSync(executable, "utf8")).toBe("old binary");
+    }
+  });
+
+  it("--mode --json prints the mutation object", async () => {
+    const result = await cli(["update", "--mode", "auto", "--json"]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ action: "updated", kind: "update", name: "mode", value: { mode: "auto" } });
+  });
+
+  it("--mode preserves the rest of the global config and replaces a previous mode", async () => {
+    fs.mkdirSync(paths.root, { recursive: true });
+    fs.writeFileSync(paths.globalConfigFile, `${JSON.stringify({ defaultConfigProfile: "base", update: { mode: "notify" } }, null, 2)}\n`);
+    const result = await cli(["update", "--mode", "auto"]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(fs.readFileSync(paths.globalConfigFile, "utf8"))).toEqual({ defaultConfigProfile: "base", update: { mode: "auto" } });
+  });
+
+  it("--mode rejects a value outside off, notify and auto as a usage error", async () => {
+    const ports = fakePorts();
+    const result = await cli(["update", "--mode", "sometimes"], ports);
+    expect(result.code).toBe(EXIT_USAGE);
+    expect(fs.existsSync(paths.globalConfigFile)).toBe(false);
+    expect(ports.downloaded).toEqual([]);
   });
 
   it("installs the verified new binary over the running executable and removes the lock", async () => {

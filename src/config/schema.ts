@@ -436,6 +436,18 @@ const FrontDoorGlobalConfigSchema = z.strictObject({
   idleShutdownMinutes: z.number().int().positive().optional(),
 });
 
+/**
+ * The launch-time update modes. `off` never touches the network at launch; `notify` checks for a newer release on a cooldown and prints one line naming it and the command to apply it; `auto` additionally applies the update in the background.
+ */
+export const UPDATE_MODES = ["off", "notify", "auto"] as const;
+export type UpdateMode = (typeof UPDATE_MODES)[number];
+
+/** The user-global update block: how the launcher treats a newer release of itself. Global-only for the same reason as headroom's block: one binary is installed per machine, so a per-directory or per-profile setting would be several claims about the same installation. */
+const UpdateGlobalConfigSchema = z.strictObject({
+  /** What a launch does about a newer release of agent-shim itself; see `UPDATE_MODES`. Absent means `off`. */
+  mode: z.enum(UPDATE_MODES).optional(),
+});
+
 /** The user-global `~/.agent-shim/config.json`. */
 export const GlobalConfigSchema = z.strictObject({
   $schema: z.string().optional(),
@@ -446,6 +458,7 @@ export const GlobalConfigSchema = z.strictObject({
   launch: LaunchSchema.optional(),
   headroom: HeadroomGlobalConfigSchema.optional(),
   frontdoor: FrontDoorGlobalConfigSchema.optional(),
+  update: UpdateGlobalConfigSchema.optional(),
   pools: z.record(PoolNameSchema, PoolSchema).optional(),
 });
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;

@@ -9,6 +9,7 @@ import { parseLauncherArgv } from "./launcher/argv";
 import { runNativeLaunch } from "./launcher/native";
 import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/identity";
 import { realFsPort, realLogPort, realProcPort, realSpawnPort, spawnDetachedSupervisor } from "./realPorts";
+import { realLaunchUpdatePort } from "./update/commands";
 
 /** Runs the launcher pipeline. `argvOverride`, when given, replaces `realProcPort`'s own `process.argv.slice(2)`; this is what lets `agent-shim run [args...]` reach the identical pipeline the `claude` binary name uses, fed the args Commander collected instead of the real argv. */
 export async function runClaude(argvOverride?: readonly string[]): Promise<void> {
@@ -89,6 +90,8 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
       farm,
       allowMissingConfigProfile,
     }),
+    // Wired here rather than in realPrepareLaunchParams because the port re-invokes this very binary: correct for the agent-shim command line, wrong for a library host whose own executable is not agent-shim.
+    update: realLaunchUpdatePort(paths),
     spawn: realSpawnPort,
   });
 }

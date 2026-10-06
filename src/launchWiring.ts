@@ -5,10 +5,11 @@ import { CliError } from "./cliError";
 import { resolveOwnBinaryCheck } from "./claudeShim";
 import { loadClassification } from "./config/classify";
 import { cosmiconfigReader } from "./config/load";
-import type { Pool } from "./config/schema";
+import type { Pool, UpdateMode } from "./config/schema";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { realFrontDoorPort } from "./frontdoor/realFrontDoorPort";
 import { prepareLaunch, type FarmRuntime, type LaunchPlan, type PrepareLaunchParams } from "./launcher";
+import { resolveUpdateMode } from "./update/launchHook";
 import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import type { LogPort, ProcPort } from "./launcher/ports";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
@@ -35,6 +36,7 @@ export function buildFarmRuntime(paths: LayoutPaths, cwd: string): {
   directoryConfigProfile?: string;
   globalDefaultConfigProfile?: string;
   pools?: Readonly<Record<string, Pool>>;
+  updateMode?: UpdateMode;
 } {
   const home = os.homedir();
   const read = cosmiconfigReader();
@@ -42,6 +44,7 @@ export function buildFarmRuntime(paths: LayoutPaths, cwd: string): {
   const loaded = loadCascadeInput({ paths, home, cwd, read });
   const selections = readDirectorySelections(loaded);
   const git = resolveGitBranch(realRunPort, cwd);
+  const updateMode = resolveUpdateMode(loaded.globalConfig);
 
   return {
     runtime: {
@@ -72,6 +75,7 @@ export function buildFarmRuntime(paths: LayoutPaths, cwd: string): {
       ? {}
       : { globalDefaultConfigProfile: loaded.globalConfig.defaultConfigProfile }),
     ...(loaded.globalConfig?.pools === undefined ? {} : { pools: loaded.globalConfig.pools }),
+    ...(updateMode === "off" ? {} : { updateMode }),
   };
 }
 
@@ -90,7 +94,7 @@ export function realClaudeBinaryResolver(paths: LayoutPaths): ClaudeBinaryResolv
   return realResolveClaudeBinary(resolveOwnBinaryCheck(paths, realContentSourcePath()));
 }
 
-/** The launcher's inputs wired to this machine: the real filesystem, daemon ports, credential resolver and `claude` binary discovery. */
+/** The launcher's inputs wired to this machine: the real filesystem, daemon ports, credential resolver and `claude` binary discovery. The launch-time update check's port is deliberately absent: it re-invokes this very binary as `agent-shim update`, which is only correct when this process is agent-shim itself, so `src/runClaude.ts` wires it and a library host (whose `process.execPath` is the host program, not agent-shim) goes without and checks nothing. */
 export function realPrepareLaunchParams(paths: LayoutPaths, options: RealLaunchOptions): PrepareLaunchParams {
   const { farm } = options;
   return {
@@ -107,6 +111,7 @@ export function realPrepareLaunchParams(paths: LayoutPaths, options: RealLaunchO
     ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
     ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),
     ...(farm.pools === undefined ? {} : { pools: farm.pools }),
+    ...(farm.updateMode === undefined ? {} : { updateMode: farm.updateMode }),
     ...(options.allowMissingConfigProfile === undefined ? {} : { allowMissingConfigProfile: options.allowMissingConfigProfile }),
   };
 }

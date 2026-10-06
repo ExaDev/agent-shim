@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
+import packageJson from "../package.json";
 import { parseEnvBool } from "./cli/envBool";
 import type { LayoutPaths } from "./paths";
 import { parseLauncherArgv, type ParsedLauncherArgv } from "./launcher/argv";
@@ -17,7 +18,7 @@ import { spawnClaude } from "./launcher/spawn";
 import { resolveProvider } from "./providersStore";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
-import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool } from "./config/schema";
+import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool, type UpdateMode } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, describeSource, resolveCredential, type CredentialPort, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
 import { ANTHROPIC_PROVIDER } from "./usage/middleware";
@@ -25,6 +26,7 @@ import { quotaWarnings } from "./usage/preflight";
 import { readUsageSnapshot, UsageSnapshotError } from "./usage/read";
 import type { ClaudeBinaryResolver } from "./versionDiscovery";
 import { resolveClaudeVersion } from "./launcher/claudeVersion";
+import { runLaunchUpdateCheck, type UpdateLaunchPort } from "./update/launchHook";
 
 /**
  * Everything the farm resync needs that the launcher itself has no way to produce: a real filesystem, a real clock, the working directory, and a way to load the cascade for it.
@@ -84,6 +86,10 @@ export interface PrepareLaunchParams {
   readonly credentials?: CredentialPort;
   /** True when the user was asked on a terminal whether to create the selected configuration profile and chose to launch without it. Without that explicit choice, a selected profile with no file is refused rather than silently skipped. */
   readonly allowMissingConfigProfile?: boolean;
+  /** The user-global `update.mode`, resolved from the same global config the launcher already loads. Absent means `off`, and `off` runs no launch-time update check at all. */
+  readonly updateMode?: UpdateMode;
+  /** Wires the launch-time update check behind `update.mode`. Omitted by a caller that cannot resolve releases, re-invoke this binary, or write to the terminal; a mode of `notify` or `auto` with no port wired simply checks nothing. */
+  readonly update?: UpdateLaunchPort;
 }
 
 /** Inputs to `runLauncher`: a launch's inputs plus the port that spawns the child. */
@@ -100,6 +106,8 @@ export interface LaunchPlan {
   readonly env: Readonly<Record<string, string | undefined>>;
   /** Releases the daemon session registrations this launch holds. Call it when the child has exited; it is safe to call more than once. */
   readonly release: () => void;
+  /** Marks the moment this plan's child is spawned: the launch-time update check suppresses its notify line from then on, since a line printed after the child took over the terminal would land mid-session. Call it immediately before spawning; it is safe to call more than once. */
+  readonly markChildStarted: () => void;
 }
 
 /** The outcome of resolving the launching identity's own credential block: the credential, or a refusal with its exit status. */
@@ -160,7 +168,7 @@ function pickFromPool(
 /**
  * Prepares one `claude` launch, in order:
  *
- * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and the final argument list and environment, returned as a `LaunchPlan` for the caller to spawn. It refuses through `params.proc.exit`, so a caller that is not a command line process passes a `proc` whose `exit` throws.
+ * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, the config-gated launch-time update check (fired after the decision line and never awaited; see `runLaunchUpdateCheck`), farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and the final argument list and environment, returned as a `LaunchPlan` for the caller to spawn. It refuses through `params.proc.exit`, so a caller that is not a command line process passes a `proc` whose `exit` throws.
  *
  * A launch that resolves an identity with no `identity.json`, or a configuration profile with no file, is refused with exit 1 naming the missing name and how it was selected: silently proceeding would create a brand-new login for a mistyped `@name`, or launch with a whole cascade layer missing. On a terminal, `src/runClaude.ts` offers to create either before this runs.
  *
@@ -338,6 +346,14 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
         : `, identity credential ${identityCredential.target} from ${describeSource(identityCredential.source)}`),
   );
 
+  // The launch-time update check sits directly after the decision line: it is the last thing that may write to the terminal before the child owns it, it never awaits anything (its answer arrives, if at all, while the child runs), and it is wrapped so a network or filesystem failure never delays, blocks or fails the launch.
+  const updateCheck = runLaunchUpdateCheck({
+    mode: params.updateMode ?? "off",
+    checkPath: path.join(paths.root, "update.check"),
+    currentVersion: packageJson.version,
+    port: params.update,
+  });
+
   // The farm resync sits here, between the identity/profile decision above and flag resolution below, because it needs the first and produces an input to the second: the cascade it resolves carries this launch's `launch` flags, which is why `resolveLaunchFlags` is called with them rather than with the environment alone.
   let cascadeLaunch: LaunchFlags | undefined;
   if (farmContext !== undefined) {
@@ -458,7 +474,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
       registered();
     }
   };
-  return { bin: discovered.path, args: finalArgv, env: finalEnv, release };
+  return { bin: discovered.path, args: finalArgv, env: finalEnv, release, markChildStarted: updateCheck.markChildStarted };
 }
 
 /**
@@ -469,6 +485,8 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
 export function runLauncher(params: RunLauncherParams): void {
   const plan = prepareLaunch(params);
   try {
+    // Marked before the spawn, not after it: the synchronous spawn blocks the event loop for the whole session, so a check answer arriving from here on is late by definition and must print nothing.
+    plan.markChildStarted();
     spawnClaude({ bin: plan.bin, args: plan.args, env: plan.env, spawn: params.spawn, proc: params.proc, beforeExit: plan.release });
   } finally {
     plan.release();
