@@ -608,11 +608,11 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
   // A pool selector is ranked the way a launch here would rank it, so the rest of the report describes the member that launch would run as.
   let poolPick: PoolPickReport | undefined;
   if (decidedIdentity.pool !== undefined) {
-    const pool = loaded.globalConfig?.pools?.[decidedIdentity.pool];
-    if (pool === undefined) {
+    const pools = loaded.globalConfig?.pools ?? {};
+    if (pools[decidedIdentity.pool] === undefined) {
       throw new PoolNotFoundError(decidedIdentity.pool);
     }
-    poolPick = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: decidedIdentity.pool, pool, directory: cwd, nowMs: Date.now() });
+    poolPick = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: decidedIdentity.pool, pools, directory: cwd, nowMs: Date.now() });
   }
   const identityDecision = poolPick?.pick === undefined ? decidedIdentity : { ...decidedIdentity, name: poolPick.pick };
 

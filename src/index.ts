@@ -204,7 +204,7 @@ export { runFrontDoorSupervisor, type FrontDoorSupervisorPorts, type RunFrontDoo
 export { listUsageSnapshots, readUsageSnapshot, snapshotPath, UsageSnapshotError, type UsageReadFs } from "./usage/read";
 export { UsageSnapshotSchema, type UsageSnapshot } from "./usage/schema";
 export { effectiveWindow, type EffectiveWindow } from "./usage/preflight";
-export { PROMPT_CACHE_TTL_MS, rankPool, type Candidate, type PoolMember, type PoolRanking, type RankPoolInput, type StickyPick } from "./usage/pick";
+export { PROMPT_CACHE_TTL_MS, rankPool, type Candidate, type NestedContribution, type PoolMember, type PoolRanking, type RankPoolInput, type StickyPick } from "./usage/pick";
 export { planOf, PlanClassSchema, type PlanClass } from "./usage/plan";
 export { collectPoolPick } from "./poolPickReport";
 export { PoolPickReportSchema, type PoolPickReport } from "./usage/pickReportSchema";

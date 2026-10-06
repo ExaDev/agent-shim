@@ -1,6 +1,9 @@
 import path from "node:path";
 import { z } from "zod";
 
+import { CliError } from "../cliError";
+import type { Pool } from "../config/schema";
+import { poolNameOf } from "../launcher/identity";
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { AccountMetadataError, readAccountMetadata } from "./account";
@@ -10,8 +13,16 @@ import { ANTHROPIC_PROVIDER } from "./middleware";
 import { USAGE_RETENTION_MS } from "./store";
 
 /**
- * The store-backed side of pool picking: loads each member's recorded state and ranks it with `rankPool`, and keeps the per-directory record of the last pick. The launcher and `agent-shim pool pick` both go through `rankPoolFromStore`, so the command shows exactly what a launch would choose.
+ * The store-backed side of pool picking: loads each member's recorded state and ranks it with `rankPool`, and keeps the per-directory record of the last pick. The launcher and `agent-shim pool pick` both go through `rankPoolGraph`, so the command shows exactly what a launch would choose.
  */
+
+/** Raised while ranking a pool graph: a member names a pool that is not defined, or the graph reaches a pool it is already inside. `pool add` and `pool set` refuse both at write time; this is the guard for pools edited since. */
+export class PoolGraphError extends CliError {
+  constructor(message: string) {
+    super(message);
+    this.name = "PoolGraphError";
+  }
+}
 
 /** The reads a pool ranking needs: snapshots, the log and each member's login file. */
 export type PoolPickFs = UsageReadFs & Pick<FarmFs, "readFileUtf8">;
@@ -53,15 +64,92 @@ export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities
   });
 }
 
-/** Ranks `identities` from what the usage store recorded, as of `nowMs`, in the pool's preference order ("score" when `preference` is absent). */
-export function rankPoolFromStore(params: Readonly<{ fs: PoolPickFs; paths: PoolPickPaths; identities: readonly string[]; nowMs: number; sticky?: StickyPick; resuming: boolean; preference?: "score" | "listed" }>): PoolRanking {
-  return rankPool({
-    members: loadPoolMembers(params.fs, params.paths, params.identities, params.nowMs),
-    nowMs: params.nowMs,
-    resuming: params.resuming,
-    ...(params.sticky === undefined ? {} : { sticky: params.sticky }),
-    ...(params.preference === undefined ? {} : { preference: params.preference }),
+/** Everything ranking a whole pool graph needs, injected so it runs against the same fakes as the rest of the launcher. */
+export interface RankPoolGraphInput {
+  readonly fs: PoolPickFs;
+  readonly paths: PoolPickPaths;
+  /** Every defined pool, so a nested `pool:<name>` entry can be ranked with its own policy. */
+  readonly pools: Readonly<Record<string, Pool>>;
+  readonly poolName: string;
+  readonly nowMs: number;
+  readonly sticky?: StickyPick;
+  readonly resuming: boolean;
+  /** Whether an identity exists on disk, so a member whose identity was removed is skipped exactly as a launch skips it. */
+  readonly identityExists: (name: string) => boolean;
+}
+
+/** A pool graph's ranking, plus the identity entries anywhere in it that no longer exist. */
+export interface PoolGraphRanking {
+  readonly ranking: PoolRanking;
+  readonly missing: readonly { readonly pool: string; readonly identity: string }[];
+}
+
+/**
+ * Ranks the pool named `poolName` and everything it nests, as of `nowMs`, each pool with its own preference. A nested `pool:<name>` entry is ranked first, depth-first, and contributes its pick at the entry's position; when every member of the nested pool is refused the entry itself is ineligible, carrying the nested pool's earliest return. The sticky pick and the resuming flag thread through to every depth, so cache warmth is honoured however deep the sticky identity sits. Throws `PoolGraphError` for a member naming an undefined pool or for a cycle, naming the chain.
+ */
+export function rankPoolGraph(input: Readonly<RankPoolGraphInput>): PoolGraphRanking {
+  return rankNamedPool(input, input.poolName, [], input.sticky);
+}
+
+/** Ranks one pool of the graph. `stack` is the chain of pools being ranked above this one, including this one, for the cycle guard. */
+function rankNamedPool(input: Readonly<RankPoolGraphInput>, poolName: string, stack: readonly string[], sticky: StickyPick | undefined): PoolGraphRanking {
+  const pool = input.pools[poolName];
+  if (pool === undefined) {
+    throw new PoolGraphError(`No pool named "${poolName}". Run \`agent-shim pool add ${poolName} --identity <name>...\` first.`);
+  }
+  const childStack = [...stack, poolName];
+
+  // One log read per level: the direct identity entries are loaded as a batch, then laid down in member order around the nested entries' contributions.
+  const direct = pool.identities.filter((entry) => poolNameOf(entry) === undefined);
+  const missing = direct.filter((entry) => !input.identityExists(entry)).map((identity) => ({ pool: poolName, identity }));
+  const loaded = new Map(loadPoolMembers(input.fs, input.paths, direct.filter(input.identityExists), input.nowMs).map((member) => [member.identity, member]));
+  const members: PoolMember[] = [];
+  for (const entry of pool.identities) {
+    const nestedName = poolNameOf(entry);
+    if (nestedName === undefined) {
+      const member = loaded.get(entry);
+      if (member !== undefined) {
+        members.push(member);
+      }
+      continue;
+    }
+    if (input.pools[nestedName] === undefined) {
+      throw new PoolGraphError(`Pool "${poolName}" member "${entry}" names a pool that is not defined.`);
+    }
+    if (childStack.includes(nestedName)) {
+      throw new PoolGraphError(`Pool "${poolName}" member "${entry}" closes a cycle: ${[...childStack.slice(childStack.indexOf(nestedName)), nestedName].join(" -> ")}. A pool cannot nest itself, directly or through another pool.`);
+    }
+    const nested = nestedMember(input, nestedName, childStack, sticky);
+    members.push(nested.member);
+    missing.push(...nested.missing);
+  }
+  const ranking = rankPool({
+    members,
+    nowMs: input.nowMs,
+    resuming: input.resuming,
+    ...(sticky === undefined ? {} : { sticky }),
+    ...(pool.preference === undefined ? {} : { preference: pool.preference }),
   });
+  return { ranking, missing };
+}
+
+/** What one nested `pool:<name>` entry contributes: its pool's pick as a member of the picked identity (re-ranked from that identity's own recorded state, with the composition in its reasons), or the entry's refusal when the nested pool has nothing to pick. */
+function nestedMember(input: Readonly<RankPoolGraphInput>, nestedName: string, childStack: readonly string[], sticky: StickyPick | undefined): { readonly member: PoolMember; readonly missing: PoolGraphRanking["missing"] } {
+  const nested = rankNamedPool(input, nestedName, childStack, sticky);
+  const pick = nested.ranking.pick;
+  if (pick !== undefined) {
+    const [member] = loadPoolMembers(input.fs, input.paths, [pick.identity], input.nowMs);
+    return { member: { ...(member ?? { identity: pick.identity, records: [] }), nested: { kind: "pick", pool: nestedName, reasons: pick.reasons } }, missing: nested.missing };
+  }
+  const earliestReturn = nested.ranking.earliestReturn;
+  return {
+    member: {
+      identity: earliestReturn?.identity ?? `pool:${nestedName}`,
+      records: [],
+      nested: { kind: "refused", pool: nestedName, ...(earliestReturn === undefined ? {} : { earliestReturn }) },
+    },
+    missing: nested.missing,
+  };
 }
 
 /** What reading the picks file found: the entries, and why they are empty when the file was unreadable. */

@@ -25,6 +25,13 @@ const SEVEN_DAY_WINDOW_MS = SEVEN_DAYS * HOURS_PER_DAY * MS_PER_HOUR;
 /** Anthropic's longest prompt-cache lifetime (the one-hour tier): a conversation resumed within it still has a warm cache on the account that served it, and the cache is per organisation, so it is lost by switching. */
 export const PROMPT_CACHE_TTL_MS = PROMPT_CACHE_TTL_HOURS * MS_PER_HOUR;
 
+/**
+ * Stands for a nested `pool:<name>` member entry rather than a direct identity. `pick` carries the nested pool's own pick (its identity and reasons), which the outer ranking re-ranks from that identity's snapshot like any member; `refused` marks an entry whose every member is refused, so the entry itself is ineligible, carrying the nested pool's earliest return.
+ */
+export type NestedContribution =
+  | { readonly kind: "pick"; readonly pool: string; readonly reasons: readonly string[] }
+  | { readonly kind: "refused"; readonly pool: string; readonly earliestReturn?: { readonly identity: string; readonly atMs: number } };
+
 /** The state a member's ranking was built from. */
 export interface PoolMember {
   readonly identity: string;
@@ -35,6 +42,8 @@ export interface PoolMember {
   readonly account?: AccountMetadata;
   /** The member's usage-log records from the current five-hour window on. */
   readonly records: readonly UsageRecord[];
+  /** Present when this member stands for a nested `pool:<name>` entry rather than a direct identity. */
+  readonly nested?: NestedContribution;
 }
 
 /** The member last picked for this directory, kept so a conversation stays on the account whose prompt cache is warm. */
@@ -161,7 +170,37 @@ interface Assessment {
   readonly burn?: number;
 }
 
+/** A nested entry whose every member is refused is itself ineligible, carrying the nested pool's earliest return as its blocked-until and naming it in the reason. */
+function assessRefusedNested(member: PoolMember, nested: Extract<NestedContribution, { kind: "refused" }>, nowMs: number): Assessment {
+  const refusal =
+    nested.earliestReturn === undefined
+      ? { reason: `no member of pool "${nested.pool}" can be picked` }
+      : { reason: `every member of pool "${nested.pool}" is refused; ${nested.earliestReturn.identity} returns at ${new Date(nested.earliestReturn.atMs).toISOString()} (in ${formatAge(nested.earliestReturn.atMs - nowMs)})`, blockedUntilMs: nested.earliestReturn.atMs };
+  return {
+    candidate: {
+      identity: member.identity,
+      class: "ineligible",
+      ...(refusal.blockedUntilMs === undefined ? {} : { blockedUntilMs: refusal.blockedUntilMs }),
+      plan: planOf(member.account),
+      reasons: [refusal.reason],
+    },
+  };
+}
+
+/** Assesses one member, unfolding what a nested `pool:<name>` entry contributes: its pool's pick is re-ranked from the picked identity's own snapshot (so it competes in a scored outer pool like any member) with the composition named first among the reasons. */
 function assess(member: PoolMember, nowMs: number): Assessment {
+  const nested = member.nested;
+  if (nested === undefined) {
+    return assessIdentity(member, nowMs);
+  }
+  if (nested.kind === "refused") {
+    return assessRefusedNested(member, nested, nowMs);
+  }
+  const assessment = assessIdentity(member, nowMs);
+  return { ...assessment, candidate: { ...assessment.candidate, reasons: [`picked by pool "${nested.pool}": ${nested.reasons.join("; ")}`, ...assessment.candidate.reasons] } };
+}
+
+function assessIdentity(member: PoolMember, nowMs: number): Assessment {
   const plan = planOf(member.account);
   const planReasons = plan.kind === "pay-per-use" ? ["billed by use (no plan allowance)"] : plan.recognised ? [`${String(plan.capacity)}x plan`] : [`plan tier ${plan.tier === undefined ? "not known" : `"${plan.tier}" not recognised`}, counted as 1x`];
   const base = { identity: member.identity, plan };

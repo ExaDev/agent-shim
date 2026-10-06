@@ -657,6 +657,27 @@ describe("runDoctor: pools", () => {
     expect(report.ok).toBe(false);
   });
 
+  it("passes a nested member naming a defined pool, and fails one that does not", () => {
+    const good = runDoctor(baseParams({ identities: [identity("work"), identity("personal")], globalConfig: poolConfig({ subs: { identities: ["work", "pool:fleet"] }, fleet: { identities: ["personal"] } }) }));
+    expect(findingsFor(good, "pool")).toEqual([
+      { section: "pool", severity: "pass", message: "subs is valid (work, pool:fleet).", subject: "subs" },
+      { section: "pool", severity: "pass", message: "fleet is valid (personal).", subject: "fleet" },
+    ]);
+    const bad = runDoctor(baseParams({ identities: [identity("work")], globalConfig: poolConfig({ subs: { identities: ["work", "pool:nope"] } }) }));
+    expect(findingsFor(bad, "pool")).toContainEqual({ section: "pool", severity: "fail", message: 'Pool "subs" names pool "nope", which is not defined.', subject: "subs" });
+    expect(bad.ok).toBe(false);
+  });
+
+  it("fails a pool graph that reaches a pool it is already inside, naming the chain once", () => {
+    const report = runDoctor(baseParams({ identities: [identity("work")], globalConfig: poolConfig({ a: { identities: ["pool:b"] }, b: { identities: ["pool:a"] }, self: { identities: ["work", "pool:self"] } }) }));
+    const cycles = findingsFor(report, "pool").filter((finding) => finding.message.startsWith("Pool cycle"));
+    expect(cycles).toEqual([
+      { section: "pool", severity: "fail", message: "Pool cycle: a -> b -> a. A pool cannot nest itself, directly or through another pool.", subject: "a" },
+      { section: "pool", severity: "fail", message: "Pool cycle: self -> self. A pool cannot nest itself, directly or through another pool.", subject: "self" },
+    ]);
+    expect(report.ok).toBe(false);
+  });
+
   it("accepts a pool selector in the active-identity file and in a directory rule, and fails one naming a pool that is not defined", () => {
     const globalConfig = poolConfig({ subs: { identities: ["work"] } });
     const rules = (identitySelector: string): RunDoctorParams["directoryRules"] => ({ path: "/x/directory-rules.json", raw: JSON.stringify({ rules: [{ path: "/work", identity: identitySelector }] }) });

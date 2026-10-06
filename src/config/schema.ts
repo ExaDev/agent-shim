@@ -313,8 +313,14 @@ const IDENTITY_NAME_PATTERN = "[A-Za-z0-9][A-Za-z0-9._@-]*";
 /** A pool's own name: the identity alphabet minus `@`, since a pool is never an email address. */
 export const PoolNameSchema = z.string().min(1).regex(new RegExp(`^${POOL_NAME_PATTERN}$`));
 
+/** One `pool:`-prefixed pool name or bare identity name, the union every selector surface accepts. `:` is outside an identity name's character set, so the two can never collide. */
+const SELECTOR_RE = new RegExp(`^(${POOL_SELECTOR_PREFIX}${POOL_NAME_PATTERN}|${IDENTITY_NAME_PATTERN})$`);
+
 /** What a directory rule, a portable config or the active-identity file may name: a concrete identity, or `pool:<name>` to have agent-shim pick one member of a pool at launch. */
-const IdentitySelectorSchema = z.string().min(1).regex(new RegExp(`^(${POOL_SELECTOR_PREFIX}${POOL_NAME_PATTERN}|${IDENTITY_NAME_PATTERN})$`));
+const IdentitySelectorSchema = z.string().min(1).regex(SELECTOR_RE);
+
+/** A pool's member entry: a concrete identity, or `pool:<name>` to nest another pool as a member, evaluated with that pool's own policy at the position the entry occupies. The same union an identity selector accepts. */
+export const PoolMemberSchema = z.string().min(1).regex(SELECTOR_RE);
 
 /** The preference modes a pool may choose among its members with. */
 export const POOL_PREFERENCES = ["score", "listed"] as const;
@@ -326,13 +332,12 @@ export type PoolPreference = z.infer<typeof PoolPreferenceSchema>;
 /**
  * A named, explicit set of identities to choose among at launch. Never implicit: a pool lists its members, so an identity that bills a client is only ever picked when someone put it there.
  *
+ * A member entry may name another pool (`pool:<name>`), which is ranked with its own preference and contributes its pick at the entry's position; see `PoolMemberSchema`. The graph must stay acyclic, which `pool add`/`pool set` enforce and `doctor` re-checks.
+ *
  * `preference` decides how the member is chosen, and an absent field means "score". "score" ranks members by plan-size-weighted remaining quota per hour until reset, so the quota closest to expiring is spent first (use-it-or-lose-it). "listed" ranks members strictly in the order the pool lists them, skipping only a member that is currently refused, so a pool can pin one identity first and fall back to the others only while that one is refused.
  */
 export const PoolSchema = z.strictObject({
-  identities: z
-    .array(z.string().min(1).regex(new RegExp(`^${IDENTITY_NAME_PATTERN}$`)))
-    .min(1)
-    .refine((names) => new Set(names).size === names.length, { message: "pool members must be unique" }),
+  identities: z.array(PoolMemberSchema).min(1).refine((members) => new Set(members).size === members.length, { message: "pool members must be unique" }),
   preference: PoolPreferenceSchema.optional(),
 });
 export type Pool = z.infer<typeof PoolSchema>;

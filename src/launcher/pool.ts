@@ -1,9 +1,9 @@
 import type { Pool } from "../config/schema";
+import { loadIdentity } from "./identity";
 import type { LayoutPaths } from "../paths";
 import { formatAge } from "../usage/preflight";
-import { rankPoolFromStore, readStickyPick, recordStickyPick, type PoolPickFs } from "../usage/poolPick";
+import { PoolGraphError, rankPoolGraph, readStickyPick, recordStickyPick, type PoolPickFs } from "../usage/poolPick";
 import type { FarmFs, FsPort, LogPort } from "./ports";
-import { loadIdentity } from "./identity";
 
 /** The flags that continue or resume an earlier conversation, which belongs on the account it started on. */
 const RESUME_FLAGS: ReadonlySet<string> = new Set(["--continue", "-c", "--resume", "-r"]);
@@ -44,12 +44,6 @@ export type PoolResolution =
     }
   | { readonly ok: false; readonly message: string };
 
-/** A pool's members split by whether each is an identity that exists: a pool may outlive an identity it names, since removing an identity does not rewrite the pools that list it. */
-export function splitMembers(pool: Pool, paths: Pick<LayoutPaths, "identitiesDir">, fs: FsPort): { readonly present: readonly string[]; readonly missing: readonly string[] } {
-  const exists = (name: string): boolean => loadIdentity(paths.identitiesDir, name, fs) !== undefined;
-  return { present: pool.identities.filter(exists), missing: pool.identities.filter((name) => !exists(name)) };
-}
-
 /** Whether the arguments claude will receive continue or resume a conversation. Only tokens before a `--` terminator count: after it they belong to a command claude runs. */
 function isResuming(passthrough: readonly string[]): boolean {
   const end = passthrough.indexOf(TERMINATOR);
@@ -59,20 +53,13 @@ function isResuming(passthrough: readonly string[]): boolean {
 /**
  * Picks the identity a launch of pool `poolName` runs as.
  *
- * Members without an `identity.json` are skipped with a warning, since a pool may outlive an identity it names. When every remaining member is refused right now the launch is refused, naming the earliest return, unless `wait` is set, which sleeps until then and ranks again. The chosen member is recorded as this directory's last pick so the next launch here keeps its warm prompt cache.
+ * The pool is ranked with everything it nests, each pool under its own preference. Members without an `identity.json` are skipped with a warning, since a pool may outlive an identity it names; a nested member naming an undefined pool or a cycle (config edited since it was written) refuses the launch. When every remaining member is refused right now the launch is refused, naming the earliest return, unless `wait` is set, which sleeps until then and ranks again. The chosen member is recorded as this directory's last pick so the next launch here keeps its warm prompt cache.
  */
 export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
   const { poolName, log } = params;
   const pool = params.pools?.[poolName];
   if (pool === undefined) {
     return { ok: false, message: `agent-shim: no pool named "${poolName}" (selected via ${params.selectedVia}). Run \`agent-shim pool add ${poolName} --identity <name>...\` first.` };
-  }
-  const { present: identities, missing } = splitMembers(pool, params.paths, params.fs);
-  for (const name of missing) {
-    log.warn(`agent-shim: pool "${poolName}" names identity "${name}", which does not exist; skipping it`);
-  }
-  if (identities.length === 0) {
-    return { ok: false, message: `agent-shim: no member of pool "${poolName}" is an existing identity.` };
   }
 
   const resuming = isResuming(params.passthrough);
@@ -81,18 +68,39 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
     log.warn(`agent-shim: ${stickyRead.problem}; ignoring the last-pick record`);
   }
 
+  const warned = new Set<string>();
   for (;;) {
     const nowMs = params.now();
-    const ranking = rankPoolFromStore({
-      fs: params.usageFs,
-      paths: params.paths,
-      identities,
-      nowMs,
-      resuming,
-      ...(pool.preference === undefined ? {} : { preference: pool.preference }),
-      ...(stickyRead.sticky === undefined ? {} : { sticky: stickyRead.sticky }),
-    });
-    const { pick, earliestReturn } = ranking;
+    let graph;
+    try {
+      graph = rankPoolGraph({
+        fs: params.usageFs,
+        paths: params.paths,
+        pools: params.pools ?? {},
+        poolName,
+        nowMs,
+        resuming,
+        identityExists: (name) => loadIdentity(params.paths.identitiesDir, name, params.fs) !== undefined,
+        ...(stickyRead.sticky === undefined ? {} : { sticky: stickyRead.sticky }),
+      });
+    } catch (error) {
+      if (error instanceof PoolGraphError) {
+        return { ok: false, message: `agent-shim: ${error.message}` };
+      }
+      throw error;
+    }
+    for (const gone of graph.missing) {
+      const key = `${gone.pool}:${gone.identity}`;
+      if (!warned.has(key)) {
+        warned.add(key);
+        log.warn(`agent-shim: pool "${gone.pool}" names identity "${gone.identity}", which does not exist; skipping it`);
+      }
+    }
+    // Only identity entries can fail to contribute (a nested entry always contributes a pick or a refusal), so an empty ranking means every member named an identity that does not exist.
+    if (graph.ranking.candidates.length === 0) {
+      return { ok: false, message: `agent-shim: no member of pool "${poolName}" is an existing identity.` };
+    }
+    const { pick, earliestReturn } = graph.ranking;
     if (pick !== undefined) {
       recordStickyPick(params.usageFs, params.paths.usagePicksFile, params.cwd, pick.identity, nowMs);
       return { ok: true, identity: pick.identity, explanation: `pool ${poolName}: ${pick.reasons.slice(0, REASONS_LOGGED).join("; ")}` };
