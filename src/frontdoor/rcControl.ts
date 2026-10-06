@@ -68,6 +68,8 @@ export interface RcControlHandlerDeps {
   readonly mcpAuthenticate: (sessionId: string, serverName: string, redirectUri: string) => Promise<RcEventWriteResult>;
   /** The mcp-oauth-callback-url operation, already wired to the tracker and the door's API-host dial. */
   readonly mcpOAuthCallbackUrl: (sessionId: string, serverName: string, callbackUrl: string) => Promise<RcEventWriteResult>;
+  /** The teleport operation, already wired to the tracker and the door's API-host dial. */
+  readonly teleport: (sessionId: string, marker: string) => Promise<RcEventWriteResult>;
 }
 
 /** Writes one JSON answer: the status, the object, and the connection closed after it. */
@@ -268,6 +270,15 @@ export function createRcControlHandler(deps: RcControlHandlerDeps): (request: In
         const serverName = bodyString(body, "serverName");
         const callbackUrl = bodyString(body, "callbackUrl");
         return session === undefined || serverName === undefined || callbackUrl === undefined ? { error: "the mcp-oauth-callback-url body must be JSON naming a non-empty session id, server name, and callback URL" } : { session, run: async () => await deps.mcpOAuthCallbackUrl(session, serverName, callbackUrl) };
+      },
+    },
+    {
+      name: "teleport",
+      path: "teleport",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        const marker = bodyString(body, "marker");
+        return session === undefined || marker === undefined ? { error: "the teleport body must be JSON naming a non-empty session id and marker" } : { session, run: async () => await deps.teleport(session, marker) };
       },
     },
   ];
@@ -582,6 +593,8 @@ export interface FrontDoorRcControl {
   readonly mcpAuthenticate: (sessionId: string, serverName: string, redirectUri: string) => Promise<RcEventWriteResult>;
   /** Hands one MCP server's OAuth callback to a session's worker, returning the minted request id and the sequence numbers, or the verbose failure. */
   readonly mcpOAuthCallbackUrl: (sessionId: string, serverName: string, callbackUrl: string) => Promise<RcEventWriteResult>;
+  /** Sends one teleport marker into a session over the teleport-events channel, returning the sequence numbers the service assigned, or the verbose failure. */
+  readonly teleport: (sessionId: string, marker: string) => Promise<RcEventWriteResult>;
 }
 
 /** Builds the control client: every request presents the control token, and a non-2xx answer becomes the verbose message the door sent with it. */
@@ -724,5 +737,7 @@ export function frontDoorRcControl(transport: RcControlTransport, token: string)
       await writeOf(`${CONTROL_PATH_PREFIX}/mcp-authenticate`, JSON.stringify({ session: sessionId, serverName, redirectUri }), (status, message) => `authenticating MCP server ${serverName} on ${sessionId} failed (HTTP ${String(status)}): ${message}`),
     mcpOAuthCallbackUrl: async (sessionId, serverName, callbackUrl) =>
       await writeOf(`${CONTROL_PATH_PREFIX}/mcp-oauth-callback-url`, JSON.stringify({ session: sessionId, serverName, callbackUrl }), (status, message) => `handing MCP server ${serverName}'s OAuth callback to ${sessionId} failed (HTTP ${String(status)}): ${message}`),
+    teleport: async (sessionId, marker) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/teleport`, JSON.stringify({ session: sessionId, marker }), (status, message) => `teleporting a marker into ${sessionId} failed (HTTP ${String(status)}): ${message}`),
   };
 }

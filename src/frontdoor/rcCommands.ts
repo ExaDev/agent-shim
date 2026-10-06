@@ -444,6 +444,19 @@ export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void 
 
   withExamples(
     rc
+      .command("teleport")
+      .description("Send one teleport marker into an observed session over the teleport-events channel, the write half the cloud UI's ultrapan path owns on the real service. The marker rides the SDK user-message shape, the line the teleport relay anchors on.")
+      .requiredOption("--session <id>", "The cse_ session id, as `frontdoor rc list` shows it.")
+      .requiredOption("--marker <text>", "The marker text, the string content the teleport relay anchors on.")
+      .option("--json", "Print the delivery result as JSON.")
+      .action(async (options: Readonly<{ session: string; marker: string; json?: boolean }>) => {
+        reportControlWrite(`teleported a marker into the session`, options.session, await frontDoorRcControlFromState(realFarmFs, paths).teleport(options.session, options.marker), options.json, { marker: options.marker });
+      }),
+    ['agent-shim frontdoor rc teleport --session cse_00000000-0000-4000-8000-000000000000 --marker "__ULTRAPAN_TELEPORT_LOCAL__"'],
+  );
+
+  withExamples(
+    rc
       .command("watch")
       .description("Print the observed sessions' client read stream events as they arrive, the approvals the door's held stream receives above all, until Ctrl-C leaves. Read-only.")
       .argument("[session]", "One cse_ session id, as `frontdoor rc list` shows it; every observed session when omitted.")

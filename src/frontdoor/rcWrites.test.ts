@@ -43,6 +43,8 @@ import {
   setRcSessionPermissionMode,
   submitRcSessionMcpOAuthCallbackUrl,
   suggestRcSessionFiles,
+  teleportRcSession,
+  buildRcMarkReadBody,
   type RcEventDial,
 } from "./rcWrites";
 
@@ -96,6 +98,16 @@ function trackerWithClock(startAt = CLOCK_START_MS): { readonly tracker: RcSessi
     } };
 }
 
+/**
+ * Completes one writeEvents fake into a whole dial: the teleport half stands as a refusal that names the test, because no non-teleport operation may ever post to the teleport path (the one write the family addresses elsewhere), so an unexpected call fails the test loudly instead of answering as though the path were the events path. The teleport operation's own tests pass a recording teleport half of their own.
+ */
+function dialOf(writeEvents: RcEventDial["writeEvents"]): RcEventDial {
+  return {
+    writeEvents,
+    writeTeleportEvents: async () => await Promise.reject(new Error("no operation but the teleport write posts to the teleport-events path")),
+  };
+}
+
 describe("the injected event's payload and answer parsing", () => {
   it("builds the Agent SDK user-message payload inside the documented write body", () => {
     const payload = buildRcUserMessagePayload("uuid-1", SESSION_ID, "run the tests");
@@ -147,12 +159,10 @@ describe("injectRcUserMessage over an injected dial", () => {
     const { tracker } = trackerWithClock();
     exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat", headers: { "anthropic-version": "2023-06-01", "anthropic-client-platform": "web_claude_ai" } }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
     const dialled: { sessionId: string; headers: Record<string, string>; body: string }[] = [];
-    const dial: RcEventDial = {
-      writeEvents: async (sessionId, headers, body) => {
-        dialled.push({ sessionId, headers: { ...headers }, body });
-        return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
-      },
-    };
+    const dial = dialOf(async (sessionId, headers, body) => {
+      dialled.push({ sessionId, headers: { ...headers }, body });
+      return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
+    });
     const result = await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid: () => "uuid-2" }, SESSION_ID, "run the tests");
     expect(result).toEqual({ ok: true, sequenceNums: [SECOND_SEQUENCE_NUM] });
     expect(dialled).toEqual([
@@ -167,11 +177,7 @@ describe("injectRcUserMessage over an injected dial", () => {
   it("refuses a write verbosely when only worker calls were observed, since the worker JWT does not authorise the client half", async () => {
     const { tracker } = trackerWithClock();
     exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }).respond(HTTP_STATUS.ok);
-    const dial: RcEventDial = {
-      writeEvents: async () => {
-        return await Promise.resolve({ status: HTTP_STATUS.ok, body: "{}" });
-      },
-    };
+    const dial = dialOf(async () => await Promise.resolve({ status: HTTP_STATUS.ok, body: "{}" }));
     const result = await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid: () => "uuid-4" }, SESSION_ID, "hello");
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -182,11 +188,7 @@ describe("injectRcUserMessage over an injected dial", () => {
 
   it("refuses an unobserved session and reports an unreachable API host, both verbosely and without throwing", async () => {
     const { tracker } = trackerWithClock();
-    const dial: RcEventDial = {
-      writeEvents: async () => {
-        return await Promise.reject(new Error("ECONNREFUSED"));
-      },
-    };
+    const dial = dialOf(async () => await Promise.reject(new Error("ECONNREFUSED")));
     const unknown = await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid: () => "uuid-3" }, SESSION_ID, "hello");
     expect(unknown.ok).toBe(false);
     if (!unknown.ok) {
@@ -222,12 +224,10 @@ describe("the control_response payload and answerRcControlRequest over an inject
     const dialled: { sessionId: string; headers: Record<string, string>; body: string }[] = [];
     return {
       dialled,
-      dial: {
-        writeEvents: async (sessionId, headers, body) => {
-          dialled.push({ sessionId, headers: { ...headers }, body });
-          return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
-        },
-      },
+      dial: dialOf(async (sessionId, headers, body) => {
+        dialled.push({ sessionId, headers: { ...headers }, body });
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
+      }),
     };
   };
 
@@ -276,7 +276,7 @@ describe("the control_response payload and answerRcControlRequest over an inject
       expect(unknownRequest.message).toContain("not observed control request");
       expect(unknownRequest.message).toContain("pending");
     }
-    const refusingDial: RcEventDial = { writeEvents: async () => await Promise.reject(new Error("ECONNREFUSED")) };
+    const refusingDial = dialOf(async () => await Promise.reject(new Error("ECONNREFUSED")));
     const unreachable = await answerRcControlRequest({ ...deps, dial: refusingDial }, SESSION_ID, REQUEST_ID, { approve: true, message: undefined });
     expect(unreachable.ok).toBe(false);
     if (!unreachable.ok) {
@@ -307,12 +307,10 @@ describe("the control_request payloads and the three client-originated operation
     const dialled: { sessionId: string; headers: Record<string, string>; body: string }[] = [];
     return {
       dialled,
-      dial: {
-        writeEvents: async (sessionId, headers, body) => {
-          dialled.push({ sessionId, headers: { ...headers }, body });
-          return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
-        },
-      },
+      dial: dialOf(async (sessionId, headers, body) => {
+        dialled.push({ sessionId, headers: { ...headers }, body });
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
+      }),
     };
   };
   /** The deps every one of the three operations runs with in these tests. */
@@ -398,7 +396,7 @@ describe("the control_request payloads and the three client-originated operation
 
   it("reports an unreachable API host verbosely and without throwing", async () => {
     const { tracker } = trackerWithSession();
-    const refusingDial: RcEventDial = { writeEvents: async () => await Promise.reject(new Error("ECONNREFUSED")) };
+    const refusingDial = dialOf(async () => await Promise.reject(new Error("ECONNREFUSED")));
     const deps = depsOf(tracker, refusingDial);
     for (const refused of [
       await interruptRcSession(deps, SESSION_ID),
@@ -438,12 +436,10 @@ describe("the wider client-half verb family: the SDK's remaining control subtype
     const dialled: { sessionId: string; headers: Record<string, string>; body: string }[] = [];
     return {
       dialled,
-      dial: {
-        writeEvents: async (sessionId, headers, body) => {
-          dialled.push({ sessionId, headers: { ...headers }, body });
-          return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
-        },
-      },
+      dial: dialOf(async (sessionId, headers, body) => {
+        dialled.push({ sessionId, headers: { ...headers }, body });
+        return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
+      }),
     };
   };
   const depsOf = (tracker: RcSessionTracker, dial: RcEventDial) => ({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid: () => MINTED_ID });
@@ -591,7 +587,7 @@ describe("the wider client-half verb family: the SDK's remaining control subtype
 
   it("reports an unreachable API host verbosely and without throwing, whatever the verb", async () => {
     const { tracker } = trackerWithSession();
-    const refusingDial: RcEventDial = { writeEvents: async () => await Promise.reject(new Error("ECONNREFUSED")) };
+    const refusingDial = dialOf(async () => await Promise.reject(new Error("ECONNREFUSED")));
     const deps = depsOf(tracker, refusingDial);
     for (const result of [
       await endRcSession(deps, SESSION_ID, undefined),
@@ -606,5 +602,85 @@ describe("the wider client-half verb family: the SDK's remaining control subtype
         expect(result.message).toContain("ECONNREFUSED");
       }
     }
+  });
+});
+
+describe("the teleport write and the read-receipt body", () => {
+  /** A dial recording both halves separately, so a test can prove which path a write took: the events half answers, and the teleport half answers, and each list names only its own calls. */
+  const recordingBothHalves = (): { readonly dial: RcEventDial; readonly events: readonly string[]; readonly teleports: readonly string[] } => {
+    const events: string[] = [];
+    const teleports: string[] = [];
+    return {
+      events,
+      teleports,
+      dial: {
+        writeEvents: async (_sessionId, _headers, body) => {
+          events.push(body);
+          return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: FIRST_SEQUENCE_NUM }] }) });
+        },
+        writeTeleportEvents: async (_sessionId, _headers, body) => {
+          teleports.push(body);
+          return await Promise.resolve({ status: HTTP_STATUS.ok, body: JSON.stringify({ results: [{ sequence_num: SECOND_SEQUENCE_NUM }] }) });
+        },
+      },
+    };
+  };
+  /** One tracker holding a session with the OAuth-kind credential, the state every teleport write runs against. */
+  const trackerWithObservedSession = (): { readonly tracker: RcSessionTracker } => {
+    const { tracker } = trackerWithClock();
+    exchange(tracker, { method: "POST", url: "/v1/code/sessions", authorization: "Bearer sk-ant-oat", headers: { "anthropic-version": "2023-06-01" } }).respond(HTTP_STATUS.ok, JSON.stringify({ session: { id: SESSION_ID } }));
+    return { tracker };
+  };
+  const MARKER = "__ULTRAPAN_TELEPORT_LOCAL__";
+  const teleportDeps = (tracker: RcSessionTracker, dial: RcEventDial): { credentialOf: RcSessionTracker["credentialOf"]; noteSequenceNums: RcSessionTracker["noteSequenceNums"]; dial: RcEventDial; newUuid: () => string } => ({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial, newUuid: () => "marker-uuid" });
+
+  it("builds the read-receipt body in the CLI's own two shapes: one event, or the whole session", () => {
+    expect(buildRcMarkReadBody("event-1")).toEqual({ event_id: "event-1" });
+    expect(buildRcMarkReadBody(undefined)).toEqual({});
+  });
+
+  it("sends the teleport marker to the teleport-events path alone, as the user message the relay anchors on", async () => {
+    const { tracker } = trackerWithObservedSession();
+    const { dial, events, teleports } = recordingBothHalves();
+    const result = await teleportRcSession(teleportDeps(tracker, dial), SESSION_ID, MARKER);
+    expect(result).toEqual({ ok: true, sequenceNums: [SECOND_SEQUENCE_NUM] });
+    expect(teleports).toEqual([JSON.stringify(buildRcEventWriteBody(buildRcUserMessagePayload("marker-uuid", SESSION_ID, MARKER)))]);
+    expect(events).toEqual([]);
+  });
+
+  it("refuses an empty marker and an unreachable host, both verbosely and without a teleport dial landing", async () => {
+    const { tracker } = trackerWithObservedSession();
+    const { dial, teleports } = recordingBothHalves();
+    const deps = teleportDeps(tracker, dial);
+    const empty = await teleportRcSession(deps, SESSION_ID, "");
+    expect(empty.ok).toBe(false);
+    if (!empty.ok) {
+      expect(empty.message).toContain("non-empty marker");
+    }
+    const unreachable = await teleportRcSession({ ...deps, dial: { writeEvents: deps.dial.writeEvents, writeTeleportEvents: async () => await Promise.reject(new Error("ECONNREFUSED")) } }, SESSION_ID, MARKER);
+    expect(unreachable.ok).toBe(false);
+    if (!unreachable.ok) {
+      expect(unreachable.message).toContain("could not reach the API host");
+      expect(unreachable.message).toContain(`teleport a marker into session ${SESSION_ID}`);
+    }
+    expect(teleports).toEqual([]);
+  });
+
+  it("refuses the teleport write for an unobserved session and a worker-only credential, both verbosely and without dialling", async () => {
+    const { tracker } = trackerWithClock();
+    const { dial, teleports } = recordingBothHalves();
+    const deps = teleportDeps(tracker, dial);
+    const unobserved = await teleportRcSession(deps, SESSION_ID, MARKER);
+    expect(unobserved.ok).toBe(false);
+    if (!unobserved.ok) {
+      expect(unobserved.message).toContain("has not observed Remote Control session");
+    }
+    exchange(tracker, { method: "POST", url: HEARTBEAT_PATH, authorization: "Bearer eyJhbGciOiJFUzI1NiJ9.worker.jwt" }).respond(HTTP_STATUS.ok);
+    const workerOnly = await teleportRcSession(deps, SESSION_ID, MARKER);
+    expect(workerOnly.ok).toBe(false);
+    if (!workerOnly.ok) {
+      expect(workerOnly.message).toContain("no claude.ai OAuth bearer has been observed");
+    }
+    expect(teleports).toEqual([]);
   });
 });

@@ -23,6 +23,7 @@ import {
   RcListOutputSchema,
   RcMcpAuthenticateInputSchema,
   RcMcpOAuthCallbackUrlInputSchema,
+  RcTeleportInputSchema,
   RcMcpReconnectInputSchema,
   RcMcpStatusInputSchema,
   RcPendingOutputSchema,
@@ -95,6 +96,8 @@ export interface RcApiDeps {
   readonly mcpAuthenticate: (sessionId: string, serverName: string, redirectUri: string) => Promise<RcEventWriteResult>;
   /** The mcp-oauth-callback-url operation, already wired to the tracker and the door's API-host dial. */
   readonly mcpOAuthCallbackUrl: (sessionId: string, serverName: string, callbackUrl: string) => Promise<RcEventWriteResult>;
+  /** The teleport operation, already wired to the tracker and the door's API-host dial. */
+  readonly teleport: (sessionId: string, marker: string) => Promise<RcEventWriteResult>;
   /** The client attachment's fan-out, whose events the subscription yields. */
   readonly fanout: RcEventFanout;
 }
@@ -226,6 +229,10 @@ export function createRcApiRouter(deps: RcApiDeps) {
         .input(RcMcpOAuthCallbackUrlInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpOAuthCallbackUrl(input.session, input.serverName, input.callbackUrl)) })),
+      teleport: authed
+        .input(RcTeleportInputSchema)
+        .output(RcWriteOutputSchema)
+        .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.teleport(input.session, input.marker)) })),
       subscribe: authed
         .input(RcSessionQuerySchema)
         .output(eventIterator(RcStreamEventSchema))

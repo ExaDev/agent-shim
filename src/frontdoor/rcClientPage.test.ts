@@ -242,6 +242,7 @@ describe("the page's script against the door's protocol", () => {
       mcpReconnect: unexercised,
       mcpAuthenticate: unexercised,
       mcpOAuthCallbackUrl: unexercised,
+      teleport: unexercised,
       fanout: { publish: () => undefined, subscribe: () => () => undefined },
     });
     const server = http.createServer((request, response) => {

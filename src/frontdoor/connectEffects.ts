@@ -9,6 +9,7 @@ import * as tls from "node:tls";
 import { HTTP_STATUS } from "../codex/http";
 import { CONNECT_INTERCEPT_HOST, HTTPS_PORT, HTTP_BAD_GATEWAY, forwardableHeaders, type ConnectEffects, type ConnectListenerHandle } from "./connect";
 import type { RcDialAnswer, RcEventDial } from "./rcWrites";
+import { buildRcMarkReadBody } from "./rcWrites";
 import type { RcStreamDial } from "./rcStream";
 import { upstreamChunks } from "./server";
 
@@ -210,38 +211,40 @@ export interface RcDialTarget {
  */
 export function realRcEventDial(target: RcDialTarget = { host: CONNECT_INTERCEPT_HOST, port: HTTPS_PORT }): RcEventDial {
   const agent = new ExemptTlsAgent();
-  return {
-    writeEvents: async (sessionId, headers, body) =>
-      await new Promise<RcDialAnswer>((resolve, reject) => {
-        const options: https.RequestOptions = {
-          host: target.host,
-          port: target.port,
-          method: "POST",
-          path: `/v1/code/sessions/${encodeURIComponent(sessionId)}/events`,
-          // The Host header names the host whose API this is, not the address dialled: a redirected test dials a loopback stand-in while still speaking to the API host by name, exactly as the forwarded paths present their SNI.
-          headers: { ...headers, host: target.servername ?? target.host, "content-length": String(Buffer.byteLength(body, "utf8")) },
-          agent,
-        };
-        // The request's own TLS facts ride in the options (a stand-in's servername, its trust anchors, its verification stance), exactly as the forwarding target's do.
-        options.servername = target.servername ?? target.host;
-        if (target.ca !== undefined) {
-          options.ca = [...target.ca];
-        }
-        if (target.rejectUnauthorized !== undefined) {
-          options.rejectUnauthorized = target.rejectUnauthorized;
-        }
-        const request = https.request(options, (response) => {
-          const chunks: Buffer[] = [];
-          response.on("data", (chunk: Buffer) => {
-            chunks.push(chunk);
-          });
-          response.on("end", () => {
-            resolve({ status: response.statusCode ?? HTTP_BAD_GATEWAY, body: Buffer.concat(chunks).toString("utf8") });
-          });
+  const post = async (path: string, headers: Readonly<Record<string, string>>, body: string): Promise<RcDialAnswer> =>
+    await new Promise<RcDialAnswer>((resolve, reject) => {
+      const options: https.RequestOptions = {
+        host: target.host,
+        port: target.port,
+        method: "POST",
+        path,
+        // The Host header names the host whose API this is, not the address dialled: a redirected test dials a loopback stand-in while still speaking to the API host by name, exactly as the forwarded paths present their SNI.
+        headers: { ...headers, host: target.servername ?? target.host, "content-length": String(Buffer.byteLength(body, "utf8")) },
+        agent,
+      };
+      // The request's own TLS facts ride in the options (a stand-in's servername, its trust anchors, its verification stance), exactly as the forwarding target's do.
+      options.servername = target.servername ?? target.host;
+      if (target.ca !== undefined) {
+        options.ca = [...target.ca];
+      }
+      if (target.rejectUnauthorized !== undefined) {
+        options.rejectUnauthorized = target.rejectUnauthorized;
+      }
+      const request = https.request(options, (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => {
+          chunks.push(chunk);
         });
-        request.once("error", reject);
-        request.end(body);
-      }),
+        response.on("end", () => {
+          resolve({ status: response.statusCode ?? HTTP_BAD_GATEWAY, body: Buffer.concat(chunks).toString("utf8") });
+        });
+      });
+      request.once("error", reject);
+      request.end(body);
+    });
+  return {
+    writeEvents: async (sessionId, headers, body) => await post(`/v1/code/sessions/${encodeURIComponent(sessionId)}/events`, headers, body),
+    writeTeleportEvents: async (sessionId, headers, body) => await post(`/v1/code/sessions/${encodeURIComponent(sessionId)}/teleport-events`, headers, body),
   };
 }
 
@@ -269,6 +272,7 @@ export function lateRcEventDial(resolve: () => RcDialTarget | undefined): RcEven
   };
   return {
     writeEvents: async (sessionId, headers, body) => await dialFor().writeEvents(sessionId, headers, body),
+    writeTeleportEvents: async (sessionId, headers, body) => await dialFor().writeTeleportEvents(sessionId, headers, body),
   };
 }
 
@@ -285,7 +289,8 @@ export function lateRcStreamDial(resolve: () => RcDialTarget | undefined): RcStr
     return built.dial;
   };
   return {
-    announcePresence: async (sessionId, headers, clientId) => await dialFor().announcePresence(sessionId, headers, clientId),
+    announcePresence: async (sessionId, headers, clientId, clear) => await dialFor().announcePresence(sessionId, headers, clientId, clear),
+    markRead: async (sessionId, headers, eventId) => await dialFor().markRead(sessionId, headers, eventId),
     openStream: async (sessionId, headers, resume, signal) => await dialFor().openStream(sessionId, headers, resume, signal),
   };
 }
@@ -330,9 +335,16 @@ export function realRcStreamDial(target: RcDialTarget = { host: CONNECT_INTERCEP
     return Buffer.concat(chunks).toString("utf8");
   };
   return {
-    announcePresence: async (sessionId, headers, clientId) => {
-      const body = JSON.stringify({ client_id: clientId, clear: false });
+    announcePresence: async (sessionId, headers, clientId, clear) => {
+      // The presence body the CLI's own sender posts (verified in the 2.1.289 bundle): the client id and the clear flag, the flag a pulse omits-by-false and a teardown posts true.
+      const body = JSON.stringify({ client_id: clientId, clear });
       const { status, response } = await request("POST", `/v1/code/sessions/${encodeURIComponent(sessionId)}/client/presence`, { ...headers, "content-type": "application/json" }, body, new AbortController().signal);
+      return { status, body: await readAll(response) };
+    },
+    markRead: async (sessionId, headers, eventId) => {
+      // The receipt body the CLI's own remote-client half posts (`markSessionRead`, verified in the 2.1.289 bundle), built by the one builder so every surface posts the same shape.
+      const body = JSON.stringify(buildRcMarkReadBody(eventId));
+      const { status, response } = await request("POST", `/v1/code/sessions/${encodeURIComponent(sessionId)}/mark_read`, { ...headers, "content-type": "application/json" }, body, new AbortController().signal);
       return { status, body: await readAll(response) };
     },
     openStream: async (sessionId, headers, resume, signal) => {

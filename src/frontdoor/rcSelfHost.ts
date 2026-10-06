@@ -3,6 +3,7 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
+import { RC_SOURCE_CLIENT, RC_SOURCE_WORKER, pageOfRcChannel, serveRcClientChannels, serveRcCompatSessions } from "./rcSelfHostEndpoints";
 import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetcher } from "./rcWebFetch";
 import type { FrontDoorRoute, RoutedRequest, RoutedResponse } from "./route";
 import type { RcStreamEnvelope } from "./rcSchemas";
@@ -35,7 +36,7 @@ export const RC_SELF_HOST_SCOPE_LIST: readonly string[] = ["user:profile", "user
 /** The path prefix of the whole session family this service serves, the same prefix the tracker observes. */
 const RC_SESSIONS_PATH_PREFIX = "/v1/code/sessions";
 
-/** The compatibility list the CLI's claude.ai-side session picker reads (`fetchCodeSessionsFromSessionsAPI` in its source, under the `ccr-byoc-2025-07-29` beta), answered locally so the picker needs no claude.ai behind it. */
+/** The compatibility session family the CLI's claude.ai-side session manager speaks (`fetchCodeSessionsFromSessionsAPI` and the Get/Update/Archive/Unarchive dispatch in its source, under the `ccr-byoc-2025-07-29` beta), served against the door's own sessions so the manager needs no claude.ai behind it. */
 const RC_COMPAT_SESSIONS_PATH = "/v1/sessions";
 
 /** The id prefix the protocol's own clients validate, so the service mints ids of the same shape. */
@@ -89,12 +90,6 @@ const RC_SELF_HOST_WORKER_EPOCH = 1;
 
 /** The SSE event name both streams dispatch their envelopes under: the name the door's own client-half parser accepts and the CLI's worker transport demands. */
 const RC_STREAM_EVENT_NAME = "client_event";
-
-/** The envelope source for events the worker wrote (the CLI's half), the value the tracker's trust rule reads. */
-const RC_SOURCE_WORKER = "worker";
-
-/** The envelope source for events a client wrote: the value observed on the live rig's stream for the door's own injected user event. */
-const RC_SOURCE_CLIENT = "client";
 
 /** The response header the protocol uses to tell a worker it is no longer the live one; sent with the epoch refusal so a superseded worker shuts down by its own rules instead of retrying. */
 const CONFLICT_REASON_HEADER = "x-ccr-conflict-reason";
@@ -164,7 +159,8 @@ function bearerOf(headers: Readonly<IncomingHttpHeaders>): string | undefined {
 /**
  * Why an Authorization header did not authenticate, as a fact about its shape rather than its value: no header at all, a scheme word that is not Bearer, the Bearer scheme word carried twice, or a well-formed bearer that is simply not one this surface minted. The refusal names the class and nothing else, so a caller with a malformed presentation is told that (a fact it can act on without knowing any credential) instead of a mismatch it will go and disprove (ExaDev/agent-shim#264: a rig proof that prefixed the scheme word onto the whole header value a persisted session record holds presented a different credential, and the one-message refusal sent the investigation fingerprinting three stores to prove a match that was never in question).
  */
-type PresentationRefusal = "absent" | "not-a-bearer" | "doubled-scheme-word" | "unrecognised";
+/** The refusal classes an Authorization presentation can fall into; exported as the type the split-out compatibility family's refusal threading carries. */
+export type PresentationRefusal = "absent" | "not-a-bearer" | "doubled-scheme-word" | "unrecognised";
 
 /** Classifies one refused presentation by shape alone. The doubled scheme word is its own class because it is the natural malformation of this door's own persisted shape: the credential a session's persisted record holds is the whole header value, scheme word included, so a caller that adds `Bearer ` to it presents `Bearer Bearer <token>`, which strips to `Bearer <token>` and matches nothing. */
 function presentationRefusal(headers: Readonly<IncomingHttpHeaders>): PresentationRefusal {
@@ -199,9 +195,9 @@ interface StoredEvent {
   readonly storedAt: number;
 }
 
-/** One internal event the worker filed through its own channel, replayed only through that channel's paginated read. */
+/** One internal event the worker filed through its own channel, replayed only through that channel's paginated read: the id the reader echoes back as its `cursor` or `after_event_id` anchor, beside the event's own body. */
 interface StoredInternalEvent {
-  readonly cursor: string;
+  readonly eventId: string;
   readonly body: Record<string, unknown>;
 }
 
@@ -213,8 +209,8 @@ interface StreamSink {
   readonly retire: () => void;
 }
 
-/** One self-hosted session's whole state, in memory only. */
-interface SelfHostSession {
+/** One self-hosted session's whole state, in memory only. Exported as the type the split-out endpoint handlers in `rcSelfHostEndpoints.ts` act on. */
+export interface SelfHostSession {
   readonly id: string;
   readonly createdAt: number;
   title: string | undefined;
@@ -227,6 +223,10 @@ interface SelfHostSession {
   readonly workerStreams: Set<StreamSink>;
   readonly clientStreams: Set<StreamSink>;
   readonly internalEvents: StoredInternalEvent[];
+  /**
+   * The clients the presence channel has announced, by id, each with the instant of its last pulse. The CLI's own sender posts one body shape for every client (`{client_id, clear}`, verified in the 2.1.289 bundle), so the registry is keyed by exactly that id; a clear deletes, and the retention sweep prunes an id no pulse has refreshed for a retention window, the same bound the session's own traffic answers to.
+   */
+  readonly clients: Map<string, number>;
   workerStatus: string | undefined;
   externalMetadata: Record<string, unknown> | undefined;
   lastTrafficAt: number;
@@ -331,7 +331,7 @@ export interface RcSelfHostSurface {
 export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface {
   const sessions = new Map<string, SelfHostSession>();
 
-  /** Sweeps what retention owns: events past the resume window, and sessions no stream holds and no traffic has touched for the same window. */
+  /** Sweeps what retention owns: events past the resume window, presence registrations no pulse has refreshed for the same window, and sessions no stream holds and no traffic has touched for the same window. */
   const sweep = (): void => {
     const now = deps.now();
     for (const session of sessions.values()) {
@@ -340,6 +340,11 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
         const uuid = dropped === undefined ? undefined : nonEmptyString(dropped.payload, "uuid");
         if (uuid !== undefined) {
           session.seenPayloadUuids.delete(uuid);
+        }
+      }
+      for (const [clientId, lastSeenAt] of session.clients) {
+        if (now - lastSeenAt > RC_SELF_HOST_RETENTION_MS) {
+          session.clients.delete(clientId);
         }
       }
       if (session.workerStreams.size === 0 && session.clientStreams.size === 0 && now - session.lastTrafficAt > RC_SELF_HOST_RETENTION_MS) {
@@ -442,8 +447,10 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     response.end();
   };
 
-  /** Files one event and delivers it to exactly the streams whose half it belongs on: assigns the next sequence number, records it, and returns the write answer's facts. */
-  const publish = (session: SelfHostSession, source: string, payload: Record<string, unknown>): { readonly sequenceNum: number; readonly eventId: string; readonly duplicate: boolean } => {
+  /**
+   * Files one event and delivers it to exactly the streams whose half it belongs on: assigns the next sequence number, records it, and returns the write answer's facts. The worker receives client-originated events (the half the `toWorker` rule names), which every ordinary client write satisfies through its `client` source; a receipt is the one publish whose source is a reading client's own id instead, so it passes the rule explicitly rather than through the default.
+   */
+  const publish = (session: SelfHostSession, source: string, payload: Record<string, unknown>, toWorker: boolean = source === RC_SOURCE_CLIENT): { readonly sequenceNum: number; readonly eventId: string; readonly duplicate: boolean } => {
     const uuid = nonEmptyString(payload, "uuid");
     const duplicate = uuid !== undefined && session.seenPayloadUuids.has(uuid);
     session.sequenceNum += 1;
@@ -452,9 +459,9 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
       eventId: uuid ?? deps.newUuid(),
       source,
       // The one enrichment the real service was observed making on the live rig's stream: the wall-clock instant it took the write. The worker's handler ignores it; the door's own parser forwards it verbatim.
-      payload: source === RC_SOURCE_CLIENT ? { ...payload, server_received_wall_ms: deps.now() } : payload,
+      payload: source === RC_SOURCE_WORKER ? payload : { ...payload, server_received_wall_ms: deps.now() },
       createdAt: new Date(deps.now()).toISOString(),
-      toWorker: source === RC_SOURCE_CLIENT,
+      toWorker,
       storedAt: deps.now(),
     };
     session.events.push(event);
@@ -515,8 +522,27 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     session.lastTrafficAt = deps.now();
 
     if (tail === "") {
+      if (method === "PATCH" || method === "PUT") {
+        const refusal = credentialRefusal(request.headers);
+        if (refusal !== undefined) {
+          await unauthorized(response, refusal);
+          return;
+        }
+        // The session update the CLI's own title writer performs (`updateSessionTitle`, verified in the 2.1.289 bundle: a PUT of `{title}` to this very path), served for the PATCH the compat family's v1 update uses too, because the two verbs carry the same body on the two URL forms of one operation.
+        const body = parseJsonObject(await readBody(request.body, CONTROL_BODY_CAP_BYTES));
+        const title = nonEmptyString(body, "title");
+        if (title === undefined) {
+          await answerJson(response, HTTP_STATUS.badRequest, { type: "error", error: { type: "invalid_request_error", message: "a session update is JSON naming a non-empty title" } });
+          return;
+        }
+        session.title = title;
+        session.lastTrafficAt = deps.now();
+        deps.log?.(`rc selfhost ${session.id}: retitled at its client's request`);
+        await answerJson(response, HTTP_STATUS.ok, {});
+        return;
+      }
       if (method !== "GET") {
-        await answerJson(response, HTTP_STATUS.methodNotAllowed, { type: "error", error: { type: "api_error", message: "the session read is a GET" } });
+        await answerJson(response, HTTP_STATUS.methodNotAllowed, { type: "error", error: { type: "api_error", message: "the session read is a GET, and its update a PATCH or PUT" } });
         return;
       }
       await answerJson(response, HTTP_STATUS.ok, { session: { id: session.id, title: session.title, created_at: new Date(session.createdAt).toISOString(), status: "active" } });
@@ -640,19 +666,26 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
         }
         for (const event of events) {
           if (isRecord(event)) {
-            session.internalEvents.push({ cursor: deps.newUuid(), body: event });
+            session.internalEvents.push({ eventId: deps.newUuid(), body: event });
           }
         }
         await answerJson(response, HTTP_STATUS.ok, {});
         return;
       }
       if (workerTail === "internal-events" && method === "GET") {
-        // The channel's own paginated read: every stored internal event after the caller's cursor, with the protocol's `next_cursor` shape naming where a further page starts; an empty page names none, because the local channel is complete the moment it is written.
-        const url = new URL(request.url, "http://127.0.0.1");
-        const cursor = url.searchParams.get("cursor");
-        const from = cursor === null ? 0 : session.internalEvents.findIndex((event) => event.cursor === cursor) + 1;
-        const page = session.internalEvents.slice(from);
-        await answerJson(response, HTTP_STATUS.ok, { data: page.map((event) => event.body), next_cursor: page.length === 0 ? undefined : page[page.length - 1]?.cursor });
+        // The channel's own paginated read, in the shape the CLI's reader pages (verified in the 2.1.289 bundle): rows of `{event_id, payload}`, the anchor the reader's own vocabulary names (`after_event_id`, or the `cursor` a previous page's `next_cursor` became), and the whole channel served because this surface keeps exactly one per session. An agent-scoped read is refused rather than answered with the full channel, because silently serving rows the reader did not ask for is the one lie this endpoint could tell. An unknown anchor answers the protocol's own `after_event_id_not_found` error type, the code the CLI's reader matches to refetch without its anchor.
+        const query = new URL(request.url, "http://127.0.0.1").searchParams;
+        if (query.get("session_agent_id") !== null || query.get("subagents") !== null) {
+          await answerJson(response, HTTP_STATUS.badRequest, { type: "error", error: { type: "invalid_request_error", message: "this surface keeps one internal-events channel per session, so an agent-scoped read has no subset to serve" } });
+          return;
+        }
+        const page = pageOfRcChannel(request.url, session.internalEvents, (event) => event.eventId, (event) => ({ event_id: event.eventId, payload: event.body }));
+        if ("error" in page) {
+          const anchorUnknown = query.get("after_event_id") !== null && page.error.startsWith("the anchor names an event id");
+          await answerJson(response, HTTP_STATUS.badRequest, { type: "error", error: { type: anchorUnknown ? "after_event_id_not_found" : "invalid_request_error", message: page.error } });
+          return;
+        }
+        await answerJson(response, HTTP_STATUS.ok, page);
         return;
       }
       if (workerTail === "diagnostics" && method === "POST") {
@@ -755,19 +788,8 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
       await holdStream(session, "clientStreams", () => true, request, response);
       return;
     }
-    if (tail === "client/presence" && method === "POST") {
-      await readBody(request.body, CONTROL_BODY_CAP_BYTES);
-      await answerJson(response, HTTP_STATUS.ok, { refresh_after_seconds: RC_PRESENCE_REFRESH_SECONDS });
-      return;
-    }
-    if (tail === "mark_read" && method === "POST") {
-      await readBody(request.body, CONTROL_BODY_CAP_BYTES);
-      await answerJson(response, HTTP_STATUS.ok, {});
-      return;
-    }
-    if (tail === "teleport-events" && method === "POST") {
-      await readBody(request.body, CONTROL_BODY_CAP_BYTES);
-      await answerJson(response, HTTP_STATUS.ok, {});
+    // The client-half channels this surface serves through the split-out endpoint handlers: presence, read receipts and the teleport channel.
+    if (await serveRcClientChannels({ request, response, session, answerJson, readBody, publish, sweep, now: deps.now, presenceRefreshSeconds: RC_PRESENCE_REFRESH_SECONDS, ...(deps.log === undefined ? {} : { log: deps.log }) }, tail, method, RC_SELF_HOST_MAX_BATCH_EVENTS)) {
       return;
     }
     await answerJson(response, HTTP_STATUS.notFound, { type: "error", error: { type: "api_error", message: `the self-hosted Remote Control surface serves no path "${tail}"` } });
@@ -787,17 +809,9 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
         await noCredential(response);
         return;
       }
-      if (pathname === RC_COMPAT_SESSIONS_PATH) {
-        if (method !== "GET") {
-          await answerJson(response, HTTP_STATUS.methodNotAllowed, { type: "error", error: { type: "api_error", message: "the compatibility session list is a GET" } });
-          return;
-        }
-        const listRefusal = credentialRefusal(request.headers);
-        if (listRefusal !== undefined) {
-          await unauthorized(response, listRefusal);
-          return;
-        }
-        await answerJson(response, HTTP_STATUS.ok, { data: [] });
+      if (pathname === RC_COMPAT_SESSIONS_PATH || pathname.startsWith(`${RC_COMPAT_SESSIONS_PATH}/`)) {
+        // The compatibility `/v1/sessions` family, served through the split-out endpoint handlers against this door's own sessions.
+        await serveRcCompatSessions({ request, response, sessions, answerJson, readBody, credentialRefusal, unauthorized, now: deps.now, ...(deps.log === undefined ? {} : { log: deps.log }) }, pathname, RC_COMPAT_SESSIONS_PATH);
         return;
       }
       if (pathname !== RC_SESSIONS_PATH_PREFIX && !pathname.startsWith(`${RC_SESSIONS_PATH_PREFIX}/`)) {
@@ -823,6 +837,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
             workerStreams: new Set<StreamSink>(),
             clientStreams: new Set<StreamSink>(),
             internalEvents: [],
+            clients: new Map<string, number>(),
             workerStatus: undefined,
             externalMetadata: undefined,
             lastTrafficAt: deps.now(),

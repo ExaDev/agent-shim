@@ -235,6 +235,12 @@ export function makeTlsWorld(
       res.end(answer);
       return;
     }
+    if (options.rc !== undefined && req.method === "POST" && (req.url ?? "").startsWith("/v1/code/sessions/") && (req.url ?? "").endsWith("/mark_read")) {
+      // The read receipt the attachment owes for what it read: accepted, the answer an accepted receipt earns.
+      res.writeHead(HTTP_OK, { "content-type": "application/json", "content-length": 2 });
+      res.end("{}");
+      return;
+    }
     if (options.rc !== undefined && req.method === "POST" && (req.url ?? "").startsWith("/v1/code/sessions/") && (req.url ?? "").endsWith("/events")) {
       // The client-half event write the inject path performs: answered with the protocol's documented per-event sequence numbers.
       const answer = JSON.stringify({ results: [{ sequence_num: RC_TEST_SEQUENCE_NUM }] });
