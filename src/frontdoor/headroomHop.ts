@@ -5,7 +5,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomSocketTarget } from "../headroom/socket";
 import { forwardableHeaders } from "./connect";
 import type { CredentialCustody } from "./custody";
-import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, parseProviderPath, type RoutedRequest, type RoutedResponse } from "./route";
+import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, SESSION_ATTRIBUTION_HEADER, parseProviderPath, type RoutedRequest, type RoutedResponse } from "./route";
 import { upstreamChunks } from "./server";
 
 /** What one hop answers when it cannot serve: the daemon is between restarts, unreachable, or its socket failed authentication. Answering with 502 (rather than bypassing headroom) is what keeps a launch that asked for compression from silently losing it. */
@@ -43,7 +43,7 @@ function responseHeaders(headers: Readonly<IncomingHttpHeaders>): Record<string,
 /**
  * Applies the headroom hop: forwards the request, still Anthropic-shaped, to the headroom daemon as a backend hop and streams its response back to the client. The hop ALWAYS sits before the route's own serving (a translator needs the request headroom has compressed, never the reverse), which is why this runs in the pipeline and not inside any route.
  *
- * `upstream` is what headroom is told to forward to once it has done its work (its per-request base URL header). When it is set it is always this door's direct listener (every provider route declares exactly that), and the provider credential is then taken into custody for the hop: headroom receives placeholders and a hop id, and the direct listener restores the real headers when headroom forwards the request back. Neither headroom nor anything that binds a port on that plain-HTTP round trip ever holds the credential. Undefined leaves headroom's default upstream (Claude Code's API) in charge, which is exactly what an OAuth session wants, and the OAuth bearer then passes through untouched: headroom forwards it straight to that API, never back here, and uses it for its subscription tracking. The session's project identity and provider name are re-set here, and only here: the identity step stripped them from everything that leaves the machine, and headroom is the one consumer that needs them.
+ * `upstream` is what headroom is told to forward to once it has done its work (its per-request base URL header). When it is set it is always this door's direct listener (every provider route declares exactly that), and the provider credential is then taken into custody for the hop: headroom receives placeholders and a hop id, and the direct listener restores the real headers when headroom forwards the request back. Neither headroom nor anything that binds a port on that plain-HTTP round trip ever holds the credential. Undefined leaves headroom's default upstream (Claude Code's API) in charge, which is exactly what an OAuth session wants, and the OAuth bearer then passes through untouched: headroom forwards it straight to that API, never back here, and uses it for its subscription tracking. The session's project identity, provider name and attribution id are re-set here, and only here: the identity step stripped them from everything that leaves the machine, and headroom is the one consumer that needs them.
  */
 export async function applyHeadroomHop(request: RoutedRequest, response: RoutedResponse, upstream: string | undefined, deps: HeadroomHopDeps): Promise<void> {
   const target = deps.headroomSocket();
@@ -78,6 +78,9 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
   }
   if (request.session.projectId !== undefined) {
     headers[PROJECT_ID_HEADER] = request.session.projectId;
+  }
+  if (request.session.sessionId !== undefined) {
+    headers[SESSION_ATTRIBUTION_HEADER] = request.session.sessionId;
   }
   headers[HOP_SECRET_HEADER] = deps.hopSecret;
   try {

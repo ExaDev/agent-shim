@@ -34,7 +34,7 @@ describe("identifyRequest", () => {
   });
 
   it("names exactly the internal headers, so a new one cannot be added without widening the strip", () => {
-    expect(INTERNAL_HEADER_NAMES).toEqual(["x-agent-shim-identity", "x-agent-shim-session", "x-agent-shim-headroom", "x-agent-shim-auth", "x-agent-shim-provider", "x-agent-shim-hop", "x-agent-shim-hop-id", "x-headroom-project-id", "x-headroom-base-url"]);
+    expect(INTERNAL_HEADER_NAMES).toEqual(["x-agent-shim-identity", "x-agent-shim-session", "x-agent-shim-headroom", "x-agent-shim-auth", "x-agent-shim-provider", "x-agent-shim-hop", "x-agent-shim-hop-id", "x-headroom-project-id", "x-headroom-session-id", "x-headroom-base-url"]);
   });
 });
 
