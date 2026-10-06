@@ -124,6 +124,7 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       mcpReconnect: unexercised,
       mcpAuthenticate: unexercised,
       mcpOAuthCallbackUrl: unexercised,
+      teleport: unexercised,
       fanout: createRcEventFanout(),
       events: doorEvents,
       usageSnapshots: () => [SNAPSHOT],

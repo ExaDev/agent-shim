@@ -40,6 +40,15 @@ const STREAM_CALLS_AFTER_BACKOFF = 3;
 const TICK_MS = 20;
 /** The presence answer's stand-in refresh interval: the scripted dial answers the protocol's documented shape, and only the request's shape is asserted. */
 const PRESENCE_REFRESH_SECONDS = 60;
+/** The sequence numbers the receipt tests' events carry past the first attached one, each named so no assertion carries an offset literal. */
+const SECOND_STREAM_EVENT_SEQUENCE_NUM = ATTACHED_SEQUENCE_NUM + 1;
+const THIRD_STREAM_EVENT_SEQUENCE_NUM = SECOND_STREAM_EVENT_SEQUENCE_NUM + 1;
+const FOURTH_STREAM_EVENT_SEQUENCE_NUM = THIRD_STREAM_EVENT_SEQUENCE_NUM + 1;
+
+/** Receipt calls once one has landed after the failures: the two refused events, then the one that unlatched the log. */
+const STREAM_RECEIPT_CALLS_UNLATCHED = 3;
+/** Receipt failure log lines after the latch resets: the first failure, then the first failure after the landed receipt unlatched it. */
+const LOGGED_RECEIPT_FAILURES_AFTER_RELATCH = 2;
 
 /** One envelope of the protocol's documented shape, as the API host would serialise it into one SSE block. */
 function sseBlock(envelope: Readonly<Record<string, unknown>>, sequenceNum: number): string {
@@ -106,29 +115,38 @@ const NO_CHUNKS: AsyncIterable<Uint8Array> = {
   }),
 };
 
-/** One scripted dialling of the client read stream: what the presence and stream calls received, and what each call is answered with. */
+/** One scripted dialling of the client read stream: what the presence, receipt and stream calls received, and what each call is answered with. */
 interface ScriptedDial {
   readonly dial: RcStreamDial;
-  readonly presenceCalls: { readonly sessionId: string; readonly headers: Readonly<Record<string, string>>; readonly clientId: string }[];
+  readonly presenceCalls: { readonly sessionId: string; readonly headers: Readonly<Record<string, string>>; readonly clientId: string; readonly clear: boolean }[];
+  readonly receiptCalls: { readonly sessionId: string; readonly headers: Readonly<Record<string, string>>; readonly eventId: string | undefined }[];
   readonly streamCalls: { readonly sessionId: string; readonly headers: Readonly<Record<string, string>>; readonly resume: { readonly fromSequenceNum: number } | undefined }[];
   /** Scripts the next stream answer: the default is a held-open 200 the test pushes to. */
   readonly answerNextStreamWith: (answer: RcStreamAnswer | (() => RcStreamAnswer)) => void;
   readonly answerNextPresenceWith: (answer: RcPresenceAnswer | (() => RcPresenceAnswer)) => void;
+  /** Scripts the next receipt answer: the default is the 200 an accepted receipt earns. */
+  readonly answerNextReceiptWith: (answer: RcPresenceAnswer | (() => RcPresenceAnswer)) => void;
 }
 
 /** A dial whose answers the test scripts, recording every call it receives. */
 function scriptedDial(): ScriptedDial {
-  const presenceCalls: { sessionId: string; headers: Record<string, string>; clientId: string }[] = [];
+  const presenceCalls: { sessionId: string; headers: Record<string, string>; clientId: string; clear: boolean }[] = [];
+  const receiptCalls: { sessionId: string; headers: Record<string, string>; eventId: string | undefined }[] = [];
   const streamCalls: { sessionId: string; headers: Record<string, string>; resume: { fromSequenceNum: number } | undefined }[] = [];
   const presenceAnswers: (RcPresenceAnswer | (() => RcPresenceAnswer))[] = [];
+  const receiptAnswers: (RcPresenceAnswer | (() => RcPresenceAnswer))[] = [];
   const streamAnswers: (RcStreamAnswer | (() => RcStreamAnswer))[] = [];
   const settlePresence = (value: RcPresenceAnswer | (() => RcPresenceAnswer)): RcPresenceAnswer => (typeof value === "function" ? value() : value);
   const settleStream = (value: RcStreamAnswer | (() => RcStreamAnswer)): RcStreamAnswer => (typeof value === "function" ? value() : value);
   return {
     dial: {
-      announcePresence: async (sessionId, headers, clientId) => {
-        presenceCalls.push({ sessionId, headers: { ...headers }, clientId });
+      announcePresence: async (sessionId, headers, clientId, clear) => {
+        presenceCalls.push({ sessionId, headers: { ...headers }, clientId, clear });
         return await Promise.resolve(settlePresence(presenceAnswers.shift() ?? { status: HTTP_STATUS.ok, body: JSON.stringify({ refresh_after_seconds: PRESENCE_REFRESH_SECONDS }) }));
+      },
+      markRead: async (sessionId, headers, eventId) => {
+        receiptCalls.push({ sessionId, headers: { ...headers }, eventId });
+        return await Promise.resolve(settlePresence(receiptAnswers.shift() ?? { status: HTTP_STATUS.ok, body: "{}" }));
       },
       openStream: async (sessionId, headers, resume) => {
         streamCalls.push({ sessionId, headers: { ...headers }, resume });
@@ -136,6 +154,7 @@ function scriptedDial(): ScriptedDial {
       },
     },
     presenceCalls,
+    receiptCalls,
     streamCalls,
     answerNextStreamWith: (answer) => {
       streamAnswers.push(answer);
@@ -143,11 +162,14 @@ function scriptedDial(): ScriptedDial {
     answerNextPresenceWith: (answer) => {
       presenceAnswers.push(answer);
     },
+    answerNextReceiptWith: (answer) => {
+      receiptAnswers.push(answer);
+    },
   };
 }
 
-/** The hub over a real tracker and a scripted dial, with a backoff sleep the test resolves by hand and an ordered log of every dial and sleep, so a test can prove what happened before what. The cursor ports are absent by default, so a test opts into exactly the persistence behaviour it asserts. */
-function hubOver(scripted: ScriptedDial, tracker: RcSessionTracker, ports: { readonly storedSequenceNumOf?: (sessionId: string) => number | undefined; readonly saveSequenceNum?: (sessionId: string, sequenceNum: number) => void } = {}): { readonly subscribeFanout: ReturnType<typeof createRcEventFanout>; readonly hub: ReturnType<typeof createRcStreamHub>; readonly order: string[]; readonly resolveSleep: () => void } {
+/** The hub over a real tracker and a scripted dial, with a backoff sleep the test resolves by hand and an ordered log of every dial and sleep, so a test can prove what happened before what. The cursor ports are absent by default, so a test opts into exactly the persistence behaviour it asserts, and `logs` collects the hub's own log lines when a test asserts them. */
+function hubOver(scripted: ScriptedDial, tracker: RcSessionTracker, ports: { readonly storedSequenceNumOf?: (sessionId: string) => number | undefined; readonly saveSequenceNum?: (sessionId: string, sequenceNum: number) => void; readonly logs?: string[] } = {}): { readonly subscribeFanout: ReturnType<typeof createRcEventFanout>; readonly hub: ReturnType<typeof createRcStreamHub>; readonly order: string[]; readonly resolveSleep: () => void } {
   const fanout = createRcEventFanout();
   const order: string[] = [];
   let resolveSleep: (() => void) | undefined;
@@ -158,10 +180,17 @@ function hubOver(scripted: ScriptedDial, tracker: RcSessionTracker, ports: { rea
     fileStreamEvent: tracker.fileStreamEvent,
     sequenceNumOf: tracker.sequenceNumOf,
     ...ports,
+    ...(ports.logs === undefined ? {} : { log: (line: string) => {
+        ports.logs?.push(line);
+      } }),
     dial: {
-      announcePresence: async (sessionId, headers, clientId) => {
-        order.push("presence");
-        return await scripted.dial.announcePresence(sessionId, headers, clientId);
+      announcePresence: async (sessionId, headers, clientId, clear) => {
+        order.push(clear ? "presence-clear" : "presence");
+        return await scripted.dial.announcePresence(sessionId, headers, clientId, clear);
+      },
+      markRead: async (sessionId, headers, eventId) => {
+        order.push("receipt");
+        return await scripted.dial.markRead(sessionId, headers, eventId);
       },
       openStream: async (sessionId, headers, resume, signal) => {
         order.push("stream");
@@ -326,7 +355,7 @@ describe("the client read stream attachment", () => {
     hub.reconcile();
     await tick();
     // The attachment announced one stable client id and opened one stream with the observed credential, and no resume: nothing has been seen yet.
-    expect(scripted.presenceCalls).toEqual([{ sessionId: SESSION_ID, headers: { accept: "text/event-stream", authorization: CREATE_BEARER }, clientId: "door-client-id" }]);
+    expect(scripted.presenceCalls).toEqual([{ sessionId: SESSION_ID, headers: { accept: "text/event-stream", authorization: CREATE_BEARER }, clientId: "door-client-id", clear: false }]);
     expect(scripted.streamCalls).toEqual([{ sessionId: SESSION_ID, headers: { accept: "text/event-stream", authorization: CREATE_BEARER }, resume: undefined }]);
 
     // Events on the held stream reach the subscriber and file with the tracker.
@@ -433,7 +462,7 @@ describe("the client read stream attachment", () => {
     hub.reconcile();
     await tick();
     // Three events cross the held stream and none of them writes the file: the native client persists at bridge-session boundaries, not per event, and so does the hub.
-    for (const sequenceNum of [ATTACHED_SEQUENCE_NUM, ATTACHED_SEQUENCE_NUM + 1, STREAM_EVENT_LAST_SEQUENCE_NUM]) {
+    for (const sequenceNum of [ATTACHED_SEQUENCE_NUM, SECOND_STREAM_EVENT_SEQUENCE_NUM, STREAM_EVENT_LAST_SEQUENCE_NUM]) {
       held.push(sseBlock({ event_type: "user", sequence_num: sequenceNum, source: "worker" }, sequenceNum));
     }
     await tick();
@@ -488,5 +517,86 @@ describe("the client read stream attachment", () => {
     hub.close();
     await tick();
     expect(scripted.streamCalls.length).toBe(1);
+  });
+
+  it("sends one read receipt per chunk naming its last event id, and never receipts a receipt", async () => {
+    const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: IDLE_MS });
+    birthSession(tracker);
+    const scripted = scriptedDial();
+    const first = controlledStream();
+    scripted.answerNextStreamWith({ status: HTTP_STATUS.ok, chunks: first.chunks });
+    const { hub } = hubOver(scripted, tracker);
+    hub.reconcile();
+    await tick();
+
+    // One chunk carrying two events: one receipt, naming the chunk's last event id, filed after both.
+    first.push(sseBlock({ event_type: "user", event_id: "event-a", sequence_num: ATTACHED_SEQUENCE_NUM, source: "worker", payload: { type: "user" } }, ATTACHED_SEQUENCE_NUM) + sseBlock({ event_type: "user", event_id: "event-b", sequence_num: SECOND_STREAM_EVENT_SEQUENCE_NUM, source: "worker", payload: { type: "user" } }, SECOND_STREAM_EVENT_SEQUENCE_NUM));
+    await tick();
+    expect(scripted.receiptCalls).toEqual([{ sessionId: SESSION_ID, headers: { accept: "text/event-stream", authorization: CREATE_BEARER }, eventId: "event-b" }]);
+
+    // A chunk whose only event carries no event id owes no receipt, and a receipt event never becomes the next receipt's target.
+    first.push(sseBlock({ event_type: "user", sequence_num: THIRD_STREAM_EVENT_SEQUENCE_NUM, source: "worker", payload: { type: "user" } }, THIRD_STREAM_EVENT_SEQUENCE_NUM));
+    await tick();
+    first.push(sseBlock({ event_type: "mark_read", event_id: "event-receipt", sequence_num: FOURTH_STREAM_EVENT_SEQUENCE_NUM, source: "client", payload: { type: "mark_read", event_id: "event-b" } }, FOURTH_STREAM_EVENT_SEQUENCE_NUM));
+    await tick();
+    expect(scripted.receiptCalls.length).toBe(1);
+    hub.close();
+  });
+
+  it("logs one read-receipt failure per attachment, not one per event, and unlatches when a receipt lands", async () => {
+    const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: IDLE_MS });
+    birthSession(tracker);
+    const scripted = scriptedDial();
+    const first = controlledStream();
+    scripted.answerNextStreamWith({ status: HTTP_STATUS.ok, chunks: first.chunks });
+    const logs: string[] = [];
+    const { hub } = hubOver(scripted, tracker, { logs });
+    hub.reconcile();
+    await tick();
+
+    scripted.answerNextReceiptWith(() => {
+      throw new Error("receipt host refused");
+    });
+    first.push(sseBlock({ event_type: "user", event_id: "event-a", sequence_num: ATTACHED_SEQUENCE_NUM, source: "worker", payload: { type: "user" } }, ATTACHED_SEQUENCE_NUM));
+    await tick();
+    first.push(sseBlock({ event_type: "user", event_id: "event-b", sequence_num: SECOND_STREAM_EVENT_SEQUENCE_NUM, source: "worker", payload: { type: "user" } }, SECOND_STREAM_EVENT_SEQUENCE_NUM));
+    await tick();
+    expect(logs.filter((line) => line.includes("read receipt")).length).toBe(1);
+
+    // A receipt that lands unlatches the log, so the next failure is news again.
+    first.push(sseBlock({ event_type: "user", event_id: "event-c", sequence_num: THIRD_STREAM_EVENT_SEQUENCE_NUM, source: "worker", payload: { type: "user" } }, THIRD_STREAM_EVENT_SEQUENCE_NUM));
+    await tick();
+    expect(scripted.receiptCalls.length).toBe(STREAM_RECEIPT_CALLS_UNLATCHED);
+    scripted.answerNextReceiptWith(() => {
+      throw new Error("receipt host refused");
+    });
+    first.push(sseBlock({ event_type: "user", event_id: "event-d", sequence_num: FOURTH_STREAM_EVENT_SEQUENCE_NUM, source: "worker", payload: { type: "user" } }, FOURTH_STREAM_EVENT_SEQUENCE_NUM));
+    await tick();
+    expect(logs.filter((line) => line.includes("read receipt")).length).toBe(LOGGED_RECEIPT_FAILURES_AFTER_RELATCH);
+    hub.close();
+  });
+
+  it("retires its presence with the clear semantics when it ends for good, and never on a drop that reconnects", async () => {
+    const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: IDLE_MS });
+    birthSession(tracker);
+    const scripted = scriptedDial();
+    const first = controlledStream();
+    const second = controlledStream();
+    scripted.answerNextStreamWith({ status: HTTP_STATUS.ok, chunks: first.chunks });
+    scripted.answerNextStreamWith({ status: HTTP_STATUS.ok, chunks: second.chunks });
+    const { hub } = hubOver(scripted, tracker);
+    hub.reconcile();
+    await tick();
+
+    // A drop reconnects: the client was never gone, so every further announcement is a pulse.
+    first.end();
+    await tick();
+    expect(scripted.presenceCalls.every((call) => !call.clear)).toBe(true);
+
+    // The hub's own close is an end for good: one clear, under the client id the attachment announced.
+    hub.close();
+    await tick();
+    expect(scripted.presenceCalls[scripted.presenceCalls.length - 1]).toEqual({ sessionId: SESSION_ID, headers: { accept: "text/event-stream", authorization: CREATE_BEARER }, clientId: "door-client-id", clear: true });
+    expect(scripted.presenceCalls.filter((call) => call.clear)).toHaveLength(1);
   });
 });

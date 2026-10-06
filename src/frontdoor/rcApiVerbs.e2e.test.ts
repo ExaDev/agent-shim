@@ -55,6 +55,7 @@ describe("the wider control-verb family on the door's typed API, end to end over
       mcpReconnect: async (session, serverName) => note("mcpReconnect", [session, serverName]),
       mcpAuthenticate: async (session, serverName, redirectUri) => note("mcpAuthenticate", [session, serverName, redirectUri]),
       mcpOAuthCallbackUrl: async (session, serverName, callbackUrl) => note("mcpOAuthCallbackUrl", [session, serverName, callbackUrl]),
+      teleport: async (session, marker) => note("teleport", [session, marker]),
       fanout: createRcEventFanout(),
     });
     const server = createFrontDoorServer(
@@ -85,6 +86,8 @@ describe("the wider control-verb family on the door's typed API, end to end over
     expect(await api.rc.getContextUsage({ session: SESSION_ID, detail: "summary" })).toEqual({ session: SESSION_ID, request: MINTED_REQUEST_ID, sequenceNums: SEQUENCE_NUMS });
     expect(await api.rc.readFile({ session: SESSION_ID, path: "src/index.ts", maxBytes: 4096, encoding: "base64" })).toEqual({ session: SESSION_ID, request: MINTED_REQUEST_ID, sequenceNums: SEQUENCE_NUMS });
     expect(await api.rc.fileSuggestions({ session: SESSION_ID, query: "src/front" })).toEqual({ session: SESSION_ID, request: MINTED_REQUEST_ID, sequenceNums: SEQUENCE_NUMS });
+    // The teleport write: the one verb with no request envelope, so its answer names no request id.
+    expect(await api.rc.teleport({ session: SESSION_ID, marker: "__ULTRAPAN_TELEPORT_LOCAL__" })).toEqual({ session: SESSION_ID, sequenceNums: SEQUENCE_NUMS });
     // The mcp_* family.
     expect(await api.rc.mcpStatus({ session: SESSION_ID })).toEqual({ session: SESSION_ID, request: MINTED_REQUEST_ID, sequenceNums: SEQUENCE_NUMS });
     expect(await api.rc.mcpReconnect({ session: SESSION_ID, serverName: "github" })).toEqual({ session: SESSION_ID, request: MINTED_REQUEST_ID, sequenceNums: SEQUENCE_NUMS });
@@ -97,6 +100,7 @@ describe("the wider control-verb family on the door's typed API, end to end over
       { op: "getContextUsage", args: [SESSION_ID, "summary"] },
       { op: "readFile", args: [SESSION_ID, "src/index.ts", { maxBytes: 4096, encoding: "base64" }] },
       { op: "fileSuggestions", args: [SESSION_ID, "src/front"] },
+      { op: "teleport", args: [SESSION_ID, "__ULTRAPAN_TELEPORT_LOCAL__"] },
       { op: "mcpStatus", args: [SESSION_ID] },
       { op: "mcpReconnect", args: [SESSION_ID, "github"] },
       { op: "mcpAuthenticate", args: [SESSION_ID, "github", "https://example.com/cb"] },
@@ -134,6 +138,7 @@ describe("the wider control-verb family on the door's typed API, end to end over
       mcpReconnect: async () => await Promise.resolve({ ok: false, message: "unexercised" }),
       mcpAuthenticate: async () => await Promise.resolve({ ok: false, message: "unexercised" }),
       mcpOAuthCallbackUrl: async () => await Promise.resolve({ ok: false, message: "unexercised" }),
+      teleport: async () => await Promise.resolve({ ok: false, message: "unexercised" }),
       fanout: createRcEventFanout(),
     });
     const server = createFrontDoorServer(

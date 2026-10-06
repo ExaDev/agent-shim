@@ -13,7 +13,7 @@ import { createRcApiNodeHandler, frontDoorRcApiClient } from "./rcApi";
 import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type RcControlTransport } from "./rcControl";
 import { createRcCredentialStore } from "./rcCredentialStore";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
-import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, type RcAnswerDecision, type RcContextUsageDetail, type RcEventDial, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcEventDial, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RcStreamEvent } from "./rcSchemas";
 import { createFrontDoorServer } from "./server";
@@ -103,6 +103,7 @@ function controlRequestOperations(tracker: RcSessionTracker, dial: RcEventDial, 
     mcpReconnect: async (sessionId: string, serverName: string) => await reconnectRcSessionMcpServer(deps, sessionId, serverName),
     mcpAuthenticate: async (sessionId: string, serverName: string, redirectUri: string) => await authenticateRcSessionMcpServer(deps, sessionId, serverName, redirectUri),
     mcpOAuthCallbackUrl: async (sessionId: string, serverName: string, callbackUrl: string) => await submitRcSessionMcpOAuthCallbackUrl(deps, sessionId, serverName, callbackUrl),
+    teleport: async (sessionId: string, marker: string) => await teleportRcSession(deps, sessionId, marker),
   };
 }
 

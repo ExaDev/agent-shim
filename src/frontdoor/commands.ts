@@ -31,7 +31,7 @@ import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
 import { readRcSelfHostRecord } from "./rcSelfHostMint";
 import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, observingRoutedRoute } from "./rcSessions";
-import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
+import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -228,6 +228,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       const rcMcpReconnect = async (sessionId: string, serverName: string) => await reconnectRcSessionMcpServer(rcControlRequestDeps, sessionId, serverName);
       const rcMcpAuthenticate = async (sessionId: string, serverName: string, redirectUri: string) => await authenticateRcSessionMcpServer(rcControlRequestDeps, sessionId, serverName, redirectUri);
       const rcMcpOAuthCallbackUrl = async (sessionId: string, serverName: string, callbackUrl: string) => await submitRcSessionMcpOAuthCallbackUrl(rcControlRequestDeps, sessionId, serverName, callbackUrl);
+      const rcTeleport = async (sessionId: string, marker: string) => await teleportRcSession(rcControlRequestDeps, sessionId, marker);
       // The control-plane reads the typed API serves beside Remote Control, each one the same read-only collector the CLI's own verbs use, so the door's answer and `frontdoor status`'s can never disagree.
       const controlDeps = {
         usageSnapshots: () => listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir),
@@ -246,7 +247,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         },
         log,
         mintLeaf(authority, LOOPBACK_LEAF_NAMES, new Date()),
-        createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcTracker.statusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer, interrupt: rcInterrupt, setModel: rcSetModel, setPermissionMode: rcSetPermissionMode, endSession: rcEndSession, getUsage: rcGetUsage, getContextUsage: rcGetContextUsage, readFile: rcReadFile, fileSuggestions: rcFileSuggestions, keepAlive: rcKeepAlive, mcpStatus: rcMcpStatus, mcpReconnect: rcMcpReconnect, mcpAuthenticate: rcMcpAuthenticate, mcpOAuthCallbackUrl: rcMcpOAuthCallbackUrl }),
+        createRcControlHandler({ expectedToken: rcControlToken, list: rcTracker.list, statusOf: rcTracker.statusOf, pendingOf: rcTracker.pendingOf, inject: rcInject, answer: rcAnswer, interrupt: rcInterrupt, setModel: rcSetModel, setPermissionMode: rcSetPermissionMode, endSession: rcEndSession, getUsage: rcGetUsage, getContextUsage: rcGetContextUsage, readFile: rcReadFile, fileSuggestions: rcFileSuggestions, keepAlive: rcKeepAlive, mcpStatus: rcMcpStatus, mcpReconnect: rcMcpReconnect, mcpAuthenticate: rcMcpAuthenticate, mcpOAuthCallbackUrl: rcMcpOAuthCallbackUrl, teleport: rcTeleport }),
         [
           createDoorApiNodeHandler({
             expectedToken: rcControlToken,
@@ -268,6 +269,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
             mcpReconnect: rcMcpReconnect,
             mcpAuthenticate: rcMcpAuthenticate,
             mcpOAuthCallbackUrl: rcMcpOAuthCallbackUrl,
+            teleport: rcTeleport,
             fanout: rcFanout,
             ...controlDeps,
             events: doorEvents,

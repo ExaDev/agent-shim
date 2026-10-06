@@ -36,6 +36,15 @@ const KEEPALIVE_TEST_TIMEOUT_MS = RC_SELF_HOST_KEEPALIVE_MS * 2;
 /** How many times a frame poll re-checks before giving up: at the poll wait's cadence this is seconds of budget, far past loopback delivery. */
 const FRAME_POLL_ATTEMPTS = 200;
 
+/** The presence answer's own refresh hint, the value the protocol's answer carries and the surface promises nothing by. */
+const PRESENCE_REFRESH_SECONDS = 60;
+
+/** Events the worker stream receives in the mark_read case: the read event itself, then one receipt per named client, then the unnamed one. */
+const RECEIPT_FANOUT_EVENTS = 4;
+
+/** How many announcements the presence test's log names a two-client count for: tui-2's arrival, web-1's repeat pulse, and web-1's re-announcement after the clear. */
+const ANNOUNCED_COUNT_LINES_TOTAL = 3;
+
 /** Where the minting test's clock starts: any fixed epoch instant. */
 const MINT_CLOCK_START_MS = 1_700_000_000_000;
 
@@ -69,6 +78,8 @@ interface TestWorld {
   readonly port: number;
   /** The URLs the injected fetch was asked for, in arrival order. */
   readonly fetchedUrls: string[];
+  /** The surface's own log lines, in arrival order, so a test can assert what the surface recorded. */
+  readonly logLines: readonly string[];
   readonly close: () => Promise<void>;
 }
 
@@ -80,6 +91,7 @@ async function makeWorld(record: RcSelfHostCredentialRecord | null = RECORD, opt
   const held: RcSelfHostCredentialRecord | undefined = record ?? undefined;
   const clock = new FakeClock();
   const fetchedUrls: string[] = [];
+  const logLines: string[] = [];
   const webFetch: RcWebFetcher = options.webFetch ?? (async (url) => {
     fetchedUrls.push(url);
     return await Promise.resolve({ ...FETCHED_PAGE, url, destinationUrl: url });
@@ -96,6 +108,9 @@ async function makeWorld(record: RcSelfHostCredentialRecord | null = RECORD, opt
     randomToken: () => "random-token-material",
     credentialRecord: () => held,
     webFetch,
+    log: (line) => {
+      logLines.push(line);
+    },
     ...(options.webSearch === undefined ? {} : { webSearch: options.webSearch }),
   });
   const server = http.createServer((request, response) => {
@@ -130,6 +145,7 @@ async function makeWorld(record: RcSelfHostCredentialRecord | null = RECORD, opt
     server,
     port: address.port,
     fetchedUrls,
+    logLines,
     close: async () => {
       surface.close();
       await new Promise<void>((resolve) => {
@@ -434,6 +450,151 @@ describe("the self-hosted Remote Control streams", () => {
     stream.close();
   }, KEEPALIVE_TEST_TIMEOUT_MS);
 });
+
+describe("the self-hosted presence, read-receipt and teleport endpoints", () => {
+  it("registers every announced client and retires exactly the one that clears, answering the refresh hint each time", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const { id } = await createSession(world);
+    const auth = { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` };
+    const pulse = async (clientId: string, clear = false): Promise<number> => (await call(world.port, "POST", `/v1/code/sessions/${id}/client/presence`, { client_id: clientId, ...(clear ? { clear } : {}) }, auth)).status;
+    expect(await pulse("web-1")).toBe(HTTP_STATUS.ok);
+    expect(await pulse("tui-2")).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse((await call(world.port, "POST", `/v1/code/sessions/${id}/client/presence`, { client_id: "web-1" }, auth)).body)).toEqual({ refresh_after_seconds: PRESENCE_REFRESH_SECONDS });
+    // The registry itself is observable through the count the announcements log: the second client's pulse names two, and after the clear retires exactly web-1, tui-2's fresh pulse and web-1's re-announcement each name two again (a reconnecting client's own shape).
+    expect(world.logLines.filter((line) => line.endsWith("(2 clients now announced)"))).toHaveLength(2);
+    expect(await pulse("web-1", true)).toBe(HTTP_STATUS.ok);
+    // The clear retired web-1, so tui-2's next pulse is the only announced client and its line names no count (the count names two or more); a pulse that still named two would mean the clear deleted nothing.
+    expect(await pulse("tui-2")).toBe(HTTP_STATUS.ok);
+    expect(world.logLines.filter((line) => line.endsWith("(2 clients now announced)"))).toHaveLength(2);
+    expect(await pulse("web-1")).toBe(HTTP_STATUS.ok);
+    expect(world.logLines.filter((line) => line.endsWith("(2 clients now announced)"))).toHaveLength(ANNOUNCED_COUNT_LINES_TOTAL);
+    const malformed = await call(world.port, "POST", `/v1/code/sessions/${id}/client/presence`, { clear: true }, auth);
+    expect(malformed.status).toBe(HTTP_STATUS.badRequest);
+  });
+
+  it("fans each client's read receipt to the worker stream as a mark_read event sourced to that client, and the unnamed receipt to the client half's own source", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const { id, workerJwt } = await createSession(world);
+    const auth = { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` };
+    const workerStream = new SseStream(world.port, `/v1/code/sessions/${id}/worker/events/stream`, { authorization: `Bearer ${workerJwt}` });
+    expect((await workerStream.response()).statusCode).toBe(HTTP_STATUS.ok);
+    const written = await call(world.port, "POST", `/v1/code/sessions/${id}/events`, { events: [{ payload: { type: "user", uuid: "read-1" } }] }, auth);
+    const eventId = (JSON.parse(written.body) as { results: { event_id: string }[] }).results[0]?.event_id;
+
+    expect((await call(world.port, "POST", `/v1/code/sessions/${id}/mark_read`, { event_id: eventId, client_id: "web-1" }, auth)).status).toBe(HTTP_STATUS.ok);
+    expect((await call(world.port, "POST", `/v1/code/sessions/${id}/mark_read`, { event_id: eventId, client_id: "tui-2" }, auth)).status).toBe(HTTP_STATUS.ok);
+    expect((await call(world.port, "POST", `/v1/code/sessions/${id}/mark_read`, {}, auth)).status).toBe(HTTP_STATUS.ok);
+    await workerStream.waitForEvents(RECEIPT_FANOUT_EVENTS);
+    const seen = envelopesOf(workerStream).map((event) => event.envelope);
+    // The stream saw the read event itself first (the client half's own source), then the receipts: the two named clients' carry their ids as the source and in the payload, and the CLI-shaped body without a client id rides the client half's own source.
+    expect(seen.map((envelope) => envelope.source)).toEqual(["client", "web-1", "tui-2", "client"]);
+    expect(seen.map((envelope) => envelope.payload)).toEqual([
+      { type: "user", uuid: "read-1", server_received_wall_ms: expect.any(Number) as unknown },
+      { type: "mark_read", event_id: eventId, client_id: "web-1", server_received_wall_ms: expect.any(Number) as unknown },
+      { type: "mark_read", event_id: eventId, client_id: "tui-2", server_received_wall_ms: expect.any(Number) as unknown },
+      { type: "mark_read", server_received_wall_ms: expect.any(Number) as unknown },
+    ]);
+    workerStream.close();
+    const refused = await call(world.port, "POST", `/v1/code/sessions/${id}/mark_read`, { event_id: "" }, auth);
+    expect(refused.status).toBe(HTTP_STATUS.badRequest);
+  });
+
+  it("publishes a teleport write into the session and pages it back in the teleport reader's own row shape", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const { id, workerJwt } = await createSession(world);
+    const auth = { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` };
+    // The worker stream opens before the write, the way a live worker's held stream stands: what the write publishes it receives live.
+    const workerStream = new SseStream(world.port, `/v1/code/sessions/${id}/worker/events/stream`, { authorization: `Bearer ${workerJwt}` });
+    expect((await workerStream.response()).statusCode).toBe(HTTP_STATUS.ok);
+    const marker = { type: "user", uuid: "teleport-marker", message: { role: "user", content: "__ULTRAPAN_TELEPORT_LOCAL__" } };
+    const written = await call(world.port, "POST", `/v1/code/sessions/${id}/teleport-events`, { events: [{ payload: marker }] }, auth);
+    expect(written.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(written.body)).toEqual({ results: [{ sequence_num: "1", duplicate: false }] });
+
+    // The marker is a session event: the worker's stream carries it like any client write, and the teleport read pages it in `{data: [{payload}], next_cursor}`.
+    await workerStream.waitForEvents(1);
+    expect(envelopesOf(workerStream).map((event) => event.envelope.event_type)).toEqual(["user"]);
+    workerStream.close();
+    await call(world.port, "POST", `/v1/code/sessions/${id}/events`, { events: [{ payload: { type: "user", uuid: "after-marker" } }] }, auth);
+    const firstPage = JSON.parse((await call(world.port, "GET", `/v1/code/sessions/${id}/teleport-events?limit=1`, undefined, auth)).body) as { data: { event_id: string; payload: Record<string, unknown> }[]; next_cursor?: string };
+    expect(firstPage.data.length).toBe(1);
+    expect(firstPage.data[0]?.payload.uuid).toBe("teleport-marker");
+    expect(firstPage.next_cursor).toBe(firstPage.data[0]?.event_id);
+    const secondPage = JSON.parse((await call(world.port, "GET", `/v1/code/sessions/${id}/teleport-events?cursor=${firstPage.next_cursor ?? ""}`, undefined, auth)).body) as { data: { payload: Record<string, unknown> }[]; next_cursor?: string };
+    expect(secondPage.data.map((row) => row.payload.uuid)).toEqual(["after-marker"]);
+    // An empty page names no cursor, the reader's own end-of-walk; an anchor this surface holds no event for is refused rather than replayed.
+    const empty = JSON.parse((await call(world.port, "GET", `/v1/code/sessions/${id}/teleport-events?cursor=${secondPage.next_cursor ?? ""}`, undefined, auth)).body) as { data: unknown[]; next_cursor?: string };
+    expect(empty).toEqual({ data: [] });
+    const unknownAnchor = await call(world.port, "GET", `/v1/code/sessions/${id}/teleport-events?cursor=no-such-event`, undefined, auth);
+    expect(unknownAnchor.status).toBe(HTTP_STATUS.badRequest);
+  });
+});
+
+describe("the self-hosted internal-events channel", () => {
+  it("serves the worker's filed events back in the reader's row shape, paging by its own anchor vocabulary", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const { id, workerJwt } = await createSession(world);
+    const workerAuth = { authorization: `Bearer ${workerJwt}` };
+    const filed = await call(world.port, "POST", `/v1/code/sessions/${id}/worker/internal-events`, { worker_epoch: 1, events: [{ type: "tool_call", tool_name: "Bash" }, { type: "tool_call", tool_name: "Read" }] }, workerAuth);
+    expect(filed.status).toBe(HTTP_STATUS.ok);
+
+    const page = JSON.parse((await call(world.port, "GET", `/v1/code/sessions/${id}/worker/internal-events?limit=1`, undefined, workerAuth)).body) as { data: { event_id: string; payload: Record<string, unknown> }[]; next_cursor?: string };
+    expect(page.data).toEqual([{ event_id: page.data[0]?.event_id, payload: { type: "tool_call", tool_name: "Bash" } }]);
+    const after = JSON.parse((await call(world.port, "GET", `/v1/code/sessions/${id}/worker/internal-events?after_event_id=${page.data[0]?.event_id ?? ""}`, undefined, workerAuth)).body) as { data: { payload: Record<string, unknown> }[]; next_cursor?: string };
+    expect(after.data.map((row) => row.payload.tool_name)).toEqual(["Read"]);
+
+    // The protocol's own stale-anchor answer: the CLI's reader matches this error type and refetches without its anchor.
+    const stale = await call(world.port, "GET", `/v1/code/sessions/${id}/worker/internal-events?after_event_id=never-filed`, undefined, workerAuth);
+    expect(stale.status).toBe(HTTP_STATUS.badRequest);
+    expect((JSON.parse(stale.body) as { error: { type: string } }).error.type).toBe("after_event_id_not_found");
+    // An agent-scoped read is refused rather than answered with the whole channel, because this surface keeps one.
+    const agentScoped = await call(world.port, "GET", `/v1/code/sessions/${id}/worker/internal-events?subagents=true`, undefined, workerAuth);
+    expect(agentScoped.status).toBe(HTTP_STATUS.badRequest);
+  });
+});
+
+describe("the self-hosted compatibility session family", () => {
+  it("lists, reads, retitles and archives this door's own sessions under the compat addressing", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const auth = { authorization: `Bearer ${MINTED_OAUTH_TOKEN}` };
+    const { id: first } = await createSession(world);
+    const { id: second } = await createSession(world);
+
+    const list = JSON.parse((await call(world.port, "GET", "/v1/sessions", undefined, auth)).body) as { data: { id: string; session_status: string; title?: string }[] };
+    expect(list.data.map((row) => row.id).sort()).toEqual([first, second].sort());
+    expect(list.data.every((row) => row.session_status === "active")).toBe(true);
+
+    // The compat family addresses a session by its bare uuid, the cse shim's own mapping, beside the door's full id.
+    const bare = first.slice("cse_".length);
+    const read = JSON.parse((await call(world.port, "GET", `/v1/sessions/${bare}`, undefined, auth)).body) as { id: string };
+    expect(read.id).toBe(first);
+    const byFullName = JSON.parse((await call(world.port, "GET", `/v1/sessions/${first}`, undefined, auth)).body) as { id: string };
+    expect(byFullName.id).toBe(first);
+    const unknown = await call(world.port, "GET", "/v1/sessions/00000000-0000-4000-8000-0000000000ff", undefined, auth);
+    expect(unknown.status).toBe(HTTP_STATUS.notFound);
+
+    expect((await call(world.port, "PATCH", `/v1/sessions/${bare}`, { title: "retitled" }, auth)).status).toBe(HTTP_STATUS.ok);
+    // The v2 family's own session root serves the same update, the CLI's own title writer's path.
+    expect((await call(world.port, "PUT", `/v1/code/sessions/${second}`, { title: "second title" }, auth)).status).toBe(HTTP_STATUS.ok);
+    const retitled = JSON.parse((await call(world.port, "GET", `/v1/code/sessions/${first}`, undefined, auth)).body) as { session: { title?: string } };
+    expect(retitled.session.title).toBe("retitled");
+    const secondRead = JSON.parse((await call(world.port, "GET", `/v1/code/sessions/${second}`, undefined, auth)).body) as { session: { title?: string } };
+    expect(secondRead.session.title).toBe("second title");
+
+    // The unarchive of a live session is the idempotent success; the archive ends it, exactly as the v2 family's archive does.
+    expect((await call(world.port, "POST", `/v1/sessions/${second}/unarchive`, {}, auth)).status).toBe(HTTP_STATUS.ok);
+    expect((await call(world.port, "POST", `/v1/sessions/${second}/archive`, {}, auth)).status).toBe(HTTP_STATUS.ok);
+    const afterArchive = JSON.parse((await call(world.port, "GET", "/v1/sessions", undefined, auth)).body) as { data: { id: string }[] };
+    expect(afterArchive.data.map((row) => row.id)).toEqual([first]);
+    expect((await call(world.port, "GET", `/v1/sessions/${second}`, undefined, auth)).status).toBe(HTTP_STATUS.notFound);
+  });
+});
+
 
 describe("the self-hosted local answers", () => {
   it("serves the feature eval, the profile, the telemetry no-ops and the OAuth refresh echo", async () => {

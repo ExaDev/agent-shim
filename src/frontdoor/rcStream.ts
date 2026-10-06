@@ -7,6 +7,8 @@ import type { RcStreamEnvelope, RcStreamEvent } from "./rcSchemas";
  *
  * The attachment is the half the door was missing. The CLI routes permission approvals only toward attached clients, and nothing is attached until something holds the stream open, so with no subscriber the CLI falls back to asking locally and the approval never crosses the door. The door therefore plays one client itself: per tracked session it announces a stable client id through the presence endpoint and holds one stream open over its own interception-proof dials, authenticated by the same OAuth-kind bearer the write path replays (the tracker's credential). One stream serves every consumer (a singleton per session, not per consumer): each event is filed with the tracker (whose cursor and pending list it advances) and handed to the fan-out, which the typed API's subscription and the `frontdoor rc watch` verb read.
  *
+ * The attachment also performs the two duties a reading client owes the host beyond reading: it sends a read receipt for the events it files (the mark_read endpoint's `{event_id}` body, one receipt per read chunk naming its last event), and it retires its presence with the clear semantics when it ends for good (the `{client_id, clear: true}` body the CLI's own teardown path posts), never on a drop that reconnects.
+ *
  * Reconnection follows the protocol's documented resume rule: the query parameter `from_sequence_num` and the `Last-Event-ID` header are sent together, naming the highest sequence number the door has seen for the session (stream events and its own confirmed writes both advance it). A generation whose memory holds no number yet, because it started after the session's traffic, names the persisted cursor instead (the injected fallback read), so a restarted door resumes where the last generation left off rather than at the stream's head. A drop reconnects immediately with that pair. A 401 re-reads the tracker's credential and retries once, since the observed bearer may simply have gone stale; a failure past that backs off to the session's own liveness bound, because retrying harder than the protocol's own give-up cadence would only hammer a session the protocol may have abandoned, and the next observed exchange for the session re-pokes the attachment anyway.
  *
  * Everything here is in memory only: nothing is written to a log, to the capture, or to disk, and the bearer is used on the dial and never surfaced. The one exception is injected, not this module's own effect: the caller may hand the hub a cursor persistence port, and then the session's sequence number alone (never an event payload, never a credential) is handed to it at attachment boundaries, at exactly the cadence the native client persists its own cursor at. The capture's redaction is untouched; a capture and this attachment observe entirely separate paths.
@@ -161,10 +163,13 @@ export interface RcStreamAnswer {
 }
 
 /**
- * The one network effect the client read stream performs, injected so the attachment logic runs against fakes: announce a client's presence, and open the read stream. Production dials the real API host over the door's interception-proof agent; tests redirect to a local stand-in. `resume` names the documented resume pair's value: present only when the door has seen events for the session already, it sends `from_sequence_num` as a query parameter and `Last-Event-ID` as a header together.
+ * The one network effect the client read stream performs, injected so the attachment logic runs against fakes: announce a client's presence (a pulse, or the clear that retires it), open the read stream, and send the read receipts a reading client owes for what it read. Production dials the real API host over the door's interception-proof agent; tests redirect to a local stand-in. `resume` names the documented resume pair's value: present only when the door has seen events for the session already, it sends `from_sequence_num` as a query parameter and `Last-Event-ID` as a header together.
  */
 export interface RcStreamDial {
-  readonly announcePresence: (sessionId: string, headers: Readonly<Record<string, string>>, clientId: string) => Promise<RcPresenceAnswer>;
+  /** Announces the client: a pulse (`clear` false) while it reads, and the clear (`clear` true) that retires it when the attachment ends for good. The CLI's own presence sender posts exactly this body shape (`{client_id, clear}`, verified in the 2.1.289 bundle, whose teardown path posts `clear: true` and whose pulses are the same call without it). */
+  readonly announcePresence: (sessionId: string, headers: Readonly<Record<string, string>>, clientId: string, clear: boolean) => Promise<RcPresenceAnswer>;
+  /** Sends one read receipt: the mark_read endpoint's own body (`{event_id}`, or `{}` for the whole session), the duty the CLI's own remote-client half performs with the same body (`markSessionRead`, verified in the 2.1.289 bundle). */
+  readonly markRead: (sessionId: string, headers: Readonly<Record<string, string>>, eventId: string | undefined) => Promise<RcPresenceAnswer>;
   readonly openStream: (sessionId: string, headers: Readonly<Record<string, string>>, resume: { readonly fromSequenceNum: number } | undefined, signal: AbortSignal) => Promise<RcStreamAnswer>;
 }
 
@@ -304,9 +309,30 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
     return headers;
   };
 
+  /**
+   * Sends the read receipt for what one attachment just read, naming the last event id the batch carried: the client-half duty the held stream owes for the events it files (the same body the CLI's own remote-client half posts, `buildRcMarkReadBody`). Fired without awaiting so a slow receipt never stalls the stream's own reading, and a failure is logged once per attachment rather than per event, because the receipt is reading etiquette the host tolerates losing, not a delivery this door promises; one line tells the operator the duty is failing without restating it per event.
+   */
+  let receiptFailureLogged = false;
+  const sendReceipt = (attachment: Attachment, headers: Readonly<Record<string, string>>, eventId: string | undefined): void => {
+    if (eventId === undefined) {
+      return;
+    }
+    deps.dial.markRead(attachment.sessionId, headers, eventId).then(
+      () => {
+        receiptFailureLogged = false;
+      },
+      (error: unknown) => {
+        if (!receiptFailureLogged) {
+          receiptFailureLogged = true;
+          deps.log?.(`rc stream ${attachment.sessionId}: the read receipt for event ${eventId} could not be sent (${error instanceof Error ? error.message : String(error)}); further receipt failures stay quiet until one lands`);
+        }
+      },
+    );
+  };
+
   const attempt = async (attachment: Attachment, credential: RcObservedCredential): Promise<AttemptOutcome> => {
     const headers = streamHeaders(credential);
-    const presence = await deps.dial.announcePresence(attachment.sessionId, headers, attachment.clientId);
+    const presence = await deps.dial.announcePresence(attachment.sessionId, headers, attachment.clientId, false);
     if (presence.status === HTTP_STATUS.unauthorized) {
       return "unauthorized";
     }
@@ -327,6 +353,7 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
     const parser = createSseParser();
     for await (const chunk of answer.chunks) {
       attachment.controller.signal.throwIfAborted();
+      let lastEventId: string | undefined;
       for (const parsed of parser.write(Buffer.from(chunk).toString("utf8"))) {
         const envelope = parseRcStreamEnvelope(parsed);
         if (envelope === undefined) {
@@ -334,9 +361,27 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
         }
         deps.fileStreamEvent(attachment.sessionId, envelope);
         deps.fanout.publish({ session: attachment.sessionId, envelope });
+        // A receipt event is never itself receipted: against this door's own surface the receipt the door just caused would arrive back on this stream, and receipting it would publish the next receipt forever.
+        if (typeof envelope.event_id === "string" && envelope.event_type !== "mark_read") {
+          lastEventId = envelope.event_id;
+        }
       }
+      // One receipt per chunk naming its last event, the cadence a reading client owes: every event the chunk carried is read the moment it is filed, so the receipt for the batch is the receipt for its last line.
+      sendReceipt(attachment, headers, lastEventId);
     }
     return "dropped";
+  };
+
+  /**
+   * Retires the client's presence with the protocol's clear semantics: the one call the CLI's own presence sender makes on teardown (`clear: true`, verified in the 2.1.289 bundle). Sent exactly when an attachment ends for good (the session expired or lost its credential, or the hub itself closes), never on a drop that reconnects, because a reconnecting client was never gone. Fired without awaiting: the clear is best-effort etiquette on the way out, and on the hub's own close the process may not wait for the dial.
+   */
+  const clearPresence = (attachment: Attachment, headers: Readonly<Record<string, string>> | undefined): void => {
+    if (headers === undefined) {
+      return;
+    }
+    void deps.dial.announcePresence(attachment.sessionId, headers, attachment.clientId, true).catch(() => {
+      // A clear that cannot be sent leaves a presence the host's own refresh window retires; there is nothing further this door can do on its way out, so the failure is swallowed rather than logged beside the ending it could not change.
+    });
   };
 
   const runLoop = async (attachment: Attachment): Promise<void> => {
@@ -352,6 +397,8 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
         // The tracker gave up on the session, or only worker calls were observed from here on (the worker JWT they carry does not authorise the client half). The attachment ends; a later observed exchange whose credential is usable re-attaches through reconcile.
         deps.log?.(`rc stream ${attachment.sessionId}: the attachment ended (${live ? "the session's client credential is no longer known" : "the tracker gave up on the session"})`);
         persistCursor(attachment.sessionId);
+        // The ended attachment retires its presence while a credential still exists to send under; one with none left was never announced under a usable one this generation, so there is nothing to clear.
+        clearPresence(attachment, credential === undefined ? undefined : streamHeaders(credential));
         if (attachments.get(attachment.sessionId) === attachment) {
           attachments.delete(attachment.sessionId);
         }
@@ -418,6 +465,8 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
       for (const attachment of attachments.values()) {
         // Persisted before the stop, synchronously: this is the one boundary the hub itself owns outright, so it never depends on a dial's teardown racing the process's exit.
         persistCursor(attachment.sessionId);
+        const credential = deps.credentialOf(attachment.sessionId);
+        clearPresence(attachment, credential?.authorization === undefined ? undefined : streamHeaders(credential));
         attachment.stop();
       }
       attachments.clear();

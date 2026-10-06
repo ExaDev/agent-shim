@@ -103,6 +103,7 @@ function handlerDeps(overrides: Readonly<Partial<Parameters<typeof createRcContr
     mcpReconnect: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
     mcpAuthenticate: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
     mcpOAuthCallbackUrl: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
+    teleport: writeAnswering({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }),
     ...overrides,
   };
 }
@@ -298,9 +299,9 @@ describe("the Remote Control control handler", () => {
 
   it("carries each verb of the wider control family out with its body's own fields, answering with the minted request id, and refuses each malformed shape before the operation runs", async () => {
     const seen: Record<string, readonly unknown[]> = {};
-    const recording = (name: string) => async (...args: readonly unknown[]): Promise<RcEventWriteResult> => {
+    const recording = (name: string, result: RcEventWriteResult = { ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID }) => async (...args: readonly unknown[]): Promise<RcEventWriteResult> => {
       seen[name] = args;
-      return await Promise.resolve({ ok: true, sequenceNums: [SEQUENCE_NUM], requestId: MINTED_REQUEST_ID });
+      return await Promise.resolve(result);
     };
     const started = await serve(
       createRcControlHandler(
@@ -315,6 +316,8 @@ describe("the Remote Control control handler", () => {
           mcpReconnect: recording("mcpReconnect"),
           mcpAuthenticate: recording("mcpAuthenticate"),
           mcpOAuthCallbackUrl: recording("mcpOAuthCallbackUrl"),
+          // The teleport write carries no request envelope (its payload is the marker message itself), so its recording answers with no request id, the shape its own answer asserts.
+          teleport: recording("teleport", { ok: true, sequenceNums: [SEQUENCE_NUM] }),
         }),
       ),
     );
@@ -338,13 +341,16 @@ describe("the Remote Control control handler", () => {
       { path: "mcp-reconnect", body: { session: SESSION_ID, serverName: "github" }, expectArgs: [SESSION_ID, "github"] },
       { path: "mcp-authenticate", body: { session: SESSION_ID, serverName: "github", redirectUri: "https://example.com/cb" }, expectArgs: [SESSION_ID, "github", "https://example.com/cb"] },
       { path: "mcp-oauth-callback-url", body: { session: SESSION_ID, serverName: "github", callbackUrl: "https://example.com/cb?code=x" }, expectArgs: [SESSION_ID, "github", "https://example.com/cb?code=x"] },
+      // The teleport write's answer names no request id, so this case asserts its own shape rather than the control family's.
+      { path: "teleport", body: { session: SESSION_ID, marker: "__ULTRAPAN_TELEPORT_LOCAL__" }, expectArgs: [SESSION_ID, "__ULTRAPAN_TELEPORT_LOCAL__"] },
     ];
     for (const testCase of cases) {
       const answered = await transport.request({ method: "POST", path: `${CONTROL_PATH_PREFIX}/${testCase.path}`, headers, body: JSON.stringify(testCase.body) });
       expect(answered.status).toBe(HTTP_STATUS.ok);
-      expect(JSON.parse(answered.body)).toEqual(withRequest);
+      // The teleport write mints no request id (no request envelope rides it), so its answer is the plain write shape.
+      expect(JSON.parse(answered.body)).toEqual(testCase.path === "teleport" ? { session: SESSION_ID, sequenceNums: [SEQUENCE_NUM] } : withRequest);
     }
-    expect(Object.keys(seen).sort()).toEqual(["endSession", "fileSuggestions", "getContextUsage", "getUsage", "keepAlive", "mcpAuthenticate", "mcpOAuthCallbackUrl", "mcpReconnect", "mcpStatus", "readFile"]);
+    expect(Object.keys(seen).sort()).toEqual(["endSession", "fileSuggestions", "getContextUsage", "getUsage", "keepAlive", "mcpAuthenticate", "mcpOAuthCallbackUrl", "mcpReconnect", "mcpStatus", "readFile", "teleport"]);
     // Every malformed shape is refused before the operation runs: an empty reason, a non-boolean skipBehaviors, a detail outside the SDK's enum, an empty path, a non-positive or fractional maxBytes, an encoding outside the enum, and an empty server name or URI.
     for (const [path, body] of [
       [`${CONTROL_PATH_PREFIX}/end-session`, JSON.stringify({ session: SESSION_ID, reason: "" })],
@@ -359,6 +365,8 @@ describe("the Remote Control control handler", () => {
       [`${CONTROL_PATH_PREFIX}/mcp-reconnect`, JSON.stringify({ session: SESSION_ID, serverName: "" })],
       [`${CONTROL_PATH_PREFIX}/mcp-authenticate`, JSON.stringify({ session: SESSION_ID, serverName: "github" })],
       [`${CONTROL_PATH_PREFIX}/mcp-oauth-callback-url`, JSON.stringify({ session: SESSION_ID, serverName: "github", callbackUrl: "" })],
+      [`${CONTROL_PATH_PREFIX}/teleport`, JSON.stringify({ session: SESSION_ID })],
+      [`${CONTROL_PATH_PREFIX}/teleport`, JSON.stringify({ session: SESSION_ID, marker: "" })],
     ] as const) {
       const refused = await transport.request({ method: "POST", path, headers, body });
       expect(refused.status).toBe(HTTP_STATUS.badRequest);

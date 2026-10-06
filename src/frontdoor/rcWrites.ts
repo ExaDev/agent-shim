@@ -7,6 +7,8 @@ import { isSuccessful, type RcPendingRequestSummary } from "./rcSessions";
  * Every request-shaped write goes through one envelope builder (`buildRcControlRequestPayload`) so the family cannot drift apart in shape, and one delivery engine (`deliverRcClientPayload`, module-local) so the two credential guards, the dial and the sequence-cursor advance exist exactly once. The fields each subtype carries are the SDK's own (`@anthropic-ai/claude-agent-sdk` `sdk.d.ts`) where it declares the subtype, and the CLI bundle's own request builders where it does not (`mcp_authenticate`, `mcp_oauth_callback_url`), each named in its builder's doc comment.
  *
  * A write that carried a `control_request` returns the request id it minted, because the worker's `control_response` echoes exactly that id on the stream the door already fans out: a consumer that wants the answer matches it there, and the id is surfaced by the result since only the door ever knew it.
+ *
+ * Two writes stand outside the events path: the teleport marker, whose channel is the session's teleport-events path (the one write the family addresses elsewhere, and the one the CLI only ever reads), and the read receipt, which is not a payload write at all but the mark_read endpoint's own small body, built here so every surface the door serves it from posts the same shape.
  */
 
 /**
@@ -43,6 +45,10 @@ export interface RcDialAnswer {
 /** The one network effect a client-half write performs, injected so the pure logic runs against fakes: POST the write body to the session's events endpoint. Production dials the real API host over the door's interception-proof agent; tests redirect to a local stand-in. */
 export interface RcEventDial {
   readonly writeEvents: (sessionId: string, headers: Readonly<Record<string, string>>, body: string) => Promise<RcDialAnswer>;
+  /**
+   * Posts one write to the session's teleport-events path instead of its events path: the write half of the channel the CLI only ever reads (`GET /teleport-events`, the teleport-to-local hydration's page source, verified in the 2.1.289 bundle, which contains no POST sender for it at all). The door's own client half is the one sender this surface has, so this method exists for `teleportRcSession` alone.
+   */
+  readonly writeTeleportEvents: (sessionId: string, headers: Readonly<Record<string, string>>, body: string) => Promise<RcDialAnswer>;
 }
 
 /**
@@ -377,9 +383,9 @@ export interface RcControlRequestDeps {
 }
 
 /**
- * The one engine every client-half payload write runs through: the two credential guards (an unobserved session, and a session only worker calls crossed, whose JWT does not authorise the client half), the write itself, and the sequence-cursor advance on a confirmed delivery. `action` names the whole act in the unreachable-host message ("interrupt session cse_..."), so each operation's failure keeps its own words while the mechanics exist once. Not exported: every caller is one of the typed operations below, whose inputs are validated before this runs.
+ * The one engine every client-half payload write runs through: the two credential guards (an unobserved session, and a session only worker calls crossed, whose JWT does not authorise the client half), the write itself, and the sequence-cursor advance on a confirmed delivery. `action` names the whole act in the unreachable-host message ("interrupt session cse_..."), so each operation's failure keeps its own words while the mechanics exist once, and `to` names which of the session's write paths the payload takes (the events path every write but the teleport marker uses, or the teleport-events path that one write's channel runs on). Not exported: every caller is one of the typed operations below, whose inputs are validated before this runs.
  */
-async function deliverRcClientPayload(deps: RcControlRequestDeps, sessionId: string, payload: Record<string, unknown>, action: string): Promise<RcEventWriteResult> {
+async function deliverRcClientPayload(deps: RcControlRequestDeps, sessionId: string, payload: Record<string, unknown>, action: string, to: "events" | "teleport-events" = "events"): Promise<RcEventWriteResult> {
   const credential = deps.credentialOf(sessionId);
   if (credential === undefined) {
     return { ok: false, message: rcSessionNotObservedMessage(sessionId) };
@@ -390,7 +396,7 @@ async function deliverRcClientPayload(deps: RcControlRequestDeps, sessionId: str
   const body = JSON.stringify(buildRcEventWriteBody(payload));
   let answer: RcDialAnswer;
   try {
-    answer = await deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body);
+    answer = await (to === "teleport-events" ? deps.dial.writeTeleportEvents(sessionId, rcWriteHeaders(credential), body) : deps.dial.writeEvents(sessionId, rcWriteHeaders(credential), body));
   } catch (error) {
     return { ok: false, message: `the door could not reach the API host to ${action}: ${error instanceof Error ? error.message : String(error)}` };
   }
@@ -535,4 +541,21 @@ export async function submitRcSessionMcpOAuthCallbackUrl(deps: RcControlRequestD
  */
 export async function sendRcKeepAlive(deps: RcControlRequestDeps, sessionId: string): Promise<RcEventWriteResult> {
   return await deliverRcClientPayload(deps, sessionId, buildRcKeepAlivePayload(), `keep session ${sessionId} alive`);
+}
+
+/**
+ * Sends one teleport marker into an observed session: the write half of the teleport-events channel, whose read half (`GET /v1/code/sessions/{id}/teleport-events`, paged `{data: [{payload}], next_cursor}` with `x-organization-uuid` and the optional trusted-device header) is the teleport-to-local hydration's page source, verified in the 2.1.289 bundle. The CLI itself never POSTs to the channel (the bundle's only sender is the GET reader); the writer is the cloud UI, whose marker is a user message carrying a sentinel string the local relay anchors on (its own parser demands a line with a uuid and string content), so the payload here is exactly that shape: the SDK user-message envelope carrying the caller's marker text. The result names the sequence numbers the service assigned, or a verbose failure.
+ */
+export async function teleportRcSession(deps: RcControlRequestDeps, sessionId: string, marker: string): Promise<RcEventWriteResult> {
+  if (marker === "") {
+    return { ok: false, message: "a teleport write needs a non-empty marker: the teleport relay anchors on a marker line's uuid and string content, and an empty string carries neither" };
+  }
+  return await deliverRcClientPayload(deps, sessionId, buildRcUserMessagePayload(deps.newUuid(), sessionId, marker), `teleport a marker into session ${sessionId}`, "teleport-events");
+}
+
+/**
+ * Builds the read-receipt body the mark_read endpoint takes: `{event_id}` naming one event, or `{}` marking the whole session read, exactly the two shapes the CLI's own `markSessionRead` sender posts (verified in the 2.1.289 bundle: `n ? {event_id: n} : {}`, with no client id in the body at all).
+ */
+export function buildRcMarkReadBody(eventId: string | undefined): Record<string, unknown> {
+  return eventId === undefined ? {} : { event_id: eventId };
 }

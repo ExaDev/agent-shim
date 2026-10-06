@@ -168,6 +168,12 @@ export const RcMcpOAuthCallbackUrlInputSchema = z.strictObject({
   callbackUrl: z.string().min(1),
 });
 
+/** The teleport operation's input: one non-empty session id and the marker text the teleport relay anchors on (the CLI's own relay demands a line with a uuid and string content, so an empty marker names neither). */
+export const RcTeleportInputSchema = z.strictObject({
+  session: z.string().min(1),
+  marker: z.string().min(1),
+});
+
 /** The session list's answer shape. */
 export const RcListOutputSchema = z.strictObject({ sessions: z.readonly(z.array(RcSessionSummarySchema)) });
 
