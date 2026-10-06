@@ -18,7 +18,7 @@ import { RC_SOURCE_CLIENT, serveRcClientChannels } from "./rcSelfHostEndpoints";
 export const RC_CONVERSATIONS_PATH_PREFIX = "/v1/code/conversations";
 
 /** The id prefix this door's own conversation ids carry, minted beside the session prefix so the two families never address one another's rows. */
-export const RC_CONVERSATION_ID_PREFIX = "conv_";
+const RC_CONVERSATION_ID_PREFIX = "conv_";
 
 /** The guard every parsed-body narrowing goes through, per the codebase's `unknown` discipline. */
 function isRecord(value: unknown): value is Record<string, unknown> {

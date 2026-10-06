@@ -11,7 +11,7 @@ import type { RcSelfHostCredentialRecord } from "./rcSelfHost";
  */
 
 /** The control-plane host whose OAuth refresh this surface answers locally; when the mode is on, its terminated session is parsed as HTTP (it is normally byte-tapped) so the refresh can be served. */
-export const RC_SELF_HOST_OAUTH_HOST = "platform.claude.com";
+const RC_SELF_HOST_OAUTH_HOST = "platform.claude.com";
 
 /**
  * The full scope list the minting writes and the local refresh echoes: the CLI's own claude.ai login scope set (`CLAUDE_AI_OAUTH_SCOPES` in its source), whose `user:inference` and `user:profile` members are exactly the two the Remote Control gate demands. Lives here, beside the refresh that echoes it, and is re-exported by the surface so the library surface it already published is unchanged.
