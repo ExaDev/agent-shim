@@ -161,6 +161,24 @@ function bearerOf(headers: Readonly<IncomingHttpHeaders>): string | undefined {
   return presented.slice(0, "bearer ".length).toLowerCase() === "bearer " ? presented.slice("bearer ".length) : undefined;
 }
 
+/**
+ * Why an Authorization header did not authenticate, as a fact about its shape rather than its value: no header at all, a scheme word that is not Bearer, the Bearer scheme word carried twice, or a well-formed bearer that is simply not one this surface minted. The refusal names the class and nothing else, so a caller with a malformed presentation is told that (a fact it can act on without knowing any credential) instead of a mismatch it will go and disprove (ExaDev/agent-shim#264: a rig proof that prefixed the scheme word onto the whole header value a persisted session record holds presented a different credential, and the one-message refusal sent the investigation fingerprinting three stores to prove a match that was never in question).
+ */
+type PresentationRefusal = "absent" | "not-a-bearer" | "doubled-scheme-word" | "unrecognised";
+
+/** Classifies one refused presentation by shape alone. The doubled scheme word is its own class because it is the natural malformation of this door's own persisted shape: the credential a session's persisted record holds is the whole header value, scheme word included, so a caller that adds `Bearer ` to it presents `Bearer Bearer <token>`, which strips to `Bearer <token>` and matches nothing. */
+function presentationRefusal(headers: Readonly<IncomingHttpHeaders>): PresentationRefusal {
+  const presented = singleHeader(headers, "authorization");
+  if (presented === undefined) {
+    return "absent";
+  }
+  if (presented.slice(0, "bearer ".length).toLowerCase() !== "bearer ") {
+    return "not-a-bearer";
+  }
+  const bearer = presented.slice("bearer ".length);
+  return bearer.slice(0, "bearer ".length).toLowerCase() === "bearer " ? "doubled-scheme-word" : "unrecognised";
+}
+
 /** The whole credential this door's self-hosted mode mints, read back for every authenticated call and never logged: the token pair the identity's Claude Code presents, beside the organisation the minting chose. */
 export interface RcSelfHostCredentialRecord {
   readonly accessToken: string;
@@ -362,6 +380,16 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     return false;
   };
 
+  /** The refusal class for a call the minted credential did not authenticate (the client half's family), or undefined when it did. */
+  const credentialRefusal = (headers: Readonly<IncomingHttpHeaders>): PresentationRefusal | undefined => (presentsCredential(headers) ? undefined : presentationRefusal(headers));
+
+  /** The refusal class for a call the session's worker JWTs did not authenticate (the worker family's own paths), or undefined when one did. */
+  const workerRefusal = (headers: Readonly<IncomingHttpHeaders>, session: SelfHostSession): PresentationRefusal | undefined => (presentsWorkerJwt(headers, session) ? undefined : presentationRefusal(headers));
+
+  /** The refusal class for a call neither the session's worker JWTs nor the minted credential authenticated (the two web proxies' union), or undefined when one did. */
+  const workerOrCredentialRefusal = (headers: Readonly<IncomingHttpHeaders>, session: SelfHostSession): PresentationRefusal | undefined =>
+    presentsWorkerJwt(headers, session) || presentsCredential(headers) ? undefined : presentationRefusal(headers);
+
   /** Frames one stored event exactly as both streams deliver it. */
   const frameOf = (event: StoredEvent): string => {
     const envelope: RcStreamEnvelope = {
@@ -464,9 +492,17 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     await answerJson(response, HTTP_CONFLICT, { type: "error", error: { type: "api_error", message: "worker_epoch does not match the session's live epoch" } }, { [CONFLICT_REASON_HEADER]: CONFLICT_REASON_EPOCH_STALE });
   };
 
-  /** The refusal for a credential this surface did not mint, shaped as the real host answers an unknown bearer. */
-  const unauthorized = async (response: RoutedResponse): Promise<void> => {
-    await answerJson(response, HTTP_STATUS.unauthorized, { type: "error", error: { type: "authentication_error", message: "the self-hosted Remote Control surface did not recognise the presented credential" } });
+  /** Each refusal class's message: shape facts only, never a credential's value, so the answer stays diagnosable without disclosing anything. */
+  const refusalMessages: Readonly<Record<PresentationRefusal, string>> = {
+    absent: "the self-hosted Remote Control surface authenticates by the Authorization header, and this call carried none",
+    "not-a-bearer": "the self-hosted Remote Control surface reads a Bearer authorization, and this call's Authorization header did not carry the Bearer scheme word",
+    "doubled-scheme-word": "the self-hosted Remote Control surface reads one Bearer scheme word, and this call's Authorization header carried it twice: a persisted session record holds the whole header value with the scheme word included, so prefixing Bearer onto it presents a different credential",
+    unrecognised: "the self-hosted Remote Control surface did not recognise the presented credential",
+  };
+
+  /** The refusal for an Authorization this surface did not accept, shaped as the real host answers an unknown bearer and naming the presentation's class so a wrong shape is never mistaken for a wrong credential. */
+  const unauthorized = async (response: RoutedResponse, refusal: PresentationRefusal): Promise<void> => {
+    await answerJson(response, HTTP_STATUS.unauthorized, { type: "error", error: { type: "authentication_error", message: refusalMessages[refusal] } });
   };
 
   /** Serves one path of the session family, already split into its session and tail; the session is absent only for a path naming one this door never created. */
@@ -488,8 +524,9 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     }
 
     if (tail === "bridge" && method === "POST") {
-      if (!presentsCredential(request.headers)) {
-        await unauthorized(response);
+      const refusal = credentialRefusal(request.headers);
+      if (refusal !== undefined) {
+        await unauthorized(response, refusal);
         return;
       }
       const workerJwt = mintWorkerJwt(deps.randomToken, deps.now());
@@ -500,8 +537,9 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     }
 
     if (tail === "archive" && method === "POST") {
-      if (!presentsCredential(request.headers)) {
-        await unauthorized(response);
+      const refusal = credentialRefusal(request.headers);
+      if (refusal !== undefined) {
+        await unauthorized(response, refusal);
         return;
       }
       for (const sink of [...session.workerStreams, ...session.clientStreams]) {
@@ -517,8 +555,9 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
       const workerTail = tail === "worker" ? "" : tail.slice("worker/".length);
       // The two web proxies are the one worker family the CLI's own half dials as well: its proxy client presents the login bearer whenever it holds no worker session url (the 2.1.289 source sets `ccrSessionUrl` from nowhere a local bridge reaches, and its auth falls back to the session credential), so these paths accept the minted credential beside the bridge's own worker JWT. The principal is the same either way: the credential that created the session.
       const webProxy = workerTail === "web-fetch" || workerTail === "web-search";
-      if (!(webProxy ? presentsCredential(request.headers) || presentsWorkerJwt(request.headers, session) : presentsWorkerJwt(request.headers, session))) {
-        await unauthorized(response);
+      const refusal = webProxy ? workerOrCredentialRefusal(request.headers, session) : workerRefusal(request.headers, session);
+      if (refusal !== undefined) {
+        await unauthorized(response, refusal);
         return;
       }
 
@@ -681,8 +720,9 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     }
 
     // Everything else on the session is the client half, authenticated by the minted credential.
-    if (!presentsCredential(request.headers)) {
-      await unauthorized(response);
+    const clientRefusal = credentialRefusal(request.headers);
+    if (clientRefusal !== undefined) {
+      await unauthorized(response, clientRefusal);
       return;
     }
 
@@ -752,8 +792,9 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
           await answerJson(response, HTTP_STATUS.methodNotAllowed, { type: "error", error: { type: "api_error", message: "the compatibility session list is a GET" } });
           return;
         }
-        if (!presentsCredential(request.headers)) {
-          await unauthorized(response);
+        const listRefusal = credentialRefusal(request.headers);
+        if (listRefusal !== undefined) {
+          await unauthorized(response, listRefusal);
           return;
         }
         await answerJson(response, HTTP_STATUS.ok, { data: [] });
@@ -765,8 +806,9 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
       }
       if (pathname === RC_SESSIONS_PATH_PREFIX) {
         if (method === "POST") {
-          if (!presentsCredential(request.headers)) {
-            await unauthorized(response);
+          const createRefusal = credentialRefusal(request.headers);
+          if (createRefusal !== undefined) {
+            await unauthorized(response, createRefusal);
             return;
           }
           const body = parseJsonObject(await readBody(request.body, CONTROL_BODY_CAP_BYTES));
@@ -791,8 +833,9 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
           return;
         }
         if (method === "GET") {
-          if (!presentsCredential(request.headers)) {
-            await unauthorized(response);
+          const readRefusal = credentialRefusal(request.headers);
+          if (readRefusal !== undefined) {
+            await unauthorized(response, readRefusal);
             return;
           }
           await answerJson(response, HTTP_STATUS.ok, { data: [...sessions.values()].map((session) => ({ id: session.id, title: session.title, created_at: new Date(session.createdAt).toISOString(), updated_at: new Date(session.lastTrafficAt).toISOString(), session_status: "active" })) });

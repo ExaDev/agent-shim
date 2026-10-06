@@ -385,6 +385,22 @@ describe("the self-hosted Remote Control mode end to end", () => {
     expect((JSON.parse(refused.body) as { error: { error_type: string } }).error.error_type).toBe("web_fetch_scheme");
     refuseSocket.destroy();
 
+    // The persisted-record journey the released-code proof drives (ExaDev/agent-shim#264): the credential the tracker observed for the create is the whole header value, scheme word included, and replaying it verbatim authenticates the web proxy, while prefixing the scheme word onto it doubles the word and is refused naming exactly that.
+    const observed = tracker.credentialOf(sessionId);
+    if (observed?.authorization === undefined) {
+      throw new Error("the tracker observed no OAuth-kind credential for the created session");
+    }
+    const persistedSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const persistedFetch = await requestOn(persistedSocket, rawRequest("POST", `/v1/code/sessions/${sessionId}/worker/web-fetch`, { Authorization: observed.authorization, "Content-Type": "application/json", "anthropic-version": "2023-06-01" }, JSON.stringify({ url: `http://127.0.0.1:${String(standInPort)}/persisted` })));
+    expect(persistedFetch.statusLine).toContain("200");
+    expect(JSON.parse(persistedFetch.body)).toEqual({ url: `http://127.0.0.1:${String(standInPort)}/persisted`, destination_url: `http://127.0.0.1:${String(standInPort)}/persisted`, text: "<html><body>the rig stand-in page</body></html>", content_type: "text/html" });
+    persistedSocket.destroy();
+    const doubledSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const doubled = await requestOn(doubledSocket, rawRequest("POST", `/v1/code/sessions/${sessionId}/worker/web-fetch`, { Authorization: `Bearer ${observed.authorization}`, "Content-Type": "application/json" }, JSON.stringify({ url: `http://127.0.0.1:${String(standInPort)}/never-fetched` })));
+    expect(doubled.statusLine).toContain("401");
+    expect((JSON.parse(doubled.body) as { error: { message: string } }).error.message).toContain("carried it twice");
+    doubledSocket.destroy();
+
     await new Promise<void>((resolve) => {
       standIn.close(() => {
         resolve(undefined);
