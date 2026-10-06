@@ -1,7 +1,7 @@
 import { CliError } from "./cliError";
 import { readGlobalConfig } from "./configProfilesStore";
 import { applyPatch } from "./config/store";
-import { GlobalConfigSchema, PoolNameSchema, type Pool } from "./config/schema";
+import { GlobalConfigSchema, PoolNameSchema, type Pool, type PoolPreference } from "./config/schema";
 import type { LayoutPaths } from "./paths";
 
 /** Raised when a command names a pool that is not defined in the global config. */
@@ -50,7 +50,7 @@ function writePools(paths: LayoutPaths, pools: Readonly<Record<string, Pool>>): 
 }
 
 /** Defines a new pool. Throws `InvalidPoolNameError` for a name `PoolNameSchema` rejects and `PoolAlreadyExistsError` for one already defined. */
-export function addPool(paths: LayoutPaths, name: string, identities: readonly string[]): Pool {
+export function addPool(paths: LayoutPaths, name: string, identities: readonly string[], preference?: PoolPreference): Pool {
   if (!PoolNameSchema.safeParse(name).success) {
     throw new InvalidPoolNameError(name);
   }
@@ -58,15 +58,15 @@ export function addPool(paths: LayoutPaths, name: string, identities: readonly s
   if (pools[name] !== undefined) {
     throw new PoolAlreadyExistsError(name);
   }
-  const pool: Pool = { identities: [...identities] };
+  const pool: Pool = { identities: [...identities], ...(preference === undefined ? {} : { preference }) };
   writePools(paths, { ...pools, [name]: pool });
   return pool;
 }
 
-/** Replaces an existing pool's members. Throws `PoolNotFoundError` when it is not defined. */
-export function setPool(paths: LayoutPaths, name: string, identities: readonly string[]): Pool {
+/** Replaces an existing pool's members and preference. Throws `PoolNotFoundError` when it is not defined. */
+export function setPool(paths: LayoutPaths, name: string, identities: readonly string[], preference?: PoolPreference): Pool {
   requirePool(paths, name);
-  const pool: Pool = { identities: [...identities] };
+  const pool: Pool = { identities: [...identities], ...(preference === undefined ? {} : { preference }) };
   writePools(paths, { ...readPools(paths), [name]: pool });
   return pool;
 }

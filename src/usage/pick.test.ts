@@ -229,4 +229,58 @@ describe("rankPool", () => {
     const ranking = rank([member("a", { seven: { utilization: U50, resetsInMs: DAY_MS } }, "default_something_new")]);
     expect(ranking.candidates[0]?.reasons.join(" ")).toContain('"default_something_new" not recognised');
   });
+
+  it("without a preference, ranks by score even when the listed order differs", () => {
+    const members = [member("far", { seven: { utilization: U10, resetsInMs: SIX_DAYS_MS } }), member("soon", { seven: { utilization: 0.6, resetsInMs: SIX_HOURS_MS } })];
+    expect(order(rank(members))).toEqual(["soon", "far"]);
+    expect(order(rank(members, { preference: "listed" }))).toEqual(["far", "soon"]);
+  });
+
+  it("in listed preference, keeps the members' own order whatever their class", () => {
+    const ranking = rank(
+      [
+        member("b-unknown", undefined),
+        member("payg", { seven: undefined, five: undefined }, "default_claude_zero"),
+        member("scored", { seven: { utilization: U50, resetsInMs: DAY_MS } }),
+      ],
+      { preference: "listed" },
+    );
+    expect(order(ranking)).toEqual(["b-unknown", "payg", "scored"]);
+    expect(ranking.pick?.identity).toBe("b-unknown");
+  });
+
+  it("in listed preference, skips a refused member and picks the next one listed", () => {
+    const ranking = rank(
+      [
+        member("refused", { five: { status: "rejected", resetsInMs: THREE_HOURS_MS } }),
+        member("next", { seven: { utilization: U90, resetsInMs: SIX_DAYS_MS } }),
+        member("last", { seven: { utilization: U10, resetsInMs: HOUR_MS } }),
+      ],
+      { preference: "listed" },
+    );
+    expect(order(ranking)).toEqual(["refused", "next", "last"]);
+    expect(ranking.pick?.identity).toBe("next");
+  });
+
+  it("in listed preference, keeps a member that would run dry in its listed place rather than demoting it", () => {
+    const burning = member("hot", { five: { utilization: U80, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U10, resetsInMs: HOUR_MS } }, MAX_20X, [burnRecord("hot", HALF_HOUR_MS, U50, FOUR_HOURS_MS), burnRecord("hot", 0, U80, FOUR_HOURS_MS)]);
+    const calm = member("calm", { five: { utilization: U10, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U90, resetsInMs: SIX_DAYS_MS } }, MAX_20X, [burnRecord("calm", HALF_HOUR_MS, U09, FOUR_HOURS_MS), burnRecord("calm", 0, U10, FOUR_HOURS_MS)]);
+    const ranking = rank([burning, calm], { preference: "listed" });
+    expect(order(ranking)).toEqual(["hot", "calm"]);
+    expect(ranking.pick).toMatchObject({ identity: "hot", feasible: false });
+    expect(ranking.pick?.reasons[0]).toContain("would run dry");
+  });
+
+  it("in listed preference, still promotes the directory's last pick while its prompt cache is warm", () => {
+    const members = [member("first", { seven: { utilization: U10, resetsInMs: HOUR_MS } }), member("old", { seven: { utilization: U90, resetsInMs: SIX_DAYS_MS } })];
+    const ranking = rank(members, { preference: "listed", sticky: { identity: "old", at: at(-(PROMPT_CACHE_TTL_MS - MINUTE_MS)) } });
+    expect(ranking.pick?.identity).toBe("old");
+    expect(ranking.pick?.reasons[0]).toContain("prompt cache still warm");
+  });
+
+  it("in listed preference, reports the earliest return when every member is refused", () => {
+    const ranking = rank([member("a", { five: { status: "rejected", resetsInMs: THREE_HOURS_MS } }), member("b", { five: { status: "rejected", resetsInMs: HOUR_MS } })], { preference: "listed" });
+    expect(ranking.pick).toBeUndefined();
+    expect(ranking.earliestReturn).toEqual({ identity: "b", atMs: NOW_MS + HOUR_MS });
+  });
 });

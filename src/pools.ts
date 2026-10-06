@@ -1,8 +1,9 @@
 import type { Command } from "commander";
+import { Option } from "commander";
 import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { UsageError } from "./cliError";
 import { collectRepeated } from "./cli/parsers";
-import { POOL_SELECTOR_PREFIX } from "./config/schema";
+import { POOL_PREFERENCES, POOL_SELECTOR_PREFIX, type PoolPreference } from "./config/schema";
 import { listIdentities, readActiveIdentity, useIdentity, IdentityNotFoundError } from "./identityStore";
 import type { LayoutPaths } from "./paths";
 import { addPool, readPools, removePool, requirePool, setPool } from "./poolStore";
@@ -36,21 +37,31 @@ function requireIdentities(paths: LayoutPaths, names: readonly string[]): void {
 
 interface PoolMembersOptions {
   readonly identity?: readonly string[];
+  readonly preference?: PoolPreference;
   readonly json?: boolean;
 }
 
-function membersOf(options: Readonly<PoolMembersOptions>): readonly string[] {
+/** What `pool set` may change: the full new member list, the preference (false clears it back to the default), or both. */
+interface PoolSetOptions {
+  readonly identity?: readonly string[];
+  readonly preference?: PoolPreference | false;
+  readonly json?: boolean;
+}
+
+function membersOf(options: Readonly<Pick<PoolMembersOptions, "identity">>): readonly string[] {
   if (options.identity === undefined || options.identity.length === 0) {
     throw new UsageError("A pool needs at least one member: pass --identity <name> (repeatable).");
   }
   return options.identity;
 }
 
+const PREFERENCE_DESCRIPTION = "How a launch picks a member: score (the default) picks the member whose remaining quota expires soonest; listed tries the members in the order the pool lists them, skipping any that is refused right now.";
+
 /** Registers the `agent-shim pool` subcommand tree onto `program`. */
 export function registerPoolCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
   const pool = withExamples(
-    program.command("pool").description("Manage pools: named sets of identities that a launch picks one member of, by remaining quota, with `claude @pool:<name>`."),
+    program.command("pool").description("Manage pools: named sets of identities that a launch picks one member of, by remaining quota or the pool's listed order, with `claude @pool:<name>`."),
     ["agent-shim pool add subs --identity work --identity personal", "agent-shim pool pick subs"],
   );
 
@@ -59,33 +70,43 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .command("add <name>")
       .description("Define a pool. Fails if one with this name already exists.")
       .option("--identity <name>", "A member identity (repeatable).", collectRepeated)
+      .addOption(new Option("--preference <mode>", PREFERENCE_DESCRIPTION).choices(POOL_PREFERENCES))
       .option("--json", "Print the result as JSON.")
       .action((name: string, options: Readonly<PoolMembersOptions>) => {
         const members = membersOf(options);
         requireIdentities(paths, members);
-        const created = addPool(paths, name, members);
+        const created = addPool(paths, name, members, options.preference);
         reportMutation(options.json, { action: "created", kind: "pool", name, value: created }, () => {
           console.log(`Created pool "${name}" with ${members.join(", ")}.`);
         });
       }),
-    ["agent-shim pool add subs --identity work --identity personal"],
+    ["agent-shim pool add subs --identity work --identity personal", "agent-shim pool add client --identity client-main --identity spare --preference listed"],
   );
 
   withExamples(
     pool
       .command("set <name>")
-      .description("Replace a pool's members.")
-      .option("--identity <name>", "A member identity (repeatable); the full new list.", collectRepeated)
+      .description("Replace a pool's members, its preference, or both.")
+      .option("--identity <name>", "A member identity (repeatable); the full new list. Kept as-is when this option is absent.", collectRepeated)
+      .addOption(new Option("--preference <mode>", PREFERENCE_DESCRIPTION).choices(POOL_PREFERENCES))
+      .option("--no-preference", "Clear the preference back to the default, score.")
       .option("--json", "Print the result as JSON.")
-      .action((name: string, options: Readonly<PoolMembersOptions>) => {
-        const members = membersOf(options);
-        requireIdentities(paths, members);
-        const updated = setPool(paths, name, members);
+      .action((name: string, options: Readonly<PoolSetOptions>) => {
+        const existing = requirePool(paths, name);
+        if (options.identity === undefined && options.preference === undefined) {
+          throw new UsageError("Nothing to change: pass --identity, --preference or --no-preference.");
+        }
+        const members = options.identity === undefined ? existing.identities : membersOf(options);
+        if (options.identity !== undefined) {
+          requireIdentities(paths, members);
+        }
+        const preference = options.preference === undefined ? existing.preference : options.preference === false ? undefined : options.preference;
+        const updated = setPool(paths, name, members, preference);
         reportMutation(options.json, { action: "updated", kind: "pool", name, value: updated }, () => {
           console.log(`Pool "${name}" now has ${members.join(", ")}.`);
         });
       }),
-    ["agent-shim pool set subs --identity work --identity personal --identity spare"],
+    ["agent-shim pool set subs --identity work --identity personal --identity spare", "agent-shim pool set subs --preference listed"],
   );
 
   withExamples(
@@ -97,7 +118,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         const pools = readPools(paths);
         const active = readActiveIdentity(paths);
         if (options.json === true) {
-          printJson(Object.entries(pools).map(([name, entry]) => ({ name, identities: entry.identities, active: active === `${POOL_SELECTOR_PREFIX}${name}` })));
+          printJson(Object.entries(pools).map(([name, entry]) => ({ name, identities: entry.identities, ...(entry.preference === undefined ? {} : { preference: entry.preference }), active: active === `${POOL_SELECTOR_PREFIX}${name}` })));
           return;
         }
         const names = Object.keys(pools).sort();
@@ -106,7 +127,8 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
           return;
         }
         for (const name of names) {
-          console.log(`${active === `${POOL_SELECTOR_PREFIX}${name}` ? "*" : " "} ${name}: ${(pools[name]?.identities ?? []).join(", ")}`);
+          const entry = pools[name];
+          console.log(`${active === `${POOL_SELECTOR_PREFIX}${name}` ? "*" : " "} ${name}: ${(entry?.identities ?? []).join(", ")}${entry?.preference === undefined ? "" : " (preference: listed)"}`);
         }
       }),
     ["agent-shim pool list", "agent-shim pool list --json"],
@@ -120,11 +142,14 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .action((name: string, options: Readonly<{ json?: boolean }>) => {
         const entry = requirePool(paths, name);
         if (options.json === true) {
-          printJson({ name, identities: entry.identities });
+          printJson({ name, identities: entry.identities, ...(entry.preference === undefined ? {} : { preference: entry.preference }) });
           return;
         }
         console.log(`Pool: ${name}`);
         console.log(`Members: ${entry.identities.join(", ")}`);
+        if (entry.preference !== undefined) {
+          console.log(`Preference: ${entry.preference}`);
+        }
       }),
     ["agent-shim pool show subs"],
   );

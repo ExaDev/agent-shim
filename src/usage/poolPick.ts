@@ -53,13 +53,14 @@ export function loadPoolMembers(fs: PoolPickFs, paths: PoolPickPaths, identities
   });
 }
 
-/** Ranks `identities` from what the usage store recorded, as of `nowMs`. */
-export function rankPoolFromStore(params: Readonly<{ fs: PoolPickFs; paths: PoolPickPaths; identities: readonly string[]; nowMs: number; sticky?: StickyPick; resuming: boolean }>): PoolRanking {
+/** Ranks `identities` from what the usage store recorded, as of `nowMs`, in the pool's preference order ("score" when `preference` is absent). */
+export function rankPoolFromStore(params: Readonly<{ fs: PoolPickFs; paths: PoolPickPaths; identities: readonly string[]; nowMs: number; sticky?: StickyPick; resuming: boolean; preference?: "score" | "listed" }>): PoolRanking {
   return rankPool({
     members: loadPoolMembers(params.fs, params.paths, params.identities, params.nowMs),
     nowMs: params.nowMs,
     resuming: params.resuming,
     ...(params.sticky === undefined ? {} : { sticky: params.sticky }),
+    ...(params.preference === undefined ? {} : { preference: params.preference }),
   });
 }
 

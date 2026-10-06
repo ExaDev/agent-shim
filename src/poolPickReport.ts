@@ -32,6 +32,7 @@ export function collectPoolPick(params: Readonly<{ paths: LayoutPaths; fs: FsPor
     identities: present,
     nowMs: params.nowMs,
     resuming: false,
+    ...(params.pool.preference === undefined ? {} : { preference: params.pool.preference }),
     ...(sticky.sticky === undefined ? {} : { sticky: sticky.sticky }),
   });
   return {

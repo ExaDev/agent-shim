@@ -83,7 +83,15 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
 
   for (;;) {
     const nowMs = params.now();
-    const ranking = rankPoolFromStore({ fs: params.usageFs, paths: params.paths, identities, nowMs, resuming, ...(stickyRead.sticky === undefined ? {} : { sticky: stickyRead.sticky }) });
+    const ranking = rankPoolFromStore({
+      fs: params.usageFs,
+      paths: params.paths,
+      identities,
+      nowMs,
+      resuming,
+      ...(pool.preference === undefined ? {} : { preference: pool.preference }),
+      ...(stickyRead.sticky === undefined ? {} : { sticky: stickyRead.sticky }),
+    });
     const { pick, earliestReturn } = ranking;
     if (pick !== undefined) {
       recordStickyPick(params.usageFs, params.paths.usagePicksFile, params.cwd, pick.identity, nowMs);
