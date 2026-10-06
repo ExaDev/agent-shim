@@ -3,6 +3,7 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
+import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetcher } from "./rcWebFetch";
 import type { FrontDoorRoute, RoutedRequest, RoutedResponse } from "./route";
 import type { RcStreamEnvelope } from "./rcSchemas";
 
@@ -12,6 +13,8 @@ import type { RcStreamEnvelope } from "./rcSchemas";
  * The protocol spoken is exactly the one the door already speaks as a client, which is what makes this honest: every path, envelope, sequence rule and resume pair below is the shape the merged client-half machinery (`rcSessions.ts`, `rcStream.ts`, `connectEffects.ts`) dials the real host with, cross-checked against the CLI source (the 2.1.88 source-map dump behind the issue's spike) and live 2.1.289 envelopes captured through the interception rig. The transport is version-unstable (CCRv1 websocket to CCRv2 SSE plus POST within the 2.1.x line), so this surface pins what the rig's pinned CLI speaks and must be re-verified on upgrades; that standing caveat is issue #207's own.
  *
  * Division of the surface: the session family (`/v1/code/sessions...` and the `/v1/sessions` compatibility list) rides the routed pipeline as a `FrontDoorRoute`, so it flows through the same admission and middleware as any routed request and, above all, through the same observation wrapper that feeds the tracker (the door's own client half learns each session's credential precisely because the create is observed like any other exchange). The non-`/v1/` answers the CLI needs around activation (feature eval, profile, telemetry no-ops) and the OAuth refresh on the control-plane host have no pipeline to ride, so they are served by `local`, which the connect surface consults before routing or piping; that surface also takes over the control-plane host's terminated session as ordinary HTTP (it is normally byte-tapped) because answering `/v1/oauth/token` requires parsing it.
+ *
+ * The worker family includes the two web proxies the CLI dials only when its environment opts in (`CLAUDE_CODE_WEBFETCH_USE_CCR_PROXY` and `CLAUDE_CODE_WEBSEARCH_USE_CCR_PROXY`, both unset by default and both verified absent from the rig session, so the default session fetches directly and never dials them): `/{cse}/worker/web-fetch` carries the CLI's URL fetch (a POST of `{url}` answered with the fetched facts or a target refusal, both shapes the 2.1.289 client's own schema reads), and `/{cse}/worker/web-search` carries its search. The fetch's bounds live in `rcWebFetch.ts`; the search is served as a clear refusal naming that no backend ships, with the injection point a real backend answers through.
  *
  * The one network lever this uses is the bridge response's `api_base_url`: the protocol lets the server name where the worker dials, so the door names the API host it itself terminates, and the worker's `/worker/...` calls arrive straight back at this surface over the same interception that carried the create.
  *
@@ -104,6 +107,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Whether a search backend's answer is its refusal rather than its result list: `Array.isArray` alone cannot narrow a readonly array out of the union, so the guard spells the refusal shape it checks for. */
+function isWebSearchRefusal(value: readonly RcWebSearchResult[] | { readonly errorType: string; readonly errorMessage: string }): value is { readonly errorType: string; readonly errorMessage: string } {
+  return !Array.isArray(value);
+}
+
 /** A record's string field when it is a non-empty string, else undefined. */
 function nonEmptyString(record: Record<string, unknown> | undefined, field: string): string | undefined {
   const value = record === undefined ? undefined : record[field];
@@ -120,6 +128,22 @@ function numberOf(record: Record<string, unknown> | undefined, field: string): n
     return Number(value);
   }
   return undefined;
+}
+
+/** A record's field as a string array when every member is a string, else undefined: the shape the web-search request's domain filters carry. */
+function stringArray(record: Record<string, unknown> | undefined, field: string): readonly string[] | undefined {
+  const value = record === undefined ? undefined : record[field];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const members: string[] = [];
+  for (const member of value) {
+    if (typeof member !== "string") {
+      return undefined;
+    }
+    members.push(member);
+  }
+  return members;
 }
 
 /** One header's single value, or undefined when absent or an unusable repeat. */
@@ -190,6 +214,18 @@ interface SelfHostSession {
   lastTrafficAt: number;
 }
 
+/** One search result a backend answers with: the three fields the CLI's web-search schema reads, of which only `url` must be present (the client filters on it). */
+export interface RcWebSearchResult {
+  readonly title?: string;
+  readonly url: string;
+  readonly snippet?: string;
+}
+
+/**
+ * A real search backend for the worker's web-search proxy, injectable because the door ships none: it receives the query exactly as the CLI sent it (with its domain filters and search profile when it named any) and answers either the result list or a refusal shaped like the fetch's. This is the documented hook a future backend plugs into; the door's own answer while none is wired is the clear refusal below, never an invented engine and never a silent empty success.
+ */
+export type RcWebSearchBackend = (request: { readonly query: string; readonly allowedDomains?: readonly string[]; readonly blockedDomains?: readonly string[]; readonly searchProfile?: string }) => Promise<readonly RcWebSearchResult[] | { readonly errorType: string; readonly errorMessage: string }>;
+
 /** Everything the service needs, injected so the decision logic runs against fakes in unit tests. */
 export interface RcSelfHostDeps {
   readonly now: () => number;
@@ -199,6 +235,10 @@ export interface RcSelfHostDeps {
   readonly randomToken: () => string;
   /** The minted credential this door authenticates against, read fresh so a re-mint takes effect without restarting the door; undefined while none was ever minted, in which case every authenticated call is refused. */
   readonly credentialRecord: () => RcSelfHostCredentialRecord | undefined;
+  /** The URL fetch behind the worker's web-fetch proxy: the door's own exempt-agent dial in production (`realRcWebFetch`), a fake in tests. */
+  readonly webFetch: RcWebFetcher;
+  /** A real search backend for the worker's web-search proxy, when one is wired; while undefined the proxy answers the clear refusal naming that no backend serves this door. */
+  readonly webSearch?: RcWebSearchBackend;
   readonly log?: (line: string) => void;
 }
 
@@ -577,6 +617,61 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
       if (workerTail === "diagnostics" && method === "POST") {
         await readBody(request.body, CONTROL_BODY_CAP_BYTES);
         await answerJson(response, HTTP_STATUS.ok, {});
+        return;
+      }
+      if (workerTail === "web-fetch" && method === "POST") {
+        // The worker-side URL fetch the CLI delegates when its environment sends it through the Remote Control host: a POST of one url, answered with the fetched facts or the target refusal, both as 200 bodies because the CLI's client retries HTTP errors but surfaces an error object as the tool's own failure.
+        const body = parseJsonObject(await readBody(request.body, CONTROL_BODY_CAP_BYTES));
+        const target = nonEmptyString(body, "url");
+        if (target === undefined) {
+          await answerJson(response, HTTP_STATUS.badRequest, { type: "error", error: { type: "invalid_request_error", message: "a worker web-fetch carries one url" } });
+          return;
+        }
+        const outcome = await deps.webFetch(target);
+        if (outcome.kind === "fetched") {
+          const answer = { url: target, destination_url: outcome.destinationUrl, text: outcome.text, ...(outcome.contentType === undefined ? {} : { content_type: outcome.contentType }) };
+          // The serialised answer must fit the CLI proxy client's own reader cap: JSON escaping can inflate a body that fitted the byte cap, and an answer past the cap is dropped unread, so the honest reply is the refusal.
+          if (Buffer.byteLength(JSON.stringify(answer), "utf8") > RC_WEB_FETCH_MAX_BYTES) {
+            deps.log?.(`rc selfhost ${session.id}: worker web-fetch of ${target} escaped past the reader cap when framed`);
+            await answerJson(response, HTTP_STATUS.ok, { error: { error_type: "web_fetch_too_large", error_message: `the answer for ${target} exceeds the ${String(RC_WEB_FETCH_MAX_BYTES)} byte cap the CLI's proxy client reads` } });
+            return;
+          }
+          deps.log?.(`rc selfhost ${session.id}: worker web-fetch served ${target} as ${outcome.destinationUrl}`);
+          await answerJson(response, HTTP_STATUS.ok, answer);
+          return;
+        }
+        deps.log?.(`rc selfhost ${session.id}: worker web-fetch of ${target} refused: ${outcome.errorType}`);
+        await answerJson(response, HTTP_STATUS.ok, { error: { error_type: outcome.errorType, error_message: outcome.errorMessage } });
+        return;
+      }
+      if (workerTail === "web-search" && method === "POST") {
+        const body = parseJsonObject(await readBody(request.body, CONTROL_BODY_CAP_BYTES));
+        const query = nonEmptyString(body, "query");
+        if (query === undefined) {
+          await answerJson(response, HTTP_STATUS.badRequest, { type: "error", error: { type: "invalid_request_error", message: "a worker web-search carries one query" } });
+          return;
+        }
+        const allowedDomains = stringArray(body, "allowed_domains");
+        const blockedDomains = stringArray(body, "blocked_domains");
+        if ((body?.allowed_domains !== undefined && allowedDomains === undefined) || (body?.blocked_domains !== undefined && blockedDomains === undefined)) {
+          await answerJson(response, HTTP_STATUS.badRequest, { type: "error", error: { type: "invalid_request_error", message: "the domain filters of a worker web-search are string arrays" } });
+          return;
+        }
+        const searchProfile = nonEmptyString(body, "search_profile");
+        const backend = deps.webSearch;
+        if (backend === undefined) {
+          // The door ships no search engine, and pretending otherwise (an empty result list reads as a search that found nothing) would be the silent failure; the refusal names the gap, and a real backend answers through the same shape once one is wired.
+          deps.log?.(`rc selfhost ${session.id}: worker web-search of "${query}" refused: no search backend serves this door`);
+          await answerJson(response, HTTP_STATUS.ok, { results: [], error: { error_type: "web_search_unavailable", error_message: "this front door serves the Remote Control web-search proxy without a search backend, so no query can be served here" } });
+          return;
+        }
+        const answered = await backend({ query, ...(allowedDomains === undefined ? {} : { allowedDomains }), ...(blockedDomains === undefined ? {} : { blockedDomains }), ...(searchProfile === undefined ? {} : { searchProfile }) });
+        deps.log?.(`rc selfhost ${session.id}: worker web-search of "${query}" answered by its backend`);
+        if (isWebSearchRefusal(answered)) {
+          await answerJson(response, HTTP_STATUS.ok, { results: [], error: { error_type: answered.errorType, error_message: answered.errorMessage } });
+          return;
+        }
+        await answerJson(response, HTTP_STATUS.ok, { results: answered.map((result) => ({ title: result.title ?? "", url: result.url, snippet: result.snippet ?? "" })) });
         return;
       }
       await answerJson(response, HTTP_STATUS.notFound, { type: "error", error: { type: "api_error", message: `the self-hosted Remote Control surface serves no worker path "${workerTail}"` } });

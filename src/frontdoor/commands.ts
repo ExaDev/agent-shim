@@ -31,6 +31,7 @@ import { createRcCredentialStore } from "./rcCredentialStore";
 import { createRcClientPage } from "./rcClientPage";
 import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
 import { mintRcSelfHostCredential, readRcSelfHostRecord, type RcSelfHostMintResult } from "./rcSelfHostMint";
+import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
 import { RC_IDLE_EXPIRY_MS, RC_PERMISSION_MODES, RC_PENDING_SUMMARY_EXCERPT_CHARS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, interruptRcSession, isRcPermissionMode, observingRoutedRoute, setRcSessionModel, setRcSessionPermissionMode, type RcAnswerDecision, type RcPermissionMode, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RcStreamEvent } from "./rcSchemas";
@@ -109,6 +110,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         newUuid: randomUUID,
         randomToken: () => randomBytes(MINTED_TOKEN_RANDOM_BYTES).toString("base64url"),
         credentialRecord: () => readRcSelfHostRecord(realFarmFs, paths.frontdoorDir),
+        webFetch: realRcWebFetch({ allowPrivate: rcWebFetchAllowsPrivateFromEnv(process.env) }),
         log,
       })
     : undefined;

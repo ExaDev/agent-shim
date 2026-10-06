@@ -1,3 +1,4 @@
+import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
@@ -16,6 +17,7 @@ import { createProviderRouteResolver } from "./providerRoute";
 import { serveRouted } from "./pipeline";
 import { observingRoutedRoute, createRcSessionTracker, answerRcControlRequest, injectRcUserMessage, type RcSessionTracker } from "./rcSessions";
 import { createRcSelfHostSurface, type RcSelfHostCredentialRecord } from "./rcSelfHost";
+import { realRcWebFetch } from "./rcWebFetch";
 import { createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import { connectRedirected, KEYGEN_TIMEOUT_MS, requestOn, TEST_CAPABILITY } from "./connectTestWorld";
 
@@ -41,6 +43,9 @@ const DELIVERY_SETTLE_MS = 150;
 
 /** The width of a UUID's final hyphen-separated group, so minted test ids carry the shape the protocol validates. */
 const UUID_TAIL_WIDTH = 12;
+
+/** The redirect status the stand-in's first hop answers with, named because the shared enum stops at the statuses this door answers with. */
+const HTTP_FOUND = 302;
 
 /** The whole-case timeout: keygen dominates the first case, the exchanges the second, and both sit far under this. */
 const TEST_TIMEOUT_MS = 30_000;
@@ -142,6 +147,8 @@ describe("the self-hosted Remote Control mode end to end", () => {
       newUuid: randomUuidSequence(),
       randomToken: () => "random-token-material",
       credentialRecord: () => RECORD,
+      // The real production fetch dial, with the private-address refusal lifted because this world's fetch targets are loopback stand-ins the test itself starts.
+      webFetch: realRcWebFetch({ allowPrivate: true }),
     });
     tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: 45_000 });
     const fanout = createRcEventFanout();
@@ -332,6 +339,58 @@ describe("the self-hosted Remote Control mode end to end", () => {
     expect(refresh.statusLine).toContain("200");
     expect(JSON.parse(refresh.body)).toMatchObject({ access_token: MINTED_OAUTH_TOKEN, refresh_token: RECORD.refreshToken });
     oauthSocket.destroy();
+  }, TEST_TIMEOUT_MS);
+
+  it("serves the worker's web-fetch proxy through the transparent surface with the door's own dial, redirect and all", async () => {
+    // The fetch target: a loopback stand-in whose first hop redirects, so the whole walk (mount, auth, bounds check, redirect, read, answer) runs against real sockets.
+    const standIn = http.createServer((request, response) => {
+      if (request.url === "/start") {
+        response.writeHead(HTTP_FOUND, { location: "/final" });
+        response.end();
+        return;
+      }
+      response.writeHead(HTTP_STATUS.ok, { "content-type": "text/html" });
+      response.end("<html><body>the rig stand-in page</body></html>");
+    });
+    await new Promise<void>((resolve) => {
+      standIn.listen(0, "127.0.0.1", () => {
+        resolve(undefined);
+      });
+    });
+    const standInPort = (standIn.address() as { port: number }).port;
+
+    const createSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const created = await requestOn(createSocket, rawRequest("POST", "/v1/code/sessions", { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "Content-Type": "application/json" }, JSON.stringify({ title: "webfetch", bridge: {} })));
+    expect(created.statusLine).toContain("200");
+    const sessionId = (JSON.parse(created.body) as { session: { id: string } }).session.id;
+    createSocket.destroy();
+    await waitUntil(() => tracker.list().some((session) => session.id === sessionId));
+
+    const bridgeSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const bridged = await requestOn(bridgeSocket, rawRequest("POST", `/v1/code/sessions/${sessionId}/bridge`, { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "Content-Type": "application/json" }, "{}"));
+    const bridge = JSON.parse(bridged.body) as { worker_jwt: string };
+    bridgeSocket.destroy();
+
+    // The request the 2.1.289 client sends: the worker JWT as its bearer, the protocol's version header, and one url in the body.
+    const fetchSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const fetched = await requestOn(fetchSocket, rawRequest("POST", `/v1/code/sessions/${sessionId}/worker/web-fetch`, { Authorization: `Bearer ${bridge.worker_jwt}`, "Content-Type": "application/json", "anthropic-version": "2023-06-01" }, JSON.stringify({ url: `http://127.0.0.1:${String(standInPort)}/start` })));
+    expect(fetched.statusLine).toContain("200");
+    expect(JSON.parse(fetched.body)).toEqual({ url: `http://127.0.0.1:${String(standInPort)}/start`, destination_url: `http://127.0.0.1:${String(standInPort)}/final`, text: "<html><body>the rig stand-in page</body></html>", content_type: "text/html" });
+    fetchSocket.destroy();
+
+    // The scheme gate is live in the same served path: a scheme the proxy does not dial is answered as the target refusal, never fetched.
+    const refuseSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const refused = await requestOn(refuseSocket, rawRequest("POST", `/v1/code/sessions/${sessionId}/worker/web-fetch`, { Authorization: `Bearer ${bridge.worker_jwt}`, "Content-Type": "application/json" }, JSON.stringify({ url: "ftp://127.0.0.1/etc" })));
+    expect(refused.statusLine).toContain("200");
+    expect((JSON.parse(refused.body) as { error: { error_type: string } }).error.error_type).toBe("web_fetch_scheme");
+    refuseSocket.destroy();
+
+    await new Promise<void>((resolve) => {
+      standIn.close(() => {
+        resolve(undefined);
+      });
+      standIn.closeAllConnections();
+    });
   }, TEST_TIMEOUT_MS);
 });
 
