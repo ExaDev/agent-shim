@@ -23,7 +23,7 @@ const JSON_HEADERS = { "content-type": "application/json" };
 
 function event(overrides: Partial<RoutedResponseEvent> = {}): RoutedResponseEvent {
   return {
-    session: { identity: "work", sessionId: "session-1", headroom: false, projectId: undefined },
+    session: { identity: "work", sessionId: "session-1", provider: undefined, headroom: false, projectId: undefined },
     route: "passthrough",
     method: "POST",
     path: "/v1/messages",
@@ -324,10 +324,10 @@ describe("createUsageMiddleware", () => {
 
     it("omits identity, session and project when the launch resolved none, and records the project when it did", () => {
       const anonymous = harness();
-      finishBody(anonymous, begin(anonymous, event({ session: { identity: undefined, sessionId: undefined, headroom: false, projectId: undefined } })));
+      finishBody(anonymous, begin(anonymous, event({ session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined } })));
       anonymous.flush();
       const scoped = harness();
-      finishBody(scoped, begin(scoped, event({ session: { identity: "work", sessionId: "s", headroom: true, projectId: "repo-root" } })));
+      finishBody(scoped, begin(scoped, event({ session: { identity: "work", sessionId: "s", provider: undefined, headroom: true, projectId: "repo-root" } })));
       scoped.flush();
 
       const bare = singleRecord(anonymous);

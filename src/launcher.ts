@@ -8,7 +8,7 @@ import { buildCliOverride, type CliOverride } from "./launcher/cliOverride";
 import { recoverFarm, recoveryDiagnostics, resyncFarm } from "./launcher/farm";
 import { evaluateAmbientCredentialGuard } from "./launcher/guard";
 import { decideConfigProfile, decideIdentity, loadIdentity, type IdentityDecision } from "./launcher/identity";
-import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider, type RoutedProvider } from "./launcher/flags";
+import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { resolvePoolLaunch } from "./launcher/pool";
 import { IdentityLockBusyError } from "./launcher/lock";
@@ -17,7 +17,6 @@ import { spawnClaude } from "./launcher/spawn";
 import { resolveProvider } from "./providersStore";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
-import { providerBaseUrl } from "./frontdoor/route";
 import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, describeSource, resolveCredential, type CredentialPort, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
@@ -420,10 +419,6 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   if (frontDoor?.trustWarning !== undefined) {
     log.warn(frontDoor.trustWarning);
   }
-  let routedProvider: RoutedProvider | undefined;
-  if (resolvedProvider !== undefined && frontDoor !== undefined) {
-    routedProvider = { ...resolvedProvider, baseUrl: providerBaseUrl(frontDoor.port, resolvedProvider.name) };
-  }
 
   let headroom: HeadroomUp | undefined;
   const headroomPort = params.headroom;
@@ -449,7 +444,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     configDirEscapeHatch: configDirEscapeHatchApplies,
     resolvedIdentityName: identityDecision.name,
     identitiesDir: paths.identitiesDir,
-    ...(routedProvider === undefined ? {} : { provider: routedProvider }),
+    ...(resolvedProvider === undefined ? {} : { provider: resolvedProvider }),
     ...(identityCredential === undefined ? {} : { identityCredential }),
     ...(frontDoor === undefined ? {} : { frontdoor: frontDoor }),
     ...(headroom === undefined ? {} : { headroom }),

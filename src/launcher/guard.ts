@@ -76,7 +76,7 @@ export interface EvaluateAmbientCredentialGuardParams {
   /** The active identity's name, for the message's persistent-opt-in command. Undefined when no identity is known. */
   readonly identityName?: string;
   /**
-   * True when this launch routes through an API provider. The guard inspects the PARENT environment, before `buildEnv` runs; a provider launch has its `ANTHROPIC_AUTH_TOKEN` injected and its `ANTHROPIC_API_KEY` cleared by `buildEnv` itself, so an ambient credential in the parent environment never reaches the child and there is nothing left for this guard to protect against. Everything else about the guard (including `IdentitySchema.allowAmbientCredential`) is unchanged by this flag.
+   * True when this launch routes through an API provider. The guard inspects the PARENT environment, before `buildEnv` runs; a provider launch has every credential variable removed by `buildEnv` itself (the door attaches the provider's credential at its route, so the child presents nothing), so an ambient credential in the parent environment never reaches the child and there is nothing left for this guard to protect against. Everything else about the guard (including `IdentitySchema.allowAmbientCredential`) is unchanged by this flag.
    */
   readonly providerSelected?: boolean;
   /** The launching identity's own credential, when its credential block resolved: see `detectAmbientCredential`. */

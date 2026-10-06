@@ -1,7 +1,7 @@
 import type { HeadroomSocketTarget } from "../headroom/socket";
 import { restoreCredentials, type CredentialCustody } from "./custody";
 import type { PipelineDeps, ResponseObserver, RouteResolution } from "./pipeline";
-import { AUTH_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, parseProviderPath, type RoutedRequest } from "./route";
+import { AUTH_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, PROVIDER_HEADER, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
 
 /** Everything the two listeners' pipelines are assembled from. */
 export interface DoorPipelineDeps {
@@ -36,7 +36,7 @@ function admitLaunch(isLiveToken: (token: string) => boolean): PipelineDeps["adm
 }
 
 /**
- * The direct listener's admission: only what this door's own headroom hop sent back gets through. The request must carry this generation's hop secret and a custody id that is live for the provider its path names; the hop's placeholder credentials are then swapped for the real ones the client sent. Anything else (a forged or stale id, an id for another provider, a missing secret) is refused before any route sees it, so nothing that reaches this plain-HTTP port can spend a credential it was never handed.
+ * The direct listener's admission: only what this door's own headroom hop sent back gets through. The request must carry this generation's hop secret and a custody id that is live for the provider its path or session names (a provider session's hop may carry either form, since its request's path can be a bare API path the door rewrites by provider header); the hop's placeholder credentials are then swapped for the real ones the client sent. Anything else (a forged or stale id, an id for another provider, a missing secret) is refused before any route sees it, so nothing that reaches this plain-HTTP port can spend a credential it was never handed.
  */
 function admitHop(hopSecret: string, custody: CredentialCustody): PipelineDeps["admit"] {
   return (request) => {
@@ -44,7 +44,7 @@ function admitHop(hopSecret: string, custody: CredentialCustody): PipelineDeps["
       return { ok: false, message: "agent-shim front door: the direct listener serves only this door's own headroom hop" };
     }
     const hopId = singleValue(request.headers[HOP_ID_HEADER]);
-    const provider = parseProviderPath(new URL(request.url, "http://127.0.0.1").pathname)?.provider;
+    const provider = parseProviderPath(new URL(request.url, "http://127.0.0.1").pathname)?.provider ?? internalHeaderValue(request.headers, PROVIDER_HEADER);
     const credentials = hopId === undefined || provider === undefined ? undefined : custody.redeem(hopId, provider);
     if (credentials === undefined) {
       return { ok: false, message: "agent-shim front door: this request names no live headroom hop for its provider" };

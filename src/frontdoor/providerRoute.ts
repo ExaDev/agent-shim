@@ -14,7 +14,7 @@ import type { RouteResolution } from "./pipeline";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
 
 /**
- * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one with the provider's own credential attached in place of whatever the child presented. A bare `/v1/...` target (what the CONNECT surface hands the pipeline from a terminated OAuth session) rides a pass-through to Claude Code's own API, except the Remote Control session family when the door serves that surface itself (`rcSelfHostRoute`, the self-hosted mode's route). Anything else is unrouted.
+ * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one with the provider's own credential attached in place of whatever the child presented. A bare `/v1/...` target (what the CONNECT surface hands the pipeline from a terminated OAuth session) rides a pass-through to Claude Code's own API, except in two cases: the Remote Control session family when the door serves that surface itself (`rcSelfHostRoute`, the self-hosted mode's route), and a session whose launch named a provider, whose inference is rewritten under that provider's scoped path and resolved as if the child had dialled the provider directly. Anything else is unrouted.
  */
 export function createProviderRouteResolver(deps: {
   /** Reads provider files, the same filesystem port the launcher uses. */
@@ -64,6 +64,10 @@ export function createProviderRouteResolver(deps: {
     if (scoped === undefined) {
       if (deps.rcSelfHostRoute !== undefined && isRcSelfHostPath(path)) {
         return { ok: true, route: deps.rcSelfHostRoute };
+      }
+      if (request.session.provider !== undefined && path.startsWith("/v1/") && !isRcSelfHostPath(path)) {
+        // A provider session arrives believing it is talking to Claude Code's own API (that belief is load-bearing: the CLI's Remote Control activation gate admits only that host, with no override), so its inference rides a bare /v1/ path. The door, which terminates that host's TLS, is the one that decides where the traffic actually goes: the session's named provider, resolved exactly as a provider-scoped request would be. The Remote Control family never takes this branch, whichever surface serves it, because a provider serves inference, not the CCR session protocol.
+        return resolve({ ...request, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(request.session.provider)}${request.url}` });
       }
       return path.startsWith("/v1/") ? { ok: true, route: oauthRoute } : { ok: false, status: HTTP_STATUS.notFound, message: `no such endpoint: ${path}` };
     }

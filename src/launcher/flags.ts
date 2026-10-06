@@ -5,7 +5,7 @@ import type { LaunchFlags, Provider } from "../config/schema";
 import { credentialVariables, type ResolvedCredential } from "../credential";
 import { mergeAnthropicCustomHeaders } from "../headroom/headers";
 import { connectProxyUrl } from "../frontdoor/capability";
-import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROJECT_ID_HEADER, SESSION_HEADER } from "../frontdoor/route";
+import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, SESSION_HEADER } from "../frontdoor/route";
 import type { FrontDoorUp, HeadroomUp } from "./ports";
 
 /** The fully resolved launch flags for one launch. */
@@ -105,26 +105,6 @@ export interface ResolvedProvider {
   readonly credential: ResolvedCredential;
 }
 
-/** A resolved provider with the base URL its sessions are sent to: the front door's provider-scoped address, which exists only once the door is up and is the same shape for both kinds (the door is what decides where the request goes from there). */
-export interface RoutedProvider extends ResolvedProvider {
-  readonly baseUrl: string;
-}
-
-/** The hosts a loopback base URL can name, which a proxy inherited from the parent must never be asked to reach. */
-const LOOPBACK_HOSTS = ["127.0.0.1", "localhost", "::1"] as const;
-
-/** Whether `baseUrl` points at this machine. */
-function isLoopbackUrl(baseUrl: string): boolean {
-  const host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "");
-  return LOOPBACK_HOSTS.some((loopback) => loopback === host);
-}
-
-/** `existing` (a comma-separated `NO_PROXY` value) with every loopback host appended that it does not already list, keeping what was there. */
-function withLoopbackHosts(existing: string | undefined): string {
-  const listed = (existing ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
-  return [...listed, ...LOOPBACK_HOSTS.filter((host) => !listed.includes(host))].join(",");
-}
-
 /** Inputs to `buildEnv`. */
 export interface BuildEnvParams {
   readonly baseEnv: Readonly<Record<string, string | undefined>>;
@@ -133,11 +113,11 @@ export interface BuildEnvParams {
   /** The identity name resolved for this launch, when one was resolved. */
   readonly resolvedIdentityName?: string;
   readonly identitiesDir: string;
-  /** The provider resolved for this launch, when one was resolved, with the base URL it routes to. Its credential is resolved by the caller because refusing an unusable one needs the caller's log/exit ports. */
-  readonly provider?: RoutedProvider;
+  /** The provider resolved for this launch, when one was resolved. Its credential is resolved by the caller because refusing an unusable one needs the caller's log/exit ports; the credential itself is never handed to the child, only used for that refusal, because the door attaches it at the provider's route. */
+  readonly provider?: ResolvedProvider;
   /** The launching identity's own resolved credential, when it has a credential block and no provider was selected. A provider's credential authenticates against the provider's endpoint, so the identity's is never applied alongside one. */
   readonly identityCredential?: ResolvedCredential;
-  /** The front door this launch routes through, when one is engaged (a provider is selected, or headroom resolved on). It is what the child talks to: its provider listener for a provider session, its CONNECT surface for an OAuth one. */
+  /** The front door this launch routes through, when one is engaged (a provider is selected, or headroom resolved on). It is what the child talks to: its CONNECT surface for every session, provider and OAuth alike, since the door decides where the traffic goes from there. */
   readonly frontdoor?: FrontDoorUp;
   /** The headroom daemon this launch's requests must pass through (as the door's headroom hop), when headroom resolved on. The child never talks to it directly. */
   readonly headroom?: HeadroomUp;
@@ -150,9 +130,9 @@ export interface BuildEnvParams {
  *
  * When the `CLAUDE_CONFIG_DIR`-already-set escape hatch applied, or no identity was resolved at all (a bare launch with no active identity, matching the legacy script's own "no profile means plain `~/.claude`" behaviour), `CLAUDE_CONFIG_DIR` is left untouched. Otherwise `CLAUDE_CONFIG_DIR` is set to the resolved identity's own directory under `identitiesDir` — farm population into that directory is Phase 5's job, not this function's.
  *
- * A resolved provider is applied regardless of the identity outcome, because it selects which API endpoint the child talks to, not which login's data it sees: `ANTHROPIC_BASE_URL` points at the provider's routed base URL (always the front door's provider-scoped address), `AGENT_SHIM_PROVIDER` names the provider for the statusline, the provider's own `env` entries land verbatim, and its resolved credential is exported as its target's variable (`credentialVariables`), with the other credential variables removed so an ambient one inherited from the parent cannot outrank it. Without a provider, an identity's own resolved credential is exported the same way. The token only ever reaches this environment, never the child's argv or a log line.
+ * A resolved provider is applied regardless of the identity outcome, because it selects which API endpoint the child talks to, not which login's data it sees: `ANTHROPIC_BASE_URL` points at the provider's routed base URL (always the front door's provider-scoped address), `AGENT_SHIM_PROVIDER` names the provider for the statusline, and the provider's own `env` entries land verbatim. The provider's credential is resolved before the launch proceeds (a provider none of whose sources yields a token fails it) but never handed to the child: the front door attaches it at the provider's route, and every credential variable is removed from the environment instead, so the child presents nothing and an ambient credential inherited from the parent can neither fill that slot nor move Claude Code out of the auth mode its Remote Control activation gate demands. Without a provider, an identity's own resolved credential is exported as its target's variable (`credentialVariables`), since that session may reach its endpoint directly with no door to attach anything. The token only ever reaches this environment, never the child's argv or a log line.
  *
- * A resolved front door is the whole of the child's routing, on top of the provider: `ANTHROPIC_CUSTOM_HEADERS` gains the launcher-injected session headers (identity, session id, the launch's capability token, and, when headroom resolved on, the headroom flag and the project identity headroom scopes memory to), merged with any headers the provider's own `env` or the parent environment already set. The door strips every one of them before anything leaves the machine; the token is what authorises the session's requests at the door in the first place. `NODE_EXTRA_CA_CERTS` points at the door's trust bundle in both modes, because the child reaches the door over TLS signed by agent-shim's CA either way. With a provider, the child's HTTPS base URL already names the door's provider listener, so a process that merely binds that port cannot present a certificate the child accepts. Without one (an OAuth launch), the base URL is left exactly as the parent environment had it, because Claude Code enables Remote Control and connectors only against the real `api.anthropic.com`; routing happens one layer down instead, with `HTTPS_PROXY` pointing the child at the door's CONNECT surface and carrying the launch's capability as its proxy credential (the surface refuses any CONNECT without a live one), so the child still believes it is talking to the real `api.anthropic.com` while the surface's terminated TLS feeds the routed paths to the same pipeline. Nothing names the headroom daemon in the child's environment: it serves only on a unix socket the door's hop dials, and the child never talks to it directly.
+ * A resolved front door is the whole of the child's routing, on top of the provider: `ANTHROPIC_CUSTOM_HEADERS` gains the launcher-injected session headers (identity, session id, the launch's capability token, the selected provider's name, and, when headroom resolved on, the headroom flag and the project identity headroom scopes memory to), merged with any headers the provider's own `env` or the parent environment already set. The door strips every one of them before anything leaves the machine; the token is what authorises the session's requests at the door in the first place, and the provider name is what tells it where the session's inference goes. `NODE_EXTRA_CA_CERTS` points at the door's trust bundle, because the child reaches the door over TLS signed by agent-shim's CA. The base URL is left exactly as the parent environment had it for an OAuth launch, and removed for a provider one, because Claude Code enables Remote Control and connectors only against the real `api.anthropic.com`; routing happens one layer down instead, with `HTTPS_PROXY` pointing the child at the door's CONNECT surface and carrying the launch's capability as its proxy credential (the surface refuses any CONNECT without a live one), so the child still believes it is talking to the real `api.anthropic.com` while the surface's terminated TLS feeds the routed paths to the same pipeline, whatever the door then does with them. Nothing names the headroom daemon in the child's environment: it serves only on a unix socket the door's hop dials, and the child never talks to it directly.
  *
  * `$CLAUDE_EXTRA_FLAGS` is never stripped from the child's environment: some wrappers set it two process-levels up and rely on inheritance through a `claude` invoked from inside a running session.
  */
@@ -169,22 +149,22 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
   if (params.provider !== undefined) {
     const providerEnv = params.provider.definition.env ?? {};
     providerCustomHeaders = providerEnv.ANTHROPIC_CUSTOM_HEADERS;
-    env.ANTHROPIC_BASE_URL = params.provider.baseUrl;
-    if (isLoopbackUrl(params.provider.baseUrl)) {
-      // A launch started from inside an OAuth session inherits that session's HTTPS_PROXY, which would send this loopback request to the parent's CONNECT surface instead of the address it names. A corporate proxy stays in force for everything else, so the proxy variables are kept and loopback is exempted from them in both spellings clients read.
-      env.NO_PROXY = withLoopbackHosts(params.baseEnv.NO_PROXY);
-      env.no_proxy = withLoopbackHosts(params.baseEnv.no_proxy);
-    }
+    // The child keeps believing it talks to Claude Code's own API (the base URL stays unset, exactly as an OAuth launch leaves it), because that belief is load-bearing: Claude Code's Remote Control activation gate admits only api.anthropic.com and honours no override, so a provider-scoped base URL is what kept provider inference and Remote Control from coexisting in one session. The door, which terminates that host's TLS, routes the session's traffic to the provider named in the provider header injected below. An ambient base URL inherited from the parent is removed too, or the child would dial somewhere the door never sees.
+    env.ANTHROPIC_BASE_URL = undefined;
     env.AGENT_SHIM_PROVIDER = params.provider.definition.displayName;
     for (const [key, value] of Object.entries(providerEnv)) {
       env[key] = value;
     }
   }
 
-  // A provider's credential outranks the identity's, which the launcher does not even resolve alongside one. ProviderSchema keeps every credential variable out of the provider's env, so nothing above can undo this.
-  const credential = params.provider?.credential ?? params.identityCredential;
-  if (credential !== undefined) {
-    for (const [variable, value] of Object.entries(credentialVariables(credential.target, credential.token))) {
+  if (params.provider !== undefined) {
+    // A provider session always rides the front door, and the door attaches the provider's own credential at its route, so the child is given no credential to present at all. This is not merely tidiness: a credential variable here puts Claude Code in env-token auth mode, which is exactly the state its Remote Control activation gate refuses, so exporting one is what kept provider inference and Remote Control from coexisting in one session. Every credential variable is removed, so an ambient one inherited from the parent can neither take the presented slot the door would ignore nor change the auth mode back; the launcher still resolves the credential before this point, so a provider none of whose sources yields a token still fails the launch outright.
+    env.ANTHROPIC_AUTH_TOKEN = undefined;
+    env.ANTHROPIC_API_KEY = undefined;
+    env.CLAUDE_CODE_OAUTH_TOKEN = undefined;
+  } else if (params.identityCredential !== undefined) {
+    // Without a provider the child may talk to its endpoint directly (no door is engaged), so the identity's own resolved credential still has to travel in the environment.
+    for (const [variable, value] of Object.entries(credentialVariables(params.identityCredential.target, params.identityCredential.token))) {
       env[variable] = value;
     }
   }
@@ -199,6 +179,7 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
         ...(params.resolvedIdentityName === undefined ? [] : [{ name: IDENTITY_HEADER, value: params.resolvedIdentityName }]),
         { name: SESSION_HEADER, value: params.sessionId },
         { name: AUTH_HEADER, value: params.frontdoor.sessionToken },
+        ...(params.provider === undefined ? [] : [{ name: PROVIDER_HEADER, value: params.provider.name }]),
         ...(params.headroom === undefined
           ? []
           : [
@@ -207,13 +188,10 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
             ]),
       ],
     );
-    // Both routing modes reach the door over TLS whose leaf agent-shim's CA signed: the provider listener's for a provider session, the CONNECT surface's intercept leaf for an OAuth one. The bundle keeps whatever the parent environment already trusted this way.
+    // Every session reaches the door over the CONNECT surface's TLS, whose intercept leaf agent-shim's CA signed: the child dials api.anthropic.com (or a tap host) and the surface terminates it and feeds the routed paths to the door's pipeline. The trust bundle keeps whatever the parent environment already trusted this way.
     env.NODE_EXTRA_CA_CERTS = params.frontdoor.trustBundlePath;
-    if (params.provider === undefined) {
-      // OAuth routing: ANTHROPIC_BASE_URL is left exactly as the parent environment had it (unset for a normal OAuth launch), because Claude Code enables Remote Control and connectors only against the real api.anthropic.com. The door's CONNECT surface terminates that host's TLS instead and feeds the routed paths to the same pipeline the provider sessions use.
-      // The capability rides in the proxy URL too, because the CONNECT request that opens each tunnel is sent before any of the child's own headers: clients turn the URL's credential into Proxy-Authorization on every CONNECT, which is what the surface authenticates before it tunnels anything.
-      env.HTTPS_PROXY = connectProxyUrl(params.frontdoor.connectPort, params.frontdoor.sessionToken);
-    }
+    // The capability rides in the proxy URL too, because the CONNECT request that opens each tunnel is sent before any of the child's own headers: clients turn the URL's credential into Proxy-Authorization on every CONNECT, which is what the surface authenticates before it tunnels anything. A provider session rides the same surface: the door decides where its traffic goes from there (by the provider header above), so the child's belief that it is talking to api.anthropic.com survives intact, which is what its Remote Control gate demands.
+    env.HTTPS_PROXY = connectProxyUrl(params.frontdoor.connectPort, params.frontdoor.sessionToken);
   }
 
   return env;

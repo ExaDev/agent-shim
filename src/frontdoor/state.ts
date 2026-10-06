@@ -8,9 +8,11 @@ import type { HeadroomFs } from "../headroom/state";
  *
  * Protocol 2: the door's headroom hop dials the daemon's unix socket from the versioned headroom state file. A protocol 1 door reads the earlier state file's loopback TCP port, so it would keep sending this release's headroom sessions over the unauthenticated hop (or to no daemon at all), and is replaced.
  *
+ * Protocol 3: the door attaches an http provider's own credential at its route, and this release's launcher no longer hands the child a provider credential to present. A protocol 2 door forwards whatever the child presented, so a protocol 3 launcher's provider sessions would arrive with no credential at all and fail at the provider; the door is replaced rather than joined.
+ *
  * The rule that makes a bump safe: a door accepts every lower protocol's launches (protocol 1 accepts the former `x-claude-use-*` header names), and a launcher replaces a door whose protocol is lower than its own, never one that is higher. Replacing is safe because restarts are what the door is designed for: the capability registry is on disk and the listeners keep their sticky ports, so launches already running reach the replacement on the addresses they froze at launch.
  */
-export const FRONT_DOOR_PROTOCOL = 2;
+export const FRONT_DOOR_PROTOCOL = 3;
 
 /** The record held in one front-door session-registry file: the launcher's pid plus the per-launch capability token its child presents on every request. */
 const FrontDoorSessionSchema = z.strictObject({ pid: z.number().int().positive(), startedAt: z.number(), token: z.string().min(1) });
