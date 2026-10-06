@@ -320,13 +320,13 @@ const SELECTOR_RE = new RegExp(`^(${POOL_SELECTOR_PREFIX}${POOL_NAME_PATTERN}|${
 const IdentitySelectorSchema = z.string().min(1).regex(SELECTOR_RE);
 
 /** A pool's member entry: a concrete identity, or `pool:<name>` to nest another pool as a member, evaluated with that pool's own policy at the position the entry occupies. The same union an identity selector accepts. */
-export const PoolMemberSchema = z.string().min(1).regex(SELECTOR_RE);
+const PoolMemberSchema = z.string().min(1).regex(SELECTOR_RE);
 
 /** The preference modes a pool may choose among its members with. */
 export const POOL_PREFERENCES = ["score", "listed"] as const;
 
 /** How a pool chooses the member a launch runs as: "score" by remaining quota, "listed" in the order the pool names its members. */
-export const PoolPreferenceSchema = z.enum(POOL_PREFERENCES);
+const PoolPreferenceSchema = z.enum(POOL_PREFERENCES);
 export type PoolPreference = z.infer<typeof PoolPreferenceSchema>;
 
 /**
