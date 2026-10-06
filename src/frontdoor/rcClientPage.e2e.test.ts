@@ -6,6 +6,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { createDoorApiNodeHandler } from "./controlApi";
 import { DOOR_EVENT_SOURCE_RC, LAUNCH_EVENT_SOURCE } from "./eventSchemas";
 import { createDoorEventHub } from "./eventHub";
+import type { RcLiveRateLimit } from "./rcSchemas";
 import { RC_CLIENT_PAGE_HTML, RC_CLIENT_PAGE_SCRIPT, RC_CLIENT_PATH, createRcClientPage } from "./rcClientPage";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "./rcSessions";
 import type { RcEventWriteResult } from "./rcWrites";
@@ -31,6 +32,8 @@ const STREAM_EVENT_COUNT = 4;
 /** The sequence the gap arithmetic jumps to from the high-water the stream left, and the dropped count it must report. */
 const GAPPED_SEQUENCE = 7;
 const DROPPED_BY_GAP = 3;
+/** The milliseconds in one second, the unit that converts the fixed ISO instants into the unix epoch seconds the payload states. */
+const MS_PER_SECOND = 1_000;
 
 /** A write the tests never expect to reach the real dial: the steering procedures resolve through it. */
 const unexercised = async (): Promise<RcEventWriteResult> => await Promise.resolve({ ok: false, message: "this test drives no Remote Control write" });
@@ -75,6 +78,8 @@ interface PageSandbox {
   rpc: (path: string, input: Readonly<Record<string, unknown>> | undefined) => Promise<unknown>;
   parseSseFrames: (buffer: string) => { readonly frames: readonly SseFrame[]; readonly rest: string };
   sequenceGap: (tracker: Readonly<Record<string, number>>, event: Readonly<DoorEventLike>) => number;
+  /** The page's quota rendering of the live read's freshest observation. */
+  quotaText: (latest: Readonly<{ observedAt: number; rateLimit: Readonly<Record<string, unknown>> }> | undefined) => string;
   token: string;
 }
 
@@ -91,6 +96,8 @@ describe("the door's web client page and its API calls over the door's own TLS",
   const writes: { readonly kind: "inject" | "answer"; readonly detail: string }[] = [];
   // The door's event backbone, hoisted so the stream case can publish on it and read the event back through the page's own parser.
   const doorEvents = createDoorEventHub();
+  /** The live quota observation the mounted door's `usage/live` answers, mutable so the quota case can file one through the door's real read. */
+  let liveLatest: RcLiveRateLimit | undefined;
   /** Every pathname the mounted door served, so the stream case can await the subscription having landed before publishing what it must deliver. */
   const served: string[] = [];
 
@@ -127,6 +134,8 @@ describe("the door's web client page and its API calls over the door's own TLS",
       teleport: unexercised,
       fanout: { publish: () => undefined, subscribe: () => () => undefined },
       events: doorEvents,
+      liveRateLimits: () => (liveLatest === undefined ? [] : [liveLatest]),
+      latestRateLimit: () => liveLatest,
       usageSnapshots: () => [],
       usageSnapshotOf: () => undefined,
       now: () => 0,
@@ -173,6 +182,7 @@ describe("the door's web client page and its API calls over the door's own TLS",
       rpc: () => notDefined("rpc"),
       parseSseFrames: () => notDefined("parseSseFrames"),
       sequenceGap: () => notDefined("sequenceGap"),
+      quotaText: () => notDefined("quotaText"),
       token: "",
     };
     vm.runInContext(RC_CLIENT_PAGE_SCRIPT, vm.createContext(sandbox));
@@ -203,6 +213,43 @@ describe("the door's web client page and its API calls over the door's own TLS",
 
     expect(await page.rpc("rc/answer", { session: "cse_page", request: "req_page", approve: false, text: "not today" })).toEqual({ session: "cse_page", request: "req_page", sequenceNums: [ANSWER_SEQUENCE_NUM] });
     expect(writes.at(-1)).toEqual({ kind: "answer", detail: "cse_page:req_page" });
+
+    // The live quota read answers empty while no rate_limit_event has been filed, and the page's own header text states that plainly.
+    expect(await page.rpc("usage/live", {})).toEqual({ sessions: [] });
+    expect(page.quotaText(undefined)).toBe("quota: not observed yet");
+  });
+
+  it("renders the live quota the door's own read filed, through the page's own summary", async () => {
+    const page = pageScript();
+    // The reset instants the payload states, as unix epoch seconds, chosen so the ISO instants they name are fixed values the assertion spells out.
+    const FIVE_HOUR_RESETS_AT = Date.parse("2025-10-06T16:00:00.000Z") / MS_PER_SECOND;
+    const SEVEN_DAY_RESETS_AT = Date.parse("2025-10-13T16:00:00.000Z") / MS_PER_SECOND;
+    const OBSERVED_AT = Date.parse("2026-10-06T12:00:00.000Z");
+    liveLatest = {
+      session: "cse_page",
+      observedAt: OBSERVED_AT,
+      rateLimit: {
+        status: "allowed_warning",
+        rateLimitType: "five_hour",
+        resetsAt: FIVE_HOUR_RESETS_AT,
+        utilization: 0.42,
+        unifiedWindows: { five_hour: { utilization: 0.42, resetsAt: FIVE_HOUR_RESETS_AT }, seven_day: { utilization: 0.12, resetsAt: SEVEN_DAY_RESETS_AT } },
+        overageStatus: "allowed",
+      },
+    };
+    try {
+      // The read crosses the door's real TLS, through the same output validation the control plane applies, and the page's header text renders what came back: the quota summary the payload's own words state, then the observation time in the browser's own clock rendering (locale-dependent, so asserted by shape).
+      const answered = (await page.rpc("usage/live", {})) as { latest: { observedAt: number; rateLimit: Record<string, unknown> } | undefined; sessions: readonly unknown[] };
+      expect(answered.sessions.length).toBe(1);
+      expect(answered.latest?.rateLimit.status).toBe("allowed_warning");
+      const rendered = page.quotaText(answered.latest);
+      const summary = "quota: allowed_warning five_hour 42% resets 2025-10-06T16:00:00.000Z windows five_hour 42% resets 2025-10-06T16:00:00.000Z, seven_day 12% resets 2025-10-13T16:00:00.000Z overage allowed  observed ";
+      // The summary is pinned exactly; the observation time after it renders in the browser's own clock, whose locale the test does not fix.
+      expect(rendered.startsWith(summary)).toBe(true);
+      expect(rendered.length).toBeGreaterThan(summary.length);
+    } finally {
+      liveLatest = undefined;
+    }
   });
 
   it("streams the door's events to the page's own parser, sequence gaps included", async () => {

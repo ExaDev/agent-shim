@@ -8,7 +8,8 @@ import { generateCa, LOOPBACK_LEAF_NAMES, mintLeaf, type CaMaterial } from "./co
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
 import { createDoorApiNodeHandler, frontDoorApiClient } from "./controlApi";
 import { LAUNCH_EVENT_SOURCE, type DoorEvent } from "./eventSchemas";
-import { createDoorEventHub } from "./eventHub";
+import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
+import { createRcLiveUsage } from "./rcLiveUsage";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "./rcSessions";
 import type { RcEventWriteResult } from "./rcWrites";
 import { createRcEventFanout } from "./rcStream";
@@ -21,6 +22,8 @@ const CONTROL_TOKEN = "e2e-control-token";
 const NOW_MS = Date.parse("2026-10-05T12:00:00.000Z");
 /** One hour in milliseconds, the unit the snapshot's reset instant is stated in. */
 const HOUR_MS = 3_600_000;
+/** The milliseconds in one second, the unit that converts the fixed ISO instants into the unix epoch seconds the payload states. */
+const MS_PER_SECOND = 1_000;
 /** How much of the five-hour window the read snapshot reports as used, so the assertion names a fraction rather than a bare number. */
 const FIVE_HOUR_UTILIZATION = 0.5;
 const SUPERVISOR_PID = 10;
@@ -95,8 +98,9 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
   let ca: CaMaterial;
   let port: number;
   let close: (() => Promise<void>) | undefined;
-  // The door's event backbone, hoisted so a test can publish on it and read the event back through the merged mount's own subscription.
+  // The door's event backbone and the Remote Control fan-out wrapped on it, hoisted so a test can publish exactly as the held client stream publishes and read the result back through the merged mount's own surfaces.
   const doorEvents = createDoorEventHub();
+  const rcFanout = rcFanoutOnDoorHub(createRcEventFanout(), doorEvents);
   /** Every request URL the mount served, so a test can await a subscription having landed before publishing what it must deliver. */
   const served: string[] = [];
 
@@ -104,6 +108,8 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
   beforeAll(async () => {
     ca = generateCa(new Date());
     const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
+    // The live quota state exactly as the door wires it: subscribed to the backbone before any stream can publish, so the rate_limit envelope this suite publishes through the wrapped fan-out is filed the way the real held stream's would be.
+    const rcLiveUsage = createRcLiveUsage({ now: () => NOW_MS, hub: doorEvents });
     const doorApi = createDoorApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
       list: tracker.list,
@@ -125,8 +131,10 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       mcpAuthenticate: unexercised,
       mcpOAuthCallbackUrl: unexercised,
       teleport: unexercised,
-      fanout: createRcEventFanout(),
+      fanout: rcFanout,
       events: doorEvents,
+      liveRateLimits: rcLiveUsage.liveOf,
+      latestRateLimit: rcLiveUsage.latestOf,
       usageSnapshots: () => [SNAPSHOT],
       usageSnapshotOf: (identity) => (identity === SNAPSHOT.identity ? SNAPSHOT : undefined),
       now: () => NOW_MS,
@@ -205,5 +213,61 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       stop.abort();
       await watching;
     }
+  });
+
+  it("serves the live quota a rate_limit envelope filed on the backbone, and files nothing but that family", async () => {
+    const api = frontDoorApiClient(port, ca.certPem, CONTROL_TOKEN);
+    const FIVE_HOUR_RESETS_AT = Date.parse("2025-10-06T16:00:00.000Z") / MS_PER_SECOND;
+    const SEVEN_DAY_RESETS_AT = Date.parse("2025-10-13T16:00:00.000Z") / MS_PER_SECOND;
+
+    // Before any rate_limit envelope, the live read answers empty and a named session is refused, exactly as the unit suite proves against fakes; here through the real mount.
+    expect(await api.usage.live({})).toEqual({ sessions: [] });
+    await expect(api.usage.live({ session: "cse_e2e_live" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    // Envelopes the live state must not file: an ordinary assistant event, and a rate_limit_event whose info lacks the family's own required status. Both leave the read empty, which is the discrimination: the surface reads only the filed rate-limit family, not whatever else crossed the fan-out.
+    rcFanout.publish({ session: "cse_e2e_live", envelope: { event_type: "assistant", sequence_num: 20, source: "worker", payload: { type: "assistant", content: [] } } });
+    rcFanout.publish({ session: "cse_e2e_live", envelope: { event_type: "rate_limit_event", sequence_num: 21, source: "worker", payload: { type: "rate_limit_event", rate_limit_info: { utilization: 0.5 } } } });
+    expect(await api.usage.live({})).toEqual({ sessions: [] });
+
+    // The real family's shape, published through the wrapped fan-out exactly as the held client stream publishes every envelope it reads, with the payload the 2.1.289 bundle's own schema declares.
+    rcFanout.publish({
+      session: "cse_e2e_live",
+      envelope: {
+        event_type: "rate_limit_event",
+        sequence_num: 22,
+        source: "worker",
+        payload: {
+          type: "rate_limit_event",
+          rate_limit_info: {
+            status: "allowed_warning",
+            rateLimitType: "five_hour",
+            resetsAt: FIVE_HOUR_RESETS_AT,
+            utilization: 0.42,
+            overageStatus: "allowed",
+            isUsingOverage: false,
+            unifiedWindows: { five_hour: { utilization: 0.42, resetsAt: FIVE_HOUR_RESETS_AT }, seven_day: { utilization: 0.12, resetsAt: SEVEN_DAY_RESETS_AT } },
+          },
+          uuid: "00000000-0000-4000-8000-000000000000",
+          session_id: "cse_e2e_live",
+        },
+      },
+    });
+
+    const expected = {
+      session: "cse_e2e_live",
+      observedAt: NOW_MS,
+      rateLimit: {
+        status: "allowed_warning",
+        rateLimitType: "five_hour",
+        resetsAt: FIVE_HOUR_RESETS_AT,
+        utilization: 0.42,
+        overageStatus: "allowed",
+        isUsingOverage: false,
+        unifiedWindows: { five_hour: { utilization: 0.42, resetsAt: FIVE_HOUR_RESETS_AT }, seven_day: { utilization: 0.12, resetsAt: SEVEN_DAY_RESETS_AT } },
+      },
+    };
+    // The read crosses the door's real TLS and its own output validation, so the observation's shape is proven against the contract, not asserted from the fake alone.
+    expect(await api.usage.live({})).toEqual({ latest: expected, sessions: [expected] });
+    expect(await api.usage.live({ session: "cse_e2e_live" })).toEqual({ latest: expected, sessions: [expected] });
   });
 });

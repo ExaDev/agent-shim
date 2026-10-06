@@ -17,6 +17,8 @@ const ANSWER_SEQUENCE_NUM = 42;
 /** The sketch cap and input length the bounded-sketch assertion uses. */
 const SKETCH_CAP = 10;
 const SKETCH_LONG_CHARS = 50;
+/** The milliseconds in one second, the unit that converts the fixed ISO instants into the unix epoch seconds the payload states. */
+const MS_PER_SECOND = 1_000;
 
 /** A write the tests never expect to reach the real dial: the page's interrupt and steering calls resolve through it. */
 const unexercised = async (): Promise<RcEventWriteResult> => await Promise.resolve({ ok: false, message: "this test drives no Remote Control write" });
@@ -46,6 +48,8 @@ interface PageScript {
   sequenceGap: (tracker: Readonly<Record<string, number>>, event: Readonly<DoorEventLike>) => number;
   /** The page's headline rendering of one Remote Control stream event. */
   rcLine: (event: Readonly<{ session: string; envelope: Readonly<{ event_type: string; payload: unknown }> }>) => string;
+  /** The page's header quota text from the live read's freshest observation. */
+  quotaText: (latest: Readonly<{ observedAt: number; rateLimit: Readonly<Record<string, unknown>> }> | undefined) => string;
   /** The page's bounded JSON sketch. */
   sketch: (value: unknown, cap: number) => string;
   /** The control token the page's calls present; the script's own `var token`, settable from the outside. */
@@ -68,6 +72,7 @@ function pageScript(fetchImpl: (input: string, init?: RequestInit) => Promise<Re
     parseSseFrames: () => notDefined("parseSseFrames"),
     sequenceGap: () => notDefined("sequenceGap"),
     rcLine: () => notDefined("rcLine"),
+    quotaText: () => notDefined("quotaText"),
     sketch: () => notDefined("sketch"),
     token: "",
   };
@@ -355,5 +360,30 @@ describe("the page's script against the door's protocol", () => {
     expect(empty.endsWith("presence")).toBe(true);
 
     expect(page.sketch({ long: "x".repeat(SKETCH_LONG_CHARS) }, SKETCH_CAP)).toBe('{"long":"x...');
+  });
+
+  it("renders a rate_limit_event as the account's quota state, the payload's own words with resets as the instants it names", () => {
+    const page = pageScript(fetch, CONTROL_TOKEN, "http://127.0.0.1:1");
+    const FIVE_HOUR_RESETS_AT = Date.parse("2025-10-06T16:00:00.000Z") / MS_PER_SECOND;
+    const SEVEN_DAY_RESETS_AT = Date.parse("2025-10-13T16:00:00.000Z") / MS_PER_SECOND;
+    const info = { status: "allowed_warning", rateLimitType: "five_hour", resetsAt: FIVE_HOUR_RESETS_AT, utilization: 0.42, overageStatus: "allowed", isUsingOverage: false, unifiedWindows: { five_hour: { utilization: 0.42, resetsAt: FIVE_HOUR_RESETS_AT }, seven_day: { utilization: 0.12, resetsAt: SEVEN_DAY_RESETS_AT } } };
+
+    const line = page.rcLine({ session: "cse_page", envelope: { event_type: "rate_limit_event", payload: { type: "rate_limit_event", rate_limit_info: info } } });
+    expect(line).toContain("rate_limit_event");
+    expect(line).toContain("allowed_warning five_hour 42% resets 2025-10-06T16:00:00.000Z windows five_hour 42% resets 2025-10-06T16:00:00.000Z, seven_day 12% resets 2025-10-13T16:00:00.000Z overage allowed");
+
+    // A rate_limit_event whose info the page cannot read keeps the bounded sketch, the fallback every other payload takes.
+    const unreadable = page.rcLine({ session: "cse_page", envelope: { event_type: "rate_limit_event", payload: { type: "rate_limit_event", rate_limit_info: { utilization: 0.5 } } } });
+    expect(unreadable).toContain('{"type":"rate_limit_event"');
+  });
+
+  it("renders the header's quota text from the freshest observation, stating plainly when none has arrived", () => {
+    const page = pageScript(fetch, CONTROL_TOKEN, "http://127.0.0.1:1");
+    expect(page.quotaText(undefined)).toBe("quota: not observed yet");
+
+    const OBSERVED_AT = Date.parse("2026-10-06T12:00:00.000Z");
+    const observed = { observedAt: OBSERVED_AT, rateLimit: { status: "rejected", rateLimitType: "seven_day", resetsAt: Date.parse("2025-10-13T16:00:00.000Z") / MS_PER_SECOND, utilization: 1.04, isUsingOverage: true } };
+    // Utilisation above the cap renders as the percentage it is, and the observation time renders in the browser's own clock, computed here from the same instant.
+    expect(page.quotaText(observed)).toBe(`quota: rejected seven_day 104% resets 2025-10-13T16:00:00.000Z overage in use  observed ${new Date(OBSERVED_AT).toLocaleTimeString()}`);
   });
 });

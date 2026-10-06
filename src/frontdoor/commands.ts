@@ -26,6 +26,7 @@ import { createProviderRouteResolver } from "./providerRoute";
 import { MINTED_TOKEN_RANDOM_BYTES, registerRcCommand } from "./rcCommands";
 import { createRcControlHandler } from "./rcControl";
 import { createRcCredentialStore } from "./rcCredentialStore";
+import { createRcLiveUsage } from "./rcLiveUsage";
 import { createRcClientPage } from "./rcClientPage";
 import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
 import { readRcSelfHostRecord } from "./rcSelfHostMint";
@@ -115,6 +116,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: rcCredentialStore });
   // The door's event backbone: one publisher/subscriber spine for every door-wide source, serving the typed API's `events.subscribe`. The Remote Control client read stream is its first publisher (through the wrap below, which moves nothing about how RC events flow) and the launch lifecycle is its first door-native one, fed by the supervisor's tick from the session registry.
   const doorEvents = createDoorEventHub();
+  // The live quota state, the backbone's first door-native consumer: subscribed to the rc source before any stream can publish, so every rate_limit_event the held client stream files becomes the door's latest per-session rate-limit observation, the state the control plane's `usage.live` read serves beside its snapshot readers.
+  const rcLiveUsage = createRcLiveUsage({ now: () => Date.now(), hub: doorEvents });
   // The door's own client read stream attachment: one held stream per tracked session, fanned out to every subscriber (the typed API's subscription and `frontdoor rc watch`), with its envelopes filed with the tracker. The door plays one client because the CLI routes permission approvals only toward attached clients: with no stream held, an approval falls back to the CLI's own local prompt and never crosses the door. In the self-hosted mode the dial is resolved per call so it can name the door's own surface once that has bound. The supervisor's shutdown closes the hub as its last stop, which is what makes the final cursor save deterministic rather than left to a drop boundary the exit might never reach. The fan-out the hub is handed is the wrapped one, so every stream event reaches the fan-out's own subscribers exactly as before and the backbone beside it, source-tagged `rc`: that wrap is the whole of the RC stream becoming the backbone's first publisher.
   const rcFanout = rcFanoutOnDoorHub(createRcEventFanout(), doorEvents);
   const rcHub = createRcStreamHub({
@@ -229,8 +232,11 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       const rcMcpAuthenticate = async (sessionId: string, serverName: string, redirectUri: string) => await authenticateRcSessionMcpServer(rcControlRequestDeps, sessionId, serverName, redirectUri);
       const rcMcpOAuthCallbackUrl = async (sessionId: string, serverName: string, callbackUrl: string) => await submitRcSessionMcpOAuthCallbackUrl(rcControlRequestDeps, sessionId, serverName, callbackUrl);
       const rcTeleport = async (sessionId: string, marker: string) => await teleportRcSession(rcControlRequestDeps, sessionId, marker);
-      // The control-plane reads the typed API serves beside Remote Control, each one the same read-only collector the CLI's own verbs use, so the door's answer and `frontdoor status`'s can never disagree.
+      // The control-plane reads the typed API serves beside Remote Control, each one the same read-only collector the CLI's own verbs use, so the door's answer and `frontdoor status`'s can never disagree, plus the live rate-limit observations the event backbone files.
       const controlDeps = {
+        list: rcTracker.list,
+        liveRateLimits: rcLiveUsage.liveOf,
+        latestRateLimit: rcLiveUsage.latestOf,
         usageSnapshots: () => listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir),
         usageSnapshotOf: (identity: string) => readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity),
         now: () => Date.now(),
@@ -251,7 +257,6 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         [
           createDoorApiNodeHandler({
             expectedToken: rcControlToken,
-            list: rcTracker.list,
             statusOf: rcTracker.statusOf,
             pendingOf: rcTracker.pendingOf,
             inject: rcInject,

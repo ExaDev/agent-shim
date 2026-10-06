@@ -4,10 +4,11 @@ import { z } from "zod";
 
 import { DOCTOR_SECTIONS, DOCTOR_SEVERITIES } from "../doctorReport";
 import { UsageSnapshotSchema } from "../usage/schema";
+import { RcLiveRateLimitSchema } from "./rcSchemas";
 import { FrontDoorStateSchema } from "./state";
 
 /**
- * The Zod schemas of the door's general control plane: the usage snapshots a remote consumer reads, the front door's own status and session registry, the check report over a path, and the doctor report, each one the input or output of a procedure in `controlApi.ts`. Like `rcSchemas.ts` this module is a plain Zod leaf (nothing here imports oRPC), and every shape it asserts is one the implementation already defines: the usage snapshot and front-door state schemas are the store's and the registry's own, the check report's is `checkReportSchema.ts`'s (`CheckReportJsonSchema`, imported straight by the procedure), and the doctor vocabulary is `doctorReport.ts`'s own, so contract and behaviour share one source and a drift fails the procedures' own validation rather than shipping silently.
+ * The Zod schemas of the door's general control plane: the usage snapshots a remote consumer reads, the live rate-limit observations the event backbone files, the front door's own status and session registry, the check report over a path, and the doctor report, each one the input or output of a procedure in `controlApi.ts`. Like `rcSchemas.ts` this module is a plain Zod leaf (nothing here imports oRPC), and every shape it asserts is one the implementation already defines: the usage snapshot and front-door state schemas are the store's and the registry's own, the check report's is `checkReportSchema.ts`'s (`CheckReportJsonSchema`, imported straight by the procedure), and the doctor vocabulary is `doctorReport.ts`'s own, so contract and behaviour share one source and a drift fails the procedures' own validation rather than shipping silently.
  */
 
 /** Every usage snapshot on this machine, one per identity that has routed a request through the door. */
@@ -39,6 +40,14 @@ export const UsageWindowsOutputSchema = z.strictObject({
   observedAt: z.iso.datetime().optional(),
   fiveHour: EffectiveWindowSchema.optional(),
   sevenDay: EffectiveWindowSchema.optional(),
+});
+
+/** The live quota read's answer: every per-session rate-limit observation the door's event backbone has filed, oldest-observed first, and the freshest one across every session. */
+export const UsageLiveOutputSchema = z.strictObject({
+  /** The freshest observation the door holds, never narrowed by the read's session filter because it is the door's single latest statement of the account's quota; absent while no rate_limit_event has been filed at all. */
+  latest: RcLiveRateLimitSchema.optional(),
+  /** One observation per session whose stream has filed a rate_limit_event this door generation. */
+  sessions: z.readonly(z.array(RcLiveRateLimitSchema)),
 });
 
 /** One registered launch as the status surfaces list it: the launcher's pid and start time plus whether it is still running, never the session's capability token. */
