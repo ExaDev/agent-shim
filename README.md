@@ -145,6 +145,7 @@ agent-shim frontdoor rc watch [<cse_id>] [--json]
 agent-shim frontdoor rc selfhost mint <identity> [--force] [--json]
 agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--json]
 agent-shim account show [<identity>] [--refresh] [--json]
+agent-shim update [--check] [--json]
 agent-shim completion <bash|zsh|fish>
 agent-shim shim enable [--dir <path>] [--force]
 agent-shim shim disable [--dir <path>] [--force]

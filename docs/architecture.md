@@ -103,6 +103,9 @@ src/
   doctorReport.ts          # the whole-tree audit (every identity, profile, extends chain, provider, directory rule, config file, binary discoverability and PATH resolution): the pure `runDoctor`, its formatter and `collectDoctorReport`, which reads this machine; no command-line dependencies, exported by the library
   poolPickReport.ts        # the read-only pool ranking `pool pick` and `check` print, with no command-line dependencies
   claudeShim.ts            # `agent-shim shim enable`/`disable` — the one explicit action that creates/removes a `claude`-named hardlink of the running executable; records claude-shim.json
+  update/
+    update.ts             # the self-update decision and install: version discovery via the releases/latest redirect, channel detection (which package manager owns this installation), the locked, checksum-verified, atomic binary swap; pure over injected network/filesystem/liveness ports
+    commands.ts           # the `agent-shim update` command and the real ports it runs on (fetch, node:fs, signal-0 liveness)
   cli/
     bool.ts               # the one boolean vocabulary (true/1, false/0) flags and environment variables share
     parsers.ts            # parsePair, parseBool, parseEnvBool, and the one-value-per-occurrence repeatable-flag collectors
