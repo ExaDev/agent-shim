@@ -1,3 +1,13 @@
+## [8.21.0](https://github.com/ExaDev/agent-shim/compare/v8.20.2...v8.21.0) (2026-10-06)
+
+### Features
+
+* **rc:** serve the worker's web-fetch and web-search proxies on the self-hosted surface ([f3ed737](https://github.com/ExaDev/agent-shim/commit/f3ed7375c4436f1e630a63b397b8a97ddc0de943))
+
+### Bug Fixes
+
+* **rc:** accept the CLI's real web-proxy credential and drive the fetch proof on the rig ([c01f5a3](https://github.com/ExaDev/agent-shim/commit/c01f5a3d5814f187e4bde3b6f99ed3d4f6a339bb))
+
 ## [8.20.2](https://github.com/ExaDev/agent-shim/compare/v8.20.1...v8.20.2) (2026-10-06)
 
 ### Bug Fixes
