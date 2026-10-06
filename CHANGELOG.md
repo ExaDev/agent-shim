@@ -1,3 +1,20 @@
+## [8.18.0](https://github.com/ExaDev/agent-shim/compare/v8.17.1...v8.18.0) (2026-10-06)
+
+### Features
+
+* **launcher:** route provider sessions through the door's OAuth path ([89ceef3](https://github.com/ExaDev/agent-shim/commit/89ceef3fa634e213084aaf495c81c21708e3292a))
+* **rig:** add the mock provider the self-hosted Remote Control proof needs ([30e5f1e](https://github.com/ExaDev/agent-shim/commit/30e5f1ed8cde0503293f3fe413de3a16656aca9d))
+
+### Bug Fixes
+
+* **frontdoor:** attach an http provider's own credential at its route ([b64de52](https://github.com/ExaDev/agent-shim/commit/b64de527405f9117342891d6c695e7220065dd9a))
+
+### Documentation
+
+* describe the OAuth-shaped provider session and its door-attached credential ([03551dc](https://github.com/ExaDev/agent-shim/commit/03551dc6e9acde74753a591c08715b7bc0c1ce7d))
+* **frontdoor:** keep the credential-attach comment honest about the launcher ([53fc319](https://github.com/ExaDev/agent-shim/commit/53fc319ea24e46df71539dae88fd8cb479a3ae61))
+* **launcher:** drop the stale base URL sentence from buildEnv's contract ([cde2292](https://github.com/ExaDev/agent-shim/commit/cde22928ed8c5cdd218cf7e7bc538dca223f628f))
+
 ## [8.17.1](https://github.com/ExaDev/agent-shim/compare/v8.17.0...v8.17.1) (2026-10-05)
 
 ### Bug Fixes
