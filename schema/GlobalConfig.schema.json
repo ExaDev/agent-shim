@@ -181,6 +181,20 @@
       },
       "additionalProperties": false
     },
+    "update": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "off",
+            "notify",
+            "auto"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "pools": {
       "type": "object",
       "propertyNames": {

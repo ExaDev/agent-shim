@@ -1,13 +1,19 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { Command } from "commander";
+import { Option, type Command } from "commander";
 
 import packageJson from "../../package.json";
-import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
-import { realOwnExecutablePath } from "../realPorts";
+import { reportMutation, printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
+import { readGlobalConfig } from "../configProfilesStore";
+import { applyPatch, writeTextAtomic } from "../config/store";
+import { UPDATE_MODES, GlobalConfigSchema, type UpdateMode } from "../config/schema";
+import type { LayoutPaths } from "../paths";
+import { realOwnExecutablePath, selfInvocation } from "../realPorts";
 import { runSelfUpdate, type UpdateReport, type UpdatePorts } from "./update";
+import type { UpdateLaunchPort } from "./launchHook";
 
 function isEnoent(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
@@ -137,6 +143,34 @@ export function formatUpdateReport(report: UpdateReport): string {
   }
 }
 
+/** Writes `update.mode` into the user-global config, preserving every other field: `applyPatch` replaces top-level keys wholesale, so the existing `update` block is read and merged here first. */
+function setUpdateMode(paths: LayoutPaths, mode: UpdateMode): void {
+  const existing = readGlobalConfig(paths);
+  applyPatch(paths.globalConfigFile, GlobalConfigSchema, { update: { ...existing?.update, mode } }, { defaults: {} });
+}
+
+/**
+ * The real `UpdateLaunchPort` for the command line launcher: the update command's own network port resolves the newest release, the config store's atomic write stamps the cooldown file, and the background apply re-invokes this very binary as a detached `agent-shim update` (stdio ignored, unref'd) so it outlives the launch it was spawned from. `AGENT_SHIM_HOME` is passed explicitly so the detached update locks and stamps under the same root as the launcher that spawned it, for the same reason the daemon spawner passes it.
+ */
+export function realLaunchUpdatePort(paths: LayoutPaths): UpdateLaunchPort {
+  return {
+    effectiveUrl: realUpdatePorts.http.effectiveUrl,
+    readStamp: (filePath) => realUpdatePorts.fs.readFileUtf8(filePath),
+    writeStamp: (filePath, contents) => {
+      writeTextAtomic(filePath, contents);
+    },
+    now: () => Date.now(),
+    spawnDetached: (args) => {
+      const invocation = selfInvocation(args);
+      const child = spawn(invocation.command, invocation.args, { detached: true, stdio: "ignore", env: { ...process.env, AGENT_SHIM_HOME: paths.root } });
+      child.unref();
+    },
+    writeErr: (line) => {
+      console.error(line);
+    },
+  };
+}
+
 /**
  * Registers `agent-shim update` onto `program`: resolves the running executable, checks the channel and the latest release through `runSelfUpdate`, and prints the outcome as text or JSON. Refusals (a package-manager channel, a live lock, a download or checksum failure) reach the top-level catch as `CliError`s and exit with the failure status.
  */
@@ -145,11 +179,20 @@ export function registerUpdateCommand(program: Command, deps: CommandDeps, ports
     program
       .command("update")
       .description(
-        "Download the newest release binary and install it over the running one. An installation that belongs to a package manager (Homebrew, npm, Scoop) names its channel and its upgrade command instead of updating in place.",
+        "Download the newest release binary and install it over the running one. An installation that belongs to a package manager (Homebrew, npm, Scoop) names its channel and its upgrade command instead of updating in place. With --mode, set the launch-time update mode in the global config instead of updating now.",
       )
       .option("--check", "Only report whether a newer release exists; download and change nothing.")
+      .addOption(new Option("--mode <mode>", "Set what a launch does about a newer release (off: nothing; notify: print one line; auto: also apply it in the background) in the global config, then exit.").choices(UPDATE_MODES))
       .option("--json", "Print the result as JSON.")
-      .action(async (options: Readonly<{ check?: boolean; json?: boolean }>) => {
+      .action(async (options: Readonly<{ check?: boolean; json?: boolean; mode?: UpdateMode }>) => {
+        const mode = options.mode;
+        if (mode !== undefined) {
+          setUpdateMode(deps.paths, mode);
+          reportMutation(options.json, { action: "updated", kind: "update", name: "mode", value: { mode } }, () => {
+            console.log(`update mode set to ${mode}`);
+          });
+          return;
+        }
         const report = await runSelfUpdate(ports, {
           currentVersion: packageJson.version,
           platform: process.platform,
@@ -165,6 +208,6 @@ export function registerUpdateCommand(program: Command, deps: CommandDeps, ports
         }
         console.log(formatUpdateReport(report));
       }),
-    ["agent-shim update", "agent-shim update --check", "agent-shim update --json"],
+    ["agent-shim update", "agent-shim update --check", "agent-shim update --mode auto", "agent-shim update --json"],
   );
 }

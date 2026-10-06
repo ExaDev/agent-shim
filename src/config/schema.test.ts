@@ -234,6 +234,15 @@ describe("GlobalConfigSchema", () => {
     expect(config.defaultConfigProfile).toBe("base");
     expect(config.walkUpLimit).toBe("~/");
   });
+
+  it("carries the launch-time update mode, and an absent update block means no mode at all", () => {
+    expect(GlobalConfigSchema.parse({}).update).toBeUndefined();
+    expect(GlobalConfigSchema.parse({ update: {} }).update).toEqual({});
+    for (const mode of ["off", "notify", "auto"] as const) {
+      expect(GlobalConfigSchema.parse({ update: { mode } }).update).toEqual({ mode });
+    }
+    expect(GlobalConfigSchema.safeParse({ update: { mode: "sometimes" } }).success).toBe(false);
+  });
 });
 
 describe("ProviderSchema", () => {
