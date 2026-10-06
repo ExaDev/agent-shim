@@ -118,24 +118,18 @@ export const RcGetUsageInputSchema = z.strictObject({
   skipBehaviors: z.boolean().optional(),
 });
 
-/** The context-usage detail levels the SDK's own `get_context_usage` field declares, as the input schema's enum. */
-export const RcContextUsageDetailSchema = z.enum(RC_CONTEXT_USAGE_DETAILS);
-
 /** The get-context-usage operation's input: one non-empty session id and the optional detail level from the SDK's own enum. */
 export const RcGetContextUsageInputSchema = z.strictObject({
   session: z.string().min(1),
-  detail: RcContextUsageDetailSchema.optional(),
+  detail: z.enum(RC_CONTEXT_USAGE_DETAILS).optional(),
 });
-
-/** The read-file encodings the SDK's own `encoding` field declares, as the input schema's enum. */
-export const RcReadFileEncodingSchema = z.enum(RC_READ_FILE_ENCODINGS);
 
 /** The read-file operation's input: one non-empty session id, the file's path as the worker resolves it, and the optional byte cap and encoding from the SDK's own fields. */
 export const RcReadFileInputSchema = z.strictObject({
   session: z.string().min(1),
   path: z.string().min(1),
   maxBytes: z.number().int().positive().optional(),
-  encoding: RcReadFileEncodingSchema.optional(),
+  encoding: z.enum(RC_READ_FILE_ENCODINGS).optional(),
 });
 
 /** The file-suggestions operation's input: one non-empty session id and the query prefix; the query itself may be empty, because the SDK's own field imposes no minimum and an empty prefix is the autocomplete's root listing. */
