@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // A deterministic Anthropic-messages provider for the Remote Control interception rig: no model, no credential of its own, loopback only. The rig's self-hosted proof needs somewhere for inference to land ("a provider of your own", docs/rc-interception-rig.md), and this server also verifies the one property that proof is about: every request must arrive carrying the provider file's own credential (the front door attaches it at the provider route, whatever the CLI presented), so a wrong or missing credential is answered with the 401 a real provider would give and the mismatch is logged.
 //
-// Behaviour: the first turn of a conversation answers with a Bash tool_use running PROOF_COMMAND, which makes a real CLI raise a real permission request for an attached Remote Control client to answer; once the tool result comes back it answers with final text naming what the tool printed. Both streaming and non-streaming shapes are answered. Usage: node scripts/rc-mock-provider.mts [--port 47474] [--token <expected credential>] [--target bearer|apiKey]; the token defaults to RC_MOCK_TOKEN so it never has to appear in a process listing.
+// Behaviour: the first turn of a conversation answers with a Bash tool_use running PROOF_COMMAND, which makes a real CLI raise a real permission request for an attached Remote Control client to answer; once the tool result comes back it answers with final text naming what the tool printed. With RC_MOCK_TOOLSEARCH=1 the driver instead walks the deferred-tool-loading flow: a ToolSearch tool_use first, then a tool_use for the rig MCP tool once the search result is in the history, then final text, which is what drives a real CLI through the tool_reference capture behind issue #226. Both streaming and non-streaming shapes are answered. Usage: node scripts/rc-mock-provider.mts [--port 47474] [--token <expected credential>] [--target bearer|apiKey]; the token defaults to RC_MOCK_TOKEN so it never has to appear in a process listing, and RC_MOCK_DUMP=<file> additionally appends every request body verbatim as JSON lines (bodies only, never headers, so the credential never reaches the dump).
 
 import { createHash } from "node:crypto";
+import * as fs from "node:fs";
 import * as http from "node:http";
 
 // The command writes a file, which is what makes the real CLI raise a real permission request: a plain `echo` is classified read-only and auto-approved without one, so the proof would never reach the approval path.
@@ -17,11 +18,14 @@ const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_NOT_FOUND = 404;
+/** The MCP tool the ToolSearch driver asks for, in the fully-qualified name a real CLI uses (server name, then tool name, joined on double underscores). */
+const RIG_TOOL_NAME = "mcp__rigtools__rig_echo";
 
 /** One content block as this server reads it: identified by its type, everything else carried loosely. */
 interface Block {
   readonly type: string;
   readonly text?: string;
+  readonly name?: string;
   readonly content?: unknown;
 }
 
@@ -52,6 +56,7 @@ function parseMessagesRequest(value: unknown): MessagesRequest | undefined {
           ? raw.content.filter(isRecord).map((block) => ({
               type: typeof block.type === "string" ? block.type : "",
               ...(typeof block.text === "string" ? { text: block.text } : {}),
+              ...(typeof block.name === "string" ? { name: block.name } : {}),
               ...("content" in block ? { content: block.content } : {}),
             }))
           : undefined;
@@ -71,6 +76,16 @@ function argument(name: string, fallback: string): string {
 const port = Number(argument("port", process.env.RC_MOCK_PORT ?? String(DEFAULT_PORT)));
 const expectedToken = argument("token", process.env.RC_MOCK_TOKEN ?? "");
 const target = argument("target", "bearer");
+const dumpFile = process.env.RC_MOCK_DUMP ?? "";
+const toolSearchDriver = process.env.RC_MOCK_TOOLSEARCH === "1";
+
+/** Appends one request body to the dump as a JSON line. The body is stored verbatim (never headers), and the file is disposable rig evidence, never committed. */
+function dumpRequest(method: string, url: string, body: string): void {
+  if (dumpFile === "") {
+    return;
+  }
+  fs.appendFileSync(dumpFile, `${JSON.stringify({ ts: new Date().toISOString(), method, url, body })}\n`);
+}
 
 /** A one-way fingerprint of a presented credential, so the log names which credential arrived without ever printing one. */
 function fingerprint(value: string): string {
@@ -86,6 +101,22 @@ function lastUserMessage(body: MessagesRequest) {
     }
   }
   return undefined;
+}
+
+/** Every tool name the assistant side of the history has ever called, in order, which is how the ToolSearch driver tells which step of the walk the conversation is on. */
+function assistantToolUseNames(body: MessagesRequest): string[] {
+  const names: string[] = [];
+  for (const message of body.messages) {
+    if (message.role !== "assistant" || typeof message.content === "string") {
+      continue;
+    }
+    for (const block of message.content) {
+      if (block.type === "tool_use" && typeof block.name === "string") {
+        names.push(block.name);
+      }
+    }
+  }
+  return names;
 }
 
 function toolResultText(content: readonly Block[]): string {
@@ -114,8 +145,52 @@ function usage(): { input_tokens: number; output_tokens: number } {
   return { input_tokens: 1, output_tokens: 1 };
 }
 
-function messageFor(body: MessagesRequest): { id: string; type: "message"; role: "assistant"; model: string; content: readonly ({ type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: { command: string } })[]; stop_reason: string; stop_sequence: null; usage: { input_tokens: number; output_tokens: number } } {
+function messageFor(body: MessagesRequest): { id: string; type: "message"; role: "assistant"; model: string; content: readonly ({ type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> })[]; stop_reason: string; stop_sequence: null; usage: { input_tokens: number; output_tokens: number } } {
   const last = lastUserMessage(body);
+  const lastResultText = last === undefined || typeof last.content === "string" ? "" : toolResultText(last.content);
+  if (toolSearchDriver) {
+    const called = assistantToolUseNames(body);
+    if (called.includes(RIG_TOOL_NAME)) {
+      return {
+        id: `msg_mock_${String(Date.now())}`,
+        type: "message",
+        role: "assistant",
+        model: body.model,
+        content: [{ type: "text", text: `the rig tool ran and printed: ${lastResultText}` }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: usage(),
+      };
+    }
+    if (called.includes("ToolSearch")) {
+      return {
+        id: `msg_mock_${String(Date.now())}`,
+        type: "message",
+        role: "assistant",
+        model: body.model,
+        content: [
+          { type: "text", text: "the search brought the schema back, calling it now" },
+          { type: "tool_use", id: `toolu_mock_${String(Date.now())}`, name: RIG_TOOL_NAME, input: { text: "toolref-pass" } },
+        ],
+        stop_reason: "tool_use",
+        stop_sequence: null,
+        usage: usage(),
+      };
+    }
+    return {
+      id: `msg_mock_${String(Date.now())}`,
+      type: "message",
+      role: "assistant",
+      model: body.model,
+      content: [
+        { type: "text", text: "searching for the rig tool first" },
+        { type: "tool_use", id: `toolu_mock_${String(Date.now())}`, name: "ToolSearch", input: { query: `select:${RIG_TOOL_NAME}`, max_results: 5 } },
+      ],
+      stop_reason: "tool_use",
+      stop_sequence: null,
+      usage: usage(),
+    };
+  }
   if (last !== undefined && sawToolResult(body)) {
     return {
       id: `msg_mock_${String(Date.now())}`,
@@ -185,10 +260,12 @@ const server = http.createServer((req, res) => {
       anthropicError(res, HTTP_UNAUTHORIZED, "authentication_error", "the mock provider demands its own configured credential; the front door attaches it at the provider route");
       return;
     }
+    const rawBody = Buffer.concat(chunks).toString("utf8");
+    dumpRequest(req.method ?? "", req.url ?? "", rawBody);
     // The CLI sends its query string along (?beta=true), so the path is matched on its own.
     const path = (req.url ?? "").split("?")[0] ?? "";
     if (req.method === "POST" && path === "/v1/messages/count_tokens") {
-      const text = JSON.stringify({ input_tokens: Math.ceil(Buffer.concat(chunks).toString("utf8").length / CHARS_PER_TOKEN) });
+      const text = JSON.stringify({ input_tokens: Math.ceil(rawBody.length / CHARS_PER_TOKEN) });
       res.writeHead(HTTP_OK, { "content-type": "application/json", "content-length": String(Buffer.byteLength(text)) });
       res.end(text);
       return;
@@ -200,7 +277,7 @@ const server = http.createServer((req, res) => {
     }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      parsed = JSON.parse(rawBody);
     } catch {
       anthropicError(res, HTTP_BAD_REQUEST, "invalid_request_error", "request body is not JSON");
       return;
