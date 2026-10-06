@@ -17,7 +17,9 @@ import { registerPoolCommand } from "./pools";
 import { registerProviderCommand } from "./providers";
 import { registerRuleCommand } from "./directoryRules";
 import { registerRunCommand } from "./runCommand";
+import { registerUpdateCommand } from "./update/commands";
 import { registerUsageCommands } from "./usage/commands";
+import type { UpdatePorts } from "./update/update";
 
 /** Everything `buildProgram` needs from its caller: the shared command dependencies, and the launcher pipeline `run` forwards to. */
 export interface ProgramDeps extends CommandDeps {
@@ -25,6 +27,8 @@ export interface ProgramDeps extends CommandDeps {
   readonly runClaude: (args: readonly string[]) => Promise<void>;
   /** Replaces the real Keychain, secret stores and `ssh` behind the `credential` commands. Omitted outside tests. */
   readonly credentialPorts?: CredentialCommandPorts;
+  /** Replaces the real network, filesystem and liveness ports behind `update`. Omitted outside tests, so a test can run the command without touching GitHub or the real `~/.local/bin`. */
+  readonly updatePorts?: UpdatePorts;
 }
 
 /** The root help's closing section: the launch command whose own help belongs to claude, the flags only agent-shim reads, and the exit statuses every command shares. */
@@ -65,7 +69,7 @@ Examples:
   $ agent-shim run --identity work --provider z -p "hello"`;
 
 /**
- * Builds the complete `agent-shim` Commander tree: the `identity`, `profile`, `pool`, `provider` and `rule` nouns (each with the same `add`/`set`/`list`/`show`/`remove`/`use` verbs where they apply), `credential`, `check`, `configure`, `doctor`, `shim`, `headroom`, `codex`, `frontdoor`, `usage`, `account`, `run`, and `completion`, each registered by its own module as a thin adapter over `src/config/store.ts` and the Zod schemas in `src/config/schema.ts`.
+ * Builds the complete `agent-shim` Commander tree: the `identity`, `profile`, `pool`, `provider` and `rule` nouns (each with the same `add`/`set`/`list`/`show`/`remove`/`use` verbs where they apply), `credential`, `check`, `configure`, `doctor`, `shim`, `headroom`, `codex`, `frontdoor`, `usage`, `account`, `run`, `update` and `completion`, each registered by its own module as a thin adapter over `src/config/store.ts` and the Zod schemas in `src/config/schema.ts`.
  *
  * Construction has no side effects: nothing is parsed, read or launched until the caller invokes `parseAsync` on the result. That is what lets the whole command surface be unit-tested against a throwaway `LayoutPaths`, scripted prompts and a fake `runClaude`, while `src/cli.ts` stays the one module that runs on import.
  *
@@ -97,6 +101,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   registerFrontDoorCommand(program, deps);
   registerUsageCommands(program, deps);
   registerRunCommand(program, deps.runClaude);
+  registerUpdateCommand(program, deps, deps.updatePorts);
   registerCompletionCommand(program);
 
   return program;
