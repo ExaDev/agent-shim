@@ -1,3 +1,14 @@
+## [8.20.0](https://github.com/ExaDev/agent-shim/compare/v8.19.0...v8.20.0) (2026-10-06)
+
+### Features
+
+* **pool:** let a pool nest another pool as a member, evaluated with its own policy ([3fcd626](https://github.com/ExaDev/agent-shim/commit/3fcd626aa00b2a45ad56df7ca53844a5babd3664))
+* **pool:** rank pool members in listed order as a preference mode ([5f985a2](https://github.com/ExaDev/agent-shim/commit/5f985a271cdd66ecc4d6863ba5dc32aeb8b858c9))
+
+### Code Refactoring
+
+* **pool:** keep the member and preference schemas module-local ([982da05](https://github.com/ExaDev/agent-shim/commit/982da05915c038b4ecfa789f330bdb58930bc138))
+
 ## [8.19.0](https://github.com/ExaDev/agent-shim/compare/v8.18.0...v8.19.0) (2026-10-06)
 
 ### Features
