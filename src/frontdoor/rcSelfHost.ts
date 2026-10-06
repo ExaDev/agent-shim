@@ -215,7 +215,7 @@ interface SelfHostSession {
 }
 
 /** One search result a backend answers with: the three fields the CLI's web-search schema reads, of which only `url` must be present (the client filters on it). */
-export interface RcWebSearchResult {
+interface RcWebSearchResult {
   readonly title?: string;
   readonly url: string;
   readonly snippet?: string;
