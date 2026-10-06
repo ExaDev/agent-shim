@@ -1,3 +1,9 @@
+## [8.21.1](https://github.com/ExaDev/agent-shim/compare/v8.21.0...v8.21.1) (2026-10-06)
+
+### Bug Fixes
+
+* **rc:** name the presentation's shape in the self-host refusal ([9d192c7](https://github.com/ExaDev/agent-shim/commit/9d192c7df5b390c026180c0d6771dc1b625535e0)), references [#264](https://github.com/ExaDev/agent-shim/issues/264)
+
 ## [8.21.0](https://github.com/ExaDev/agent-shim/compare/v8.20.2...v8.21.0) (2026-10-06)
 
 ### Features
