@@ -12,7 +12,8 @@ import { KEYGEN_TIMEOUT_MS, RC_TEST_SEQUENCE_NUM, RC_TEST_SESSION_ID, HTTP_OK, S
 import { createRcApiNodeHandler, frontDoorRcApiClient } from "./rcApi";
 import { createRcControlHandler, frontDoorRcControl, realRcControlTransport, type RcControlTransport } from "./rcControl";
 import { createRcCredentialStore } from "./rcCredentialStore";
-import { RC_IDLE_EXPIRY_MS, answerRcControlRequest, createRcSessionTracker, injectRcUserMessage, interruptRcSession, setRcSessionModel, setRcSessionPermissionMode, type RcAnswerDecision, type RcEventDial, type RcEventWriteResult, type RcPermissionMode, type RcSessionTracker } from "./rcSessions";
+import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, type RcSessionTracker } from "./rcSessions";
+import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, type RcAnswerDecision, type RcContextUsageDetail, type RcEventDial, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RcStreamEvent } from "./rcSchemas";
 import { createFrontDoorServer } from "./server";
@@ -92,6 +93,16 @@ function controlRequestOperations(tracker: RcSessionTracker, dial: RcEventDial, 
     interrupt: async (sessionId: string) => await interruptRcSession(deps, sessionId),
     setModel: async (sessionId: string, model: string) => await setRcSessionModel(deps, sessionId, model),
     setPermissionMode: async (sessionId: string, mode: RcPermissionMode) => await setRcSessionPermissionMode(deps, sessionId, mode),
+    endSession: async (sessionId: string, reason: string | undefined) => await endRcSession(deps, sessionId, reason),
+    getUsage: async (sessionId: string, skipBehaviors: boolean | undefined) => await getRcSessionUsage(deps, sessionId, skipBehaviors),
+    getContextUsage: async (sessionId: string, detail: RcContextUsageDetail | undefined) => await getRcSessionContextUsage(deps, sessionId, detail),
+    readFile: async (sessionId: string, path: string, options: RcReadFileOptions | undefined) => await readRcSessionFile(deps, sessionId, path, options),
+    fileSuggestions: async (sessionId: string, query: string) => await suggestRcSessionFiles(deps, sessionId, query),
+    keepAlive: async (sessionId: string) => await sendRcKeepAlive(deps, sessionId),
+    mcpStatus: async (sessionId: string) => await getRcSessionMcpStatus(deps, sessionId),
+    mcpReconnect: async (sessionId: string, serverName: string) => await reconnectRcSessionMcpServer(deps, sessionId, serverName),
+    mcpAuthenticate: async (sessionId: string, serverName: string, redirectUri: string) => await authenticateRcSessionMcpServer(deps, sessionId, serverName, redirectUri),
+    mcpOAuthCallbackUrl: async (sessionId: string, serverName: string, callbackUrl: string) => await submitRcSessionMcpOAuthCallbackUrl(deps, sessionId, serverName, callbackUrl),
   };
 }
 
@@ -314,9 +325,9 @@ describe("Remote Control observation and injection over the connect surface", ()
           { sessionId: RC_TEST_SESSION_ID, requestId: RC_TEST_REQUEST_ID, type: "can_use_tool", summary: 'Bash {"command":"pnpm test"}', observedAt: expect.any(Number) as unknown },
         ]);
 
-        // The answer, driven the way the door's control route drives it: the tracker's observed credential, and the door's real dial code redirected at the stand-in API host.
+        // The answer, driven the way the door's control route drives it: the tracker's observed credential, and the door's real dial code redirected at the stand-in API host. The client surfaces the answered request id back, the same id the route's answer names.
         const approved = await client.answerRequest(RC_TEST_SESSION_ID, RC_TEST_REQUEST_ID, { approve: true, message: undefined });
-        expect(approved).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM] });
+        expect(approved).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM], requestId: RC_TEST_REQUEST_ID });
         expect(await client.pendingOf(RC_TEST_SESSION_ID)).toEqual([]);
         const answeredAgain = await client.answerRequest(RC_TEST_SESSION_ID, RC_TEST_REQUEST_ID, { approve: true, message: undefined });
         expect(answeredAgain.ok).toBe(false);
@@ -391,10 +402,10 @@ describe("Remote Control observation and injection over the connect surface", ()
         }
         const client = frontDoorRcControl(loopbackTransport(address.port), CONTROL_TOKEN);
 
-        // Each write is driven the way the door's control route drives it: the tracker's observed credential, and the door's real dial code redirected at the stand-in API host.
-        expect(await client.interruptSession(RC_TEST_SESSION_ID)).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM] });
-        expect(await client.setModel(RC_TEST_SESSION_ID, RC_TEST_MODEL_ID)).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM] });
-        expect(await client.setPermissionMode(RC_TEST_SESSION_ID, RC_TEST_PERMISSION_MODE)).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM] });
+        // Each write is driven the way the door's control route drives it: the tracker's observed credential, and the door's real dial code redirected at the stand-in API host. Each result names the request id its own write minted, in minting order.
+        expect(await client.interruptSession(RC_TEST_SESSION_ID)).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM], requestId: "uuid-e2e-control-request-1" });
+        expect(await client.setModel(RC_TEST_SESSION_ID, RC_TEST_MODEL_ID)).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM], requestId: "uuid-e2e-control-request-2" });
+        expect(await client.setPermissionMode(RC_TEST_SESSION_ID, RC_TEST_PERMISSION_MODE)).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM], requestId: "uuid-e2e-control-request-3" });
 
         // The API host received each documented client-half write: the session's events endpoint, the observed bearer, and the SDK's control_request envelope for its subtype.
         const writes = world.upstreamRequests.filter((seen) => seen.url === `/v1/code/sessions/${RC_TEST_SESSION_ID}/events`);
@@ -437,7 +448,6 @@ describe("Remote Control observation and injection over the connect surface", ()
         await injectRcUserMessage({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-stream" }, sessionId, text);
       const rcAnswer = async (sessionId: string, requestId: string, decision: RcAnswerDecision): Promise<RcEventWriteResult> =>
         await answerRcControlRequest({ credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, pendingOf: (id) => tracker.pendingOf(id), completePending: tracker.completePending, dial: rcDial }, sessionId, requestId, decision);
-      const rcControlRequestDeps = { credentialOf: tracker.credentialOf, noteSequenceNums: tracker.noteSequenceNums, dial: rcDial, newUuid: () => "uuid-e2e-stream" };
       const controlDeps = {
         expectedToken: CONTROL_TOKEN,
         list: tracker.list,
@@ -445,9 +455,7 @@ describe("Remote Control observation and injection over the connect surface", ()
         pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
         inject: rcInject,
         answer: rcAnswer,
-        interrupt: async (sessionId: string) => await interruptRcSession(rcControlRequestDeps, sessionId),
-        setModel: async (sessionId: string, model: string) => await setRcSessionModel(rcControlRequestDeps, sessionId, model),
-        setPermissionMode: async (sessionId: string, mode: RcPermissionMode) => await setRcSessionPermissionMode(rcControlRequestDeps, sessionId, mode),
+        ...controlRequestOperations(tracker, rcDial, () => "uuid-e2e-stream"),
       };
       // The real listener shape: the same server builder the door uses, with both pre-pipeline surfaces mounted, over TLS signed by the world's CA. The typed API's handle is wrapped only to record that the subscription request landed, because the fan-out holds no replay: an event published before a subscriber's request arrives is simply not seen by that subscriber.
       const apiSurface = createRcApiNodeHandler({ ...controlDeps, fanout });
@@ -551,7 +559,7 @@ describe("Remote Control observation and injection over the connect surface", ()
 
         // The answer responds through the write path that is already live-proven, and the door's own confirmed delivery advances the same cursor the resume continues from (without ever lowering it past the stream's own events).
         const approved = await client.answerRequest(RC_TEST_SESSION_ID, RC_TEST_REQUEST_ID, { approve: true, message: undefined });
-        expect(approved).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM] });
+        expect(approved).toEqual({ ok: true, sequenceNums: [RC_TEST_SEQUENCE_NUM], requestId: RC_TEST_REQUEST_ID });
         expect(await client.pendingOf(RC_TEST_SESSION_ID)).toEqual([]);
         const write = world.upstreamRequests.find((seen) => seen.url === `/v1/code/sessions/${RC_TEST_SESSION_ID}/events`);
         expect(write?.headers.authorization).toBe(CREATE_BEARER);

@@ -3,13 +3,14 @@ import * as https from "node:https";
 
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
-import { RC_PERMISSION_MODES, isRcPermissionMode, rcSessionNotObservedMessage, type RcAnswerDecision, type RcEventWriteResult, type RcPendingRequestSummary, type RcPermissionMode, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
+import type { RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
+import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, rcSessionNotObservedMessage, type RcAnswerDecision, type RcContextUsageDetail, type RcEventWriteResult, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 
 /** The SDK's own permission modes as one readable list, so a body refused for a bad mode names exactly what is permitted. */
 const RC_PERMISSION_MODE_LIST = RC_PERMISSION_MODES.join(", ");
 
 /**
- * The Remote Control control surface: the small HTTP namespace the serving door answers on its provider listener, next to `/healthz`, through which `agent-shim frontdoor rc` lists the observed sessions, reports each one's status and pending control requests, injects a prompt into one, answers one of its pending requests, and sends its own control requests into one (interrupt, set-model, set-permission-mode).
+ * The Remote Control control surface: the small HTTP namespace the serving door answers on its provider listener, next to `/healthz`, through which `agent-shim frontdoor rc` lists the observed sessions, reports each one's status and pending control requests, injects a prompt into one, answers one of its pending requests, and sends its own control requests into one (interrupt, set-model, set-permission-mode, and the wider client-half verb family: end-session, the usage and context queries, read-file, file-suggestions, keep-alive, and the mcp_* family).
  *
  * This rides the listener `frontdoor status` already knows the door by (its address comes from the same state file, its trust anchor from the same CA path) rather than any second channel. The routes sit under one prefix the routed pipeline never serves, and every request must present the serving generation's control token as a Bearer credential: a fresh random value per door start, written owner-only under the front door's state directory so only this user's CLI can read it, and checked in constant time like every other capability the door accepts. An inject, answer or control request is carried out by the door itself over its interception-proof dials, which is the whole point: the CLI never dials the API host directly, so nothing about the write depends on the caller's own network path.
  */
@@ -47,6 +48,26 @@ export interface RcControlHandlerDeps {
   readonly setModel: (sessionId: string, model: string) => Promise<RcEventWriteResult>;
   /** The set-permission-mode operation, already wired to the tracker and the door's API-host dial. */
   readonly setPermissionMode: (sessionId: string, mode: RcPermissionMode) => Promise<RcEventWriteResult>;
+  /** The end-session operation, already wired to the tracker and the door's API-host dial. */
+  readonly endSession: (sessionId: string, reason: string | undefined) => Promise<RcEventWriteResult>;
+  /** The get-usage operation, already wired to the tracker and the door's API-host dial. */
+  readonly getUsage: (sessionId: string, skipBehaviors: boolean | undefined) => Promise<RcEventWriteResult>;
+  /** The get-context-usage operation, already wired to the tracker and the door's API-host dial. */
+  readonly getContextUsage: (sessionId: string, detail: RcContextUsageDetail | undefined) => Promise<RcEventWriteResult>;
+  /** The read-file operation, already wired to the tracker and the door's API-host dial. */
+  readonly readFile: (sessionId: string, path: string, options: RcReadFileOptions | undefined) => Promise<RcEventWriteResult>;
+  /** The file-suggestions operation, already wired to the tracker and the door's API-host dial. */
+  readonly fileSuggestions: (sessionId: string, query: string) => Promise<RcEventWriteResult>;
+  /** The keep-alive operation, already wired to the tracker and the door's API-host dial. */
+  readonly keepAlive: (sessionId: string) => Promise<RcEventWriteResult>;
+  /** The mcp-status operation, already wired to the tracker and the door's API-host dial. */
+  readonly mcpStatus: (sessionId: string) => Promise<RcEventWriteResult>;
+  /** The mcp-reconnect operation, already wired to the tracker and the door's API-host dial. */
+  readonly mcpReconnect: (sessionId: string, serverName: string) => Promise<RcEventWriteResult>;
+  /** The mcp-authenticate operation, already wired to the tracker and the door's API-host dial. */
+  readonly mcpAuthenticate: (sessionId: string, serverName: string, redirectUri: string) => Promise<RcEventWriteResult>;
+  /** The mcp-oauth-callback-url operation, already wired to the tracker and the door's API-host dial. */
+  readonly mcpOAuthCallbackUrl: (sessionId: string, serverName: string, callbackUrl: string) => Promise<RcEventWriteResult>;
 }
 
 /** Writes one JSON answer: the status, the object, and the connection closed after it. */
@@ -54,6 +75,44 @@ function answerJson(response: ServerResponse, status: number, body: unknown): vo
   const text = JSON.stringify(body);
   response.writeHead(status, { "content-type": "application/json", "content-length": String(Buffer.byteLength(text, "utf8")) });
   response.end(text);
+}
+
+/** Whether one value is a plain JSON object, the guard every route body's narrowing goes through. */
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** One route body's string field when it is a non-empty string, else undefined: the shape every id and name extraction narrows to. */
+function bodyString(body: Record<string, unknown>, field: string): string | undefined {
+  const value = body[field];
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/** One route body's string field when it is present as a string (the empty string included), else undefined: the one field family whose emptiness is a value of its own (the file-suggestions query). */
+function bodyStringAllowingEmpty(body: Record<string, unknown>, field: string): string | undefined {
+  const value = body[field];
+  return typeof value === "string" ? value : undefined;
+}
+
+/** One route body's boolean field, else undefined. */
+function bodyBoolean(body: Record<string, unknown>, field: string): boolean | undefined {
+  const value = body[field];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+/** One route body's field when it is a positive whole number, else undefined: the read-file byte cap's own shape. */
+function bodyPositiveInteger(body: Record<string, unknown>, field: string): number | undefined {
+  const value = body[field];
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * One control-write route the handler serves: its name (the words its refusals carry), its path under the control prefix, and its body reader, which either refuses with the route's own words or yields the session and the already-bound operation call. The table exists because every control write is the same route shape (one POST, one JSON body, one operation, one answer naming the minted request id and the assigned sequence numbers), so the mechanics are stated once and each entry states only its own fields.
+ */
+interface ControlWriteRoute {
+  readonly name: string;
+  readonly path: string;
+  readonly read: (body: Record<string, unknown>) => { readonly error: string } | { readonly session: string; readonly run: () => Promise<RcEventWriteResult> };
 }
 
 /** Reads one request's whole body as text, refusing a body past the cap with 413. */
@@ -88,9 +147,130 @@ export function createRcControlHandler(deps: RcControlHandlerDeps): (request: In
   const pendingPath = `${CONTROL_PATH_PREFIX}/pending`;
   const injectPath = `${CONTROL_PATH_PREFIX}/inject`;
   const answerPath = `${CONTROL_PATH_PREFIX}/answer`;
-  const interruptPath = `${CONTROL_PATH_PREFIX}/interrupt`;
-  const setModelPath = `${CONTROL_PATH_PREFIX}/set-model`;
-  const setPermissionModePath = `${CONTROL_PATH_PREFIX}/set-permission-mode`;
+  /** Every control-write route, one entry per operation; the mechanics they share (the POST, the JSON body, the answer shape) live in the one loop below. */
+  const controlWrites: readonly ControlWriteRoute[] = [
+    {
+      name: "interrupt",
+      path: "interrupt",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        return session === undefined ? { error: "the interrupt body must be JSON naming a non-empty session id" } : { session, run: async () => await deps.interrupt(session) };
+      },
+    },
+    {
+      name: "set-model",
+      path: "set-model",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        const model = bodyString(body, "model");
+        return session === undefined || model === undefined ? { error: "the set-model body must be JSON naming a non-empty session id and model id" } : { session, run: async () => await deps.setModel(session, model) };
+      },
+    },
+    {
+      name: "set-permission-mode",
+      path: "set-permission-mode",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        const mode = body.mode;
+        return session === undefined || !isRcPermissionMode(mode) ? { error: `the set-permission-mode body must be JSON naming a non-empty session id and a mode the SDK's own type permits (${RC_PERMISSION_MODE_LIST})` } : { session, run: async () => await deps.setPermissionMode(session, mode) };
+      },
+    },
+    {
+      name: "end-session",
+      path: "end-session",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        const reason = "reason" in body ? bodyString(body, "reason") : undefined;
+        return session === undefined || ("reason" in body && reason === undefined) ? { error: "the end-session body must be JSON naming a non-empty session id, and a reason only as a non-empty string or absent" } : { session, run: async () => await deps.endSession(session, reason) };
+      },
+    },
+    {
+      name: "get-usage",
+      path: "get-usage",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        const skipBehaviors = "skipBehaviors" in body ? bodyBoolean(body, "skipBehaviors") : undefined;
+        return session === undefined || ("skipBehaviors" in body && skipBehaviors === undefined) ? { error: "the get-usage body must be JSON naming a non-empty session id, and skipBehaviors only as a boolean or absent" } : { session, run: async () => await deps.getUsage(session, skipBehaviors) };
+      },
+    },
+    {
+      name: "get-context-usage",
+      path: "get-context-usage",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        const detail = "detail" in body && isRcContextUsageDetail(body.detail) ? body.detail : undefined;
+        return session === undefined || ("detail" in body && detail === undefined) ? { error: `the get-context-usage body must be JSON naming a non-empty session id, and a detail level the SDK's own type permits (${RC_CONTEXT_USAGE_DETAILS.join(", ")}) or none` } : { session, run: async () => await deps.getContextUsage(session, detail) };
+      },
+    },
+    {
+      name: "read-file",
+      path: "read-file",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        const path = bodyString(body, "path");
+        const maxBytes = "maxBytes" in body ? bodyPositiveInteger(body, "maxBytes") : undefined;
+        const encoding = "encoding" in body && isRcReadFileEncoding(body.encoding) ? body.encoding : undefined;
+        const refused = session === undefined || path === undefined || ("maxBytes" in body && maxBytes === undefined) || ("encoding" in body && encoding === undefined);
+        return refused
+          ? { error: `the read-file body must be JSON naming a non-empty session id and path, maxBytes only as a positive whole number or absent, and an encoding the SDK's own type permits (${RC_READ_FILE_ENCODINGS.join(", ")}) or none` }
+          : { session, run: async () => await deps.readFile(session, path, { ...(maxBytes === undefined ? {} : { maxBytes }), ...(encoding === undefined ? {} : { encoding }) }) };
+      },
+    },
+    {
+      name: "file-suggestions",
+      path: "file-suggestions",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        const query = bodyStringAllowingEmpty(body, "query");
+        return session === undefined || query === undefined ? { error: "the file-suggestions body must be JSON naming a non-empty session id and a query string, which may be empty" } : { session, run: async () => await deps.fileSuggestions(session, query) };
+      },
+    },
+    {
+      name: "keep-alive",
+      path: "keep-alive",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        return session === undefined ? { error: "the keep-alive body must be JSON naming a non-empty session id" } : { session, run: async () => await deps.keepAlive(session) };
+      },
+    },
+    {
+      name: "mcp-status",
+      path: "mcp-status",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        return session === undefined ? { error: "the mcp-status body must be JSON naming a non-empty session id" } : { session, run: async () => await deps.mcpStatus(session) };
+      },
+    },
+    {
+      name: "mcp-reconnect",
+      path: "mcp-reconnect",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        const serverName = bodyString(body, "serverName");
+        return session === undefined || serverName === undefined ? { error: "the mcp-reconnect body must be JSON naming a non-empty session id and server name" } : { session, run: async () => await deps.mcpReconnect(session, serverName) };
+      },
+    },
+    {
+      name: "mcp-authenticate",
+      path: "mcp-authenticate",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        const serverName = bodyString(body, "serverName");
+        const redirectUri = bodyString(body, "redirectUri");
+        return session === undefined || serverName === undefined || redirectUri === undefined ? { error: "the mcp-authenticate body must be JSON naming a non-empty session id, server name, and redirect URI" } : { session, run: async () => await deps.mcpAuthenticate(session, serverName, redirectUri) };
+      },
+    },
+    {
+      name: "mcp-oauth-callback-url",
+      path: "mcp-oauth-callback-url",
+      read: (body) => {
+        const session = bodyString(body, "session");
+        const serverName = bodyString(body, "serverName");
+        const callbackUrl = bodyString(body, "callbackUrl");
+        return session === undefined || serverName === undefined || callbackUrl === undefined ? { error: "the mcp-oauth-callback-url body must be JSON naming a non-empty session id, server name, and callback URL" } : { session, run: async () => await deps.mcpOAuthCallbackUrl(session, serverName, callbackUrl) };
+      },
+    },
+  ];
   return (request, response) => {
     const presented = request.headers.authorization;
     const bearerPrefix = "bearer ".length;
@@ -177,73 +357,34 @@ export function createRcControlHandler(deps: RcControlHandlerDeps): (request: In
         answerJson(response, HTTP_STATUS.badGateway, { error: result.message } satisfies ControlErrorBody);
         return;
       }
-      if (url.pathname === interruptPath) {
+      for (const route of controlWrites) {
+        if (url.pathname !== `${CONTROL_PATH_PREFIX}/${route.path}`) {
+          continue;
+        }
         if (request.method !== "POST") {
-          answerJson(response, HTTP_STATUS.methodNotAllowed, { error: "the interrupt operation is a POST" } satisfies ControlErrorBody);
+          answerJson(response, HTTP_STATUS.methodNotAllowed, { error: `the ${route.name} operation is a POST` } satisfies ControlErrorBody);
           return;
         }
         let parsed: unknown;
         try {
           parsed = JSON.parse(await readBody(request));
         } catch {
-          answerJson(response, HTTP_STATUS.badRequest, { error: "the interrupt body is not readable JSON within the control body cap" } satisfies ControlErrorBody);
+          answerJson(response, HTTP_STATUS.badRequest, { error: `the ${route.name} body is not readable JSON within the control body cap` } satisfies ControlErrorBody);
           return;
         }
-        if (typeof parsed !== "object" || parsed === null || !("session" in parsed) || typeof parsed.session !== "string" || parsed.session === "") {
-          answerJson(response, HTTP_STATUS.badRequest, { error: "the interrupt body must be JSON naming a non-empty session id" } satisfies ControlErrorBody);
+        if (!isJsonObject(parsed)) {
+          answerJson(response, HTTP_STATUS.badRequest, { error: `the ${route.name} body must be a JSON object` } satisfies ControlErrorBody);
           return;
         }
-        const result = await deps.interrupt(parsed.session);
+        const read = route.read(parsed);
+        if ("error" in read) {
+          answerJson(response, HTTP_STATUS.badRequest, { error: read.error } satisfies ControlErrorBody);
+          return;
+        }
+        const result = await read.run();
         if (result.ok) {
-          answerJson(response, HTTP_STATUS.ok, { session: parsed.session, sequenceNums: result.sequenceNums });
-          return;
-        }
-        answerJson(response, HTTP_STATUS.badGateway, { error: result.message } satisfies ControlErrorBody);
-        return;
-      }
-      if (url.pathname === setModelPath) {
-        if (request.method !== "POST") {
-          answerJson(response, HTTP_STATUS.methodNotAllowed, { error: "the set-model operation is a POST" } satisfies ControlErrorBody);
-          return;
-        }
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(await readBody(request));
-        } catch {
-          answerJson(response, HTTP_STATUS.badRequest, { error: "the set-model body is not readable JSON within the control body cap" } satisfies ControlErrorBody);
-          return;
-        }
-        if (typeof parsed !== "object" || parsed === null || !("session" in parsed) || !("model" in parsed) || typeof parsed.session !== "string" || typeof parsed.model !== "string" || parsed.session === "" || parsed.model === "") {
-          answerJson(response, HTTP_STATUS.badRequest, { error: "the set-model body must be JSON naming a non-empty session id and model id" } satisfies ControlErrorBody);
-          return;
-        }
-        const result = await deps.setModel(parsed.session, parsed.model);
-        if (result.ok) {
-          answerJson(response, HTTP_STATUS.ok, { session: parsed.session, model: parsed.model, sequenceNums: result.sequenceNums });
-          return;
-        }
-        answerJson(response, HTTP_STATUS.badGateway, { error: result.message } satisfies ControlErrorBody);
-        return;
-      }
-      if (url.pathname === setPermissionModePath) {
-        if (request.method !== "POST") {
-          answerJson(response, HTTP_STATUS.methodNotAllowed, { error: "the set-permission-mode operation is a POST" } satisfies ControlErrorBody);
-          return;
-        }
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(await readBody(request));
-        } catch {
-          answerJson(response, HTTP_STATUS.badRequest, { error: "the set-permission-mode body is not readable JSON within the control body cap" } satisfies ControlErrorBody);
-          return;
-        }
-        if (typeof parsed !== "object" || parsed === null || !("session" in parsed) || !("mode" in parsed) || typeof parsed.session !== "string" || parsed.session === "" || !isRcPermissionMode(parsed.mode)) {
-          answerJson(response, HTTP_STATUS.badRequest, { error: `the set-permission-mode body must be JSON naming a non-empty session id and a mode the SDK's own type permits (${RC_PERMISSION_MODE_LIST})` } satisfies ControlErrorBody);
-          return;
-        }
-        const result = await deps.setPermissionMode(parsed.session, parsed.mode);
-        if (result.ok) {
-          answerJson(response, HTTP_STATUS.ok, { session: parsed.session, mode: parsed.mode, sequenceNums: result.sequenceNums });
+          // The minted request id is named beside the sequence numbers because the worker's `control_response` echoes exactly it, and only the door ever knew it.
+          answerJson(response, HTTP_STATUS.ok, { session: read.session, ...(result.requestId === undefined ? {} : { request: result.requestId }), sequenceNums: result.sequenceNums });
           return;
         }
         answerJson(response, HTTP_STATUS.badGateway, { error: result.message } satisfies ControlErrorBody);
@@ -388,7 +529,22 @@ function sequenceNumsOfBody(body: string): readonly number[] | undefined {
   return sequenceNums;
 }
 
-/** The door-facing client the `frontdoor rc` verbs use: the session list, the status and pending reads, the inject and answer operations, and the door's own control requests (interrupt, set-model, set-permission-mode), over the injected transport. */
+/** Parses a JSON body's `request` field, the minted request id a control write's answer names, when it carries one. */
+function requestIdOfBody(body: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || !("request" in parsed)) {
+    return undefined;
+  }
+  const value: unknown = parsed.request;
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/** The door-facing client the `frontdoor rc` verbs use: the session list, the status and pending reads, the inject and answer operations, and the door's own control requests (interrupt, set-model, set-permission-mode, and the wider verb family: end-session, the usage and context queries, read-file, file-suggestions, keep-alive, and the mcp_* family), over the injected transport. */
 export interface FrontDoorRcControl {
   /** The observed sessions, oldest-created first. Throws with the door's verbose reason when the list cannot be had. */
   readonly listSessions: () => Promise<readonly RcSessionSummary[]>;
@@ -400,12 +556,32 @@ export interface FrontDoorRcControl {
   readonly sendPrompt: (sessionId: string, text: string) => Promise<RcEventWriteResult>;
   /** Answers one pending control request, returning the sequence numbers the real service assigned or the verbose failure. */
   readonly answerRequest: (sessionId: string, requestId: string, decision: RcAnswerDecision) => Promise<RcEventWriteResult>;
-  /** Interrupts one session's running turn, returning the sequence numbers the real service assigned or the verbose failure. */
+  /** Interrupts one session's running turn, returning the minted request id and the sequence numbers the real service assigned, or the verbose failure. */
   readonly interruptSession: (sessionId: string) => Promise<RcEventWriteResult>;
-  /** Sets the model one session's subsequent turns use, returning the sequence numbers the real service assigned or the verbose failure. */
+  /** Sets the model one session's subsequent turns use, returning the minted request id and the sequence numbers the real service assigned, or the verbose failure. */
   readonly setModel: (sessionId: string, model: string) => Promise<RcEventWriteResult>;
-  /** Sets one session's permission mode, returning the sequence numbers the real service assigned or the verbose failure. */
+  /** Sets one session's permission mode, returning the minted request id and the sequence numbers the real service assigned, or the verbose failure. */
   readonly setPermissionMode: (sessionId: string, mode: RcPermissionMode) => Promise<RcEventWriteResult>;
+  /** Ends one session, returning the minted request id and the sequence numbers the real service assigned, or the verbose failure. */
+  readonly endSession: (sessionId: string, reason: string | undefined) => Promise<RcEventWriteResult>;
+  /** Asks one session's worker for its structured usage, returning the minted request id (the id its `control_response` answer echoes) and the sequence numbers, or the verbose failure. */
+  readonly getUsage: (sessionId: string, skipBehaviors: boolean | undefined) => Promise<RcEventWriteResult>;
+  /** Asks one session's worker for its context-window breakdown, returning the minted request id and the sequence numbers, or the verbose failure. */
+  readonly getContextUsage: (sessionId: string, detail: RcContextUsageDetail | undefined) => Promise<RcEventWriteResult>;
+  /** Asks one session's worker to read one file, returning the minted request id and the sequence numbers, or the verbose failure. */
+  readonly readFile: (sessionId: string, path: string, options: RcReadFileOptions | undefined) => Promise<RcEventWriteResult>;
+  /** Asks one session's worker for its at-mention file suggestions, returning the minted request id and the sequence numbers, or the verbose failure. */
+  readonly fileSuggestions: (sessionId: string, query: string) => Promise<RcEventWriteResult>;
+  /** Sends one liveness heartbeat into a session, returning the sequence numbers the real service assigned or the verbose failure. */
+  readonly keepAlive: (sessionId: string) => Promise<RcEventWriteResult>;
+  /** Asks one session's worker for the status of its MCP server connections, returning the minted request id and the sequence numbers, or the verbose failure. */
+  readonly mcpStatus: (sessionId: string) => Promise<RcEventWriteResult>;
+  /** Asks one session's worker to reconnect one MCP server, returning the minted request id and the sequence numbers, or the verbose failure. */
+  readonly mcpReconnect: (sessionId: string, serverName: string) => Promise<RcEventWriteResult>;
+  /** Starts one MCP server's OAuth handshake on a session, returning the minted request id and the sequence numbers, or the verbose failure. */
+  readonly mcpAuthenticate: (sessionId: string, serverName: string, redirectUri: string) => Promise<RcEventWriteResult>;
+  /** Hands one MCP server's OAuth callback to a session's worker, returning the minted request id and the sequence numbers, or the verbose failure. */
+  readonly mcpOAuthCallbackUrl: (sessionId: string, serverName: string, callbackUrl: string) => Promise<RcEventWriteResult>;
 }
 
 /** Builds the control client: every request presents the control token, and a non-2xx answer becomes the verbose message the door sent with it. */
@@ -497,7 +673,8 @@ export function frontDoorRcControl(transport: RcControlTransport, token: string)
       if (sequenceNums === undefined) {
         return { ok: false, message: `the door accepted the event but its answer named no sequence numbers: ${answer.body}` };
       }
-      return { ok: true, sequenceNums };
+      const requestId = requestIdOfBody(answer.body);
+      return requestId === undefined ? { ok: true, sequenceNums } : { ok: true, sequenceNums, requestId };
     }
     return { ok: false, message: describeFailure(answer.status, controlErrorOf(answer.body) ?? answer.body) };
   };
@@ -523,5 +700,29 @@ export function frontDoorRcControl(transport: RcControlTransport, token: string)
       await writeOf(`${CONTROL_PATH_PREFIX}/set-model`, JSON.stringify({ session: sessionId, model }), (status, message) => `setting the model on ${sessionId} failed (HTTP ${String(status)}): ${message}`),
     setPermissionMode: async (sessionId, mode) =>
       await writeOf(`${CONTROL_PATH_PREFIX}/set-permission-mode`, JSON.stringify({ session: sessionId, mode }), (status, message) => `setting the permission mode on ${sessionId} failed (HTTP ${String(status)}): ${message}`),
+    endSession: async (sessionId, reason) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/end-session`, JSON.stringify({ session: sessionId, ...(reason === undefined ? {} : { reason }) }), (status, message) => `ending ${sessionId} failed (HTTP ${String(status)}): ${message}`),
+    getUsage: async (sessionId, skipBehaviors) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/get-usage`, JSON.stringify({ session: sessionId, ...(skipBehaviors === undefined ? {} : { skipBehaviors }) }), (status, message) => `requesting the usage of ${sessionId} failed (HTTP ${String(status)}): ${message}`),
+    getContextUsage: async (sessionId, detail) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/get-context-usage`, JSON.stringify({ session: sessionId, ...(detail === undefined ? {} : { detail }) }), (status, message) => `requesting the context usage of ${sessionId} failed (HTTP ${String(status)}): ${message}`),
+    readFile: async (sessionId, path, options) =>
+      await writeOf(
+        `${CONTROL_PATH_PREFIX}/read-file`,
+        JSON.stringify({ session: sessionId, path, ...(options?.maxBytes === undefined ? {} : { maxBytes: options.maxBytes }), ...(options?.encoding === undefined ? {} : { encoding: options.encoding }) }),
+        (status, message) => `reading ${path} from ${sessionId} failed (HTTP ${String(status)}): ${message}`,
+      ),
+    fileSuggestions: async (sessionId, query) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/file-suggestions`, JSON.stringify({ session: sessionId, query }), (status, message) => `requesting file suggestions from ${sessionId} failed (HTTP ${String(status)}): ${message}`),
+    keepAlive: async (sessionId) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/keep-alive`, JSON.stringify({ session: sessionId }), (status, message) => `keeping ${sessionId} alive failed (HTTP ${String(status)}): ${message}`),
+    mcpStatus: async (sessionId) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/mcp-status`, JSON.stringify({ session: sessionId }), (status, message) => `requesting the MCP status of ${sessionId} failed (HTTP ${String(status)}): ${message}`),
+    mcpReconnect: async (sessionId, serverName) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/mcp-reconnect`, JSON.stringify({ session: sessionId, serverName }), (status, message) => `reconnecting MCP server ${serverName} on ${sessionId} failed (HTTP ${String(status)}): ${message}`),
+    mcpAuthenticate: async (sessionId, serverName, redirectUri) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/mcp-authenticate`, JSON.stringify({ session: sessionId, serverName, redirectUri }), (status, message) => `authenticating MCP server ${serverName} on ${sessionId} failed (HTTP ${String(status)}): ${message}`),
+    mcpOAuthCallbackUrl: async (sessionId, serverName, callbackUrl) =>
+      await writeOf(`${CONTROL_PATH_PREFIX}/mcp-oauth-callback-url`, JSON.stringify({ session: sessionId, serverName, callbackUrl }), (status, message) => `handing MCP server ${serverName}'s OAuth callback to ${sessionId} failed (HTTP ${String(status)}): ${message}`),
   };
 }

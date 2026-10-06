@@ -8,7 +8,7 @@ import * as tls from "node:tls";
 
 import { HTTP_STATUS } from "../codex/http";
 import { CONNECT_INTERCEPT_HOST, HTTPS_PORT, HTTP_BAD_GATEWAY, forwardableHeaders, type ConnectEffects, type ConnectListenerHandle } from "./connect";
-import type { RcDialAnswer, RcEventDial } from "./rcSessions";
+import type { RcDialAnswer, RcEventDial } from "./rcWrites";
 import type { RcStreamDial } from "./rcStream";
 import { upstreamChunks } from "./server";
 

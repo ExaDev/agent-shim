@@ -9,7 +9,8 @@ import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
 import { createDoorApiNodeHandler, frontDoorApiClient } from "./controlApi";
 import { LAUNCH_EVENT_SOURCE, type DoorEvent } from "./eventSchemas";
 import { createDoorEventHub } from "./eventHub";
-import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, type RcEventWriteResult } from "./rcSessions";
+import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "./rcSessions";
+import type { RcEventWriteResult } from "./rcWrites";
 import { createRcEventFanout } from "./rcStream";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import type { FrontDoorStatus } from "./status";
@@ -113,6 +114,16 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       interrupt: unexercised,
       setModel: unexercised,
       setPermissionMode: unexercised,
+      endSession: unexercised,
+      getUsage: unexercised,
+      getContextUsage: unexercised,
+      readFile: unexercised,
+      fileSuggestions: unexercised,
+      keepAlive: unexercised,
+      mcpStatus: unexercised,
+      mcpReconnect: unexercised,
+      mcpAuthenticate: unexercised,
+      mcpOAuthCallbackUrl: unexercised,
       fanout: createRcEventFanout(),
       events: doorEvents,
       usageSnapshots: () => [SNAPSHOT],
