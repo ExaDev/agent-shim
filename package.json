@@ -79,7 +79,7 @@
     "rollup": "4.64.0",
     "rollup-plugin-dts": "6.5.1",
     "semantic-release": "^25.0.9",
-    "turbo": "^2.10.12",
+    "turbo": "^2.11.5",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0",
     "vitest": "^4.1.11"
