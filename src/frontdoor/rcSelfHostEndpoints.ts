@@ -16,7 +16,7 @@ import type { PresentationRefusal, RcEventWriter, SelfHostConversation, SelfHost
 /**
  * The host one client-channel call arrived through: a cse session or a conversation addressed directly. Each keeps its own presence registry (the id the log lines and the session's or conversation's own sweep read), and both publish into and page back the one conversation their events belong to, under the writer the host names.
  */
-export interface RcClientChannelHost {
+interface RcClientChannelHost {
   /** The host's own id, for its log lines. */
   readonly id: string;
   /** The presence registry this host's presence channel maintains. */
