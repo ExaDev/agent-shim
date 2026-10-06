@@ -1,3 +1,9 @@
+## [8.26.0](https://github.com/ExaDev/agent-shim/compare/v8.25.0...v8.26.0) (2026-10-06)
+
+### Features
+
+* **rc:** serve live rate_limit_event envelopes as a real-time usage source ([b4593de](https://github.com/ExaDev/agent-shim/commit/b4593de514d7867383c025ad3adf3860d35d2588))
+
 ## [8.25.0](https://github.com/ExaDev/agent-shim/compare/v8.24.0...v8.25.0) (2026-10-06)
 
 ### Features
