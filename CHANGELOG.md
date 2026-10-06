@@ -1,3 +1,9 @@
+## [8.20.2](https://github.com/ExaDev/agent-shim/compare/v8.20.1...v8.20.2) (2026-10-06)
+
+### Bug Fixes
+
+* **frontdoor:** attribute headroom traffic with the launch session id ([8b0c970](https://github.com/ExaDev/agent-shim/commit/8b0c97027b3fa1f9dd0aebdba9a7ea17b51239bb))
+
 ## [8.20.1](https://github.com/ExaDev/agent-shim/compare/v8.20.0...v8.20.1) (2026-10-06)
 
 ### Bug Fixes
