@@ -1,3 +1,9 @@
+## [8.20.1](https://github.com/ExaDev/agent-shim/compare/v8.20.0...v8.20.1) (2026-10-06)
+
+### Bug Fixes
+
+* **rule:** accept a pool selector as a directory rule's identity ([658dfe1](https://github.com/ExaDev/agent-shim/commit/658dfe1cb3471bc3be7eecad3daa4e75ad282bf2))
+
 ## [8.20.0](https://github.com/ExaDev/agent-shim/compare/v8.19.0...v8.20.0) (2026-10-06)
 
 ### Features
