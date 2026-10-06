@@ -1,3 +1,13 @@
+## [8.27.0](https://github.com/ExaDev/agent-shim/compare/v8.26.0...v8.27.0) (2026-10-06)
+
+### Features
+
+* **rc:** key self-hosted event logs by conversation above cse sessions ([1111f81](https://github.com/ExaDev/agent-shim/commit/1111f81d2663ca566684676620e7dd0fcbbe764b)), references [#238](https://github.com/ExaDev/agent-shim/issues/238) [#238](https://github.com/ExaDev/agent-shim/issues/238) [#260](https://github.com/ExaDev/agent-shim/issues/260)
+
+### Bug Fixes
+
+* **rc:** keep the split self-host modules' own vocabulary private ([915503c](https://github.com/ExaDev/agent-shim/commit/915503ca386e9ca2597d5327c569ca3c82d71ffc))
+
 ## [8.26.0](https://github.com/ExaDev/agent-shim/compare/v8.25.0...v8.26.0) (2026-10-06)
 
 ### Features
