@@ -1,9 +1,11 @@
-import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import { RC_SOURCE_CLIENT, RC_SOURCE_WORKER, pageOfRcChannel, serveRcClientChannels, serveRcCompatSessions } from "./rcSelfHostEndpoints";
+import { RC_CONVERSATIONS_PATH_PREFIX, newRcSelfHostConversation, serveRcConversations } from "./rcSelfHostConversations";
+import { createRcSelfHostLocal, type RcSelfHostLocal } from "./rcSelfHostLocal";
 import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetcher } from "./rcWebFetch";
 import type { FrontDoorRoute, RoutedRequest, RoutedResponse } from "./route";
 import type { RcStreamEnvelope } from "./rcSchemas";
@@ -14,6 +16,8 @@ import type { RcStreamEnvelope } from "./rcSchemas";
  * The protocol spoken is exactly the one the door already speaks as a client, which is what makes this honest: every path, envelope, sequence rule and resume pair below is the shape the merged client-half machinery (`rcSessions.ts`, `rcStream.ts`, `connectEffects.ts`) dials the real host with, cross-checked against the CLI source (the 2.1.88 source-map dump behind the issue's spike) and live 2.1.289 envelopes captured through the interception rig. The transport is version-unstable (CCRv1 websocket to CCRv2 SSE plus POST within the 2.1.x line), so this surface pins what the rig's pinned CLI speaks and must be re-verified on upgrades; that standing caveat is issue #207's own.
  *
  * Division of the surface: the session family (`/v1/code/sessions...` and the `/v1/sessions` compatibility list) rides the routed pipeline as a `FrontDoorRoute`, so it flows through the same admission and middleware as any routed request and, above all, through the same observation wrapper that feeds the tracker (the door's own client half learns each session's credential precisely because the create is observed like any other exchange). The non-`/v1/` answers the CLI needs around activation (feature eval, profile, telemetry no-ops) and the OAuth refresh on the control-plane host have no pipeline to ride, so they are served by `local`, which the connect surface consults before routing or piping; that surface also takes over the control-plane host's terminated session as ordinary HTTP (it is normally byte-tapped) because answering `/v1/oauth/token` requires parsing it.
+ *
+ * Above the sessions sits the conversation, the native service's own keying as observed through two bridged TUIs holding two distinct `cse_` ids over one live conversation (#238's finding): the event log and its sequence space belong to the conversation, and the `cse_` sessions are attachments to it. A create that names no conversation mints a fresh one, so the single-session shape every door-observed CLI runs keeps exactly its previous behaviour under a wrapper; a create that names one attaches to it, and every write through either attachment numbers in the one shared space and fans to every stream the conversation holds, each worker's own writes excepted (feeding a worker its own writes back would loop its REPL, while the other attachment's worker writes are the other client's half of the conversation, exactly what a second TUI joins to see). No observed wire shape names the link: the create body, the bridge answer and every envelope the captures and the 2.1.289 bundle show carry no conversation id, so the linking vocabulary here (the create body's `conversation` field, the `conv_` id prefix, the session rows' `conversation_id`, and the `/v1/code/conversations` family a sessionless client reads, writes and subscribes through) is this door's own design, named as such; should the real service's shape ever surface, these are the pieces to realign.
  *
  * The worker family includes the two web proxies the CLI dials only when its environment opts in (`CLAUDE_CODE_WEBFETCH_USE_CCR_PROXY` and `CLAUDE_CODE_WEBSEARCH_USE_CCR_PROXY`, both unset by default and both verified absent from the rig session, so the default session fetches directly and never dials them): `/{cse}/worker/web-fetch` carries the CLI's URL fetch (a POST of `{url}` answered with the fetched facts or a target refusal, both shapes the 2.1.289 client's own schema reads), and `/{cse}/worker/web-search` carries its search. The wire facts the live rig settled beside the source: the session id the proxy URL names comes from a `CLAUDE_CODE_SESSION_ID` latch that only the cloud worker shape provisions (a locally launched bridge never sets it), and the credential the client presents is the session ingress token read from `CLAUDE_SESSION_INGRESS_TOKEN_FILE` or the well-known remote directory, which locally is nothing at all, so a bare local launch sends no Authorization and is refused; when the ingress token is one of this surface's own worker JWTs it authenticates exactly as the worker family's other paths do. The paths also accept the minted credential itself, the shape the client's login-bearer fallback presents, whose principal is the same credential that created the session. The fetch's bounds live in `rcWebFetch.ts`; the search is served as a clear refusal naming that no backend ships, with the injection point a real backend answers through.
  *
@@ -30,9 +34,6 @@ export function rcSelfHostFromEnv(env: NodeJS.ProcessEnv): boolean {
   return env[RC_SELF_HOST_ENV] === "1";
 }
 
-/** The full scope list the minting writes and the local refresh echoes: the CLI's own claude.ai login scope set (`CLAUDE_AI_OAUTH_SCOPES` in its source), whose `user:inference` and `user:profile` members are exactly the two the Remote Control gate demands. */
-export const RC_SELF_HOST_SCOPE_LIST: readonly string[] = ["user:profile", "user:inference", "user:sessions:claude_code", "user:mcp_servers", "user:file_upload"];
-
 /** The path prefix of the whole session family this service serves, the same prefix the tracker observes. */
 const RC_SESSIONS_PATH_PREFIX = "/v1/code/sessions";
 
@@ -44,9 +45,6 @@ const RC_SESSION_ID_PREFIX = "cse_";
 
 /** The API host this service answers as, and the host its minted bridge response names as the worker's base: the door terminates this host on both of its surfaces, so naming it sends the worker's calls straight back here. */
 const RC_SELF_HOST_API_BASE_URL = "https://api.anthropic.com";
-
-/** The control-plane host whose OAuth refresh this service answers locally; when the mode is on, its terminated session is parsed as HTTP (it is normally byte-tapped) so the refresh can be served. */
-const RC_SELF_HOST_OAUTH_HOST = "platform.claude.com";
 
 /** The status the protocol's epoch conflict answers with, alongside its own `x-ccr-conflict-reason` header; the CLI's worker transport treats a 409 as "superseded, shut down". */
 const HTTP_CONFLICT = 409;
@@ -61,11 +59,6 @@ const HTTP_SERVICE_UNAVAILABLE = 503;
  * How long a minted worker JWT is good for. Not a fresh number: 46800 seconds is the `expires_in` the real bridge handed the live rig session (13 hours), so the local surface keeps the CLI's refresh cadence exactly where the real one put it.
  */
 export const RC_SELF_HOST_WORKER_JWT_TTL_SECONDS = 46_800;
-
-/**
- * The expiry the local OAuth refresh names, in seconds. One hour is the convention the real token endpoint's answers establish; the value only positions the CLI's next scheduled refresh, which lands back here whatever it says, because the minted pair never changes.
- */
-const RC_SELF_HOST_OAUTH_TOKEN_TTL_SECONDS = 3_600;
 
 /**
  * How often the SSE streams send a keepalive comment. Not a fresh number: it is the protocol's own keepalive cadence (the 15 s comments the door's client-half parser documents from live captures), and it must beat the worker transport's 45 s liveness bound (`DIY` in the CLI source), which a 15 s cadence does with two comments to spare.
@@ -183,15 +176,25 @@ export interface RcSelfHostCredentialRecord {
   readonly accountUuid: string;
 }
 
-/** One stored event: the envelope the streams replay, minus the SSE framing derived at delivery. */
-interface StoredEvent {
+/**
+ * Which attachment wrote one event: the cse session the write arrived through, and the half it rode. The half decides worker-stream delivery (the `reachesWorkerStream` rule below): a worker half's own writes never return to that session's worker stream, but do reach every other attachment's, which is what lets a second TUI see the first's replies without either looping itself. Exported as the type the split-out client-channel handlers publish under.
+ */
+export interface RcEventWriter {
+  /** The cse session the write arrived through, or undefined for a write the conversation family itself received (which has no worker half at all). */
+  readonly session: string | undefined;
+  /** Whether the write rode a session's worker half (its own event batch) or a client half (every other write path, sessions' and conversations' alike). */
+  readonly half: "worker" | "client";
+}
+
+/** One stored event: the envelope the streams replay, minus the SSE framing derived at delivery. Exported as the element type of the conversation's event log, which the split-out conversation family pages and replays. */
+export interface StoredEvent {
   readonly sequenceNum: number;
   readonly eventId: string;
   readonly source: string;
   readonly payload: Record<string, unknown>;
   readonly createdAt: string;
-  /** Whether the worker's stream receives it: client-originated events only, since feeding a worker its own writes back would loop its REPL. */
-  readonly toWorker: boolean;
+  /** Which attachment wrote the event, the fact every stream's delivery rule reads. */
+  readonly writer: RcEventWriter;
   readonly storedAt: number;
 }
 
@@ -203,10 +206,35 @@ interface StoredInternalEvent {
 
 /** One open SSE stream this service is holding, whichever half it serves. */
 interface StreamSink {
+  /** The attachment the stream belongs to: the cse session whose path dialed it, or the conversation's own id for a stream held through the conversation family. The worker-half delivery rule and archive's retirement both read it. */
+  readonly owner: string;
   /** Writes one already-framed SSE block, serialised behind whatever the sink is still sending. */
   readonly write: (frame: string) => void;
-  /** Retires the sink from its session's set; the response's own end is what closes the stream. */
+  /** Retires the sink from its conversation's set; the response's own end is what closes the stream. */
   readonly retire: () => void;
+}
+
+/**
+ * One conversation: the event log and sequence space its attached `cse_` sessions share, in memory only. The native service's own keying (#238's two-TUI observation); the linking vocabulary on the wire is this door's design (see the module comment). Exported as the type the split-out endpoint handlers in `rcSelfHostEndpoints.ts` act on.
+ */
+export interface SelfHostConversation {
+  readonly id: string;
+  readonly createdAt: number;
+  sequenceNum: number;
+  readonly events: StoredEvent[];
+  /** The payload uuids already written, for the write answer's duplicate flag: pruned with the events, so it names the same window. */
+  readonly seenPayloadUuids: Set<string>;
+  /** The worker streams held through the attached sessions; there is no worker half on the conversation family itself, so every owner here is a cse session id. */
+  readonly workerStreams: Set<StreamSink>;
+  /** The client streams held through the attached sessions and through the conversation family alike. */
+  readonly clientStreams: Set<StreamSink>;
+  /**
+   * The clients the conversation family's own presence channel has announced, by id, each with the instant of its last pulse, the same registry shape and semantics the sessions keep: a clear deletes, and the retention sweep prunes an id no pulse has refreshed for a retention window.
+   */
+  readonly clients: Map<string, number>;
+  /** The live sessions attached to this conversation, exactly the ids their own creates named or minted. */
+  readonly sessionIds: Set<string>;
+  lastTrafficAt: number;
 }
 
 /** One self-hosted session's whole state, in memory only. Exported as the type the split-out endpoint handlers in `rcSelfHostEndpoints.ts` act on. */
@@ -214,14 +242,10 @@ export interface SelfHostSession {
   readonly id: string;
   readonly createdAt: number;
   title: string | undefined;
+  /** The conversation this session is attached to: the owner of its event log, sequence space and streams. */
+  readonly conversation: SelfHostConversation;
   /** Every worker JWT this service minted for the session: all stay valid, because the reconnect flow's fresh `/bridge` must not invalidate the JWT a still-live transport holds. */
   readonly workerJwts: Set<string>;
-  sequenceNum: number;
-  readonly events: StoredEvent[];
-  /** The payload uuids already written, for the write answer's duplicate flag: pruned with the events, so it names the same window. */
-  readonly seenPayloadUuids: Set<string>;
-  readonly workerStreams: Set<StreamSink>;
-  readonly clientStreams: Set<StreamSink>;
   readonly internalEvents: StoredInternalEvent[];
   /**
    * The clients the presence channel has announced, by id, each with the instant of its last pulse. The CLI's own sender posts one body shape for every client (`{client_id, clear}`, verified in the 2.1.289 bundle), so the registry is keyed by exactly that id; a clear deletes, and the retention sweep prunes an id no pulse has refreshed for a retention window, the same bound the session's own traffic answers to.
@@ -302,27 +326,12 @@ function mintWorkerJwt(randomToken: () => string, issuedAt: number): string {
   return `${header}.${payload}.${Buffer.from(randomToken(), "utf8").toString("base64url")}`;
 }
 
-/** The feature payload the local eval answers: exactly the gates the Remote Control activation path reads (the GrowthBook check in `getBridgeDisabledReason`, and the env-less v2 bridge selector), each at the value that enables the feature, and nothing else, so every unrelated flag keeps evaluating to its default as though the eval had never run. */
-function growthBookFeatures(): Record<string, unknown> {
-  return {
-    tengu_ccr_bridge: { defaultValue: true },
-    tengu_bridge_repl_v2: { defaultValue: true },
-    tengu_bridge_repl_v2_cse_shim_enabled: { defaultValue: true },
-    tengu_bridge_min_version: { defaultValue: { minVersion: "0.0.0" } },
-  };
-}
-
 /** The self-hosted Remote Control service: the session-family route for the pipeline, and the local answers the connect surface consults before routing or piping. */
 export interface RcSelfHostSurface {
-  /** The pipeline route serving the whole `/v1/code/sessions` family and the `/v1/sessions` compatibility list. */
+  /** The pipeline route serving the whole `/v1/code/sessions` family, the `/v1/sessions` compatibility list and the `/v1/code/conversations` family. */
   readonly route: FrontDoorRoute;
   /** The connect surface's local answers: which hosts it takes over as HTTP, and the requests it answers itself. */
-  readonly local: {
-    /** The hosts whose terminated sessions this surface needs parsed as HTTP (the control-plane host, normally byte-tapped). */
-    readonly parsesHost: (host: string) => boolean;
-    /** Serves one request locally; resolves false when the surface does not own the path, so routing or piping continues unchanged. */
-    readonly serve: (host: string, request: IncomingMessage, response: ServerResponse) => Promise<boolean>;
-  };
+  readonly local: RcSelfHostLocal;
   /** Stops the service's timers and retires every open stream. The sessions themselves are unreachable the moment the door drops them. */
   readonly close: () => void;
 }
@@ -330,25 +339,48 @@ export interface RcSelfHostSurface {
 /** Creates the self-hosted Remote Control service. One per door process; everything it holds dies with it. */
 export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface {
   const sessions = new Map<string, SelfHostSession>();
+  const conversations = new Map<string, SelfHostConversation>();
 
-  /** Sweeps what retention owns: events past the resume window, presence registrations no pulse has refreshed for the same window, and sessions no stream holds and no traffic has touched for the same window. */
+  /** Ends one session on this surface: retires exactly its own streams from its conversation, detaches it, and drops the record. The conversation itself is left to live or die by its own remaining attachments, which is what keeps a second client's attachment alive through the first's archive. */
+  const retireSession = (session: SelfHostSession): void => {
+    for (const sink of [...session.conversation.workerStreams, ...session.conversation.clientStreams]) {
+      if (sink.owner === session.id) {
+        sink.retire();
+      }
+    }
+    session.conversation.sessionIds.delete(session.id);
+    sessions.delete(session.id);
+  };
+
+  /** Sweeps what retention owns: events past the resume window, presence registrations no pulse has refreshed for the same window, sessions no stream holds and no traffic has touched for the same window, and conversations no attachment, stream or traffic keeps alive for the same window. */
   const sweep = (): void => {
     const now = deps.now();
     for (const session of sessions.values()) {
-      while (session.events[0] !== undefined && now - session.events[0].storedAt > RC_SELF_HOST_RETENTION_MS) {
-        const dropped = session.events.shift();
-        const uuid = dropped === undefined ? undefined : nonEmptyString(dropped.payload, "uuid");
-        if (uuid !== undefined) {
-          session.seenPayloadUuids.delete(uuid);
-        }
-      }
       for (const [clientId, lastSeenAt] of session.clients) {
         if (now - lastSeenAt > RC_SELF_HOST_RETENTION_MS) {
           session.clients.delete(clientId);
         }
       }
-      if (session.workerStreams.size === 0 && session.clientStreams.size === 0 && now - session.lastTrafficAt > RC_SELF_HOST_RETENTION_MS) {
-        sessions.delete(session.id);
+      const holdsStream = [...session.conversation.workerStreams, ...session.conversation.clientStreams].some((sink) => sink.owner === session.id);
+      if (!holdsStream && now - session.lastTrafficAt > RC_SELF_HOST_RETENTION_MS) {
+        retireSession(session);
+      }
+    }
+    for (const conversation of conversations.values()) {
+      while (conversation.events[0] !== undefined && now - conversation.events[0].storedAt > RC_SELF_HOST_RETENTION_MS) {
+        const dropped = conversation.events.shift();
+        const uuid = dropped === undefined ? undefined : nonEmptyString(dropped.payload, "uuid");
+        if (uuid !== undefined) {
+          conversation.seenPayloadUuids.delete(uuid);
+        }
+      }
+      for (const [clientId, lastSeenAt] of conversation.clients) {
+        if (now - lastSeenAt > RC_SELF_HOST_RETENTION_MS) {
+          conversation.clients.delete(clientId);
+        }
+      }
+      if (conversation.sessionIds.size === 0 && conversation.workerStreams.size === 0 && conversation.clientStreams.size === 0 && now - conversation.lastTrafficAt > RC_SELF_HOST_RETENTION_MS) {
+        conversations.delete(conversation.id);
       }
     }
   };
@@ -356,8 +388,8 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
   const timer = setInterval(sweep, RC_SELF_HOST_RETENTION_MS);
   timer.unref();
   const keepalive = setInterval(() => {
-    for (const session of sessions.values()) {
-      for (const sink of [...session.workerStreams, ...session.clientStreams]) {
+    for (const conversation of conversations.values()) {
+      for (const sink of [...conversation.workerStreams, ...conversation.clientStreams]) {
         sink.write(": keep-alive\n\n");
       }
     }
@@ -409,18 +441,24 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
   };
 
   /**
+   * Whether one event belongs on the worker stream of the named attachment: everything except the writes that attachment's own worker half made, since feeding a worker its own writes back would loop its REPL. A worker half's writes through any other attachment do reach it, and every client-half write does whatever session it rode, which is the delivery rule a conversation's attachments fan out under.
+   */
+  const reachesWorkerStream = (event: StoredEvent, owner: string): boolean => !(event.writer.half === "worker" && event.writer.session === owner);
+
+  /**
    * Holds one SSE stream open over a routed response. Registration and the resume replay are one synchronous step (the snapshot is taken, the sink registered, and only then is the snapshot written through it), so no published event can be lost or doubled across the gap: everything after the snapshot is delivered live because the sink is already registered, and everything in the snapshot predates it.
    */
-  const holdStream = async (session: SelfHostSession, which: "workerStreams" | "clientStreams", wantsReplay: (event: StoredEvent) => boolean, request: RoutedRequest, response: RoutedResponse): Promise<void> => {
+  const holdStream = async (conversation: SelfHostConversation, owner: string, which: "workerStreams" | "clientStreams", wantsReplay: (event: StoredEvent) => boolean, request: RoutedRequest, response: RoutedResponse): Promise<void> => {
     const url = new URL(request.url, "http://127.0.0.1");
     // The protocol's documented resume pair: the query parameter and the header arrive together, so either supplies the cursor; a first connection sends neither and reads from the stream's own head.
     const cursor = numberOf({ value: url.searchParams.get("from_sequence_num") }, "value") ?? numberOf({ value: singleHeader(request.headers, "last-event-id") }, "value");
-    const replay = cursor === undefined ? [] : session.events.filter((event) => wantsReplay(event) && event.sequenceNum > cursor);
+    const replay = cursor === undefined ? [] : conversation.events.filter((event) => wantsReplay(event) && event.sequenceNum > cursor);
     response.start(HTTP_STATUS.ok, { "content-type": "text/event-stream", "cache-control": "no-cache" });
     // The head goes out before any event exists: a stream that has said nothing yet is still an open stream, and a client that has not seen the head would otherwise wait on it while the surface waits on events (the deadlock the first e2e run surfaced).
     response.flush();
     let pending: Promise<void> = Promise.resolve();
     const sink: StreamSink = {
+      owner,
       write: (frame) => {
         pending = pending.then(async () => {
           await response.write(frame);
@@ -429,11 +467,11 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
         });
       },
       retire: () => {
-        session[which].delete(sink);
+        conversation[which].delete(sink);
       },
     };
-    session[which].add(sink);
-    session.lastTrafficAt = deps.now();
+    conversation[which].add(sink);
+    conversation.lastTrafficAt = deps.now();
     for (const event of replay) {
       sink.write(frameOf(event));
     }
@@ -448,38 +486,41 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
   };
 
   /**
-   * Files one event and delivers it to exactly the streams whose half it belongs on: assigns the next sequence number, records it, and returns the write answer's facts. The worker receives client-originated events (the half the `toWorker` rule names), which every ordinary client write satisfies through its `client` source; a receipt is the one publish whose source is a reading client's own id instead, so it passes the rule explicitly rather than through the default.
+   * Files one event into its conversation and delivers it to the streams whose half it belongs on: assigns the next sequence number in the conversation's one shared space, records it, and returns the write answer's facts. The worker streams receive the event under the `reachesWorkerStream` rule (everything but each worker's own writes), and every client stream receives everything, whichever attachment the write rode.
    */
-  const publish = (session: SelfHostSession, source: string, payload: Record<string, unknown>, toWorker: boolean = source === RC_SOURCE_CLIENT): { readonly sequenceNum: number; readonly eventId: string; readonly duplicate: boolean } => {
+  const publish = (conversation: SelfHostConversation, writer: RcEventWriter, source: string, payload: Record<string, unknown>): { readonly sequenceNum: number; readonly eventId: string; readonly duplicate: boolean } => {
     const uuid = nonEmptyString(payload, "uuid");
-    const duplicate = uuid !== undefined && session.seenPayloadUuids.has(uuid);
-    session.sequenceNum += 1;
+    const duplicate = uuid !== undefined && conversation.seenPayloadUuids.has(uuid);
+    conversation.sequenceNum += 1;
     const event: StoredEvent = {
-      sequenceNum: session.sequenceNum,
+      sequenceNum: conversation.sequenceNum,
       eventId: uuid ?? deps.newUuid(),
       source,
       // The one enrichment the real service was observed making on the live rig's stream: the wall-clock instant it took the write. The worker's handler ignores it; the door's own parser forwards it verbatim.
       payload: source === RC_SOURCE_WORKER ? payload : { ...payload, server_received_wall_ms: deps.now() },
       createdAt: new Date(deps.now()).toISOString(),
-      toWorker,
+      writer,
       storedAt: deps.now(),
     };
-    session.events.push(event);
+    conversation.events.push(event);
     if (uuid !== undefined) {
-      session.seenPayloadUuids.add(uuid);
+      conversation.seenPayloadUuids.add(uuid);
     }
-    session.lastTrafficAt = event.storedAt;
+    conversation.lastTrafficAt = event.storedAt;
     const frame = frameOf(event);
-    if (event.toWorker) {
-      for (const sink of [...session.workerStreams]) {
+    for (const sink of [...conversation.workerStreams]) {
+      if (reachesWorkerStream(event, sink.owner)) {
         sink.write(frame);
       }
     }
-    for (const sink of [...session.clientStreams]) {
+    for (const sink of [...conversation.clientStreams]) {
       sink.write(frame);
     }
     return { sequenceNum: event.sequenceNum, eventId: event.eventId, duplicate };
   };
+
+  /** The session row the create, read and list answers carry: the observed members plus the door's own `conversation_id`, the one field a second client needs to learn where to join (a door-designed field; the observed shapes name no conversation). */
+  const sessionRow = (session: SelfHostSession): Record<string, unknown> => ({ id: session.id, title: session.title, created_at: new Date(session.createdAt).toISOString(), status: "active", conversation_id: session.conversation.id });
 
   /** Answers one JSON object through a routed response and ends it, content-length framed the way the real host frames its JSON answers. */
   const answerJson = async (response: RoutedResponse, status: number, body: unknown, extraHeaders: Readonly<Record<string, string>> = {}): Promise<void> => {
@@ -545,7 +586,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
         await answerJson(response, HTTP_STATUS.methodNotAllowed, { type: "error", error: { type: "api_error", message: "the session read is a GET, and its update a PATCH or PUT" } });
         return;
       }
-      await answerJson(response, HTTP_STATUS.ok, { session: { id: session.id, title: session.title, created_at: new Date(session.createdAt).toISOString(), status: "active" } });
+      await answerJson(response, HTTP_STATUS.ok, { session: sessionRow(session) });
       return;
     }
 
@@ -568,10 +609,8 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
         await unauthorized(response, refusal);
         return;
       }
-      for (const sink of [...session.workerStreams, ...session.clientStreams]) {
-        sink.retire();
-      }
-      sessions.delete(session.id);
+      // The archive ends this session, not its conversation: a second attachment's streams and the shared log live on through their own attachment.
+      retireSession(session);
       deps.log?.(`rc selfhost ${session.id}: archived at its client's request`);
       await answerJson(response, HTTP_STATUS.ok, {});
       return;
@@ -636,7 +675,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
             await answerJson(response, HTTP_STATUS.badRequest, { type: "error", error: { type: "invalid_request_error", message: "every event in a batch is an object carrying one payload object" } });
             return;
           }
-          const published = publish(session, RC_SOURCE_WORKER, event.payload);
+          const published = publish(session.conversation, { session: session.id, half: "worker" }, RC_SOURCE_WORKER, event.payload);
           results.push({ event_id: published.eventId, sequence_num: String(published.sequenceNum) });
         }
         sweep();
@@ -644,7 +683,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
         return;
       }
       if (workerTail === "events/stream" && method === "GET") {
-        await holdStream(session, "workerStreams", (event) => event.toWorker, request, response);
+        await holdStream(session.conversation, session.id, "workerStreams", (event) => reachesWorkerStream(event, session.id), request, response);
         return;
       }
       if (workerTail === "events/delivery" && method === "POST") {
@@ -772,7 +811,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
           await answerJson(response, HTTP_STATUS.badRequest, { type: "error", error: { type: "invalid_request_error", message: "every event in a write is an object carrying one payload object" } });
           return;
         }
-        const published = publish(session, RC_SOURCE_CLIENT, event.payload);
+        const published = publish(session.conversation, { session: session.id, half: "client" }, RC_SOURCE_CLIENT, event.payload);
         // The write answer the door's own client half parses: per-event sequence numbers as strings (the form the real endpoint was observed returning) beside the duplicate flag the live proof saw.
         results.push({ sequence_num: String(published.sequenceNum), duplicate: published.duplicate });
       }
@@ -781,15 +820,15 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
       return;
     }
     if (tail === "events" && method === "GET") {
-      await answerJson(response, HTTP_STATUS.ok, { data: session.events.map((event) => ({ event_id: event.eventId, event_type: nonEmptyString(event.payload, "type") ?? "event", sequence_num: event.sequenceNum, source: event.source, payload: event.payload, created_at: event.createdAt })) });
+      await answerJson(response, HTTP_STATUS.ok, { data: session.conversation.events.map((event) => ({ event_id: event.eventId, event_type: nonEmptyString(event.payload, "type") ?? "event", sequence_num: event.sequenceNum, source: event.source, payload: event.payload, created_at: event.createdAt })) });
       return;
     }
     if (tail === "events/stream" && method === "GET") {
-      await holdStream(session, "clientStreams", () => true, request, response);
+      await holdStream(session.conversation, session.id, "clientStreams", () => true, request, response);
       return;
     }
     // The client-half channels this surface serves through the split-out endpoint handlers: presence, read receipts and the teleport channel.
-    if (await serveRcClientChannels({ request, response, session, answerJson, readBody, publish, sweep, now: deps.now, presenceRefreshSeconds: RC_PRESENCE_REFRESH_SECONDS, ...(deps.log === undefined ? {} : { log: deps.log }) }, tail, method, RC_SELF_HOST_MAX_BATCH_EVENTS)) {
+    if (await serveRcClientChannels({ request, response, host: { id: session.id, clients: session.clients, conversation: session.conversation, writer: { session: session.id, half: "client" } }, answerJson, readBody, publish, sweep, now: deps.now, presenceRefreshSeconds: RC_PRESENCE_REFRESH_SECONDS, ...(deps.log === undefined ? {} : { log: deps.log }) }, tail, method, RC_SELF_HOST_MAX_BATCH_EVENTS)) {
       return;
     }
     await answerJson(response, HTTP_STATUS.notFound, { type: "error", error: { type: "api_error", message: `the self-hosted Remote Control surface serves no path "${tail}"` } });
@@ -811,7 +850,12 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
       }
       if (pathname === RC_COMPAT_SESSIONS_PATH || pathname.startsWith(`${RC_COMPAT_SESSIONS_PATH}/`)) {
         // The compatibility `/v1/sessions` family, served through the split-out endpoint handlers against this door's own sessions.
-        await serveRcCompatSessions({ request, response, sessions, answerJson, readBody, credentialRefusal, unauthorized, now: deps.now, ...(deps.log === undefined ? {} : { log: deps.log }) }, pathname, RC_COMPAT_SESSIONS_PATH);
+        await serveRcCompatSessions({ request, response, sessions, retireSession, answerJson, readBody, credentialRefusal, unauthorized, now: deps.now, ...(deps.log === undefined ? {} : { log: deps.log }) }, pathname, RC_COMPAT_SESSIONS_PATH);
+        return;
+      }
+      if (pathname === RC_CONVERSATIONS_PATH_PREFIX || pathname.startsWith(`${RC_CONVERSATIONS_PATH_PREFIX}/`)) {
+        // The conversation family, the door's own sessionless surface, served through its split-out handlers against this surface's conversations.
+        await serveRcConversations({ request, response, conversations, answerJson, readBody, credentialRefusal, unauthorized, publish, holdStream, sweep, now: deps.now, presenceRefreshSeconds: RC_PRESENCE_REFRESH_SECONDS, maxBatchEvents: RC_SELF_HOST_MAX_BATCH_EVENTS, ...(deps.log === undefined ? {} : { log: deps.log }) }, pathname, method);
         return;
       }
       if (pathname !== RC_SESSIONS_PATH_PREFIX && !pathname.startsWith(`${RC_SESSIONS_PATH_PREFIX}/`)) {
@@ -826,25 +870,36 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
             return;
           }
           const body = parseJsonObject(await readBody(request.body, CONTROL_BODY_CAP_BYTES));
+          // The joining handshake: a create that names a conversation attaches the new session to it (the multi-TUI native shape, two cse ids over one event log); a create that names none mints a fresh one. The body field is this door's own design, named in the module comment: no observed create carries a conversation link.
+          const namedConversation = nonEmptyString(body, "conversation");
+          let conversation: SelfHostConversation | undefined;
+          if (namedConversation === undefined) {
+            conversation = newRcSelfHostConversation(deps.newUuid, deps.now);
+            conversations.set(conversation.id, conversation);
+          } else {
+            conversation = conversations.get(namedConversation);
+            if (conversation === undefined) {
+              await answerJson(response, HTTP_STATUS.notFound, { type: "error", error: { type: "api_error", message: `no such Remote Control conversation on this door: ${namedConversation}` } });
+              return;
+            }
+            conversation.lastTrafficAt = deps.now();
+          }
           const session: SelfHostSession = {
             id: `${RC_SESSION_ID_PREFIX}${deps.newUuid()}`,
             createdAt: deps.now(),
             title: nonEmptyString(body, "title"),
+            conversation,
             workerJwts: new Set<string>(),
-            sequenceNum: 0,
-            events: [],
-            seenPayloadUuids: new Set<string>(),
-            workerStreams: new Set<StreamSink>(),
-            clientStreams: new Set<StreamSink>(),
             internalEvents: [],
             clients: new Map<string, number>(),
             workerStatus: undefined,
             externalMetadata: undefined,
             lastTrafficAt: deps.now(),
           };
+          conversation.sessionIds.add(session.id);
           sessions.set(session.id, session);
-          deps.log?.(`rc selfhost ${session.id}: session created on the door's own surface`);
-          await answerJson(response, HTTP_STATUS.ok, { session: { id: session.id, title: session.title, created_at: new Date(session.createdAt).toISOString(), status: "active" } });
+          deps.log?.(`rc selfhost ${session.id}: session created on the door's own surface, attached to conversation ${conversation.id}${namedConversation === undefined ? "" : " at its client's request"}`);
+          await answerJson(response, HTTP_STATUS.ok, { session: sessionRow(session) });
           return;
         }
         if (method === "GET") {
@@ -853,7 +908,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
             await unauthorized(response, readRefusal);
             return;
           }
-          await answerJson(response, HTTP_STATUS.ok, { data: [...sessions.values()].map((session) => ({ id: session.id, title: session.title, created_at: new Date(session.createdAt).toISOString(), updated_at: new Date(session.lastTrafficAt).toISOString(), session_status: "active" })) });
+          await answerJson(response, HTTP_STATUS.ok, { data: [...sessions.values()].map((session) => ({ id: session.id, title: session.title, created_at: new Date(session.createdAt).toISOString(), updated_at: new Date(session.lastTrafficAt).toISOString(), session_status: "active", conversation_id: session.conversation.id })) });
           return;
         }
         await answerJson(response, HTTP_STATUS.methodNotAllowed, { type: "error", error: { type: "api_error", message: "the session collection is a POST (create) and a GET (list)" } });
@@ -871,85 +926,7 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     },
   };
 
-  /** Answers one JSON body on the connect surface's plain response shape; the local answers ride no pipeline. */
-  const answerServerJson = (response: ServerResponse, status: number, body: unknown): void => {
-    const text = JSON.stringify(body);
-    response.writeHead(status, { "content-type": "application/json", "content-length": String(Buffer.byteLength(text, "utf8")) });
-    response.end(text);
-  };
-
-  const local = {
-    parsesHost: (host: string): boolean => host === RC_SELF_HOST_OAUTH_HOST,
-    serve: async (host: string, request: IncomingMessage, response: ServerResponse): Promise<boolean> => {
-      const method = (request.method ?? "").toUpperCase();
-      const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-      if (host === RC_SELF_HOST_OAUTH_HOST) {
-        if (method === "POST" && pathname === "/v1/oauth/token") {
-          const body = parseJsonObject(await readBody(request, CONTROL_BODY_CAP_BYTES));
-          const record = deps.credentialRecord();
-          if (record === undefined) {
-            answerServerJson(response, HTTP_SERVICE_UNAVAILABLE, { error: "the front door's self-hosted Remote Control surface is on but no credential has been minted for it" });
-            return true;
-          }
-          if (body?.grant_type !== undefined && body.grant_type !== "refresh_token") {
-            answerServerJson(response, HTTP_STATUS.badRequest, { error: "unsupported_grant_type" });
-            return true;
-          }
-          // The refresh this surface always answers: the minted pair itself, unchanged. The minting sets no expiry, so nothing schedules a refresh; a forced one (a 401 from elsewhere) lands here, is answered with the same pair, and the session carries on exactly as it stood.
-          answerServerJson(response, HTTP_STATUS.ok, { access_token: record.accessToken, refresh_token: record.refreshToken, expires_in: RC_SELF_HOST_OAUTH_TOKEN_TTL_SECONDS, scope: RC_SELF_HOST_SCOPE_LIST.join(" ") });
-          return true;
-        }
-        if (method === "GET" && pathname === "/v1/oauth/hello") {
-          answerServerJson(response, HTTP_STATUS.ok, {});
-          return true;
-        }
-        return false;
-      }
-      // The API host's activation neighbours: exactly the calls the gate and the session's own bookkeeping make around Remote Control, answered so a self-hosted session needs no claude.ai behind it.
-      if (method === "POST" && pathname.startsWith("/api/eval/")) {
-        await readBody(request, CONTROL_BODY_CAP_BYTES);
-        answerServerJson(response, HTTP_STATUS.ok, { features: growthBookFeatures(), dateUpdated: Math.floor(deps.now() / MS_PER_SECOND) });
-        return true;
-      }
-      if (method === "GET" && pathname === "/api/oauth/profile") {
-        const record = deps.credentialRecord();
-        if (record === undefined) {
-          answerServerJson(response, HTTP_SERVICE_UNAVAILABLE, { error: "the front door's self-hosted Remote Control surface is on but no credential has been minted for it" });
-          return true;
-        }
-        answerServerJson(response, HTTP_STATUS.ok, {
-          account: { uuid: record.accountUuid, display_name: "agent-shim self-hosted", created_at: new Date(0).toISOString() },
-          organization: { uuid: record.organizationUuid, organization_type: "claude_max" },
-        });
-        return true;
-      }
-      if (method === "GET" && pathname === "/api/claude_code/policy_limits") {
-        answerServerJson(response, HTTP_STATUS.ok, {});
-        return true;
-      }
-      if (method === "POST" && pathname === "/api/oauth/validate") {
-        // The startup check the CLI makes of its stored token (the live rig showed its 401 tipping a freshly minted session straight into the login flow). The answer names the token's scopes and account facts back, which is exactly what the check reads: the scopes gate accepts any of the mint's members, and a null expiry is the never-expiring form the mint itself wrote.
-        await readBody(request, CONTROL_BODY_CAP_BYTES);
-        const record = deps.credentialRecord();
-        if (record === undefined) {
-          answerServerJson(response, HTTP_SERVICE_UNAVAILABLE, { error: "the front door's self-hosted Remote Control surface is on but no credential has been minted for it" });
-          return true;
-        }
-        answerServerJson(response, HTTP_STATUS.ok, { scopes: [...RC_SELF_HOST_SCOPE_LIST], expiresAt: null, subscriptionType: "max", account_uuid: record.accountUuid, organization_uuid: record.organizationUuid });
-        return true;
-      }
-      if (method === "POST" && (pathname === "/api/event_logging/v2/batch" || pathname === "/api/claude_code/metrics" || pathname === "/api/claude_cli_feedback")) {
-        await readBody(request, CONTROL_BODY_CAP_BYTES);
-        answerServerJson(response, HTTP_STATUS.ok, {});
-        return true;
-      }
-      if (method === "GET" && pathname === "/api/hello") {
-        answerServerJson(response, HTTP_STATUS.ok, {});
-        return true;
-      }
-      return false;
-    },
-  };
+  const local = createRcSelfHostLocal({ now: deps.now, credentialRecord: deps.credentialRecord, readBody });
 
   return {
     route,
@@ -957,12 +934,13 @@ export function createRcSelfHostSurface(deps: RcSelfHostDeps): RcSelfHostSurface
     close: () => {
       clearInterval(timer);
       clearInterval(keepalive);
-      for (const session of sessions.values()) {
-        for (const sink of [...session.workerStreams, ...session.clientStreams]) {
+      for (const conversation of conversations.values()) {
+        for (const sink of [...conversation.workerStreams, ...conversation.clientStreams]) {
           sink.retire();
         }
       }
       sessions.clear();
+      conversations.clear();
     },
   };
 }

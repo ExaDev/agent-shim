@@ -436,6 +436,90 @@ describe("the self-hosted Remote Control mode end to end", () => {
     workerStream.destroy();
   }, TEST_TIMEOUT_MS);
 
+  it("joins a second client to one conversation through the door: a prompt from the second client drives the first's worker, the reply and the approval flow to both, and the answer written from the second retires on the first", async () => {
+    // The first attachment: create, bridge, register, then hold the worker stream open, the TUI-shaped half the conversation runs in.
+    const createSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const created = await requestOn(createSocket, rawRequest("POST", "/v1/code/sessions", { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "Content-Type": "application/json", "anthropic-version": "2023-06-01" }, JSON.stringify({ title: "join", bridge: {} })));
+    expect(created.statusLine).toContain("200");
+    const firstSession = JSON.parse(created.body) as { session: { id: string; conversation_id: string } };
+    expect(firstSession.session.conversation_id.startsWith("conv_")).toBe(true);
+    createSocket.destroy();
+    await waitUntil(() => tracker.list().some((session) => session.id === firstSession.session.id));
+
+    const bridgeSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const bridged = await requestOn(bridgeSocket, rawRequest("POST", `/v1/code/sessions/${firstSession.session.id}/bridge`, { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "Content-Type": "application/json" }, "{}"));
+    const firstBridge = JSON.parse(bridged.body) as { worker_jwt: string };
+    bridgeSocket.destroy();
+    const registerSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    expect((await requestOn(registerSocket, rawRequest("PUT", `/v1/code/sessions/${firstSession.session.id}/worker`, { Authorization: `Bearer ${firstBridge.worker_jwt}`, "Content-Type": "application/json" }, JSON.stringify({ worker_status: "idle", worker_epoch: 1 })))).statusLine).toContain("200");
+    registerSocket.destroy();
+    const workerOfFirst = openStream(transparentPort, ca.certPem, `/v1/code/sessions/${firstSession.session.id}/worker/events/stream`, { Authorization: `Bearer ${firstBridge.worker_jwt}`, "anthropic-version": "2023-06-01" });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, ATTACH_SETTLE_MS);
+    });
+    hub.reconcile();
+
+    // The joining handshake: the second client's create names the first's conversation, the multi-TUI native shape over the door's own surface.
+    const joinSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const joined = await requestOn(joinSocket, rawRequest("POST", "/v1/code/sessions", { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "Content-Type": "application/json", "anthropic-version": "2023-06-01" }, JSON.stringify({ title: "second client", bridge: {}, conversation: firstSession.session.conversation_id })));
+    expect(joined.statusLine).toContain("200");
+    const secondSession = (JSON.parse(joined.body) as { session: { id: string; conversation_id: string } }).session;
+    expect(secondSession.conversation_id).toBe(firstSession.session.conversation_id);
+    joinSocket.destroy();
+    await waitUntil(() => tracker.list().some((session) => session.id === secondSession.id));
+    const clientOfSecond = openStream(transparentPort, ca.certPem, `/v1/code/sessions/${secondSession.id}/events/stream`, { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "anthropic-version": "2023-06-01" });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, ATTACH_SETTLE_MS);
+    });
+    hub.reconcile();
+
+    // A prompt from the second client: its client-half write numbers in the conversation's shared space and reaches the first attachment's worker (the live half that acts on it) and its own client stream alike.
+    const promptSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const promptWrite = await requestOn(promptSocket, rawRequest("POST", `/v1/code/sessions/${secondSession.id}/events`, { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "Content-Type": "application/json" }, JSON.stringify({ events: [{ payload: { type: "user", uuid: "join-prompt", message: { role: "user", content: "prompt from the second client" } } }] })));
+    expect(promptWrite.statusLine).toContain("200");
+    promptSocket.destroy();
+    const promptNum = Number((JSON.parse(promptWrite.body) as { results: { sequence_num: string }[] }).results[0]?.sequence_num);
+    await waitForFrames(workerOfFirst, (frames) => frames.some((frame) => frame.includes(`"sequence_num":${String(promptNum)}`)));
+    const promptOnWorker = envelopesOf(workerOfFirst).find((event) => event.envelope.sequence_num === promptNum);
+    expect(promptOnWorker?.envelope.source).toBe("client");
+    expect(((promptOnWorker?.envelope.payload as Record<string, unknown>).message as Record<string, unknown>).content).toBe("prompt from the second client");
+    await waitForFrames(clientOfSecond, (frames) => frames.some((frame) => frame.includes(`"sequence_num":${String(promptNum)}`)));
+    expect(envelopesOf(clientOfSecond).find((event) => event.envelope.sequence_num === promptNum)?.envelope.event_type).toBe("user");
+
+    // The first attachment's worker replies and raises an approval: both reach the second client's stream, and neither returns to the worker's own.
+    const replySocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const reply = await requestOn(
+      replySocket,
+      rawRequest("POST", `/v1/code/sessions/${firstSession.session.id}/worker/events`, { Authorization: `Bearer ${firstBridge.worker_jwt}`, "Content-Type": "application/json" }, JSON.stringify({ worker_epoch: 1, events: [
+        { payload: { type: "assistant", uuid: "join-reply", message: { role: "assistant", content: "the reply both clients see" } } },
+        { payload: { type: "control_request", request_id: "req-join-1", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "make join" } } } },
+      ] })),
+    );
+    expect(reply.statusLine).toContain("200");
+    replySocket.destroy();
+    await waitForFrames(clientOfSecond, (frames) => frames.some((frame) => frame.includes("join-reply")) && frames.some((frame) => frame.includes("req-join-1")));
+    expect(envelopesOf(workerOfFirst).some((event) => isPayloadRecord(event.envelope.payload) && event.envelope.payload.uuid === "join-reply")).toBe(false);
+    // The door's held client stream filed the request, so the tracker holds it pending for the first session.
+    await waitUntil(() => tracker.pendingOf(firstSession.session.id).some((request) => request.requestId === "req-join-1"));
+
+    // The approval is answered from the second client: the control_response written through its session reaches the first's worker stream and retires the pending request on the first.
+    const answerSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
+    const answerWrite = await requestOn(
+      answerSocket,
+      rawRequest("POST", `/v1/code/sessions/${secondSession.id}/events`, { Authorization: `Bearer ${MINTED_OAUTH_TOKEN}`, "Content-Type": "application/json" }, JSON.stringify({ events: [{ payload: { type: "control_response", response: { subtype: "success", request_id: "req-join-1", response: { behavior: "allow" } } } }] })),
+    );
+    expect(answerWrite.statusLine).toContain("200");
+    answerSocket.destroy();
+    await waitForFrames(workerOfFirst, (frames) => frames.some((frame) => frame.includes("req-join-1") && frame.includes("control_response")));
+    const answeredOnWorker = envelopesOf(workerOfFirst).find((event) => isPayloadRecord(event.envelope.payload) && event.envelope.payload.type === "control_response");
+    expect(((answeredOnWorker?.envelope.payload as Record<string, unknown>).response as Record<string, unknown>).request_id).toBe("req-join-1");
+    await waitForFrames(clientOfSecond, (frames) => frames.some((frame) => frame.includes("control_response")));
+    await waitUntil(() => !tracker.pendingOf(firstSession.session.id).some((request) => request.requestId === "req-join-1"));
+
+    workerOfFirst.destroy();
+    clientOfSecond.destroy();
+  }, TEST_TIMEOUT_MS);
+
   it("serves the activation neighbours through the transparent surface: the eval, the profile, and the control-plane refresh", async () => {
     const apiSocket = await connectRedirected(transparentPort, CONNECT_INTERCEPT_HOST, ca.certPem);
     const evalAnswer = await requestOn(apiSocket, rawRequest("POST", "/api/eval/sdk-selfhost", { "Content-Type": "application/json" }, JSON.stringify({ attributes: {} })));
