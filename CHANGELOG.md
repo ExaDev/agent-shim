@@ -1,3 +1,9 @@
+## [8.23.0](https://github.com/ExaDev/agent-shim/compare/v8.22.0...v8.23.0) (2026-10-06)
+
+### Features
+
+* **update:** config-gated automatic update check and background apply at launch ([40df4c5](https://github.com/ExaDev/agent-shim/commit/40df4c5d2e33630f21a8fd719538bfc097b53464))
+
 ## [8.22.0](https://github.com/ExaDev/agent-shim/compare/v8.21.1...v8.22.0) (2026-10-06)
 
 ### Features
