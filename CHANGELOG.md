@@ -1,3 +1,13 @@
+## [8.37.0](https://github.com/ExaDev/agent-shim/compare/v8.36.0...v8.37.0) (2026-10-07)
+
+### Features
+
+* add tools, thinking and max_tokens as route predicates ([8e13978](https://github.com/ExaDev/agent-shim/commit/8e13978a1aefbe5f342cf7dae1615d97af73571d))
+
+### Documentation
+
+* name the pool and request facts in the conditions row ([bdbbb01](https://github.com/ExaDev/agent-shim/commit/bdbbb01a8f4efc936f84a6345d830831546e8593))
+
 ## [8.36.0](https://github.com/ExaDev/agent-shim/compare/v8.35.0...v8.36.0) (2026-10-07)
 
 ### Features
