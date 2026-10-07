@@ -1,3 +1,9 @@
+## [8.27.1](https://github.com/ExaDev/agent-shim/compare/v8.27.0...v8.27.1) (2026-10-07)
+
+### Bug Fixes
+
+* **launcher:** exempt loopback from the door's proxy via NO_PROXY ([e0c1cf4](https://github.com/ExaDev/agent-shim/commit/e0c1cf4f2b7b85b1fb3834974134d17ad3569779)), closes [#271](https://github.com/ExaDev/agent-shim/issues/271)
+
 ## [8.27.0](https://github.com/ExaDev/agent-shim/compare/v8.26.0...v8.27.0) (2026-10-06)
 
 ### Features
