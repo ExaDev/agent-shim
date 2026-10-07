@@ -1,3 +1,9 @@
+## [8.36.0](https://github.com/ExaDev/agent-shim/compare/v8.35.0...v8.36.0) (2026-10-07)
+
+### Features
+
+* complete per-request routing with image predicates, quota fallback and model rewriting ([b682304](https://github.com/ExaDev/agent-shim/commit/b68230450739dc1fb7e9c266fbfed237b8507a2e))
+
 ## [8.35.0](https://github.com/ExaDev/agent-shim/compare/v8.34.0...v8.35.0) (2026-10-07)
 
 ### Features
