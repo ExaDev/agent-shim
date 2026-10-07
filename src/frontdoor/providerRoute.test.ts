@@ -37,7 +37,7 @@ function resolver(files: Record<string, unknown>, directPort = OWN_PORT): Return
 }
 
 function request(url: string): RoutedRequest {
-  return { method: "POST", url, headers: {}, body: Readable.from(["{}"]) as unknown as RoutedRequest["body"], signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined } };
+  return { method: "POST", url, headers: {}, body: Readable.from(["{}"]), signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined } };
 }
 
 describe("createProviderRouteResolver", () => {
@@ -222,6 +222,108 @@ describe("the credential an http provider's route attaches", () => {
       mutable.files[`${PROVIDERS_DIR}/z.json`] = { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-rotated-token" }] } };
       expect((await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" })).status).toBe(HTTP_STATUS.ok);
       expect(upstream.seen()[1]?.headers.authorization).toBe("Bearer z-rotated-token");
+    } finally {
+      await door.close();
+    }
+  });
+});
+
+/** A fake upstream that also records each request's body text, so a routed request proves its replayed body is unbroken. */
+async function bodyRecordingUpstream(): Promise<{ readonly port: number; readonly seen: () => readonly { url: string; body: string }[] }> {
+  const requests: { url: string; body: string }[] = [];
+  const server = http.createServer((incoming, response) => {
+    let body = "";
+    incoming.on("data", (chunk: Buffer) => {
+      body += chunk.toString("utf8");
+    });
+    incoming.on("end", () => {
+      requests.push({ url: incoming.url ?? "", body });
+      response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true }));
+    });
+  });
+  upstreams.push(server);
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("upstream has no TCP address");
+  }
+  return { port: (address satisfies AddressInfo).port, seen: () => requests };
+}
+
+describe("per-request routing by model", () => {
+  it("sends a request whose model matches to the entry's provider, its body replayed whole and its credential attached", async () => {
+    const main = await bodyRecordingUpstream();
+    const cheap = await bodyRecordingUpstream();
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/main.json`]: { displayName: "Main", baseUrl: `http://127.0.0.1:${String(main.port)}`, credential: { sources: [{ literal: "main-token" }] }, routes: [{ when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*haiku.*" } }, provider: "cheap" }] },
+      [`${PROVIDERS_DIR}/cheap.json`]: { displayName: "Cheap", baseUrl: `http://127.0.0.1:${String(cheap.port)}`, credential: { sources: [{ literal: "cheap-token" }] } },
+    };
+    const door = await startDoor(resolver(files));
+    try {
+      const body = JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 1024, messages: [{ role: "user", content: "route me" }] });
+      const response = await fetch(`${door.url}/providers/main/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(main.seen()).toEqual([]);
+      const seen = cheap.seen()[0];
+      expect(seen?.url).toBe("/v1/messages");
+      expect(seen?.body).toBe(body);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("keeps a request whose model matches no entry on the provider itself", async () => {
+    const main = await bodyRecordingUpstream();
+    const cheap = await bodyRecordingUpstream();
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/main.json`]: { displayName: "Main", baseUrl: `http://127.0.0.1:${String(main.port)}`, credential: { sources: [{ literal: "main-token" }] }, routes: [{ when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*haiku.*" } }, provider: "cheap" }] },
+      [`${PROVIDERS_DIR}/cheap.json`]: { displayName: "Cheap", baseUrl: `http://127.0.0.1:${String(cheap.port)}`, credential: { sources: [{ literal: "cheap-token" }] } },
+    };
+    const door = await startDoor(resolver(files));
+    try {
+      const response = await fetch(`${door.url}/providers/main/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body: JSON.stringify({ model: "claude-opus-4-5", messages: [] }) });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(cheap.seen()).toEqual([]);
+      expect(main.seen()[0]?.url).toBe("/v1/messages");
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("falls through an entry whose condition a body with no model field leaves undecided, rather than routing on a guess", async () => {
+    const main = await bodyRecordingUpstream();
+    const cheap = await bodyRecordingUpstream();
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/main.json`]: { displayName: "Main", baseUrl: `http://127.0.0.1:${String(main.port)}`, credential: { sources: [{ literal: "main-token" }] }, routes: [{ when: { kind: "exists", operand: { kind: "reference", key: "request.model" } }, provider: "cheap" }] },
+      [`${PROVIDERS_DIR}/cheap.json`]: { displayName: "Cheap", baseUrl: `http://127.0.0.1:${String(cheap.port)}`, credential: { sources: [{ literal: "cheap-token" }] } },
+    };
+    const door = await startDoor(resolver(files));
+    try {
+      const response = await fetch(`${door.url}/providers/main/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body: JSON.stringify({ messages: [] }) });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(cheap.seen()).toEqual([]);
+      expect(main.seen()).toHaveLength(1);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("refuses a routing table that circles back on itself, naming the cycle", async () => {
+    const main = await bodyRecordingUpstream();
+    const cheap = await bodyRecordingUpstream();
+    // main sends haiku models to cheap; cheap sends everything back to main. A haiku request therefore circles, and the resolution refuses it naming the chain instead of looping.
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/main.json`]: { displayName: "Main", baseUrl: `http://127.0.0.1:${String(main.port)}`, credential: { sources: [{ literal: "main-token" }] }, routes: [{ when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*haiku.*" } }, provider: "cheap" }] },
+      [`${PROVIDERS_DIR}/cheap.json`]: { displayName: "Cheap", baseUrl: `http://127.0.0.1:${String(cheap.port)}`, credential: { sources: [{ literal: "cheap-token" }] }, routes: [{ when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*" } }, provider: "main" }] },
+    };
+    const door = await startDoor(resolver(files));
+    try {
+      const response = await fetch(`${door.url}/providers/main/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body: JSON.stringify({ model: "claude-haiku-4-5" }) });
+      expect(response.status).toBe(HTTP_STATUS.internalServerError);
+      expect(await response.text()).toContain("provider routing cycle");
     } finally {
       await door.close();
     }

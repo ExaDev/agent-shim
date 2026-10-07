@@ -1,4 +1,5 @@
-import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
+import type { IncomingHttpHeaders } from "node:http";
+import type { Readable } from "node:stream";
 
 import { HTTP_STATUS } from "../codex/http";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
@@ -59,7 +60,7 @@ export interface RcConversationContext {
   /** The conversations the surface holds, keyed by id, exactly as the create's mint or attach left them. */
   readonly conversations: Map<string, SelfHostConversation>;
   readonly answerJson: (response: RoutedResponse, status: number, body: unknown, extraHeaders?: Readonly<Record<string, string>>) => Promise<void>;
-  readonly readBody: (request: IncomingMessage, capBytes: number) => Promise<string>;
+  readonly readBody: (request: Readable, capBytes: number) => Promise<string>;
   readonly credentialRefusal: (headers: Readonly<IncomingHttpHeaders>) => PresentationRefusal | undefined;
   readonly unauthorized: (response: RoutedResponse, refusal: PresentationRefusal) => Promise<void>;
   /** The surface's publish, whose conversation-keyed sequence space the family's writes join. */

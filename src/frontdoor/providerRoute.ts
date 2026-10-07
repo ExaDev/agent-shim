@@ -11,7 +11,9 @@ import { CONNECT_INTERCEPT_HOST, HTTPS_PORT } from "./connect";
 import { restoreCredentials } from "./custody";
 import { createPassthroughRoute } from "./passthrough";
 import type { RouteResolution } from "./pipeline";
+import { evaluateWhen, type ConditionContext } from "../resolve/conditions";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
+import { scanRequestHead } from "./requestScan";
 
 /**
  * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one with the provider's own credential attached in place of whatever the child presented. A bare `/v1/...` target (what the CONNECT surface hands the pipeline from a terminated OAuth session) rides a pass-through to Claude Code's own API, except in two cases: the Remote Control session family when the door serves that surface itself (`rcSelfHostRoute`, the self-hosted mode's route), and a session whose launch named a provider, whose inference is rewritten under that provider's scoped path and resolved as if the child had dialled the provider directly. Anything else is unrouted.
@@ -108,7 +110,72 @@ export function createProviderRouteResolver(deps: {
       ),
     };
   };
-  return async (request) => await Promise.resolve(resolve(request));
+  /**
+   * The per-request routing layer over the path-only resolution: a provider whose file carries `routes` has each request matched against the list in order, over the facts a bounded scan of the body's head found, and the first definite match is resolved exactly as a request dialled to that provider directly would be. An undecided condition falls through (never to a cheaper provider by accident) and an unmatched request stays on the provider itself; whichever route finally serves, it is handed the replayed body the scan produced, because the scan is the only reader and its replay is the one unbroken remainder.
+   */
+  const servingRewritten = (route: FrontDoorRoute, url: string, body: RoutedRequest["body"]): FrontDoorRoute => ({
+    name: route.name,
+    headroomEligible: route.headroomEligible,
+    headroomUpstream: route.headroomUpstream,
+    // The pipeline serves the route with the request it received; the routing layer's decisions (the rewritten target path, the replayed body) are substituted here, so the route sees exactly the request the resolution acted on.
+    serve: async (request, response) => {
+      await route.serve({ ...request, url, body }, response);
+    },
+  });
+
+  return async (request) => {
+    let current = request;
+    let replay: RoutedRequest | undefined;
+    const visited = new Set<string>();
+    for (;;) {
+      const path = new URL(current.url, "http://127.0.0.1").pathname;
+      const scoped = parseProviderPath(path);
+      const providerName = scoped?.provider ?? current.session.provider;
+      if (providerName !== undefined && visited.has(providerName)) {
+        return { ok: false, status: HTTP_STATUS.internalServerError, message: `provider routing cycle: ${[...visited, providerName].join(" -> ")}` };
+      }
+      if (providerName !== undefined) {
+        visited.add(providerName);
+      }
+      let routes;
+      try {
+        const definition = providerName === undefined ? undefined : loadProvider(deps.providersDir, providerName, deps.fs);
+        routes = definition === undefined || isCodexProvider(definition) ? undefined : definition.routes;
+      } catch {
+        // An invalid provider file is the sync resolver's own refusal to report, not this layer's.
+        routes = undefined;
+      }
+      if (routes === undefined || routes.length === 0) {
+        const resolution = resolve(current);
+        return resolution.ok && replay !== undefined ? { ok: true, route: servingRewritten(resolution.route, current.url, replay.body) } : resolution;
+      }
+      const scan = await scanRequestHead(current);
+      if (scan.replayed === undefined) {
+        // Nothing was read (the body was empty): the original request is the honest handover.
+        const resolution = resolve(current);
+        return resolution.ok && replay !== undefined ? { ok: true, route: servingRewritten(resolution.route, current.url, replay.body) } : resolution;
+      }
+      replay = scan.replayed;
+      const context: ConditionContext = { nowMs: Date.now(), env: deps.env, ...(scan.model === undefined && scan.hasImage === undefined ? {} : { request: { ...(scan.model === undefined ? {} : { model: scan.model }), hasImage: scan.hasImage } }) };
+      let matched: string | undefined;
+      for (const entry of routes) {
+        const verdict = evaluateWhen(entry.when, context);
+        if (verdict.status === "definite" && verdict.passed) {
+          matched = entry.provider;
+          break;
+        }
+      }
+      if (matched === undefined) {
+        const resolution = resolve(current);
+        return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, current.url, replay.body) } : resolution;
+      }
+      // The match rides the target's own scoped path, so the loop's next turn resolves it exactly as a direct dial would: its kind, its credential, and its own routes list all apply. The path after this provider's own prefix (or the whole bare /v1/ path of a session-named provider) is the target's to serve, query included.
+      const rest = scoped === undefined ? path : path.slice(`${PROVIDER_PATH_PREFIX}${encodeURIComponent(scoped.provider)}`.length);
+      const query = current.url.includes("?") ? current.url.slice(current.url.indexOf("?")) : "";
+      // The body carried forward is the replay's: the original stream's head was consumed by this turn's scan, and the target's own resolution (including another scan, when the target itself routes) must read a body that still begins at the head.
+      current = { ...current, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(matched)}${rest}${query}`, body: replay.body };
+    }
+  };
 }
 
 /** The credential headers one resolved provider credential becomes on the wire, in the form Claude Code itself gives that target: a bearer or OAuth token as `Authorization`, an API key as `x-api-key`. */

@@ -267,6 +267,14 @@ export type CodexProviderConfig = z.infer<typeof CodexProviderConfigSchema>;
  *
  * `credential` is required for both kinds, since a provider launch has to give Claude Code a token to send. A provider file is ordinary committed config, so none of its sources holds a secret (a `literal` source is by definition a non-secret placeholder, which is exactly what a codex provider needs: the daemon authenticates upstream with the Codex CLI's own login and ignores the token Claude Code sends it). `env` may not name a credential variable (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`) at all: the credential target sets one and the launcher removes the other two, so a value there would either be overwritten or be a second credential hiding outside the block.
  */
+/** One per-request route of an `http` provider's `routes` list: the condition a request is matched against, and the provider a match sends it to. The first entry whose condition is definitely true wins; an undecided condition (a request the door could not read, or a fact this embedding does not provide) falls through to the next entry, so a routing table never lands an unreadable request on a cheaper provider by accident. */
+const ProviderRouteSchema = z.strictObject({
+  /** The condition, the same `when` union a configuration cascade entry takes: the object form or a trilean predicate tree over the request facts the door resolves (`request.model` and kin). */
+  when: WhenSchema,
+  /** The provider a matching request is sent to, by the name a provider file carries. */
+  provider: z.string().min(1),
+});
+
 const HttpProviderSchema = z.strictObject({
   $schema: z.string().optional(),
   kind: z.literal("http").optional(),
@@ -274,6 +282,8 @@ const HttpProviderSchema = z.strictObject({
   baseUrl: z.url(),
   credential: ProviderCredentialSchema,
   env: ProviderEnvSchema.optional(),
+  /** Per-request routing: when present, each request this provider would serve is matched against the list in order, and the first definite match is sent to that entry's provider instead (itself resolved exactly as a directly dialled request would be). Unmatched requests stay on this provider. */
+  routes: z.array(ProviderRouteSchema).optional(),
 });
 
 /** A `codex` provider: see `ProviderSchema`. */

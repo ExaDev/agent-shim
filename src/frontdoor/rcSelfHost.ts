@@ -1,4 +1,5 @@
-import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
+import type { IncomingHttpHeaders } from "node:http";
+import type { Readable } from "node:stream";
 
 import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
@@ -285,7 +286,7 @@ export interface RcSelfHostDeps {
 }
 
 /** Reads one request's whole body as text, refusing a body past the protocol's own batch cap by rejecting: the caller answers 413. */
-async function readBody(request: IncomingMessage, capBytes: number): Promise<string> {
+async function readBody(request: Readable, capBytes: number): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;

@@ -1,4 +1,5 @@
-import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
+import type { IncomingHttpHeaders } from "node:http";
+import type { Readable } from "node:stream";
 
 import { HTTP_STATUS } from "../codex/http";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
@@ -93,7 +94,7 @@ export interface RcClientChannelContext {
   readonly response: RoutedResponse;
   readonly host: RcClientChannelHost;
   readonly answerJson: (response: RoutedResponse, status: number, body: unknown, extraHeaders?: Readonly<Record<string, string>>) => Promise<void>;
-  readonly readBody: (request: IncomingMessage, capBytes: number) => Promise<string>;
+  readonly readBody: (request: Readable, capBytes: number) => Promise<string>;
   readonly publish: (conversation: SelfHostConversation, writer: RcEventWriter, source: string, payload: Record<string, unknown>) => { readonly sequenceNum: number; readonly eventId: string; readonly duplicate: boolean };
   readonly sweep: () => void;
   readonly now: () => number;
@@ -185,7 +186,7 @@ export interface RcCompatSessionContext {
   /** Ends one session the way the v2 family's own archive does: retires exactly its streams from its conversation and detaches it, leaving the conversation to its remaining attachments. */
   readonly retireSession: (session: SelfHostSession) => void;
   readonly answerJson: (response: RoutedResponse, status: number, body: unknown, extraHeaders?: Readonly<Record<string, string>>) => Promise<void>;
-  readonly readBody: (request: IncomingMessage, capBytes: number) => Promise<string>;
+  readonly readBody: (request: Readable, capBytes: number) => Promise<string>;
   readonly credentialRefusal: (headers: Readonly<IncomingHttpHeaders>) => PresentationRefusal | undefined;
   readonly unauthorized: (response: RoutedResponse, refusal: PresentationRefusal) => Promise<void>;
   readonly now: () => number;
