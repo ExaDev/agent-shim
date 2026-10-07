@@ -64,7 +64,7 @@ export interface ConditionContext {
   /**
    * The request facts a provider's route condition reads, present only when the condition routes a request the door is resolving: `request.model` (the Messages body's own model field) and `request.hasImage` (an image block anywhere in the scanned head of the body). A request the door could not read that far carries neither, so a condition naming them is indeterminate and the routing falls through, never to a cheaper provider by accident.
    */
-  readonly request?: { readonly model?: string; readonly hasImage?: boolean };
+  readonly request?: { readonly model?: string; readonly hasImage?: boolean; readonly toolsPresent?: boolean; readonly thinking?: boolean; readonly maxTokens?: number; readonly isCountTokens?: boolean };
   /** Per-provider quota facts for request routing, keyed by provider name, from the session identity's usage snapshot: a route condition names a target's windows (`provider.<name>.fiveHour.utilization` and kin) to skip one that is exhausted or nearly spent. The windows are the same shape the pool facts read. */
   readonly providerQuota?: Readonly<Record<string, { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts }>>;
 }
@@ -103,6 +103,10 @@ function resolversOf(context: ConditionContext): SyncResolvers {
     ...(pool?.lastPickHoursAgo === undefined ? {} : { "session.lastPickHoursAgo": pool.lastPickHoursAgo }),
     ...(context.request?.model === undefined ? {} : { "request.model": context.request.model }),
     ...(context.request?.hasImage === undefined ? {} : { "request.hasImage": context.request.hasImage }),
+    ...(context.request?.toolsPresent === undefined ? {} : { "request.toolsPresent": context.request.toolsPresent }),
+    ...(context.request?.thinking === undefined ? {} : { "request.thinking": context.request.thinking }),
+    ...(context.request?.maxTokens === undefined ? {} : { "request.maxTokens": context.request.maxTokens }),
+    ...(context.request?.isCountTokens === undefined ? {} : { "request.isCountTokens": context.request.isCountTokens }),
     ...(context.providerQuota === undefined
       ? {}
       : Object.fromEntries(

@@ -180,7 +180,15 @@ export function createProviderRouteResolver(deps: {
         return resolution.ok && replay !== undefined ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }) } : resolution;
       }
       replay = scan.replayed;
-      const context: ConditionContext = { nowMs: Date.now(), env: deps.env, providerQuota, ...(scan.model === undefined && scan.hasImage === undefined ? {} : { request: { ...(scan.model === undefined ? {} : { model: scan.model }), hasImage: scan.hasImage } }) };
+      const requestFacts = {
+        ...(scan.model === undefined ? {} : { model: scan.model }),
+        ...(scan.hasImage === undefined ? {} : { hasImage: scan.hasImage }),
+        ...(scan.toolsPresent === undefined ? {} : { toolsPresent: scan.toolsPresent }),
+        ...(scan.thinking === undefined ? {} : { thinking: scan.thinking }),
+        ...(scan.maxTokens === undefined ? {} : { maxTokens: scan.maxTokens }),
+        ...(scan.isCountTokens === undefined ? {} : { isCountTokens: scan.isCountTokens }),
+      };
+      const context: ConditionContext = { nowMs: Date.now(), env: deps.env, providerQuota, ...(Object.keys(requestFacts).length === 0 ? {} : { request: requestFacts }) };
       let matched: { provider: string; model: string | undefined } | undefined;
       for (const entry of routes) {
         const verdict = evaluateWhen(entry.when, context);

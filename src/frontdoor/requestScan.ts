@@ -23,6 +23,14 @@ export interface RequestScan {
   readonly text?: string;
   readonly model?: string;
   readonly hasImage?: boolean;
+  /** True when the request carries a non-empty `tools` array. */
+  readonly toolsPresent?: boolean;
+  /** True when the request enables extended thinking (`thinking` of type enabled). */
+  readonly thinking?: boolean;
+  /** The request's `max_tokens`, when the scanned text reached it. */
+  readonly maxTokens?: number;
+  /** True when the request targets the count_tokens endpoint, which the path (not the body) states. */
+  readonly isCountTokens?: boolean;
   /** The request as the chosen route should receive it: the scanned head replayed in front of the unread remainder. `undefined` when nothing was read, in which case the original request is the honest handover. */
   readonly replayed?: RoutedRequest;
 }
@@ -52,7 +60,17 @@ export async function scanRequestHead(request: RoutedRequest, wholeBody = false)
       for (const chunk of head) {
         replay.write(chunk);
       }
-      resolve({ ...(model === undefined ? {} : { model }), hasImage, ...(wholeBody ? { whole: true, text } : {}), replayed: { ...request, body: replay } });
+      const maxTokens = /"max_tokens"\s*:\s*([0-9]+)/.exec(text)?.[1];
+      resolve({
+        ...(model === undefined ? {} : { model }),
+        hasImage,
+        toolsPresent: /"tools"\s*:\s*\[\s*\{/.test(text),
+        thinking: /"thinking"\s*:\s*\{\s*"type"\s*:\s*"enabled"/.test(text),
+        ...(maxTokens === undefined ? {} : { maxTokens: Number(maxTokens) }),
+        isCountTokens: request.url.includes("/v1/messages/count_tokens"),
+        ...(wholeBody ? { whole: true, text } : {}),
+        replayed: { ...request, body: replay },
+      });
     };
     body.on("data", (chunk: Buffer) => {
       if (decided) {
