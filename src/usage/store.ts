@@ -38,6 +38,10 @@ export interface UsageStoreDeps {
   /** The identity's current account metadata, copied into its snapshot on every write so the snapshot is never staler than the last request. */
   readonly readAccount: (identity: string) => AccountMetadata | undefined;
   readonly log: (line: string) => void;
+  /**
+   * Told every snapshot the store writes, after the write succeeded, when the door wires its event backbone's usage source to this store; absent otherwise, so the store stays a plain filesystem writer for every other embedder. One event per write is the honest unit: the consumer reads the change or the reset out of the payload itself.
+   */
+  readonly publish?: (snapshot: UsageSnapshot) => void;
 }
 
 /** The store's writer. */
@@ -138,6 +142,7 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
     } satisfies UsageSnapshot);
     fs.mkdirPrivate(paths.usageSnapshotsDir);
     fs.writeFilePrivate(snapshotPath(paths.usageSnapshotsDir, identity), `${JSON.stringify(snapshot, null, 2)}\n`);
+    deps.publish?.(snapshot);
     return true;
   };
 
