@@ -59,13 +59,23 @@ export interface ControlApiDeps {
   readonly doctorReport: () => DoctorReport;
 }
 
+/** The OpenAPI tags the control-plane routers group under in the document, one per domain a consumer reads. */
+const USAGE_API_TAG = "usage";
+const FRONTDOOR_API_TAG = "frontdoor";
+const CHECK_API_TAG = "check";
+const DOCTOR_API_TAG = "doctor";
+
 /** Builds the control-plane routers: one procedure per read, every one behind the control-token middleware. */
 export function createControlApiRouter(deps: ControlApiDeps) {
   const authed = doorApiAuth(deps.expectedToken);
   return {
     usage: {
-      list: authed.output(UsageListOutputSchema).handler(() => ({ snapshots: deps.usageSnapshots() })),
+      list: authed
+        .route({ method: "GET", path: "/rest/usage/snapshots", summary: "List every identity's usage snapshot", tags: [USAGE_API_TAG] })
+        .output(UsageListOutputSchema)
+        .handler(() => ({ snapshots: deps.usageSnapshots() })),
       effectiveWindow: authed
+        .route({ method: "GET", path: "/rest/usage/windows", summary: "Read one identity's effective quota windows", tags: [USAGE_API_TAG] })
         .input(UsageWindowsInputSchema)
         .output(UsageWindowsOutputSchema)
         .handler(({ input }) => {
@@ -88,6 +98,7 @@ export function createControlApiRouter(deps: ControlApiDeps) {
           };
         }),
       live: authed
+        .route({ method: "GET", path: "/rest/usage/live", summary: "Read the live rate-limit observations the event backbone files", tags: [USAGE_API_TAG] })
         .input(RcSessionQuerySchema)
         .output(UsageLiveOutputSchema)
         .handler(({ input }) => {
@@ -103,18 +114,28 @@ export function createControlApiRouter(deps: ControlApiDeps) {
         }),
     },
     frontdoor: {
-      status: authed.output(FrontDoorStatusOutputSchema).handler(() => deps.frontDoorStatus()),
-      sessions: authed.output(FrontDoorSessionsOutputSchema).handler(() => ({ sessions: deps.frontDoorStatus().sessions })),
+      status: authed
+        .route({ method: "GET", path: "/rest/frontdoor/status", summary: "Read the front door's status", tags: [FRONTDOOR_API_TAG] })
+        .output(FrontDoorStatusOutputSchema)
+        .handler(() => deps.frontDoorStatus()),
+      sessions: authed
+        .route({ method: "GET", path: "/rest/frontdoor/sessions", summary: "Read the front door's session registry", tags: [FRONTDOOR_API_TAG] })
+        .output(FrontDoorSessionsOutputSchema)
+        .handler(() => ({ sessions: deps.frontDoorStatus().sessions })),
     },
     check: {
       // The report's own JSON shape is the contract (the same one `check --json` prints and `checkReportSchema.ts` defines), so the procedure returns exactly that conversion.
       run: authed
+        .route({ method: "GET", path: "/rest/check", summary: "Run the check report for one directory", tags: [CHECK_API_TAG] })
         .input(CheckRunInputSchema)
         .output(CheckReportJsonSchema)
         .handler(({ input }) => checkReportToJson(deps.checkReport(input.path, input.identity))),
     },
     doctor: {
-      run: authed.output(DoctorRunOutputSchema).handler(() => deps.doctorReport()),
+      run: authed
+        .route({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report", tags: [DOCTOR_API_TAG] })
+        .output(DoctorRunOutputSchema)
+        .handler(() => deps.doctorReport()),
     },
   };
 }
@@ -140,7 +161,7 @@ export type DoorApiRouter = ReturnType<typeof createDoorApiRouter>;
  * Builds the node handler for the door's whole typed API, Remote Control and control plane together: the pre-pipeline surface the provider listener hands every request under `RC_ORPC_PATH_PREFIX`.
  */
 export function createDoorApiNodeHandler(deps: DoorApiDeps): PrePipelineApi {
-  return doorApiNodeHandlerOf(createDoorApiRouter(deps));
+  return doorApiNodeHandlerOf(createDoorApiRouter(deps), deps.expectedToken);
 }
 
 /** The door's whole typed API as a client sees it: every call presents the control token, over TLS trusting only the CA file the door's own state names. */

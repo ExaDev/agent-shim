@@ -19,12 +19,16 @@ export interface DoorEventsApiDeps {
   readonly events: DoorEventHub;
 }
 
+/** The OpenAPI tag the events router groups under in the document. */
+const EVENTS_API_TAG = "events";
+
 /** Builds the events router: one streaming procedure behind the control-token middleware. */
 export function createEventsApiRouter(deps: DoorEventsApiDeps) {
   const authed = doorApiAuth(deps.expectedToken);
   return {
     events: {
       subscribe: authed
+        .route({ method: "GET", path: "/rest/events", summary: "Stream the door's every event source (SSE)", tags: [EVENTS_API_TAG] })
         .input(DoorEventSourceQuerySchema)
         .output(eventIterator(DoorEventSchema))
         .handler(async function* ({ input, signal }) {

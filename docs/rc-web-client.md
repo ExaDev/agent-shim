@@ -21,7 +21,7 @@ The served HTML never contains the token. The page's script reads it from its ow
 
 ## How the page talks to the door
 
-The page speaks the door's existing typed API directly, with no client library: the oRPC RPC protocol is one `POST` per procedure with a `{"json": input}` body and a `{"json": output}` answer, and `events.subscribe` answers `text/event-stream`, which the page parses by hand. This is why the REST/OpenAPI mount (#224) stays unfired: its trigger is the door's TLS pinning making a browser client awkward, and plain `fetch` from the page's own origin is not that. The page is one hand-written HTML file (`src/frontdoor/rcClientPage.ts`), inline script and style, no build step and no external resource of any kind; a CSP header admits only the page's own inline script, its style and same-origin fetches.
+The page speaks the door's existing typed API directly, with no client library: the oRPC RPC protocol is one `POST` per procedure with a `{"json": input}` body and a `{"json": output}` answer, and `events.subscribe` answers `text/event-stream`, which the page parses by hand. It stays on the RPC protocol rather than the mount's REST routes because plain `fetch` from the page's own origin already works; the REST/OpenAPI surface serves consumers with no TypeScript client, and its entry point is the OpenAPI document at `/__agent-shim/orpc/openapi.json` (same control token), with the routes themselves under `/rest`. The page is one hand-written HTML file (`src/frontdoor/rcClientPage.ts`), inline script and style, no build step and no external resource of any kind; a CSP header admits only the page's own inline script, its style and same-origin fetches.
 
 What the page drives:
 

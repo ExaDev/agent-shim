@@ -52,7 +52,7 @@ function eventsApiClient(port: number, caPem: string, token: string): RouterClie
 
 /** Serves the events router on the door's real listener shape through the shared node-handler builder, recording every request URL that reaches it, and resolves the bound port. */
 async function serveApi(doorEvents: ReturnType<typeof createDoorEventHub>): Promise<{ readonly port: number; readonly requests: string[]; readonly close: () => Promise<void> }> {
-  const api = doorApiNodeHandlerOf(createEventsApiRouter({ expectedToken: CONTROL_TOKEN, events: doorEvents }));
+  const api = doorApiNodeHandlerOf(createEventsApiRouter({ expectedToken: CONTROL_TOKEN, events: doorEvents }), CONTROL_TOKEN);
   const requests: string[] = [];
   const server = createFrontDoorServer(
     async () => {

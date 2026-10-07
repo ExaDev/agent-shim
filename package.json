@@ -51,6 +51,7 @@
   "dependencies": {
     "@clack/prompts": "^1.8.0",
     "@orpc/client": "1.15.4",
+    "@orpc/openapi": "1.15.4",
     "@orpc/server": "1.15.4",
     "commander": "^15.0.0",
     "cosmiconfig": "^10.0.1",
