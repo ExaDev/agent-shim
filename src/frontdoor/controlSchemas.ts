@@ -81,6 +81,14 @@ export const CheckRunInputSchema = z
   })
   .refine((input) => path.isAbsolute(input.path), { message: "path must be absolute: the door cannot resolve a relative path against the caller's working directory" });
 
+/** The pool-pick query: one pool by name and one absolute directory, the same two facts a launch from that directory would rank the pool against (a sticky pick is directory-scoped), so a relative path is refused for the same reason the check query refuses one. */
+export const PoolPickInputSchema = z
+  .strictObject({
+    pool: z.string().min(1),
+    path: z.string().min(1),
+  })
+  .refine((input) => path.isAbsolute(input.path), { message: "path must be absolute: the door cannot resolve a relative path against the caller's working directory" });
+
 /** One line of the doctor report: the section it belongs to, its severity, its message, and the identity/profile/rule it is about when there is one. */
 export const DoctorFindingSchema = z.strictObject({
   section: z.enum(DOCTOR_SECTIONS),

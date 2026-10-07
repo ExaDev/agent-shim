@@ -6,12 +6,14 @@ import { CheckReportJsonSchema } from "../checkReportSchema";
 import type { DoctorReport } from "../doctorReport";
 import { ANTHROPIC_PROVIDER } from "../usage/middleware";
 import { effectiveWindow } from "../usage/preflight";
+import { PoolPickReportSchema, type PoolPickReport } from "../usage/pickReportSchema";
 import type { UsageSnapshot } from "../usage/schema";
 import {
   CheckRunInputSchema,
   DoctorRunOutputSchema,
   FrontDoorSessionsOutputSchema,
   FrontDoorStatusOutputSchema,
+  PoolPickInputSchema,
   UsageListOutputSchema,
   UsageLiveOutputSchema,
   UsageWindowsInputSchema,
@@ -31,6 +33,7 @@ import type { PrePipelineApi } from "./server";
  * - `usage.*` reads the per-identity usage snapshots the door's own middleware writes, reads a provider's quota windows the way every in-process consumer does (`effectiveWindow`: a window past its reset is empty and carries no status), and reads the live rate-limit observations the event backbone files off the Remote Control client stream (`live`: per-session latest state, exactly as fresh as the last turn a session completed, never a timer's derivation of it).
  * - `frontdoor.*` returns what `agent-shim frontdoor status` returns: the supervisor state, its liveness, the session registry's launches and the headroom hop.
  * - `check.run` and `doctor.run` return the reports `agent-shim check` and `agent-shim doctor` print, as data, `check.run` parameterised by an absolute directory path.
+ * - `pool.pick` returns what `agent-shim pool pick` prints, the ranked pick for one pool exactly as a launch from the named absolute directory would make it right now, so a programmatic consumer can ask which identity to use without reading the door host's files.
  *
  * Read-only by design: identity, configuration-profile, provider, pool and directory-rule management stay CLI-side, and adding writes over this mount is a decision of its own rather than a gap here. `createDoorApiNodeHandler` mounts these routers and the door-wide `events.subscribe` router beside the Remote Control router on the one prefix the provider listener already serves, so a consumer dials one address with one token for the whole door.
  */
@@ -57,6 +60,10 @@ export interface ControlApiDeps {
   readonly checkReport: (path: string, identity?: string) => CheckReport;
   /** The doctor report, as `collectDoctorReport` collects it. */
   readonly doctorReport: () => DoctorReport;
+  /** The ranked pick for one pool as a launch from one absolute directory would make it right now, exactly `pool pick`'s own product; undefined when the pool table names no such pool. */
+  readonly poolPick: (pool: string, directory: string) => PoolPickReport | undefined;
+  /** The pool table's live names, so an unknown pool is refused naming the real ones rather than answered as an empty ranking. */
+  readonly poolNames: () => readonly string[];
 }
 
 /** The OpenAPI tags the control-plane routers group under in the document, one per domain a consumer reads. */
@@ -64,6 +71,7 @@ const USAGE_API_TAG = "usage";
 const FRONTDOOR_API_TAG = "frontdoor";
 const CHECK_API_TAG = "check";
 const DOCTOR_API_TAG = "doctor";
+const POOL_API_TAG = "pool";
 
 /** Builds the control-plane routers: one procedure per read, every one behind the control-token middleware. */
 export function createControlApiRouter(deps: ControlApiDeps) {
@@ -136,6 +144,23 @@ export function createControlApiRouter(deps: ControlApiDeps) {
         .route({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report", tags: [DOCTOR_API_TAG] })
         .output(DoctorRunOutputSchema)
         .handler(() => deps.doctorReport()),
+    },
+    pool: {
+      pick: authed
+        .route({ method: "GET", path: "/rest/pool/pick", summary: "Rank one pool exactly as a launch from a directory would right now", tags: [POOL_API_TAG] })
+        .input(PoolPickInputSchema)
+        .output(PoolPickReportSchema)
+        .handler(({ input }) => {
+          const report = deps.poolPick(input.pool, input.path);
+          // The same refusal rule every named read keeps: an unknown pool answered as an empty ranking would read as "observed, nothing eligible", so the real pool names are stated instead.
+          if (report === undefined) {
+            const live = deps.poolNames();
+            throw new ORPCError("NOT_FOUND", {
+              message: live.length === 0 ? `no pools are configured, so none is named ${input.pool}` : `no pool is named ${input.pool}; the live pools are ${live.map((name) => `"${name}"`).join(", ")}`,
+            });
+          }
+          return report;
+        }),
     },
   };
 }

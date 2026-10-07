@@ -146,6 +146,10 @@ describe("the door's web client page and its API calls over the door's own TLS",
       doctorReport: () => {
         throw new Error("the e2e page drives no doctor");
       },
+      poolPick: (): never => {
+        throw new Error("the e2e page drives no pool pick");
+      },
+      poolNames: () => [],
     });
     const page = createRcClientPage(CONTROL_TOKEN);
     // Both pre-pipeline surfaces record the pathnames they serve, so the stream case can await a subscription having landed before publishing what it must deliver.
