@@ -1,4 +1,5 @@
-import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
+import type { Readable } from "node:stream";
+import type { IncomingHttpHeaders } from "node:http";
 
 /**
  * The agent-shim-internal headers the launcher injects through `ANTHROPIC_CUSTOM_HEADERS` so the front door can identify and route a request's session. None of them may ever leave the machine: the identity step strips every one before a route sees the request, so no upstream, and not even the headroom hop, learns what they say.
@@ -153,8 +154,8 @@ export interface RoutedRequest {
   readonly url: string;
   /** The request's headers with every internal header already stripped: exactly what a route may forward onwards. */
   readonly headers: IncomingHttpHeaders;
-  /** The request's body stream: a route either pipes it onward untouched or reads it whole, never both. */
-  readonly body: IncomingMessage;
+  /** The request's body stream: a route either pipes it onward untouched or reads it whole, never both. A readable, not the socket-bound type the pipeline received it as, because the routing layer's scan hands routes a replayed body (the scanned head re-emitted in front of the unread remainder) that is a plain stream. */
+  readonly body: Readable;
   /** Aborted the moment the client goes away; a route aborts its own upstream work with it. */
   readonly signal: AbortSignal;
   readonly session: SessionIdentity;

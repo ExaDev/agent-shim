@@ -61,6 +61,10 @@ export interface ConditionContext {
    * The pool-selection facts a member entry's policy condition reads. Present only when the condition guards a pool member, so the same reference namespace serves the cascade and the pool: `quota.fiveHour.remaining`, `quota.fiveHour.utilization`, `quota.fiveHour.hoursUntilReset`, the same three under `quota.sevenDay`, `quota.burnPerHour` (the five-hour window's observed utilisation pace, in fractions per hour), `session.resuming` (this launch resumes or continues a conversation) and `session.lastPickHoursAgo` (how long ago this directory last picked this member). Conversation context is deliberately not provided: nothing the door holds knows it, so a condition referencing it is indeterminate, naming the missing fact, rather than guessed.
    */
   readonly pool?: { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts; readonly burnPerHour?: number; readonly resuming?: boolean; readonly lastPickHoursAgo?: number };
+  /**
+   * The request facts a provider's route condition reads, present only when the condition routes a request the door is resolving: `request.model` (the Messages body's own model field) and `request.hasImage` (an image block anywhere in the scanned head of the body). A request the door could not read that far carries neither, so a condition naming them is indeterminate and the routing falls through, never to a cheaper provider by accident.
+   */
+  readonly request?: { readonly model?: string; readonly hasImage?: boolean };
 }
 
 /**
@@ -95,6 +99,8 @@ function resolversOf(context: ConditionContext): SyncResolvers {
     ...(pool?.burnPerHour === undefined ? {} : { "quota.burnPerHour": pool.burnPerHour }),
     ...(pool?.resuming === undefined ? {} : { "session.resuming": pool.resuming }),
     ...(pool?.lastPickHoursAgo === undefined ? {} : { "session.lastPickHoursAgo": pool.lastPickHoursAgo }),
+    ...(context.request?.model === undefined ? {} : { "request.model": context.request.model }),
+    ...(context.request?.hasImage === undefined ? {} : { "request.hasImage": context.request.hasImage }),
   };
   return {
     resolveValue: (key): Resolution => {
