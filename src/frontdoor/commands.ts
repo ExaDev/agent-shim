@@ -20,7 +20,8 @@ import { collectCheckReport } from "../checkReport";
 import { collectDoctorReport } from "../doctorReport";
 import { collectPoolPick } from "../poolPickReport";
 import { readPools } from "../poolStore";
-import { listUsageSnapshots, readUsageSnapshot } from "../usage/read";import { createDoorApiNodeHandler } from "./controlApi";
+import { listUsageSnapshots, readUsageSnapshot } from "../usage/read";
+import type { UsageSnapshot } from "../usage/schema";import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorHealthPublisher } from "./doorHealthEvents";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
 import { USAGE_EVENT_SOURCE } from "./eventSchemas";
@@ -152,6 +153,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     },
   });
   // This generation's control token, minted per door start and written owner-only: the value the door's control routes demand and only this user's CLI can read. A crashed door's stale file never authenticates, because the next generation mints a fresh one over it.
+  // The routing layer's snapshot cache, kept fresh by the usage store's publish below: a route condition reading a target's quota sees the state this process last wrote without a file read, and a cold cache (a door just started) falls back to the snapshot on disk once before the store's next write makes it live.
+  const routingSnapshots = new Map<string, UsageSnapshot>();
   const rcControlToken = randomUUID();
   const resolveRoute = rcObservingResolver(
     createProviderRouteResolver({
@@ -162,6 +165,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       // The same port (cache included) the launcher resolves a launch's provider with, so the credential the door attaches at the route and the one the launcher handed the child are the same resolution of the same block.
       env: process.env,
       credentials: { ...realCredentialPort, cache: realCredentialCacheEnv(paths) },
+      usageSnapshotOf: (identity) => (identity === undefined ? undefined : routingSnapshots.get(identity) ?? readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity)),
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
     }),
     rcTracker,
@@ -171,7 +175,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   // One check for every listener that admits launches, read fresh on each call since launches come and go: the provider listener's and the CONNECT surface's routed paths (the capability header), and the CONNECT surface's own CONNECT requests (the proxy credential).
   const isLiveToken = (token: string): boolean => isLiveCapability(token, liveSessionTokens(realFarmFs, paths.frontdoorSessionsDir));
 
-  // Usage tracking: one store per door process, its log segments named by this pid, written on a deferred turn so recording never sits in a response's path. Every snapshot it writes is published on the backbone's usage source, the durable fact the expiring-quota checker and any quota consumer reads.
+  // Usage tracking: one store per door process, its log segments named by this pid, written on a deferred turn so recording never sits in a response's path. Every snapshot it writes is published on the backbone's usage source, the durable fact the expiring-quota checker and any quota consumer reads; the routing layer's snapshot cache rides the same publish, so a route condition reading a target's quota sees the state this process last wrote without a file read.
   const usageStore = createUsageStore({
     fs: realFarmFs,
     paths,
@@ -180,6 +184,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     readAccount: createAccountReader(realFarmFs, paths.identitiesDir),
     log,
     publish: (snapshot) => {
+      routingSnapshots.set(snapshot.identity, snapshot);
       usagePublisher.publish(snapshot);
     },
   });

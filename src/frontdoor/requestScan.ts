@@ -17,6 +17,10 @@ const REQUEST_SCAN_CAP_BYTES = SCAN_KIB * BYTES_PER_KIB;
 
 /** Everything the scan found in the head it read, beside the request whose body is now the replay: the model field when the head reached it, image-block presence when it saw content blocks at all. */
 export interface RequestScan {
+  /** True when the scan read the whole body rather than its head, which is what makes `hasImage` a fact about the whole conversation rather than its opening turns. */
+  readonly whole?: boolean;
+  /** The whole body's text, present only in whole-body mode, so a route that rewrites the model field does it from the one copy already read rather than a second. */
+  readonly text?: string;
   readonly model?: string;
   readonly hasImage?: boolean;
   /** The request as the chosen route should receive it: the scanned head replayed in front of the unread remainder. `undefined` when nothing was read, in which case the original request is the honest handover. */
@@ -30,7 +34,7 @@ export interface RequestScan {
  *
  * Nothing here parses the body: the model field is found as the first `"model": "..."` pair of the head's text, and an image block as the first `"type": "image"` inside it, which is exactly how the fields appear in the JSON Claude Code serialises. A head with neither (or a body the cap could not cover) reports the fact as absent, which the condition evaluator carries as indeterminate.
  */
-export async function scanRequestHead(request: RoutedRequest): Promise<RequestScan> {
+export async function scanRequestHead(request: RoutedRequest, wholeBody = false): Promise<RequestScan> {
   const body = request.body;
   const head: Buffer[] = [];
   let seen = 0;
@@ -48,7 +52,7 @@ export async function scanRequestHead(request: RoutedRequest): Promise<RequestSc
       for (const chunk of head) {
         replay.write(chunk);
       }
-      resolve({ ...(model === undefined ? {} : { model }), hasImage, replayed: { ...request, body: replay } });
+      resolve({ ...(model === undefined ? {} : { model }), hasImage, ...(wholeBody ? { whole: true, text } : {}), replayed: { ...request, body: replay } });
     };
     body.on("data", (chunk: Buffer) => {
       if (decided) {
@@ -64,7 +68,7 @@ export async function scanRequestHead(request: RoutedRequest): Promise<RequestSc
       head.push(chunk);
       seen += chunk.length;
       text += chunk.toString("utf8");
-      if (modelIn() !== undefined || seen >= REQUEST_SCAN_CAP_BYTES) {
+      if (!wholeBody && (modelIn() !== undefined || seen >= REQUEST_SCAN_CAP_BYTES)) {
         decided = true;
         body.pause();
         // Let the scan's caller resume the source when it is ready to consume the replay, so the remainder never buffers unread.

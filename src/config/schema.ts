@@ -273,6 +273,8 @@ const ProviderRouteSchema = z.strictObject({
   when: WhenSchema,
   /** The provider a matching request is sent to, by the name a provider file carries. */
   provider: z.string().min(1),
+  /** The model name to rewrite the request to before it reaches the target, for a provider that expects another form (OpenRouter's `anthropic/claude-...` for instance). A route that rewrites reads the whole body, the one copy the rewrite needs. */
+  model: z.string().min(1).optional(),
 });
 
 const HttpProviderSchema = z.strictObject({

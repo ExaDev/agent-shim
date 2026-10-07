@@ -65,6 +65,8 @@ export interface ConditionContext {
    * The request facts a provider's route condition reads, present only when the condition routes a request the door is resolving: `request.model` (the Messages body's own model field) and `request.hasImage` (an image block anywhere in the scanned head of the body). A request the door could not read that far carries neither, so a condition naming them is indeterminate and the routing falls through, never to a cheaper provider by accident.
    */
   readonly request?: { readonly model?: string; readonly hasImage?: boolean };
+  /** Per-provider quota facts for request routing, keyed by provider name, from the session identity's usage snapshot: a route condition names a target's windows (`provider.<name>.fiveHour.utilization` and kin) to skip one that is exhausted or nearly spent. The windows are the same shape the pool facts read. */
+  readonly providerQuota?: Readonly<Record<string, { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts }>>;
 }
 
 /**
@@ -101,6 +103,16 @@ function resolversOf(context: ConditionContext): SyncResolvers {
     ...(pool?.lastPickHoursAgo === undefined ? {} : { "session.lastPickHoursAgo": pool.lastPickHoursAgo }),
     ...(context.request?.model === undefined ? {} : { "request.model": context.request.model }),
     ...(context.request?.hasImage === undefined ? {} : { "request.hasImage": context.request.hasImage }),
+    ...(context.providerQuota === undefined
+      ? {}
+      : Object.fromEntries(
+          Object.entries(context.providerQuota).flatMap(
+            ([name, windows]): (readonly [string, number])[] => [
+              ...(windows.fiveHour === undefined ? [] : ([["provider." + name + ".fiveHour.remaining", windows.fiveHour.remaining], ["provider." + name + ".fiveHour.utilization", windows.fiveHour.utilization], ["provider." + name + ".fiveHour.hoursUntilReset", windows.fiveHour.hoursUntilReset]] as const)),
+              ...(windows.sevenDay === undefined ? [] : ([["provider." + name + ".sevenDay.remaining", windows.sevenDay.remaining], ["provider." + name + ".sevenDay.utilization", windows.sevenDay.utilization], ["provider." + name + ".sevenDay.hoursUntilReset", windows.sevenDay.hoursUntilReset]] as const)),
+            ],
+          ),
+        )),
   };
   return {
     resolveValue: (key): Resolution => {
@@ -186,6 +198,26 @@ export function evaluateWhen(when: WhenCondition | undefined, context: Condition
     }
   }
   return { status: "definite", passed: failed.length === 0, checked, failed };
+}
+
+/** Whether a `when` references the named fact, by walking the predicate tree for reference nodes with that key. The object form references no request fact (its fields read entry and repo facts), so it answers false for those. The routing layer uses this to decide how far a request must be scanned: a condition that names `request.hasImage` needs the whole body, because an image anywhere in the conversation is the fact, and the head cannot see it. */
+export function referencesFact(when: WhenCondition | undefined, key: string): boolean {
+  if (when === undefined || !("kind" in when)) {
+    return false;
+  }
+  const walk = (node: unknown): boolean => {
+    if (Array.isArray(node)) {
+      return node.some(walk);
+    }
+    if (typeof node !== "object" || node === null) {
+      return false;
+    }
+    if ("kind" in node && node.kind === "reference" && "key" in node && node.key === key) {
+      return true;
+    }
+    return Object.values(node).some(walk);
+  };
+  return walk(when);
 }
 
 /** True when the `when` is present but an empty object, which is vacuously true and therefore has no effect. A predicate-form `when` is never vacuous: a tree always states something. */
