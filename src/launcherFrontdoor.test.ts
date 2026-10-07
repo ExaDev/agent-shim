@@ -47,6 +47,8 @@ describe("runLauncher with a provider", () => {
     expect(order).toEqual([]);
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
+    // Loopback is exempted from the proxy so a plain-http MCP server on it is reached directly, never sent to the CONNECT surface in absolute form.
+    expect(env.NO_PROXY).toBe("127.0.0.1,localhost,::1");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.AGENT_SHIM_PROVIDER).toBe("Codex");
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toMatch(/^x-agent-shim-session: [0-9a-f-]{36}\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-provider: codex$/);
