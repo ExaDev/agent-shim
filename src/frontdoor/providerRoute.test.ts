@@ -8,12 +8,16 @@ import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { FAKE_HOME, admitLaunchToken, fakeCredentials, fakeFs } from "../test-helpers";
 import type { FsPort } from "../launcher/ports";
+import type { UsageSnapshot } from "../usage/schema";
 import { createProviderRouteResolver } from "./providerRoute";
 import { serveRouted } from "./pipeline";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { AUTH_HEADER, type RoutedRequest } from "./route";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
+
+/** When the quota-test fixture's windows reset: one day out, far enough to be live at any test instant. */
+const DAY_RESET_MS = 86_400_000;
 const OWN_PORT = 4100;
 
 const codexProvider = { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } };
@@ -306,6 +310,77 @@ describe("per-request routing by model", () => {
       expect(response.status).toBe(HTTP_STATUS.ok);
       expect(cheap.seen()).toEqual([]);
       expect(main.seen()).toHaveLength(1);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("routes on an image anywhere in the conversation, which the whole-body scan the predicate chooses can see", async () => {
+    const main = await bodyRecordingUpstream();
+    const vision = await bodyRecordingUpstream();
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/main.json`]: { displayName: "Main", baseUrl: `http://127.0.0.1:${String(main.port)}`, credential: { sources: [{ literal: "main-token" }] }, routes: [{ when: { kind: "compare", op: "eq", left: { kind: "reference", key: "request.hasImage" }, right: { kind: "booleanLiteral", value: true } }, provider: "vision" }] },
+      [`${PROVIDERS_DIR}/vision.json`]: { displayName: "Vision", baseUrl: `http://127.0.0.1:${String(vision.port)}`, credential: { sources: [{ literal: "vision-token" }] } },
+    };
+    const door = await startDoor(resolver(files));
+    try {
+      // The image block sits in the newest turn, the last element of the conversation: only a whole-body scan finds it.
+      const body = JSON.stringify({ model: "claude-opus-4-5", messages: [{ role: "user", content: "hello" }, { role: "user", content: [{ type: "image", source: { type: "base64" } }] }] });
+      const response = await fetch(`${door.url}/providers/main/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(main.seen()).toEqual([]);
+      expect(vision.seen()[0]?.body).toBe(body);
+      // A conversation with no image block stays on the provider.
+      await fetch(`${door.url}/providers/main/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body: JSON.stringify({ model: "claude-opus-4-5", messages: [{ role: "user", content: "plain" }] }) });
+      expect(main.seen()).toHaveLength(1);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("rewrites the model field for a route that names another form, changing exactly that one field", async () => {
+    const main = await bodyRecordingUpstream();
+    const openrouter = await bodyRecordingUpstream();
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/main.json`]: { displayName: "Main", baseUrl: `http://127.0.0.1:${String(main.port)}`, credential: { sources: [{ literal: "main-token" }] }, routes: [{ when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*sonnet.*" } }, provider: "openrouter", model: "anthropic/claude-sonnet-4" }] },
+      [`${PROVIDERS_DIR}/openrouter.json`]: { displayName: "OpenRouter", baseUrl: `http://127.0.0.1:${String(openrouter.port)}`, credential: { sources: [{ literal: "or-token" }] } },
+    };
+    const door = await startDoor(resolver(files));
+    try {
+      const response = await fetch(`${door.url}/providers/main/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 512, messages: [{ role: "user", content: "hi" }] }) });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(JSON.parse(openrouter.seen()[0]?.body ?? "{}")).toMatchObject({ model: "anthropic/claude-sonnet-4", max_tokens: 512 });
+      expect(main.seen()).toEqual([]);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("skips a target whose quota the condition says is spent, falling through to the provider itself", async () => {
+    const main = await bodyRecordingUpstream();
+    const spent = await bodyRecordingUpstream();
+    const fresh = await bodyRecordingUpstream();
+    // The identity's snapshot records the spent target at full utilisation and the fresh one barely used; the route demands under-full utilisation, so the first target is skipped and the second serves.
+    const snapshot: UsageSnapshot = { schemaVersion: 1, identity: "work", updatedAt: new Date(0).toISOString(), providers: { spent: { lastRequestAt: new Date(0).toISOString(), lastStatus: 200, rateLimit: { observedAt: new Date(0).toISOString(), headers: {}, unified: { sevenDay: { utilization: 1, resetsAt: new Date(DAY_RESET_MS).toISOString(), status: "rejected" } } } }, fresh: { lastRequestAt: new Date(0).toISOString(), lastStatus: 200, rateLimit: { observedAt: new Date(0).toISOString(), headers: {}, unified: { sevenDay: { utilization: 0.1, resetsAt: new Date(DAY_RESET_MS).toISOString(), status: "allowed" } } } } } };
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/main.json`]: { displayName: "Main", baseUrl: `http://127.0.0.1:${String(main.port)}`, credential: { sources: [{ literal: "main-token" }] }, routes: [{ when: { kind: "allOf", operands: [{ kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*haiku.*" } }, { kind: "compare", op: "lt", left: { kind: "reference", key: "provider.spent.sevenDay.utilization" }, right: { kind: "numberLiteral", value: 0.9 } }] }, provider: "spent" }, { when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*haiku.*" } }, provider: "fresh" }] },
+      [`${PROVIDERS_DIR}/spent.json`]: { displayName: "Spent", baseUrl: `http://127.0.0.1:${String(spent.port)}`, credential: { sources: [{ literal: "spent-token" }] } },
+      [`${PROVIDERS_DIR}/fresh.json`]: { displayName: "Fresh", baseUrl: `http://127.0.0.1:${String(fresh.port)}`, credential: { sources: [{ literal: "fresh-token" }] } },
+    };
+    const resolve = createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeCredentials(), usageSnapshotOf: (identity) => (identity === "work" ? snapshot : undefined) });
+    const server = createFrontDoorServer(
+      async (pipelineRequest) => {
+        await serveRouted(pipelineRequest, { resolveRoute: resolve, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
+      },
+      () => undefined,
+    );
+    const handle = await listenFrontDoor(server);
+    const door = { url: `http://127.0.0.1:${String(handle.port)}`, close: handle.close };
+    try {
+      const response = await fetch(`${door.url}/providers/main/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests", "x-agent-shim-identity": "work" }, body: JSON.stringify({ model: "claude-haiku-4-5", messages: [] }) });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(spent.seen()).toEqual([]);
+      expect(fresh.seen()).toHaveLength(1);
     } finally {
       await door.close();
     }

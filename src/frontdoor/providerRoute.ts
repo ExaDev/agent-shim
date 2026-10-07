@@ -11,8 +11,14 @@ import { CONNECT_INTERCEPT_HOST, HTTPS_PORT } from "./connect";
 import { restoreCredentials } from "./custody";
 import { createPassthroughRoute } from "./passthrough";
 import type { RouteResolution } from "./pipeline";
-import { evaluateWhen, type ConditionContext } from "../resolve/conditions";
+import { evaluateWhen, referencesFact, type ConditionContext, type PoolWindowFacts } from "../resolve/conditions";
+import type { UsageSnapshot } from "../usage/schema";
+
+/** One hour in milliseconds, the unit the quota windows' hours-until-reset facts are stated in. */
+const MS_PER_HOUR = 3_600_000;
+import type { QuotaWindow } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
+import { Readable } from "node:stream";
 import { scanRequestHead } from "./requestScan";
 
 /**
@@ -34,6 +40,8 @@ export function createProviderRouteResolver(deps: {
   readonly env: Readonly<Record<string, string | undefined>>;
   /** Resolves an `http` provider's credential block: the same port the launcher resolves a launch's provider with, cache included. */
   readonly credentials: CredentialPort;
+  /** Reads the session identity's usage snapshot, kept fresh by the caller (the door's own store writes it): the per-provider quota facts a route condition skips an exhausted target with. */
+  readonly usageSnapshotOf?: (identity: string | undefined) => UsageSnapshot | undefined;
   /**
    * The self-hosted Remote Control route, when the door runs that mode: it takes over the `/v1/code/sessions` family and the `/v1/sessions` compatibility list, which would otherwise ride the pass-through to the real API. Absent, every `/v1/` target rides the pass-through exactly as before.
    */
@@ -113,13 +121,13 @@ export function createProviderRouteResolver(deps: {
   /**
    * The per-request routing layer over the path-only resolution: a provider whose file carries `routes` has each request matched against the list in order, over the facts a bounded scan of the body's head found, and the first definite match is resolved exactly as a request dialled to that provider directly would be. An undecided condition falls through (never to a cheaper provider by accident) and an unmatched request stays on the provider itself; whichever route finally serves, it is handed the replayed body the scan produced, because the scan is the only reader and its replay is the one unbroken remainder.
    */
-  const servingRewritten = (route: FrontDoorRoute, url: string, body: RoutedRequest["body"]): FrontDoorRoute => ({
+  const servingRewritten = (route: FrontDoorRoute, rewritten: RoutedRequest): FrontDoorRoute => ({
     name: route.name,
     headroomEligible: route.headroomEligible,
     headroomUpstream: route.headroomUpstream,
-    // The pipeline serves the route with the request it received; the routing layer's decisions (the rewritten target path, the replayed body) are substituted here, so the route sees exactly the request the resolution acted on.
+    // The pipeline serves the route with the request it received; the routing layer's decisions (the rewritten target path, the replayed body and, when the model name was rewritten, the re-framed headers) are substituted here, so the route sees exactly the request the resolution acted on.
     serve: async (request, response) => {
-      await route.serve({ ...request, url, body }, response);
+      await route.serve({ ...request, url: rewritten.url, headers: rewritten.headers, body: rewritten.body }, response);
     },
   });
 
@@ -147,33 +155,56 @@ export function createProviderRouteResolver(deps: {
       }
       if (routes === undefined || routes.length === 0) {
         const resolution = resolve(current);
-        return resolution.ok && replay !== undefined ? { ok: true, route: servingRewritten(resolution.route, current.url, replay.body) } : resolution;
+        return resolution.ok && replay !== undefined ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }) } : resolution;
       }
-      const scan = await scanRequestHead(current);
+      // How far this request must be read: the head suffices for the model field, but a condition that names the image fact needs the whole conversation (an image anywhere is the fact, and the newest turn sits at the body's end), and so does a route that rewrites the model name. The route author's own predicate chooses the cost.
+      const whole = routes.some((entry) => entry.model !== undefined || referencesFact(entry.when, "request.hasImage"));
+      // The targets' quota facts, from this identity's snapshot: a route's condition names them to skip an exhausted target. A provider the snapshot has never recorded carries no facts, so a condition naming its windows is undecided and falls through, never routing onto it by accident.
+      const snapshot = deps.usageSnapshotOf?.(current.session.identity);
+      const windowFacts = (raw: QuotaWindow | undefined): PoolWindowFacts | undefined => {
+        if (raw?.utilization === undefined || raw.resetsAt === undefined) {
+          return undefined;
+        }
+        return { remaining: Math.max(0, 1 - raw.utilization), utilization: raw.utilization, hoursUntilReset: Math.max(0, (Date.parse(raw.resetsAt) - Date.now()) / MS_PER_HOUR) };
+      };
+      const providerQuota = Object.fromEntries(
+        routes.flatMap((entry) => {
+          const unified = snapshot?.providers[entry.provider]?.rateLimit?.unified;
+          return [[entry.provider, { fiveHour: windowFacts(unified?.fiveHour), sevenDay: windowFacts(unified?.sevenDay) }]];
+        }),
+      );
+      const scan = await scanRequestHead(current, whole);
       if (scan.replayed === undefined) {
         // Nothing was read (the body was empty): the original request is the honest handover.
         const resolution = resolve(current);
-        return resolution.ok && replay !== undefined ? { ok: true, route: servingRewritten(resolution.route, current.url, replay.body) } : resolution;
+        return resolution.ok && replay !== undefined ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }) } : resolution;
       }
       replay = scan.replayed;
-      const context: ConditionContext = { nowMs: Date.now(), env: deps.env, ...(scan.model === undefined && scan.hasImage === undefined ? {} : { request: { ...(scan.model === undefined ? {} : { model: scan.model }), hasImage: scan.hasImage } }) };
-      let matched: string | undefined;
+      const context: ConditionContext = { nowMs: Date.now(), env: deps.env, providerQuota, ...(scan.model === undefined && scan.hasImage === undefined ? {} : { request: { ...(scan.model === undefined ? {} : { model: scan.model }), hasImage: scan.hasImage } }) };
+      let matched: { provider: string; model: string | undefined } | undefined;
       for (const entry of routes) {
         const verdict = evaluateWhen(entry.when, context);
         if (verdict.status === "definite" && verdict.passed) {
-          matched = entry.provider;
+          matched = { provider: entry.provider, model: entry.model };
           break;
         }
       }
       if (matched === undefined) {
         const resolution = resolve(current);
-        return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, current.url, replay.body) } : resolution;
+        return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }) } : resolution;
+      }
+      if (matched.model !== undefined && scan.text !== undefined && scan.model !== undefined) {
+        // The rewrite replaces the model field's value in the one copy of the body the whole-body scan already holds, so the target receives exactly the request that matched with exactly one field changed.
+        const rewritten = scan.text.replace(new RegExp('"model":\\s*"' + scan.model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"'), '"model":"' + matched.model + '"');
+        // The rewritten body's byte count no longer matches the client's content-length (the new model name is a different length), so the framing header is dropped and the forward re-frames the body itself.
+        const headers = Object.fromEntries(Object.entries(replay.headers).filter(([name]) => name.toLowerCase() !== "content-length"));
+        replay = { ...replay, headers, body: Readable.from([Buffer.from(rewritten, "utf8")]) };
       }
       // The match rides the target's own scoped path, so the loop's next turn resolves it exactly as a direct dial would: its kind, its credential, and its own routes list all apply. The path after this provider's own prefix (or the whole bare /v1/ path of a session-named provider) is the target's to serve, query included.
       const rest = scoped === undefined ? path : path.slice(`${PROVIDER_PATH_PREFIX}${encodeURIComponent(scoped.provider)}`.length);
       const query = current.url.includes("?") ? current.url.slice(current.url.indexOf("?")) : "";
       // The body carried forward is the replay's: the original stream's head was consumed by this turn's scan, and the target's own resolution (including another scan, when the target itself routes) must read a body that still begins at the head.
-      current = { ...current, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(matched)}${rest}${query}`, body: replay.body };
+      current = { ...current, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(matched.provider)}${rest}${query}`, body: replay.body, headers: replay.headers };
     }
   };
 }
