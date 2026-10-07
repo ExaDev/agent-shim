@@ -1,3 +1,9 @@
+## [8.32.0](https://github.com/ExaDev/agent-shim/compare/v8.31.0...v8.32.0) (2026-10-07)
+
+### Features
+
+* re-rank the pool at resume and continue, with stickiness that yields ([aa7b45b](https://github.com/ExaDev/agent-shim/commit/aa7b45b788e61536c5cc451027db3e7043cfe615))
+
 ## [8.31.0](https://github.com/ExaDev/agent-shim/compare/v8.30.0...v8.31.0) (2026-10-07)
 
 ### Features
