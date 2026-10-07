@@ -18,6 +18,13 @@ const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 
 /** When the quota-test fixture's windows reset: one day out, far enough to be live at any test instant. */
 const DAY_RESET_MS = 86_400_000;
+
+
+/** The max_tokens threshold the one numeric fact routes above. */
+const MAX_TOKENS_THRESHOLD = 8192;
+
+/** How many of the four further facts the one test drives onto the heavy target. */
+const FACT_ROUTE_COUNT = 4;
 const OWN_PORT = 4100;
 
 const codexProvider = { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } };
@@ -381,6 +388,74 @@ describe("per-request routing by model", () => {
       expect(response.status).toBe(HTTP_STATUS.ok);
       expect(spent.seen()).toEqual([]);
       expect(fresh.seen()).toHaveLength(1);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("routes on the further request facts: tools, thinking, max_tokens and count_tokens calls", async () => {
+    const main = await bodyRecordingUpstream();
+    const heavy = await bodyRecordingUpstream();
+    // One entry per fact: a request carrying tools, or enabled thinking, or a max_tokens above the threshold, or a count_tokens call, all go to the heavy target; everything else stays.
+    const fact = (key: string, node: unknown) => ({ kind: "allOf", operands: [{ kind: "compare", op: "eq", left: { kind: "reference", key }, right: node }] });
+    const routes = [
+      { when: fact("request.toolsPresent", { kind: "booleanLiteral", value: true }), provider: "heavy" },
+      { when: fact("request.thinking", { kind: "booleanLiteral", value: true }), provider: "heavy" },
+      { when: { kind: "compare", op: "gt", left: { kind: "reference", key: "request.maxTokens" }, right: { kind: "numberLiteral", value: 8192 } }, provider: "heavy" },
+      { when: fact("request.isCountTokens", { kind: "booleanLiteral", value: true }), provider: "heavy" },
+    ];
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/main.json`]: { displayName: "Main", baseUrl: `http://127.0.0.1:${String(main.port)}`, credential: { sources: [{ literal: "main-token" }] }, routes },
+      [`${PROVIDERS_DIR}/heavy.json`]: { displayName: "Heavy", baseUrl: `http://127.0.0.1:${String(heavy.port)}`, credential: { sources: [{ literal: "heavy-token" }] } },
+    };
+    const door = await startDoor(resolver(files));
+    try {
+      const post = async (url: string, body: string): Promise<void> => {
+        const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body });
+        expect(response.status).toBe(HTTP_STATUS.ok);
+      };
+      await post(`${door.url}/providers/main/v1/messages`, JSON.stringify({ model: "claude-opus-4-5", tools: [{ name: "bash" }], messages: [] }));
+      await post(`${door.url}/providers/main/v1/messages`, JSON.stringify({ model: "claude-opus-4-5", thinking: { type: "enabled", budget_tokens: 1024 }, messages: [] }));
+      await post(`${door.url}/providers/main/v1/messages`, JSON.stringify({ model: "claude-opus-4-5", max_tokens: 16384, messages: [] }));
+      await post(`${door.url}/providers/main/v1/messages/count_tokens`, JSON.stringify({ model: "claude-opus-4-5", messages: [] }));
+      expect(heavy.seen()).toHaveLength(FACT_ROUTE_COUNT);
+      // The plain request, under every threshold and carrying none of the flags, stays on the provider.
+      await post(`${door.url}/providers/main/v1/messages`, JSON.stringify({ model: "claude-opus-4-5", max_tokens: 1024, messages: [] }));
+      expect(main.seen()).toHaveLength(1);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("routes on the further request facts: tools, thinking, max_tokens and count_tokens calls", async () => {
+    const main = await bodyRecordingUpstream();
+    const heavy = await bodyRecordingUpstream();
+    // One entry per fact: a request carrying tools, or enabled thinking, or a max_tokens above the threshold, or a count_tokens call, all go to the heavy target; everything else stays.
+    const flagRoute = (key: string) => ({ when: { kind: "compare", op: "eq", left: { kind: "reference", key }, right: { kind: "booleanLiteral", value: true } }, provider: "heavy" });
+    const routes = [
+      flagRoute("request.toolsPresent"),
+      flagRoute("request.thinking"),
+      { when: { kind: "compare", op: "gt", left: { kind: "reference", key: "request.maxTokens" }, right: { kind: "numberLiteral", value: MAX_TOKENS_THRESHOLD } }, provider: "heavy" },
+      flagRoute("request.isCountTokens"),
+    ];
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/main.json`]: { displayName: "Main", baseUrl: `http://127.0.0.1:${String(main.port)}`, credential: { sources: [{ literal: "main-token" }] }, routes },
+      [`${PROVIDERS_DIR}/heavy.json`]: { displayName: "Heavy", baseUrl: `http://127.0.0.1:${String(heavy.port)}`, credential: { sources: [{ literal: "heavy-token" }] } },
+    };
+    const door = await startDoor(resolver(files));
+    try {
+      const post = async (url: string, body: string): Promise<void> => {
+        const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body });
+        expect(response.status).toBe(HTTP_STATUS.ok);
+      };
+      await post(`${door.url}/providers/main/v1/messages`, JSON.stringify({ model: "claude-opus-4-5", tools: [{ name: "bash" }], messages: [] }));
+      await post(`${door.url}/providers/main/v1/messages`, JSON.stringify({ model: "claude-opus-4-5", thinking: { type: "enabled", budget_tokens: 1024 }, messages: [] }));
+      await post(`${door.url}/providers/main/v1/messages`, JSON.stringify({ model: "claude-opus-4-5", max_tokens: 16384, messages: [] }));
+      await post(`${door.url}/providers/main/v1/messages/count_tokens`, JSON.stringify({ model: "claude-opus-4-5", messages: [] }));
+      expect(heavy.seen()).toHaveLength(FACT_ROUTE_COUNT);
+      // The plain request, under every threshold and carrying none of the flags, stays on the provider.
+      await post(`${door.url}/providers/main/v1/messages`, JSON.stringify({ model: "claude-opus-4-5", max_tokens: 1024, messages: [] }));
+      expect(main.seen()).toHaveLength(1);
     } finally {
       await door.close();
     }
