@@ -58,7 +58,7 @@ import type { PrePipelineApi } from "./server";
 export const RC_ORPC_PATH_PREFIX = "/__agent-shim/orpc";
 
 /** Where the mount serves the OpenAPI document of every annotated route, under the same control token as the operations it describes. */
-export const RC_OPENAPI_DOC_PATH = "/openapi.json";
+const RC_OPENAPI_DOC_PATH = "/openapi.json";
 
 /**
  * How many events one subscriber's bridge holds while the consumer behind it has not pulled them. Not a fresh number: it is the bound oRPC's own `EventPublisher` documents as its default for exactly this slow-consumer case (a buffer without one grows without limit), and a full buffer drops the oldest event, whose absence a consumer detects by the gap it leaves in the sequence numbers, while the tracker keeps the authoritative record of everything the stream carried.
@@ -117,7 +117,7 @@ export interface DoorApiContext {
 }
 
 /** Reads the Bearer credential a request presents, whichever surface it arrived on; undefined when nothing is presented in that form. */
-export function doorApiBearer(headers: IncomingHttpHeaders): string | undefined {
+function doorApiBearer(headers: IncomingHttpHeaders): string | undefined {
   const presented = headers.authorization;
   const bearerPrefix = "bearer ".length;
   return typeof presented === "string" && presented.slice(0, bearerPrefix).toLowerCase() === "bearer " ? presented.slice(bearerPrefix) : undefined;
