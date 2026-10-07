@@ -1,3 +1,13 @@
+## [8.29.0](https://github.com/ExaDev/agent-shim/compare/v8.28.0...v8.29.0) (2026-10-07)
+
+### Features
+
+* serve the typed door API as REST with an OpenAPI document ([6bf9d55](https://github.com/ExaDev/agent-shim/commit/6bf9d55022560fb667cf03198c711d230f836f04))
+
+### Code Refactoring
+
+* keep the doc path and bearer reader module-private ([811ce9c](https://github.com/ExaDev/agent-shim/commit/811ce9c9a038a98b9c2ead2b85d990b0da9cd1da))
+
 ## [8.28.0](https://github.com/ExaDev/agent-shim/compare/v8.27.1...v8.28.0) (2026-10-07)
 
 ### Features
