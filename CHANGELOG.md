@@ -1,3 +1,9 @@
+## [8.30.0](https://github.com/ExaDev/agent-shim/compare/v8.29.0...v8.30.0) (2026-10-07)
+
+### Features
+
+* serve the ranked pool pick on the door's typed API ([74e75fd](https://github.com/ExaDev/agent-shim/commit/74e75fdba931bc4c5faa4b65577af1f5fe8f9b46))
+
 ## [8.29.0](https://github.com/ExaDev/agent-shim/compare/v8.28.0...v8.29.0) (2026-10-07)
 
 ### Features
