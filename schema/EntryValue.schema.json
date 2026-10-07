@@ -12,37 +12,44 @@
           "type": "boolean"
         },
         "when": {
-          "type": "object",
-          "properties": {
-            "newerThan": {
-              "type": "string",
-              "pattern": "^(?:0|[1-9][0-9]*)(?:ms|s|m|h|d|w)$"
-            },
-            "olderThan": {
-              "type": "string",
-              "pattern": "^(?:0|[1-9][0-9]*)(?:ms|s|m|h|d|w)$"
-            },
-            "maxSizeBytes": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            },
-            "branch": {
-              "type": "string",
-              "minLength": 1
-            },
-            "env": {
+          "anyOf": [
+            {
               "type": "object",
-              "propertyNames": {
-                "type": "string",
-                "minLength": 1
+              "properties": {
+                "newerThan": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]*)(?:ms|s|m|h|d|w)$"
+                },
+                "olderThan": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]*)(?:ms|s|m|h|d|w)$"
+                },
+                "maxSizeBytes": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "branch": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "env": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
               },
-              "additionalProperties": {
-                "type": "string"
-              }
+              "additionalProperties": false
+            },
+            {
+              "$ref": "#/$defs/__schema0"
             }
-          },
-          "additionalProperties": false
+          ]
         }
       },
       "required": [
@@ -51,5 +58,766 @@
       ],
       "additionalProperties": false
     }
-  ]
+  ],
+  "$defs": {
+    "__schema0": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not"
+            },
+            "operand": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "required": [
+            "kind",
+            "operand"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "and"
+            },
+            "left": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "right": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "required": [
+            "kind",
+            "left",
+            "right"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "or"
+            },
+            "left": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "right": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "required": [
+            "kind",
+            "left",
+            "right"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "allOf"
+            },
+            "operands": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema0"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "operands"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "anyOf"
+            },
+            "operands": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema0"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "operands"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "compare"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "eq",
+                "neq"
+              ]
+            },
+            "left": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "right": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "required": [
+            "kind",
+            "op",
+            "left",
+            "right"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "textCompare"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "equals",
+                "notEquals",
+                "matches",
+                "notMatches",
+                "portableMatches",
+                "portableNotMatches"
+              ]
+            },
+            "left": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "right": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "required": [
+            "kind",
+            "op",
+            "left",
+            "right"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "memberOf"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "in",
+                "notIn"
+              ]
+            },
+            "operand": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "candidates": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema1"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "op",
+            "operand",
+            "candidates"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "exists"
+            },
+            "operand": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "required": [
+            "kind",
+            "operand"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "some"
+            },
+            "collection": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "item": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "filter": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "required": [
+            "kind",
+            "collection",
+            "item"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "every"
+            },
+            "collection": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "item": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "filter": {
+              "$ref": "#/$defs/__schema0"
+            }
+          },
+          "required": [
+            "kind",
+            "collection",
+            "item"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "treeReference"
+            },
+            "key": {
+              "$ref": "#/$defs/__schema2"
+            }
+          },
+          "required": [
+            "kind",
+            "key"
+          ]
+        }
+      ]
+    },
+    "__schema1": {
+      "anyOf": [
+        {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "numberLiteral"
+                },
+                "value": {
+                  "type": "number"
+                },
+                "unit": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "textLiteral"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "booleanLiteral"
+                },
+                "value": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "instantLiteral"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "value"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "durationLiteral"
+                },
+                "value": {
+                  "type": "number"
+                },
+                "unit": {
+                  "type": "string",
+                  "enum": [
+                    "ms",
+                    "s",
+                    "min",
+                    "h",
+                    "d"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "value",
+                "unit"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "reference"
+                },
+                "key": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "unit": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "key"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "arithmetic"
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "add",
+                    "subtract",
+                    "multiply",
+                    "divide",
+                    "power",
+                    "modulo"
+                  ]
+                },
+                "left": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "right": {
+                  "$ref": "#/$defs/__schema1"
+                }
+              },
+              "required": [
+                "kind",
+                "op",
+                "left",
+                "right"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "negate"
+                },
+                "operand": {
+                  "$ref": "#/$defs/__schema1"
+                }
+              },
+              "required": [
+                "kind",
+                "operand"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "call"
+                },
+                "fn": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/__schema1"
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "fn",
+                "args"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "lookup"
+                },
+                "table": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "keys": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/__schema1"
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "table",
+                "keys"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "conditional"
+                },
+                "hitPolicy": {
+                  "type": "string",
+                  "enum": [
+                    "first",
+                    "unique"
+                  ]
+                },
+                "cases": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "when": {
+                        "$ref": "#/$defs/__schema0"
+                      },
+                      "then": {
+                        "$ref": "#/$defs/__schema1"
+                      }
+                    },
+                    "required": [
+                      "when",
+                      "then"
+                    ]
+                  }
+                },
+                "fallback": {
+                  "$ref": "#/$defs/__schema1"
+                }
+              },
+              "required": [
+                "kind",
+                "cases",
+                "fallback"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "fold"
+                },
+                "collection": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "filter": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "combiner": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "const": "max"
+                        },
+                        "item": {
+                          "$ref": "#/$defs/__schema1"
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "item"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "const": "min"
+                        },
+                        "item": {
+                          "$ref": "#/$defs/__schema1"
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "item"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "const": "reduce"
+                        },
+                        "initial": {
+                          "$ref": "#/$defs/__schema1"
+                        },
+                        "combine": {
+                          "$ref": "#/$defs/__schema1"
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "initial",
+                        "combine"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "collection",
+                "combiner"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "accumulator"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "delegate"
+                },
+                "system": {
+                  "type": "string"
+                },
+                "payload": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "required": [
+                "kind",
+                "system",
+                "payload"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "treeReference"
+                },
+                "key": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "required": [
+                "kind",
+                "key"
+              ]
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "complexLiteral"
+                },
+                "re": {
+                  "type": "number"
+                },
+                "im": {
+                  "type": "number"
+                },
+                "unit": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "re",
+                "im"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "complexLiteral"
+                },
+                "magnitude": {
+                  "type": "number"
+                },
+                "phase": {
+                  "type": "number"
+                },
+                "unit": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "number"
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "magnitude",
+                "phase"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      ]
+    },
+    "__schema2": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema2"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema2"
+          }
+        }
+      ]
+    }
+  }
 }

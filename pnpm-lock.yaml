@@ -192,6 +192,9 @@ importers:
       picomatch:
         specifier: ^4.0.7
         version: 4.0.7
+      trilean:
+        specifier: 1.7.1
+        version: 1.7.1
       undici:
         specifier: 7.29.1
         version: 7.29.1
@@ -3150,6 +3153,14 @@ packages:
   traverse@0.6.8:
     resolution: {integrity: sha512-aXJDbk6SnumuaZSANd21XAo15ucCDE38H4fkqiGsc3MhCK+wOlZvLP9cB/TvpHT0mOyWgC4Z8EwRlzqYSUzdsA==}
     engines: {node: '>= 0.4'}
+
+  trilean-regex@1.0.3:
+    resolution: {integrity: sha512-6i+FYT0udFlu8sR4suack6FDnYhkgrUeUk2LC16Zj28zhtPeJJTiHtoHDqmsEMUYJMrkKHZ32CBguyHV87JS8A==}
+    engines: {node: '>=20'}
+
+  trilean@1.7.1:
+    resolution: {integrity: sha512-qRlE3AEyxd9/7KB4B106MmyR77qTAvVWuAI/vjPcZy2r7ZtrUEnXBvWaVSy2nni5N+gP0v8KY5zzjGps5Q2dvA==}
+    engines: {node: '>=20'}
 
   ts-api-utils@2.5.0:
     resolution: {integrity: sha512-OJ/ibxhPlqrMM0UiNHJ/0CKQkoKF243/AEmplt3qpRgkW8VG7IfOS41h7V8TjITqdByHzrjcS/2si+y4lIh8NA==}
@@ -6204,6 +6215,13 @@ snapshots:
       reserved-identifiers: 1.2.0
 
   traverse@0.6.8: {}
+
+  trilean-regex@1.0.3: {}
+
+  trilean@1.7.1:
+    dependencies:
+      trilean-regex: 1.0.3
+      zod: 4.6.5
 
   ts-api-utils@2.5.0(typescript@6.0.3):
     dependencies:

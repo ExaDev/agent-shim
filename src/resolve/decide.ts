@@ -42,10 +42,11 @@ export function selectRule(
       ...(context.branchDetached === undefined ? {} : { branchDetached: context.branchDetached }),
       env: context.env,
     });
-    if (evaluation.passed) {
+    if (evaluation.status === "definite" && evaluation.passed) {
       return { rule, eliminated };
     }
-    eliminated.push({ rule, failed: evaluation.failed });
+    // An undecided condition does not pass the rule, which is the behaviour a missing fact has always had; the reason it could not be decided is what `check` reports instead of a bare field name.
+    eliminated.push({ rule, failed: evaluation.status === "definite" ? evaluation.failed : [`${evaluation.checked.join(", ")} could not be decided: ${evaluation.reason}`] });
   }
   return { eliminated };
 }
