@@ -1,3 +1,9 @@
+## [8.33.0](https://github.com/ExaDev/agent-shim/compare/v8.32.0...v8.33.0) (2026-10-07)
+
+### Features
+
+* evaluate when conditions as trilean predicates ([aa201d6](https://github.com/ExaDev/agent-shim/commit/aa201d6b822fd29fb249d04944b3a85cc2047528))
+
 ## [8.32.0](https://github.com/ExaDev/agent-shim/compare/v8.31.0...v8.32.0) (2026-10-07)
 
 ### Features
