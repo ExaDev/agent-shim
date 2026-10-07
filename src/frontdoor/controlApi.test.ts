@@ -129,7 +129,7 @@ const DEPS: ControlApiDeps = {
 
 /** Mounts one router of the door's typed API on a plain loopback listener and returns a typed client for it with the given token, the same node handler the provider listener mounts so the prefix, the token middleware and both directions of validation all run. */
 async function mountClient(deps: ControlApiDeps, token: string): Promise<{ readonly client: ControlApiClient; readonly close: () => Promise<void> }> {
-  const surface = doorApiNodeHandlerOf(createControlApiRouter(deps));
+  const surface = doorApiNodeHandlerOf(createControlApiRouter(deps), CONTROL_TOKEN);
   // The listener owns the rejection path here (the door's own listener logs it), so a rejection surfaces on the console rather than being swallowed or failing the process.
   const server = http.createServer((request, response) => {
     void surface.handle(request, response).catch((error: unknown) => {

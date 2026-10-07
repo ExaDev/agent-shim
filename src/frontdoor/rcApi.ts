@@ -2,10 +2,14 @@ import type { IncomingHttpHeaders } from "node:http";
 
 import { createORPCClient, ORPCError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
+import { OpenAPIGenerator, type OpenAPI } from "@orpc/openapi";
+import { OpenAPIHandler } from "@orpc/openapi/node";
 import { eventIterator, os, withEventMeta, type AnyRouter, type RouterClient } from "@orpc/server";
 import { BodyLimitPlugin, RPCHandler } from "@orpc/server/node";
 import { Agent, fetch as undiciFetch } from "undici";
 
+import packageJson from "../../package.json";
+import { HTTP_STATUS } from "../codex/http";
 import { isLiveCapability } from "./capability";
 import { CONTROL_BODY_CAP_BYTES } from "./rcControl";
 import type { RcPendingRequestSummary, RcSessionStatus, RcSessionSummary } from "./rcSessions";
@@ -46,10 +50,15 @@ import type { PrePipelineApi } from "./server";
  * Mounted on the provider listener beside the bespoke namespace, authenticated by the same per-generation owner-only control token as a Bearer credential: a fresh random value per door start, written owner-only under the front door's state directory, and checked in constant time like every other capability the door accepts. `rc.subscribe` streams the client attachment's fan-out: every event the door's held stream produced, SSE-framed by oRPC's event iterator, each carrying its sequence number as the SSE event id so a consumer's own reconnect can resume exactly as the door's does.
  *
  * This module also owns the mount's router-agnostic plumbing, which the control-plane routers (`controlApi.ts`) serve on the same prefix under the same token: the control-token middleware (`doorApiAuth`), the node-handler builder (`doorApiNodeHandlerOf`) and the TLS-pinned client link (`frontDoorApiLink`).
+ *
+ * Every procedure is route-annotated (method, path, summary, tags) under the mount's one REST namespace (`/rest/...`), so the mount serves the same operations twice over: as the oRPC RPC protocol the typed clients and the web client speak, and as plain REST for consumers with no TypeScript client (curl, scripts, other languages), with the OpenAPI document of the whole surface at `RC_OPENAPI_DOC_PATH` under the same token. The two share one router, one token middleware and one Zod schema source, so nothing can drift between them; an annotated (method, path) pair is served REST-shaped and everything else falls through to the RPC handler, and no RPC procedure path begins with `/rest`, so neither address space can ever capture the other.
  */
 
 /** The one path prefix the typed API is mounted under, answered before the routed pipeline like the bespoke control routes are. */
 export const RC_ORPC_PATH_PREFIX = "/__agent-shim/orpc";
+
+/** Where the mount serves the OpenAPI document of every annotated route, under the same control token as the operations it describes. */
+export const RC_OPENAPI_DOC_PATH = "/openapi.json";
 
 /**
  * How many events one subscriber's bridge holds while the consumer behind it has not pulled them. Not a fresh number: it is the bound oRPC's own `EventPublisher` documents as its default for exactly this slow-consumer case (a buffer without one grows without limit), and a full buffer drops the oldest event, whose absence a consumer detects by the gap it leaves in the sequence numbers, while the tracker keeps the authoritative record of everything the stream carried.
@@ -107,20 +116,28 @@ export interface DoorApiContext {
   readonly headers: IncomingHttpHeaders;
 }
 
+/** Reads the Bearer credential a request presents, whichever surface it arrived on; undefined when nothing is presented in that form. */
+export function doorApiBearer(headers: IncomingHttpHeaders): string | undefined {
+  const presented = headers.authorization;
+  const bearerPrefix = "bearer ".length;
+  return typeof presented === "string" && presented.slice(0, bearerPrefix).toLowerCase() === "bearer " ? presented.slice(bearerPrefix) : undefined;
+}
+
 /** Builds the middleware every procedure on the door's typed API sits behind, whichever router it belongs to: the per-generation owner-only control token, presented as a Bearer credential and checked in constant time like every other capability the door accepts. */
 export function doorApiAuth(expectedToken: string) {
   return os
     .$context<DoorApiContext>()
     .use(({ context, next }) => {
-      const presented = context.headers.authorization;
-      const bearerPrefix = "bearer ".length;
-      const token = typeof presented === "string" && presented.slice(0, bearerPrefix).toLowerCase() === "bearer " ? presented.slice(bearerPrefix) : undefined;
+      const token = doorApiBearer(context.headers);
       if (token === undefined || !isLiveCapability(token, [expectedToken])) {
         throw new ORPCError("UNAUTHORIZED", { message: "the front door's typed API demands this generation's control token as a Bearer credential" });
       }
       return next();
     });
 }
+
+/** The one OpenAPI tag every Remote Control procedure carries, so the document groups the door's Remote Control surface as one section. */
+const RC_API_TAG = "remote-control";
 
 /** Builds the typed API's router: one procedure per operation, every one behind the control-token middleware. */
 export function createRcApiRouter(deps: RcApiDeps) {
@@ -144,8 +161,12 @@ export function createRcApiRouter(deps: RcApiDeps) {
   };
   return {
     rc: {
-      list: authed.output(RcListOutputSchema).handler(() => ({ sessions: deps.list() })),
+      list: authed
+        .route({ method: "GET", path: "/rest/rc/sessions", summary: "List the observed Remote Control sessions", tags: [RC_API_TAG] })
+        .output(RcListOutputSchema)
+        .handler(() => ({ sessions: deps.list() })),
       status: authed
+        .route({ method: "GET", path: "/rest/rc/status", summary: "Read session status, one session's when named", tags: [RC_API_TAG] })
         .input(RcSessionQuerySchema)
         .output(RcStatusOutputSchema)
         .handler(({ input }) => {
@@ -157,6 +178,7 @@ export function createRcApiRouter(deps: RcApiDeps) {
           return { statuses };
         }),
       pending: authed
+        .route({ method: "GET", path: "/rest/rc/pending", summary: "Read the control requests awaiting an answer", tags: [RC_API_TAG] })
         .input(RcSessionQuerySchema)
         .output(RcPendingOutputSchema)
         .handler(({ input }) => {
@@ -167,10 +189,12 @@ export function createRcApiRouter(deps: RcApiDeps) {
           return { pending };
         }),
       send: authed
+        .route({ method: "POST", path: "/rest/rc/send", summary: "Send one message into a session", tags: [RC_API_TAG] })
         .input(RcSendInputSchema)
         .output(RcWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.inject(input.session, input.text)) })),
       answer: authed
+        .route({ method: "POST", path: "/rest/rc/answer", summary: "Answer one pending control request", tags: [RC_API_TAG] })
         .input(RcAnswerInputSchema)
         .output(RcAnswerOutputSchema)
         .handler(async ({ input }) => {
@@ -178,62 +202,77 @@ export function createRcApiRouter(deps: RcApiDeps) {
           return { session: input.session, request: input.request, sequenceNums: delivered(input.session, await deps.answer(input.session, input.request, decision)) };
         }),
       interrupt: authed
+        .route({ method: "POST", path: "/rest/rc/interrupt", summary: "Interrupt a session's running turn", tags: [RC_API_TAG] })
         .input(RcInterruptInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.interrupt(input.session)) })),
       setModel: authed
+        .route({ method: "POST", path: "/rest/rc/set-model", summary: "Switch a session's model", tags: [RC_API_TAG] })
         .input(RcSetModelInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.setModel(input.session, input.model)) })),
       setPermissionMode: authed
+        .route({ method: "POST", path: "/rest/rc/set-permission-mode", summary: "Switch a session's permission mode", tags: [RC_API_TAG] })
         .input(RcSetPermissionModeInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.setPermissionMode(input.session, input.mode)) })),
       endSession: authed
+        .route({ method: "POST", path: "/rest/rc/end-session", summary: "End a session", tags: [RC_API_TAG] })
         .input(RcEndSessionInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.endSession(input.session, input.reason)) })),
       getUsage: authed
+        .route({ method: "POST", path: "/rest/rc/get-usage", summary: "Ask a session for its usage snapshot", tags: [RC_API_TAG] })
         .input(RcGetUsageInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.getUsage(input.session, input.skipBehaviors)) })),
       getContextUsage: authed
+        .route({ method: "POST", path: "/rest/rc/get-context-usage", summary: "Ask a session for its context usage", tags: [RC_API_TAG] })
         .input(RcGetContextUsageInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.getContextUsage(input.session, input.detail)) })),
       readFile: authed
+        .route({ method: "POST", path: "/rest/rc/read-file", summary: "Ask a session to read one file", tags: [RC_API_TAG] })
         .input(RcReadFileInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.readFile(input.session, input.path, { ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }), ...(input.encoding === undefined ? {} : { encoding: input.encoding }) })) })),
       fileSuggestions: authed
+        .route({ method: "POST", path: "/rest/rc/file-suggestions", summary: "Ask a session for file-path suggestions", tags: [RC_API_TAG] })
         .input(RcFileSuggestionsInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.fileSuggestions(input.session, input.query)) })),
       keepAlive: authed
+        .route({ method: "POST", path: "/rest/rc/keep-alive", summary: "Keep a session's bridge alive", tags: [RC_API_TAG] })
         .input(RcKeepAliveInputSchema)
         .output(RcWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.keepAlive(input.session)) })),
       mcpStatus: authed
+        .route({ method: "POST", path: "/rest/rc/mcp-status", summary: "Ask a session for its MCP servers' status", tags: [RC_API_TAG] })
         .input(RcMcpStatusInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpStatus(input.session)) })),
       mcpReconnect: authed
+        .route({ method: "POST", path: "/rest/rc/mcp-reconnect", summary: "Ask a session to reconnect one MCP server", tags: [RC_API_TAG] })
         .input(RcMcpReconnectInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpReconnect(input.session, input.serverName)) })),
       mcpAuthenticate: authed
+        .route({ method: "POST", path: "/rest/rc/mcp-authenticate", summary: "Start OAuth for one MCP server on a session", tags: [RC_API_TAG] })
         .input(RcMcpAuthenticateInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpAuthenticate(input.session, input.serverName, input.redirectUri)) })),
       mcpOAuthCallbackUrl: authed
+        .route({ method: "POST", path: "/rest/rc/mcp-oauth-callback-url", summary: "Hand a completed MCP OAuth callback to a session", tags: [RC_API_TAG] })
         .input(RcMcpOAuthCallbackUrlInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpOAuthCallbackUrl(input.session, input.serverName, input.callbackUrl)) })),
       teleport: authed
+        .route({ method: "POST", path: "/rest/rc/teleport", summary: "Teleport a session to a conversation marker", tags: [RC_API_TAG] })
         .input(RcTeleportInputSchema)
         .output(RcWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.teleport(input.session, input.marker)) })),
       subscribe: authed
+        .route({ method: "GET", path: "/rest/rc/events", summary: "Stream a session's Remote Control events (SSE)", tags: [RC_API_TAG] })
         .input(RcSessionQuerySchema)
         .output(eventIterator(RcStreamEventSchema))
         .handler(async function* ({ input, signal }) {
@@ -281,13 +320,44 @@ export function createRcApiRouter(deps: RcApiDeps) {
 export type RcApiRouter = ReturnType<typeof createRcApiRouter>;
 
 /**
- * Builds the node handler that serves one router of the door's typed API under the mount's one prefix: the pre-pipeline surface the provider listener hands every request under `RC_ORPC_PATH_PREFIX`, answering with `matched: false` for a path under the prefix that names no procedure (which the listener itself answers as a 404). Request bodies are bounded by the same protocol cap the bespoke routes apply. Every router the mount serves (Remote Control and the control plane) goes through this one builder, so the prefix, the context and the cap are stated once.
+ * Builds the node handler that serves one router of the door's typed API under the mount's one prefix, twice over: the OpenAPI handler answers every route-annotated (method, path) pair as plain REST (every annotation under `/rest`, which no RPC procedure path begins with, so the RPC protocol's own POSTs always fall through untouched), and everything else falls to the RPC handler, which answers the oRPC protocol the typed clients and the web client speak. The OpenAPI document of the annotated routes is served at `RC_OPENAPI_DOC_PATH`, behind the same per-generation control token the procedures demand, so a consumer with no TypeScript client reads the whole surface from the mount itself. The pre-pipeline surface the provider listener hands every request under `RC_ORPC_PATH_PREFIX`, answering with `matched: false` for a path under the prefix that names no route and no procedure (which the listener itself answers as a 404). Request bodies are bounded by the same protocol cap the bespoke routes apply, on both handlers. Every router the mount serves (Remote Control and the control plane) goes through this one builder, so the prefix, the context and the cap are stated once.
  */
-export function doorApiNodeHandlerOf(router: AnyRouter): PrePipelineApi {
-  const handler = new RPCHandler(router, { plugins: [new BodyLimitPlugin({ maxBodySize: CONTROL_BODY_CAP_BYTES })] });
+export function doorApiNodeHandlerOf(router: AnyRouter, expectedToken: string): PrePipelineApi {
+  const plugins = [new BodyLimitPlugin({ maxBodySize: CONTROL_BODY_CAP_BYTES })];
+  const rpcHandler = new RPCHandler(router, { plugins });
+  const restHandler = new OpenAPIHandler(router, { plugins });
+  // Generated from the same router the two handlers serve, on the first request that asks for it and never again: the router cannot change after the mount is built, and the memoised promise (success or failure) is what later requests read, so a schema that cannot convert surfaces on every read of the document rather than flapping between attempts.
+  let document: Promise<OpenAPI.Document> | undefined;
+  const documentOf = async () => (document ??= new OpenAPIGenerator().generate(router, { info: { title: "agent-shim front door API", version: packageJson.version } }));
   return {
     pathPrefix: RC_ORPC_PATH_PREFIX,
-    handle: async (request, response) => await handler.handle(request, response, { context: { headers: request.headers }, prefix: RC_ORPC_PATH_PREFIX }),
+    handle: async (request, response) => {
+      if (request.method === "GET" && request.url === `${RC_ORPC_PATH_PREFIX}${RC_OPENAPI_DOC_PATH}`) {
+        const token = doorApiBearer(request.headers);
+        if (token === undefined || !isLiveCapability(token, [expectedToken])) {
+          // The same error convention the procedures answer with (an oRPC error's own JSON), so a consumer sees one error shape across the whole mount.
+          const refusal = new ORPCError("UNAUTHORIZED", { message: "the front door's OpenAPI document demands this generation's control token as a Bearer credential" });
+          response.writeHead(HTTP_STATUS.unauthorized, { "content-type": "application/json" });
+          response.end(JSON.stringify(refusal.toJSON()));
+          return { matched: true };
+        }
+        try {
+          const doc = await documentOf();
+          response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
+          response.end(JSON.stringify(doc));
+        } catch (error: unknown) {
+          const refusal = new ORPCError("INTERNAL_SERVER_ERROR", { message: `the OpenAPI document could not be generated from the door's own router: ${error instanceof Error ? error.message : String(error)}` });
+          response.writeHead(HTTP_STATUS.internalServerError, { "content-type": "application/json" });
+          response.end(JSON.stringify(refusal.toJSON()));
+        }
+        return { matched: true };
+      }
+      const rest = await restHandler.handle(request, response, { context: { headers: request.headers }, prefix: RC_ORPC_PATH_PREFIX });
+      if (rest.matched) {
+        return rest;
+      }
+      return await rpcHandler.handle(request, response, { context: { headers: request.headers }, prefix: RC_ORPC_PATH_PREFIX });
+    },
   };
 }
 
@@ -295,7 +365,7 @@ export function doorApiNodeHandlerOf(router: AnyRouter): PrePipelineApi {
  * Builds the typed API's node handler for the Remote Control router alone: the pre-pipeline surface the provider listener hands every request under `RC_ORPC_PATH_PREFIX`.
  */
 export function createRcApiNodeHandler(deps: RcApiDeps): PrePipelineApi {
-  return doorApiNodeHandlerOf(createRcApiRouter(deps));
+  return doorApiNodeHandlerOf(createRcApiRouter(deps), deps.expectedToken);
 }
 
 /** The typed API's client as the `frontdoor rc` verbs use it: every call presents the control token, over TLS trusting only the CA file the door's own state names. */
