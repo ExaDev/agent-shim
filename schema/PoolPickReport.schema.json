@@ -126,6 +126,22 @@
       ],
       "additionalProperties": false
     },
+    "movedOff": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
     "stickyProblem": {
       "type": "string"
     }
