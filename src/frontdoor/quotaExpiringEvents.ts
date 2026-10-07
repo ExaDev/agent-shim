@@ -26,7 +26,7 @@ const SEVEN_DAY_WINDOW_DAYS = 7;
 export const FIVE_HOUR_WINDOW_MS = FIVE_HOUR_WINDOW_HOURS * MS_PER_HOUR;
 
 /** The seven-day unified window's own span, the unit its final fraction is taken of. */
-export const SEVEN_DAY_WINDOW_MS = SEVEN_DAY_WINDOW_DAYS * MS_PER_DAY;
+const SEVEN_DAY_WINDOW_MS = SEVEN_DAY_WINDOW_DAYS * MS_PER_DAY;
 
 /** The denominator of the final-span fraction: the window's span divided by this is the stretch that counts as expiring. */
 const FINAL_SPAN_DENOMINATOR = 30;
