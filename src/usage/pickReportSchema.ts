@@ -33,6 +33,8 @@ export const PoolPickReportSchema = z.strictObject({
   missing: z.array(z.string()),
   /** When nothing can be picked, the soonest any member returns. */
   earliestReturn: z.strictObject({ identity: z.string(), at: z.iso.datetime() }).optional(),
+  /** The member a resumed conversation started on but moved off, and why, when the ranking could not keep it. */
+  movedOff: z.strictObject({ identity: z.string(), reason: z.string() }).optional(),
   /** Why the last-pick record could not be read, when that is the case. */
   stickyProblem: z.string().optional(),
 });

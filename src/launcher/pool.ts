@@ -100,10 +100,12 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
     if (graph.ranking.candidates.length === 0) {
       return { ok: false, message: `agent-shim: no member of pool "${poolName}" is an existing identity.` };
     }
-    const { pick, earliestReturn } = graph.ranking;
+    const { pick, earliestReturn, movedOff } = graph.ranking;
     if (pick !== undefined) {
       recordStickyPick(params.usageFs, params.paths.usagePicksFile, params.cwd, pick.identity, nowMs);
-      return { ok: true, identity: pick.identity, explanation: `pool ${poolName}: ${pick.reasons.slice(0, REASONS_LOGGED).join("; ")}` };
+      // The move a resumed conversation made, one sentence beside the pick's own reasons: which member it left and why the ranking could not keep it.
+      const move = movedOff === undefined ? "" : `moved off ${movedOff.identity} (${movedOff.reason}); `;
+      return { ok: true, identity: pick.identity, explanation: `pool ${poolName}: ${move}${pick.reasons.slice(0, REASONS_LOGGED).join("; ")}` };
     }
     if (earliestReturn === undefined) {
       return { ok: false, message: `agent-shim: no member of pool "${poolName}" can be picked.` };

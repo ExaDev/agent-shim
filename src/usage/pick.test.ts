@@ -26,6 +26,10 @@ const U50 = 0.5;
 const U60 = 0.6;
 const U80 = 0.8;
 const U90 = 0.9;
+const U89 = 0.89;
+const U92 = 0.92;
+const U95 = 0.95;
+const U25 = 0.25;
 const U09 = 0.09;
 const FULL = 1;
 const MAX_20X = "default_claude_max_20x";
@@ -115,6 +119,17 @@ function burnRecord(identity: string, agoMs: number, fiveHourUtilization: number
   };
 }
 
+/** A burn record whose readings carry the seven-day window instead, so a seven-day pace can be observed the same way. */
+function sevenDayBurnRecord(identity: string, agoMs: number, sevenDayUtilization: number, resetsInMs: number): UsageRecord {
+  return {
+    ...burnRecord(identity, agoMs, 0, FOUR_HOURS_MS),
+    rateLimitHeaders: {
+      "anthropic-ratelimit-unified-7d-utilization": String(sevenDayUtilization),
+      "anthropic-ratelimit-unified-7d-reset": epochSeconds(resetsInMs),
+    },
+  };
+}
+
 describe("rankPool", () => {
   it("never picks a member whose plan window is rejected and has not reset, and reports when it returns", () => {
     const ranking = rank([member("a", { seven: { utilization: FULL, status: "rejected", resetsInMs: TWO_DAYS_MS } }), member("b", { seven: { utilization: U90, status: "allowed", resetsInMs: DAY_MS } })]);
@@ -199,6 +214,58 @@ describe("rankPool", () => {
   it("does not keep a last pick that is refused or would run dry", () => {
     const members = [member("old", { seven: { utilization: U50, status: "rejected", resetsInMs: DAY_MS } }), member("other", { seven: { utilization: U50, resetsInMs: DAY_MS } })];
     expect(rank(members, { sticky: { identity: "old", at: at(-MINUTE_MS) } }).pick?.identity).toBe("other");
+  });
+
+  it("demotes a member whose seven-day window would run dry at its own observed pace, below one that would not", () => {
+    // 0.05 left, rising 0.03 per hour from its own records, runs dry in under two hours while the window resets in six days; the five-hour window is nowhere near spent.
+    const draining = member("draining", { five: { utilization: U10, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U95, resetsInMs: SIX_DAYS_MS } }, MAX_20X, [
+      sevenDayBurnRecord("draining", HOUR_MS, U92, SIX_DAYS_MS),
+      sevenDayBurnRecord("draining", 0, U95, SIX_DAYS_MS),
+    ]);
+    // The calm member has a slower seven-day rise of its own (0.01 per hour) and stays feasible.
+    const calm = member("calm", { five: { utilization: U10, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U90, resetsInMs: SIX_DAYS_MS } }, MAX_20X, [
+      sevenDayBurnRecord("calm", HOUR_MS, U89, SIX_DAYS_MS),
+      sevenDayBurnRecord("calm", 0, U90, SIX_DAYS_MS),
+    ]);
+    const ranking = rank([draining, calm]);
+    expect(order(ranking)).toEqual(["calm", "draining"]);
+    expect(ranking.candidates[1]?.feasible).toBe(false);
+    expect(ranking.candidates[1]?.reasons[0]).toContain("7d window would run dry");
+  });
+
+  it("does not project a seven-day window from a five-hour pace, only from its own readings", () => {
+    // The member burns its five-hour window gently (0.05 per hour, 0.7 left, so it outlasts its reset) but has no two seven-day readings: the seven-day window is left unprojected rather than guessed from the five-hour pace.
+    const member5h = member("hot5h", { five: { utilization: U30, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U95, resetsInMs: SIX_DAYS_MS } }, MAX_20X, [
+      burnRecord("hot5h", HOUR_MS, U25, FOUR_HOURS_MS),
+      burnRecord("hot5h", 0, U30, FOUR_HOURS_MS),
+    ]);
+    expect(rank([member5h]).candidates[0]?.feasible).toBe(true);
+  });
+
+  it("names the member a resumed conversation moved off, and why, when the ranking could not keep it", () => {
+    const members = [member("old", { five: { utilization: U10, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U95, resetsInMs: SIX_DAYS_MS } }, MAX_20X, [
+      sevenDayBurnRecord("old", HOUR_MS, U92, SIX_DAYS_MS),
+      sevenDayBurnRecord("old", 0, U95, SIX_DAYS_MS),
+    ]), member("fresh", { seven: { utilization: U10, resetsInMs: DAY_MS } })];
+    const ranking = rank(members, { sticky: { identity: "old", at: at(-THREE_DAYS_MS) }, resuming: true });
+    expect(ranking.pick?.identity).toBe("fresh");
+    expect(ranking.movedOff).toMatchObject({ identity: "old" });
+    expect(ranking.movedOff?.reason).toContain("7d window would run dry");
+  });
+
+  it("names the move off a sticky member that only serves on extra usage, the billing tail", () => {
+    const members = [member("old", { seven: { utilization: FULL, status: "rejected", resetsInMs: DAY_MS }, overage: "allowed" }), member("fresh", { seven: { utilization: U10, resetsInMs: DAY_MS } })];
+    const ranking = rank(members, { sticky: { identity: "old", at: at(-MINUTE_MS) }, resuming: true });
+    expect(ranking.pick?.identity).toBe("fresh");
+    expect(ranking.movedOff).toMatchObject({ identity: "old" });
+    expect(ranking.movedOff?.reason).toContain("continues as extra usage");
+  });
+
+  it("reports no move when the resumed conversation keeps its member, and none for a fresh launch that picks elsewhere", () => {
+    const members = [member("old", { seven: { utilization: U90, resetsInMs: SIX_DAYS_MS } }), member("better", { seven: { utilization: U10, resetsInMs: HOUR_MS } })];
+    expect(rank(members, { sticky: { identity: "old", at: at(-THREE_DAYS_MS) }, resuming: true }).movedOff).toBeUndefined();
+    // A cold-cache fresh launch that picks the better member is an ordinary pick, not a move: nothing resumed to move.
+    expect(rank(members, { sticky: { identity: "old", at: at(-(PROMPT_CACHE_TTL_MS + MINUTE_MS)) } }).movedOff).toBeUndefined();
   });
 
   it("ranks unknown members after scored ones and pay-per-use after those, refused last, deterministically by name", () => {

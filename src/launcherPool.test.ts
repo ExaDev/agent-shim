@@ -24,7 +24,7 @@ interface SevenDay {
   readonly status?: string;
 }
 
-function snapshotOf(identity: string, sevenDay: SevenDay): string {
+function snapshotOf(identity: string, sevenDay: SevenDay, overage?: string): string {
   const seen = iso(-HOUR_MS);
   return JSON.stringify({
     schemaVersion: 1,
@@ -35,7 +35,7 @@ function snapshotOf(identity: string, sevenDay: SevenDay): string {
       anthropic: {
         lastRequestAt: seen,
         lastStatus: 200,
-        rateLimit: { observedAt: seen, headers: {}, unified: { sevenDay: { utilization: sevenDay.utilization, resetsAt: iso(sevenDay.resetsInMs), ...(sevenDay.status === undefined ? {} : { status: sevenDay.status }) } } },
+        rateLimit: { observedAt: seen, headers: {}, unified: { sevenDay: { utilization: sevenDay.utilization, resetsAt: iso(sevenDay.resetsInMs), ...(sevenDay.status === undefined ? {} : { status: sevenDay.status }) }, ...(overage === undefined ? {} : { overageStatus: overage }) } },
       },
     },
   });
@@ -192,11 +192,12 @@ describe("runLauncher with a pool selector", () => {
 
   describe("keeping the account whose prompt cache is warm", () => {
     /** Runs two launches in one directory over one filesystem; between them the other member becomes the better pick. */
-    function twoLaunches(secondAtMs: number, secondArgv: readonly string[]): { readonly first: Launch; readonly second: Launch } {
+    function twoLaunches(secondAtMs: number, secondArgv: readonly string[], between?: (farmFs: ReturnType<typeof createFakeFarmFs>) => void): { readonly first: Launch; readonly second: Launch } {
       const farmFs = createFakeFarmFs(WORK_SOON);
       const first = launch({ farmFs });
       farmFs.writeFileUtf8(snapshotPath("work"), snapshotOf("work", { utilization: U60, resetsInMs: SIX_DAYS_MS }));
       farmFs.writeFileUtf8(snapshotPath("personal"), snapshotOf("personal", { utilization: U10, resetsInMs: HOUR_MS }));
+      between?.(farmFs);
       const second = launch({ farmFs, argv: secondArgv, farm: (base) => ({ ...base, now: () => FAKE_NOW_MS + secondAtMs }) });
       return { first, second };
     }
@@ -221,6 +222,17 @@ describe("runLauncher with a pool selector", () => {
     it("does not treat --resume after a -- terminator as claude's own", () => {
       const { second } = twoLaunches(PROMPT_CACHE_TTL_MS + FIVE_MINUTES_MS, ["@pool:main", "--", "mcp", "--resume"]);
       expect(spawnedEnv(second.spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/personal`);
+    });
+
+    it("says on the decision line which member a resumed conversation moved off, and why", () => {
+      // Between the launches, the member the conversation started on exhausts its plan and keeps serving on extra usage: stickiness yields, the conversation continues on the other member, and the line names the move.
+      const { second } = twoLaunches(PROMPT_CACHE_TTL_MS + FIVE_MINUTES_MS, ["@pool:main", "--resume"], (farmFs) => {
+        farmFs.writeFileUtf8(snapshotPath("work"), snapshotOf("work", { utilization: 1, resetsInMs: SIX_DAYS_MS, status: "rejected" }, "allowed"));
+      });
+      expect(spawnedEnv(second.spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/personal`);
+      const decision = second.log.infos.find((line) => line.includes("identity personal"));
+      expect(decision).toContain("moved off work (");
+      expect(decision).toContain("continues as extra usage");
     });
   });
 });
