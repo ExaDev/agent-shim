@@ -42,6 +42,7 @@ export function collectPoolPick(params: Readonly<{ paths: LayoutPaths; fs: FsPor
     candidates: ranking.candidates.map(candidateView),
     missing: missing.map(({ identity }) => identity),
     ...(ranking.earliestReturn === undefined ? {} : { earliestReturn: { identity: ranking.earliestReturn.identity, at: new Date(ranking.earliestReturn.atMs).toISOString() } }),
+    ...(ranking.movedOff === undefined ? {} : { movedOff: ranking.movedOff }),
     ...(sticky.problem === undefined ? {} : { stickyProblem: sticky.problem }),
   };
 }

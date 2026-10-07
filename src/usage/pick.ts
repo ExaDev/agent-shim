@@ -72,7 +72,7 @@ export interface Candidate {
   readonly class: CandidateClass;
   /** Plan-size-weighted remaining quota per hour until its reset: higher is more wasted if left unused. Present for `scored` only. */
   readonly score?: number;
-  /** False when the five-hour window would run dry, at the observed pace, before it resets. A `scored` candidate that is not feasible ranks below every feasible one. */
+  /** False when a quota window would run dry, at the observed pace, before it resets (the five-hour at its own or the rescaled shared pace, the seven-day at its own). A `scored` candidate that is not feasible ranks below every feasible one. */
   readonly feasible: boolean;
   /** When an `ineligible` candidate can be used again. */
   readonly blockedUntilMs?: number;
@@ -88,6 +88,8 @@ export interface PoolRanking {
   readonly pick?: Candidate;
   /** When nothing can be picked, the soonest any member comes back. */
   readonly earliestReturn?: { readonly identity: string; readonly atMs: number };
+  /** The member a resumed or continued conversation started on but moved off, and why, when a launch that resumes could not keep it. One sentence for the launch decision line and `check`. */
+  readonly movedOff?: { readonly identity: string; readonly reason: string };
 }
 
 function unifiedOf(state: ProviderUsageState | undefined): UnifiedRateLimit | undefined {
@@ -124,11 +126,13 @@ interface BurnPoint {
   readonly utilization: number;
 }
 
-/** The pace of five-hour utilisation, per millisecond, over the member's records in its current window, or undefined without two readings that show it rising. */
-function fiveHourBurn(records: readonly UsageRecord[]): number | undefined {
+/**
+ * The pace of one window's utilisation, per millisecond, over the member's records in its current instance of that window, or undefined without two readings that show it rising. The same arithmetic reads either window: the records carry both, and each window's pace is measured in its own utilisation fractions.
+ */
+function windowBurn(records: readonly UsageRecord[], which: "fiveHour" | "sevenDay"): number | undefined {
   const points: { resetsAt: string; point: BurnPoint }[] = [];
   for (const record of records) {
-    const window = record.rateLimitHeaders === undefined ? undefined : parseUnifiedRateLimit(record.rateLimitHeaders)?.fiveHour;
+    const window = record.rateLimitHeaders === undefined ? undefined : parseUnifiedRateLimit(record.rateLimitHeaders)?.[which];
     if (window?.utilization !== undefined && window.resetsAt !== undefined) {
       points.push({ resetsAt: window.resetsAt, point: { atMs: Date.parse(record.at), utilization: window.utilization } });
     }
@@ -168,6 +172,10 @@ interface Assessment {
   /** Five-hour remaining fraction and time to reset, for the feasibility pass. */
   readonly fiveHour?: { readonly remaining: number; readonly untilResetMs: number };
   readonly burn?: number;
+  /** Seven-day remaining fraction and time to reset, for the same pass over the longer window. */
+  readonly sevenDay?: { readonly remaining: number; readonly untilResetMs: number };
+  /** The seven-day window's own observed pace, in its own utilisation fractions per millisecond. */
+  readonly sevenDayBurn?: number;
 }
 
 /** A nested entry whose every member is refused is itself ineligible, carrying the nested pool's earliest return as its blocked-until and naming it in the reason. */
@@ -249,18 +257,23 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
 
   const fiveRemaining = five?.utilization === undefined ? undefined : Math.max(0, 1 - five.utilization);
   const fiveUntil = five?.resetsAtMs === undefined ? FIVE_HOUR_WINDOW_MS : Math.max(five.resetsAtMs - nowMs, MS_PER_SECOND);
-  const burn = fiveHourBurn(member.records);
+  const burn = windowBurn(member.records, "fiveHour");
+  const sevenRemaining = seven?.utilization === undefined ? undefined : Math.max(0, 1 - seven.utilization);
+  const sevenUntil = seven?.resetsAtMs === undefined ? SEVEN_DAY_WINDOW_MS : Math.max(seven.resetsAtMs - nowMs, MS_PER_SECOND);
+  const sevenDayBurn = windowBurn(member.records, "sevenDay");
   return {
     candidate: { ...base, class: "scored", score, reasons: [...windowReasons.map((reason, index) => (index === windowReasons.length - 1 ? `${reason}${observedAgo}` : reason)), ...planReasons] },
     ...(fiveRemaining === undefined ? {} : { fiveHour: { remaining: fiveRemaining, untilResetMs: fiveUntil } }),
     ...(burn === undefined ? {} : { burn }),
+    ...(sevenRemaining === undefined ? {} : { sevenDay: { remaining: sevenRemaining, untilResetMs: sevenUntil } }),
+    ...(sevenDayBurn === undefined ? {} : { sevenDayBurn }),
   };
 }
 
 /**
  * Ranks `members` for a launch.
  *
- * A member is `ineligible` while a window of its plan, or a refusal it last hit, still binds; it is `unknown` without recorded quota, `pay-per-use` when its usage bills by use, and otherwise `scored`. Scored members order by how much plan-size-weighted quota would expire unused per hour of runway, with any whose five-hour window would run dry at the observed pace (their own, or the person's pace on another member rescaled by plan size) placed behind those that would not. The member last picked for this directory then moves to the front if it is still usable and either the launch resumes a conversation or its prompt cache is still warm.
+ * A member is `ineligible` while a window of its plan, or a refusal it last hit, still binds; it is `unknown` without recorded quota, `pay-per-use` when its usage bills by use, and otherwise `scored`. Scored members order by how much plan-size-weighted quota would expire unused per hour of runway, with any whose five-hour window would run dry at the observed pace (their own, or the person's pace on another member rescaled by plan size) or whose seven-day window would run dry at its own observed pace placed behind those that would not. The member last picked for this directory then moves to the front if it still serves on plan quota and is not projected to run dry, and either the launch resumes a conversation or its prompt cache is still warm; a resumed conversation that cannot keep its member re-ranks and continues on the pick, with the move named in `movedOff`.
  *
  * How members are ordered depends on `preference`. The default, "score", is the order above: class first, then feasibility, then score, with ties by name. "listed" keeps the order of `members`, which callers build in pool member order, so member order, not class, decides: an `unknown` (no usage recorded) or `pay-per-use` member can be picked before a later `scored` one, which is the list owner's stated preference, and a `scored` member that is not feasible keeps its place and its reason line rather than being demoted. In both modes the pick is the first non-`ineligible` candidate, `earliestReturn` still reports the soonest returning refused member, and the sticky-pick promotion applies unchanged.
  */
@@ -275,14 +288,28 @@ export function rankPool(input: RankPoolInput): PoolRanking {
   const candidates: Candidate[] = assessments.map((assessment) => {
     const { candidate, fiveHour, burn } = assessment;
     const pace = burn ?? (sharedDemand === undefined ? undefined : sharedDemand / capacityOf(candidate.plan));
-    if (candidate.class !== "scored" || fiveHour === undefined || pace === undefined) {
+    // The seven-day window projects only from its own observed pace. The shared demand is measured in five-hour utilisation fractions rescaled by plan size, and the ratio between the two windows' capacities is not documented anywhere the door can read, so converting a five-hour pace into seven-day fractions would be a guess dressed as arithmetic. A member whose seven-day utilisation has been seen rising twice has a pace of its own, which is exactly the tail case the projection exists for.
+    const { sevenDay, sevenDayBurn } = assessment;
+    if (candidate.class !== "scored") {
       return { ...candidate, feasible: true };
     }
-    const runsDryInMs = fiveHour.remaining / pace;
-    if (runsDryInMs >= fiveHour.untilResetMs) {
+    const drySpots: string[] = [];
+    if (fiveHour !== undefined && pace !== undefined) {
+      const runsDryInMs = fiveHour.remaining / pace;
+      if (runsDryInMs < fiveHour.untilResetMs) {
+        drySpots.push(`5h window would run dry in ${formatAge(runsDryInMs)}, before it resets in ${formatAge(fiveHour.untilResetMs)}`);
+      }
+    }
+    if (sevenDay !== undefined && sevenDayBurn !== undefined) {
+      const runsDryInMs = sevenDay.remaining / sevenDayBurn;
+      if (runsDryInMs < sevenDay.untilResetMs) {
+        drySpots.push(`7d window would run dry in ${formatAge(runsDryInMs)}, before it resets in ${formatAge(sevenDay.untilResetMs)}`);
+      }
+    }
+    if (drySpots.length === 0) {
       return { ...candidate, feasible: true };
     }
-    return { ...candidate, feasible: false, reasons: [`5h window would run dry in ${formatAge(runsDryInMs)}, before it resets in ${formatAge(fiveHour.untilResetMs)}`, ...candidate.reasons] };
+    return { ...candidate, feasible: false, reasons: [...drySpots, ...candidate.reasons] };
   });
 
   // "listed" keeps the members' own order, which is the pool's stated preference; "score" (the default) is the use-it-or-lose-it order.
@@ -300,7 +327,8 @@ export function rankPool(input: RankPoolInput): PoolRanking {
   const sticky = input.sticky;
   const stickyIndex = sticky === undefined ? -1 : ordered.findIndex((candidate) => candidate.identity === sticky.identity);
   const stickyCandidate = ordered[stickyIndex];
-  if (sticky !== undefined && stickyCandidate?.class === "scored" && stickyCandidate.feasible) {
+  const keepSticky = stickyCandidate?.class === "scored" && stickyCandidate.feasible;
+  if (sticky !== undefined && keepSticky) {
     const ageMs = nowMs - Date.parse(sticky.at);
     const warm = ageMs <= PROMPT_CACHE_TTL_MS;
     if (input.resuming || warm) {
@@ -310,11 +338,18 @@ export function rankPool(input: RankPoolInput): PoolRanking {
     }
   }
 
+  // The move a resumed conversation makes, named for the decision line: the member it started on could not keep it (not scored, or projected to run dry), so the conversation continues on the pool's pick instead, accepting a cold cache. The sticky member's own leading reason states why precisely; a member no longer in the pool at all says so.
+  const movedOff =
+    sticky !== undefined && input.resuming && !keepSticky
+      ? { identity: sticky.identity, reason: stickyCandidate?.reasons[0] ?? "no longer among the pool's members" }
+      : undefined;
+
   const pick = ordered.find((candidate) => candidate.class !== "ineligible");
   const returns = ordered.flatMap((candidate) => (candidate.blockedUntilMs === undefined ? [] : [{ identity: candidate.identity, atMs: candidate.blockedUntilMs }]));
   const earliestReturn = returns.length === 0 ? undefined : returns.reduce((soonest, entry) => (entry.atMs < soonest.atMs ? entry : soonest));
   return {
     candidates: ordered,
     ...(pick === undefined ? { ...(earliestReturn === undefined ? {} : { earliestReturn }) } : { pick }),
+    ...(movedOff === undefined || pick === undefined ? {} : { movedOff }),
   };
 }
