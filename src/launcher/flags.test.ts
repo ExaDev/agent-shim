@@ -302,15 +302,17 @@ describe("buildEnv", () => {
     });
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
+    expect(env.NO_PROXY).toBe("127.0.0.1,localhost,::1");
+    expect(env.no_proxy).toBe("127.0.0.1,localhost,::1");
     expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.agent-shim/frontdoor/ca/bundles/0123abcd.pem");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-provider: z\nx-agent-shim-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
   });
 
-  it("replaces a proxy inherited from the parent with the door's own for a provider session, since the child no longer dials any address directly", () => {
+  it("replaces a proxy inherited from the parent with the door's own for a provider session, since the child no longer dials any address directly, while the door's loopback entries are appended to the parent's own exclusions in both spellings rather than replacing them", () => {
     const env = buildEnv({
       sessionId: "session-test",
-      baseEnv: { ...baseEnv, HTTPS_PROXY: "http://agent-shim:parent-token@127.0.0.1:4200", NO_PROXY: "corp.example" },
+      baseEnv: { ...baseEnv, HTTPS_PROXY: "http://agent-shim:parent-token@127.0.0.1:4200", NO_PROXY: "corp.example", no_proxy: "corp.example" },
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
       identitiesDir: "/home/testuser/.agent-shim/identities",
@@ -318,7 +320,19 @@ describe("buildEnv", () => {
       frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/bundle.pem", sessionToken: "launch-token-for-tests" },
     });
     expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
-    expect(env.NO_PROXY).toBe("corp.example");
+    expect(env.NO_PROXY).toBe("corp.example,127.0.0.1,localhost,::1");
+    expect(env.no_proxy).toBe("corp.example,127.0.0.1,localhost,::1");
+  });
+
+  it("folds a loopback name the parent's exclusions already carry rather than repeating it", () => {
+    const env = buildEnv({
+      sessionId: "session-test",
+      baseEnv: { ...baseEnv, NO_PROXY: "localhost" },
+      configDirEscapeHatch: false,
+      identitiesDir,
+      frontdoor: { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" },
+    });
+    expect(env.NO_PROXY).toBe("localhost,127.0.0.1,::1");
   });
 
   it("injects the identity, session and provider headers when the door is engaged without headroom, and nothing else of the door's own", () => {
@@ -346,6 +360,7 @@ describe("buildEnv", () => {
     });
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
+    expect(env.NO_PROXY).toBe("127.0.0.1,localhost,::1");
     expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.agent-shim/frontdoor/ca/ca.pem");
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
   });
@@ -384,6 +399,8 @@ describe("buildEnv", () => {
     });
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
+    expect(env.NO_PROXY).toBeUndefined();
+    expect(env.no_proxy).toBeUndefined();
     expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
   });
 });
