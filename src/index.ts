@@ -190,14 +190,24 @@ export {
 } from "./frontdoor/eventHub";
 export {
   DOOR_EVENT_SOURCE_RC,
+  DOOR_HEALTH_EVENT_SOURCE,
   LAUNCH_EVENT_SOURCE,
+  QUOTA_EXPIRING_EVENT_SOURCE,
+  USAGE_EVENT_SOURCE,
   DoorEventSchema,
   DoorEventSourceQuerySchema,
+  DoorHealthEventSchema,
   LaunchLifecycleEventSchema,
+  QuotaExpiringEventSchema,
   type DoorEvent,
+  type DoorHealthEvent,
   type LaunchLifecycleEvent,
+  type QuotaExpiringEvent,
+  type UsageChangeEvent,
 } from "./frontdoor/eventSchemas";
 export { createLaunchEventPublisher, type LaunchEventPublisher } from "./frontdoor/launchEvents";
+export { createDoorHealthPublisher, type DoorHealthPublisher } from "./frontdoor/doorHealthEvents";
+export { createQuotaExpiringPublisher, type QuotaExpiringPublisher } from "./frontdoor/quotaExpiringEvents";
 export {
   RcLiveRateLimitSchema,
   RcPermissionModeSchema,

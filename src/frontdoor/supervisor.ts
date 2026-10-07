@@ -1,5 +1,6 @@
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
+import type { DoorHealthPublisher } from "./doorHealthEvents";
 import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
 
 /** A bound front-door listener in this process, and how to stop it. */
@@ -39,6 +40,14 @@ export interface FrontDoorSupervisorPorts {
    * Reports one tick's session-registry facts to the door's event backbone: the sessions the tick's listing saw (taken before the prune, so a pruned launch's record is still there to name its start time) and the pids the tick's prune removed. The launch lifecycle publisher turns the diff between ticks into source-tagged events; the listing is also this loop's own idle input, so the two read one fact instead of two.
    */
   readonly observeLaunchRegistry: (sessions: readonly FrontDoorSessionSummary[], pruned: readonly number[]) => void;
+  /**
+   * Publishes the supervisor's own state transitions to the door's event backbone: the generation serving, a start failure that ends it, the idle shutdown. Fed the moments the supervisor already lives through, published as they happen rather than at a tick, because these are process facts.
+   */
+  readonly doorHealth: DoorHealthPublisher;
+  /**
+   * Checks the expiring-quota windows against the clock, once per tick: the publisher holds the snapshots the usage source keeps fresh, so this costs arithmetic, never a file read.
+   */
+  readonly checkQuotaExpiry: () => void;
   readonly log: (line: string) => void;
 }
 
@@ -90,6 +99,7 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
   try {
     http = await ports.startProviderListener(lastPort);
   } catch (error) {
+    ports.doorHealth.listenerFailed("provider", error instanceof Error ? error.message : String(error));
     return fail(`could not start the provider listener: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (previousSticky !== undefined && http.port !== previousSticky) {
@@ -103,6 +113,7 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
     connect = await ports.startConnectListener(lastConnectPort);
   } catch (error) {
     await http.close();
+    ports.doorHealth.listenerFailed("connect", error instanceof Error ? error.message : String(error));
     return fail(`could not start the CONNECT surface: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (previousStickyConnect !== undefined && connect.port !== previousStickyConnect) {
@@ -117,6 +128,7 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
   } catch (error) {
     await connect.close();
     await http.close();
+    ports.doorHealth.listenerFailed("direct", error instanceof Error ? error.message : String(error));
     return fail(`could not start the direct listener: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (previousStickyDirect !== undefined && direct.port !== previousStickyDirect) {
@@ -125,6 +137,7 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
   lastDirectPort = direct.port;
 
   writeFrontDoorState(fs, paths.frontdoorStateFile, { protocol: FRONT_DOOR_PROTOCOL, supervisorPid: ports.ownPid, port: http.port, connectPort: connect.port, directPort: direct.port, ...sticky() });
+  ports.doorHealth.generation({ providerPort: http.port, connectPort: connect.port, directPort: direct.port });
   // The start lock has done its job: state now names a live supervisor, so every future launcher finds it there instead.
   fs.removeRecursive(paths.frontdoorLockFile);
   ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: front door on 127.0.0.1:${String(http.port)}, CONNECT surface on 127.0.0.1:${String(connect.port)}`);
@@ -140,11 +153,13 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
     const listed = listFrontDoorSessions(fs, paths.frontdoorSessionsDir);
     const pruned = pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, ports.isRunning);
     ports.observeLaunchRegistry(listed, pruned);
+    ports.checkQuotaExpiry();
     const prunedPids = new Set(pruned);
     if (listed.filter((session) => !prunedPids.has(session.pid)).length === 0) {
       idleSince ??= ports.now();
       if (ports.now() - idleSince >= idleShutdownMinutes * MS_PER_MINUTE) {
         ports.log(`agent-shim frontdoor supervisor: no sessions for ${String(idleShutdownMinutes)} minute(s); closing the front door and exiting`);
+        ports.doorHealth.idleShutdown();
         await direct.close();
         await connect.close();
         await http.close();

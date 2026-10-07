@@ -21,7 +21,10 @@ import { collectDoctorReport } from "../doctorReport";
 import { collectPoolPick } from "../poolPickReport";
 import { readPools } from "../poolStore";
 import { listUsageSnapshots, readUsageSnapshot } from "../usage/read";import { createDoorApiNodeHandler } from "./controlApi";
+import { createDoorHealthPublisher } from "./doorHealthEvents";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
+import { USAGE_EVENT_SOURCE } from "./eventSchemas";
+import { createQuotaExpiringPublisher } from "./quotaExpiringEvents";
 import { createLaunchEventPublisher } from "./launchEvents";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
@@ -116,8 +119,13 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   // The Remote Control session record: one per door process, in memory only, fed by every resolved route's served exchanges. Wrapping the resolver (rather than any one listener) is what lets whichever pipeline serves a `/v1/code/sessions` exchange observe it, and the wrapper is inert for every path outside the Remote Control prefix. The client credential and the stream's sequence cursor are the two parts that must outlive the process (a session outlives any one door generation, only client-half calls state the OAuth bearer, and a generation that lost the cursor would re-read the stream from its head), so both are persisted per session in one owner-only file and read back by whichever generation needs them.
   const rcCredentialStore = createRcCredentialStore(realFarmFs, paths.frontdoorRcCredentialsDir);
   const rcTracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS, credentialStore: rcCredentialStore });
-  // The door's event backbone: one publisher/subscriber spine for every door-wide source, serving the typed API's `events.subscribe`. The Remote Control client read stream is its first publisher (through the wrap below, which moves nothing about how RC events flow) and the launch lifecycle is its first door-native one, fed by the supervisor's tick from the session registry.
+  // The door's event backbone: one publisher/subscriber spine for every door-wide source, serving the typed API's `events.subscribe`. The Remote Control client read stream is its first publisher (through the wrap below, which moves nothing about how RC events flow) and the launch lifecycle is its first door-native one, fed by the supervisor's tick from the session registry; the usage source publishes every snapshot the store writes, the door health source the supervisor's own transitions, and the expiring-quota source the windows the supervisor's tick sees entering their final span (kept fresh by the usage source's own events, seeded from the snapshot directory).
   const doorEvents = createDoorEventHub();
+  // The usage source's publisher, registered here so the store (created below) can hand it every snapshot it writes, and the expiring-quota checker that reads those same snapshots off the backbone rather than the disk.
+  const usagePublisher = doorEvents.publisher(USAGE_EVENT_SOURCE);
+  const quotaExpiring = createQuotaExpiringPublisher(doorEvents, { seed: listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir), now: () => Date.now() });
+  // The door health publisher, fed by the supervisor's own transitions.
+  const doorHealth = createDoorHealthPublisher(doorEvents, () => Date.now(), process.pid);
   // The live quota state, the backbone's first door-native consumer: subscribed to the rc source before any stream can publish, so every rate_limit_event the held client stream files becomes the door's latest per-session rate-limit observation, the state the control plane's `usage.live` read serves beside its snapshot readers.
   const rcLiveUsage = createRcLiveUsage({ now: () => Date.now(), hub: doorEvents });
   // The door's own client read stream attachment: one held stream per tracked session, fanned out to every subscriber (the typed API's subscription and `frontdoor rc watch`), with its envelopes filed with the tracker. The door plays one client because the CLI routes permission approvals only toward attached clients: with no stream held, an approval falls back to the CLI's own local prompt and never crosses the door. In the self-hosted mode the dial is resolved per call so it can name the door's own surface once that has bound. The supervisor's shutdown closes the hub as its last stop, which is what makes the final cursor save deterministic rather than left to a drop boundary the exit might never reach. The fan-out the hub is handed is the wrapped one, so every stream event reaches the fan-out's own subscribers exactly as before and the backbone beside it, source-tagged `rc`: that wrap is the whole of the RC stream becoming the backbone's first publisher.
@@ -163,7 +171,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   // One check for every listener that admits launches, read fresh on each call since launches come and go: the provider listener's and the CONNECT surface's routed paths (the capability header), and the CONNECT surface's own CONNECT requests (the proxy credential).
   const isLiveToken = (token: string): boolean => isLiveCapability(token, liveSessionTokens(realFarmFs, paths.frontdoorSessionsDir));
 
-  // Usage tracking: one store per door process, its log segments named by this pid, written on a deferred turn so recording never sits in a response's path.
+  // Usage tracking: one store per door process, its log segments named by this pid, written on a deferred turn so recording never sits in a response's path. Every snapshot it writes is published on the backbone's usage source, the durable fact the expiring-quota checker and any quota consumer reads.
   const usageStore = createUsageStore({
     fs: realFarmFs,
     paths,
@@ -171,6 +179,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     now: () => Date.now(),
     readAccount: createAccountReader(realFarmFs, paths.identitiesDir),
     log,
+    publish: (snapshot) => {
+      usagePublisher.publish(snapshot);
+    },
   });
   // A provider whose quota only its own usage endpoint reports is refreshed after its requests are recorded, throttled by the quota's own resolution; the refresh runs detached from the request.
   const quotaRefresher = createRealQuotaRefresher({ paths, store: usageStore, log });
@@ -381,6 +392,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     closeRcStreamHub: rcHub.close,
     // The launch lifecycle publisher over the same backbone the typed API serves: the tick's registry facts go in here, and the door's own register, prune and end moments come out as source-tagged events.
     observeLaunchRegistry: createLaunchEventPublisher(doorEvents, () => Date.now()).observe,
+    doorHealth,
+    checkQuotaExpiry: quotaExpiring.check,
     log: (line) => {
       appendLog(paths, line);
     },

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createFakeFarmFs, DAY_MS, FAKE_NOW_MS, paths, type FakeFarmFs } from "../test-helpers";
 import { AccountMetadataError } from "./account";
 import { listLogSegments, readUsageLog, readUsageSnapshot, segmentDay, segmentName, snapshotPath } from "./read";
-import { USAGE_SCHEMA_VERSION, type AccountMetadata, type LimitClassification, type ProviderQuota, type UsageRecord } from "./schema";
+import { USAGE_SCHEMA_VERSION, type AccountMetadata, type LimitClassification, type ProviderQuota, type UsageRecord, type UsageSnapshot } from "./schema";
 import { createUsageStore, foldProviderState, pruneUsageLog, USAGE_RETENTION_MS, type UsageStoreDeps } from "./store";
 
 const PID = 4242;
@@ -67,6 +67,24 @@ function todaysSegment(): string {
 }
 
 describe("createUsageStore", () => {
+  it("tells the publish dep every snapshot it writes, the fact the door's usage event source is wired to", () => {
+    const published: UsageSnapshot[] = [];
+    const world = harness({ publish: (snapshot) => { published.push(snapshot); } });
+    world.store.record(makeRecord({ provider: "anthropic" }));
+    world.store.record(makeRecord({ provider: "z" }));
+    expect(published.map((snapshot) => Object.keys(snapshot.providers))).toEqual([["anthropic"], ["anthropic", "z"]]);
+    // The published payload is the snapshot on disk, verbatim: the consumer diffs or reads windows from the payload itself.
+    expect(published.at(-1)).toEqual(JSON.parse(world.fs.readFileUtf8(`${paths.usageSnapshotsDir}/work.json`) ?? "{}"));
+  });
+
+  it("records with no publish dep wired at all, and a record without an identity writes no snapshot so would publish nothing", () => {
+    const world = harness();
+    world.store.record({ ...ANONYMOUS_RECORD });
+    // The record still landed in the log: the store is a plain filesystem writer whenever no backbone is wired.
+    expect((world.fs.readFileUtf8(todaysSegment()) ?? "").trim()).toContain(ANONYMOUS_RECORD.endpoint);
+    expect(world.fs.readFileUtf8(`${paths.usageSnapshotsDir}/work.json`)).toBeUndefined();
+  });
+
   it("appends each record as one line to this process's segment for the day", () => {
     const { fs, store } = harness();
     const first = makeRecord({ requestId: "req-1" });

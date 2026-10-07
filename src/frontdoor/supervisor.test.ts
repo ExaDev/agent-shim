@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { HeadroomFs } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { type DoorEvent } from "./eventSchemas";
+import { DOOR_HEALTH_EVENT_SOURCE, LAUNCH_EVENT_SOURCE, type DoorEvent } from "./eventSchemas";
 import { createDoorEventHub } from "./eventHub";
+import { createDoorHealthPublisher } from "./doorHealthEvents";
 import { createLaunchEventPublisher } from "./launchEvents";
 import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
 import { FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
@@ -53,6 +54,8 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
   // The door's event backbone and its launch lifecycle publisher, the same pairing the real ports wire: the tick's registry facts go in through the port below and come out as source-tagged events a test subscribes for.
   const doorEvents = createDoorEventHub();
   const launchEvents = createLaunchEventPublisher(doorEvents, () => clock);
+  /** How many ticks ran the expiring-quota check, so the tick's calling of it is itself observable. */
+  let quotaChecks = 0;
 
   const ports: FrontDoorSupervisorPorts = {
     fs,
@@ -115,6 +118,11 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
       stopOrder.push("hub");
     },
     observeLaunchRegistry: launchEvents.observe,
+    // The door health publisher and the expiring-quota checker, the same pairing the real ports wire: the publisher over the same backbone the launch events ride, and the checker a recorder the tick calls.
+    doorHealth: createDoorHealthPublisher(doorEvents, () => clock, ownPid),
+    checkQuotaExpiry: () => {
+      quotaChecks += 1;
+    },
     log: (line) => {
       logs.push(line);
     },
@@ -131,6 +139,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
     stopOrder,
     hubCloses: () => hubCloses,
     doorEvents,
+    quotaChecks: () => quotaChecks,
     logs,
     clock: () => clock,
     set failListener(value: boolean) {
@@ -287,7 +296,7 @@ describe("runFrontDoorSupervisor", () => {
   it("publishes the launch lifecycle on the event backbone as the registry changes between ticks, and nothing for the baseline a generation inherits", async () => {
     const world = makeWorld();
     const received: DoorEvent[] = [];
-    const detach = world.doorEvents.subscribe(undefined, (event) => {
+    const detach = world.doorEvents.subscribe([LAUNCH_EVENT_SOURCE], (event) => {
       received.push(event);
     });
     // The clock instants the driven changes are observed at, one sleep apart: the world's clock only moves when the supervisor sleeps, so each is the tick's own reading.
@@ -320,5 +329,40 @@ describe("runFrontDoorSupervisor", () => {
       { source: "launch", sequence: 2, payload: { kind: "ended", pid: NEW_SESSION, startedAt: FRONTDOOR_POLL_MS, observedAt: endedAtMs } },
       { source: "launch", sequence: 3, payload: { kind: "pruned", pid: LIVE_SESSION, startedAt: 0, observedAt: prunedAtMs } },
     ]);
+  });
+
+  it("publishes the door's own health on the backbone: the generation once serving, and the idle shutdown before the exit", async () => {
+    const world = makeWorld();
+    const received: DoorEvent[] = [];
+    const detach = world.doorEvents.subscribe([DOOR_HEALTH_EVENT_SOURCE], (event) => {
+      received.push(event);
+    });
+    // The idle exit's clock reading: the window is one minute, the clock advances one tick per second, and the shutdown is observed at the first tick at or past the window.
+    const shutdownAtMs = IDLE_MINUTES * MS_PER_MINUTE;
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports)).toBe(0);
+    detach();
+    expect(received).toEqual([
+      { source: DOOR_HEALTH_EVENT_SOURCE, sequence: 1, payload: { kind: "generation", pid: OWN_PID, providerPort: FRESH_PORT, connectPort: FRESH_PORT, directPort: FRESH_PORT, observedAt: 0 } },
+      { source: DOOR_HEALTH_EVENT_SOURCE, sequence: 2, payload: { kind: "idleShutdown", pid: OWN_PID, observedAt: shutdownAtMs } },
+    ]);
+  });
+
+  it("publishes the listener failure that ends a generation, naming which listener and why", async () => {
+    const world = makeWorld();
+    world.failConnect = true;
+    const received: DoorEvent[] = [];
+    const detach = world.doorEvents.subscribe([DOOR_HEALTH_EVENT_SOURCE], (event) => {
+      received.push(event);
+    });
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports)).toBe(1);
+    detach();
+    // No generation event: the door never fully served.
+    expect(received).toEqual([{ source: DOOR_HEALTH_EVENT_SOURCE, sequence: 1, payload: { kind: "listenerFailed", pid: OWN_PID, listener: "connect", message: "connect chaos", observedAt: 0 } }]);
+  });
+
+  it("runs the expiring-quota check on every tick", async () => {
+    const world = makeWorld();
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: SLACK_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
+    expect(world.quotaChecks()).toBe(SLACK_TICKS);
   });
 });
