@@ -146,6 +146,8 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
         return CHECK;
       },
       doctorReport: () => DOCTOR,
+      poolPick: (): undefined => undefined,
+      poolNames: () => [],
     });
     const server = createFrontDoorServer(
       async () => {

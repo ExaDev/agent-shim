@@ -34,6 +34,7 @@ const EXPECTED_REST_PATHS = [
   "/rest/events",
   "/rest/frontdoor/sessions",
   "/rest/frontdoor/status",
+  "/rest/pool/pick",
   "/rest/rc/answer",
   "/rest/rc/end-session",
   "/rest/rc/events",
@@ -147,6 +148,10 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
       doctorReport: (): DoctorReport => {
         throw new Error("no REST test drives doctor.run");
       },
+      poolPick: (): never => {
+        throw new Error("no REST test drives pool.pick");
+      },
+      poolNames: () => [],
       events: doorEvents,
     });
     // The listener shape the door's own listener takes: it owns the not-matched 404, the mount owns everything under the prefix.

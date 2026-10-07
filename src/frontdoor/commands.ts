@@ -18,6 +18,8 @@ import { lateRcEventDial, lateRcStreamDial, realConnectEffects, realRcEventDial,
 import { createCredentialCustody } from "./custody";
 import { collectCheckReport } from "../checkReport";
 import { collectDoctorReport } from "../doctorReport";
+import { collectPoolPick } from "../poolPickReport";
+import { readPools } from "../poolStore";
 import { listUsageSnapshots, readUsageSnapshot } from "../usage/read";import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
 import { createLaunchEventPublisher } from "./launchEvents";
@@ -243,6 +245,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         frontDoorStatus: () => collectFrontDoorStatus(realFarmFs, realHeadroomSocketTrust, paths, realIsProcessRunning),
         checkReport: (target: string, identity?: string) => collectCheckReport({ paths, cwd: target, ...(identity === undefined ? {} : { identity }), env: process.env }),
         doctorReport: () => collectDoctorReport({ paths, env: process.env }),
+        // The pool table is read per call, not captured here, so a pool created or removed after the door started is ranked or refused by its live name the same moment the CLI would see it.
+        poolPick: (pool: string, directory: string) => {
+          const pools = readPools(paths);
+          return pools[pool] === undefined ? undefined : collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: pool, pools, directory, nowMs: Date.now() });
+        },
+        poolNames: () => Object.keys(readPools(paths)).sort(),
       };
       // Written before the listener binds, so a listener that answers control requests is always one whose token exists; removed when this listener closes, so an idle-shut door leaves no token behind that a squatter on the port could be probed with.
       realFarmFs.mkdirp(paths.frontdoorDir);

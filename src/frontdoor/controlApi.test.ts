@@ -6,9 +6,12 @@ import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 
 import { checkReportToJson, runCheck, type CheckReport, type RunCheckParams } from "../checkReport";
+import type { Pool } from "../config/schema";
 import type { DoctorReport } from "../doctorReport";
 import type { CascadeInput } from "../resolve/walk";
-import { createFakeFarmFs, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, shippedClassification } from "../test-helpers";
+import { collectPoolPick } from "../poolPickReport";
+import { createFakeFarmFs, fakeFs, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, paths, shippedClassification } from "../test-helpers";
+import { type PoolPickReport } from "../usage/pickReportSchema";
 import { USAGE_SCHEMA_VERSION, type UsageSnapshot } from "../usage/schema";
 import { type ControlApiClient, createControlApiRouter, type ControlApiDeps } from "./controlApi";
 import type { RcLiveRateLimit } from "./rcSchemas";
@@ -108,6 +111,14 @@ const DOCTOR: DoctorReport = {
 /** The report the check procedure returns, a real `runCheck` product so the procedure's own output validation proves the schema matches what the collector produces. */
 const CHECK: CheckReport = runCheck(baseCheckParams());
 
+/** The pool table the pick ranks against: the two stand-in identities the fake filesystem carries, so the ranking's candidates are real names. */
+const POOLS: Readonly<Record<string, Pool>> = { subs: { identities: ["work", "personal"] } };
+
+/** The one pool these tests rank, and the report its pick returns: a real `collectPoolPick` product over the same stand-ins `check`'s tests use, so the procedure's own output validation proves the schema matches what the collector produces. */
+const POOL_PICKS: Readonly<Record<string, PoolPickReport>> = {
+  subs: collectPoolPick({ paths, fs: fakeFs({}), usageFs: createFakeFarmFs({}), poolName: "subs", pools: POOLS, directory: `${FAKE_HOME}/work`, nowMs: NOW_MS }),
+};
+
 /** The deps every procedure in these tests runs against, each read answered by a fixed value the assertions name. */
 const DEPS: ControlApiDeps = {
   expectedToken: CONTROL_TOKEN,
@@ -125,6 +136,8 @@ const DEPS: ControlApiDeps = {
     return CHECK;
   },
   doctorReport: () => DOCTOR,
+  poolPick: (pool, directory) => POOL_PICKS[pool] === undefined || directory !== `${FAKE_HOME}/work` ? undefined : POOL_PICKS[pool],
+  poolNames: () => Object.keys(POOL_PICKS),
 };
 
 /** Mounts one router of the door's typed API on a plain loopback listener and returns a typed client for it with the given token, the same node handler the provider listener mounts so the prefix, the token middleware and both directions of validation all run. */
@@ -326,6 +339,35 @@ describe("the door's control-plane API", () => {
 
     it("refuses a caller without this generation's control token", async () => {
       await expect(refused.doctor.run()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    });
+  });
+
+  describe("pool", () => {
+    it("returns the ranking `pool pick` itself produces, the collector's own product over an absolute directory", async () => {
+      // The procedure's output validation is the assertion: a real `collectPoolPick` product must satisfy the report schema, exactly as the check case proves its collector against `CheckReportJsonSchema`.
+      expect(await client.pool.pick({ pool: "subs", path: `${FAKE_HOME}/work` })).toEqual(POOL_PICKS.subs);
+    });
+
+    it("refuses an unknown pool naming the live ones, never an empty ranking", async () => {
+      const refusal = await client.pool.pick({ pool: "fleet", path: `${FAKE_HOME}/work` }).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(refusal).toMatchObject({ code: "NOT_FOUND" });
+      expect((refusal as { message?: string }).message).toContain('no pool is named fleet; the live pools are "subs"');
+    });
+
+    it("refuses a relative path for the same reason the check query refuses one", async () => {
+      const refusal = await client.pool.pick({ pool: "subs", path: "work" }).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(refusal).toMatchObject({ code: "BAD_REQUEST" });
+      expect(JSON.stringify(refusal)).toContain("path must be absolute");
+    });
+
+    it("refuses a caller without this generation's control token", async () => {
+      await expect(refused.pool.pick({ pool: "subs", path: `${FAKE_HOME}/work` })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     });
   });
 });
