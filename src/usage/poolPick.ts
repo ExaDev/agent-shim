@@ -110,7 +110,7 @@ function rankNamedPool(input: Readonly<RankPoolGraphInput>, poolName: string, st
     if (nestedName === undefined) {
       const member = loaded.get(poolMemberIdentity(entry));
       if (member !== undefined) {
-        members.push(member);
+        members.push(typeof entry === "string" ? member : { ...member, policy: entry.when });
       }
       continue;
     }
@@ -121,7 +121,8 @@ function rankNamedPool(input: Readonly<RankPoolGraphInput>, poolName: string, st
       throw new PoolGraphError(`Pool "${poolName}" member "${poolMemberIdentity(entry)}" closes a cycle: ${[...childStack.slice(childStack.indexOf(nestedName)), nestedName].join(" -> ")}. A pool cannot nest itself, directly or through another pool.`);
     }
     const nested = nestedMember(input, nestedName, childStack, sticky);
-    members.push(nested.member);
+    // A condition on a nested entry guards the whole subtree: it rides the contributed pick's member, so the same rule skips or demotes the entry whatever it nests.
+    members.push(typeof entry === "string" ? nested.member : { ...nested.member, policy: entry.when });
     missing.push(...nested.missing);
   }
   const ranking = rankPool({

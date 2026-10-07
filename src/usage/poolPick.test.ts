@@ -123,6 +123,19 @@ describe("rankPoolGraph", () => {
     expect(ranking.pick?.reasons.join(" ").split("7d 60% used, resets in 1h")).toHaveLength(2);
   });
 
+  it("guards a nested subtree with its entry's when: a condition that does not hold makes the entry ineligible by policy", () => {
+    // The fleet's pick would be eligible; the entry's own policy (seven-day utilisation below half) does not hold, so the whole subtree is skipped and the outer pool falls to its other member.
+    const pools: Record<string, Pool> = {
+      outer: { identities: [{ identity: "pool:fleet", when: { kind: "compare", op: "lt", left: { kind: "reference", key: "quota.sevenDay.utilization" }, right: { kind: "numberLiteral", value: 0.5 } } }, "far"] },
+      fleet: { identities: ["soon"] },
+    };
+    const { ranking } = graph(pools, "outer", { soon: { utilization: 0.9, resetsInMs: HOUR_MS }, far: { utilization: 0.6, resetsInMs: SIX_DAYS_MS } });
+    expect(ranking.pick?.identity).toBe("far");
+    const guarded = ranking.candidates.find((candidate) => candidate.identity === "soon");
+    expect(guarded).toMatchObject({ class: "ineligible" });
+    expect(guarded?.reasons[0]).toContain("skipped by policy");
+  });
+
   it("makes an entry whose nested pool is entirely refused ineligible, propagating that pool's earliest return", () => {
     const pools: Record<string, Pool> = { outer: { identities: ["pool:fleet"] }, fleet: { identities: ["a", "b"] } };
     const { ranking } = graph(pools, "outer", { a: { utilization: FULL, resetsInMs: THREE_HOURS_MS, status: "rejected" }, b: { utilization: FULL, resetsInMs: HOUR_MS, status: "rejected" } });

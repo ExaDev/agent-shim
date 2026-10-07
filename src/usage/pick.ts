@@ -1,3 +1,5 @@
+import type { WhenCondition } from "../config/schema";
+import { evaluateWhen, type ConditionContext, type PoolWindowFacts } from "../resolve/conditions";
 import { planOf, type PlanClass } from "./plan";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import { effectiveWindow, formatAge, type EffectiveWindow } from "./preflight";
@@ -44,6 +46,8 @@ export interface PoolMember {
   readonly records: readonly UsageRecord[];
   /** Present when this member stands for a nested `pool:<name>` entry rather than a direct identity. */
   readonly nested?: NestedContribution;
+  /** The member entry's policy condition, from the object form of a pool member: definite false skips the member as ineligible by policy, indeterminate demotes it to last within its class, naming the missing fact either way. */
+  readonly policy?: WhenCondition;
 }
 
 /** The member last picked for this directory, kept so a conversation stays on the account whose prompt cache is warm. */
@@ -77,6 +81,8 @@ export interface Candidate {
   /** When an `ineligible` candidate can be used again. */
   readonly blockedUntilMs?: number;
   readonly plan: PlanClass;
+  /** True when the member's policy condition could not be decided and it is ranked last within its class, naming the missing fact in its reasons. */
+  readonly policyDemoted?: boolean;
   /** Human-readable facts behind the class and score, in the order they matter. */
   readonly reasons: readonly string[];
 }
@@ -270,6 +276,30 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
   };
 }
 
+/** One member's pool-selection facts, the reference namespace's `quota.*` and `session.*` half; the window facts the member's own assessment read, and the session facts the whole ranking was given. */
+function poolFactsOf(member: PoolMember, nowMs: number, resuming: boolean, sticky?: StickyPick): { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts; readonly burnPerHour?: number; readonly resuming: boolean; readonly lastPickHoursAgo?: number } {
+  const unified = member.snapshot?.providers[ANTHROPIC_PROVIDER]?.rateLimit?.unified;
+  const window = (which: "fiveHour" | "sevenDay"): PoolWindowFacts | undefined => {
+    const raw = unified?.[which];
+    if (raw?.utilization === undefined) {
+      return undefined;
+    }
+    if (raw.resetsAt === undefined) {
+      // A window that reports no reset instant cannot answer the hours-until-reset fact, so the whole window is absent and a condition referencing it is indeterminate, never a guessed zero.
+      return undefined;
+    }
+    return { remaining: Math.max(0, 1 - raw.utilization), utilization: raw.utilization, hoursUntilReset: Math.max(0, (Date.parse(raw.resetsAt) - nowMs) / MS_PER_HOUR) };
+  };
+  const burn = windowBurn(member.records, "fiveHour");
+  return {
+    ...(window("fiveHour") === undefined ? {} : { fiveHour: window("fiveHour") }),
+    ...(window("sevenDay") === undefined ? {} : { sevenDay: window("sevenDay") }),
+    ...(burn === undefined ? {} : { burnPerHour: burn * MS_PER_HOUR }),
+    resuming,
+    ...(sticky?.identity === member.identity ? { lastPickHoursAgo: Math.max(0, (nowMs - Date.parse(sticky.at)) / MS_PER_HOUR) } : {}),
+  };
+}
+
 /**
  * Ranks `members` for a launch.
  *
@@ -279,13 +309,31 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
  */
 export function rankPool(input: RankPoolInput): PoolRanking {
   const { members, nowMs } = input;
-  const assessments = members.map((member) => assess(member, nowMs));
+  // The member paired with its assessment, because the policy guard reads the entry's own condition beside what the assessment found.
+  const assessments = members.map((member): { member: PoolMember } & Assessment => ({ member, ...assess(member, nowMs) }));
 
   // The person's demand, in plan-size units per millisecond, is what a member without readings of its own is projected with. The highest observed is used so an unmeasured member is not credited with more room than the measured pace allows.
   const demands = assessments.flatMap(({ candidate, burn }) => (burn === undefined ? [] : [burn * capacityOf(candidate.plan)]));
   const sharedDemand = demands.length === 0 ? undefined : Math.max(...demands);
 
-  const candidates: Candidate[] = assessments.map((assessment) => {
+  // The member entry's policy guard, evaluated over the member's own facts before anything ranks: definite false replaces the candidate with an ineligible-by-policy one naming the condition, indeterminate marks the candidate demoted (last within its class) naming the missing fact. The nested entries carry their condition the same way, so one rule guards a subtree and a member alike.
+  const guarded: readonly ({ member: PoolMember } & Assessment)[] = assessments.map((assessment) => {
+    const { candidate } = assessment;
+    if (candidate.class === "ineligible" || assessment.member.policy === undefined) {
+      return assessment;
+    }
+    const context: ConditionContext = { nowMs, env: {}, pool: poolFactsOf(assessment.member, nowMs, input.resuming, input.sticky) };
+    const verdict = evaluateWhen(assessment.member.policy, context);
+    if (verdict.status === "indeterminate") {
+      return { ...assessment, candidate: { ...candidate, policyDemoted: true, reasons: [`policy undecided (${verdict.checked.join(", ") === "predicate" ? "predicate" : verdict.checked.join(", ")}): ${verdict.reason}`, ...candidate.reasons] } };
+    }
+    if (verdict.passed) {
+      return assessment;
+    }
+    return { ...assessment, candidate: { ...candidate, class: "ineligible", reasons: [`skipped by policy (${verdict.checked.join(", ")}: did not hold)`, ...candidate.reasons] } };
+  });
+
+  const candidates: Candidate[] = guarded.map((assessment): Candidate => {
     const { candidate, fiveHour, burn } = assessment;
     const pace = burn ?? (sharedDemand === undefined ? undefined : sharedDemand / capacityOf(candidate.plan));
     // The seven-day window projects only from its own observed pace. The shared demand is measured in five-hour utilisation fractions rescaled by plan size, and the ratio between the two windows' capacities is not documented anywhere the door can read, so converting a five-hour pace into seven-day fractions would be a guess dressed as arithmetic. A member whose seven-day utilisation has been seen rising twice has a pace of its own, which is exactly the tail case the projection exists for.
@@ -319,6 +367,7 @@ export function rankPool(input: RankPoolInput): PoolRanking {
       : [...candidates].sort(
           (left, right) =>
             CLASS_ORDER[left.class] - CLASS_ORDER[right.class] ||
+            Number(left.policyDemoted ?? false) - Number(right.policyDemoted ?? false) ||
             Number(right.feasible) - Number(left.feasible) ||
             (right.score ?? 0) - (left.score ?? 0) ||
             left.identity.localeCompare(right.identity),
