@@ -326,8 +326,13 @@ const SELECTOR_RE = new RegExp(`^(${POOL_SELECTOR_PREFIX}${POOL_NAME_PATTERN}|${
 /** What a directory rule, a portable config or the active-identity file may name: a concrete identity, or `pool:<name>` to have agent-shim pick one member of a pool at launch. */
 const IdentitySelectorSchema = z.string().min(1).regex(SELECTOR_RE);
 
-/** A pool's member entry: a concrete identity, or `pool:<name>` to nest another pool as a member, evaluated with that pool's own policy at the position the entry occupies. The same union an identity selector accepts. */
-const PoolMemberSchema = z.string().min(1).regex(SELECTOR_RE);
+/** A pool's member entry: a concrete identity, or `pool:<name>` to nest another pool as a member, evaluated with that pool's own policy at the position the entry occupies. The same union an identity selector accepts, in the plain string form; the object form carries a `when` condition beside the same identity, the policy guard #258's ranking evaluates over the facts the ranker holds. */
+const PoolMemberSchema = z.union([z.string().min(1).regex(SELECTOR_RE), z.strictObject({ identity: z.string().min(1).regex(SELECTOR_RE), when: WhenSchema })]);
+
+/** The identity a member entry names, whichever form the entry takes. */
+export function poolMemberIdentity(member: z.output<typeof PoolMemberSchema>): string {
+  return typeof member === "string" ? member : member.identity;
+}
 
 /** The preference modes a pool may choose among its members with. */
 export const POOL_PREFERENCES = ["score", "listed"] as const;
@@ -344,7 +349,9 @@ export type PoolPreference = z.infer<typeof PoolPreferenceSchema>;
  * `preference` decides how the member is chosen, and an absent field means "score". "score" ranks members by plan-size-weighted remaining quota per hour until reset, so the quota closest to expiring is spent first (use-it-or-lose-it). "listed" ranks members strictly in the order the pool lists them, skipping only a member that is currently refused, so a pool can pin one identity first and fall back to the others only while that one is refused.
  */
 export const PoolSchema = z.strictObject({
-  identities: z.array(PoolMemberSchema).min(1).refine((members) => new Set(members).size === members.length, { message: "pool members must be unique" }),
+  identities: z.array(PoolMemberSchema)
+    .min(1)
+    .refine((members) => new Set(members.map(poolMemberIdentity)).size === members.length, { message: "pool members must be unique" }),
   preference: PoolPreferenceSchema.optional(),
 });
 export type Pool = z.infer<typeof PoolSchema>;

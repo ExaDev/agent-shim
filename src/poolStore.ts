@@ -1,7 +1,10 @@
 import { CliError, UsageError } from "./cliError";
 import { readGlobalConfig } from "./configProfilesStore";
 import { applyPatch } from "./config/store";
-import { GlobalConfigSchema, PoolNameSchema, type Pool, type PoolPreference } from "./config/schema";
+import { GlobalConfigSchema, PoolNameSchema, poolMemberIdentity, type Pool, type PoolPreference } from "./config/schema";
+
+/** One pool member entry, whichever form it takes: the plain selector string, or the object form carrying its policy condition. */
+export type PoolMemberEntry = Pool["identities"][number];
 import { poolNameOf } from "./launcher/identity";
 import type { LayoutPaths } from "./paths";
 
@@ -56,7 +59,7 @@ function writePools(paths: LayoutPaths, pools: Readonly<Record<string, Pool>>): 
 export function poolCycleOf(pools: Readonly<Record<string, Pool>>, name: string): readonly string[] | undefined {
   const walk = (current: string, path: readonly string[]): readonly string[] | undefined => {
     for (const entry of pools[current]?.identities ?? []) {
-      const nested = poolNameOf(entry);
+      const nested = poolNameOf(poolMemberIdentity(entry));
       if (nested === undefined) {
         continue;
       }
@@ -80,11 +83,12 @@ export function poolCycleOf(pools: Readonly<Record<string, Pool>>, name: string)
 /**
  * Refuses member entries only the store can see the problems with: a `pool:<name>` entry naming a pool that is not defined, and any nesting that would make the pool reach itself. Identity entries are the command's concern (`requireIdentities`); a nested entry's own identities are checked the same way when that pool was written.
  */
-function validateMembers(pools: Readonly<Record<string, Pool>>, name: string, members: readonly string[]): void {
+function validateMembers(pools: Readonly<Record<string, Pool>>, name: string, members: readonly PoolMemberEntry[]): void {
   for (const entry of members) {
-    const nested = poolNameOf(entry);
+    const identity = poolMemberIdentity(entry);
+    const nested = poolNameOf(identity);
     if (nested !== undefined && nested !== name && pools[nested] === undefined) {
-      throw new UsageError(`Member "${entry}" of pool "${name}" names a pool that is not defined. Run \`agent-shim pool add ${nested} --identity <name>...\` first.`);
+      throw new UsageError(`Member "${identity}" of pool "${name}" names a pool that is not defined. Run \`agent-shim pool add ${nested} --identity <name>...\` first.`);
     }
   }
   const cycle = poolCycleOf({ ...pools, [name]: { identities: [...members] } }, name);
@@ -94,7 +98,7 @@ function validateMembers(pools: Readonly<Record<string, Pool>>, name: string, me
 }
 
 /** Defines a new pool. Throws `InvalidPoolNameError` for a name `PoolNameSchema` rejects, `PoolAlreadyExistsError` for one already defined, and `UsageError` for a nested member that names an undefined pool or a cycle. */
-export function addPool(paths: LayoutPaths, name: string, identities: readonly string[], preference?: PoolPreference): Pool {
+export function addPool(paths: LayoutPaths, name: string, identities: readonly PoolMemberEntry[], preference?: PoolPreference): Pool {
   if (!PoolNameSchema.safeParse(name).success) {
     throw new InvalidPoolNameError(name);
   }
@@ -109,7 +113,7 @@ export function addPool(paths: LayoutPaths, name: string, identities: readonly s
 }
 
 /** Replaces an existing pool's members and preference. Throws `PoolNotFoundError` when it is not defined, and `UsageError` for a nested member that names an undefined pool or a cycle. */
-export function setPool(paths: LayoutPaths, name: string, identities: readonly string[], preference?: PoolPreference): Pool {
+export function setPool(paths: LayoutPaths, name: string, identities: readonly PoolMemberEntry[], preference?: PoolPreference): Pool {
   requirePool(paths, name);
   validateMembers(readPools(paths), name, identities);
   const pool: Pool = { identities: [...identities], ...(preference === undefined ? {} : { preference }) };
