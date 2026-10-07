@@ -1,3 +1,13 @@
+## [8.31.0](https://github.com/ExaDev/agent-shim/compare/v8.30.0...v8.31.0) (2026-10-07)
+
+### Features
+
+* publish quota, door-health and expiring-quota events on the door's backbone ([30b1898](https://github.com/ExaDev/agent-shim/commit/30b18986b036355e7c7fda68501e7df9c5eb0558))
+
+### Code Refactoring
+
+* keep the seven-day window span module-private ([3f71f1e](https://github.com/ExaDev/agent-shim/commit/3f71f1e481e85849ac9cc2956521fa8829b8a1d6))
+
 ## [8.30.0](https://github.com/ExaDev/agent-shim/compare/v8.29.0...v8.30.0) (2026-10-07)
 
 ### Features
