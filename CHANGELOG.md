@@ -1,3 +1,10 @@
+## [8.34.0](https://github.com/ExaDev/agent-shim/compare/v8.33.0...v8.34.0) (2026-10-07)
+
+### Features
+
+* drive pool member selection with when conditions ([b7263b5](https://github.com/ExaDev/agent-shim/commit/b7263b568ecf8dab51bb82dc0ff51f9dc84ff8c6))
+* let a pool member entry carry a when condition ([33b03a4](https://github.com/ExaDev/agent-shim/commit/33b03a4968c6fec8cfb8746ae66764aebf46cd5b)), references [#177](https://github.com/ExaDev/agent-shim/issues/177)
+
 ## [8.33.0](https://github.com/ExaDev/agent-shim/compare/v8.32.0...v8.33.0) (2026-10-07)
 
 ### Features
