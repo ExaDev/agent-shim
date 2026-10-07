@@ -1,3 +1,9 @@
+## [8.35.0](https://github.com/ExaDev/agent-shim/compare/v8.34.0...v8.35.0) (2026-10-07)
+
+### Features
+
+* route requests to a provider by the model they ask for ([f30cb06](https://github.com/ExaDev/agent-shim/commit/f30cb0622fd96f5bf7514f231ffcb6c3d22e13bb))
+
 ## [8.34.0](https://github.com/ExaDev/agent-shim/compare/v8.33.0...v8.34.0) (2026-10-07)
 
 ### Features
