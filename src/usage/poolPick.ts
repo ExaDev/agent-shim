@@ -6,6 +6,7 @@ import type { Pool } from "../config/schema";
 import { poolNameOf } from "../launcher/identity";
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
+import { poolMemberIdentity } from "../config/schema";
 import { AccountMetadataError, readAccountMetadata } from "./account";
 import { FIVE_HOUR_WINDOW_MS, rankPool, type PoolMember, type PoolRanking, type StickyPick } from "./pick";
 import { readUsageLog, readUsageSnapshot, UsageSnapshotError, type UsageReadFs } from "./read";
@@ -100,24 +101,24 @@ function rankNamedPool(input: Readonly<RankPoolGraphInput>, poolName: string, st
   const childStack = [...stack, poolName];
 
   // One log read per level: the direct identity entries are loaded as a batch, then laid down in member order around the nested entries' contributions.
-  const direct = pool.identities.filter((entry) => poolNameOf(entry) === undefined);
-  const missing = direct.filter((entry) => !input.identityExists(entry)).map((identity) => ({ pool: poolName, identity }));
-  const loaded = new Map(loadPoolMembers(input.fs, input.paths, direct.filter(input.identityExists), input.nowMs).map((member) => [member.identity, member]));
+  const direct = pool.identities.filter((entry) => poolNameOf(poolMemberIdentity(entry)) === undefined);
+  const missing = direct.filter((entry) => !input.identityExists(poolMemberIdentity(entry))).map((entry) => ({ pool: poolName, identity: poolMemberIdentity(entry) }));
+  const loaded = new Map(loadPoolMembers(input.fs, input.paths, direct.filter((entry) => input.identityExists(poolMemberIdentity(entry))).map(poolMemberIdentity), input.nowMs).map((member) => [member.identity, member]));
   const members: PoolMember[] = [];
   for (const entry of pool.identities) {
-    const nestedName = poolNameOf(entry);
+    const nestedName = poolNameOf(poolMemberIdentity(entry));
     if (nestedName === undefined) {
-      const member = loaded.get(entry);
+      const member = loaded.get(poolMemberIdentity(entry));
       if (member !== undefined) {
         members.push(member);
       }
       continue;
     }
     if (input.pools[nestedName] === undefined) {
-      throw new PoolGraphError(`Pool "${poolName}" member "${entry}" names a pool that is not defined.`);
+      throw new PoolGraphError(`Pool "${poolName}" member "${poolMemberIdentity(entry)}" names a pool that is not defined.`);
     }
     if (childStack.includes(nestedName)) {
-      throw new PoolGraphError(`Pool "${poolName}" member "${entry}" closes a cycle: ${[...childStack.slice(childStack.indexOf(nestedName)), nestedName].join(" -> ")}. A pool cannot nest itself, directly or through another pool.`);
+      throw new PoolGraphError(`Pool "${poolName}" member "${poolMemberIdentity(entry)}" closes a cycle: ${[...childStack.slice(childStack.indexOf(nestedName)), nestedName].join(" -> ")}. A pool cannot nest itself, directly or through another pool.`);
     }
     const nested = nestedMember(input, nestedName, childStack, sticky);
     members.push(nested.member);

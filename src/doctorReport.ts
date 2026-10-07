@@ -10,7 +10,7 @@ import { lookupKeychainService } from "./checkReport";
 import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
-import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, isCodexProvider, ProviderSchema, type Credential } from "./config/schema";
+import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, isCodexProvider, poolMemberIdentity, ProviderSchema, type Credential } from "./config/schema";
 import { describeCredential, type CredentialCacheEnv } from "./credential";
 import { describeCachedCredential, formatCachedCredentialState } from "./credentialCache";
 import { realCredentialCacheEnv } from "./realCredentialCache";
@@ -440,16 +440,16 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   const validatedGlobalConfig = params.globalConfig.raw === undefined ? undefined : validateJson(GlobalConfigSchema, params.globalConfig);
   const pools = validatedGlobalConfig?.ok === true ? (validatedGlobalConfig.data.pools ?? {}) : {};
   for (const [poolName, pool] of Object.entries(pools)) {
-    const missing = pool.identities.filter((member) => poolNameOf(member) === undefined && !validIdentityNames.has(member));
+    const missing = pool.identities.filter((member) => poolNameOf(poolMemberIdentity(member)) === undefined && !validIdentityNames.has(poolMemberIdentity(member)));
     const undefinedPools = pool.identities.flatMap((member) => {
-      const nested = poolNameOf(member);
+      const nested = poolNameOf(poolMemberIdentity(member));
       return nested === undefined || nested in pools ? [] : [nested];
     });
     if (missing.length === 0 && undefinedPools.length === 0) {
-      push("pool", "pass", `${poolName} is valid (${pool.identities.join(", ")}).`, poolName);
+      push("pool", "pass", `${poolName} is valid (${pool.identities.map(poolMemberIdentity).join(", ")}).`, poolName);
     } else {
       const problems = [
-        ...missing.map((member) => `identity "${member}", which does not exist`),
+        ...missing.map((member) => `identity "${poolMemberIdentity(member)}", which does not exist`),
         ...undefinedPools.map((nested) => `pool "${nested}", which is not defined`),
       ];
       push("pool", "fail", `Pool "${poolName}" names ${problems.join(" and ")}.`, poolName);

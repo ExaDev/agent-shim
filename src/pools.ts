@@ -8,6 +8,7 @@ import { listIdentities, readActiveIdentity, useIdentity, IdentityNotFoundError 
 import type { LayoutPaths } from "./paths";
 import { addPool, readPools, removePool, requirePool, setPool } from "./poolStore";
 import { poolNameOf } from "./launcher/identity";
+import { poolMemberIdentity } from "./config/schema";
 import { realFarmFs, realFsPort } from "./realPorts";
 import { formatAge } from "./usage/preflight";
 import { collectPoolPick } from "./poolPickReport";
@@ -99,12 +100,14 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         }
         const members = options.identity === undefined ? existing.identities : membersOf(options);
         if (options.identity !== undefined) {
-          requireIdentities(paths, members);
+          // Only the freshly listed names are validated: the pass-through keeps object entries whose condition the CLI does not restate.
+          requireIdentities(paths, membersOf(options));
         }
+        // The listing prints member names whichever form an entry takes; an object entry's condition is configuration the ranking reads, not something the CLI restates.
         const preference = options.preference === undefined ? existing.preference : options.preference === false ? undefined : options.preference;
         const updated = setPool(paths, name, members, preference);
         reportMutation(options.json, { action: "updated", kind: "pool", name, value: updated }, () => {
-          console.log(`Pool "${name}" now has ${members.join(", ")}.`);
+          console.log(`Pool "${name}" now has ${members.map(poolMemberIdentity).join(", ")}.`);
         });
       }),
     ["agent-shim pool set subs --identity work --identity personal --identity spare", "agent-shim pool set subs --preference listed"],
@@ -129,7 +132,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         }
         for (const name of names) {
           const entry = pools[name];
-          console.log(`${active === `${POOL_SELECTOR_PREFIX}${name}` ? "*" : " "} ${name}: ${(entry?.identities ?? []).join(", ")}${entry?.preference === undefined ? "" : " (preference: listed)"}`);
+          console.log(`${active === `${POOL_SELECTOR_PREFIX}${name}` ? "*" : " "} ${name}: ${(entry?.identities ?? []).map(poolMemberIdentity).join(", ")}${entry?.preference === undefined ? "" : " (preference: listed)"}`);
         }
       }),
     ["agent-shim pool list", "agent-shim pool list --json"],
@@ -147,7 +150,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
           return;
         }
         console.log(`Pool: ${name}`);
-        console.log(`Members: ${entry.identities.join(", ")}`);
+        console.log(`Members: ${entry.identities.map(poolMemberIdentity).join(", ")}`);
         if (entry.preference !== undefined) {
           console.log(`Preference: ${entry.preference}`);
         }
