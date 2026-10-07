@@ -1,3 +1,14 @@
+## [8.28.0](https://github.com/ExaDev/agent-shim/compare/v8.27.1...v8.28.0) (2026-10-07)
+
+### Features
+
+* **rig:** add the OAuth-capable MCP server the MCP OAuth proof needs ([e2766e9](https://github.com/ExaDev/agent-shim/commit/e2766e9c908cb97bc24f6404c8e7e2563a7e6408)), references [#272](https://github.com/ExaDev/agent-shim/issues/272)
+* **rig:** drive the MCP OAuth walk from the mock provider ([a4fb15e](https://github.com/ExaDev/agent-shim/commit/a4fb15e634bbad7bf0e2dbbd0613d7d5de20a8d1))
+
+### Documentation
+
+* describe the MCP OAuth proof on the interception rig ([65b9c61](https://github.com/ExaDev/agent-shim/commit/65b9c612b51ceb19cf0a2ca0c69649df552c6c72)), references [#271](https://github.com/ExaDev/agent-shim/issues/271)
+
 ## [8.27.1](https://github.com/ExaDev/agent-shim/compare/v8.27.0...v8.27.1) (2026-10-07)
 
 ### Bug Fixes
