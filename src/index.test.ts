@@ -24,8 +24,8 @@ describe("library surface", () => {
 
   it("evaluates a rule's `when` with the semantics the cascade uses", () => {
     const context = { nowMs: 0, env: { CI: "1" }, branch: "main", branchDetached: false } satisfies library.ConditionContext;
-    expect(library.evaluateWhen({ branch: "main" }, context)).toEqual({ passed: true, checked: ["branch"], failed: [] });
-    expect(library.evaluateWhen({ branch: "release/*" }, context)).toMatchObject({ passed: false, failed: ["branch"] });
+    expect(library.evaluateWhen({ branch: "main" }, context)).toEqual({ status: "definite", passed: true, checked: ["branch"], failed: [] });
+    expect(library.evaluateWhen({ branch: "release/*" }, context)).toMatchObject({ status: "definite", passed: false, failed: ["branch"] });
     expect(library.matchBranch("feat/*", "feat/x")).toBe(true);
   });
 

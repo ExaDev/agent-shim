@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import { z } from "zod";
+import { PredicateNodeSchema } from "trilean";
 
 import { NUMERIC_DOTTED_VERSION_RE } from "../versionDiscovery";
 
@@ -63,14 +64,20 @@ const DurationSchema = z.string().regex(DURATION_RE);
 /**
  * A conditional guard on an entries value or a whole directory rule. Every field present within one `when` object must hold (AND logic). An empty object is vacuously true — `agent-shim check` warns about it, it is never an error.
  */
-export const WhenSchema = z.strictObject({
+export const WhenConditionObjectSchema = z.strictObject({
   newerThan: DurationSchema.optional(),
   olderThan: DurationSchema.optional(),
   maxSizeBytes: z.int().positive().optional(),
   branch: z.string().min(1).optional(),
   env: z.record(z.string().min(1), z.string()).optional(),
 });
-export type WhenCondition = z.infer<typeof WhenSchema>;
+
+/**
+ * A `when` condition, in either form. The object form is the original sugar (every present field must hold); the predicate form is a trilean predicate tree, which expresses OR and NOT and reports a missing fact as indeterminate rather than failed. The two are one union, not a migration: every existing configuration keeps parsing, and `evaluateWhen` gives the object form the same semantics it always had by mapping it onto the equivalent predicates.
+ */
+export const WhenSchema = z.union([WhenConditionObjectSchema, PredicateNodeSchema]);
+export type WhenConditionObject = z.output<typeof WhenConditionObjectSchema>;
+export type WhenCondition = z.output<typeof WhenSchema>;
 
 /** An entries value: a flat boolean, or a boolean guarded by a `when` condition. */
 export const EntryValueSchema = z.union([

@@ -1,6 +1,7 @@
 import picomatch from "picomatch";
+import { createSyncEvaluator, type PredicateNode, type Resolution, type SyncResolvers } from "trilean";
 
-import { DURATION_RE, type WhenCondition } from "../config/schema";
+import { DURATION_RE, type WhenCondition, type WhenConditionObject } from "../config/schema";
 import type { EntryFact } from "./types";
 
 const MILLISECONDS_PER_UNIT: Readonly<Record<string, number>> = Object.freeze({
@@ -48,14 +49,12 @@ export interface ConditionContext {
   readonly env: Readonly<Record<string, string | undefined>>;
 }
 
-/** The result of evaluating one `when` object. */
-export interface WhenEvaluation {
-  readonly passed: boolean;
-  /** Which condition fields were present and evaluated. */
-  readonly checked: readonly string[];
-  /** Which of those fields did not hold. Empty when `passed` is true. */
-  readonly failed: readonly string[];
-}
+/**
+ * The result of evaluating one `when`: definite, with which condition fields were present and which of those did not hold, or indeterminate, when a datum the condition needed is missing. Indeterminate is not false: a missing fact has not failed the condition, it has left it undecided, and the consumer decides what an undecided entry does (the resolver keeps today's behaviour of not passing it, so nothing changes for existing configurations; the pool ranking of #258 instead keeps such a member but ranks it last, naming the missing fact).
+ */
+export type WhenEvaluation =
+  | { readonly status: "definite"; readonly passed: boolean; /** Which condition fields were present and evaluated. */ readonly checked: readonly string[]; /** Which of those fields did not hold. Empty when `passed` is true. */ readonly failed: readonly string[] }
+  | { readonly status: "indeterminate"; /** What was missing or wrong, in the evaluation's own words. */ readonly reason: string; readonly checked: readonly string[] };
 
 /** True when `branch` matches `pattern`. The pattern is glob-capable (`client/*`); a detached HEAD or a non-repository directory never matches. */
 export function matchBranch(pattern: string, branch: string | undefined, detached = false): boolean {
@@ -65,66 +64,105 @@ export function matchBranch(pattern: string, branch: string | undefined, detache
   return picomatch(pattern, { dot: true, nocase: false })(branch);
 }
 
+/** The evaluator every `when` runs through: the trilean package's own synchronous one, so OR, NOT and missing-fact indeterminacy are its semantics rather than a re-derivation. */
+const evaluator = createSyncEvaluator({});
+
+/** One resolver over the condition context's facts, keyed by the reference names the `when` forms document: `now` (epoch milliseconds), `entry.latestMtimeMs`, `entry.totalSizeBytes`, `repo.branch`, `repo.detached`, and `env.<NAME>` for every environment variable. A name the context cannot answer resolves not-found, which the evaluator carries as indeterminate, the unknown semantics itself. */
+function resolversOf(context: ConditionContext): SyncResolvers {
+  const values: Readonly<Record<string, number | string | boolean>> = {
+    now: context.nowMs,
+    ...(context.fact?.latestMtimeMs === undefined ? {} : { "entry.latestMtimeMs": context.fact.latestMtimeMs }),
+    ...(context.fact?.totalSizeBytes === undefined ? {} : { "entry.totalSizeBytes": context.fact.totalSizeBytes }),
+    ...(context.branch === undefined ? {} : { "repo.branch": context.branch }),
+    "repo.detached": context.branchDetached ?? false,
+  };
+  return {
+    resolveValue: (key): Resolution => {
+      // A computed value is tagged by its own kind, so each fact resolves as what it is: a number, a text or a boolean, never a bare primitive the evaluator would have to guess about.
+      const wrap = (value: number | string | boolean): Resolution => ({ found: true, value: typeof value === "number" ? { kind: "number", value } : typeof value === "string" ? { kind: "text", value } : { kind: "boolean", value } });
+      if (typeof key !== "string") {
+        return { found: false };
+      }
+      if (key.startsWith("env.")) {
+        const value = context.env[key.slice("env.".length)];
+        return value === undefined ? { found: false } : wrap(value);
+      }
+      const value = values[key];
+      return value === undefined ? { found: false } : wrap(value);
+    },
+    // This embedding provides the reference namespace only: a tree that asks for a lookup or a collection finds neither, which the evaluator carries as indeterminate rather than letting the tree pretend an answer.
+    resolveLookup: () => ({ found: false }),
+    resolveCollection: () => [],
+  };
+}
+
+/** The predicate one field of the object form maps onto. Each is stated once here, so the object form and the predicate form cannot drift apart in semantics. */
+function fieldPredicate(field: keyof WhenConditionObject, when: WhenConditionObject, context: ConditionContext): PredicateNode {
+  switch (field) {
+    case "newerThan": {
+      const window = parseDuration(when.newerThan ?? "");
+      return { kind: "compare", op: "gte", left: { kind: "reference", key: "entry.latestMtimeMs" }, right: { kind: "numberLiteral", value: context.nowMs - window } };
+    }
+    case "olderThan": {
+      const window = parseDuration(when.olderThan ?? "");
+      return { kind: "compare", op: "lt", left: { kind: "reference", key: "entry.latestMtimeMs" }, right: { kind: "numberLiteral", value: context.nowMs - window } };
+    }
+    case "maxSizeBytes":
+      return { kind: "compare", op: "lte", left: { kind: "reference", key: "entry.totalSizeBytes" }, right: { kind: "numberLiteral", value: when.maxSizeBytes ?? 0 } };
+    case "branch":
+      // A detached HEAD never matches however its branch string reads, which is `matchBranch`'s own rule, so the pattern match is guarded by the detached fact beside it rather than losing that nuance in the mapping.
+      return { kind: "allOf", operands: [{ kind: "textCompare", op: "portableMatches", left: { kind: "reference", key: "repo.branch" }, right: { kind: "textLiteral", value: when.branch ?? "" } }, { kind: "compare", op: "eq", left: { kind: "reference", key: "repo.detached" }, right: { kind: "booleanLiteral", value: false } }] };
+    case "env": {
+      const entries = Object.entries(when.env ?? {});
+      // Every named variable must equal its expected value, so the fields AND together; an unset variable resolves not-found and the whole conjunction reports it indeterminate.
+      return { kind: "allOf", operands: entries.map(([name, expected]) => ({ kind: "textCompare", op: "equals", left: { kind: "reference", key: `env.${name}` }, right: { kind: "textLiteral", value: expected } })) };
+    }
+  }
+  // The switch is exhaustive over WhenConditionObject's own keys; the caller loops only fields that are present, so no field arrives unhandled. The empty conjunction is the matching vacuous truth for a case that cannot run.
+  return { kind: "allOf", operands: [] };
+}
+
 /**
- * Evaluates a `when` object. Every present field must hold — conditions AND together within one object.
+ * Evaluates a `when`, in either of its two forms.
  *
- * An absent condition is vacuously true, so `when: {}` passes; `agent-shim check` warns about that rather than erroring, since an empty object is more likely a half-finished edit than an intentional statement.
+ * The object form (`newerThan`, `olderThan`, `maxSizeBytes`, `branch`, `env`) is the original configuration sugar: every present field must hold, which is the AND of the field predicates above. It is kept unchanged, so no configuration migrates, and its per-field reporting (`checked`, `failed`) survives exactly as before.
+ *
+ * The predicate form is a trilean predicate tree, evaluated by the package's own synchronous evaluator over the reference namespace `resolversOf` documents: `and`/`or`/`not` compose, comparisons and text matches read the facts, and a reference the context cannot answer makes the evaluation indeterminate rather than false. A predicate form is reported as one condition (`checked: ["predicate"]`), because a tree has no per-field breakdown to give.
  *
  * `newerThan`, `olderThan`, and `maxSizeBytes` read the subtree-aggregated facts (`latestMtimeMs`, `totalSizeBytes`), never the entry's own inode stat: a directory's own mtime does not change when a file three levels beneath it is rewritten, and its own size is a ~4KB inode figure that says nothing about what it contains.
  */
 export function evaluateWhen(when: WhenCondition | undefined, context: ConditionContext): WhenEvaluation {
   if (when === undefined) {
-    return { passed: true, checked: [], failed: [] };
+    return { status: "definite", passed: true, checked: [], failed: [] };
+  }
+
+  if ("kind" in when) {
+    const result = evaluator.evaluatePredicate(when, undefined, resolversOf(context));
+    return result.status === "indeterminate"
+      ? { status: "indeterminate", reason: result.reason.message, checked: ["predicate"] }
+      : { status: "definite", passed: result.value, checked: ["predicate"], failed: result.value ? [] : ["predicate"] };
   }
 
   const checked: string[] = [];
   const failed: string[] = [];
-
-  if (when.newerThan !== undefined) {
-    checked.push("newerThan");
-    const window = parseDuration(when.newerThan);
-    const latest = context.fact?.latestMtimeMs;
-    if (latest === undefined || context.nowMs - latest > window) {
-      failed.push("newerThan");
+  for (const field of ["newerThan", "olderThan", "maxSizeBytes", "branch", "env"] as const) {
+    if (when[field] === undefined) {
+      continue;
+    }
+    checked.push(field);
+    const result = evaluator.evaluatePredicate(fieldPredicate(field, when, context), undefined, resolversOf(context));
+    if (result.status === "indeterminate") {
+      // The first field that cannot be decided decides the whole conjunction, and names what was missing: the rest are not evaluated, exactly as an AND that has already met an undecided operand.
+      return { status: "indeterminate", reason: result.reason.message, checked };
+    }
+    if (!result.value) {
+      failed.push(field);
     }
   }
-
-  if (when.olderThan !== undefined) {
-    checked.push("olderThan");
-    const window = parseDuration(when.olderThan);
-    const latest = context.fact?.latestMtimeMs;
-    if (latest === undefined || context.nowMs - latest <= window) {
-      failed.push("olderThan");
-    }
-  }
-
-  if (when.maxSizeBytes !== undefined) {
-    checked.push("maxSizeBytes");
-    const total = context.fact?.totalSizeBytes;
-    if (total === undefined || total > when.maxSizeBytes) {
-      failed.push("maxSizeBytes");
-    }
-  }
-
-  if (when.branch !== undefined) {
-    checked.push("branch");
-    if (!matchBranch(when.branch, context.branch, context.branchDetached ?? false)) {
-      failed.push("branch");
-    }
-  }
-
-  if (when.env !== undefined) {
-    checked.push("env");
-    const mismatch = Object.entries(when.env).some(([name, expected]) => context.env[name] !== expected);
-    if (mismatch) {
-      failed.push("env");
-    }
-  }
-
-  return { passed: failed.length === 0, checked, failed };
+  return { status: "definite", passed: failed.length === 0, checked, failed };
 }
 
-/** True when the `when` object is present but empty, which is vacuously true and therefore has no effect. */
+/** True when the `when` is present but an empty object, which is vacuously true and therefore has no effect. A predicate-form `when` is never vacuous: a tree always states something. */
 export function isVacuousWhen(when: WhenCondition | undefined): boolean {
-  return when !== undefined && Object.keys(when).length === 0;
+  return when !== undefined && !("kind" in when) && Object.keys(when).length === 0;
 }

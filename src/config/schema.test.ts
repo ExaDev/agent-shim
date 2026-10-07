@@ -22,6 +22,7 @@ import {
   isCodexProvider,
   ProviderSchema,
   SHIPPED_CATEGORY_DEFAULTS,
+  WhenConditionObjectSchema,
   WhenSchema,
 } from "./schema";
 
@@ -138,7 +139,7 @@ describe("EntryValueSchema", () => {
 describe("WhenSchema", () => {
   it.each(["90d", "1w", "500ms", "12h", "30m", "45s", "0d"])("accepts the duration %s", (duration) => {
     expect(DURATION_RE.test(duration)).toBe(true);
-    expect(WhenSchema.parse({ newerThan: duration }).newerThan).toBe(duration);
+    expect(WhenConditionObjectSchema.parse({ newerThan: duration }).newerThan).toBe(duration);
   });
 
   it.each(["90", "d", "90 d", "90days", "-1d", "1.5d", ""])("rejects the malformed duration %s", (duration) => {
@@ -146,12 +147,21 @@ describe("WhenSchema", () => {
   });
 
   it("takes zero or more environment-variable checks in one object, not a single fixed pair", () => {
-    const when = WhenSchema.parse({ env: { CI: "1", DEPLOY_ENV: "staging" } });
+    const when = WhenConditionObjectSchema.parse({ env: { CI: "1", DEPLOY_ENV: "staging" } });
     expect(when.env).toEqual({ CI: "1", DEPLOY_ENV: "staging" });
   });
 
   it("accepts an empty object, which is vacuously true", () => {
     expect(WhenSchema.parse({})).toEqual({});
+  });
+
+  it("accepts a predicate tree beside the object form, the union that needs no migration", () => {
+    const tree = WhenSchema.parse({ kind: "anyOf", operands: [{ kind: "textCompare", op: "equals", left: { kind: "reference", key: "env.CI" }, right: { kind: "textLiteral", value: "1" } }, { kind: "not", operand: { kind: "exists", operand: { kind: "reference", key: "repo.branch" } } }] });
+    expect(tree).toMatchObject({ kind: "anyOf" });
+    // The object form still parses through the same union unchanged.
+    expect(WhenSchema.parse({ newerThan: "1d" })).toEqual({ newerThan: "1d" });
+    // A tree with a node the evaluator does not know is rejected by the schema itself, not discovered at evaluation time.
+    expect(WhenSchema.safeParse({ kind: "nonsense" }).success).toBe(false);
   });
 
   it("rejects a non-positive maxSizeBytes", () => {

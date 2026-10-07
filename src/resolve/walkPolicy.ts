@@ -11,7 +11,11 @@ const ENTER_EVERYTHING: DescendPolicy = () => true;
 /** Whether `rule` reads the subtree aggregates (`latestMtimeMs`, `totalSizeBytes`) of the entry it matches, which only a complete walk below that entry can supply. */
 function readsSubtreeAggregates(rule: CompiledRule): boolean {
   const when = rule.when;
-  return when !== undefined && (when.newerThan !== undefined || when.olderThan !== undefined || when.maxSizeBytes !== undefined);
+  if (when === undefined) {
+    return false;
+  }
+  // The object form names its fields, so the three aggregate readers are exactly the three checks; a predicate tree can reference the aggregates anywhere, so it is assumed to read them, which is this policy's own conservative rule (it may enter for a rule that reads nothing, never skip for one that reads something).
+  return "kind" in when || when.newerThan !== undefined || when.olderThan !== undefined || when.maxSizeBytes !== undefined;
 }
 
 /** Pattern syntax whose match depth is not the number of its `/`-separated segments: `**` spans segments, and a brace or extglob group may contain a `/`. */
