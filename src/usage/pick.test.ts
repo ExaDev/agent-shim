@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { PredicateNode } from "trilean";
 
 import { PROMPT_CACHE_TTL_MS, rankPool, type PoolMember, type RankPoolInput } from "./pick";
 import type { AccountMetadata, UsageRecord, UsageSnapshot } from "./schema";
@@ -259,6 +260,30 @@ describe("rankPool", () => {
     expect(ranking.pick?.identity).toBe("fresh");
     expect(ranking.movedOff).toMatchObject({ identity: "old" });
     expect(ranking.movedOff?.reason).toContain("continues as extra usage");
+  });
+
+  it("skips a member whose policy condition definitely does not hold, naming the condition", () => {
+    // The policy keeps new sessions off a member whose seven-day window is nearly spent: at 0.9 used the condition (utilisation below 0.8) does not hold.
+    const policy = { kind: "compare", op: "lt", left: { kind: "reference", key: "quota.sevenDay.utilization" }, right: { kind: "numberLiteral", value: 0.8 } } as const satisfies PredicateNode;
+    const spent = { ...member("spent", { five: { utilization: U10, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: 0.9, resetsInMs: SIX_DAYS_MS } }), policy };
+    const fine = member("fine", { five: { utilization: U10, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U50, resetsInMs: DAY_MS } });
+    const ranking = rank([spent, fine]);
+    expect(ranking.pick?.identity).toBe("fine");
+    const skipped = ranking.candidates.find((candidate) => candidate.identity === "spent");
+    expect(skipped?.class).toBe("ineligible");
+    expect(skipped?.reasons[0]).toContain("skipped by policy");
+  });
+
+  it("demotes a member whose policy condition is undecided to last within its class, naming the missing fact", () => {
+    // The condition reads the five-hour window's remaining fraction; this member reports only a seven-day window, so the fact is missing rather than failed.
+    const policy = { kind: "compare", op: "gt", left: { kind: "reference", key: "quota.fiveHour.remaining" }, right: { kind: "numberLiteral", value: 0.1 } } as const satisfies PredicateNode;
+    const undecided = { ...member("undecided", { seven: { utilization: U10, resetsInMs: DAY_MS } }), policy };
+    const ordinary = member("ordinary", { seven: { utilization: U90, resetsInMs: HOUR_MS } });
+    const ranking = rank([undecided, ordinary]);
+    // Both are scored; the undecided one ranks last within the class whatever its score says.
+    expect(order(ranking)).toEqual(["ordinary", "undecided"]);
+    expect(ranking.candidates[1]?.reasons[0]).toContain("policy undecided");
+    expect(ranking.candidates[1]?.reasons[0]).toContain("quota.fiveHour.remaining");
   });
 
   it("reports no move when the resumed conversation keeps its member, and none for a fresh launch that picks elsewhere", () => {

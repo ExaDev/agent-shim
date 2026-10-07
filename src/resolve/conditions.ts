@@ -37,6 +37,16 @@ export function isDuration(value: string): boolean {
   return DURATION_RE.test(value);
 }
 
+/** One quota window's pool-selection facts, in the units a policy reads: fractions of the window, and hours until it resets. */
+export interface PoolWindowFacts {
+  /** The fraction of the window still unused, between zero and one. */
+  readonly remaining: number;
+  /** The fraction of the window already used, between zero and one. */
+  readonly utilization: number;
+  /** How long until the window resets, in hours. */
+  readonly hoursUntilReset: number;
+}
+
 /** Everything a `when` condition can be evaluated against, injected rather than read. */
 export interface ConditionContext {
   readonly nowMs: number;
@@ -47,6 +57,10 @@ export interface ConditionContext {
   /** True when the repository is in detached-HEAD state, in which case no `branch` condition can match. */
   readonly branchDetached?: boolean;
   readonly env: Readonly<Record<string, string | undefined>>;
+  /**
+   * The pool-selection facts a member entry's policy condition reads. Present only when the condition guards a pool member, so the same reference namespace serves the cascade and the pool: `quota.fiveHour.remaining`, `quota.fiveHour.utilization`, `quota.fiveHour.hoursUntilReset`, the same three under `quota.sevenDay`, `quota.burnPerHour` (the five-hour window's observed utilisation pace, in fractions per hour), `session.resuming` (this launch resumes or continues a conversation) and `session.lastPickHoursAgo` (how long ago this directory last picked this member). Conversation context is deliberately not provided: nothing the door holds knows it, so a condition referencing it is indeterminate, naming the missing fact, rather than guessed.
+   */
+  readonly pool?: { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts; readonly burnPerHour?: number; readonly resuming?: boolean; readonly lastPickHoursAgo?: number };
 }
 
 /**
@@ -69,12 +83,18 @@ const evaluator = createSyncEvaluator({});
 
 /** One resolver over the condition context's facts, keyed by the reference names the `when` forms document: `now` (epoch milliseconds), `entry.latestMtimeMs`, `entry.totalSizeBytes`, `repo.branch`, `repo.detached`, and `env.<NAME>` for every environment variable. A name the context cannot answer resolves not-found, which the evaluator carries as indeterminate, the unknown semantics itself. */
 function resolversOf(context: ConditionContext): SyncResolvers {
+  const pool = context.pool;
   const values: Readonly<Record<string, number | string | boolean>> = {
     now: context.nowMs,
     ...(context.fact?.latestMtimeMs === undefined ? {} : { "entry.latestMtimeMs": context.fact.latestMtimeMs }),
     ...(context.fact?.totalSizeBytes === undefined ? {} : { "entry.totalSizeBytes": context.fact.totalSizeBytes }),
     ...(context.branch === undefined ? {} : { "repo.branch": context.branch }),
     "repo.detached": context.branchDetached ?? false,
+    ...(pool?.fiveHour === undefined ? {} : { "quota.fiveHour.remaining": pool.fiveHour.remaining, "quota.fiveHour.utilization": pool.fiveHour.utilization, "quota.fiveHour.hoursUntilReset": pool.fiveHour.hoursUntilReset }),
+    ...(pool?.sevenDay === undefined ? {} : { "quota.sevenDay.remaining": pool.sevenDay.remaining, "quota.sevenDay.utilization": pool.sevenDay.utilization, "quota.sevenDay.hoursUntilReset": pool.sevenDay.hoursUntilReset }),
+    ...(pool?.burnPerHour === undefined ? {} : { "quota.burnPerHour": pool.burnPerHour }),
+    ...(pool?.resuming === undefined ? {} : { "session.resuming": pool.resuming }),
+    ...(pool?.lastPickHoursAgo === undefined ? {} : { "session.lastPickHoursAgo": pool.lastPickHoursAgo }),
   };
   return {
     resolveValue: (key): Resolution => {
