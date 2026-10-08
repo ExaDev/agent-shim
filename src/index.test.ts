@@ -266,6 +266,7 @@ describe("library surface", () => {
       "parseConnectTarget",
       "parseRcStreamEnvelope",
       "planOf",
+      "poolIdentities",
       "prepareClaudeLaunch",
       "prepareLaunch",
       "profileExists",
