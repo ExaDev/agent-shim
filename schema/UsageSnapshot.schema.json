@@ -282,10 +282,6 @@
             "additionalProperties": false
           }
         },
-        "required": [
-          "lastRequestAt",
-          "lastStatus"
-        ],
         "additionalProperties": false
       }
     }

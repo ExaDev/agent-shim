@@ -151,8 +151,9 @@ export type ProviderQuota = z.infer<typeof ProviderQuotaSchema>;
 
 /** One provider's latest state under one identity. */
 const ProviderUsageStateSchema = z.strictObject({
-  lastRequestAt: InstantSchema,
-  lastStatus: z.number().int(),
+  /** When the provider last served a request for the identity through the front door. Absent while the state holds only a rate-limit state fetched from the provider's usage endpoint, for an identity that has made no request. */
+  lastRequestAt: InstantSchema.optional(),
+  lastStatus: z.number().int().optional(),
   lastModel: z.string().optional(),
   /** The latest rate-limit state, from the last response that carried any rate-limit header. */
   rateLimit: RateLimitStateSchema.optional(),

@@ -22,7 +22,7 @@ const SEVEN_DAYS = 7;
 
 /** The lengths of Anthropic's two subscription windows, used when a window reported no reset time of its own. */
 export const FIVE_HOUR_WINDOW_MS = FIVE_HOURS * MS_PER_HOUR;
-const SEVEN_DAY_WINDOW_MS = SEVEN_DAYS * HOURS_PER_DAY * MS_PER_HOUR;
+export const SEVEN_DAY_WINDOW_MS = SEVEN_DAYS * HOURS_PER_DAY * MS_PER_HOUR;
 
 /** Anthropic's longest prompt-cache lifetime (the one-hour tier): a conversation resumed within it still has a warm cache on the account that served it, and the cache is per organisation, so it is lost by switching. */
 export const PROMPT_CACHE_TTL_MS = PROMPT_CACHE_TTL_HOURS * MS_PER_HOUR;
@@ -109,7 +109,7 @@ function limitBlockedUntil(state: ProviderUsageState | undefined, nowMs: number)
     return undefined;
   }
   // The snapshot keeps the last refusal after later successes, so a request that started after the refusal was seen means it has lifted.
-  if (Date.parse(state.lastRequestAt) > Date.parse(limit.observedAt)) {
+  if (state.lastRequestAt !== undefined && Date.parse(state.lastRequestAt) > Date.parse(limit.observedAt)) {
     return undefined;
   }
   const until =
