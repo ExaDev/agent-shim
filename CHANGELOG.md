@@ -1,3 +1,22 @@
+## [9.0.0](https://github.com/ExaDev/agent-shim/compare/v8.44.0...v9.0.0) (2026-10-08)
+
+### ⚠ BREAKING CHANGES
+
+* keep headroom state in one unversioned file, migrated in place
+
+### Features
+
+* keep headroom state in one unversioned file, migrated in place ([bc62a34](https://github.com/ExaDev/agent-shim/commit/bc62a34c7851bb0ae94e50ab9d89083d4a46185a))
+
+### Bug Fixes
+
+* pin the doctor's legacy resolution and tidy the state doc comments ([2e0d39c](https://github.com/ExaDev/agent-shim/commit/2e0d39c98f8a3ce004e63c1c7958d9897946ca99))
+* report the TCP-port era's state as claimable and cover the legacy wiring ([19308b6](https://github.com/ExaDev/agent-shim/commit/19308b675296b6a16a2473b396b4b3f51d4ecad1))
+
+### Tests
+
+* make a swapped state pair observable and tidy the last notes ([ac8dfb8](https://github.com/ExaDev/agent-shim/commit/ac8dfb8cbec187f0f63b09fc33db0a7ad8139ddc))
+
 ## [8.44.0](https://github.com/ExaDev/agent-shim/compare/v8.43.0...v8.44.0) (2026-10-08)
 
 ### Features
