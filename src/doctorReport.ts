@@ -157,6 +157,18 @@ export interface RunDoctorParams {
 }
 
 /** Parses and validates one optional JSON file's raw text against `schema`, without ever throwing — a missing file, invalid JSON, and a schema violation are each reported as their own failure message rather than aborting the caller. */
+/** Whether `raw` is the TCP-port era's state record (a `port` or `lastPort` key and no `socketPath`): content this release cannot parse but deliberately treats as claimable, so the doctor reports it as expected rather than malformed. */
+function tcpPortEraRecord(raw: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  const has = (key: string): boolean => typeof parsed === "object" && parsed !== null && key in parsed;
+  return (has("port") || has("lastPort")) && !has("socketPath");
+}
+
 function validateJson<S extends z.ZodType>(
   schema: S,
   input: DoctorFileInput,
@@ -548,6 +560,9 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
 
   if (params.headroom.state.raw === undefined) {
     push("headroom", "pass", "No headroom daemon has ever run; nothing to check.");
+  } else if (tcpPortEraRecord(params.headroom.state.raw)) {
+    // Claimable, not broken: the single-file design treats this content as absent and the next launch through headroom overwrites it, so it must not fail the audit on a machine that never launches with headroom on.
+    push("headroom", "pass", `${params.headroom.state.path} holds a previous release's TCP-port state record; the next launch through headroom claims over it.`);
   } else {
     const validated = validateJson(HeadroomStateSchema, params.headroom.state);
     if (!validated.ok) {

@@ -323,6 +323,27 @@ describe("the headroom hop", () => {
     }
   });
 
+  it("follows a daemon recorded only under the previous release's legacy state name", async () => {
+    const headroom = await fakeHeadroom();
+    // The record moves to the legacy name, the shape a draining previous-generation supervisor serves under: the hop must still resolve and dial the daemon.
+    fs.rmSync(home.paths.headroomStateFile, { force: true });
+    writeHeadroomState(realFarmFs, home.paths.headroomLegacyStateFile, { supervisorPid: SUPERVISOR_PID, headroomPid: SUPERVISOR_PID + 1, socketPath: home.socketPath });
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
+    try {
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting,
+        method: "POST",
+        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN },
+        body: MESSAGES_BODY,
+      });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(headroom.seen()).toHaveLength(1);
+    } finally {
+      await door.close();
+      await headroom.close();
+    }
+  });
+
   it("re-sets the project identity and the session attribution id on the hop, replacing any inbound copy, and forwards no launcher session header beyond it", async () => {
     const headroom = await fakeHeadroom();
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });

@@ -741,6 +741,41 @@ describe("collectDoctorReport: binary discovery", () => {
   });
 });
 
+describe("collectDoctorReport: headroom state resolution", () => {
+  // Real-wired like the binary-discovery suite: the collector's headroom port is built from realFarmFs and realIsProcessRunning, so the legacy-name resolution it performs is only observable over a real root.
+  it("reports the live previous-release daemon recorded under the legacy state name", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-headroom-root-"));
+    try {
+      const stateDir = path.join(root, "headroom");
+      fs.mkdirSync(stateDir, { recursive: true });
+      const legacyPath = path.join(stateDir, "state.v2.json");
+      const thisProcess = process.pid;
+      fs.writeFileSync(legacyPath, `${JSON.stringify({ supervisorPid: thisProcess, headroomPid: thisProcess, socketPath: path.join(stateDir, "run", "x.sock") }, null, 2)}\n`);
+      const report = collectDoctorReport({ paths: buildLayoutPaths(root), env: { PATH: process.env.PATH ?? "" } });
+      const finding = findingsFor(report, "headroom")[0];
+      // This process is alive, so the collector must have resolved the legacy record rather than reporting a never-run or malformed daemon.
+      expect(finding?.severity).not.toBe("fail");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("passes on the TCP-port era's state.json content instead of failing it as malformed", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-headroom-root-"));
+    try {
+      const stateDir = path.join(root, "headroom");
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "state.json"), `${JSON.stringify({ supervisorPid: 11, headroomPid: 12, port: 8923, lastPort: 8923 }, null, 2)}\n`);
+      const report = collectDoctorReport({ paths: buildLayoutPaths(root), env: { PATH: process.env.PATH ?? "" } });
+      const finding = findingsFor(report, "headroom")[0];
+      expect(finding?.severity).toBe("pass");
+      expect(finding?.message).toContain("TCP-port");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("runDoctor: credential cache", () => {
   const HOUR_MS = 3_600_000;
   const THREE_HOURS_MS = 10_800_000;

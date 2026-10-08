@@ -31,6 +31,10 @@ const SESSION_PID = 321;
 const ZOMBIE_SESSION_PID = 322;
 const ORPHAN_DAEMON_PID = 888;
 const OWN_PID = 4242;
+/** A supervisor from the previous release whose generation has ended, recorded only under the legacy state name. */
+const DRAINED_SUPERVISOR_PID = 424242;
+/** A supervisor from the previous release still serving, recorded only under the legacy state name. */
+const DRAINING_SUPERVISOR_PID = 424243;
 const OTHER_SUPERVISOR_PID = 5151;
 const OTHER_DAEMON_PID = 5152;
 /** The socket this supervisor generation serves on. */
@@ -600,6 +604,31 @@ describe("runSupervisor", () => {
     const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_ONE_MINUTE }, { tickLimit: TICKS_LONG_SESSION });
     expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     expect(world.stops).toHaveLength(0);
+  });
+
+  it("migrates a dead generation's legacy state record onto the shared name before claiming it", async () => {
+    const world = makeWorld();
+    writeHeadroomState(world.fs, paths.headroomLegacyStateFile, { supervisorPid: DRAINED_SUPERVISOR_PID, socketPath: `${paths.headroomSocketDir}/${String(DRAINED_SUPERVISOR_PID)}.sock`, installedSource: "headroom>=0.39" });
+    world.kill(DRAINED_SUPERVISOR_PID);
+    const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: 1 });
+    expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
+    // The legacy file is gone and this supervisor's claim owns the shared name, one file instead of two.
+    expect(world.fs.readFileUtf8(paths.headroomLegacyStateFile)).toBeUndefined();
+    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    expect(state.supervisorPid).toBe(OWN_PID);
+  });
+
+  it("exits without touching either file when a live previous-release supervisor owns the legacy record and the shared name is absent", async () => {
+    const world = makeWorld();
+    writeHeadroomState(world.fs, paths.headroomLegacyStateFile, { supervisorPid: DRAINING_SUPERVISOR_PID, socketPath: `${paths.headroomSocketDir}/${String(DRAINING_SUPERVISOR_PID)}.sock` });
+    world.alive.add(DRAINING_SUPERVISOR_PID);
+    const before = world.fs.readFileUtf8(paths.headroomLegacyStateFile);
+    const code = await supervise(world, config);
+    expect(code).toBe(0);
+    expect(world.spawns).toHaveLength(0);
+    expect(world.stops).toHaveLength(0);
+    expect(world.fs.readFileUtf8(paths.headroomLegacyStateFile)).toBe(before);
+    expect(world.fs.readFileUtf8(paths.headroomStateFile)).toBeUndefined();
   });
 
   it("exits at once, touching neither the state file nor the other daemon, when another live supervisor already owns it", async () => {

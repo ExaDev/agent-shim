@@ -63,6 +63,22 @@ describe("collectHeadroomStatus", () => {
     expect(status.allowlistDrifted).toBe(true);
   });
 
+  it("reports a live previous-release supervisor recorded under the legacy state name as the serving daemon", () => {
+    const { fs, alive } = aliveWorld();
+    // The shared name carries nothing; only the legacy file names the live daemon, and the read-only resolution must surface it without migrating.
+    fs.removeRecursive(paths.headroomStateFile);
+    writeHeadroomState(fs, paths.headroomLegacyStateFile, {
+      supervisorPid: SUPERVISOR_PID,
+      headroomPid: HEADROOM_PID,
+      socketPath: SOCKET_PATH,
+      version: "headroom 0.39.1",
+    });
+    const status = collectHeadroomStatus(fs, paths, (pid) => alive.has(pid));
+    expect(status.supervisorAlive).toBe(true);
+    expect(status.headroomAlive).toBe(true);
+    expect(status.state.socketPath).toBe(SOCKET_PATH);
+  });
+
   it("treats absent state as a never-run daemon rather than an error", () => {
     const status = collectHeadroomStatus(createFakeFarmFs({}), paths, () => true);
     expect(status.state).toEqual({});
