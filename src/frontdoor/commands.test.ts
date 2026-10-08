@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 
+import realFs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { writeHeadroomState } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
 import { RC_PENDING_SUMMARY_EXCERPT_CHARS } from "./rcSessions";
 import { formatRcPendingList, formatRcRateLimitInfo, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./rcCommands";
+import { realStatOwnExecutable } from "./commands";
 import { collectFrontDoorStatus, formatFrontDoorStatus } from "./status";
 import { writeFrontDoorSession, writeFrontDoorState } from "./state";
 
@@ -232,5 +237,43 @@ describe("frontdoor rc", () => {
     expect(lines[lines.length - 1]).toContain("AGENT_SHIM_FRONTDOOR_RC_SELF_HOST=1");
     // The mint's own output contract: no line of it ever carries token material, because the result never received any to print.
     expect(lines.join("\n")).not.toMatch(/sk-ant-/);
+  });
+});
+
+describe("realStatOwnExecutable", () => {
+  it("reports the entry's identity, follows a symlink to what it points at, and sees a rename-install replace it", () => {
+    const dir = realFs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-turnover-test-"));
+    try {
+      const entry = path.join(dir, "agent-shim");
+      realFs.writeFileSync(entry, "first");
+      const stat = realStatOwnExecutable(entry);
+      const before = stat();
+      expect(before).toBeDefined();
+      // A symlinked alias resolves to the entry it points at, so a door spawned through one watches the same identity.
+      const alias = path.join(dir, "claude-use");
+      realFs.symlinkSync(entry, alias);
+      expect(realStatOwnExecutable(alias)()).toEqual(before);
+      // The updater's install shape: verified bytes written beside the target and renamed over it, a new inode at the same path.
+      const staged = path.join(dir, "agent-shim.staged");
+      realFs.writeFileSync(staged, "second, different bytes so the size differs too");
+      realFs.renameSync(staged, entry);
+      const after = stat();
+      expect(after).toBeDefined();
+      expect(after).not.toEqual(before);
+    } finally {
+      realFs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports undefined for a missing entry and for one that is not a regular file", () => {
+    const dir = realFs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-turnover-test-"));
+    try {
+      expect(realStatOwnExecutable(path.join(dir, "agent-shim"))()).toBeUndefined();
+      const asDirectory = path.join(dir, "agent-shim");
+      realFs.mkdirSync(asDirectory);
+      expect(realStatOwnExecutable(asDirectory)()).toBeUndefined();
+    } finally {
+      realFs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

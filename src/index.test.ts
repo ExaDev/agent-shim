@@ -349,6 +349,7 @@ describe("library surface", () => {
       "updateDirectoryRule",
       "updateProvider",
       "useIdentity",
+      "watchedInstallEntry",
       "writeDirectoryRules",
     ]);
   });
