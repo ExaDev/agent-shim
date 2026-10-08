@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createFakeFarmFs, DAY_MS, FAKE_NOW_MS, paths, type FakeFarmFs } from "../test-helpers";
 import { AccountMetadataError } from "./account";
 import { listLogSegments, readUsageLog, readUsageSnapshot, segmentDay, segmentName, snapshotPath } from "./read";
-import { USAGE_SCHEMA_VERSION, type AccountMetadata, type LimitClassification, type ProviderQuota, type UsageRecord, type UsageSnapshot } from "./schema";
+import { USAGE_SCHEMA_VERSION, type AccountMetadata, type LimitClassification, type ProviderQuota, type RateLimitState, type UsageRecord, type UsageSnapshot } from "./schema";
 import { createUsageStore, foldProviderState, pruneUsageLog, USAGE_RETENTION_MS, type UsageStoreDeps } from "./store";
 
 const PID = 4242;
@@ -430,5 +430,65 @@ describe("recordQuota", () => {
     expect(store.recordQuota("other", "z", quotaObservedAt(0))).toBe(false);
 
     expect(fs.snapshot()).toEqual(before);
+  });
+});
+
+describe("recordRateLimit", () => {
+  const FIVE_HOUR_FRACTION = 0.24;
+  const HALF_USED = 0.5;
+
+  function fetchedAt(offsetMs: number, utilization = FIVE_HOUR_FRACTION, overageStatus?: string): RateLimitState {
+    return { observedAt: atOffset(offsetMs), headers: {}, unified: { fiveHour: { utilization, resetsAt: atOffset(DAY_MS) }, ...(overageStatus === undefined ? {} : { overageStatus }) } };
+  }
+
+  it("records the fetched state beside the provider's existing state and leaves the rest of it alone", () => {
+    const { fs, store } = harness();
+    store.record(makeRecord({ model: "claude-sonnet-5-5" }));
+    const fetched = fetchedAt(0);
+
+    store.recordRateLimit("work", "anthropic", fetched);
+
+    expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.anthropic).toEqual({ lastRequestAt: NOW_ISO, lastStatus: OK_STATUS, lastModel: "claude-sonnet-5-5", rateLimit: fetched });
+  });
+
+  it("creates the provider's state for an identity that has made no request, with no request time", () => {
+    const { fs, store } = harness();
+    const fetched = fetchedAt(0);
+
+    store.recordRateLimit("work", "anthropic", fetched);
+
+    expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.anthropic).toEqual({ rateLimit: fetched });
+  });
+
+  it("takes the request fields from the first request recorded after a fetched state alone", () => {
+    const { fs, store } = harness();
+    const fetched = fetchedAt(0);
+    store.recordRateLimit("work", "anthropic", fetched);
+
+    store.record(makeRecord());
+
+    const state = readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.anthropic;
+    expect(state).toMatchObject({ lastRequestAt: NOW_ISO, lastStatus: OK_STATUS, rateLimit: fetched });
+  });
+
+  it("keeps a rate-limit state observed later than the fetched one", () => {
+    const { fs, store } = harness();
+    store.record(makeRecord());
+    const newer = fetchedAt(SECOND_MS, HALF_USED);
+    store.recordRateLimit("work", "anthropic", newer);
+
+    store.recordRateLimit("work", "anthropic", fetchedAt(0));
+
+    expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.anthropic?.rateLimit).toEqual(newer);
+  });
+
+  it("carries the extra-usage status earlier response headers stated, which the usage endpoint does not report", () => {
+    const { fs, store } = harness();
+    store.record(makeRecord());
+    store.recordRateLimit("work", "anthropic", fetchedAt(0, FIVE_HOUR_FRACTION, "allowed"));
+
+    store.recordRateLimit("work", "anthropic", fetchedAt(SECOND_MS, HALF_USED));
+
+    expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.anthropic?.rateLimit?.unified).toEqual({ fiveHour: { utilization: HALF_USED, resetsAt: atOffset(DAY_MS) }, overageStatus: "allowed" });
   });
 });

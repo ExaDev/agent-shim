@@ -5,11 +5,13 @@ import { parseDurationOption } from "../cli/parsers";
 import { IdentityNotFoundError, listIdentities } from "../identityStore";
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs } from "../realPorts";
+import { realFarmFs, spawnDetachedSupervisor } from "../realPorts";
 import { createAccountReader, readAccountMetadata } from "./account";
 import { listUsageSnapshots, readUsageLog, readUsageSnapshot, summariseUsage, type UsageSummary } from "./read";
+import { isAnthropicUsageProbeable } from "./anthropicUsageRefresh";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import type { AccountMetadata, LimitEvent, ProviderQuota, ProviderQuotaWindow, QuotaWindow, RateLimitState, UsageSnapshot } from "./schema";
+import { createRealAnthropicUsageRefresher } from "./realAnthropicUsageProbe";
 import { createRealQuotaRefresher } from "./realQuotaRefresher";
 import { createUsageStore, USAGE_RETENTION_MS } from "./store";
 
@@ -220,7 +222,7 @@ function formatAccounts(views: readonly AccountView[]): string[] {
       lines.push("Usage: nothing recorded yet");
     }
     for (const [provider, state] of providers) {
-      lines.push(`Usage via ${provider}: last request ${state.lastRequestAt} (${String(state.lastStatus)})`, ...snapshotLines(view.usage, provider));
+      lines.push(`Usage via ${provider}: ${state.lastRequestAt === undefined ? "no request yet" : `last request ${state.lastRequestAt} (${String(state.lastStatus)})`}`, ...snapshotLines(view.usage, provider));
     }
     return lines;
   });
@@ -248,6 +250,19 @@ async function refreshQuotas(paths: LayoutPaths, filters: Readonly<{ identity?: 
     .filter((snapshot) => filters.identity === undefined || snapshot.identity === filters.identity)
     .flatMap((snapshot) => Object.keys(snapshot.providers).filter((provider) => provider !== ANTHROPIC_PROVIDER && (filters.provider === undefined || provider === filters.provider)).map((provider) => ({ identity: snapshot.identity, provider })));
   const warnings: string[] = [];
+  if (filters.provider === undefined || filters.provider === ANTHROPIC_PROVIDER) {
+    const anthropic = createRealAnthropicUsageRefresher({ paths, store, cwd: process.cwd(), spawnDaemon: spawnDetachedSupervisor, log: () => undefined });
+    // A named identity is asked even when it has made no request, which is when it has the most to learn; without a name, every identity with a snapshot is.
+    const subscribed = (filters.identity === undefined ? listUsageSnapshots(realFarmFs, paths.usageSnapshotsDir).map((snapshot) => snapshot.identity) : [filters.identity])
+      .map((identity) => ({ identity, snapshot: readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity), account: readAccountMetadata(realFarmFs, paths.identitiesDir, identity) }))
+      .filter(({ snapshot, account }) => isAnthropicUsageProbeable({ ...(snapshot === undefined ? {} : { snapshot }), ...(account === undefined ? {} : { account }) }));
+    for (const { identity } of subscribed) {
+      const outcome = await anthropic.refresh(identity);
+      if (outcome.status === "failed") {
+        warnings.push(`warning: could not refresh ${identity} via ${ANTHROPIC_PROVIDER}: ${outcome.message}`);
+      }
+    }
+  }
   for (const { identity, provider } of pairs) {
     const outcome = await refresher.refresh(identity, provider, { force: true });
     if (outcome.status === "failed") {
@@ -269,7 +284,7 @@ export function registerUsageCommands(program: Command, deps: CommandDeps): void
       .option("--identity <name>", "Only this identity's requests and snapshot.")
       .option("--provider <name>", "Only this provider's requests (anthropic for OAuth sessions).")
       .option("--since <duration>", "Only requests from this long ago on: a count followed by m, h, d or w, such as 5h or 7d.", parseDurationOption)
-      .option("--refresh", "First fetch the quota of providers that report it through their own usage endpoint (z.ai), regardless of how fresh the stored one is.")
+      .option("--refresh", "First fetch the quota of providers that report it through their own usage endpoint (z.ai) or a plan-window usage endpoint (Anthropic subscriptions), regardless of how fresh the stored one is.")
       .option("--json", "Print the report as JSON.")
       .action(async (options: Readonly<{ identity?: string; provider?: string; since?: number; refresh?: boolean; json?: boolean }>) => {
         if (options.refresh === true) {
@@ -300,7 +315,7 @@ export function registerUsageCommands(program: Command, deps: CommandDeps): void
     account
       .command("show [identity]")
       .description("Show an identity's account metadata (read live from its stored login) and its latest recorded quota; every identity when none is named. Read-only.")
-      .option("--refresh", "First fetch the quota of providers that report it through their own usage endpoint (z.ai), regardless of how fresh the stored one is.")
+      .option("--refresh", "First fetch the quota of providers that report it through their own usage endpoint (z.ai) or a plan-window usage endpoint (Anthropic subscriptions), regardless of how fresh the stored one is.")
       .option("--json", "Print the accounts as JSON.")
       .action(async (identity: string | undefined, options: Readonly<{ refresh?: boolean; json?: boolean }>) => {
         if (options.refresh === true) {

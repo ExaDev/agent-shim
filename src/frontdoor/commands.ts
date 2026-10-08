@@ -8,7 +8,11 @@ import { readGlobalConfig } from "../configProfilesStore";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
 import { createCodexRoutePorts } from "../codex/commands";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort } from "../realPorts";
+import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, spawnDetachedSupervisor } from "../realPorts";
+import { refreshStalePoolMembers } from "../launcher/poolRefresh";
+import { ANTHROPIC_USAGE_FRESHNESS_MS } from "../usage/anthropicUsageRefresh";
+import { loadPoolMembers } from "../usage/poolPick";
+import { createRealAnthropicUsageRefresher } from "../usage/realAnthropicUsageProbe";
 import { realCredentialCacheEnv } from "../realCredentialCache";
 import { createDoorPipelines } from "./assembly";
 import { isLiveCapability } from "./capability";
@@ -190,6 +194,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   });
   // A provider whose quota only its own usage endpoint reports is refreshed after its requests are recorded, throttled by the quota's own resolution; the refresh runs detached from the request.
   const quotaRefresher = createRealQuotaRefresher({ paths, store: usageStore, log });
+  // A pool member that has made no request lately has no current quota for a launch to rank on, so the door asks the usage endpoint about stale members on the cadence at which a fresh answer could differ from the recorded one. The timer never keeps the process alive.
+  const anthropicRefresher = createRealAnthropicUsageRefresher({ paths, store: usageStore, cwd: process.cwd(), spawnDaemon: spawnDetachedSupervisor, log });
+  setInterval(() => {
+    const pools = readPools(paths);
+    void refreshStalePoolMembers({ poolNames: Object.keys(pools), pools, loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now()), refresher: anthropicRefresher });
+  }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
   const usageMiddleware = createUsageMiddleware({
     record: withQuotaRefresh(usageStore.record, quotaRefresher),
     defer: (task) => {

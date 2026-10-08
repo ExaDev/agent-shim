@@ -5,7 +5,7 @@ import type { LayoutPaths } from "../paths";
 import { AccountMetadataError, isIdentityName } from "./account";
 import { parseUnifiedRateLimit } from "./rateLimit";
 import { listLogSegments, readUsageSnapshot, segmentDay, segmentName, snapshotPath, UsageSnapshotError } from "./read";
-import { USAGE_SCHEMA_VERSION, UsageRecordSchema, UsageSnapshotSchema, type AccountMetadata, type ProviderQuota, type ProviderUsageState, type UsageRecord, type UsageSnapshot } from "./schema";
+import { USAGE_SCHEMA_VERSION, UsageRecordSchema, UsageSnapshotSchema, type AccountMetadata, type ProviderQuota, type ProviderUsageState, type RateLimitState, type UsageRecord, type UsageSnapshot } from "./schema";
 
 /** The filesystem effects the usage store's writer performs, all owner-only. */
 export type UsageFs = Pick<FarmFs, "mkdirPrivate" | "writeFilePrivate" | "appendFilePrivate" | "readFileUtf8" | "readdir" | "removeRecursive">;
@@ -50,6 +50,8 @@ export interface UsageStore {
   readonly record: (record: UsageRecord) => void;
   /** Attaches a provider's pulled quota to the identity's existing state for that provider, keeping the newer observation when one is already there. Returns false when the identity has no state for the provider (a quota is only ever attached to usage that was seen). Throws on a write failure. */
   readonly recordQuota: (identity: string, provider: string, quota: ProviderQuota) => boolean;
+  /** Records a rate-limit state fetched from the provider's usage endpoint (rather than read off a response) in the identity's state for that provider, creating the state for an identity that has made no request, and keeping the newer observation when one is already there. Returns false when the identity's name cannot name a snapshot. Throws on a write failure. */
+  readonly recordRateLimit: (identity: string, provider: string, rateLimit: RateLimitState) => boolean;
 }
 
 /** The later of two ISO instants. */
@@ -67,7 +69,7 @@ function observedAt(record: UsageRecord): string {
  */
 export function foldProviderState(current: ProviderUsageState | undefined, record: UsageRecord): ProviderUsageState {
   const seen = observedAt(record);
-  const newest = current === undefined || record.at.localeCompare(current.lastRequestAt) >= 0;
+  const newest = current?.lastRequestAt === undefined || record.at.localeCompare(current.lastRequestAt) >= 0;
   const rateLimit =
     record.rateLimitHeaders === undefined || (current?.rateLimit !== undefined && current.rateLimit.observedAt.localeCompare(seen) > 0)
       ? current?.rateLimit
@@ -81,8 +83,8 @@ export function foldProviderState(current: ProviderUsageState | undefined, recor
       : { ...record.limit, observedAt: seen, status: record.status };
   const lastModel = newest ? (record.model ?? current?.lastModel) : (current.lastModel ?? record.model);
   return {
-    lastRequestAt: current === undefined ? record.at : later(current.lastRequestAt, record.at),
-    lastStatus: newest ? record.status : current.lastStatus,
+    lastRequestAt: current?.lastRequestAt === undefined ? record.at : later(current.lastRequestAt, record.at),
+    ...(newest ? { lastStatus: record.status } : current.lastStatus === undefined ? {} : { lastStatus: current.lastStatus }),
     ...(lastModel === undefined ? {} : { lastModel }),
     ...(rateLimit === undefined ? {} : { rateLimit }),
     ...(lastLimit === undefined ? {} : { lastLimit }),
@@ -171,6 +173,15 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
         }
         const keep = state.quota !== undefined && state.quota.observedAt.localeCompare(quota.observedAt) > 0;
         return { ...current.providers, [provider]: { ...state, quota: keep ? state.quota : quota } };
+      }),
+    recordRateLimit: (identity, provider, rateLimit) =>
+      rewriteSnapshot(identity, (current) => {
+        const state: ProviderUsageState = current?.providers[provider] ?? {};
+        const keep = state.rateLimit !== undefined && state.rateLimit.observedAt.localeCompare(rateLimit.observedAt) > 0;
+        // The usage endpoint answers the plan windows only; whether extra usage is available is a plan setting that earlier response headers stated, and it outlives them.
+        const overageStatus = rateLimit.unified?.overageStatus ?? state.rateLimit?.unified?.overageStatus;
+        const merged: RateLimitState = overageStatus === undefined || rateLimit.unified === undefined ? rateLimit : { ...rateLimit, unified: { ...rateLimit.unified, overageStatus } };
+        return { ...current?.providers, [provider]: { ...state, rateLimit: keep ? state.rateLimit : merged } };
       }),
   };
 }
