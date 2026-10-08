@@ -1,3 +1,17 @@
+## [8.42.0](https://github.com/ExaDev/agent-shim/compare/v8.41.0...v8.42.0) (2026-10-08)
+
+### Features
+
+* open the door's whole typed API client from the state root ([6a6a8d0](https://github.com/ExaDev/agent-shim/commit/6a6a8d0a386e6fcf742bdb33f2b4fe3b0bd07ff2))
+
+### Code Refactoring
+
+* read the serving door's control material in a library module ([290dbb2](https://github.com/ExaDev/agent-shim/commit/290dbb2f98c990cc7e24d20eeb7d0f5a46310909))
+
+### Documentation
+
+* describe frontDoorApiFromState in the library surface ([7293fe2](https://github.com/ExaDev/agent-shim/commit/7293fe2165bd51ad8089dcd9c5864c846064d7d5))
+
 ## [8.41.0](https://github.com/ExaDev/agent-shim/compare/v8.40.0...v8.41.0) (2026-10-08)
 
 ### Features
