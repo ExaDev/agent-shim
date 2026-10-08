@@ -1,3 +1,13 @@
+## [8.38.0](https://github.com/ExaDev/agent-shim/compare/v8.37.0...v8.38.0) (2026-10-08)
+
+### Features
+
+* **usage:** refresh stale Anthropic usage before ranking a pool ([8e6beba](https://github.com/ExaDev/agent-shim/commit/8e6bebaa6fc749b58bafbfaf1081fe7187eaf34d))
+
+### Build System
+
+* bundle the Agent SDK into the CommonJS build ([860eef1](https://github.com/ExaDev/agent-shim/commit/860eef122bdbb44823aab341a47533d77b1fdf82))
+
 ## [8.37.0](https://github.com/ExaDev/agent-shim/compare/v8.36.0...v8.37.0) (2026-10-07)
 
 ### Features
