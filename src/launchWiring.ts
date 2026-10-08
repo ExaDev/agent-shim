@@ -9,7 +9,7 @@ import type { Pool, UpdateMode } from "./config/schema";
 import { agentShimCliPath } from "./ownCli";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { realFrontDoorPort } from "./frontdoor/realFrontDoorPort";
-import { prepareLaunch, type FarmRuntime, type LaunchPlan, type PrepareLaunchParams } from "./launcher";
+import { prepareLaunch, runLaunchPlan, type FarmRuntime, type LaunchPlan, type PrepareLaunchParams } from "./launcher";
 import { resolveUpdateMode } from "./update/launchHook";
 import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import type { LogPort, ProcPort } from "./launcher/ports";
@@ -24,6 +24,7 @@ import {
   realIsProcessRunning,
   realResolveClaudeBinary,
   realRunPort,
+  realSpawnPort,
   realSleepSync,
   resolveGitBranch,
   spawnDaemonThrough,
@@ -170,4 +171,13 @@ export function prepareClaudeLaunch(options: PrepareClaudeLaunchOptions): Launch
       ? (spawnPaths, subcommand, logPath) => spawnDaemonThroughScript(agentShimCliPath())(spawnPaths, subcommand, logPath)
       : spawnDaemonThrough(options.agentShim);
   return prepareLaunch(realPrepareLaunchParams(paths, { proc, log, spawnDaemon, farm: buildFarmRuntime(paths, options.cwd) }));
+}
+
+/**
+ * Runs one `claude` launch for `options.cwd` on this machine as `agent-shim run` does, and returns the child's exit code: the launch is prepared (`prepareClaudeLaunch`), the child runs with the terminal's standard streams until it ends, and the launch's front door and headroom registrations are released whether it exited, was signalled (`128` plus the signal number) or could not be spawned. It does not exit this process, so the host decides what to do with the code.
+ *
+ * Throws `LaunchRefusedError` before anything is spawned when the launch is refused, and rethrows a spawn failure after releasing. Interactive offers (creating a missing identity or profile) and the launch-time update notice belong to the command line and are not made here.
+ */
+export function runClaudeLaunch(options: PrepareClaudeLaunchOptions): number {
+  return runLaunchPlan(prepareClaudeLaunch(options), realSpawnPort);
 }
