@@ -189,7 +189,6 @@ function tcpPortEraRecord(raw: string): boolean {
   return (has("port") || has("lastPort")) && !has("socketPath");
 }
 
-
 /**
  * Reports which `agent-shim` a bare command name actually runs, and — when a `claude` shim is enabled — the same for `claude`.
  *
