@@ -114,12 +114,7 @@ function rankNamedPool(input: Readonly<RankPoolGraphInput>, poolName: string, st
       }
       continue;
     }
-    if (input.pools[nestedName] === undefined) {
-      throw new PoolGraphError(`Pool "${poolName}" member "${poolMemberIdentity(entry)}" names a pool that is not defined.`);
-    }
-    if (childStack.includes(nestedName)) {
-      throw new PoolGraphError(`Pool "${poolName}" member "${poolMemberIdentity(entry)}" closes a cycle: ${[...childStack.slice(childStack.indexOf(nestedName)), nestedName].join(" -> ")}. A pool cannot nest itself, directly or through another pool.`);
-    }
+    assertNestable(input.pools, poolName, poolMemberIdentity(entry), nestedName, childStack);
     const nested = nestedMember(input, nestedName, childStack, sticky);
     // A condition on a nested entry guards the whole subtree: it rides the contributed pick's member, so the same rule skips or demotes the entry whatever it nests.
     members.push(typeof entry === "string" ? nested.member : { ...nested.member, policy: entry.when });
@@ -133,6 +128,16 @@ function rankNamedPool(input: Readonly<RankPoolGraphInput>, poolName: string, st
     ...(pool.preference === undefined ? {} : { preference: pool.preference }),
   });
   return { ranking, missing };
+}
+
+/** Refuses a nested `pool:<name>` entry that names a pool that is not defined or that closes a cycle. `childStack` is the chain of pools above and including the one holding the entry. */
+function assertNestable(pools: Readonly<Record<string, Pool>>, poolName: string, member: string, nestedName: string, childStack: readonly string[]): void {
+  if (pools[nestedName] === undefined) {
+    throw new PoolGraphError(`Pool "${poolName}" member "${member}" names a pool that is not defined.`);
+  }
+  if (childStack.includes(nestedName)) {
+    throw new PoolGraphError(`Pool "${poolName}" member "${member}" closes a cycle: ${[...childStack.slice(childStack.indexOf(nestedName)), nestedName].join(" -> ")}. A pool cannot nest itself, directly or through another pool.`);
+  }
 }
 
 /** What one nested `pool:<name>` entry contributes: its pool's pick as a member of the picked identity (re-ranked from that identity's own recorded state, with the composition in its reasons), or the entry's refusal when the nested pool has nothing to pick. */
@@ -152,6 +157,34 @@ function nestedMember(input: Readonly<RankPoolGraphInput>, nestedName: string, c
     },
     missing: nested.missing,
   };
+}
+
+/**
+ * The concrete identities the pool named `poolName` can launch as, in member order with a nested `pool:<name>` entry replaced by the identities of that pool at the entry's position, each identity once. It reads no usage and no identity file, so it lists every identity the pool graph names, whether or not it exists or is eligible: ranking is `rankPoolGraph`'s job.
+ *
+ * Throws `PoolGraphError` when the pool, or a pool it nests, is not defined, or when the graph reaches a pool it is already inside.
+ */
+export function poolIdentities(pools: Readonly<Record<string, Pool>>, poolName: string): readonly string[] {
+  const found = new Set<string>();
+  collectPoolIdentities(pools, poolName, [], found);
+  return [...found];
+}
+
+function collectPoolIdentities(pools: Readonly<Record<string, Pool>>, poolName: string, stack: readonly string[], found: Set<string>): void {
+  const pool = pools[poolName];
+  if (pool === undefined) {
+    throw new PoolGraphError(`No pool named "${poolName}". Run \`agent-shim pool add ${poolName} --identity <name>...\` first.`);
+  }
+  const childStack = [...stack, poolName];
+  for (const entry of pool.identities) {
+    const nestedName = poolNameOf(poolMemberIdentity(entry));
+    if (nestedName === undefined) {
+      found.add(poolMemberIdentity(entry));
+      continue;
+    }
+    assertNestable(pools, poolName, poolMemberIdentity(entry), nestedName, childStack);
+    collectPoolIdentities(pools, nestedName, childStack, found);
+  }
 }
 
 /** What reading the picks file found: the entries, and why they are empty when the file was unreadable. */
