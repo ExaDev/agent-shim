@@ -8,7 +8,7 @@ import { createDoorEventHub } from "./eventHub";
 import { createDoorHealthPublisher } from "./doorHealthEvents";
 import { createLaunchEventPublisher } from "./launchEvents";
 import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
-import { FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
+import { FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -168,6 +168,19 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
   };
 }
 
+describe("watchedInstallEntry", () => {
+  it("watches the resolved entry itself when it is already named agent-shim", () => {
+    expect(watchedInstallEntry("/home/testuser/.local/bin/agent-shim")).toBe("/home/testuser/.local/bin/agent-shim");
+    expect(watchedInstallEntry("/home/testuser/.local/bin/agent-shim.exe")).toBe("/home/testuser/.local/bin/agent-shim.exe");
+  });
+
+  it("watches the agent-shim sibling when the door was spawned through another entry, the way the claude hardlink and the legacy claude-use symlink are", () => {
+    expect(watchedInstallEntry("/home/testuser/.local/bin/claude")).toBe("/home/testuser/.local/bin/agent-shim");
+    expect(watchedInstallEntry("/home/testuser/.local/bin/claude-use")).toBe("/home/testuser/.local/bin/agent-shim");
+    expect(watchedInstallEntry("/home/testuser/.local/bin/claude.exe")).toBe("/home/testuser/.local/bin/agent-shim.exe");
+  });
+});
+
 describe("runFrontDoorSupervisor", () => {
   it("binds both sticky ports the previous generation served on and records a serving state", async () => {
     const world = makeWorld();
@@ -324,12 +337,43 @@ describe("runFrontDoorSupervisor", () => {
     expect(world.clock()).toBe(IDLE_MINUTES * MS_PER_MINUTE);
   });
 
-  it("does not turn over while the executable is briefly unstatable mid-run, the mid-install window a rename leaves", async () => {
+  it("does not turn over while the executable is briefly unstatable mid-run, the removal window a remove-then-link install leaves", async () => {
     const world = makeWorld();
     world.onSleep = () => {
       world.ownExecutable = undefined;
     };
     // Within the idle window, with the stat gone but the door otherwise serving: still running, the same no-flap rule.
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: SLACK_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
+    expect(world.closes).toEqual([]);
+  });
+
+  it("turns the door over at the first empty registry tick after a session that was live at the replacement ends, not after fresh idle minutes", async () => {
+    const world = makeWorld();
+    world.alive.add(LIVE_SESSION);
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0, token: SESSION_TOKEN });
+    // The replacement and the launcher's death land together between the first and second tick: the tick's prune then empties the registry in the same pass that first sees the replaced stat.
+    world.onSleep = () => {
+      world.ownExecutable = REPLACED_BINARY;
+      world.alive.delete(LIVE_SESSION);
+    };
+    const code = await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS });
+    expect(code).toBe(0);
+    // One poll interval: the turnover fired on the first tick with an empty registry, not after the idle window restarted.
+    expect(world.clock()).toBe(FRONTDOOR_POLL_MS);
+    expect(world.logs.some((line) => line.includes("the installed binary changed"))).toBe(true);
+  });
+
+  it("treats a stat returning to the exact captured identity after an absent window as unchanged, not replaced", async () => {
+    const world = makeWorld();
+    let sleeps = 0;
+    world.onSleep = () => {
+      sleeps += 1;
+      if (sleeps === 1) {
+        world.ownExecutable = undefined;
+      } else if (sleeps === 2) {
+        world.ownExecutable = INSTALLED_BINARY;
+      }
+    };
     expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: SLACK_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
     expect(world.closes).toEqual([]);
   });

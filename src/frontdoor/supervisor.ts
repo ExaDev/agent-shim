@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
 import type { DoorHealthPublisher } from "./doorHealthEvents";
@@ -18,6 +20,14 @@ export interface OwnExecutableStat {
   readonly ino: number;
   readonly size: number;
   readonly mtimeMs: number;
+}
+
+/**
+ * The installed entry the door's turnover check watches: the resolved own-executable path when that entry is itself named `agent-shim` (with or without Windows' `.exe`), and the `agent-shim` sibling beside it otherwise. `agent-shim update` renames its verified bytes over the entry the updating process resolved, so a door spawned through another name (the `claude` hardlink `shim enable` maintains, or the legacy `claude-use` symlink) never sees its own exec'd file change: the sibling beside it is the file the update replaces, and an installation with no `agent-shim` sibling at all watches a path that does not exist, which leaves the turnover check disabled for that generation rather than watching an entry nothing replaces.
+ */
+export function watchedInstallEntry(resolvedOwnExecutablePath: string): string {
+  const parsed = path.parse(resolvedOwnExecutablePath);
+  return parsed.name === "agent-shim" ? resolvedOwnExecutablePath : path.join(parsed.dir, `agent-shim${parsed.ext}`);
 }
 
 /** Every effect the front-door supervisor performs, injected so its whole lifecycle runs against fakes: no real process, port, clock or listener in a unit test. */
@@ -55,7 +65,7 @@ export interface FrontDoorSupervisorPorts {
    */
   readonly doorHealth: DoorHealthPublisher;
   /**
-   * Stats the executable this supervisor was spawned from, or undefined when it cannot be statted. The turnover check compares this against the stat taken when the door started serving: a replaced binary turns the door over at the first empty session registry, an unstatable one (missing, or mid-install between the removal and the rename) leaves the door alone rather than flapping on a half-applied update.
+   * Stats the installed entry the door's binary lives at (see `watchedInstallEntry`), or undefined when it cannot be statted. The turnover check compares this against the stat taken when the supervisor started: a replaced binary turns the door over at the first empty session registry, an unstatable one (a deleted binary, or a remove-then-link install between its removal and its relink) leaves the door alone rather than flapping on a half-applied install.
    */
   readonly statOwnExecutable: () => OwnExecutableStat | undefined;
   /**
@@ -86,6 +96,8 @@ const MS_PER_MINUTE = 60_000;
  */
 export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports: FrontDoorSupervisorPorts, options: RunFrontDoorSupervisorOptions = {}): Promise<number> {
   const { fs, paths } = ports;
+  // The binary identity this generation serves as, taken before any listener binds so an update landing during the door's own startup (CA load, binds, probes) is still a turnover for this generation rather than captured as the new normal. The turnover decision itself additionally waits for the second tick, because the launch that ensured this door writes its session record a few hundred milliseconds after the bind, and a door retiring on tick one would close its listeners under that launch's probe and refuse it outright.
+  const servingBinary = ports.statOwnExecutable();
   const previous = readFrontDoorState(fs, paths.frontdoorStateFile);
   let lastPort = previous?.lastPort;
   let lastConnectPort = previous?.lastConnectPort;
@@ -158,11 +170,9 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
 
   let idleSince: number | undefined;
   let ticks = 0;
-  // The binary identity this generation serves as, taken once the door is serving: a stat captured any earlier could name a binary that was replaced before the door ever accepted a session, and turning that over would retire a door nobody ever used. An unstatable executable at startup disables the turnover check for this generation rather than guessing.
-  const servingBinary = ports.statOwnExecutable();
   const binaryReplaced = (): boolean => {
     const current = ports.statOwnExecutable();
-    // A present-but-different stat is the turnover signal; an absent one (binary deleted, or mid-install between removal and rename) is not, so a half-applied update never flaps the door.
+    // A present-but-different stat is the turnover signal; an absent one (a deleted binary, or a remove-then-link install between its removal and its relink) is not, and a stat returning to the exact captured identity after such a window is equally not, so a half-applied install never flaps the door.
     return current !== undefined && servingBinary !== undefined && (current.dev !== servingBinary.dev || current.ino !== servingBinary.ino || current.size !== servingBinary.size || current.mtimeMs !== servingBinary.mtimeMs);
   };
   // The one graceful exit both retirements share: listeners down in the established order, the RC stream hub's cursor save last, sticky addresses preserved for the successor.
@@ -188,7 +198,8 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
     ports.checkQuotaExpiry();
     const prunedPids = new Set(pruned);
     if (listed.filter((session) => !prunedPids.has(session.pid)).length === 0) {
-      if (binaryReplaced()) {
+      // The first tick never retires the door: the ensuring launch's session record lands shortly after the bind (see the capture comment above), and this grace is what lets a startup-window update turn over on tick two with the record already in place.
+      if (ticks > 1 && binaryReplaced()) {
         ports.log("agent-shim frontdoor supervisor: the installed binary changed and no sessions are live; turning the door over for the next launch");
         ports.doorHealth.binaryTurnover();
         return await shutdown();

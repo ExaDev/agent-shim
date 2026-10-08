@@ -48,7 +48,7 @@ import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { collectFrontDoorStatus, formatFrontDoorStatus, headroomSocketTarget } from "./status";
 import { liveSessionTokens, writeFrontDoorSession } from "./state";
-import { runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
+import { runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 import { createAccountReader } from "../usage/account";
 import { createUsageMiddleware } from "../usage/middleware";
 import { withQuotaRefresh } from "../usage/quotaRefresh";
@@ -73,6 +73,17 @@ function rcObservingResolver(
     return resolution.ok
       ? { ok: true, route: observingRoutedRoute(resolution.route, tracker, hub === undefined ? undefined : { onExchangeSettled: () => { hub.reconcile(); } }) }
       : resolution;
+  };
+}
+
+/**
+ * The real turnover stat: the file identity of one installed entry, stat'd fresh on each call. Exported for its real-filesystem tests, which pin the symlink-following, the non-file refusal and the rename-install detection the supervisor's turnover depends on.
+ */
+export function realStatOwnExecutable(watchPath: string): () => OwnExecutableStat | undefined {
+  return () => {
+    // throwIfNoEntry, because an absent entry is the remove-then-link or deleted case the supervisor deliberately ignores rather than a crash.
+    const st = fs.statSync(watchPath, { throwIfNoEntry: false });
+    return st?.isFile() !== true ? undefined : { dev: st.dev, ino: st.ino, size: st.size, mtimeMs: st.mtimeMs };
   };
 }
 
@@ -237,11 +248,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       });
     },
     isRunning: realIsProcessRunning,
-    // The turnover check's file identity: the PATH-visible executable `agent-shim update` renames its verified bytes over, stat'd fresh on every tick (throwIfNoEntry, because an absent binary is the mid-install or deleted case the supervisor deliberately ignores rather than a crash).
-    statOwnExecutable: () => {
-      const st = fs.statSync(realOwnExecutablePath(), { throwIfNoEntry: false });
-      return st?.isFile() !== true ? undefined : { dev: st.dev, ino: st.ino, size: st.size, mtimeMs: st.mtimeMs };
-    },
+    // The turnover check's file identity, over the installed entry resolved once at door start: re-resolving per tick would re-run the PATH scan every second and could theoretically flip between two files, while the entry itself is fixed for as long as this door lives.
+    statOwnExecutable: realStatOwnExecutable(watchedInstallEntry(realOwnExecutablePath())),
     startProviderListener: async (preferredPort) => {
       const authority = loadCa();
       // The write operations the control routes and the typed API both carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly. A confirmed write advances the session's sequence cursor through the tracker, so a stream resume continues after the door's own events too. In the self-hosted mode the dial's target is resolved per call so it names the door's own surface once that has bound.
