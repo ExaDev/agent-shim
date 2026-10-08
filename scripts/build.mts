@@ -21,6 +21,9 @@ const bundleOnly = process.argv.includes("--bundle-only");
 /** The lowest Node version this bundle is ever asked to run under — set by `commander@15`'s own `engines.node`, the strictest floor among this project's runtime dependencies, and mirrored in package.json's own `engines` field. Fixed rather than tied to whichever Node version happens to run this build script: the SEA binary embeds its own runtime regardless, and the npm-published bundle runs under whatever Node the installer has, which is only guaranteed to be at least this floor. */
 const ESBUILD_TARGET = "node22";
 
+/** The CommonJS bundle's stand-in for `import.meta.url`, declared by its banner and substituted for every bundled ES module's use of it. */
+const IMPORT_META_URL_VARIABLE = "__agentShimImportMetaUrl";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const distDir = path.join(rootDir, "dist");
@@ -55,8 +58,9 @@ async function bundle(): Promise<void> {
     format: "cjs",
     target: ESBUILD_TARGET,
     outfile: path.join(distDir, bundleFileName),
-    // A shebang is inert for the SEA build (Node's CommonJS loader strips a leading `#!` line from any entry point regardless) and required for the npm-published bin script to be directly executable.
-    banner: { js: "#!/usr/bin/env node" },
+    // A shebang is inert for the SEA build (Node's CommonJS loader strips a leading `#!` line from any entry point regardless) and required for the npm-published bin script to be directly executable. The second line gives bundled ES modules an `import.meta.url`, which a CommonJS bundle otherwise leaves undefined: the Agent SDK passes it to `createRequire`. It names the running script, or the executable itself under SEA.
+    banner: { js: `#!/usr/bin/env node\nconst ${IMPORT_META_URL_VARIABLE} = require("node:url").pathToFileURL(process.argv[1] ?? process.execPath).href;` },
+    define: { "import.meta.url": IMPORT_META_URL_VARIABLE },
     minify: false,
     logLevel: "info",
   });
