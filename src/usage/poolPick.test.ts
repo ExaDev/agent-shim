@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Pool } from "../config/schema";
 import { FAKE_NOW_MS, createFakeFarmFs, paths } from "../test-helpers";
-import { loadPoolMembers, PoolGraphError, rankPoolGraph, readStickyPick, recordStickyPick } from "./poolPick";
+import { loadPoolMembers, PoolGraphError, poolIdentities, rankPoolGraph, readStickyPick, recordStickyPick } from "./poolPick";
 import { PROMPT_CACHE_TTL_MS } from "./pick";
 import { USAGE_RETENTION_MS } from "./store";
 
@@ -67,6 +67,29 @@ describe("last-pick record", () => {
     expect(readStickyPick(fs, paths.usagePicksFile, DIRECTORY).problem).toContain("not valid JSON");
     recordStickyPick(fs, paths.usagePicksFile, DIRECTORY, "work", FAKE_NOW_MS);
     expect(readStickyPick(fs, paths.usagePicksFile, DIRECTORY).sticky?.identity).toBe("work");
+  });
+});
+
+describe("poolIdentities", () => {
+  it("lists a pool's identities in member order, whichever form each entry takes", () => {
+    const pools: Record<string, Pool> = { main: { identities: ["work", { identity: "personal", when: { branch: "main" } }] } };
+    expect(poolIdentities(pools, "main")).toEqual(["work", "personal"]);
+  });
+
+  it("replaces a nested pool entry with that pool's identities at the entry's position, each identity once", () => {
+    const pools: Record<string, Pool> = {
+      main: { identities: ["a", "pool:spare", "d", "c"] },
+      spare: { identities: ["b", "c", "pool:deep"] },
+      deep: { identities: ["a", "e"] },
+    };
+    expect(poolIdentities(pools, "main")).toEqual(["a", "b", "c", "e", "d"]);
+  });
+
+  it("refuses a pool that is not defined, a nested one that is not, and a graph that closes a cycle", () => {
+    const pools: Record<string, Pool> = { loop: { identities: ["pool:other"] }, other: { identities: ["pool:loop"] }, dangling: { identities: ["pool:ghost"] } };
+    expect(() => poolIdentities(pools, "nobody")).toThrow(PoolGraphError);
+    expect(() => poolIdentities(pools, "dangling")).toThrow(/names a pool that is not defined/);
+    expect(() => poolIdentities(pools, "loop")).toThrow(/closes a cycle: loop -> other -> loop/);
   });
 });
 
