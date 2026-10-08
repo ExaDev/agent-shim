@@ -4,16 +4,22 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runLaunchPlan, type LaunchPlan } from "./launcher";
-import { LaunchRefusedError, runClaudeLaunch } from "./launchWiring";
+import { runClaudeLaunch } from "./launchRun";
+import { LaunchRefusedError } from "./launchWiring";
 import type { SpawnResult } from "./launcher/ports";
 import { addIdentity } from "./identityStore";
-import { buildLayoutPaths } from "./paths";
+import { addPool } from "./poolStore";
+import type { AnthropicUsageRefresher } from "./usage/anthropicUsageRefresh";
+import type { PoolMember } from "./usage/pick";
+import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { fakeSpawn } from "./test-helpers";
 
 /** The exit code the stub child ends with, so a returned code can only have come from it. */
 const CHILD_EXIT_CODE = 7;
 /** The conventional shell offset for a child ended by a signal: 128 plus the signal number. */
 const SIGNAL_EXIT_OFFSET = 128;
+/** Six days in milliseconds: a window that resets a long way off. */
+const SIX_DAYS_MS = 518_400_000;
 
 /** A plan whose callbacks call `record` in the order they run, beside the spawn. */
 function recordedPlan(record: (entry: string) => void): LaunchPlan {
@@ -89,19 +95,68 @@ describe.skipIf(process.platform === "win32")("runClaudeLaunch", () => {
     return record;
   }
 
-  it("runs the real claude as the identity the launch names and returns the child's exit code without exiting the host", () => {
+  it("runs the real claude as the identity the launch names and returns the child's exit code without exiting the host", async () => {
     const paths = buildLayoutPaths(root);
     addIdentity(paths, "work");
     const record = stubClaude(CHILD_EXIT_CODE);
-    const code = runClaudeLaunch({ argv: ["@work", "--print", "hello"], cwd: root, env: {}, paths });
+    const code = await runClaudeLaunch({ argv: ["@work", "--print", "hello"], cwd: root, env: {}, paths });
     expect(code).toBe(CHILD_EXIT_CODE);
     expect(nodeFs.readFileSync(record, "utf8")).toBe(`${path.join(paths.identitiesDir, "work")}\n--print hello\n`);
   });
 
-  it("refuses a launch for an identity that does not exist before spawning anything", () => {
+  it("refuses a launch for an identity that does not exist before spawning anything", async () => {
     const paths = buildLayoutPaths(root);
     const record = stubClaude(0);
-    expect(() => runClaudeLaunch({ argv: ["@nobody"], cwd: root, env: {}, paths })).toThrow(LaunchRefusedError);
+    await expect(runClaudeLaunch({ argv: ["@nobody"], cwd: root, env: {}, paths })).rejects.toThrow(LaunchRefusedError);
     expect(nodeFs.existsSync(record)).toBe(false);
+  });
+
+  /** Writes the rejected seven-day window that makes `identity` ineligible for a pool pick, as an observation of just now would. */
+  function exhaust(paths: LayoutPaths, identity: string): void {
+    const seen = new Date().toISOString();
+    nodeFs.mkdirSync(paths.usageSnapshotsDir, { recursive: true });
+    nodeFs.writeFileSync(
+      path.join(paths.usageSnapshotsDir, `${identity}.json`),
+      JSON.stringify({
+        schemaVersion: 1,
+        identity,
+        updatedAt: seen,
+        account: { organizationRateLimitTier: "default_claude_max_20x" },
+        providers: { anthropic: { lastRequestAt: seen, lastStatus: 200, rateLimit: { observedAt: seen, headers: {}, unified: { sevenDay: { utilization: 1, resetsAt: new Date(Date.now() + SIX_DAYS_MS).toISOString(), status: "rejected" } } } } },
+      }),
+    );
+  }
+
+  it("refreshes the stale usage of the pool the launch selects before it picks, so the pick ranks on what the refresh recorded", async () => {
+    const paths = buildLayoutPaths(root);
+    addIdentity(paths, "work");
+    addIdentity(paths, "personal");
+    addPool(paths, "main", ["work", "personal"], "listed");
+    const record = stubClaude(0);
+    const asked: string[][] = [];
+    const refresher: AnthropicUsageRefresher = {
+      refresh: vi.fn(),
+      refreshStale: async (members: readonly PoolMember[]) => {
+        asked.push(members.map((member) => member.identity));
+        exhaust(paths, "work");
+        await Promise.resolve();
+      },
+    };
+    // --no-track-usage keeps the launch off the front door, which a test has no daemon for.
+    await runClaudeLaunch({ argv: ["@pool:main", "--no-track-usage", "--print"], cwd: root, env: {}, paths, refresher });
+    expect(asked).toEqual([["work", "personal"]]);
+    expect(nodeFs.readFileSync(record, "utf8")).toBe(`${path.join(paths.identitiesDir, "personal")}\n--print\n`);
+  });
+
+  it("does not touch the refresher for a launch that selects an identity, whatever pools exist", async () => {
+    const paths = buildLayoutPaths(root);
+    addIdentity(paths, "work");
+    addPool(paths, "main", ["work"]);
+    stubClaude(0);
+    const refreshStale = vi.fn<AnthropicUsageRefresher["refreshStale"]>(async () => {
+      await Promise.resolve();
+    });
+    await runClaudeLaunch({ argv: ["@work"], cwd: root, env: {}, paths, refresher: { refresh: vi.fn(), refreshStale } });
+    expect(refreshStale).not.toHaveBeenCalled();
   });
 });

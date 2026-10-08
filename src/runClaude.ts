@@ -4,16 +4,12 @@ import { profileExists } from "./configProfilesStore";
 import { runIdentityWizard } from "./identityManager";
 import { buildFarmRuntime, realClaudeBinaryResolver, realPrepareLaunchParams } from "./launchWiring";
 import { resolveLayoutPaths } from "./paths";
+import { refreshPools } from "./poolUsageRefresh";
 import { runLauncher } from "./launcher";
 import { parseLauncherArgv } from "./launcher/argv";
 import { runNativeLaunch } from "./launcher/native";
-import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/identity";
-import { refreshStalePoolMembers } from "./launcher/poolRefresh";
-import { loadPoolMembers } from "./usage/poolPick";
-import { createAccountReader } from "./usage/account";
-import { createRealAnthropicUsageRefresher } from "./usage/realAnthropicUsageProbe";
-import { createUsageStore } from "./usage/store";
-import { realFarmFs, realFsPort, realLogPort, realProcPort, realSpawnPort, spawnDetachedSupervisor } from "./realPorts";
+import { decideConfigProfile, decideIdentity, loadIdentity, readActiveIdentity } from "./launcher/identity";
+import { realFsPort, realLogPort, realProcPort, realSpawnPort, spawnDetachedSupervisor } from "./realPorts";
 import { realLaunchUpdatePort } from "./update/commands";
 
 /** Runs the launcher pipeline. `argvOverride`, when given, replaces `realProcPort`'s own `process.argv.slice(2)`; this is what lets `agent-shim run [args...]` reach the identical pipeline the `claude` binary name uses, fed the args Commander collected instead of the real argv. */
@@ -33,14 +29,7 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
     env: procForDecision.env,
     argv0Identity: nativeArgv.identity,
     ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
-    readActiveIdentityFile: () => {
-      const raw = realFsPort.readFileUtf8(paths.activeIdentityFile);
-      if (raw === undefined) {
-        return undefined;
-      }
-      const trimmed = raw.trim();
-      return trimmed === "" ? undefined : trimmed;
-    },
+    readActiveIdentityFile: () => readActiveIdentity(realFsPort, paths.activeIdentityFile),
   });
   if (process.stdin.isTTY) {
     if (
@@ -87,17 +76,12 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
   }
 
   // A pool pick ranks on recorded usage, which only moves when a request passes the front door; members whose record has gone stale are asked for current figures first.
-  await refreshStalePoolMembers({
+  await refreshPools({
+    paths,
+    cwd: process.cwd(),
     poolNames: identityDecision.pool === undefined ? [] : [identityDecision.pool],
-    pools: farm.pools ?? {},
-    loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now()),
-    refresher: createRealAnthropicUsageRefresher({
-      paths,
-      store: createUsageStore({ fs: realFarmFs, paths, pid: process.pid, now: () => Date.now(), readAccount: createAccountReader(realFarmFs, paths.identitiesDir), log: realLogPort.warn }),
-      cwd: process.cwd(),
-      spawnDaemon: spawnDetachedSupervisor,
-      log: realLogPort.warn,
-    }),
+    spawnDaemon: spawnDetachedSupervisor,
+    log: realLogPort.warn,
   });
 
   runLauncher({

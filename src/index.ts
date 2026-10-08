@@ -14,7 +14,7 @@
  *
  * - `check` and `doctor` as data: `collectCheckReport` and `collectDoctorReport` read this machine and return the report, the pure `runCheck` and `runDoctor` take the facts as parameters, and `checkReportToJson` returns the report in the shape `CheckReportJsonSchema` (in `checkReportSchema.ts`) defines, so the JSON the CLI prints, the door's `check.run` procedure and any consumer's validation share one definition.
  *
- * - launching: `prepareClaudeLaunch` resolves a launch for a directory on this machine and returns the binary, arguments and environment to spawn (performing the farm resync and daemon registration the child depends on), `prepareLaunch` does the same over injected ports, the plan's `decision` reports what was resolved (identity, pool pick and reasons, configuration directory, profile, provider) as data, `agentShimCliPath` names the package's own command line bundle that starts the daemons a launch needs unless the caller names another executable, `runClaudeLaunch` runs the launch end to end and returns the child's exit code, and `runLauncher`, `runLaunchPlan` and `spawnClaude` are the spawn step itself: the former plans and releases in one call, the latter takes a plan's parts with the release-on-exit ordering an embedder would otherwise get wrong.
+ * - launching: `prepareClaudeLaunch` resolves a launch for a directory on this machine and returns the binary, arguments and environment to spawn (performing the farm resync and daemon registration the child depends on), `prepareLaunch` does the same over injected ports, the plan's `decision` reports what was resolved (identity, pool pick and reasons, configuration directory, profile, provider) as data, `agentShimCliPath` names the package's own command line bundle that starts the daemons a launch needs unless the caller names another executable, `runClaudeLaunch` refreshes the selected pool's stale usage (`refreshPoolUsage` does that on demand) and then runs the launch end to end, resolving to the child's exit code, and `runLauncher`, `runLaunchPlan` and `spawnClaude` are the spawn step itself: the former plans and releases in one call, the latter takes a plan's parts with the release-on-exit ordering an embedder would otherwise get wrong.
  *
  * Everything the CLI alone needs (commander wiring and prompts) is deliberately not exported here.
  */
@@ -404,6 +404,10 @@ export {
 } from "./doctorReport";
 export { prepareLaunch, runLauncher, runLaunchPlan, type LaunchDecision, type LaunchPlan, type LaunchPoolDecision, type PrepareLaunchParams, type RunLauncherParams } from "./launcher";
 export { spawnClaude, type SpawnClaudeParams } from "./launcher/spawn";
-export { LaunchRefusedError, prepareClaudeLaunch, runClaudeLaunch, type PrepareClaudeLaunchOptions } from "./launchWiring";
+export { LaunchRefusedError, prepareClaudeLaunch, type PrepareClaudeLaunchOptions } from "./launchWiring";
+export { runClaudeLaunch, type RunClaudeLaunchOptions } from "./launchRun";
+export { poolSelectedByLaunch, refreshLaunchPoolUsage, refreshPoolUsage, type RefreshLaunchPoolUsageOptions, type RefreshPoolUsageParams } from "./poolUsageRefresh";
+export { refreshStalePoolMembers, type RefreshStalePoolMembersParams } from "./launcher/poolRefresh";
+export type { AnthropicUsageRefresher } from "./usage/anthropicUsageRefresh";
 export { agentShimCliPath, OWN_CLI_FILE_NAME } from "./ownCli";
 

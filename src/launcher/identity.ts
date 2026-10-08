@@ -37,6 +37,12 @@ export interface IdentityDecision {
   readonly configDirEscapeHatch: boolean;
 }
 
+/** Reads the persisted active-identity file through `fs`: its trimmed content, or undefined when the file does not exist or is empty. */
+export function readActiveIdentity(fs: Pick<FsPort, "readFileUtf8">, activeIdentityFile: string): string | undefined {
+  const trimmed = fs.readFileUtf8(activeIdentityFile)?.trim();
+  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+}
+
 /** Inputs to `decideIdentity`, in the exact precedence order the README's CLI reference table documents. */
 export interface DecideIdentityParams {
   readonly env: Readonly<Record<string, string | undefined>>;
