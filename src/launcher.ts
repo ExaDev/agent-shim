@@ -14,7 +14,7 @@ import { splitExtraFlags } from "./launcher/extraFlags";
 import { resolvePoolLaunch } from "./launcher/pool";
 import { IdentityLockBusyError } from "./launcher/lock";
 import type { FarmFs, FsPort, FrontDoorPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
-import { spawnClaude } from "./launcher/spawn";
+import { childExitCode } from "./launcher/spawn";
 import { resolveProvider } from "./providersStore";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
@@ -527,17 +527,27 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
 }
 
 /**
- * Runs one `claude` launch: `prepareLaunch`, then the child under `params.spawn`, whose exit code becomes this process's.
- *
- * The session registrations are released twice by design: `beforeExit` covers the real success path (where `process.exit` never unwinds a `finally`), and the `finally` below covers a thrown spawn error, where it does.
+ * Runs the child a `plan` describes under `spawn` and returns its exit code, in the order every launch observes: the update check's notice is suppressed from the moment the child takes the terminal, the child runs to completion, and the plan's session registrations are released whether it exited, was signalled or could not be spawned. A spawn failure is thrown after the release rather than turned into an exit code.
  */
-export function runLauncher(params: RunLauncherParams): void {
-  const plan = prepareLaunch(params);
+export function runLaunchPlan(plan: LaunchPlan, spawn: SpawnPort): number {
   try {
     // Marked before the spawn, not after it: the synchronous spawn blocks the event loop for the whole session, so a check answer arriving from here on is late by definition and must print nothing.
     plan.markChildStarted();
-    spawnClaude({ bin: plan.bin, args: plan.args, env: plan.env, spawn: params.spawn, proc: params.proc, beforeExit: plan.release });
+    const result = spawn.spawnSync(plan.bin, plan.args, { stdio: "inherit", env: plan.env });
+    if (result.error !== undefined) {
+      throw result.error;
+    }
+    return childExitCode(result);
   } finally {
     plan.release();
   }
+}
+
+/**
+ * Runs one `claude` launch: `prepareLaunch`, then the child under `params.spawn`, whose exit code becomes this process's.
+ *
+ * The session registrations are released by `runLaunchPlan` before `proc.exit` runs, because the real `process.exit` never unwinds a `finally` block.
+ */
+export function runLauncher(params: RunLauncherParams): void {
+  params.proc.exit(runLaunchPlan(prepareLaunch(params), params.spawn));
 }
