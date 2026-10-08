@@ -1,3 +1,9 @@
+## [8.38.1](https://github.com/ExaDev/agent-shim/compare/v8.38.0...v8.38.1) (2026-10-08)
+
+### Documentation
+
+* name only the genuinely CLI-only parts as not in the library ([5473dd6](https://github.com/ExaDev/agent-shim/commit/5473dd68315785ca9e386b11ae793e43b76035ca))
+
 ## [8.38.0](https://github.com/ExaDev/agent-shim/compare/v8.37.0...v8.38.0) (2026-10-08)
 
 ### Features
