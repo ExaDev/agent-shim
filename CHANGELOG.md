@@ -1,3 +1,23 @@
+## [8.43.0](https://github.com/ExaDev/agent-shim/compare/v8.42.0...v8.43.0) (2026-10-08)
+
+### Features
+
+* refresh the selected pool's stale usage before a library launch picks ([14951c3](https://github.com/ExaDev/agent-shim/commit/14951c3e9102a3621faaecbe494b4e8f35e49907))
+* run a launch end to end over the real ports and return the exit code ([73fad6b](https://github.com/ExaDev/agent-shim/commit/73fad6b070aa4bf52adf3e9cd9308b4ab52a1171))
+
+### Code Refactoring
+
+* run a launch plan's child in one function that returns its exit code ([20c7945](https://github.com/ExaDev/agent-shim/commit/20c7945c4e884b3d8d5ed19f31d1f63d1cf84879))
+
+### Documentation
+
+* describe the pool usage refresh and the SDK stand-in for bundlers ([681b70e](https://github.com/ExaDev/agent-shim/commit/681b70e809aaac7390dcb868fc55b05dc7c9afae))
+* list runClaudeLaunch and runLaunchPlan in the library surface ([e90fbd8](https://github.com/ExaDev/agent-shim/commit/e90fbd81d8da4204ac6cfc697791813db5f28863))
+
+### Tests
+
+* give the recorded launch plan the decision a plan now carries ([caaa6c9](https://github.com/ExaDev/agent-shim/commit/caaa6c9f2357beda511cb515449fac94fae42ae7))
+
 ## [8.42.0](https://github.com/ExaDev/agent-shim/compare/v8.41.0...v8.42.0) (2026-10-08)
 
 ### Features
