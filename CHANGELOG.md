@@ -1,3 +1,9 @@
+## [9.1.0](https://github.com/ExaDev/agent-shim/compare/v9.0.0...v9.1.0) (2026-10-08)
+
+### Features
+
+* export PoolGraphError so an embedder can catch what poolIdentities throws ([e35571a](https://github.com/ExaDev/agent-shim/commit/e35571af67f296aef4b41c91b697eecce6072c6a)), closes [#304](https://github.com/ExaDev/agent-shim/issues/304)
+
 ## [9.0.0](https://github.com/ExaDev/agent-shim/compare/v8.44.0...v9.0.0) (2026-10-08)
 
 ### ⚠ BREAKING CHANGES
