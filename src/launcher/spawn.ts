@@ -22,7 +22,7 @@ const SIGNAL_EXIT_CODE_OFFSET = 128;
 /**
  * Derives the exit code to propagate from a completed `spawnSync` result: the child's own exit status when it exited normally, or the conventional `128 + signal number` when it was terminated by a signal, or `1` as a last resort when the result carries neither. `os.constants.signals` is a closed mapping over every `NodeJS.Signals` name to its numeric value, so indexing it with a non-null `result.signal` is always defined -- confirmed directly, not merely assumed, since the earlier defensive `undefined` fallback here was itself flagged as unreachable.
  */
-function exitCodeFor(result: SpawnResult): number {
+export function childExitCode(result: SpawnResult): number {
   if (result.status !== null) {
     return result.status;
   }
@@ -45,5 +45,5 @@ export function spawnClaude(params: SpawnClaudeParams): never {
   if (params.beforeExit !== undefined) {
     params.beforeExit();
   }
-  return params.proc.exit(exitCodeFor(result));
+  return params.proc.exit(childExitCode(result));
 }
