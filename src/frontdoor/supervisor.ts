@@ -10,6 +10,16 @@ interface FrontDoorListenerHandle {
   readonly close: () => Promise<void>;
 }
 
+/**
+ * The file identity of the executable this supervisor was spawned from, everything that distinguishes one installed binary from its replacement at the same path: `agent-shim update` installs by rename, so a newer release on disk is a different inode there, and the turnover check is a plain identity comparison rather than a version query (which would mean spawning a subprocess once per tick).
+ */
+export interface OwnExecutableStat {
+  readonly dev: number;
+  readonly ino: number;
+  readonly size: number;
+  readonly mtimeMs: number;
+}
+
 /** Every effect the front-door supervisor performs, injected so its whole lifecycle runs against fakes: no real process, port, clock or listener in a unit test. */
 export interface FrontDoorSupervisorPorts {
   readonly fs: HeadroomFs;
@@ -41,9 +51,13 @@ export interface FrontDoorSupervisorPorts {
    */
   readonly observeLaunchRegistry: (sessions: readonly FrontDoorSessionSummary[], pruned: readonly number[]) => void;
   /**
-   * Publishes the supervisor's own state transitions to the door's event backbone: the generation serving, a start failure that ends it, the idle shutdown. Fed the moments the supervisor already lives through, published as they happen rather than at a tick, because these are process facts.
+   * Publishes the supervisor's own state transitions to the door's event backbone: the generation serving, a start failure that ends it, the binary turnover and the idle shutdown. Fed the moments the supervisor already lives through, published as they happen rather than at a tick, because these are process facts.
    */
   readonly doorHealth: DoorHealthPublisher;
+  /**
+   * Stats the executable this supervisor was spawned from, or undefined when it cannot be statted. The turnover check compares this against the stat taken when the door started serving: a replaced binary turns the door over at the first empty session registry, an unstatable one (missing, or mid-install between the removal and the rename) leaves the door alone rather than flapping on a half-applied update.
+   */
+  readonly statOwnExecutable: () => OwnExecutableStat | undefined;
   /**
    * Checks the expiring-quota windows against the clock, once per tick: the publisher holds the snapshots the usage source keeps fresh, so this costs arithmetic, never a file read.
    */
@@ -66,7 +80,7 @@ export const FRONTDOOR_POLL_MS = 1_000;
 const MS_PER_MINUTE = 60_000;
 
 /**
- * Runs the front-door supervisor: binds all three listeners (the HTTPS provider listener, the CONNECT surface and the plain-HTTP direct listener, each on its sticky port), records the serving state, and shuts down after `idleShutdownMinutes` with an empty session registry. Returns the exit code: 0 for an idle shutdown, 1 for a fatal start failure.
+ * Runs the front-door supervisor: binds all three listeners (the HTTPS provider listener, the CONNECT surface and the plain-HTTP direct listener, each on its sticky port), records the serving state, and shuts down with an empty session registry, either at the first such tick after the executable it serves as has been replaced on disk (so an applied update reaches the door without waiting out the idle window) or after `idleShutdownMinutes` of it. Returns the exit code: 0 for either retirement, 1 for a fatal start failure.
  *
  * The listeners live in this process, so there is no child to keep alive: a crash of this process is a crash of every routed session's door at once, and recovery is the next launch's ensure spawning a replacement on the same sticky ports, which is exactly the failure model the issue asks to settle with tests. Keeping the headroom daemon alive is the headroom supervisor's job, not this one's; the two daemons idle out independently.
  */
@@ -144,6 +158,24 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
 
   let idleSince: number | undefined;
   let ticks = 0;
+  // The binary identity this generation serves as, taken once the door is serving: a stat captured any earlier could name a binary that was replaced before the door ever accepted a session, and turning that over would retire a door nobody ever used. An unstatable executable at startup disables the turnover check for this generation rather than guessing.
+  const servingBinary = ports.statOwnExecutable();
+  const binaryReplaced = (): boolean => {
+    const current = ports.statOwnExecutable();
+    // A present-but-different stat is the turnover signal; an absent one (binary deleted, or mid-install between removal and rename) is not, so a half-applied update never flaps the door.
+    return current !== undefined && servingBinary !== undefined && (current.dev !== servingBinary.dev || current.ino !== servingBinary.ino || current.size !== servingBinary.size || current.mtimeMs !== servingBinary.mtimeMs);
+  };
+  // The one graceful exit both retirements share: listeners down in the established order, the RC stream hub's cursor save last, sticky addresses preserved for the successor.
+  const shutdown = async (): Promise<number> => {
+    await direct.close();
+    await connect.close();
+    await http.close();
+    // Last of the serving machinery to stop, and deliberately last: with every listener down no observed exchange can settle and re-attach a stream, so the hub's synchronous cursor persistence is the final word on every attachment before the process exits.
+    ports.closeRcStreamHub();
+    // The sticky addresses survive the shutdown so the next generation starts where this one served.
+    writeFrontDoorState(fs, paths.frontdoorStateFile, sticky());
+    return 0;
+  };
   for (;;) {
     if (options.tickLimit !== undefined && ticks >= options.tickLimit) {
       return FRONTDOOR_SUPERVISOR_STILL_RUNNING;
@@ -156,18 +188,16 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
     ports.checkQuotaExpiry();
     const prunedPids = new Set(pruned);
     if (listed.filter((session) => !prunedPids.has(session.pid)).length === 0) {
+      if (binaryReplaced()) {
+        ports.log("agent-shim frontdoor supervisor: the installed binary changed and no sessions are live; turning the door over for the next launch");
+        ports.doorHealth.binaryTurnover();
+        return await shutdown();
+      }
       idleSince ??= ports.now();
       if (ports.now() - idleSince >= idleShutdownMinutes * MS_PER_MINUTE) {
         ports.log(`agent-shim frontdoor supervisor: no sessions for ${String(idleShutdownMinutes)} minute(s); closing the front door and exiting`);
         ports.doorHealth.idleShutdown();
-        await direct.close();
-        await connect.close();
-        await http.close();
-        // Last of the serving machinery to stop, and deliberately last: with every listener down no observed exchange can settle and re-attach a stream, so the hub's synchronous cursor persistence is the final word on every attachment before the process exits.
-        ports.closeRcStreamHub();
-        // The sticky addresses survive the shutdown so the next generation starts where this one served.
-        writeFrontDoorState(fs, paths.frontdoorStateFile, sticky());
-        return 0;
+        return await shutdown();
       }
     } else {
       idleSince = undefined;

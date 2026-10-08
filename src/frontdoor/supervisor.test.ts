@@ -8,7 +8,7 @@ import { createDoorEventHub } from "./eventHub";
 import { createDoorHealthPublisher } from "./doorHealthEvents";
 import { createLaunchEventPublisher } from "./launchEvents";
 import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
-import { FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, type FrontDoorSupervisorPorts } from "./supervisor";
+import { FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -29,6 +29,9 @@ const MS_PER_MINUTE = 60_000;
 /** Ticks beyond the idle window itself, so an unwanted shutdown cannot hide behind the tick limit. */
 const SLACK_TICKS = 5;
 const FULL_IDLE_WINDOW_TICKS = Math.ceil((IDLE_MINUTES * MS_PER_MINUTE) / FRONTDOOR_POLL_MS) + SLACK_TICKS;
+/** The installed binary as the door starts serving it: every field differs in the replacement, the way a rename-install's new inode does. */
+const INSTALLED_BINARY: OwnExecutableStat = { dev: 1, ino: 10, size: 4096, mtimeMs: 0 };
+const REPLACED_BINARY: OwnExecutableStat = { dev: 1, ino: 11, size: 4097, mtimeMs: 1 };
 
 /**
  * The fake world the supervisor runs against: an in-memory filesystem, a clock advanced only by the supervisor's own sleeps, a modelled process table, and listeners that bind the preferred port when it is free and the fresh one otherwise (the real listeners' bind-time fallback). `onSleep` lets a test act between ticks.
@@ -51,6 +54,8 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
   let failConnect = false;
   let failDirect = false;
   let onSleep: (() => void) | undefined;
+  // The executable identity the door serves as, present by default so the existing idle behaviour runs with a matching stat (the no-drift case), replaceable or removable mid-run through the world's setter the way `agent-shim update`'s rename-install replaces the file between ticks.
+  let ownExecutableStat: OwnExecutableStat | undefined = INSTALLED_BINARY;
   // The door's event backbone and its launch lifecycle publisher, the same pairing the real ports wire: the tick's registry facts go in through the port below and come out as source-tagged events a test subscribes for.
   const doorEvents = createDoorEventHub();
   const launchEvents = createLaunchEventPublisher(doorEvents, () => clock);
@@ -68,6 +73,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
       await Promise.resolve();
     },
     isRunning: (pid) => alive.has(pid),
+    statOwnExecutable: () => ownExecutableStat,
     startProviderListener: async (preferred) => {
       if (failListener) {
         throw new Error("port chaos");
@@ -150,6 +156,10 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
     },
     set failDirect(value: boolean) {
       failDirect = value;
+    },
+    /** Replaces or removes the installed binary's identity; setting it mid-run (from `onSleep`) models the update's rename landing between ticks. */
+    set ownExecutable(value: OwnExecutableStat | undefined) {
+      ownExecutableStat = value;
     },
     directBinds,
     set onSleep(hook: (() => void) | undefined) {
@@ -257,6 +267,71 @@ describe("runFrontDoorSupervisor", () => {
     // All three listeners close, the direct one included, and the sticky addresses seed the next generation: the plain listener rebinding its sticky port, the other two starting fresh.
     expect(world.closes.sort((a, b) => a - b)).toEqual([STICKY_PORT, FRESH_PORT, FRESH_PORT].sort((a, b) => a - b));
     expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)).toEqual({ lastPort: STICKY_PORT, lastConnectPort: FRESH_PORT, lastDirectPort: FRESH_PORT });
+  });
+
+  it("turns the door over at the first empty registry once the installed binary changed, without waiting out the idle window", async () => {
+    const world = makeWorld();
+    writeFrontDoorState(world.fs, paths.frontdoorStateFile, { lastPort: STICKY_PORT });
+    // The replacement lands between the first and second tick, the way a rename-install does.
+    world.onSleep = () => {
+      world.ownExecutable = REPLACED_BINARY;
+    };
+    const code = await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS });
+    expect(code).toBe(0);
+    // The exit happened on the drift, long before the idle window: one tick's poll has passed, not a minute of them.
+    expect(world.clock()).toBe(FRONTDOOR_POLL_MS);
+    expect(world.logs.some((line) => line.includes("the installed binary changed"))).toBe(true);
+    // The turnover is the same graceful shutdown the idle exit is: every listener closed, the hub closed after them, the sticky address kept for the successor.
+    expect(world.stopOrder).toEqual(["direct", "connect", "provider", "hub"]);
+    expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)).toEqual({ lastPort: STICKY_PORT, lastConnectPort: FRESH_PORT, lastDirectPort: FRESH_PORT });
+  });
+
+  it("keeps serving a replaced binary while a session is live", async () => {
+    const world = makeWorld();
+    world.alive.add(LIVE_SESSION);
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0, token: SESSION_TOKEN });
+    world.onSleep = () => {
+      world.ownExecutable = REPLACED_BINARY;
+    };
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
+    expect(world.closes).toEqual([]);
+    expect(world.hubCloses()).toBe(0);
+  });
+
+  it("publishes the binary turnover on the backbone before the exit, and no idle shutdown beside it", async () => {
+    const world = makeWorld();
+    const received: DoorEvent[] = [];
+    const detach = world.doorEvents.subscribe([DOOR_HEALTH_EVENT_SOURCE], (event) => {
+      received.push(event);
+    });
+    world.onSleep = () => {
+      world.ownExecutable = REPLACED_BINARY;
+    };
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports)).toBe(0);
+    detach();
+    // The turnover is observed at the second tick, the first one to see the replaced stat.
+    expect(received).toEqual([
+      { source: DOOR_HEALTH_EVENT_SOURCE, sequence: 1, payload: { kind: "generation", pid: OWN_PID, providerPort: FRESH_PORT, connectPort: FRESH_PORT, directPort: FRESH_PORT, observedAt: 0 } },
+      { source: DOOR_HEALTH_EVENT_SOURCE, sequence: 2, payload: { kind: "binaryTurnover", pid: OWN_PID, observedAt: FRONTDOOR_POLL_MS } },
+    ]);
+  });
+
+  it("leaves an executable that cannot be statted at startup on the idle behaviour alone, without flapping", async () => {
+    const world = makeWorld();
+    world.ownExecutable = undefined;
+    const code = await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS });
+    expect(code).toBe(0);
+    expect(world.clock()).toBe(IDLE_MINUTES * MS_PER_MINUTE);
+  });
+
+  it("does not turn over while the executable is briefly unstatable mid-run, the mid-install window a rename leaves", async () => {
+    const world = makeWorld();
+    world.onSleep = () => {
+      world.ownExecutable = undefined;
+    };
+    // Within the idle window, with the stat gone but the door otherwise serving: still running, the same no-flap rule.
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: SLACK_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
+    expect(world.closes).toEqual([]);
   });
 
   it("closes the Remote Control stream hub once, after every listener is down and before the exit, so the final cursor save is deterministic", async () => {
