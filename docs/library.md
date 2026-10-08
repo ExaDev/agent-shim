@@ -42,6 +42,6 @@ const identity = IdentitySchema.parse(JSON.parse(readFileSync(path.join(paths.id
 
 ## What is not in the library
 
-Launching `claude` is a CLI operation today, and so is anything interactive (the setup wizards and prompts). Scripts should call the CLI for those; every `list`, `show`, `check`, `doctor` and mutating (`add`, `set`, `remove`, `use`) command accepts `--json`.
+What stays CLI-only is the command-line surface itself: the interactive setup wizards and prompts, the `commander` command tree (`buildProgram`) and its output formatting, and shell completion. Launching is not CLI-only: `prepareClaudeLaunch` resolves a launch and returns what to spawn, and `runLauncher` and `spawnClaude` carry it out over injected ports. Anything the library does not cover can be scripted through the CLI, whose `list`, `show`, `check`, `doctor` and mutating (`add`, `set`, `remove`, `use`) commands all accept `--json`.
 
 The export list is guarded by `src/index.test.ts`, so removing or renaming an entry point is a deliberate, visible change.
