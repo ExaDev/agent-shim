@@ -1,3 +1,19 @@
+## [8.44.0](https://github.com/ExaDev/agent-shim/compare/v8.43.0...v8.44.0) (2026-10-08)
+
+### Features
+
+* turn the front door over when the installed binary changes ([f4c0af7](https://github.com/ExaDev/agent-shim/commit/f4c0af726f2c47c5c1b9dbc371ff0306cc1fc14e))
+
+### Bug Fixes
+
+* prefer the agent-shim sibling only when it exists ([08484d4](https://github.com/ExaDev/agent-shim/commit/08484d4be0318a4aac4beb09512f9e6414ee5058))
+* watch the installed agent-shim entry, not the door's own exec'd path ([414851a](https://github.com/ExaDev/agent-shim/commit/414851a756770f38122d1bd71b8da15009815f17))
+
+### Documentation
+
+* correct the idle-only layouts and the no-sibling fallback wording ([d3e6cb3](https://github.com/ExaDev/agent-shim/commit/d3e6cb3c219a93478a1c0ace5ec785bdd17721f0))
+* scope the idle-only reason to the entry the update ran through ([1f2074c](https://github.com/ExaDev/agent-shim/commit/1f2074cd5bf3fd67c968b90b86a9e84edb18f6c8))
+
 ## [8.43.0](https://github.com/ExaDev/agent-shim/compare/v8.42.0...v8.43.0) (2026-10-08)
 
 ### Features
