@@ -16,7 +16,7 @@ import { realFarmFs, realHeadroomSocketTrust, realIsProcessRunning, realSleepSyn
 import {
   hashAllowlist,
   listSessions,
-  readHeadroomState,
+  resolveServingHeadroomState,
   type HeadroomFs,
   type HeadroomSession,
   type HeadroomState,
@@ -52,7 +52,8 @@ export function collectHeadroomStatus(
   paths: LayoutPaths,
   isRunning: (pid: number) => boolean,
 ): HeadroomStatus {
-  const state = readHeadroomState(fsPort, paths.headroomStateFile) ?? {};
+  // Read-only: the resolver surfaces a live previous-release supervisor's record beside the shared name without migrating anything, so `headroom status` reports the daemon a launch would join.
+  const state = resolveServingHeadroomState(fsPort, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, isRunning)?.state ?? {};
   const allowlist = currentHeadroomAllowlist(fsPort, paths);
   const settings = settingsOf(readGlobalConfig(paths)?.headroom ?? {});
   return {

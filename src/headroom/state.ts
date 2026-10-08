@@ -9,9 +9,12 @@ import type { FarmFs } from "../launcher/ports";
 export const HEADROOM_ANTHROPIC_UPSTREAM = "https://api.anthropic.com";
 
 /**
- * The version of the headroom state file's schema, carried in its file name (`state.v<N>.json`, see `LayoutPaths.headroomStateFile`). Version 1 was the unversioned `state.json`, which named a loopback TCP port; version 2 names the daemon's unix socket instead. Each version gets its own file because a supervisor started by an earlier release keeps running, and writing, until its own sessions end: sharing one file, each would read the other's record as malformed and claim it, and the two would overwrite each other indefinitely. With separate files the earlier generation drains its own sessions and idles out, and this release's launches never read its port.
+ * The two names the headroom state has lived at: the one name every release shares (`LayoutPaths.headroomStateFile`, `state.json`), and the previous release's versioned name for it (`state.v2.json`), read only while a supervisor from that release is still alive and cleaned up once its generation has drained. A supervisor from an older release keeps running, and writing, until its own sessions end, which is why the shared name is arbitrated by ownership rather than by another version bump: a supervisor stands down while the state file names another live supervisor, treats an absent or dead-owner record (including one from a schema it cannot parse, such as the TCP-port era's) as claimable, and a superseded generation's last write is its own shutdown record, which the next claim heals. The realistic cost is that during the rare cross-era window a displaced record can cause one extra supervisor spawn, which then claims and serves; sessions are never cut off, because each generation's daemon serves only its own registered sessions on its own pid-named socket.
  */
-export const HEADROOM_STATE_SCHEMA_VERSION = 2;
+export interface HeadroomStateFiles {
+  readonly stateFile: string;
+  readonly legacyStateFile: string;
+}
 
 /**
  * The headroom supervisor's state file under `<home>/headroom/`. Every field is optional because the file exists in stages: a fresh supervisor writes only `supervisorPid` before the daemon is up, and a shut-down daemon leaves the file with everything cleared except any `lastError` worth surfacing.
@@ -77,6 +80,47 @@ export function readHeadroomState(fs: HeadroomFs, stateFile: string): HeadroomSt
 export function writeHeadroomState(fs: HeadroomFs, stateFile: string, state: Readonly<HeadroomState>): void {
   fs.mkdirp(path.dirname(stateFile));
   fs.writeFilePrivate(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+/** What `resolveServingHeadroomState` found: the record a launch would join, and the file it was read from (the shared name once migration has run, the legacy name while that generation still serves). */
+export interface ServingHeadroomState {
+  readonly path: string;
+  readonly state: HeadroomState;
+}
+
+/**
+ * Resolves the serving state read-only: the shared file when it parses, otherwise the legacy file when it parses and names a live supervisor (a supervisor from the previous release, still serving its own sessions through the name that release used). A legacy record whose supervisor is not live is not serving anything and is left for `migrateHeadroomStateFile` to claim; the return is undefined, which is the "spawn a supervisor" answer.
+ */
+export function resolveServingHeadroomState(fs: HeadroomFs, files: HeadroomStateFiles, isRunning: (pid: number) => boolean): ServingHeadroomState | undefined {
+  const current = readHeadroomState(fs, files.stateFile);
+  if (current !== undefined) {
+    return { path: files.stateFile, state: current };
+  }
+  const legacy = readHeadroomState(fs, files.legacyStateFile);
+  if (legacy?.supervisorPid !== undefined && isRunning(legacy.supervisorPid)) {
+    return { path: files.legacyStateFile, state: legacy };
+  }
+  return undefined;
+}
+
+/**
+ * Migrates the state files toward the one shared name: once the shared file parses, the legacy file is deleted unless it names a live supervisor; while the shared file is absent or unparseable (the TCP-port era's content reads exactly that way), a legacy record whose supervisor is not live is rewritten onto the shared name and the legacy file removed, and a legacy file that cannot be parsed at all is removed (nothing coordinates through a record its own reader treats as absent). Live-supervisor legacy records are left untouched: that generation keeps serving and writing its own file until it drains, and the next migration after it has gone claims or deletes what it left. Called from the two writers of the coordination (a launch's ensure and a supervisor's start), never from a read-only report, so the status and doctor collectors can stay pure by resolving without migrating.
+ */
+export function migrateHeadroomState(fs: HeadroomFs, files: HeadroomStateFiles, isRunning: (pid: number) => boolean): void {
+  const legacy = readHeadroomState(fs, files.legacyStateFile);
+  const legacyLive = legacy?.supervisorPid !== undefined && isRunning(legacy.supervisorPid);
+  const current = readHeadroomState(fs, files.stateFile);
+  if (current !== undefined || legacyLive) {
+    // The shared name is already claimed, or a live previous-release generation still owns the legacy one: the only remaining work is removing a legacy file nothing live can still write.
+    if (!legacyLive && fs.readFileUtf8(files.legacyStateFile) !== undefined) {
+      fs.removeRecursive(files.legacyStateFile);
+    }
+    return;
+  }
+  if (legacy !== undefined) {
+    writeHeadroomState(fs, files.stateFile, legacy);
+  }
+  fs.removeRecursive(files.legacyStateFile);
 }
 
 /** The allowlist the daemon is started with: every provider's base URL plus Claude Code's own API, so a session with no provider selected reaches the real Anthropic upstream through the same proxy. */

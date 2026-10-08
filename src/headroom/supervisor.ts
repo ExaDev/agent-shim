@@ -8,9 +8,11 @@ import {
   hashAllowlist,
   headroomAllowlist,
   headroomUpstreams,
+  migrateHeadroomState,
   pruneDeadSessions,
   readAllProviders,
   readHeadroomState,
+  resolveServingHeadroomState,
   sessionsForSupervisor,
   writeHeadroomState,
   type HeadroomFs,
@@ -231,7 +233,9 @@ export async function runSupervisor(
   // Replaced from disk at the top of every tick, so an edited `source` or setting is seen while the daemon runs.
   let config = initialConfig;
 
-  const previousState = readHeadroomState(fs, paths.headroomStateFile);
+  // A supervisor start owns the same file-lifecycle step a launch's ensure performs, so the shared name is claimed or the legacy file retired here too.
+  migrateHeadroomState(fs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, ports.isRunning);
+  const previousState = resolveServingHeadroomState(fs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, ports.isRunning)?.state;
   if (
     previousState?.supervisorPid !== undefined &&
     previousState.supervisorPid !== ports.ownPid &&

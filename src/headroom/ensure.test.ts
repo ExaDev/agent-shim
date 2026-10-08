@@ -84,6 +84,21 @@ describe("ensureHeadroom", () => {
     expect(world.fs.readFileUtf8(`${paths.headroomSessionsDir}/43.json`)).toBeDefined();
   });
 
+  it("joins a live previous-release supervisor recorded under the legacy state name, migrating nothing", () => {
+    const world = makeWorld();
+    writeHeadroomState(world.fs, paths.headroomLegacyStateFile, {
+      supervisorPid: SUPERVISOR_PID,
+      headroomPid: HEADROOM_PID,
+      socketPath: SOCKET_PATH,
+      version: "headroom 0.39.1",
+    });
+    const result = ensureHeadroom({ paths, launcherPid: 45, ports: world.ports });
+    expect(result).toEqual({ socketPath: SOCKET_PATH });
+    expect(world.spawns).toHaveLength(0);
+    expect(world.fs.readFileUtf8(paths.headroomLegacyStateFile)).toBeDefined();
+    expect(world.fs.readFileUtf8(paths.headroomStateFile)).toBeUndefined();
+  });
+
   it("registers the session against the supervisor whose daemon socket it returns, so only that supervisor counts it as live", () => {
     const world = makeWorld();
     world.writeReadyState();

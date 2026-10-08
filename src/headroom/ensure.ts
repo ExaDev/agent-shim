@@ -1,8 +1,9 @@
 import { CliError } from "../cliError";
 import type { LayoutPaths } from "../paths";
 import {
-  readHeadroomState,
+  migrateHeadroomState,
   readStartLock,
+  resolveServingHeadroomState,
   sessionsForSupervisor,
   writeSession,
   type HeadroomFs,
@@ -56,9 +57,11 @@ export function ensureHeadroom(params: {
   const deadline = ports.now() + HEADROOM_START_TIMEOUT_MS;
   let spawnedSupervisor = false;
   let awaitingAllowlist = false;
+  // The one file-lifecycle step a launch owns: folding the previous release's state file onto the shared name, or removing it once its generation has drained, before any polling starts.
+  migrateHeadroomState(ports.fs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, ports.isRunning);
 
   for (;;) {
-    const state = readHeadroomState(ports.fs, paths.headroomStateFile);
+    const state = resolveServingHeadroomState(ports.fs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, ports.isRunning)?.state;
     if (state?.supervisorPid !== undefined && ports.isRunning(state.supervisorPid)) {
       const daemonUp = state.socketPath !== undefined && state.headroomPid !== undefined && ports.isRunning(state.headroomPid);
       if (daemonUp && state.socketPath !== undefined) {
