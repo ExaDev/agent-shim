@@ -1,11 +1,9 @@
 import os from "node:os";
 import { loadClassification } from "./config/classify";
 import { cosmiconfigReader } from "./config/load";
-import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
-import { decideConfigProfile, decideIdentity, loadIdentity } from "./launcher/identity";
+import { selectLaunch } from "./launchSelection";
+import { loadCascadeInput } from "./launcher/cascade";
 import { resolveClaudeHome } from "./paths";
-import { collectPoolPick } from "./poolPickReport";
-import { PoolNotFoundError } from "./poolStore";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { cascadeProviderName } from "./providersStore";
 import { realFarmFs, realFsPort, realInstalledClaudeVersions, realRunPort, resolveGitBranch } from "./realPorts";
@@ -588,43 +586,10 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
   const classification = loadClassification(paths);
 
   const loaded = loadCascadeInput({ paths, home, cwd, read });
-  const selections = readDirectorySelections(loaded);
   const git = resolveGitBranch(realRunPort, cwd);
 
-  const decidedIdentity = decideIdentity({
-    env: params.env,
-    argv0Identity: params.identity,
-    directoryPinnedIdentity: selections.identity,
-    readActiveIdentityFile: () => {
-      const raw = realFsPort.readFileUtf8(paths.activeIdentityFile);
-      if (raw === undefined) {
-        return undefined;
-      }
-      const trimmed = raw.trim();
-      return trimmed === "" ? undefined : trimmed;
-    },
-  });
-
-  // A pool selector is ranked the way a launch here would rank it, so the rest of the report describes the member that launch would run as.
-  let poolPick: PoolPickReport | undefined;
-  if (decidedIdentity.pool !== undefined) {
-    const pools = loaded.globalConfig?.pools ?? {};
-    if (pools[decidedIdentity.pool] === undefined) {
-      throw new PoolNotFoundError(decidedIdentity.pool);
-    }
-    poolPick = collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: decidedIdentity.pool, pools, directory: cwd, nowMs: Date.now() });
-  }
-  const identityDecision = poolPick?.pick === undefined ? decidedIdentity : { ...decidedIdentity, name: poolPick.pick };
-
-  const loadedIdentity =
-    identityDecision.name === undefined ? undefined : loadIdentity(paths.identitiesDir, identityDecision.name, realFsPort);
-
-  const configProfileDecision = decideConfigProfile({
-    env: params.env,
-    directoryRuleConfigProfile: selections.configProfile,
-    identityDefaultConfigProfile: loadedIdentity?.config.defaultConfigProfile,
-    globalDefaultConfigProfile: loaded.globalConfig?.defaultConfigProfile,
-  });
+  const { selection, identityConfig } = selectLaunch({ paths, cwd, env: params.env, ...(params.identity === undefined ? {} : { identity: params.identity }) }, loaded);
+  const { identity: identityDecision, poolPick, configProfile: configProfileDecision } = selection;
 
   const cascade = loadCascadeInput({
     paths,
@@ -659,7 +624,7 @@ export function collectCheckReport(params: CollectCheckReportParams): CheckRepor
     ...(poolPick === undefined ? {} : { poolPick }),
     ...(configProfileDecision.name === undefined ? {} : { configProfileName: configProfileDecision.name }),
     configProfileSource: configProfileDecision.source,
-    ...(loadedIdentity === undefined ? {} : { identity: loadedIdentity.config }),
+    ...(identityConfig === undefined ? {} : { identity: identityConfig }),
     settingsFiles,
     run: realRunPort,
     credentialCache: realCredentialCacheEnv(paths),
