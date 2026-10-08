@@ -1,6 +1,6 @@
 import { availableParallelism } from "node:os";
 
-import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { buildFarmRuntime, LaunchRefusedError, realPrepareLaunchParams } from "../launchWiring";
 import { prepareLaunch } from "../launcher";
@@ -74,6 +74,8 @@ function createRealAnthropicUsageProbe(params: RealAnthropicUsageProbeParams): (
         farm: buildFarmRuntime(params.paths, params.cwd),
       }),
     );
+    // Loaded here, not at the top of the file, so a library host that never asks for usage never loads the SDK.
+    const { query } = await import("@anthropic-ai/claude-agent-sdk");
     const abort = new AbortController();
     const timer = setTimeout(() => {
       abort.abort();

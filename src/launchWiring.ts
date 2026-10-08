@@ -9,7 +9,7 @@ import type { Pool, UpdateMode } from "./config/schema";
 import { agentShimCliPath } from "./ownCli";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { realFrontDoorPort } from "./frontdoor/realFrontDoorPort";
-import { prepareLaunch, runLaunchPlan, type FarmRuntime, type LaunchPlan, type PrepareLaunchParams } from "./launcher";
+import { prepareLaunch, type FarmRuntime, type LaunchPlan, type PrepareLaunchParams } from "./launcher";
 import { resolveUpdateMode } from "./update/launchHook";
 import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import type { LogPort, ProcPort } from "./launcher/ports";
@@ -24,7 +24,6 @@ import {
   realIsProcessRunning,
   realResolveClaudeBinary,
   realRunPort,
-  realSpawnPort,
   realSleepSync,
   resolveGitBranch,
   spawnDaemonThrough,
@@ -145,6 +144,13 @@ export interface PrepareClaudeLaunchOptions {
 }
 
 /**
+ * The spawner a library launch starts the front door and headroom daemons through: the executable at `agentShim` when one is named, otherwise the package's own command line bundle (`agentShimCliPath`) run with the Node running this process, found when a launch first needs a daemon.
+ */
+export function daemonSpawnerFor(agentShim: string | undefined): DaemonSpawner {
+  return agentShim === undefined ? (spawnPaths, subcommand, logPath) => spawnDaemonThroughScript(agentShimCliPath())(spawnPaths, subcommand, logPath) : spawnDaemonThrough(agentShim);
+}
+
+/**
  * Resolves a launch for `options.cwd` on this machine and returns what to spawn, so another tool can start `claude` as an identity, through a provider, with the same sharing rules the command line applies, without shelling out. It performs the effects the child depends on: the identity's farm is resynced, and the front door and headroom are brought up and this process registered with them. Call `release` on the plan when the child has exited.
  *
  * A refused launch throws `LaunchRefusedError` carrying the launcher's own message. Interactive offers (creating a missing identity or profile on a terminal) belong to the command line and are not made here.
@@ -166,18 +172,6 @@ export function prepareClaudeLaunch(options: PrepareClaudeLaunchOptions): Launch
       throw new LaunchRefusedError(refusals.join("\n") || `the launch was refused (exit ${String(code)})`, code);
     },
   };
-  const spawnDaemon: DaemonSpawner =
-    options.agentShim === undefined
-      ? (spawnPaths, subcommand, logPath) => spawnDaemonThroughScript(agentShimCliPath())(spawnPaths, subcommand, logPath)
-      : spawnDaemonThrough(options.agentShim);
+  const spawnDaemon = daemonSpawnerFor(options.agentShim);
   return prepareLaunch(realPrepareLaunchParams(paths, { proc, log, spawnDaemon, farm: buildFarmRuntime(paths, options.cwd) }));
-}
-
-/**
- * Runs one `claude` launch for `options.cwd` on this machine as `agent-shim run` does, and returns the child's exit code: the launch is prepared (`prepareClaudeLaunch`), the child runs with the terminal's standard streams until it ends, and the launch's front door and headroom registrations are released whether it exited, was signalled (`128` plus the signal number) or could not be spawned. It does not exit this process, so the host decides what to do with the code.
- *
- * Throws `LaunchRefusedError` before anything is spawned when the launch is refused, and rethrows a spawn failure after releasing. Interactive offers (creating a missing identity or profile) and the launch-time update notice belong to the command line and are not made here.
- */
-export function runClaudeLaunch(options: PrepareClaudeLaunchOptions): number {
-  return runLaunchPlan(prepareClaudeLaunch(options), realSpawnPort);
 }
