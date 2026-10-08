@@ -753,8 +753,9 @@ describe("collectDoctorReport: headroom state resolution", () => {
       fs.writeFileSync(legacyPath, `${JSON.stringify({ supervisorPid: thisProcess, headroomPid: thisProcess, socketPath: path.join(stateDir, "run", "x.sock") }, null, 2)}\n`);
       const report = collectDoctorReport({ paths: buildLayoutPaths(root), env: { PATH: process.env.PATH ?? "" } });
       const finding = findingsFor(report, "headroom")[0];
-      // This process is alive, so the collector must have resolved the legacy record rather than reporting a never-run or malformed daemon.
-      expect(finding?.severity).not.toBe("fail");
+      // This process is alive, so the collector must have resolved the legacy record into the healthy-daemon branch (a dropped fallback or a swapped pair would land on the never-run pass instead) and never on the malformed fail.
+      expect(finding?.severity).toBe("pass");
+      expect(finding?.message).toContain("Headroom daemon is up on unix socket");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

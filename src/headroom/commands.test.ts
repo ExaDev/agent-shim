@@ -19,6 +19,9 @@ const HEADROOM_PID = 12;
 const SESSION_PID = 13;
 const SOCKET_PATH = headroomSocketPath(paths, SUPERVISOR_PID);
 
+/** A distinct supervisor generation, alive, recorded only under the legacy state name. */
+const LEGACY_SUPERVISOR_PID = 7070;
+
 function aliveWorld() {
   const fs = createFakeFarmFs({});
   fs.mkdirp(paths.providersDir);
@@ -76,6 +79,15 @@ describe("collectHeadroomStatus", () => {
     const status = collectHeadroomStatus(fs, paths, (pid) => alive.has(pid));
     expect(status.supervisorAlive).toBe(true);
     expect(status.headroomAlive).toBe(true);
+    expect(status.state.socketPath).toBe(SOCKET_PATH);
+  });
+
+  it("prefers the shared name's record over a live legacy one beside it", () => {
+    const { fs, alive } = aliveWorld();
+    writeHeadroomState(fs, paths.headroomLegacyStateFile, { supervisorPid: LEGACY_SUPERVISOR_PID, headroomPid: LEGACY_SUPERVISOR_PID + 1, socketPath: `${paths.headroomSocketDir}/${String(LEGACY_SUPERVISOR_PID)}.sock` });
+    alive.add(LEGACY_SUPERVISOR_PID);
+    alive.add(LEGACY_SUPERVISOR_PID + 1);
+    const status = collectHeadroomStatus(fs, paths, (pid) => alive.has(pid));
     expect(status.state.socketPath).toBe(SOCKET_PATH);
   });
 

@@ -89,7 +89,7 @@ export interface ServingHeadroomState {
 }
 
 /**
- * Resolves the serving state read-only: the shared file when it parses, otherwise the legacy file when it parses and names a live supervisor (a supervisor from the previous release, still serving its own sessions through the name that release used). A legacy record whose supervisor is not live is not serving anything and is left for `migrateHeadroomStateFile` to claim; the return is undefined, which is the "spawn a supervisor" answer.
+ * Resolves the serving state read-only: the shared file when it parses, otherwise the legacy file when it parses and names a live supervisor (a supervisor from the previous release, still serving its own sessions through the name that release used). A legacy record whose supervisor is not live is not serving anything and is left for `migrateHeadroomState` to claim; the return is undefined, which is the "spawn a supervisor" answer.
  */
 export function resolveServingHeadroomState(fs: HeadroomFs, files: HeadroomStateFiles, isRunning: (pid: number) => boolean): ServingHeadroomState | undefined {
   const current = readHeadroomState(fs, files.stateFile);

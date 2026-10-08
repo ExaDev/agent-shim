@@ -157,18 +157,6 @@ export interface RunDoctorParams {
 }
 
 /** Parses and validates one optional JSON file's raw text against `schema`, without ever throwing — a missing file, invalid JSON, and a schema violation are each reported as their own failure message rather than aborting the caller. */
-/** Whether `raw` is the TCP-port era's state record (a `port` or `lastPort` key and no `socketPath`): content this release cannot parse but deliberately treats as claimable, so the doctor reports it as expected rather than malformed. */
-function tcpPortEraRecord(raw: string): boolean {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return false;
-  }
-  const has = (key: string): boolean => typeof parsed === "object" && parsed !== null && key in parsed;
-  return (has("port") || has("lastPort")) && !has("socketPath");
-}
-
 function validateJson<S extends z.ZodType>(
   schema: S,
   input: DoctorFileInput,
@@ -188,6 +176,19 @@ function validateJson<S extends z.ZodType>(
   }
   return { ok: true, data: result.data };
 }
+
+/** Whether `raw` is the TCP-port era's state record (a `port` or `lastPort` key and no `socketPath`): content this release cannot parse but deliberately treats as claimable, so the doctor reports it as expected rather than malformed. */
+function tcpPortEraRecord(raw: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  const has = (key: string): boolean => typeof parsed === "object" && parsed !== null && key in parsed;
+  return (has("port") || has("lastPort")) && !has("socketPath");
+}
+
 
 /**
  * Reports which `agent-shim` a bare command name actually runs, and — when a `claude` shim is enabled — the same for `claude`.
