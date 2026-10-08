@@ -6,6 +6,7 @@ import { UsageError } from "../cliError";
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs } from "../realPorts";
+import { readFrontDoorControlMaterial } from "./doorClient";
 import { frontDoorRcApiClient, type RcApiClient } from "./rcApi";
 import { frontDoorRcControl, realRcControlTransport, type FrontDoorRcControl } from "./rcControl";
 import { rcRateLimitInfoOf } from "./rcLiveUsage";
@@ -14,7 +15,6 @@ import { mintRcSelfHostCredential, type RcSelfHostMintResult } from "./rcSelfHos
 import { RC_PENDING_SUMMARY_EXCERPT_CHARS, type RcPendingRequestSummary, type RcSessionStatus, type RcSessionSummary } from "./rcSessions";
 import { RC_CONTEXT_USAGE_DETAILS, RC_PERMISSION_MODES, RC_READ_FILE_ENCODINGS, isRcContextUsageDetail, isRcPermissionMode, isRcReadFileEncoding, type RcEventWriteResult } from "./rcWrites";
 import type { RcStreamEvent } from "./rcSchemas";
-import { readFrontDoorState } from "./state";
 
 /**
  * The `agent-shim frontdoor rc` command tree, its output formatters, and the two state-reading client openers its verbs dial the serving door through: the CLI's whole Remote Control surface, extracted from `commands.ts` so each file stays a readable size. The verbs ride the door's control client (the bespoke token-gated routes) for the reads and writes, and the typed API's TLS-pinned client for the stream watch.
@@ -161,38 +161,16 @@ export function formatRcSelfHostMint(result: RcSelfHostMintResult): string[] {
  * Opens the serving door's Remote Control control client: the provider listener's address from the same state file `frontdoor status` reads, its CA from the same CA path, and this generation's control token from the owner-only file the door writes. Throws with the verbose reason when the door is not serving or its control material is missing, so a verb never dials anything on a guess.
  */
 export function frontDoorRcControlFromState(fsPort: HeadroomFs, paths: LayoutPaths): FrontDoorRcControl {
-  const state = readFrontDoorState(fsPort, paths.frontdoorStateFile);
-  if (state?.port === undefined) {
-    throw new Error("the front door is not serving: Remote Control sessions are observed only while it runs, so start a session through the door first");
-  }
-  const ca = fsPort.readFileUtf8(paths.frontdoorCaCertFile);
-  if (ca === undefined) {
-    throw new Error(`the front door's CA certificate is missing at ${paths.frontdoorCaCertFile}, so its control listener cannot be authenticated`);
-  }
-  const token = fsPort.readFileUtf8(paths.frontdoorControlTokenFile)?.trim();
-  if (token === undefined || token === "") {
-    throw new Error(`the serving front door's control token is missing at ${paths.frontdoorControlTokenFile}`);
-  }
-  return frontDoorRcControl(realRcControlTransport(state.port, ca), token);
+  const { port, ca, token } = readFrontDoorControlMaterial(fsPort, paths, "its control listener");
+  return frontDoorRcControl(realRcControlTransport(port, ca), token);
 }
 
 /**
  * Opens the serving door's typed Remote Control API client, from the same state file, CA path and owner-only control token file the bespoke control client reads. Throws with the verbose reason when the door is not serving or its control material is missing, so a verb never dials anything on a guess.
  */
 export function frontDoorRcApiFromState(fsPort: HeadroomFs, paths: LayoutPaths): RcApiClient {
-  const state = readFrontDoorState(fsPort, paths.frontdoorStateFile);
-  if (state?.port === undefined) {
-    throw new Error("the front door is not serving: Remote Control sessions are observed only while it runs, so start a session through the door first");
-  }
-  const ca = fsPort.readFileUtf8(paths.frontdoorCaCertFile);
-  if (ca === undefined) {
-    throw new Error(`the front door's CA certificate is missing at ${paths.frontdoorCaCertFile}, so its typed API cannot be authenticated`);
-  }
-  const token = fsPort.readFileUtf8(paths.frontdoorControlTokenFile)?.trim();
-  if (token === undefined || token === "") {
-    throw new Error(`the serving front door's control token is missing at ${paths.frontdoorControlTokenFile}`);
-  }
-  return frontDoorRcApiClient(state.port, ca, token);
+  const { port, ca, token } = readFrontDoorControlMaterial(fsPort, paths, "its typed API");
+  return frontDoorRcApiClient(port, ca, token);
 }
 /** Registers the `frontdoor rc` verbs on the frontdoor command: the reads, the writes, the watch, and the self-hosted minting. */
 export function registerRcCommand(frontdoor: Command, paths: LayoutPaths): void {
