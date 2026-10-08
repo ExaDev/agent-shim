@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
-import type { RunLauncherParams } from "./launcher";
+import { prepareLaunch, type RunLauncherParams } from "./launcher";
 import {
   createFakeFarmFs, discovered, FAKE_HOME, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv,
 } from "./test-helpers";
@@ -23,6 +23,21 @@ describe("runLauncher provider selection", () => {
     baseUrl: "https://openrouter.ai/api/v1",
     credential: { sources: [{ env: "OPENROUTER_API_KEY" }] },
   };
+
+  it("reports the provider a launch routes through on the plan's decision, and none when it routes through none", () => {
+    const decide = (argv: readonly string[]): ReturnType<typeof prepareLaunch>["decision"] =>
+      prepareLaunch({
+        paths,
+        fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ }),
+        proc: fakeProc({ Z_API_TOKEN: "tok-z" }, argv),
+        log: fakeLog(),
+        resolveClaudeBinary: () => discovered,
+        credentials: fakeCredentials(),
+        frontdoor: fakeFrontDoorPort(),
+      }).decision;
+    expect(decide(["--provider", "z", "--print"]).provider).toBe("z");
+    expect(decide(["--print"]).provider).toBeUndefined();
+  });
 
   it("launches through a provider selected by the --provider flag", () => {
     const spawn = fakeSpawn();

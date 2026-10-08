@@ -8,7 +8,7 @@ import { parseLauncherArgv, type ParsedLauncherArgv } from "./launcher/argv";
 import { buildCliOverride, type CliOverride } from "./launcher/cliOverride";
 import { recoverFarm, recoveryDiagnostics, resyncFarm } from "./launcher/farm";
 import { evaluateAmbientCredentialGuard } from "./launcher/guard";
-import { decideConfigProfile, decideIdentity, loadIdentity, type IdentityDecision } from "./launcher/identity";
+import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDecisionSource, type IdentityDecision, type IdentityDecisionSource } from "./launcher/identity";
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { resolvePoolLaunch } from "./launcher/pool";
@@ -97,6 +97,38 @@ export interface RunLauncherParams extends PrepareLaunchParams {
   readonly spawn: SpawnPort;
 }
 
+/** The pick a pool made for a launch: the pool, why the ranking chose the member it did, and, for a resumed conversation, the member it left. */
+export interface LaunchPoolDecision {
+  /** The pool the launch selected with `pool:<name>`. */
+  readonly name: string;
+  /** Every reason the ranking gave for the chosen member, in the ranking's order. */
+  readonly reasons: readonly string[];
+  /** The member a resumed conversation left, and why the ranking could not keep it. */
+  readonly movedOff?: { readonly identity: string; readonly reason: string };
+}
+
+/**
+ * What a launch resolved to, and where each decision came from. Everything here is a name or a path, never a credential.
+ */
+export interface LaunchDecision {
+  /** The identity the launch runs as. Absent when the escape hatch applied or nothing resolved one. */
+  readonly identity?: string;
+  /** Which precedence rule selected the identity (or the pool the identity was picked from). */
+  readonly identitySource: IdentityDecisionSource;
+  /** The pool pick behind `identity`, when the launch selected a pool. */
+  readonly pool?: LaunchPoolDecision;
+  /** True when `CLAUDE_CONFIG_DIR` was already set, so no identity was resolved and no farm was managed. */
+  readonly configDirEscapeHatch: boolean;
+  /** The configuration directory the child runs with: the identity's own, or the one the caller named. Absent when none is set. */
+  readonly configDir?: string;
+  /** The configuration profile that applied, when one did. */
+  readonly configProfile?: string;
+  /** Which precedence rule selected the configuration profile. */
+  readonly configProfileSource: ConfigProfileDecisionSource;
+  /** The provider the launch routes through, when it selected one. */
+  readonly provider?: string;
+}
+
 /**
  * What one launch resolved to, once every effect its child depends on is in place (the identity's farm resynced, the front door and headroom up and this launch registered with them): the real binary, its arguments and its environment.
  */
@@ -106,6 +138,8 @@ export interface LaunchPlan {
   readonly env: Readonly<Record<string, string | undefined>>;
   /** Releases the daemon session registrations this launch holds. Call it when the child has exited; it is safe to call more than once. */
   readonly release: () => void;
+  /** What the launch resolved to, as data: the facts the launcher's decision line reports. */
+  readonly decision: LaunchDecision;
   /** Marks the moment this plan's child is spawned: the launch-time update check suppresses its notify line from then on, since a line printed after the child took over the terminal would land mid-session. Call it immediately before spawning; it is safe to call more than once. */
   readonly markChildStarted: () => void;
 }
@@ -134,7 +168,7 @@ function pickFromPool(
   decided: IdentityDecision,
   params: PrepareLaunchParams,
   parsedArgv: ParsedLauncherArgv,
-): { readonly identityDecision: IdentityDecision; readonly poolExplanation?: string } {
+): { readonly identityDecision: IdentityDecision; readonly poolExplanation?: string; readonly poolPick?: LaunchPoolDecision } {
   const { paths, fs, proc, log } = params;
   if (decided.pool === undefined) {
     return { identityDecision: decided };
@@ -162,7 +196,11 @@ function pickFromPool(
     log.error(resolution.message);
     return proc.exit(1);
   }
-  return { identityDecision: { ...decided, name: resolution.identity }, poolExplanation: resolution.explanation };
+  return {
+    identityDecision: { ...decided, name: resolution.identity },
+    poolExplanation: resolution.explanation,
+    poolPick: { name: decided.pool, reasons: resolution.reasons, ...(resolution.movedOff === undefined ? {} : { movedOff: resolution.movedOff }) },
+  };
 }
 
 /**
@@ -202,7 +240,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   });
 
   // A pool selector is resolved to one member here, ahead of everything that reads the identity: farm recovery, loading, the credential and the resync all work on the chosen name exactly as if it had been typed.
-  const { identityDecision, poolExplanation } = pickFromPool(decidedIdentity, params, parsedArgv);
+  const { identityDecision, poolExplanation, poolPick } = pickFromPool(decidedIdentity, params, parsedArgv);
 
   // There is a farm to manage only when an identity resolved and the caller did not name a configuration directory itself.
   const farmIdentity = configDirEscapeHatchApplies ? undefined : identityDecision.name;
@@ -474,7 +512,18 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
       registered();
     }
   };
-  return { bin: discovered.path, args: finalArgv, env: finalEnv, release, markChildStarted: updateCheck.markChildStarted };
+  const configDir = finalEnv.CLAUDE_CONFIG_DIR;
+  const decision: LaunchDecision = {
+    identitySource: identityDecision.source,
+    configDirEscapeHatch: identityDecision.configDirEscapeHatch,
+    configProfileSource: configProfileDecision.source,
+    ...(identityDecision.name === undefined ? {} : { identity: identityDecision.name }),
+    ...(poolPick === undefined ? {} : { pool: poolPick }),
+    ...(configDir === undefined || configDir === "" ? {} : { configDir }),
+    ...(configProfileDecision.name === undefined ? {} : { configProfile: configProfileDecision.name }),
+    ...(resolvedProvider === undefined ? {} : { provider: resolvedProvider.name }),
+  };
+  return { bin: discovered.path, args: finalArgv, env: finalEnv, release, markChildStarted: updateCheck.markChildStarted, decision };
 }
 
 /**
