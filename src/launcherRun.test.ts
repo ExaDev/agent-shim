@@ -30,6 +30,7 @@ function recordedPlan(record: (entry: string) => void): LaunchPlan {
     release: () => {
       record("release");
     },
+    decision: { identitySource: "none", configDirEscapeHatch: false, configProfileSource: "none" },
     markChildStarted: () => {
       record("started");
     },
