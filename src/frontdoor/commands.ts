@@ -8,7 +8,7 @@ import { readGlobalConfig } from "../configProfilesStore";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
 import { createCodexRoutePorts } from "../codex/commands";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, spawnDetachedSupervisor } from "../realPorts";
+import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, realOwnExecutablePath, spawnDetachedSupervisor } from "../realPorts";
 import { refreshStalePoolMembers } from "../launcher/poolRefresh";
 import { ANTHROPIC_USAGE_FRESHNESS_MS } from "../usage/anthropicUsageRefresh";
 import { loadPoolMembers } from "../usage/poolPick";
@@ -237,6 +237,11 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       });
     },
     isRunning: realIsProcessRunning,
+    // The turnover check's file identity: the PATH-visible executable `agent-shim update` renames its verified bytes over, stat'd fresh on every tick (throwIfNoEntry, because an absent binary is the mid-install or deleted case the supervisor deliberately ignores rather than a crash).
+    statOwnExecutable: () => {
+      const st = fs.statSync(realOwnExecutablePath(), { throwIfNoEntry: false });
+      return st?.isFile() !== true ? undefined : { dev: st.dev, ino: st.ino, size: st.size, mtimeMs: st.mtimeMs };
+    },
     startProviderListener: async (preferredPort) => {
       const authority = loadCa();
       // The write operations the control routes and the typed API both carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly. A confirmed write advances the session's sequence cursor through the tracker, so a stream resume continues after the door's own events too. In the self-hosted mode the dial's target is resolved per call so it names the door's own surface once that has bound.
