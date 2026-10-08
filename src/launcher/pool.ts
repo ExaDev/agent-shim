@@ -41,6 +41,10 @@ export type PoolResolution =
       readonly identity: string;
       /** The pool and the chosen member's leading reasons, for the launch's decision line. */
       readonly explanation: string;
+      /** Every reason the ranking gave for choosing the member, in the ranking's order. */
+      readonly reasons: readonly string[];
+      /** The member a resumed conversation left, and why the ranking could not keep it. */
+      readonly movedOff?: { readonly identity: string; readonly reason: string };
     }
   | { readonly ok: false; readonly message: string };
 
@@ -105,7 +109,13 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
       recordStickyPick(params.usageFs, params.paths.usagePicksFile, params.cwd, pick.identity, nowMs);
       // The move a resumed conversation made, one sentence beside the pick's own reasons: which member it left and why the ranking could not keep it.
       const move = movedOff === undefined ? "" : `moved off ${movedOff.identity} (${movedOff.reason}); `;
-      return { ok: true, identity: pick.identity, explanation: `pool ${poolName}: ${move}${pick.reasons.slice(0, REASONS_LOGGED).join("; ")}` };
+      return {
+        ok: true,
+        identity: pick.identity,
+        explanation: `pool ${poolName}: ${move}${pick.reasons.slice(0, REASONS_LOGGED).join("; ")}`,
+        reasons: pick.reasons,
+        ...(movedOff === undefined ? {} : { movedOff }),
+      };
     }
     if (earliestReturn === undefined) {
       return { ok: false, message: `agent-shim: no member of pool "${poolName}" can be picked.` };

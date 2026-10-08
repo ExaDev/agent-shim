@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Pool } from "./config/schema";
-import type { FarmRuntime } from "./launcher";
+import { prepareLaunch, type FarmRuntime, type LaunchDecision } from "./launcher";
 import { PROMPT_CACHE_TTL_MS } from "./usage/pick";
 import { FAKE_NOW_MS, createFakeFarmFs, discovered, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
@@ -73,6 +73,45 @@ function launch(options: { readonly seed?: Readonly<Record<string, string>>; rea
   });
   return { log, code, spawn, frontdoor, farmFs };
 }
+
+/** The decision of a pool launch over `farmFs`, made the way `launch` makes its own. */
+function decisionOf(farmFs: ReturnType<typeof createFakeFarmFs>, argv: readonly string[], nowOffsetMs = 0): LaunchDecision {
+  const base = fakeFarm(farmFs);
+  return prepareLaunch({
+    paths,
+    fs: fakeFs({}),
+    proc: fakeProc({}, argv),
+    log: fakeLog(),
+    resolveClaudeBinary: () => discovered,
+    farm: { ...base, now: () => FAKE_NOW_MS + nowOffsetMs },
+    frontdoor: fakeFrontDoorPort(FRONTDOOR_PORT),
+    pools: POOLS,
+  }).decision;
+}
+
+describe("the decision of a pool launch", () => {
+  it("names the pool, the member it picked and every reason the ranking gave", () => {
+    const decision = decisionOf(createFakeFarmFs(WORK_SOON), ["@pool:main", "--print"]);
+    expect(decision).toMatchObject({ identity: "work", identitySource: "argv", configDir: `${paths.identitiesDir}/work`, pool: { name: "main" } });
+    expect(decision.pool?.reasons.join("\n")).toContain("7d 60% used");
+    expect(decision.pool?.movedOff).toBeUndefined();
+  });
+
+  it("names the member a resumed conversation moved off, and why", () => {
+    const farmFs = createFakeFarmFs(WORK_SOON);
+    launch({ farmFs });
+    farmFs.writeFileUtf8(snapshotPath("work"), snapshotOf("work", { utilization: 1, resetsInMs: SIX_DAYS_MS, status: "rejected" }, "allowed"));
+    farmFs.writeFileUtf8(snapshotPath("personal"), snapshotOf("personal", { utilization: U10, resetsInMs: HOUR_MS }));
+    const decision = decisionOf(farmFs, ["@pool:main", "--resume"], PROMPT_CACHE_TTL_MS + FIVE_MINUTES_MS);
+    expect(decision.identity).toBe("personal");
+    expect(decision.pool?.movedOff).toMatchObject({ identity: "work" });
+    expect(decision.pool?.movedOff?.reason).toContain("continues as extra usage");
+  });
+
+  it("carries no pool for a launch that named an identity", () => {
+    expect(decisionOf(createFakeFarmFs(WORK_SOON), ["@work", "--print"]).pool).toBeUndefined();
+  });
+});
 
 describe("runLauncher with a pool selector", () => {
   it("launches as the member whose quota expires soonest, and says why on the decision line", () => {
