@@ -753,9 +753,27 @@ describe("collectDoctorReport: headroom state resolution", () => {
       fs.writeFileSync(legacyPath, `${JSON.stringify({ supervisorPid: thisProcess, headroomPid: thisProcess, socketPath: path.join(stateDir, "run", "x.sock") }, null, 2)}\n`);
       const report = collectDoctorReport({ paths: buildLayoutPaths(root), env: { PATH: process.env.PATH ?? "" } });
       const finding = findingsFor(report, "headroom")[0];
-      // This process is alive, so the collector must have resolved the legacy record into the healthy-daemon branch (a dropped fallback or a swapped pair would land on the never-run pass instead) and never on the malformed fail.
+      // This process is alive, so the collector must have resolved the legacy record into the healthy-daemon branch and never on the malformed fail; a dropped fallback lands on the never-run pass, which the message assertion distinguishes.
       expect(finding?.severity).toBe("pass");
       expect(finding?.message).toContain("Headroom daemon is up on unix socket");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers the shared name's record when both state files are present, so a swapped pair is observable", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "doctor-headroom-root-"));
+    try {
+      const stateDir = path.join(root, "headroom");
+      fs.mkdirSync(stateDir, { recursive: true });
+      // Both records name this live process; only the shared one carries the socket the healthy message prints, so a collector that read the pair the wrong way round reports a different daemon.
+      const sharedSocket = path.join(stateDir, "run", "shared.sock");
+      fs.writeFileSync(path.join(stateDir, "state.json"), `${JSON.stringify({ supervisorPid: process.pid, headroomPid: process.pid, socketPath: sharedSocket }, null, 2)}\n`);
+      fs.writeFileSync(path.join(stateDir, "state.v2.json"), `${JSON.stringify({ supervisorPid: process.pid, headroomPid: process.pid, socketPath: path.join(stateDir, "run", "legacy.sock") }, null, 2)}\n`);
+      const report = collectDoctorReport({ paths: buildLayoutPaths(root), env: { PATH: process.env.PATH ?? "" } });
+      const finding = findingsFor(report, "headroom")[0];
+      expect(finding?.severity).toBe("pass");
+      expect(finding?.message).toContain(sharedSocket);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

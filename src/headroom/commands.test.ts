@@ -84,7 +84,7 @@ describe("collectHeadroomStatus", () => {
 
   it("prefers the shared name's record over a live legacy one beside it", () => {
     const { fs, alive } = aliveWorld();
-    writeHeadroomState(fs, paths.headroomLegacyStateFile, { supervisorPid: LEGACY_SUPERVISOR_PID, headroomPid: LEGACY_SUPERVISOR_PID + 1, socketPath: `${paths.headroomSocketDir}/${String(LEGACY_SUPERVISOR_PID)}.sock` });
+    writeHeadroomState(fs, paths.headroomLegacyStateFile, { supervisorPid: LEGACY_SUPERVISOR_PID, headroomPid: LEGACY_SUPERVISOR_PID + 1, socketPath: headroomSocketPath(paths, LEGACY_SUPERVISOR_PID) });
     alive.add(LEGACY_SUPERVISOR_PID);
     alive.add(LEGACY_SUPERVISOR_PID + 1);
     const status = collectHeadroomStatus(fs, paths, (pid) => alive.has(pid));
