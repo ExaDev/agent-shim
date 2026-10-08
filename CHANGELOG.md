@@ -1,3 +1,17 @@
+## [8.41.0](https://github.com/ExaDev/agent-shim/compare/v8.40.0...v8.41.0) (2026-10-08)
+
+### Features
+
+* export resolveLaunchSelection, the identity and profile a directory resolves to ([025eeed](https://github.com/ExaDev/agent-shim/commit/025eeed05789048a9fe9c004fc7c6249f3f19b1a))
+
+### Code Refactoring
+
+* take the identity and profile decision out of check ([7c48bb7](https://github.com/ExaDev/agent-shim/commit/7c48bb7d5145959f7d57a56ce3989060fcfca783))
+
+### Documentation
+
+* describe resolveLaunchSelection in the library surface ([785f12b](https://github.com/ExaDev/agent-shim/commit/785f12be55c1bd177e0858f494ad21a5e218de23))
+
 ## [8.40.0](https://github.com/ExaDev/agent-shim/compare/v8.39.0...v8.40.0) (2026-10-08)
 
 ### Features
