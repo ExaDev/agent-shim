@@ -326,6 +326,11 @@ export function spawnDaemonThrough(executable: string): DaemonSpawner {
   return (paths, subcommand, logPath) => spawnDetachedDaemon({ command: executable, args: [subcommand] }, paths, subcommand, logPath);
 }
 
+/** A `DaemonSpawner` that starts daemons by running the JavaScript bundle at `script` (the package's `dist/cli.cjs`) with the Node that is running this process, for a library host that did not name an executable. */
+export function spawnDaemonThroughScript(script: string): DaemonSpawner {
+  return (paths, subcommand, logPath) => spawnDetachedDaemon({ command: process.execPath, args: [script, subcommand] }, paths, subcommand, logPath);
+}
+
 function spawnDetachedDaemon(invocation: { readonly command: string; readonly args: readonly string[] }, paths: LayoutPaths, subcommand: string, logPath: string): number {
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
   const logFd = fs.openSync(logPath, "a");
