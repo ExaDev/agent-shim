@@ -153,6 +153,7 @@ export {
   type RcApiDeps,
   type RcApiRouter,
 } from "./frontdoor/rcApi";
+export { FrontDoorControlMaterialError, FrontDoorNotServingError, frontDoorApiFromState, readFrontDoorControlMaterial, type FrontDoorControlMaterial } from "./frontdoor/doorClient";
 export {
   createControlApiRouter,
   createDoorApiNodeHandler,
