@@ -116,6 +116,7 @@ describe("library surface", () => {
       "OWN_CLI_FILE_NAME",
       "PROMPT_CACHE_TTL_MS",
       "PlanClassSchema",
+      "PoolGraphError",
       "PoolNameSchema",
       "PoolNotFoundError",
       "PoolPickReportSchema",

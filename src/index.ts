@@ -260,7 +260,7 @@ export { UsageSnapshotSchema, type UsageSnapshot } from "./usage/schema";
 export { effectiveWindow, type EffectiveWindow } from "./usage/preflight";
 export { PROMPT_CACHE_TTL_MS, rankPool, type Candidate, type NestedContribution, type PoolMember, type PoolRanking, type RankPoolInput, type StickyPick } from "./usage/pick";
 export { planOf, PlanClassSchema, type PlanClass } from "./usage/plan";
-export { poolIdentities } from "./usage/poolPick";
+export { PoolGraphError, poolIdentities } from "./usage/poolPick";
 export { collectPoolPick } from "./poolPickReport";
 export { PoolPickReportSchema, type PoolPickReport } from "./usage/pickReportSchema";
 export { evaluateWhen, matchBranch, type ConditionContext, type WhenEvaluation } from "./resolve/conditions";
