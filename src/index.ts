@@ -8,6 +8,8 @@
  * - `evaluateWhen` and `matchBranch`, the condition evaluator behind a rule's or entry's `when`, so a consumer reading directory rules applies the same semantics;
  * - the state root's layout (`resolveAgentShimHome`, `resolveLayoutPaths`, `buildLayoutPaths`), which includes adopting an existing `~/.claude-use` in place, and the Zod schema and inferred type of every configuration file (identity, configuration profile, provider, pool, directory rules, global config, credential), so a tool can validate or generate them with the same definitions the CLI uses.
  *
+ * - launch selection: `resolveLaunchSelection` answers which identity (or pool member) and configuration profile a launch in a directory would use, and where each decision came from, with the launcher's own precedence rules and no credential read.
+ *
  * Creating and changing identities, configuration profiles, providers, pools and directory rules: the `*Store` modules, which take the state root's `LayoutPaths`, return typed values and throw `CliError` subclasses.
  *
  * - `check` and `doctor` as data: `collectCheckReport` and `collectDoctorReport` read this machine and return the report, the pure `runCheck` and `runDoctor` take the facts as parameters, and `checkReportToJson` returns the report in the shape `CheckReportJsonSchema` (in `checkReportSchema.ts`) defines, so the JSON the CLI prints, the door's `check.run` procedure and any consumer's validation share one definition.
@@ -390,6 +392,7 @@ export {
   type RunCheckParams,
 } from "./checkReport";
 export { CHECK_CREDENTIAL_APPLIES, CheckReportJsonSchema, type CheckReportJson } from "./checkReportSchema";
+export { resolveLaunchSelection, type LaunchSelection, type ResolveLaunchSelectionParams } from "./launchSelection";
 export {
   collectDoctorReport,
   formatDoctorReport,

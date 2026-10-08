@@ -307,6 +307,7 @@ describe("library surface", () => {
       "resolveAgentShimHome",
       "resolveClaudeHome",
       "resolveDecisions",
+      "resolveLaunchSelection",
       "resolveLayoutPaths",
       "resolveSupervisorConfig",
       "resyncFarm",
