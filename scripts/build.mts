@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import * as esbuild from "esbuild";
 import { rollup } from "rollup";
@@ -80,12 +81,37 @@ async function buildLibrary(): Promise<void> {
       format,
       target: ESBUILD_TARGET,
       outfile: path.join(distDir, `index.${extension}`),
+      // `agentShimCliPath` finds the command line bundle beside the library file, so each format records the directory it was loaded from under the name `src/ownCli.ts` reads.
+      banner: { js: format === "esm" ? "const __AGENT_SHIM_DIST_DIR__ = import.meta.dirname;" : "const __AGENT_SHIM_DIST_DIR__ = __dirname;" },
       metafile: true,
       logLevel: "info",
     });
     assertNoCliOnlyImports(result.metafile);
   }
   await bundleDeclarations();
+  await assertLibraryFindsOwnCli();
+}
+
+/**
+ * Loads both built library files and fails the build unless each names the `dist/cli.cjs` that was just built, so a change to the recorded directory or to the file names cannot ship an `agentShimCliPath` that points nowhere.
+ */
+async function assertLibraryFindsOwnCli(): Promise<void> {
+  const expected = path.join(distDir, bundleFileName);
+  const esm: unknown = await import(pathToFileURL(path.join(distDir, "index.mjs")).href);
+  const cjs: unknown = createRequire(import.meta.url)(path.join(distDir, "index.cjs"));
+  for (const [format, library] of [["index.mjs", esm], ["index.cjs", cjs]] as const) {
+    if (!hasAgentShimCliPath(library)) {
+      throw new Error(`${format} does not export agentShimCliPath`);
+    }
+    const found = library.agentShimCliPath();
+    if (found !== expected || !fs.existsSync(found)) {
+      throw new Error(`${format} resolves its own command line bundle to ${found}, expected the built ${expected}`);
+    }
+  }
+}
+
+function hasAgentShimCliPath(library: unknown): library is { readonly agentShimCliPath: () => string } {
+  return typeof library === "object" && library !== null && "agentShimCliPath" in library && typeof library.agentShimCliPath === "function";
 }
 
 /**
