@@ -6,6 +6,7 @@ import { resolveOwnBinaryCheck } from "./claudeShim";
 import { loadClassification } from "./config/classify";
 import { cosmiconfigReader } from "./config/load";
 import type { Pool, UpdateMode } from "./config/schema";
+import { agentShimCliPath } from "./ownCli";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { realFrontDoorPort } from "./frontdoor/realFrontDoorPort";
 import { prepareLaunch, type FarmRuntime, type LaunchPlan, type PrepareLaunchParams } from "./launcher";
@@ -26,6 +27,7 @@ import {
   realSleepSync,
   resolveGitBranch,
   spawnDaemonThrough,
+  spawnDaemonThroughScript,
   type DaemonSpawner,
 } from "./realPorts";
 
@@ -137,7 +139,7 @@ export interface PrepareClaudeLaunchOptions {
   readonly env: Readonly<Record<string, string | undefined>>;
   /** The state root; defaults to the one the command line resolves. */
   readonly paths?: LayoutPaths;
-  /** The path of the agent-shim executable, used to start the front door and headroom daemons when the launch routes through them. Without it such a launch is refused: this process is not agent-shim, and re-running it would run the host program again. */
+  /** The path of the agent-shim executable, used to start the front door and headroom daemons when the launch routes through them. Without it the daemons start through the command line bundle of this same package (`agentShimCliPath`), run with the Node running this process; pass it to use another build or a compiled binary. */
   readonly agentShim?: string;
 }
 
@@ -165,9 +167,7 @@ export function prepareClaudeLaunch(options: PrepareClaudeLaunchOptions): Launch
   };
   const spawnDaemon: DaemonSpawner =
     options.agentShim === undefined
-      ? () => {
-          throw new LaunchRefusedError("this launch routes through the front door or headroom, which need `agentShim`, the path of the agent-shim executable, to start their daemons", 1);
-        }
+      ? (spawnPaths, subcommand, logPath) => spawnDaemonThroughScript(agentShimCliPath())(spawnPaths, subcommand, logPath)
       : spawnDaemonThrough(options.agentShim);
   return prepareLaunch(realPrepareLaunchParams(paths, { proc, log, spawnDaemon, farm: buildFarmRuntime(paths, options.cwd) }));
 }
