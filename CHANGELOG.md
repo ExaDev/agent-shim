@@ -1,3 +1,14 @@
+## [8.40.0](https://github.com/ExaDev/agent-shim/compare/v8.39.0...v8.40.0) (2026-10-08)
+
+### Features
+
+* list the concrete identities a pool can launch as ([44d9461](https://github.com/ExaDev/agent-shim/commit/44d946137817fe2046ae857cf40fbed8dab7e8ca))
+* report what a launch resolved to on the launch plan ([9f944de](https://github.com/ExaDev/agent-shim/commit/9f944de34844ad1e364ea681601f63a702910388))
+
+### Documentation
+
+* list poolIdentities and the launch decision in the library surface ([7f9fe35](https://github.com/ExaDev/agent-shim/commit/7f9fe35695026080ff0ad3d304451eb1413e9f5a))
+
 ## [8.39.0](https://github.com/ExaDev/agent-shim/compare/v8.38.1...v8.39.0) (2026-10-08)
 
 ### Features
