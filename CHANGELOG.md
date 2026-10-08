@@ -1,3 +1,14 @@
+## [8.39.0](https://github.com/ExaDev/agent-shim/compare/v8.38.1...v8.39.0) (2026-10-08)
+
+### Features
+
+* export the path of the package's own command line bundle ([8462a5c](https://github.com/ExaDev/agent-shim/commit/8462a5cf9c4fdd1083fa6d1351bd0bfb5177a7bc))
+* start a launch's daemons through the package's own CLI by default ([1eabb13](https://github.com/ExaDev/agent-shim/commit/1eabb138520f4965367975876fe4e9fe8593544f))
+
+### Build System
+
+* record each library file's directory and check it finds the built CLI ([84869fc](https://github.com/ExaDev/agent-shim/commit/84869fc83748248cc03bd2f467e94957fc3c9f3a))
+
 ## [8.38.1](https://github.com/ExaDev/agent-shim/compare/v8.38.0...v8.38.1) (2026-10-08)
 
 ### Documentation
