@@ -23,11 +23,15 @@ export interface OwnExecutableStat {
 }
 
 /**
- * The installed entry the door's turnover check watches: the resolved own-executable path when that entry is itself named `agent-shim` (with or without Windows' `.exe`), and the `agent-shim` sibling beside it otherwise. `agent-shim update` renames its verified bytes over the entry the updating process resolved, so a door spawned through another name (the `claude` hardlink `shim enable` maintains, or the legacy `claude-use` symlink) never sees its own exec'd file change: the sibling beside it is the file the update replaces, and an installation with no `agent-shim` sibling at all watches a path that does not exist, which leaves the turnover check disabled for that generation rather than watching an entry nothing replaces.
+ * The installed entry the door's turnover check watches: the resolved own-executable path when that entry is itself named `agent-shim` (with or without Windows' `.exe`), the `agent-shim` sibling beside it when one exists, and the own path otherwise. `agent-shim update` renames its verified bytes over the entry the updating process resolved, so a door spawned through another name (the `claude` hardlink `shim enable` maintains, or the legacy `claude-use` symlink) never sees its own exec'd file change, and the sibling beside it is the file the update replaces. The sibling is preferred only when it exists because the package's own layouts defeat the rule otherwise: a door started from the npm bundle resolves to `dist/cli.cjs`, whose sibling `dist/agent-shim.cjs` is never shipped, while `dist/cli.cjs` itself is exactly the file `npm install -g agent-shim@latest` replaces, so the own path is the right watch whenever no sibling answers.
  */
-export function watchedInstallEntry(resolvedOwnExecutablePath: string): string {
+export function watchedInstallEntry(resolvedOwnExecutablePath: string, siblingExists: (candidate: string) => boolean): string {
   const parsed = path.parse(resolvedOwnExecutablePath);
-  return parsed.name === "agent-shim" ? resolvedOwnExecutablePath : path.join(parsed.dir, `agent-shim${parsed.ext}`);
+  if (parsed.name === "agent-shim") {
+    return resolvedOwnExecutablePath;
+  }
+  const sibling = path.join(parsed.dir, `agent-shim${parsed.ext}`);
+  return siblingExists(sibling) ? sibling : resolvedOwnExecutablePath;
 }
 
 /** Every effect the front-door supervisor performs, injected so its whole lifecycle runs against fakes: no real process, port, clock or listener in a unit test. */

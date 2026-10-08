@@ -54,6 +54,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
   let failConnect = false;
   let failDirect = false;
   let onSleep: (() => void) | undefined;
+  let onListenerStart: (() => void) | undefined;
   // The executable identity the door serves as, present by default so the existing idle behaviour runs with a matching stat (the no-drift case), replaceable or removable mid-run through the world's setter the way `agent-shim update`'s rename-install replaces the file between ticks.
   let ownExecutableStat: OwnExecutableStat | undefined = INSTALLED_BINARY;
   // The door's event backbone and its launch lifecycle publisher, the same pairing the real ports wire: the tick's registry facts go in through the port below and come out as source-tagged events a test subscribes for.
@@ -78,6 +79,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
       if (failListener) {
         throw new Error("port chaos");
       }
+      onListenerStart?.();
       binds.push(preferred);
       const port = preferred !== undefined && !occupied.has(preferred) ? preferred : FRESH_PORT;
       return await Promise.resolve({
@@ -165,19 +167,30 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
     set onSleep(hook: (() => void) | undefined) {
       onSleep = hook;
     },
+    /** Fired inside the provider listener's start, modelling an update landing during the door's own startup, between the identity baseline and the first tick. */
+    set onListenerStart(hook: (() => void) | undefined) {
+      onListenerStart = hook;
+    },
   };
 }
 
+/** The existence check that always answers yes: the sibling rule applies wherever the candidate path would be. */
+const SIBLING_EXISTS = (): boolean => true;
+
 describe("watchedInstallEntry", () => {
   it("watches the resolved entry itself when it is already named agent-shim", () => {
-    expect(watchedInstallEntry("/home/testuser/.local/bin/agent-shim")).toBe("/home/testuser/.local/bin/agent-shim");
-    expect(watchedInstallEntry("/home/testuser/.local/bin/agent-shim.exe")).toBe("/home/testuser/.local/bin/agent-shim.exe");
+    expect(watchedInstallEntry("/home/testuser/.local/bin/agent-shim", SIBLING_EXISTS)).toBe("/home/testuser/.local/bin/agent-shim");
+    expect(watchedInstallEntry("/home/testuser/.local/bin/agent-shim.exe", SIBLING_EXISTS)).toBe("/home/testuser/.local/bin/agent-shim.exe");
   });
 
-  it("watches the agent-shim sibling when the door was spawned through another entry, the way the claude hardlink and the legacy claude-use symlink are", () => {
-    expect(watchedInstallEntry("/home/testuser/.local/bin/claude")).toBe("/home/testuser/.local/bin/agent-shim");
-    expect(watchedInstallEntry("/home/testuser/.local/bin/claude-use")).toBe("/home/testuser/.local/bin/agent-shim");
-    expect(watchedInstallEntry("/home/testuser/.local/bin/claude.exe")).toBe("/home/testuser/.local/bin/agent-shim.exe");
+  it("watches the agent-shim sibling when the door was spawned through another entry and one exists, the way the claude hardlink and the legacy claude-use symlink are", () => {
+    expect(watchedInstallEntry("/home/testuser/.local/bin/claude", SIBLING_EXISTS)).toBe("/home/testuser/.local/bin/agent-shim");
+    expect(watchedInstallEntry("/home/testuser/.local/bin/claude-use", SIBLING_EXISTS)).toBe("/home/testuser/.local/bin/agent-shim");
+    expect(watchedInstallEntry("/home/testuser/.local/bin/claude.exe", SIBLING_EXISTS)).toBe("/home/testuser/.local/bin/agent-shim.exe");
+  });
+
+  it("falls back to the own path when no sibling exists, the npm bundle's own layout, where dist/cli.cjs is itself the file an update replaces", () => {
+    expect(watchedInstallEntry("/n/lib/node_modules/agent-shim/dist/cli.cjs", () => false)).toBe("/n/lib/node_modules/agent-shim/dist/cli.cjs");
   });
 });
 
@@ -361,6 +374,26 @@ describe("runFrontDoorSupervisor", () => {
     // One poll interval: the turnover fired on the first tick with an empty registry, not after the idle window restarted.
     expect(world.clock()).toBe(FRONTDOOR_POLL_MS);
     expect(world.logs.some((line) => line.includes("the installed binary changed"))).toBe(true);
+  });
+
+  it("turns over a replacement that lands during the door's own startup, at the second tick rather than under the ensuring launch", async () => {
+    const world = makeWorld();
+    const received: DoorEvent[] = [];
+    const detach = world.doorEvents.subscribe([DOOR_HEALTH_EVENT_SOURCE], (event) => {
+      received.push(event);
+    });
+    // The replacement lands between the identity baseline and the listeners being up, the window a post-bind baseline would wrongly capture as the new normal.
+    world.onListenerStart = () => {
+      world.ownExecutable = REPLACED_BINARY;
+    };
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports)).toBe(0);
+    detach();
+    // The turnover is observed at the second tick's clock (one poll interval), not at tick one: the first tick's grace is what lets the ensuring launch's session record land before the door may retire.
+    expect(world.clock()).toBe(FRONTDOOR_POLL_MS);
+    expect(received).toEqual([
+      { source: DOOR_HEALTH_EVENT_SOURCE, sequence: 1, payload: { kind: "generation", pid: OWN_PID, providerPort: FRESH_PORT, connectPort: FRESH_PORT, directPort: FRESH_PORT, observedAt: 0 } },
+      { source: DOOR_HEALTH_EVENT_SOURCE, sequence: 2, payload: { kind: "binaryTurnover", pid: OWN_PID, observedAt: FRONTDOOR_POLL_MS } },
+    ]);
   });
 
   it("treats a stat returning to the exact captured identity after an absent window as unchanged, not replaced", async () => {

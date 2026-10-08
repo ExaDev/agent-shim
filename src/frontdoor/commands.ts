@@ -248,8 +248,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       });
     },
     isRunning: realIsProcessRunning,
-    // The turnover check's file identity, over the installed entry resolved once at door start: re-resolving per tick would re-run the PATH scan every second and could theoretically flip between two files, while the entry itself is fixed for as long as this door lives.
-    statOwnExecutable: realStatOwnExecutable(watchedInstallEntry(realOwnExecutablePath())),
+    // The turnover check's file identity, over the installed entry resolved once at door start: re-resolving per tick would re-run the PATH scan every second and could theoretically flip between two files, while the entry itself is fixed for as long as this door lives. The existence check prefers the agent-shim sibling only when it is really there (see watchedInstallEntry).
+    statOwnExecutable: realStatOwnExecutable(watchedInstallEntry(realOwnExecutablePath(), (candidate) => fs.existsSync(candidate))),
     startProviderListener: async (preferredPort) => {
       const authority = loadCa();
       // The write operations the control routes and the typed API both carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly. A confirmed write advances the session's sequence cursor through the tracker, so a stream resume continues after the door's own events too. In the self-hosted mode the dial's target is resolved per call so it names the door's own surface once that has bound.
