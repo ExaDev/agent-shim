@@ -2,7 +2,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { HEADROOM_STATE_SCHEMA_VERSION } from "./headroom/state";
 import { HOME_DIRNAME, LEGACY_HOME_DIRNAME } from "./legacy";
 
 /**
@@ -31,8 +30,10 @@ export interface LayoutPaths {
   readonly claudeShimFile: string;
   /** Directory holding the headroom daemon's coordination state: the state file, the start lock, the session registry, and the socket directory. */
   readonly headroomDir: string;
-  /** Path to the headroom supervisor's state file: pids, socket path, version, allowlist hash, last error. Its name carries `HEADROOM_STATE_SCHEMA_VERSION`, so a supervisor from a release with another state schema keeps its own file instead of contending for this one. */
+  /** Path to the headroom supervisor's state file: pids, socket path, version, allowlist hash, last error. One unversioned name every release shares, arbitrated by the ownership rules in `headroom/state.ts` rather than by a version in the file name. */
   readonly headroomStateFile: string;
+  /** The previous release's versioned name for the state file, read only while a supervisor from that release is still alive and removed once its generation has drained (see `migrateHeadroomState`). */
+  readonly headroomLegacyStateFile: string;
   /** Directory, mode 0700, holding the headroom daemon's unix socket: one `<supervisor-pid>.sock` per supervisor generation. Only its owner can enter it, which is what authenticates the door's hop to the daemon. */
   readonly headroomSocketDir: string;
   /** Path to the exclusive-create marker guarding "who spawns the supervisor" so concurrent launches start at most one. */
@@ -126,7 +127,8 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     categoriesLocalFile: path.join(root, "categories.local.json"),
     claudeShimFile: path.join(root, "claude-shim.json"),
     headroomDir: path.join(root, "headroom"),
-    headroomStateFile: path.join(root, "headroom", `state.v${String(HEADROOM_STATE_SCHEMA_VERSION)}.json`),
+    headroomStateFile: path.join(root, "headroom", "state.json"),
+    headroomLegacyStateFile: path.join(root, "headroom", "state.v2.json"),
     headroomSocketDir: path.join(root, "headroom", "run"),
     headroomLockFile: path.join(root, "headroom", "start.lock"),
     headroomSessionsDir: path.join(root, "headroom", "sessions"),

@@ -2,7 +2,7 @@ import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnBinar
 import type { LayoutPaths } from "./paths";
 import { readJson } from "./config/store";
 import { isIdentityDirectoryName } from "./identityStore";
-import { findExecutableInDir, realContentSourcePath, realFsPort, realInstalledClaudeVersions, realIsProcessRunning, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
+import { findExecutableInDir, realContentSourcePath, realFarmFs, realFsPort, realInstalledClaudeVersions, realIsProcessRunning, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
 import fs from "node:fs";
 import path from "node:path";
 import type { z } from "zod";
@@ -15,7 +15,7 @@ import { describeCredential, type CredentialCacheEnv } from "./credential";
 import { describeCachedCredential, formatCachedCredentialState } from "./credentialCache";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { isMovingGitSource } from "./headroom/source";
-import { HeadroomStateSchema } from "./headroom/state";
+import { HeadroomStateSchema, resolveServingHeadroomState } from "./headroom/state";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providersStore";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
@@ -801,7 +801,12 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     run: realRunPort,
     platform: process.platform,
     headroom: {
-      state: { path: paths.headroomStateFile, raw: realFsPort.readFileUtf8(paths.headroomStateFile) },
+      // Read-only resolution like `headroom status`: the doctor reports whichever record a launch would join, migrating nothing.
+      state: (() => {
+        const resolved = resolveServingHeadroomState(realFarmFs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, realIsProcessRunning);
+        const statePath = resolved?.path ?? paths.headroomStateFile;
+        return { path: statePath, raw: realFarmFs.readFileUtf8(statePath) };
+      })(),
       isRunning: realIsProcessRunning,
     },
   });

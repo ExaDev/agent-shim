@@ -5,8 +5,9 @@ import { ProviderSchema } from "../config/schema";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import {
-  HEADROOM_STATE_SCHEMA_VERSION,
   hashAllowlist,
+  migrateHeadroomState,
+  resolveServingHeadroomState,
   headroomAllowlist,
   headroomUpstreams,
   HEADROOM_ANTHROPIC_UPSTREAM,
@@ -23,6 +24,9 @@ import {
 } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
+
+/** The two names the resolution runs over, as the callers pass them. */
+const files = (): { stateFile: string; legacyStateFile: string } => ({ stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile });
 
 const SESSION_EARLY_PID = 42;
 const SESSION_LATE_PID = 101;
@@ -82,9 +86,76 @@ describe("headroom state files", () => {
     expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual({ supervisorPid: 11, headroomPid: 12, socketPath });
   });
 
-  it("keeps its state in a file named by the schema version, apart from the earlier port-based state.json", () => {
-    expect(path.basename(paths.headroomStateFile)).toBe(`state.v${String(HEADROOM_STATE_SCHEMA_VERSION)}.json`);
+  it("keeps its state in one unversioned file, with the previous release's versioned name beside it for migration", () => {
+    expect(path.basename(paths.headroomStateFile)).toBe("state.json");
     expect(path.dirname(paths.headroomStateFile)).toBe(paths.headroomDir);
+    expect(path.basename(paths.headroomLegacyStateFile)).toBe("state.v2.json");
+  });
+
+  it("resolves the shared file's record as the serving one", () => {
+    const fs = createFakeFarmFs({});
+    fs.mkdirp(paths.headroomDir);
+    writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: SUPERVISOR_A_PID, socketPath: `${paths.headroomSocketDir}/a.sock` });
+    const resolved = resolveServingHeadroomState(fs, files(), () => true);
+    expect(resolved).toEqual({ path: paths.headroomStateFile, state: { supervisorPid: SUPERVISOR_A_PID, socketPath: `${paths.headroomSocketDir}/a.sock` } });
+  });
+
+  it("resolves a live previous-release supervisor's legacy record as the serving one, without touching either file", () => {
+    const fs = createFakeFarmFs({});
+    fs.mkdirp(paths.headroomDir);
+    writeHeadroomState(fs, paths.headroomLegacyStateFile, { supervisorPid: SUPERVISOR_A_PID, socketPath: `${paths.headroomSocketDir}/a.sock` });
+    const resolved = resolveServingHeadroomState(fs, files(), () => true);
+    expect(resolved?.path).toBe(paths.headroomLegacyStateFile);
+    expect(resolved?.state.supervisorPid).toBe(SUPERVISOR_A_PID);
+    expect(readHeadroomState(fs, paths.headroomStateFile)).toBeUndefined();
+  });
+
+  it("resolves nothing while the shared file is absent and the legacy record's supervisor is not live", () => {
+    const fs = createFakeFarmFs({});
+    fs.mkdirp(paths.headroomDir);
+    writeHeadroomState(fs, paths.headroomLegacyStateFile, { supervisorPid: SUPERVISOR_A_PID, socketPath: `${paths.headroomSocketDir}/a.sock` });
+    expect(resolveServingHeadroomState(fs, files(), () => false)).toBeUndefined();
+  });
+
+  it("migrates a legacy record whose generation has ended onto the shared name in place, removing the legacy file", () => {
+    const fs = createFakeFarmFs({});
+    fs.mkdirp(paths.headroomDir);
+    const record = { supervisorPid: SUPERVISOR_A_PID, socketPath: `${paths.headroomSocketDir}/a.sock`, installedSource: "headroom>=0.39" };
+    writeHeadroomState(fs, paths.headroomLegacyStateFile, record);
+    migrateHeadroomState(fs, files(), () => false);
+    expect(readHeadroomState(fs, paths.headroomStateFile)).toEqual(record);
+    expect(fs.readFileUtf8(paths.headroomLegacyStateFile)).toBeUndefined();
+  });
+
+  it("leaves a live legacy generation alone, and once the shared name serves it deletes the legacy file", () => {
+    const fs = createFakeFarmFs({});
+    fs.mkdirp(paths.headroomDir);
+    writeHeadroomState(fs, paths.headroomLegacyStateFile, { supervisorPid: SUPERVISOR_A_PID, socketPath: `${paths.headroomSocketDir}/a.sock` });
+    migrateHeadroomState(fs, files(), () => true);
+    expect(fs.readFileUtf8(paths.headroomLegacyStateFile)).toBeDefined();
+    // The generation drains: the shared name gets claimed by a new supervisor, and the next migration retires the legacy file.
+    writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: SUPERVISOR_B_PID, socketPath: `${paths.headroomSocketDir}/b.sock` });
+    migrateHeadroomState(fs, files(), () => false);
+    expect(fs.readFileUtf8(paths.headroomLegacyStateFile)).toBeUndefined();
+    expect(readHeadroomState(fs, paths.headroomStateFile)?.supervisorPid).toBe(SUPERVISOR_B_PID);
+  });
+
+  it("removes a legacy file nothing can parse, and claims nothing over an unparseable shared file", () => {
+    const fs = createFakeFarmFs({});
+    fs.mkdirp(paths.headroomDir);
+    fs.writeFileUtf8(paths.headroomLegacyStateFile, "{bad");
+    migrateHeadroomState(fs, files(), () => true);
+    expect(fs.readFileUtf8(paths.headroomLegacyStateFile)).toBeUndefined();
+  });
+
+  it("migrates over a shared file carrying the TCP-port era's content, which reads as absent", () => {
+    const fs = createFakeFarmFs({});
+    fs.mkdirp(paths.headroomDir);
+    fs.writeFileUtf8(paths.headroomStateFile, JSON.stringify({ supervisorPid: 11, headroomPid: 12, port: 8923, lastPort: 8923 }));
+    writeHeadroomState(fs, paths.headroomLegacyStateFile, { supervisorPid: SUPERVISOR_A_PID, socketPath: `${paths.headroomSocketDir}/a.sock` });
+    migrateHeadroomState(fs, files(), () => false);
+    expect(readHeadroomState(fs, paths.headroomStateFile)?.socketPath).toBe(`${paths.headroomSocketDir}/a.sock`);
+    expect(fs.readFileUtf8(paths.headroomLegacyStateFile)).toBeUndefined();
   });
 
   it("reads a record carrying a TCP port as malformed, so nothing of the earlier schema is ever dialled", () => {
