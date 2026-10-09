@@ -32,10 +32,14 @@ const ZERO_TIER = /(?:^|_)zero$/;
 const BASE_TIER = /(?:^|_)(?:pro|free)$/;
 
 /**
- * Classifies an account from the rate-limit tier of its stored login (`organizationRateLimitTier`, which decides the organisation's limits, then `userRateLimitTier`). The tier strings are free text on Anthropic's side, so only the shapes seen are read: a trailing `<n>x` is that multiple, a bare `pro` is 1, a `zero` tier is pay-per-use. Anything else is a subscription of unrecognised size, counted as 1 and marked so the ranking can say it guessed.
+ * Classifies an account from the rate-limit tier of its stored login (`organizationRateLimitTier`, which decides the organisation's limits, then `userRateLimitTier`), except that a `zero` user tier decides alone: a seat whose own allowance is zero draws on no plan whatever its organisation's tier says (a usage-based Enterprise seat sits in an organisation tier that reads as a subscription). The tier strings are free text on Anthropic's side, so only the shapes seen are read: a trailing `<n>x` is that multiple, a bare `pro` is 1, a `zero` tier is pay-per-use. Anything else is a subscription of unrecognised size, counted as 1 and marked so the ranking can say it guessed.
  */
 export function planOf(account: AccountMetadata | undefined): PlanClass {
-  const tier = account?.organizationRateLimitTier ?? account?.userRateLimitTier;
+  const userTier = account?.userRateLimitTier;
+  if (userTier !== undefined && ZERO_TIER.test(userTier)) {
+    return { kind: "pay-per-use", tier: userTier };
+  }
+  const tier = account?.organizationRateLimitTier ?? userTier;
   const tierField = tier === undefined ? {} : { tier };
   if (tier === undefined) {
     return { kind: "subscription", capacity: 1, recognised: false };

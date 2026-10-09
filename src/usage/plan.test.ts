@@ -19,6 +19,11 @@ describe("planOf", () => {
     expect(planOf({ organizationRateLimitTier: "default_claude_zero" })).toEqual({ kind: "pay-per-use", tier: "default_claude_zero" });
   });
 
+  it("classes a seat whose own tier is zero as pay-per-use whatever its organisation's tier says", () => {
+    expect(planOf({ organizationRateLimitTier: "default_raven_enterprise", userRateLimitTier: "default_claude_zero" })).toEqual({ kind: "pay-per-use", tier: "default_claude_zero" });
+    expect(planOf({ organizationRateLimitTier: "default_claude_max_20x", userRateLimitTier: "default_claude_zero" })).toEqual({ kind: "pay-per-use", tier: "default_claude_zero" });
+  });
+
   it("counts an unrecognised or missing tier as capacity 1 and says it guessed", () => {
     expect(planOf({ organizationRateLimitTier: "default_something_new" })).toEqual({ kind: "subscription", capacity: 1, recognised: false, tier: "default_something_new" });
     expect(planOf(undefined)).toEqual({ kind: "subscription", capacity: 1, recognised: false });
