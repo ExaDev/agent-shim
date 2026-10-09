@@ -1,3 +1,4 @@
+import { soleOverageWindow } from "./rateLimit";
 import type { QuotaWindow, UsageSnapshot } from "./schema";
 
 const MS_PER_SECOND = 1000;
@@ -57,6 +58,7 @@ export function quotaWarnings(snapshot: UsageSnapshot | undefined, provider: str
   const windows = [
     { name: "five-hour", window: unified.fiveHour },
     { name: "seven-day", window: unified.sevenDay },
+    { name: "extra-usage", window: soleOverageWindow(unified) },
   ];
   return windows.flatMap(({ name, window }) => {
     const effective = window === undefined ? undefined : effectiveWindow(window, nowMs);

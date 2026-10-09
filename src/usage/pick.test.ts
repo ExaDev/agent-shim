@@ -43,6 +43,8 @@ interface Windows {
   readonly five?: { utilization?: number; status?: string; resetsInMs?: number };
   readonly seven?: { utilization?: number; status?: string; resetsInMs?: number };
   readonly overage?: string;
+  /** The extra-usage allowance's own meter, as an account with no plan windows reports it. */
+  readonly overageMeter?: { utilization?: number; resetsInMs?: number; disabledReason?: string };
   readonly lastLimit?: { kind: "rate-limited" | "quota-exhausted"; resetInMs?: number; retryAfterSeconds?: number; observedAgoMs?: number };
   readonly lastRequestAgoMs?: number;
 }
@@ -70,6 +72,9 @@ function snapshot(identity: string, windows: Windows): UsageSnapshot {
             ...(windows.five === undefined ? {} : { fiveHour: window(windows.five) }),
             ...(windows.seven === undefined ? {} : { sevenDay: window(windows.seven) }),
             ...(windows.overage === undefined ? {} : { overageStatus: windows.overage }),
+            ...(windows.overageMeter?.utilization === undefined ? {} : { overageUtilization: windows.overageMeter.utilization }),
+            ...(windows.overageMeter?.resetsInMs === undefined ? {} : { overageResetsAt: at(windows.overageMeter.resetsInMs) }),
+            ...(windows.overageMeter?.disabledReason === undefined ? {} : { overageDisabledReason: windows.overageMeter.disabledReason }),
           },
         },
         ...(windows.lastLimit === undefined
@@ -310,6 +315,37 @@ describe("rankPool", () => {
     expect(noWindows.candidates[0]?.class).toBe("pay-per-use");
     const overage = rank([member("a", { seven: { utilization: FULL, status: "rejected", resetsInMs: DAY_MS }, overage: "allowed" })]);
     expect(overage.candidates[0]?.class).toBe("pay-per-use");
+  });
+
+  describe("an account metered only by extra usage", () => {
+    it("refuses a member whose allowance is rejected until it resets, naming the allowance", () => {
+      const ranking = rank([member("capped", { overage: "rejected", overageMeter: { utilization: FULL, resetsInMs: DAY_MS } })]);
+      expect(ranking.candidates[0]).toMatchObject({ class: "ineligible", blockedUntilMs: NOW_MS + DAY_MS });
+      expect(ranking.candidates[0]?.reasons.join(" ")).toContain("extra usage 100% used");
+      expect(ranking.pick).toBeUndefined();
+      expect(ranking.earliestReturn).toEqual({ identity: "capped", atMs: NOW_MS + DAY_MS });
+    });
+
+    it("serves a member whose rejected allowance has since reset", () => {
+      const ranking = rank([member("lapsed", { overage: "rejected", overageMeter: { utilization: FULL, resetsInMs: -HOUR_MS } })]);
+      expect(ranking.candidates[0]?.class).toBe("pay-per-use");
+    });
+
+    it("ranks the member with more of its allowance left first, and one reporting no meter as unconstrained", () => {
+      const ranking = rank([
+        member("nearly-spent", { overage: "allowed", overageMeter: { utilization: U95, resetsInMs: DAY_MS } }),
+        member("half", { overage: "allowed", overageMeter: { utilization: U50, resetsInMs: DAY_MS } }),
+        member("unmetered", { overage: "allowed" }),
+      ]);
+      expect(order(ranking)).toEqual(["unmetered", "half", "nearly-spent"]);
+      expect(ranking.candidates.find((candidate) => candidate.identity === "half")).toMatchObject({ class: "pay-per-use", headroom: U50 });
+      expect(ranking.candidates.find((candidate) => candidate.identity === "half")?.reasons.join(" ")).toContain("extra usage 50% used");
+    });
+
+    it("never reads extra usage as the budget of an account that has plan windows", () => {
+      const ranking = rank([member("plan", { seven: { utilization: U50, resetsInMs: DAY_MS }, overage: "rejected", overageMeter: { utilization: FULL, resetsInMs: DAY_MS, disabledReason: "out_of_credits" } })]);
+      expect(ranking.candidates[0]?.class).toBe("scored");
+    });
   });
 
   it("reports an unreadable snapshot as unknown with the reason", () => {

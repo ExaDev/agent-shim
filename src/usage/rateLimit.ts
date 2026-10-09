@@ -69,6 +69,9 @@ export function parseUnifiedRateLimit(headers: Readonly<Record<string, string>>)
   const representativeClaim = headers[`${UNIFIED_PREFIX}representative-claim`];
   const resetAt = epochSecondsToIso(headers[`${UNIFIED_PREFIX}reset`]);
   const overageStatus = headers[`${UNIFIED_PREFIX}overage-status`];
+  const overageUtilization = nonNegativeNumber(headers[`${UNIFIED_PREFIX}overage-utilization`]);
+  const overageResetsAt = epochSecondsToIso(headers[`${UNIFIED_PREFIX}overage-reset`]);
+  const overageDisabledReason = headers[`${UNIFIED_PREFIX}overage-disabled-reason`];
   return {
     ...(status === undefined ? {} : { status }),
     ...(fiveHour === undefined ? {} : { fiveHour }),
@@ -76,7 +79,37 @@ export function parseUnifiedRateLimit(headers: Readonly<Record<string, string>>)
     ...(representativeClaim === undefined ? {} : { representativeClaim }),
     ...(resetAt === undefined ? {} : { resetAt }),
     ...(overageStatus === undefined ? {} : { overageStatus }),
+    ...(overageUtilization === undefined ? {} : { overageUtilization }),
+    ...(overageResetsAt === undefined ? {} : { overageResetsAt }),
+    ...(overageDisabledReason === undefined ? {} : { overageDisabledReason }),
   };
+}
+
+/** The extra-usage fields of a recorded state, for carrying onto a later state that lacks them. */
+export function overageFactsOf(unified: Readonly<UnifiedRateLimit>): Pick<UnifiedRateLimit, "overageStatus" | "overageUtilization" | "overageResetsAt" | "overageDisabledReason"> {
+  const { overageStatus, overageUtilization, overageResetsAt, overageDisabledReason } = unified;
+  return {
+    ...(overageStatus === undefined ? {} : { overageStatus }),
+    ...(overageUtilization === undefined ? {} : { overageUtilization }),
+    ...(overageResetsAt === undefined ? {} : { overageResetsAt }),
+    ...(overageDisabledReason === undefined ? {} : { overageDisabledReason }),
+  };
+}
+
+/** The extra-usage allowance as a quota window, or undefined when the state carries no overage fact. */
+export function overageWindowOf(unified: Readonly<UnifiedRateLimit>): QuotaWindow | undefined {
+  const { overageUtilization: utilization, overageResetsAt: resetsAt, overageStatus: status } = unified;
+  if (utilization === undefined && resetsAt === undefined && status === undefined) {
+    return undefined;
+  }
+  return { ...(utilization === undefined ? {} : { utilization }), ...(resetsAt === undefined ? {} : { resetsAt }), ...(status === undefined ? {} : { status }) };
+}
+
+/**
+ * The extra-usage allowance, when it is the account's only budget: no five-hour or seven-day window was reported, as for an Enterprise account, whose spend cap is metered by the overage fields alone. For an account that has plan windows, extra usage is a fallback after the plan, so its status says nothing about whether the account can serve and this is undefined.
+ */
+export function soleOverageWindow(unified: Readonly<UnifiedRateLimit>): QuotaWindow | undefined {
+  return unified.fiveHour === undefined && unified.sevenDay === undefined ? overageWindowOf(unified) : undefined;
 }
 
 /** `retry-after` in seconds: either a number of seconds or an HTTP date (RFC 9110 section 10.2.3), measured from `nowMs`. */

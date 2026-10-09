@@ -482,6 +482,17 @@ describe("recordRateLimit", () => {
     expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.anthropic?.rateLimit).toEqual(newer);
   });
 
+  it("carries the whole extra-usage meter earlier response headers stated, not only its status", () => {
+    const { fs, store } = harness();
+    store.record(makeRecord());
+    const meter = { overageStatus: "allowed", overageUtilization: HALF_USED, overageResetsAt: atOffset(DAY_MS), overageDisabledReason: "out_of_credits" };
+    store.recordRateLimit("work", "anthropic", { observedAt: atOffset(0), headers: {}, unified: meter });
+
+    store.recordRateLimit("work", "anthropic", fetchedAt(SECOND_MS, HALF_USED));
+
+    expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.anthropic?.rateLimit?.unified).toEqual({ fiveHour: { utilization: HALF_USED, resetsAt: atOffset(DAY_MS) }, ...meter });
+  });
+
   it("carries the extra-usage status earlier response headers stated, which the usage endpoint does not report", () => {
     const { fs, store } = harness();
     store.record(makeRecord());

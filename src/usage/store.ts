@@ -3,7 +3,7 @@ import path from "node:path";
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { AccountMetadataError, isIdentityName } from "./account";
-import { parseUnifiedRateLimit } from "./rateLimit";
+import { overageFactsOf, parseUnifiedRateLimit } from "./rateLimit";
 import { listLogSegments, readUsageSnapshot, segmentDay, segmentName, snapshotPath, UsageSnapshotError } from "./read";
 import { USAGE_SCHEMA_VERSION, UsageRecordSchema, UsageSnapshotSchema, type AccountMetadata, type ProviderQuota, type ProviderUsageState, type RateLimitState, type UsageRecord, type UsageSnapshot } from "./schema";
 
@@ -178,9 +178,10 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
       rewriteSnapshot(identity, (current) => {
         const state: ProviderUsageState = current?.providers[provider] ?? {};
         const keep = state.rateLimit !== undefined && state.rateLimit.observedAt.localeCompare(rateLimit.observedAt) > 0;
-        // The usage endpoint answers the plan windows only; whether extra usage is available is a plan setting that earlier response headers stated, and it outlives them.
-        const overageStatus = rateLimit.unified?.overageStatus ?? state.rateLimit?.unified?.overageStatus;
-        const merged: RateLimitState = overageStatus === undefined || rateLimit.unified === undefined ? rateLimit : { ...rateLimit, unified: { ...rateLimit.unified, overageStatus } };
+        // The usage endpoint answers the plan windows only; whether extra usage is available, and how much of it is used, is what earlier response headers stated, and it outlives them.
+        const earlier = state.rateLimit?.unified;
+        const carried = rateLimit.unified === undefined || rateLimit.unified.overageStatus !== undefined || earlier === undefined ? undefined : overageFactsOf(earlier);
+        const merged: RateLimitState = carried === undefined || rateLimit.unified === undefined ? rateLimit : { ...rateLimit, unified: { ...rateLimit.unified, ...carried } };
         return { ...current?.providers, [provider]: { ...state, rateLimit: keep ? state.rateLimit : merged } };
       }),
   };

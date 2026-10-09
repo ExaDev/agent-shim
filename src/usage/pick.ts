@@ -3,7 +3,7 @@ import { evaluateWhen, type ConditionContext, type PoolWindowFacts } from "../re
 import { planOf, type PlanClass } from "./plan";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import { effectiveWindow, formatAge, type EffectiveWindow } from "./preflight";
-import { parseUnifiedRateLimit } from "./rateLimit";
+import { parseUnifiedRateLimit, soleOverageWindow } from "./rateLimit";
 import type { AccountMetadata, ProviderUsageState, QuotaWindow, UnifiedRateLimit, UsageRecord, UsageSnapshot } from "./schema";
 
 /**
@@ -78,6 +78,8 @@ export interface Candidate {
   readonly score?: number;
   /** False when a quota window would run dry, at the observed pace, before it resets (the five-hour at its own or the rescaled shared pace, the seven-day at its own). A `scored` candidate that is not feasible ranks below every feasible one. */
   readonly feasible: boolean;
+  /** The fraction of the extra-usage allowance still unspent, for a `pay-per-use` member whose only budget is that allowance (an Enterprise account). A member reporting none ranks as having all of it: no cap is known to bind. */
+  readonly headroom?: number;
   /** When an `ineligible` candidate can be used again. */
   readonly blockedUntilMs?: number;
   readonly plan: PlanClass;
@@ -238,19 +240,23 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
     ...(sevenDayWindow === undefined || seven === undefined ? [] : [describeWindow("7d", sevenDayWindow, seven, nowMs)]),
   ];
 
+  const overageWindow = soleOverageWindow(unified);
+  const overage = overageWindow === undefined ? undefined : effectiveWindow(overageWindow, nowMs);
+  const overageReasons = overageWindow === undefined || overage === undefined ? [] : [describeWindow("extra usage", overageWindow, overage, nowMs)];
   const blockedUntil = Math.max(
-    windowBlockedUntil([five, seven].flatMap((window) => (window === undefined ? [] : [window]))) ?? 0,
+    windowBlockedUntil([five, seven, overage].flatMap((window) => (window === undefined ? [] : [window]))) ?? 0,
     limitBlockedUntil(state, nowMs) ?? 0,
   );
   if (blockedUntil > nowMs) {
     if (unified.overageStatus === "allowed") {
       return { candidate: { ...base, class: "pay-per-use", reasons: [`plan exhausted until ${new Date(blockedUntil).toISOString()}, continues as extra usage`, ...windowReasons, ...planReasons] } };
     }
-    return { candidate: { ...base, class: "ineligible", blockedUntilMs: blockedUntil, reasons: [`refused until ${new Date(blockedUntil).toISOString()} (in ${formatAge(blockedUntil - nowMs)})`, ...windowReasons, ...planReasons] } };
+    return { candidate: { ...base, class: "ineligible", blockedUntilMs: blockedUntil, reasons: [`refused until ${new Date(blockedUntil).toISOString()} (in ${formatAge(blockedUntil - nowMs)})`, ...windowReasons, ...overageReasons, ...planReasons] } };
   }
 
   if (plan.kind === "pay-per-use" || (fiveHourWindow === undefined && sevenDayWindow === undefined)) {
-    return { candidate: { ...base, class: "pay-per-use", reasons: [...(plan.kind === "pay-per-use" ? planReasons : ["no plan windows reported, so usage bills as extra usage"])] } };
+    const headroom = overage?.utilization === undefined ? undefined : Math.max(0, 1 - overage.utilization);
+    return { candidate: { ...base, class: "pay-per-use", ...(headroom === undefined ? {} : { headroom }), reasons: [...(plan.kind === "pay-per-use" ? planReasons : ["no plan windows reported, so usage bills as extra usage"]), ...overageReasons] } };
   }
 
   const basis = seven?.utilization !== undefined ? { window: seven, windowMs: SEVEN_DAY_WINDOW_MS } : five?.utilization !== undefined ? { window: five, windowMs: FIVE_HOUR_WINDOW_MS } : undefined;
@@ -369,6 +375,7 @@ export function rankPool(input: RankPoolInput): PoolRanking {
             CLASS_ORDER[left.class] - CLASS_ORDER[right.class] ||
             Number(left.policyDemoted ?? false) - Number(right.policyDemoted ?? false) ||
             Number(right.feasible) - Number(left.feasible) ||
+            (right.headroom ?? 1) - (left.headroom ?? 1) ||
             (right.score ?? 0) - (left.score ?? 0) ||
             left.identity.localeCompare(right.identity),
         );
