@@ -1,3 +1,9 @@
+## [9.2.1](https://github.com/ExaDev/agent-shim/compare/v9.2.0...v9.2.1) (2026-10-09)
+
+### Bug Fixes
+
+* class a seat whose own rate-limit tier is zero as pay-per-use ([da67a89](https://github.com/ExaDev/agent-shim/commit/da67a89ada1c97c9fb8e5f45f506b3272e2b53f7))
+
 ## [9.2.0](https://github.com/ExaDev/agent-shim/compare/v9.1.0...v9.2.0) (2026-10-09)
 
 ### Features
