@@ -205,6 +205,7 @@ describe("headers captured from the live API", () => {
   const WEEK_EXHAUSTED_RESET_SECONDS = 1_791_115_200;
   const FIVE_HOUR_IDLE_RESET_SECONDS = 1_790_955_000;
   const ENTERPRISE_OVERAGE_RESET_SECONDS = 1_793_491_200;
+  const WEEK_PARTLY_USED = 0.16;
 
   const weekExhausted: Record<string, string> = {
     [`${PREFIX}status`]: "rejected",
@@ -239,6 +240,41 @@ describe("headers captured from the live API", () => {
       fiveHour: { utilization: 0, resetsAt: new Date(FIVE_HOUR_IDLE_RESET_SECONDS * MS_PER_SECOND).toISOString() },
       sevenDay: { utilization: 1, status: "rejected", resetsAt: new Date(WEEK_EXHAUSTED_RESET_SECONDS * MS_PER_SECOND).toISOString() },
     });
+  });
+
+  it("reads a five-hour window in grace, with the fraction of its grace allowance used", () => {
+    const inGrace: Record<string, string> = {
+      [`${PREFIX}status`]: "allowed_warning",
+      [`${PREFIX}representative-claim`]: "five_hour",
+      [`${PREFIX}5h-status`]: "allowed_warning",
+      [`${PREFIX}5h-utilization`]: "0.99",
+      [`${PREFIX}5h-reset`]: String(FIVE_HOUR_IDLE_RESET_SECONDS),
+      [`${PREFIX}grace-status`]: "active",
+      [`${PREFIX}grace-5h-utilization`]: "0.342",
+    };
+    expect(parseUnifiedRateLimit(inGrace)?.fiveHour).toMatchObject({ utilization: 0.99, status: "allowed_warning", graceUtilization: 0.342 });
+  });
+
+  it("ignores a grace figure the response does not mark active", () => {
+    const parsed = parseUnifiedRateLimit({ [`${PREFIX}5h-utilization`]: "0.5", [`${PREFIX}grace-5h-utilization`]: "0.1" });
+    expect(parsed?.fiveHour).toEqual({ utilization: 0.5 });
+  });
+
+  it("reads the overage-included weekly window beside the all-models weekly one", () => {
+    const parsed = parseUnifiedRateLimit({
+      [`${PREFIX}7d-utilization`]: String(WEEK_PARTLY_USED),
+      [`${PREFIX}7d-reset`]: String(WEEK_EXHAUSTED_RESET_SECONDS),
+      [`${PREFIX}7d_oi-utilization`]: "0.0",
+      [`${PREFIX}7d_oi-reset`]: String(WEEK_EXHAUSTED_RESET_SECONDS),
+      [`${PREFIX}7d_oi-status`]: "allowed",
+    });
+    expect(parsed?.sevenDay?.utilization).toBe(WEEK_PARTLY_USED);
+    expect(parsed?.sevenDayOverageIncluded).toMatchObject({ utilization: 0, status: "allowed" });
+  });
+
+  it("reads whether a response was served on extra usage, and whether a fallback is on offer", () => {
+    expect(parseUnifiedRateLimit({ ...enterpriseOverageOnly, [`${PREFIX}overage-in-use`]: "true", [`${PREFIX}fallback`]: "available" })).toMatchObject({ overageInUse: true, fallbackAvailable: true });
+    expect(parseUnifiedRateLimit(enterpriseOverageOnly)).not.toHaveProperty("fallbackAvailable");
   });
 
   it("reads why extra usage is unavailable", () => {

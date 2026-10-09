@@ -86,8 +86,20 @@ const QuotaWindowSchema = z.strictObject({
   resetsAt: InstantSchema.optional(),
   /** The window's own status (`allowed`, `allowed_warning`, `rejected`). */
   status: z.string().optional(),
+  /** The fraction of the window's grace allowance used, while the upstream reports the window in grace (the five-hour window only). Requests are served beyond the window's own full mark while it grows, but refusals have been seen at a small value, so nothing ranks on it. */
+  graceUtilization: z.number().nonnegative().optional(),
 });
 export type QuotaWindow = z.infer<typeof QuotaWindowSchema>;
+
+/** How much of an extra-usage allowance is spent, in money: what the usage endpoint reports for an account whose spend is capped (an Enterprise one). */
+const ExtraUsageSpendSchema = z.strictObject({
+  /** Spent so far in the allowance's period, in the currency's minor units (pence, cents). */
+  usedMinor: z.number().nonnegative(),
+  /** The allowance's cap in the same units, when it has one. */
+  limitMinor: z.number().nonnegative().optional(),
+  /** The ISO 4217 currency code. */
+  currency: z.string(),
+});
 
 /** Anthropic's unified subscription rate-limit state, parsed from the `anthropic-ratelimit-unified-*` headers (which the in-process Codex route also derives from the Codex backend's own quota headers). */
 export const UnifiedRateLimitSchema = z.strictObject({
@@ -95,6 +107,8 @@ export const UnifiedRateLimitSchema = z.strictObject({
   status: z.string().optional(),
   fiveHour: QuotaWindowSchema.optional(),
   sevenDay: QuotaWindowSchema.optional(),
+  /** The weekly window of the models whose usage may continue as extra usage (`7d_oi`), reported by some plans beside the all-models weekly window. */
+  sevenDayOverageIncluded: QuotaWindowSchema.optional(),
   /** The window that currently binds. */
   representativeClaim: z.string().optional(),
   /** When the binding window resets. */
@@ -107,6 +121,12 @@ export const UnifiedRateLimitSchema = z.strictObject({
   overageResetsAt: InstantSchema.optional(),
   /** Why extra usage is unavailable, as the upstream names it (`out_of_credits`, for one). */
   overageDisabledReason: z.string().optional(),
+  /** Whether the response was served on extra usage, as the upstream states it. */
+  overageInUse: z.boolean().optional(),
+  /** The allowance in money, from the usage endpoint (the response headers state only the fraction). */
+  extraUsageSpend: ExtraUsageSpendSchema.optional(),
+  /** True when the upstream offers a fallback while a window is rejected: some requests, by model, are still served, though the rest are refused. */
+  fallbackAvailable: z.boolean().optional(),
 });
 export type UnifiedRateLimit = z.infer<typeof UnifiedRateLimitSchema>;
 
@@ -116,6 +136,8 @@ const RateLimitStateSchema = z.strictObject({
   /** Every quota and rate-limit header on that response, by name. */
   headers: z.record(z.string(), z.string()),
   unified: UnifiedRateLimitSchema.optional(),
+  /** When the usage endpoint last answered that it has no plan windows for the account, which a later response replaces. Its answer leaves the recorded `unified` state alone (a response's headers may be the only source of it), so this alone says the question was asked. */
+  planWindowsUnavailableAt: InstantSchema.optional(),
 });
 export type RateLimitState = z.infer<typeof RateLimitStateSchema>;
 

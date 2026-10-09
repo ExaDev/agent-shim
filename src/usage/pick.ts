@@ -252,7 +252,7 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
     if (unified.overageStatus === "allowed") {
       return { candidate: { ...base, class: "pay-per-use", reasons: [`plan exhausted until ${new Date(blockedUntil).toISOString()}, continues as extra usage`, ...windowReasons, ...planReasons] } };
     }
-    return { candidate: { ...base, class: "ineligible", blockedUntilMs: blockedUntil, reasons: [`refused until ${new Date(blockedUntil).toISOString()} (in ${formatAge(blockedUntil - nowMs)})`, ...windowReasons, ...overageReasons, ...planReasons] } };
+    return { candidate: { ...base, class: "ineligible", blockedUntilMs: blockedUntil, reasons: [`refused until ${new Date(blockedUntil).toISOString()} (in ${formatAge(blockedUntil - nowMs)})`, ...(unified.fallbackAvailable === true ? ["a fallback is on offer, so requests for some models may still be served"] : []), ...windowReasons, ...overageReasons, ...planReasons] } };
   }
 
   if (plan.kind === "pay-per-use" || (fiveHourWindow === undefined && sevenDayWindow === undefined)) {

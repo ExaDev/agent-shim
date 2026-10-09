@@ -44,6 +44,8 @@ interface Windows {
   readonly seven?: { utilization?: number; status?: string; resetsInMs?: number };
   readonly overage?: string;
   /** The extra-usage allowance's own meter, as an account with no plan windows reports it. */
+  /** The upstream offers a fallback while a window is rejected. */
+  readonly fallback?: boolean;
   readonly overageMeter?: { utilization?: number; resetsInMs?: number; disabledReason?: string };
   readonly lastLimit?: { kind: "rate-limited" | "quota-exhausted"; resetInMs?: number; retryAfterSeconds?: number; observedAgoMs?: number };
   readonly lastRequestAgoMs?: number;
@@ -75,6 +77,7 @@ function snapshot(identity: string, windows: Windows): UsageSnapshot {
             ...(windows.overageMeter?.utilization === undefined ? {} : { overageUtilization: windows.overageMeter.utilization }),
             ...(windows.overageMeter?.resetsInMs === undefined ? {} : { overageResetsAt: at(windows.overageMeter.resetsInMs) }),
             ...(windows.overageMeter?.disabledReason === undefined ? {} : { overageDisabledReason: windows.overageMeter.disabledReason }),
+            ...(windows.fallback === true ? { fallbackAvailable: true } : {}),
           },
         },
         ...(windows.lastLimit === undefined
@@ -363,6 +366,12 @@ describe("rankPool", () => {
       const ranking = rank([member("plan", { seven: { utilization: U50, resetsInMs: DAY_MS }, overage: "rejected", overageMeter: { utilization: FULL, resetsInMs: DAY_MS, disabledReason: "out_of_credits" } })]);
       expect(ranking.candidates[0]?.class).toBe("scored");
     });
+  });
+
+  it("says a fallback is on offer for a refused member, without letting it serve", () => {
+    const ranking = rank([member("refused", { seven: { utilization: FULL, status: "rejected", resetsInMs: DAY_MS }, fallback: true })]);
+    expect(ranking.candidates[0]?.class).toBe("ineligible");
+    expect(ranking.candidates[0]?.reasons.join(" ")).toContain("a fallback is on offer");
   });
 
   it("reports an unreadable snapshot as unknown with the reason", () => {

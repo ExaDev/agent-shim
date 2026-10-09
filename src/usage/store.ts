@@ -178,10 +178,13 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
       rewriteSnapshot(identity, (current) => {
         const state: ProviderUsageState = current?.providers[provider] ?? {};
         const keep = state.rateLimit !== undefined && state.rateLimit.observedAt.localeCompare(rateLimit.observedAt) > 0;
-        // The usage endpoint answers the plan windows only; whether extra usage is available, and how much of it is used, is what earlier response headers stated, and it outlives them.
-        const earlier = state.rateLimit?.unified;
-        const carried = rateLimit.unified === undefined || rateLimit.unified.overageStatus !== undefined || earlier === undefined ? undefined : overageFactsOf(earlier);
-        const merged: RateLimitState = carried === undefined || rateLimit.unified === undefined ? rateLimit : { ...rateLimit, unified: { ...rateLimit.unified, ...carried } };
+        const earlier = state.rateLimit;
+        // An answer without a state to give (the usage endpoint has no plan windows for the account) leaves what response headers recorded in place and only notes that the question was asked, so the account's own responses stay its source.
+        // An answer with one fills in what the endpoint does not report (whether extra usage is on, when it resets) from earlier response headers, and wins for everything it does report.
+        const merged: RateLimitState =
+          rateLimit.unified === undefined
+            ? { ...(earlier ?? rateLimit), planWindowsUnavailableAt: rateLimit.observedAt }
+            : { ...rateLimit, unified: { ...(earlier?.unified === undefined ? {} : overageFactsOf(earlier.unified)), ...rateLimit.unified } };
         return { ...current?.providers, [provider]: { ...state, rateLimit: keep ? state.rateLimit : merged } };
       }),
   };
