@@ -421,6 +421,14 @@ The same block carries headroom's token-saving settings, which agent-shim turns 
 
 **The cache-sharing model.** Everything routed through one daemon shares that daemon's caches: the semantic cache (response reuse across identical requests) is shared across accounts, which is the point of running one daemon per machine; headroom's memory state is scoped per project by the `x-headroom-project-id` header, so two projects talking to the same daemon keep separate memory; and the provider (which account's endpoint, which model mapping) is selected per session by the front door's route, not by anything the child sends. The daemon agent-shim supervises serves only on its owner-only socket, so it is not shared with other people or other accounts at all; a daemon you run yourself for sharing binds memory identity to its `HEADROOM_PROXY_TOKEN`, so treat that token like any other shared credential.
 
+## What a running front door re-reads
+
+A front door that is already serving does not need a restart for every configuration change. A provider's definition is loaded for each routed request, so an edited provider file, its credential block included, applies to the next request. The pool table is read each time `pool.pick` or the list of pool names is asked for, and again on each tick of the refresh that asks stale pool members for their usage, so a pool created, changed or removed after the door started is ranked or refused by its live definition. The `check.run` and `doctor.run` reports and `frontdoor.status` are collected fresh on every call.
+
+Two things are read once, when the door's supervisor starts, and need the door restarted to change: `frontdoor.idleShutdownMinutes` in the global configuration, and the ports its listeners bind.
+
+This is the door's side only. The identity, configuration profile and provider a launch selects are decided by that launch (`prepareClaudeLaunch` or `agent-shim run`), so a change to which of them applies reaches the launches made after it.
+
 ## Launch flags
 
 `skipPermissions`, `remoteControl`, `headroom` and `trackUsage` resolve through the same cascade as everything else (shipped default: all off), and each also has a one-off command-line flag and environment variable. For each setting, the flag decides outright, then the environment variable, then the cascade:
