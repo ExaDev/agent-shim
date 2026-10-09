@@ -1,3 +1,14 @@
+## [9.2.0](https://github.com/ExaDev/agent-shim/compare/v9.1.0...v9.2.0) (2026-10-09)
+
+### Features
+
+* let pool and routing conditions read the extra-usage allowance ([693af88](https://github.com/ExaDev/agent-shim/commit/693af88ebd96c57fa9918f1609e106b06ff2549f))
+* read, show and rank on the extra-usage meter of an account with no plan windows ([6650dd7](https://github.com/ExaDev/agent-shim/commit/6650dd7da72b409e2a4bd9b86114551b5d190950))
+
+### Bug Fixes
+
+* stop probing the usage endpoint for an account metered only by extra usage ([920ddb5](https://github.com/ExaDev/agent-shim/commit/920ddb53545e3b9fedba152e1c5b662aa71ca279))
+
 ## [9.1.0](https://github.com/ExaDev/agent-shim/compare/v9.0.0...v9.1.0) (2026-10-08)
 
 ### Features
