@@ -279,6 +279,23 @@ describe("rankPool", () => {
     expect(skipped?.reasons[0]).toContain("skipped by policy");
   });
 
+  it("lets a policy keep new sessions off a member whose extra-usage allowance is nearly spent", () => {
+    const policy = { kind: "compare", op: "lt", left: { kind: "reference", key: "quota.extraUsage.utilization" }, right: { kind: "numberLiteral", value: U90 } } as const satisfies PredicateNode;
+    const nearlySpent = { ...member("nearly-spent", { overage: "allowed", overageMeter: { utilization: U95, resetsInMs: DAY_MS } }), policy };
+    const roomy = { ...member("roomy", { overage: "allowed", overageMeter: { utilization: U10, resetsInMs: DAY_MS } }), policy };
+    const ranking = rank([nearlySpent, roomy]);
+    expect(ranking.pick?.identity).toBe("roomy");
+    expect(ranking.candidates.find((candidate) => candidate.identity === "nearly-spent")).toMatchObject({ class: "ineligible" });
+  });
+
+  it("leaves a policy on the extra-usage allowance undecided for a plan member, whose allowance is only a fallback", () => {
+    const policy = { kind: "compare", op: "lt", left: { kind: "reference", key: "quota.extraUsage.utilization" }, right: { kind: "numberLiteral", value: U90 } } as const satisfies PredicateNode;
+    const plan = { ...member("plan", { seven: { utilization: U10, resetsInMs: DAY_MS }, overage: "allowed", overageMeter: { utilization: U95, resetsInMs: DAY_MS } }), policy };
+    const candidate = rank([plan]).candidates[0];
+    expect(candidate?.policyDemoted).toBe(true);
+    expect(candidate?.reasons[0]).toContain("quota.extraUsage.utilization");
+  });
+
   it("demotes a member whose policy condition is undecided to last within its class, naming the missing fact", () => {
     // The condition reads the five-hour window's remaining fraction; this member reports only a seven-day window, so the fact is missing rather than failed.
     const policy = { kind: "compare", op: "gt", left: { kind: "reference", key: "quota.fiveHour.remaining" }, right: { kind: "numberLiteral", value: 0.1 } } as const satisfies PredicateNode;
