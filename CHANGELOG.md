@@ -1,3 +1,9 @@
+## [9.3.1](https://github.com/ExaDev/agent-shim/compare/v9.3.0...v9.3.1) (2026-10-09)
+
+### Documentation
+
+* say what a running front door re-reads and what needs a restart ([774c685](https://github.com/ExaDev/agent-shim/commit/774c685a95cff6d3eca26489cde8759fe855803b))
+
 ## [9.3.0](https://github.com/ExaDev/agent-shim/compare/v9.2.1...v9.3.0) (2026-10-09)
 
 ### Features
