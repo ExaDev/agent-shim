@@ -493,6 +493,35 @@ describe("recordRateLimit", () => {
     expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.anthropic?.rateLimit?.unified).toEqual({ fiveHour: { utilization: HALF_USED, resetsAt: atOffset(DAY_MS) }, ...meter });
   });
 
+  it("lets the usage endpoint's extra-usage figures win over earlier headers, and keeps the reset only the headers give", () => {
+    const { fs, store } = harness();
+    store.record(makeRecord());
+    store.recordRateLimit("work", "anthropic", { observedAt: atOffset(0), headers: {}, unified: { overageStatus: "allowed", overageUtilization: HALF_USED, overageResetsAt: atOffset(DAY_MS) } });
+    const spend = { usedMinor: 84_900, limitMinor: 200_000, currency: "USD" };
+
+    store.recordRateLimit("work", "anthropic", { observedAt: atOffset(SECOND_MS), headers: {}, unified: { overageStatus: "rejected", overageUtilization: 1, extraUsageSpend: spend } });
+
+    expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.anthropic?.rateLimit?.unified).toEqual({ overageStatus: "rejected", overageUtilization: 1, overageResetsAt: atOffset(DAY_MS), extraUsageSpend: spend });
+  });
+
+  it("keeps what response headers recorded when the usage endpoint has nothing to report, noting only that it was asked", () => {
+    const { fs, store } = harness();
+    store.record(makeRecord());
+    const fromHeaders: RateLimitState = { observedAt: atOffset(0), headers: { "anthropic-ratelimit-unified-overage-utilization": "0.42" }, unified: { overageStatus: "allowed", overageUtilization: 0.42 } };
+    store.recordRateLimit("work", "anthropic", fromHeaders);
+
+    store.recordRateLimit("work", "anthropic", { observedAt: atOffset(SECOND_MS), headers: {} });
+
+    expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.anthropic?.rateLimit).toEqual({ ...fromHeaders, planWindowsUnavailableAt: atOffset(SECOND_MS) });
+  });
+
+  it("records an answer without plan windows for an account that has no state yet, as the question having been asked", () => {
+    const { fs, store } = harness();
+    store.recordRateLimit("work", "anthropic", { observedAt: atOffset(0), headers: {} });
+
+    expect(readUsageSnapshot(fs, paths.usageSnapshotsDir, "work")?.providers.anthropic?.rateLimit).toEqual({ observedAt: atOffset(0), headers: {}, planWindowsUnavailableAt: atOffset(0) });
+  });
+
   it("carries the extra-usage status earlier response headers stated, which the usage endpoint does not report", () => {
     const { fs, store } = harness();
     store.record(makeRecord());

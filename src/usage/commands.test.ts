@@ -248,6 +248,26 @@ describe("agent-shim usage", () => {
     expect(result.stdout).toContain(`extra usage 42% used, resets ${resetsAt} (allowed)`);
   });
 
+  it("shows the spend in money against the cap, and that a response was served on extra usage", async () => {
+    writeLog([recordAgo(HOUR_MS)]);
+    writeSnapshot(snapshotWithQuota("work", { status: "allowed", overageStatus: "allowed", overageUtilization: 0.4245, overageInUse: true, extraUsageSpend: { usedMinor: 84_900, limitMinor: 200_000, currency: "USD" } }));
+
+    const result = await cli(["usage"]);
+
+    expect(result.stdout).toContain("extra usage spend US$849.00 of US$2,000.00");
+    expect(result.stdout).toContain("served on extra usage");
+  });
+
+  it("shows a five-hour window in grace and a fallback on offer", async () => {
+    writeLog([recordAgo(HOUR_MS)]);
+    writeSnapshot(snapshotWithQuota("work", { status: "allowed_warning", fiveHour: { utilization: 0.99, status: "allowed_warning", graceUtilization: 0.34 }, fallbackAvailable: true }));
+
+    const result = await cli(["usage"]);
+
+    expect(result.stdout).toContain("5h 99% used, in grace, 34% of the allowance used (allowed_warning)");
+    expect(result.stdout).toContain("fallback available");
+  });
+
   it("says why extra usage is unavailable when the upstream named a reason", async () => {
     writeLog([recordAgo(HOUR_MS)]);
     writeSnapshot(snapshotWithQuota("work", { status: "rejected", overageStatus: "rejected", overageDisabledReason: "out_of_credits" }));

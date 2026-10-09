@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { Pool } from "../config/schema";
-import { ANTHROPIC_USAGE_FRESHNESS_MS, createAnthropicUsageRefresher, isAnthropicUsageProbeable, isAnthropicUsageStale, poolIdentityNames, unifiedFromReportedLimits, type AnthropicUsageRefresherDeps } from "./anthropicUsageRefresh";
+import { ANTHROPIC_USAGE_FRESHNESS_MS, createAnthropicUsageRefresher, isAnthropicUsageProbeable, isAnthropicUsageStale, poolIdentityNames, unifiedFromReportedLimits, type AnthropicUsageRefresherDeps, type ReportedRateLimits } from "./anthropicUsageRefresh";
 import { SEVEN_DAY_WINDOW_MS, type PoolMember } from "./pick";
 import type { AccountMetadata, UnifiedRateLimit, UsageSnapshot } from "./schema";
 import { USAGE_SCHEMA_VERSION } from "./schema";
@@ -35,6 +35,19 @@ function member(identity: string, usage: UsageSnapshot | undefined, account: Acc
   return { identity, records: [], ...(usage === undefined ? {} : { snapshot: { ...usage, identity } }), ...(account === null ? {} : { account }) };
 }
 
+describe("an answer without plan windows", () => {
+  const answeredAt = (offsetMs: number): UsageSnapshot => {
+    const base = snapshot(NOW_MS - SEVEN_DAY_WINDOW_MS);
+    return { ...base, providers: { anthropic: { ...base.providers.anthropic, rateLimit: { observedAt: new Date(NOW_MS - SEVEN_DAY_WINDOW_MS).toISOString(), headers: {}, unified: { fiveHour: { utilization: FRACTION_USED } }, planWindowsUnavailableAt: new Date(NOW_MS + offsetMs).toISOString() } } } };
+  };
+
+  it("counts the question as asked, so a state the endpoint cannot refresh is not probed again until the no-plan-windows period passes", () => {
+    const noWindowsFreshnessMs = SEVEN_DAY_WINDOW_MS / PERCENT_WINDOWS;
+    expect(isAnthropicUsageStale(member("work", answeredAt(-noWindowsFreshnessMs + ONE_MS)), NOW_MS)).toBe(false);
+    expect(isAnthropicUsageStale(member("work", answeredAt(-noWindowsFreshnessMs)), NOW_MS)).toBe(true);
+  });
+});
+
 describe("unifiedFromReportedLimits", () => {
   it("converts percentages to fractions and normalises the reset instants to UTC milliseconds", () => {
     const unified = unifiedFromReportedLimits({
@@ -65,20 +78,54 @@ describe("unifiedFromReportedLimits", () => {
   });
 });
 
-describe("isAnthropicUsageProbeable", () => {
-  const meteredByExtraUsage = (): UsageSnapshot => {
-    const base = snapshot(NOW_MS);
-    return { ...base, providers: { anthropic: { ...base.providers.anthropic, rateLimit: { observedAt: new Date(NOW_MS).toISOString(), headers: {}, unified: { overageStatus: "allowed", overageUtilization: 0.42 } } } } };
-  };
-
-  it("does not ask the usage endpoint about an account whose responses show only extra usage, which it cannot report and whose recorded meter an empty answer would erase", () => {
-    expect(isAnthropicUsageProbeable(member("work", meteredByExtraUsage()))).toBe(false);
-    expect(isAnthropicUsageStale(member("work", meteredByExtraUsage()), NOW_MS + ANTHROPIC_USAGE_FRESHNESS_MS)).toBe(false);
+describe("unifiedFromReportedLimits, extra usage", () => {
+  const ENTERPRISE_USED_MINOR = 84_900;
+  const ENTERPRISE_LIMIT_MINOR = 200_000;
+  const ENTERPRISE_UTILISATION_PERCENT = 42.45;
+  const CLOSE_DIGITS = 10;
+  const enterprise = (overrides: Readonly<Partial<NonNullable<ReportedRateLimits["extra_usage"]>>> = {}): ReportedRateLimits => ({
+    five_hour: null,
+    seven_day: null,
+    extra_usage: { is_enabled: true, monthly_limit: ENTERPRISE_LIMIT_MINOR, used_credits: ENTERPRISE_USED_MINOR, utilization: ENTERPRISE_UTILISATION_PERCENT, currency: "USD", ...overrides },
   });
 
-  it("still asks about a subscription account whose responses carry plan windows, or none yet", () => {
-    expect(isAnthropicUsageProbeable(member("work", snapshot(NOW_MS)))).toBe(true);
+  it("reads the allowance of an account with no plan window: the fraction used and the spend in money", () => {
+    const unified = unifiedFromReportedLimits(enterprise());
+    expect(unified).toMatchObject({ overageStatus: "allowed", extraUsageSpend: { usedMinor: ENTERPRISE_USED_MINOR, limitMinor: ENTERPRISE_LIMIT_MINOR, currency: "USD" } });
+    expect(unified?.overageUtilization).toBeCloseTo(ENTERPRISE_UTILISATION_PERCENT / PERCENT_WINDOWS, CLOSE_DIGITS);
+  });
+
+  it("marks an allowance whose cap is reached, or that is switched off, as rejected", () => {
+    expect(unifiedFromReportedLimits(enterprise({ utilization: PERCENT_WINDOWS }))?.overageStatus).toBe("rejected");
+    expect(unifiedFromReportedLimits(enterprise({ is_enabled: false, monthly_limit: null, used_credits: null, utilization: null }))).toEqual({ overageStatus: "rejected" });
+  });
+
+  it("states a spend without a cap when the allowance has none, and none without a currency", () => {
+    expect(unifiedFromReportedLimits(enterprise({ monthly_limit: null }))?.extraUsageSpend).toEqual({ usedMinor: ENTERPRISE_USED_MINOR, currency: "USD" });
+    expect(unifiedFromReportedLimits(enterprise({ currency: null }))?.extraUsageSpend).toBeUndefined();
+  });
+
+  it("keeps the plan windows beside the allowance", () => {
+    const reported: ReportedRateLimits = { ...enterprise(), five_hour: { utilization: PERCENT_USED, resets_at: "2026-10-08T10:59:58.695666+00:00" } };
+    expect(unifiedFromReportedLimits(reported)).toMatchObject({ fiveHour: { utilization: FRACTION_USED }, overageStatus: "allowed" });
+  });
+
+  it("answers nothing for an account with neither a plan window nor an allowance", () => {
+    expect(unifiedFromReportedLimits({ five_hour: null, seven_day: null, extra_usage: null })).toBeUndefined();
+    expect(unifiedFromReportedLimits(null)).toBeUndefined();
+  });
+});
+
+describe("isAnthropicUsageProbeable", () => {
+  it("asks the usage endpoint about a subscription account, including one metered only by extra usage, whose spend the endpoint reports", () => {
+    const base = snapshot(NOW_MS);
+    const meteredByExtraUsage: UsageSnapshot = { ...base, providers: { anthropic: { ...base.providers.anthropic, rateLimit: { observedAt: new Date(NOW_MS).toISOString(), headers: {}, unified: { overageStatus: "allowed", overageUtilization: 0.42 } } } } };
+    expect(isAnthropicUsageProbeable(member("work", meteredByExtraUsage))).toBe(true);
     expect(isAnthropicUsageProbeable(member("work", snapshot(undefined)))).toBe(true);
+  });
+
+  it("does not ask about a pay-per-use account", () => {
+    expect(isAnthropicUsageProbeable(member("work", snapshot(NOW_MS, PAY_PER_USE), PAY_PER_USE))).toBe(false);
   });
 });
 

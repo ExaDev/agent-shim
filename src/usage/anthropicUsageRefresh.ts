@@ -1,10 +1,11 @@
+import type { SDKControlGetUsageResponse } from "@anthropic-ai/claude-agent-sdk";
+
 import type { Pool } from "../config/schema";
 import { poolMemberIdentity } from "../config/schema";
 import { poolNameOf } from "../launcher/identity";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS, type PoolMember } from "./pick";
 import { planOf } from "./plan";
-import { soleOverageWindow } from "./rateLimit";
 import type { QuotaWindow, RateLimitState, UnifiedRateLimit } from "./schema";
 
 const PERCENT = 100;
@@ -17,17 +18,11 @@ export const ANTHROPIC_USAGE_FRESHNESS_MS = FIVE_HOUR_WINDOW_MS / PERCENT;
 /** How long an answer that carried no plan windows stays current. Whether an account has plan windows at all (a subscription login rather than an API key or an unauthenticated identity) changes only when the account does, so the question is asked again at the pace of one percent of the longest window, not the shortest. */
 const NO_PLAN_WINDOWS_FRESHNESS_MS = SEVEN_DAY_WINDOW_MS / PERCENT;
 
-/** One window of the usage endpoint's answer: the percentage used (0 to 100) and the ISO instant it resets, each null when the endpoint did not know it. */
-interface ReportedWindow {
-  readonly utilization: number | null;
-  readonly resets_at: string | null;
-}
+/** The usage endpoint's answer, as the Agent SDK's usage report carries it. */
+export type ReportedRateLimits = NonNullable<SDKControlGetUsageResponse["rate_limits"]>;
 
-/** The plan windows of the usage endpoint's answer, as the Agent SDK's usage report carries them. */
-export interface ReportedRateLimits {
-  readonly five_hour?: ReportedWindow | null;
-  readonly seven_day?: ReportedWindow | null;
-}
+/** One window of that answer: the percentage used (0 to 100) and the ISO instant it resets, each null when the endpoint did not know it. */
+type ReportedWindow = NonNullable<ReportedRateLimits["five_hour"]>;
 
 /** The instant as the store writes it (UTC, millisecond precision): the endpoint answers with a numeric offset and finer precision, which the store's schema does not accept. Undefined for a value that is not a date. */
 function normalisedInstant(value: string): string | undefined {
@@ -52,29 +47,47 @@ function windowOf(reported: ReportedWindow | null | undefined): QuotaWindow | un
   };
 }
 
-/** The unified rate-limit state a usage-endpoint answer describes, or undefined when it reported neither plan window (an API-key lane, or a token without the profile scope). */
+/**
+ * The extra-usage allowance of an answer: its status (rejected when extra usage is off or the cap is reached, the same vocabulary the headers use), the fraction used and, with a currency, the spend in money. Undefined when the answer carries no extra-usage section. The endpoint does not give the allowance's reset, which the response headers do.
+ */
+function extraUsageOf(reported: ReportedRateLimits | null): Pick<UnifiedRateLimit, "overageStatus" | "overageUtilization" | "extraUsageSpend"> | undefined {
+  const extra = reported?.extra_usage;
+  if (extra === null || extra === undefined) {
+    return undefined;
+  }
+  const utilization = extra.utilization === null ? undefined : extra.utilization / PERCENT;
+  const currency = extra.currency ?? undefined;
+  const spend = extra.used_credits === null || currency === undefined ? undefined : { usedMinor: extra.used_credits, ...(extra.monthly_limit === null ? {} : { limitMinor: extra.monthly_limit }), currency };
+  return {
+    overageStatus: !extra.is_enabled || (utilization !== undefined && utilization >= 1) ? "rejected" : "allowed",
+    ...(utilization === undefined ? {} : { overageUtilization: utilization }),
+    ...(spend === undefined ? {} : { extraUsageSpend: spend }),
+  };
+}
+
+/** The unified rate-limit state a usage-endpoint answer describes, or undefined when it reported neither a plan window nor an extra-usage allowance (an API-key lane, or a token without the profile scope). */
 export function unifiedFromReportedLimits(reported: ReportedRateLimits | null): UnifiedRateLimit | undefined {
   const fiveHour = windowOf(reported?.five_hour);
   const sevenDay = windowOf(reported?.seven_day);
-  if (fiveHour === undefined && sevenDay === undefined) {
+  const extraUsage = extraUsageOf(reported);
+  if (fiveHour === undefined && sevenDay === undefined && extraUsage === undefined) {
     return undefined;
   }
-  return { ...(fiveHour === undefined ? {} : { fiveHour }), ...(sevenDay === undefined ? {} : { sevenDay }) };
+  return { ...(fiveHour === undefined ? {} : { fiveHour }), ...(sevenDay === undefined ? {} : { sevenDay }), ...extraUsage };
 }
 
-/**
- * Whether the usage endpoint can be asked about a member at all: a subscription member whose own responses have not shown it to be metered by extra usage alone. A pay-per-use member has no plan windows, and neither has an Enterprise one, whose tier reads as a subscription: the endpoint answers plan windows only, so for it the answer is empty, and recording that empty answer replaced the extra-usage meter the responses had recorded.
- */
+/** Whether the usage endpoint can be asked about a member at all: a subscription member. A pay-per-use member has no plan windows. */
 export function isAnthropicUsageProbeable(member: Pick<PoolMember, "snapshot" | "account">): boolean {
-  const unified = member.snapshot?.providers[ANTHROPIC_PROVIDER]?.rateLimit?.unified;
-  return planOf(member.account ?? member.snapshot?.account).kind === "subscription" && (unified === undefined || soleOverageWindow(unified) === undefined);
+  return planOf(member.account ?? member.snapshot?.account).kind === "subscription";
 }
 
 /** Whether a member's Anthropic usage is worth fetching now: it can be fetched at all, and no rate-limit state was ever observed for it (a member that has made no request included) or the recorded one is older than its freshness period. */
 export function isAnthropicUsageStale(member: Pick<PoolMember, "snapshot" | "account">, nowMs: number): boolean {
   const rateLimit = member.snapshot?.providers[ANTHROPIC_PROVIDER]?.rateLimit;
-  const freshnessMs = rateLimit?.unified === undefined ? NO_PLAN_WINDOWS_FRESHNESS_MS : ANTHROPIC_USAGE_FRESHNESS_MS;
-  return isAnthropicUsageProbeable(member) && (rateLimit === undefined || nowMs - Date.parse(rateLimit.observedAt) >= freshnessMs);
+  const answeredNothing = rateLimit?.unified === undefined || rateLimit.planWindowsUnavailableAt !== undefined;
+  const freshnessMs = answeredNothing ? NO_PLAN_WINDOWS_FRESHNESS_MS : ANTHROPIC_USAGE_FRESHNESS_MS;
+  const checkedAt = rateLimit === undefined ? undefined : Date.parse(rateLimit.planWindowsUnavailableAt ?? rateLimit.observedAt);
+  return isAnthropicUsageProbeable(member) && (checkedAt === undefined || nowMs - checkedAt >= freshnessMs);
 }
 
 /** Every identity a pool and the pools it nests name, each once, in first-seen order. A nested pool that is not defined, or that closes a cycle, contributes nothing: ranking refuses those, and this only lists. */

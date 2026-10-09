@@ -45,7 +45,18 @@ function nonNegativeNumber(value: string | undefined): number | undefined {
 
 const UNIFIED_PREFIX = "anthropic-ratelimit-unified-";
 
-/** One unified window (`5h` or `7d`) from its utilisation, reset and status headers, or undefined when none is present. */
+/** A boolean header value (`true` or `false`), or undefined when absent or anything else. */
+function booleanHeader(value: string | undefined): boolean | undefined {
+  return value === "true" ? true : value === "false" ? false : undefined;
+}
+
+/** The five-hour window with its grace utilisation, when the response reports the window in grace (`grace-status: active`) and gives a figure for it. */
+function withGrace(window: QuotaWindow | undefined, headers: Readonly<Record<string, string>>): QuotaWindow | undefined {
+  const graceUtilization = headers[`${UNIFIED_PREFIX}grace-status`] === "active" ? nonNegativeNumber(headers[`${UNIFIED_PREFIX}grace-5h-utilization`]) : undefined;
+  return window === undefined || graceUtilization === undefined ? window : { ...window, graceUtilization };
+}
+
+/** One unified window (`5h`, `7d` or `7d_oi`) from its utilisation, reset and status headers, or undefined when none is present. */
 function unifiedWindow(headers: Readonly<Record<string, string>>, window: string): QuotaWindow | undefined {
   const utilization = nonNegativeNumber(headers[`${UNIFIED_PREFIX}${window}-utilization`]);
   const resetsAt = epochSecondsToIso(headers[`${UNIFIED_PREFIX}${window}-reset`]);
@@ -57,42 +68,48 @@ function unifiedWindow(headers: Readonly<Record<string, string>>, window: string
 }
 
 /**
- * Parses Anthropic's unified subscription rate-limit headers, from `rateLimitHeadersOf`'s lowercased map. These were captured from a real `api.anthropic.com` response to an OAuth (subscription) session through the front door: `-status`, `-5h-status`, `-5h-utilization` (a fraction), `-5h-reset` (epoch seconds), the same three for `7d`, `-representative-claim`, `-reset`, `-overage-status`, `-overage-disabled-reason`, `-fallback` and `-fallback-percentage`. Undefined when the response carried none of them (an API-key or third-party provider response).
+ * Parses Anthropic's unified subscription rate-limit headers, from `rateLimitHeadersOf`'s lowercased map, captured from real `api.anthropic.com` responses to OAuth (subscription) sessions through the front door. Read: `-status`, `-representative-claim`, `-reset`; `-5h-*`, `-7d-*` and `-7d_oi-*` (`-status`, `-utilization` as a fraction, `-reset` in epoch seconds); `-grace-status` with `-grace-5h-utilization`; `-overage-status`, `-overage-utilization`, `-overage-reset`, `-overage-disabled-reason` and `-overage-in-use`; and `-fallback`. Deliberately not read, though every one stays in the stored raw headers: `-<window>-surpassed-threshold` (only says at which fraction a window's status turned to warning, and the status is read), `-fallback-percentage` (the same value on every response seen) and `-upgrade-paths` (a hint attached to refusals). `retry-after` is read by `classifyLimit`. Undefined when the response carried none of the unified headers (an API-key or third-party provider response).
  */
 export function parseUnifiedRateLimit(headers: Readonly<Record<string, string>>): UnifiedRateLimit | undefined {
   if (!Object.keys(headers).some((name) => name.startsWith(UNIFIED_PREFIX))) {
     return undefined;
   }
   const status = headers[`${UNIFIED_PREFIX}status`];
-  const fiveHour = unifiedWindow(headers, "5h");
+  const fiveHour = withGrace(unifiedWindow(headers, "5h"), headers);
   const sevenDay = unifiedWindow(headers, "7d");
+  const sevenDayOverageIncluded = unifiedWindow(headers, "7d_oi");
   const representativeClaim = headers[`${UNIFIED_PREFIX}representative-claim`];
   const resetAt = epochSecondsToIso(headers[`${UNIFIED_PREFIX}reset`]);
   const overageStatus = headers[`${UNIFIED_PREFIX}overage-status`];
   const overageUtilization = nonNegativeNumber(headers[`${UNIFIED_PREFIX}overage-utilization`]);
   const overageResetsAt = epochSecondsToIso(headers[`${UNIFIED_PREFIX}overage-reset`]);
   const overageDisabledReason = headers[`${UNIFIED_PREFIX}overage-disabled-reason`];
+  const overageInUse = booleanHeader(headers[`${UNIFIED_PREFIX}overage-in-use`]);
   return {
     ...(status === undefined ? {} : { status }),
     ...(fiveHour === undefined ? {} : { fiveHour }),
     ...(sevenDay === undefined ? {} : { sevenDay }),
+    ...(sevenDayOverageIncluded === undefined ? {} : { sevenDayOverageIncluded }),
     ...(representativeClaim === undefined ? {} : { representativeClaim }),
     ...(resetAt === undefined ? {} : { resetAt }),
     ...(overageStatus === undefined ? {} : { overageStatus }),
     ...(overageUtilization === undefined ? {} : { overageUtilization }),
     ...(overageResetsAt === undefined ? {} : { overageResetsAt }),
     ...(overageDisabledReason === undefined ? {} : { overageDisabledReason }),
+    ...(overageInUse === undefined ? {} : { overageInUse }),
+    ...(headers[`${UNIFIED_PREFIX}fallback`] === "available" ? { fallbackAvailable: true } : {}),
   };
 }
 
 /** The extra-usage fields of a recorded state, for carrying onto a later state that lacks them. */
-export function overageFactsOf(unified: Readonly<UnifiedRateLimit>): Pick<UnifiedRateLimit, "overageStatus" | "overageUtilization" | "overageResetsAt" | "overageDisabledReason"> {
-  const { overageStatus, overageUtilization, overageResetsAt, overageDisabledReason } = unified;
+export function overageFactsOf(unified: Readonly<UnifiedRateLimit>): Pick<UnifiedRateLimit, "overageStatus" | "overageUtilization" | "overageResetsAt" | "overageDisabledReason" | "overageInUse"> {
+  const { overageStatus, overageUtilization, overageResetsAt, overageDisabledReason, overageInUse } = unified;
   return {
     ...(overageStatus === undefined ? {} : { overageStatus }),
     ...(overageUtilization === undefined ? {} : { overageUtilization }),
     ...(overageResetsAt === undefined ? {} : { overageResetsAt }),
     ...(overageDisabledReason === undefined ? {} : { overageDisabledReason }),
+    ...(overageInUse === undefined ? {} : { overageInUse }),
   };
 }
 

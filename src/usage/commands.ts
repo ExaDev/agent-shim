@@ -69,6 +69,7 @@ export function collectUsageReport(fs: ReportFs, paths: LayoutPaths, filters: Us
 }
 
 const PERCENT = 100;
+const DECIMAL_RADIX = 10;
 
 /** One quota window as `5h 83% used, resets <time>`. */
 function formatWindow(label: string, window: QuotaWindow | undefined): string | undefined {
@@ -76,7 +77,15 @@ function formatWindow(label: string, window: QuotaWindow | undefined): string | 
     return undefined;
   }
   const used = window.utilization === undefined ? "usage unknown" : `${String(Math.round(window.utilization * PERCENT))}% used`;
-  return `${label} ${used}${window.resetsAt === undefined ? "" : `, resets ${window.resetsAt}`}${window.status === undefined ? "" : ` (${window.status})`}`;
+  const grace = window.graceUtilization === undefined ? "" : `, in grace, ${String(Math.round(window.graceUtilization * PERCENT))}% of the allowance used`;
+  return `${label} ${used}${grace}${window.resetsAt === undefined ? "" : `, resets ${window.resetsAt}`}${window.status === undefined ? "" : ` (${window.status})`}`;
+}
+
+/** An amount in a currency's minor units as money, with the currency's own number of decimal places (two for pounds and dollars, none for yen). */
+function formatMoney(minor: number, currency: string): string {
+  const format = new Intl.NumberFormat("en-GB", { style: "currency", currency });
+  const { maximumFractionDigits } = format.resolvedOptions();
+  return format.format(minor / DECIMAL_RADIX ** (maximumFractionDigits ?? 0));
 }
 
 /** The extra-usage facts a state carries: how much of the allowance is used and when it resets (or only its status, when that is all the upstream said), and why it is unavailable when it named a reason. */
@@ -84,7 +93,14 @@ function extraUsageParts(unified: UnifiedRateLimit): string[] {
   const window = overageWindowOf(unified);
   const measured = window?.utilization !== undefined || window?.resetsAt !== undefined;
   const fact = window === undefined ? undefined : measured ? formatWindow("extra usage", window) : `extra usage ${window.status ?? "unknown"}`;
-  return [...(fact === undefined ? [] : [fact]), ...(unified.overageDisabledReason === undefined ? [] : [`extra usage disabled: ${unified.overageDisabledReason}`])];
+  const spend = unified.extraUsageSpend;
+  const money = spend === undefined ? undefined : `extra usage spend ${formatMoney(spend.usedMinor, spend.currency)}${spend.limitMinor === undefined ? "" : ` of ${formatMoney(spend.limitMinor, spend.currency)}`}`;
+  return [
+    ...(fact === undefined ? [] : [fact]),
+    ...(money === undefined ? [] : [money]),
+    ...(unified.overageInUse === true ? ["served on extra usage"] : []),
+    ...(unified.overageDisabledReason === undefined ? [] : [`extra usage disabled: ${unified.overageDisabledReason}`]),
+  ];
 }
 
 /** A rate-limit state as one line: the unified windows when the upstream sent them, otherwise the raw header names it did send. */
@@ -95,8 +111,8 @@ function formatRateLimit(state: RateLimitState): string {
       .map(([name, value]) => `${name}=${value}`)
       .join(", ")}`;
   }
-  const parts = [formatWindow("5h", unified.fiveHour), formatWindow("7d", unified.sevenDay)].filter((part) => part !== undefined);
-  return `quota (as of ${state.observedAt}): ${[...parts, `status ${unified.status ?? "unknown"}`, ...extraUsageParts(unified)].join("; ")}`;
+  const parts = [formatWindow("5h", unified.fiveHour), formatWindow("7d", unified.sevenDay), formatWindow("7d overage-included", unified.sevenDayOverageIncluded)].filter((part) => part !== undefined);
+  return `quota (as of ${state.observedAt}): ${[...parts, `status ${unified.status ?? "unknown"}`, ...(unified.fallbackAvailable === true ? ["fallback available"] : []), ...extraUsageParts(unified)].join("; ")}`;
 }
 
 /** A classified refusal as one line. */
