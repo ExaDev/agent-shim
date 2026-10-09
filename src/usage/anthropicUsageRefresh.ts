@@ -4,6 +4,7 @@ import { poolNameOf } from "../launcher/identity";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS, type PoolMember } from "./pick";
 import { planOf } from "./plan";
+import { soleOverageWindow } from "./rateLimit";
 import type { QuotaWindow, RateLimitState, UnifiedRateLimit } from "./schema";
 
 const PERCENT = 100;
@@ -61,9 +62,12 @@ export function unifiedFromReportedLimits(reported: ReportedRateLimits | null): 
   return { ...(fiveHour === undefined ? {} : { fiveHour }), ...(sevenDay === undefined ? {} : { sevenDay }) };
 }
 
-/** Whether the usage endpoint can be asked about a member at all: a subscription member. A pay-per-use member has no plan windows. */
+/**
+ * Whether the usage endpoint can be asked about a member at all: a subscription member whose own responses have not shown it to be metered by extra usage alone. A pay-per-use member has no plan windows, and neither has an Enterprise one, whose tier reads as a subscription: the endpoint answers plan windows only, so for it the answer is empty, and recording that empty answer replaced the extra-usage meter the responses had recorded.
+ */
 export function isAnthropicUsageProbeable(member: Pick<PoolMember, "snapshot" | "account">): boolean {
-  return planOf(member.account ?? member.snapshot?.account).kind === "subscription";
+  const unified = member.snapshot?.providers[ANTHROPIC_PROVIDER]?.rateLimit?.unified;
+  return planOf(member.account ?? member.snapshot?.account).kind === "subscription" && (unified === undefined || soleOverageWindow(unified) === undefined);
 }
 
 /** Whether a member's Anthropic usage is worth fetching now: it can be fetched at all, and no rate-limit state was ever observed for it (a member that has made no request included) or the recorded one is older than its freshness period. */

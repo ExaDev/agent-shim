@@ -65,6 +65,23 @@ describe("unifiedFromReportedLimits", () => {
   });
 });
 
+describe("isAnthropicUsageProbeable", () => {
+  const meteredByExtraUsage = (): UsageSnapshot => {
+    const base = snapshot(NOW_MS);
+    return { ...base, providers: { anthropic: { ...base.providers.anthropic, rateLimit: { observedAt: new Date(NOW_MS).toISOString(), headers: {}, unified: { overageStatus: "allowed", overageUtilization: 0.42 } } } } };
+  };
+
+  it("does not ask the usage endpoint about an account whose responses show only extra usage, which it cannot report and whose recorded meter an empty answer would erase", () => {
+    expect(isAnthropicUsageProbeable(member("work", meteredByExtraUsage()))).toBe(false);
+    expect(isAnthropicUsageStale(member("work", meteredByExtraUsage()), NOW_MS + ANTHROPIC_USAGE_FRESHNESS_MS)).toBe(false);
+  });
+
+  it("still asks about a subscription account whose responses carry plan windows, or none yet", () => {
+    expect(isAnthropicUsageProbeable(member("work", snapshot(NOW_MS)))).toBe(true);
+    expect(isAnthropicUsageProbeable(member("work", snapshot(undefined)))).toBe(true);
+  });
+});
+
 describe("isAnthropicUsageStale", () => {
   it("is fresh while the recorded state is younger than one percent of the five-hour window", () => {
     expect(isAnthropicUsageStale(member("work", snapshot(NOW_MS - ANTHROPIC_USAGE_FRESHNESS_MS + ONE_MS)), NOW_MS)).toBe(false);
