@@ -11,12 +11,9 @@ import { CONNECT_INTERCEPT_HOST, HTTPS_PORT } from "./connect";
 import { restoreCredentials } from "./custody";
 import { createPassthroughRoute } from "./passthrough";
 import type { RouteResolution } from "./pipeline";
-import { evaluateWhen, referencesFact, type ConditionContext, type PoolWindowFacts } from "../resolve/conditions";
+import { evaluateWhen, referencesFact, type ConditionContext } from "../resolve/conditions";
+import { quotaFactsOf } from "../usage/quotaFacts";
 import type { UsageSnapshot } from "../usage/schema";
-
-/** One hour in milliseconds, the unit the quota windows' hours-until-reset facts are stated in. */
-const MS_PER_HOUR = 3_600_000;
-import type { QuotaWindow } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
 import { Readable } from "node:stream";
 import { scanRequestHead } from "./requestScan";
@@ -161,16 +158,9 @@ export function createProviderRouteResolver(deps: {
       const whole = routes.some((entry) => entry.model !== undefined || referencesFact(entry.when, "request.hasImage"));
       // The targets' quota facts, from this identity's snapshot: a route's condition names them to skip an exhausted target. A provider the snapshot has never recorded carries no facts, so a condition naming its windows is undecided and falls through, never routing onto it by accident.
       const snapshot = deps.usageSnapshotOf?.(current.session.identity);
-      const windowFacts = (raw: QuotaWindow | undefined): PoolWindowFacts | undefined => {
-        if (raw?.utilization === undefined || raw.resetsAt === undefined) {
-          return undefined;
-        }
-        return { remaining: Math.max(0, 1 - raw.utilization), utilization: raw.utilization, hoursUntilReset: Math.max(0, (Date.parse(raw.resetsAt) - Date.now()) / MS_PER_HOUR) };
-      };
       const providerQuota = Object.fromEntries(
         routes.flatMap((entry) => {
-          const unified = snapshot?.providers[entry.provider]?.rateLimit?.unified;
-          return [[entry.provider, { fiveHour: windowFacts(unified?.fiveHour), sevenDay: windowFacts(unified?.sevenDay) }]];
+          return [[entry.provider, quotaFactsOf(snapshot?.providers[entry.provider]?.rateLimit?.unified, Date.now())]];
         }),
       );
       const scan = await scanRequestHead(current, whole);

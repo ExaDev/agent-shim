@@ -58,15 +58,15 @@ export interface ConditionContext {
   readonly branchDetached?: boolean;
   readonly env: Readonly<Record<string, string | undefined>>;
   /**
-   * The pool-selection facts a member entry's policy condition reads. Present only when the condition guards a pool member, so the same reference namespace serves the cascade and the pool: `quota.fiveHour.remaining`, `quota.fiveHour.utilization`, `quota.fiveHour.hoursUntilReset`, the same three under `quota.sevenDay`, `quota.burnPerHour` (the five-hour window's observed utilisation pace, in fractions per hour), `session.resuming` (this launch resumes or continues a conversation) and `session.lastPickHoursAgo` (how long ago this directory last picked this member). Conversation context is deliberately not provided: nothing the door holds knows it, so a condition referencing it is indeterminate, naming the missing fact, rather than guessed.
+   * The pool-selection facts a member entry's policy condition reads. Present only when the condition guards a pool member, so the same reference namespace serves the cascade and the pool: `quota.fiveHour.remaining`, `quota.fiveHour.utilization`, `quota.fiveHour.hoursUntilReset`, the same three under `quota.sevenDay`, and under `quota.extraUsage` for an account metered by extra usage alone (an Enterprise one with no plan windows), `quota.burnPerHour` (the five-hour window's observed utilisation pace, in fractions per hour), `session.resuming` (this launch resumes or continues a conversation) and `session.lastPickHoursAgo` (how long ago this directory last picked this member). Conversation context is deliberately not provided: nothing the door holds knows it, so a condition referencing it is indeterminate, naming the missing fact, rather than guessed.
    */
-  readonly pool?: { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts; readonly burnPerHour?: number; readonly resuming?: boolean; readonly lastPickHoursAgo?: number };
+  readonly pool?: { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts; readonly extraUsage?: PoolWindowFacts; readonly burnPerHour?: number; readonly resuming?: boolean; readonly lastPickHoursAgo?: number };
   /**
    * The request facts a provider's route condition reads, present only when the condition routes a request the door is resolving: `request.model` (the Messages body's own model field) and `request.hasImage` (an image block anywhere in the scanned head of the body). A request the door could not read that far carries neither, so a condition naming them is indeterminate and the routing falls through, never to a cheaper provider by accident.
    */
   readonly request?: { readonly model?: string; readonly hasImage?: boolean; readonly toolsPresent?: boolean; readonly thinking?: boolean; readonly maxTokens?: number; readonly isCountTokens?: boolean };
-  /** Per-provider quota facts for request routing, keyed by provider name, from the session identity's usage snapshot: a route condition names a target's windows (`provider.<name>.fiveHour.utilization` and kin) to skip one that is exhausted or nearly spent. The windows are the same shape the pool facts read. */
-  readonly providerQuota?: Readonly<Record<string, { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts }>>;
+  /** Per-provider quota facts for request routing, keyed by provider name, from the session identity's usage snapshot: a route condition names a target's windows (`provider.<name>.fiveHour.utilization` and kin, and `provider.<name>.extraUsage.*` for an account metered by extra usage alone) to skip one that is exhausted or nearly spent. The windows are the same shape the pool facts read. */
+  readonly providerQuota?: Readonly<Record<string, { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts; readonly extraUsage?: PoolWindowFacts }>>;
 }
 
 /**
@@ -87,6 +87,20 @@ export function matchBranch(pattern: string, branch: string | undefined, detache
 /** The evaluator every `when` runs through: the trilean package's own synchronous one, so OR, NOT and missing-fact indeterminacy are its semantics rather than a re-derivation. */
 const evaluator = createSyncEvaluator({});
 
+/** The reference names one set of windows answers, under `prefix` (`quota`, or `provider.<name>`): `<window>.remaining`, `.utilization` and `.hoursUntilReset` for each window present. */
+function windowValues(prefix: string, windows: { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts; readonly extraUsage?: PoolWindowFacts } | undefined): Record<string, number> {
+  const values: Record<string, number> = {};
+  for (const name of ["fiveHour", "sevenDay", "extraUsage"] as const) {
+    const facts = windows?.[name];
+    if (facts !== undefined) {
+      values[`${prefix}.${name}.remaining`] = facts.remaining;
+      values[`${prefix}.${name}.utilization`] = facts.utilization;
+      values[`${prefix}.${name}.hoursUntilReset`] = facts.hoursUntilReset;
+    }
+  }
+  return values;
+}
+
 /** One resolver over the condition context's facts, keyed by the reference names the `when` forms document: `now` (epoch milliseconds), `entry.latestMtimeMs`, `entry.totalSizeBytes`, `repo.branch`, `repo.detached`, and `env.<NAME>` for every environment variable. A name the context cannot answer resolves not-found, which the evaluator carries as indeterminate, the unknown semantics itself. */
 function resolversOf(context: ConditionContext): SyncResolvers {
   const pool = context.pool;
@@ -96,8 +110,7 @@ function resolversOf(context: ConditionContext): SyncResolvers {
     ...(context.fact?.totalSizeBytes === undefined ? {} : { "entry.totalSizeBytes": context.fact.totalSizeBytes }),
     ...(context.branch === undefined ? {} : { "repo.branch": context.branch }),
     "repo.detached": context.branchDetached ?? false,
-    ...(pool?.fiveHour === undefined ? {} : { "quota.fiveHour.remaining": pool.fiveHour.remaining, "quota.fiveHour.utilization": pool.fiveHour.utilization, "quota.fiveHour.hoursUntilReset": pool.fiveHour.hoursUntilReset }),
-    ...(pool?.sevenDay === undefined ? {} : { "quota.sevenDay.remaining": pool.sevenDay.remaining, "quota.sevenDay.utilization": pool.sevenDay.utilization, "quota.sevenDay.hoursUntilReset": pool.sevenDay.hoursUntilReset }),
+    ...windowValues("quota", pool),
     ...(pool?.burnPerHour === undefined ? {} : { "quota.burnPerHour": pool.burnPerHour }),
     ...(pool?.resuming === undefined ? {} : { "session.resuming": pool.resuming }),
     ...(pool?.lastPickHoursAgo === undefined ? {} : { "session.lastPickHoursAgo": pool.lastPickHoursAgo }),
@@ -110,12 +123,7 @@ function resolversOf(context: ConditionContext): SyncResolvers {
     ...(context.providerQuota === undefined
       ? {}
       : Object.fromEntries(
-          Object.entries(context.providerQuota).flatMap(
-            ([name, windows]): (readonly [string, number])[] => [
-              ...(windows.fiveHour === undefined ? [] : ([["provider." + name + ".fiveHour.remaining", windows.fiveHour.remaining], ["provider." + name + ".fiveHour.utilization", windows.fiveHour.utilization], ["provider." + name + ".fiveHour.hoursUntilReset", windows.fiveHour.hoursUntilReset]] as const)),
-              ...(windows.sevenDay === undefined ? [] : ([["provider." + name + ".sevenDay.remaining", windows.sevenDay.remaining], ["provider." + name + ".sevenDay.utilization", windows.sevenDay.utilization], ["provider." + name + ".sevenDay.hoursUntilReset", windows.sevenDay.hoursUntilReset]] as const)),
-            ],
-          ),
+          Object.entries(context.providerQuota).flatMap(([name, windows]) => Object.entries(windowValues("provider." + name, windows))),
         )),
   };
   return {

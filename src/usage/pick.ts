@@ -3,6 +3,7 @@ import { evaluateWhen, type ConditionContext, type PoolWindowFacts } from "../re
 import { planOf, type PlanClass } from "./plan";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import { effectiveWindow, formatAge, type EffectiveWindow } from "./preflight";
+import { quotaFactsOf } from "./quotaFacts";
 import { parseUnifiedRateLimit, soleOverageWindow } from "./rateLimit";
 import type { AccountMetadata, ProviderUsageState, QuotaWindow, UnifiedRateLimit, UsageRecord, UsageSnapshot } from "./schema";
 
@@ -283,23 +284,13 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
 }
 
 /** One member's pool-selection facts, the reference namespace's `quota.*` and `session.*` half; the window facts the member's own assessment read, and the session facts the whole ranking was given. */
-function poolFactsOf(member: PoolMember, nowMs: number, resuming: boolean, sticky?: StickyPick): { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts; readonly burnPerHour?: number; readonly resuming: boolean; readonly lastPickHoursAgo?: number } {
-  const unified = member.snapshot?.providers[ANTHROPIC_PROVIDER]?.rateLimit?.unified;
-  const window = (which: "fiveHour" | "sevenDay"): PoolWindowFacts | undefined => {
-    const raw = unified?.[which];
-    if (raw?.utilization === undefined) {
-      return undefined;
-    }
-    if (raw.resetsAt === undefined) {
-      // A window that reports no reset instant cannot answer the hours-until-reset fact, so the whole window is absent and a condition referencing it is indeterminate, never a guessed zero.
-      return undefined;
-    }
-    return { remaining: Math.max(0, 1 - raw.utilization), utilization: raw.utilization, hoursUntilReset: Math.max(0, (Date.parse(raw.resetsAt) - nowMs) / MS_PER_HOUR) };
-  };
+function poolFactsOf(member: PoolMember, nowMs: number, resuming: boolean, sticky?: StickyPick): { readonly fiveHour?: PoolWindowFacts; readonly sevenDay?: PoolWindowFacts; readonly extraUsage?: PoolWindowFacts; readonly burnPerHour?: number; readonly resuming: boolean; readonly lastPickHoursAgo?: number } {
+  const { fiveHour, sevenDay, extraUsage } = quotaFactsOf(member.snapshot?.providers[ANTHROPIC_PROVIDER]?.rateLimit?.unified, nowMs);
   const burn = windowBurn(member.records, "fiveHour");
   return {
-    ...(window("fiveHour") === undefined ? {} : { fiveHour: window("fiveHour") }),
-    ...(window("sevenDay") === undefined ? {} : { sevenDay: window("sevenDay") }),
+    ...(fiveHour === undefined ? {} : { fiveHour }),
+    ...(sevenDay === undefined ? {} : { sevenDay }),
+    ...(extraUsage === undefined ? {} : { extraUsage }),
     ...(burn === undefined ? {} : { burnPerHour: burn * MS_PER_HOUR }),
     resuming,
     ...(sticky?.identity === member.identity ? { lastPickHoursAgo: Math.max(0, (nowMs - Date.parse(sticky.at)) / MS_PER_HOUR) } : {}),
