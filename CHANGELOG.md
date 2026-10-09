@@ -1,3 +1,9 @@
+## [9.3.0](https://github.com/ExaDev/agent-shim/compare/v9.2.1...v9.3.0) (2026-10-09)
+
+### Features
+
+* record the usage endpoint's extra-usage spend and the remaining rate-limit headers ([d91c22c](https://github.com/ExaDev/agent-shim/commit/d91c22ca85bd6f3ba76fd051cfd1764f67e31bdf))
+
 ## [9.2.1](https://github.com/ExaDev/agent-shim/compare/v9.2.0...v9.2.1) (2026-10-09)
 
 ### Bug Fixes
