@@ -15,7 +15,7 @@ import { fakeCommandDeps } from "../test-helpers";
 import { claudeJsonPath } from "./account";
 import { collectAccounts, collectUsageReport } from "./commands";
 import { segmentDay, segmentName, snapshotPath } from "./read";
-import { USAGE_SCHEMA_VERSION, type UsageRecord, type UsageSnapshot } from "./schema";
+import { USAGE_SCHEMA_VERSION, type UnifiedRateLimit, type UsageRecord, type UsageSnapshot } from "./schema";
 
 const HOUR_MS = 3_600_000;
 const FIVE_HOURS = 5;
@@ -127,7 +127,7 @@ function writeSnapshot(snapshot: UsageSnapshot): void {
   fs.writeFileSync(snapshotPath(paths.usageSnapshotsDir, snapshot.identity), JSON.stringify(snapshot));
 }
 
-function snapshotWithQuota(identity: string): UsageSnapshot {
+function snapshotWithQuota(identity: string, unified?: UnifiedRateLimit): UsageSnapshot {
   const at = new Date(startedAt).toISOString();
   return {
     schemaVersion: USAGE_SCHEMA_VERSION,
@@ -140,7 +140,7 @@ function snapshotWithQuota(identity: string): UsageSnapshot {
         rateLimit: {
           observedAt: at,
           headers: { "anthropic-ratelimit-unified-status": "allowed" },
-          unified: {
+          unified: unified ?? {
             status: "allowed",
             fiveHour: { utilization: Number(FIVE_HOUR_UTILISATION), resetsAt: new Date(FIVE_HOUR_RESET_SECONDS * MS_PER_SECOND).toISOString(), status: "allowed" },
           },
@@ -236,6 +236,26 @@ describe("agent-shim usage", () => {
 
     expect(result.stdout).toContain("5h 25% used");
     expect(result.stdout).toContain("status allowed");
+  });
+
+  it("shows how much of the extra-usage allowance an account with no plan windows has used, and when it resets", async () => {
+    const resetsAt = new Date(FIVE_HOUR_RESET_SECONDS * MS_PER_SECOND).toISOString();
+    writeLog([recordAgo(HOUR_MS)]);
+    writeSnapshot(snapshotWithQuota("work", { status: "allowed", representativeClaim: "overage", overageStatus: "allowed", overageUtilization: 0.42, overageResetsAt: resetsAt }));
+
+    const result = await cli(["usage"]);
+
+    expect(result.stdout).toContain(`extra usage 42% used, resets ${resetsAt} (allowed)`);
+  });
+
+  it("says why extra usage is unavailable when the upstream named a reason", async () => {
+    writeLog([recordAgo(HOUR_MS)]);
+    writeSnapshot(snapshotWithQuota("work", { status: "rejected", overageStatus: "rejected", overageDisabledReason: "out_of_credits" }));
+
+    const result = await cli(["usage"]);
+
+    expect(result.stdout).toContain("extra usage rejected");
+    expect(result.stdout).toContain("extra usage disabled: out_of_credits");
   });
 
   it("shows a provider's pulled quota: each window's length, use, counts and reset, with where and when it was observed", async () => {

@@ -57,6 +57,15 @@ describe("quotaWarnings", () => {
     expect(quotaWarnings(snapshotWith({ fiveHour: { status: "rejected" } }), "anthropic", NOW_MS)).toHaveLength(1);
   });
 
+  it("warns that an account metered only by extra usage has used its allowance, with the reset", () => {
+    const warnings = quotaWarnings(snapshotWith({ overageStatus: "rejected", overageUtilization: 1, overageResetsAt: future(DAY_MS) }), "anthropic", NOW_MS);
+    expect(warnings).toEqual([`agent-shim: identity work: the extra-usage quota is exhausted, resets ${future(DAY_MS)} (last seen ${String(LAST_SEEN_HOURS_AGO)}h ago)`]);
+  });
+
+  it("does not warn about extra usage for an account that has plan windows, where it is only a fallback", () => {
+    expect(quotaWarnings(snapshotWith({ fiveHour: { utilization: 0.1, resetsAt: future(HOUR_MS) }, overageStatus: "rejected", overageResetsAt: future(DAY_MS) }), "anthropic", NOW_MS)).toEqual([]);
+  });
+
   it("reads the state of the provider the launch uses", () => {
     const warnings = quotaWarnings(snapshotWith({ sevenDay: { status: "rejected", resetsAt: future(DAY_MS) } }, undefined, "z"), "z", NOW_MS);
     expect(warnings).toHaveLength(1);

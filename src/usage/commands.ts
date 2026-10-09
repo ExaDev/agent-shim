@@ -10,7 +10,8 @@ import { createAccountReader, readAccountMetadata } from "./account";
 import { listUsageSnapshots, readUsageLog, readUsageSnapshot, summariseUsage, type UsageSummary } from "./read";
 import { isAnthropicUsageProbeable } from "./anthropicUsageRefresh";
 import { ANTHROPIC_PROVIDER } from "./middleware";
-import type { AccountMetadata, LimitEvent, ProviderQuota, ProviderQuotaWindow, QuotaWindow, RateLimitState, UsageSnapshot } from "./schema";
+import { overageWindowOf } from "./rateLimit";
+import type { AccountMetadata, LimitEvent, ProviderQuota, ProviderQuotaWindow, QuotaWindow, RateLimitState, UnifiedRateLimit, UsageSnapshot } from "./schema";
 import { createRealAnthropicUsageRefresher } from "./realAnthropicUsageProbe";
 import { createRealQuotaRefresher } from "./realQuotaRefresher";
 import { createUsageStore, USAGE_RETENTION_MS } from "./store";
@@ -78,6 +79,14 @@ function formatWindow(label: string, window: QuotaWindow | undefined): string | 
   return `${label} ${used}${window.resetsAt === undefined ? "" : `, resets ${window.resetsAt}`}${window.status === undefined ? "" : ` (${window.status})`}`;
 }
 
+/** The extra-usage facts a state carries: how much of the allowance is used and when it resets (or only its status, when that is all the upstream said), and why it is unavailable when it named a reason. */
+function extraUsageParts(unified: UnifiedRateLimit): string[] {
+  const window = overageWindowOf(unified);
+  const measured = window?.utilization !== undefined || window?.resetsAt !== undefined;
+  const fact = window === undefined ? undefined : measured ? formatWindow("extra usage", window) : `extra usage ${window.status ?? "unknown"}`;
+  return [...(fact === undefined ? [] : [fact]), ...(unified.overageDisabledReason === undefined ? [] : [`extra usage disabled: ${unified.overageDisabledReason}`])];
+}
+
 /** A rate-limit state as one line: the unified windows when the upstream sent them, otherwise the raw header names it did send. */
 function formatRateLimit(state: RateLimitState): string {
   const { unified } = state;
@@ -87,7 +96,7 @@ function formatRateLimit(state: RateLimitState): string {
       .join(", ")}`;
   }
   const parts = [formatWindow("5h", unified.fiveHour), formatWindow("7d", unified.sevenDay)].filter((part) => part !== undefined);
-  return `quota (as of ${state.observedAt}): ${[...parts, `status ${unified.status ?? "unknown"}`, ...(unified.overageStatus === undefined ? [] : [`extra usage ${unified.overageStatus}`])].join("; ")}`;
+  return `quota (as of ${state.observedAt}): ${[...parts, `status ${unified.status ?? "unknown"}`, ...extraUsageParts(unified)].join("; ")}`;
 }
 
 /** A classified refusal as one line. */

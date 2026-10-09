@@ -241,6 +241,10 @@ describe("headers captured from the live API", () => {
     });
   });
 
+  it("reads why extra usage is unavailable", () => {
+    expect(parseUnifiedRateLimit(weekExhausted)).toMatchObject({ overageStatus: "rejected", overageDisabledReason: "out_of_credits" });
+  });
+
   it("classifies the refusal that goes with it as an exhausted quota resetting with the week", () => {
     expect(classifyLimit({ status: TOO_MANY_REQUESTS, headers: weekExhausted, error: undefined, nowMs: NOW_MS })).toMatchObject({
       kind: "quota-exhausted",
@@ -251,7 +255,7 @@ describe("headers captured from the live API", () => {
 
   it("reads an account with no five-hour or weekly window, only extra usage, without inventing either", () => {
     const parsed = parseUnifiedRateLimit(enterpriseOverageOnly);
-    expect(parsed).toMatchObject({ status: "allowed", representativeClaim: "overage", overageStatus: "allowed" });
+    expect(parsed).toMatchObject({ status: "allowed", representativeClaim: "overage", overageStatus: "allowed", overageUtilization: 0, overageResetsAt: new Date(ENTERPRISE_OVERAGE_RESET_SECONDS * MS_PER_SECOND).toISOString() });
     expect(parsed?.fiveHour).toBeUndefined();
     expect(parsed?.sevenDay).toBeUndefined();
     expect(classifyLimit({ status: OK, headers: enterpriseOverageOnly, error: undefined, nowMs: NOW_MS })).toBeUndefined();

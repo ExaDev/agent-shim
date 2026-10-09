@@ -101,6 +101,12 @@ export const UnifiedRateLimitSchema = z.strictObject({
   resetAt: InstantSchema.optional(),
   /** Whether usage beyond the plan (extra usage) is available: `allowed` or `rejected`. */
   overageStatus: z.string().optional(),
+  /** The fraction of the extra-usage allowance used, as the upstream reports it (0 to 1). An account with no plan windows, such as an Enterprise one, is metered by this alone. */
+  overageUtilization: z.number().nonnegative().optional(),
+  /** When the extra-usage allowance resets. */
+  overageResetsAt: InstantSchema.optional(),
+  /** Why extra usage is unavailable, as the upstream names it (`out_of_credits`, for one). */
+  overageDisabledReason: z.string().optional(),
 });
 export type UnifiedRateLimit = z.infer<typeof UnifiedRateLimitSchema>;
 
