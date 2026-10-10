@@ -136,6 +136,6 @@ describe("launch-time update check", () => {
     update.settle(NEWER_TAG_URL);
     await flushUpdateCheck();
     expect(update.errLines).toEqual([]);
-    expect(update.spawns).toEqual([["update"]]);
+    expect(update.spawns).toEqual([["update", "--restart-door"]]);
   });
 });
