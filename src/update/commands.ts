@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,8 +11,8 @@ import { applyPatch, writeTextAtomic } from "../config/store";
 import { UPDATE_MODES, GlobalConfigSchema, type UpdateMode } from "../config/schema";
 import type { LayoutPaths } from "../paths";
 import { realRestartFrontDoor } from "../frontdoor/realFrontDoorPort";
-import { realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor } from "../realPorts";
-import { runSelfUpdate, type UpdateReport, type UpdatePorts } from "./update";
+import { realOwnExecutablePath, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
+import { runSelfUpdate, type SelfUpdateOptions, type UpdateReport, type UpdatePorts } from "./update";
 import type { UpdateLaunchPort } from "./launchHook";
 
 function isEnoent(error: unknown): boolean {
@@ -130,6 +129,24 @@ const realUpdatePorts: UpdatePorts = {
   },
 };
 
+/** The inputs one self-update or update check runs with: this process's version, platform and executable, and the lock beside the state root. */
+function selfUpdateOptions(paths: LayoutPaths, checkOnly: boolean): SelfUpdateOptions {
+  return {
+    currentVersion: packageJson.version,
+    platform: process.platform,
+    arch: process.arch,
+    executablePath: realOwnExecutablePath(),
+    lockPath: path.join(paths.root, "update.lock"),
+    checkOnly,
+    pid: process.pid,
+  };
+}
+
+/** `agent-shim update --check` as a function: asks the release channel for the newest release and reports against the running version, downloading and changing nothing. Raises the update path's own refusals (a package-manager channel, a concurrent update, a release that could not be fetched). */
+export async function checkForUpdate(paths: LayoutPaths): Promise<UpdateReport> {
+  return await runSelfUpdate(realUpdatePorts, selfUpdateOptions(paths, true));
+}
+
 /** `agent-shim update`'s one line of human output per outcome. */
 export function formatUpdateReport(report: UpdateReport): string {
   switch (report.action) {
@@ -162,9 +179,7 @@ export function realLaunchUpdatePort(paths: LayoutPaths): UpdateLaunchPort {
     },
     now: () => Date.now(),
     spawnDetached: (args) => {
-      const invocation = selfInvocation(args);
-      const child = spawn(invocation.command, invocation.args, { detached: true, stdio: "ignore", env: { ...process.env, AGENT_SHIM_HOME: paths.root } });
-      child.unref();
+      spawnSelfDetached(paths, args);
     },
     writeErr: (line) => {
       console.error(line);
@@ -195,15 +210,7 @@ export function registerUpdateCommand(program: Command, deps: CommandDeps, ports
           });
           return;
         }
-        const report = await runSelfUpdate(ports, {
-          currentVersion: packageJson.version,
-          platform: process.platform,
-          arch: process.arch,
-          executablePath: realOwnExecutablePath(),
-          lockPath: path.join(deps.paths.root, "update.lock"),
-          checkOnly: options.check === true,
-          pid: process.pid,
-        });
+        const report = await runSelfUpdate(ports, selfUpdateOptions(deps.paths, options.check === true));
         // Only an applied update has a newer binary for the door to restart into; every other outcome (current, check-only, a channel refusal) leaves the door as it is.
         const doorRestart = options.restartDoor === true && report.action === "updated" ? realRestartFrontDoor(deps.paths, spawnDetachedSupervisor) : undefined;
         if (options.json === true) {
