@@ -1,3 +1,13 @@
+## [9.4.1](https://github.com/ExaDev/agent-shim/compare/v9.4.0...v9.4.1) (2026-10-10)
+
+### Bug Fixes
+
+* replay a headroom hop the daemon resets before any response byte ([39f5877](https://github.com/ExaDev/agent-shim/commit/39f58772884baea1007f1a365590eaa974de956f))
+
+### Continuous Integration
+
+* stop stamping a static platform block on every release ([a9a4b82](https://github.com/ExaDev/agent-shim/commit/a9a4b825ececefd02f21ec9fd79338b417ebfd9c))
+
 ## [9.4.0](https://github.com/ExaDev/agent-shim/compare/v9.3.2...v9.4.0) (2026-10-10)
 
 ### Features
