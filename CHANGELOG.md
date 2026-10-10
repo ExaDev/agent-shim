@@ -1,3 +1,13 @@
+## [9.8.0](https://github.com/ExaDev/agent-shim/compare/v9.7.2...v9.8.0) (2026-10-10)
+
+### Features
+
+* report whether an identity is signed in from account show and doctor ([a607b36](https://github.com/ExaDev/agent-shim/commit/a607b36dbbc15389bc1b95f8e463e764948aca7e))
+
+### Documentation
+
+* describe the sign-in state in account show and doctor ([2514883](https://github.com/ExaDev/agent-shim/commit/2514883c8563db7a0144634146381bf3fcdaa6f2))
+
 ## [9.7.2](https://github.com/ExaDev/agent-shim/compare/v9.7.1...v9.7.2) (2026-10-10)
 
 ### Bug Fixes
