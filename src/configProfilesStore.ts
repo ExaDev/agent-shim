@@ -189,3 +189,62 @@ export function removeProfile(paths: LayoutPaths, name: string): void {
   requireProfileExists(paths, name);
   fs.rmSync(profileJsonPath(paths, name));
 }
+
+/** What one `profile set` applies: category and entry toggles, the extends list, the description and the launch settings. Each `launch*` value, `extends` and `description` is `false` to clear it. */
+export interface ProfileChange {
+  readonly category?: Record<string, boolean>;
+  readonly entry?: Record<string, boolean>;
+  readonly extends?: readonly string[] | false;
+  readonly description?: string | false;
+  readonly launchSkipPermissions?: boolean;
+  readonly launchRemoteControl?: boolean;
+  readonly launchHeadroom?: boolean;
+  readonly launchTrackUsage?: boolean;
+  readonly launchProvider?: string | false;
+  readonly launchClaudeVersion?: string | false;
+}
+
+/** Applies every field `change` names to profile `name`, returning whether any was given. The one implementation `profile set` and the typed API's `config.profile.set` share. */
+export function applyProfileChange(paths: LayoutPaths, name: string, change: ProfileChange): boolean {
+  let touched = false;
+  if (change.category !== undefined) {
+    setProfileCategories(paths, name, change.category);
+    touched = true;
+  }
+  if (change.entry !== undefined) {
+    setProfileEntries(paths, name, change.entry);
+    touched = true;
+  }
+  if (change.extends !== undefined || change.description !== undefined) {
+    setProfileMetadata(paths, name, {
+      ...(change.extends === undefined ? {} : { extends: change.extends === false ? [] : change.extends }),
+      ...(change.description === undefined ? {} : { description: change.description }),
+    });
+    touched = true;
+  }
+  const launchPatch: LaunchFlags = {};
+  if (change.launchSkipPermissions !== undefined) {
+    launchPatch.skipPermissions = change.launchSkipPermissions;
+  }
+  if (change.launchRemoteControl !== undefined) {
+    launchPatch.remoteControl = change.launchRemoteControl;
+  }
+  if (change.launchHeadroom !== undefined) {
+    launchPatch.headroom = change.launchHeadroom;
+  }
+  if (change.launchTrackUsage !== undefined) {
+    launchPatch.trackUsage = change.launchTrackUsage;
+  }
+  if (change.launchProvider !== undefined) {
+    launchPatch.provider = change.launchProvider === false ? undefined : change.launchProvider;
+  }
+  if (change.launchClaudeVersion !== undefined) {
+    launchPatch.claudeVersion = change.launchClaudeVersion === false ? undefined : change.launchClaudeVersion;
+  }
+  if (Object.keys(launchPatch).length > 0) {
+    setProfileLaunchFlags(paths, name, launchPatch);
+    touched = true;
+  }
+  return touched;
+}
+

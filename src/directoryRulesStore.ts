@@ -1,7 +1,9 @@
 import { readJson, writeJsonAtomic } from "./config/store";
 import { ConfigValidationError } from "./config/load";
-import { DirectoryRulesSchema, type DirectoryRule, type DirectoryRules } from "./config/schema";
+import { DirectoryRulesSchema, POOL_SELECTOR_PREFIX, type DirectoryRule, type DirectoryRules } from "./config/schema";
 import { CliError } from "./cliError";
+import { IdentityNotFoundError, readIdentity } from "./identityStore";
+import { PoolNotFoundError, readPools } from "./poolStore";
 import type { LayoutPaths } from "./paths";
 
 /** Raised by `removeDirectoryRule`, `updateDirectoryRule` and `rule show` when no rule matches the given path exactly. */
@@ -129,4 +131,16 @@ export function removeDirectoryRule(paths: LayoutPaths, rulePath: string): void 
     throw new DirectoryRuleNotFoundError(rulePath);
   }
   writeDirectoryRules(paths, { ...current, rules: nextRules });
+}
+
+/** Throws when `selector` names an identity or pool that does not exist, since pinning a path to a selector nothing can load would only fail at the next launch there. A `pool:<name>` selector is checked against the pool table, anything else against the identities. */
+export function requireRuleSelector(paths: LayoutPaths, selector: string): void {
+  if (selector.startsWith(POOL_SELECTOR_PREFIX)) {
+    const poolName = selector.slice(POOL_SELECTOR_PREFIX.length);
+    if (readPools(paths)[poolName] === undefined) {
+      throw new PoolNotFoundError(poolName);
+    }
+  } else if (readIdentity(paths, selector) === undefined) {
+    throw new IdentityNotFoundError(selector);
+  }
 }

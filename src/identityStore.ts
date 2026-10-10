@@ -39,6 +39,16 @@ function identityJsonPath(paths: LayoutPaths, name: string): string {
   return path.join(paths.identitiesDir, name, "identity.json");
 }
 
+/** Throws `IdentityNotFoundError` for any of `names` that is a direct member but not an identity, so a pool never starts with a member nothing can load. `pool:<name>` members are the pool store's concern: `addPool` and `setPool` check them against the pool table and the nesting graph. */
+export function requireIdentityNames(paths: LayoutPaths, names: readonly string[]): void {
+  const existing = new Set(listIdentities(paths).map((entry) => entry.name));
+  for (const name of names) {
+    if (poolNameOf(name) === undefined && !existing.has(name)) {
+      throw new IdentityNotFoundError(name);
+    }
+  }
+}
+
 export function identityExists(paths: LayoutPaths, name: string): boolean {
   return fs.existsSync(identityJsonPath(paths, name));
 }

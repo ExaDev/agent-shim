@@ -1,6 +1,8 @@
 import { InvalidArgumentError, Option, type Command } from "commander";
 
-import { CREDENTIAL_CACHE_STORES, CredentialCacheSchema, CredentialSourceSchema, type CredentialCache, type CredentialSource } from "../config/schema";
+import { UsageError } from "../cliError";
+import { CREDENTIAL_CACHE_STORES, CredentialSourceSchema, type CredentialCache, type CredentialSource } from "../config/schema";
+import { mergeCredentialCache } from "../credentialCacheChange";
 
 /** The `--credential` spellings, for help text: every kind's short form, and the JSON form that reaches every field. */
 export const CREDENTIAL_SOURCE_SYNTAX =
@@ -80,22 +82,19 @@ export function addCredentialCacheOptions(command: Command): Command {
 }
 
 /**
- * The cache block the parsed options ask for, merged over `existing`: undefined when no cache option was given (leave it alone), false for `--no-credential-cache`, otherwise the existing block with the given `ttl` and `store` replaced. Throws `InvalidArgumentError` for a malformed ttl.
+ * The cache block the parsed options ask for, merged over `existing`: undefined when no cache option was given (leave it alone), false for `--no-credential-cache`, otherwise the existing block with the given `ttl` and `store` replaced. Throws commander's `InvalidArgumentError` when the merged block fails the schema, so a bad `--credential-cache-ttl` reads as the usage error it is.
  */
 export function cacheChange(options: CredentialCacheOptions, existing: CredentialCache | undefined): CredentialCache | false | undefined {
-  if (options.credentialCache === false) {
-    return false;
+  try {
+    return mergeCredentialCache(
+      {
+        ...(options.credentialCache === undefined ? {} : { enabled: options.credentialCache }),
+        ...(options.credentialCacheTtl === undefined ? {} : { ttl: options.credentialCacheTtl }),
+        ...(options.credentialCacheStore === undefined ? {} : { store: options.credentialCacheStore }),
+      },
+      existing,
+    );
+  } catch (error: unknown) {
+    throw error instanceof UsageError ? new InvalidArgumentError(error.message) : error;
   }
-  if (options.credentialCacheTtl === undefined && options.credentialCacheStore === undefined && options.credentialCache !== true) {
-    return undefined;
-  }
-  const parsed = CredentialCacheSchema.safeParse({
-    ...existing,
-    ...(options.credentialCacheTtl === undefined ? {} : { ttl: options.credentialCacheTtl }),
-    ...(options.credentialCacheStore === undefined ? {} : { store: options.credentialCacheStore }),
-  });
-  if (!parsed.success) {
-    throw new InvalidArgumentError(parsed.error.issues.map((issue) => issue.message).join("; "));
-  }
-  return parsed.data;
 }

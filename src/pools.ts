@@ -4,10 +4,8 @@ import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDe
 import { UsageError } from "./cliError";
 import { collectRepeated } from "./cli/parsers";
 import { POOL_PREFERENCES, POOL_SELECTOR_PREFIX, type PoolPreference } from "./config/schema";
-import { listIdentities, readActiveIdentity, useIdentity, IdentityNotFoundError } from "./identityStore";
-import type { LayoutPaths } from "./paths";
+import { readActiveIdentity, requireIdentityNames, useIdentity } from "./identityStore";
 import { addPool, readPools, removePool, requirePool, setPool } from "./poolStore";
-import { poolNameOf } from "./launcher/identity";
 import { poolMemberIdentity } from "./config/schema";
 import { realFarmFs, realFsPort } from "./realPorts";
 import { formatAge } from "./usage/preflight";
@@ -25,16 +23,6 @@ function formatPoolPick(report: PoolPickReport, nowMs: number): string[] {
     return `  ${String(index + 1)}. ${candidate.identity} [${candidate.class}${score}]${dry}\n     ${candidate.reasons.join("; ")}`;
   });
   return [head, ...rows, ...report.missing.map((name) => `  (skipped: ${name} is not an identity)`), ...(report.stickyProblem === undefined ? [] : [`Note: ${report.stickyProblem}; the last-pick record was ignored.`])];
-}
-
-/** Throws `IdentityNotFoundError` for any of `names` that is a direct member but not an identity, so a pool never starts with a member nothing can load. `pool:<name>` members are the store's concern: `addPool` and `setPool` check them against the pool map. */
-function requireIdentities(paths: LayoutPaths, names: readonly string[]): void {
-  const existing = new Set(listIdentities(paths).map((entry) => entry.name));
-  for (const name of names) {
-    if (poolNameOf(name) === undefined && !existing.has(name)) {
-      throw new IdentityNotFoundError(name);
-    }
-  }
 }
 
 interface PoolMembersOptions {
@@ -76,7 +64,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .option("--json", "Print the result as JSON.")
       .action((name: string, options: Readonly<PoolMembersOptions>) => {
         const members = membersOf(options);
-        requireIdentities(paths, members);
+        requireIdentityNames(paths, members);
         const created = addPool(paths, name, members, options.preference);
         reportMutation(options.json, { action: "created", kind: "pool", name, value: created }, () => {
           console.log(`Created pool "${name}" with ${members.join(", ")}.`);
@@ -101,7 +89,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         const members = options.identity === undefined ? existing.identities : membersOf(options);
         if (options.identity !== undefined) {
           // Only the freshly listed names are validated: the pass-through keeps object entries whose condition the CLI does not restate.
-          requireIdentities(paths, membersOf(options));
+          requireIdentityNames(paths, membersOf(options));
         }
         // The listing prints member names whichever form an entry takes; an object entry's condition is configuration the ranking reads, not something the CLI restates.
         const preference = options.preference === undefined ? existing.preference : options.preference === false ? undefined : options.preference;
