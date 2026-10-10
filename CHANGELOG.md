@@ -1,3 +1,9 @@
+## [9.7.2](https://github.com/ExaDev/agent-shim/compare/v9.7.1...v9.7.2) (2026-10-10)
+
+### Bug Fixes
+
+* report cascade diagnostics for a launch with no farm to resync ([954ddbc](https://github.com/ExaDev/agent-shim/commit/954ddbc1f01fb5a79678308f355ccacf228569f1))
+
 ## [9.7.1](https://github.com/ExaDev/agent-shim/compare/v9.7.0...v9.7.1) (2026-10-10)
 
 ### Bug Fixes
