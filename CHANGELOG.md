@@ -1,3 +1,26 @@
+## [9.6.0](https://github.com/ExaDev/agent-shim/compare/v9.5.1...v9.6.0) (2026-10-10)
+
+### Features
+
+* resolve a launch over the door's typed API without performing it ([13eac1a](https://github.com/ExaDev/agent-shim/commit/13eac1ac22601863e659f48b9d5e0e6cacb0b3d6))
+* serve the door's restart, update check and Codex sign-in on the typed API ([84f8450](https://github.com/ExaDev/agent-shim/commit/84f84505db47991bd760babeb3cebb613bd85a4a))
+* serve the door's typed API to agents as MCP tools ([ddc2ca8](https://github.com/ExaDev/agent-shim/commit/ddc2ca818a0746a412bf049b2c35cb55bb511555))
+
+### Bug Fixes
+
+* report cascade diagnostics and tolerate an unresolved ambient credential ([afbc023](https://github.com/ExaDev/agent-shim/commit/afbc023d97e15bca1016d7604660c00d31902b30))
+
+### Code Refactoring
+
+* expose the update check, Codex logout and detached self spawn as functions ([e06cff6](https://github.com/ExaDev/agent-shim/commit/e06cff63c0204962d775671be7f222c7160dd451))
+* split a launch's decisions from its effects ([9c2acb9](https://github.com/ExaDev/agent-shim/commit/9c2acb96a1791671cc54d1031cd6cbb4c8bfec56))
+
+### Tests
+
+* expect the mcp command among the top-level commands ([55ca824](https://github.com/ExaDev/agent-shim/commit/55ca824709ce63a1f96c4ad8da9e886eafaa9081))
+* pin that a resolved launch changes and runs nothing ([3d52d6f](https://github.com/ExaDev/agent-shim/commit/3d52d6f16a7912f52bb7376c4c1940fd9839ae1b))
+* supply the lifecycle, Codex and launch deps to the MCP end-to-end door ([9524ba0](https://github.com/ExaDev/agent-shim/commit/9524ba031a877fe58bb66733ea453eea58d12b78))
+
 ## [9.5.1](https://github.com/ExaDev/agent-shim/compare/v9.5.0...v9.5.1) (2026-10-10)
 
 ### Bug Fixes
