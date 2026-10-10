@@ -11,7 +11,7 @@ const OTHER_SESSION_ID = "cse_00000000-0000-4000-8000-000000000002";
 /** The bearers the fakes present: the OAuth-kind prefix alone (the shortest string the prefix check still accepts). */
 const CREATE_BEARER = "Bearer sk-ant-oat";
 /** A bearer observed after the create, standing for the CLI refreshing its token. */
-const FRESH_BEARER = "Bearer sk-ant-REDACTED";
+const FRESH_BEARER = `${CREATE_BEARER}-refreshed`;
 /** The request id a scripted control request carries, which a `control_response` must echo. */
 const REQUEST_ID = "req_00000000-0000-4000-8000-00000000000a";
 /** Where the fake clocks start, so the expected timestamps are the constants the tests name. */
