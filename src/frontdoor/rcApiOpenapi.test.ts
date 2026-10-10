@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { HTTP_STATUS } from "../codex/http";
 import type { CheckReport } from "../checkReport";
 import type { DoctorReport } from "../doctorReport";
+import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "./lifecycleCodexTestDeps";
 import { createDoorApiNodeHandler } from "./controlApi";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, type RcSessionTracker } from "./rcSessions";
@@ -30,8 +31,11 @@ const SETTLE_MS = 50;
 /** The exact REST surface the document must describe: every procedure annotated, and nothing beyond it (an unannotated procedure would leak its router-segment path into this set, so equality proves both halves at once). Every path sits under the mount's one `/rest` namespace, which no RPC procedure path begins with, and the writes are flat verb paths carrying the session in the body, mirroring the CLI's own verbs, because the door's one input shape (the same Zod schema over RPC and REST) must stay one object. */
 const EXPECTED_REST_PATHS = [
   "/rest/check",
+  "/rest/codex/logout",
+  "/rest/codex/status",
   "/rest/doctor",
   "/rest/events",
+  "/rest/frontdoor/restart",
   "/rest/frontdoor/sessions",
   "/rest/frontdoor/status",
   "/rest/pool/pick",
@@ -55,6 +59,7 @@ const EXPECTED_REST_PATHS = [
   "/rest/rc/set-permission-mode",
   "/rest/rc/status",
   "/rest/rc/teleport",
+  "/rest/update/check",
   "/rest/usage/live",
   "/rest/usage/snapshots",
   "/rest/usage/windows",
@@ -152,6 +157,7 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
         throw new Error("no REST test drives pool.pick");
       },
       poolNames: () => [],
+      ...LIFECYCLE_AND_CODEX_TEST_DEPS,
       events: doorEvents,
     });
     // The listener shape the door's own listener takes: it owns the not-matched 404, the mount owns everything under the prefix.

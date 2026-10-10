@@ -6,6 +6,7 @@ import { createFakeFarmFs, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, shippedClas
 import { USAGE_SCHEMA_VERSION, type UsageSnapshot } from "../usage/schema";
 import { generateCa, LOOPBACK_LEAF_NAMES, mintLeaf, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
+import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "./lifecycleCodexTestDeps";
 import { createDoorApiNodeHandler, frontDoorApiClient } from "./controlApi";
 import { LAUNCH_EVENT_SOURCE, type DoorEvent } from "./eventSchemas";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
@@ -148,6 +149,7 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       doctorReport: () => DOCTOR,
       poolPick: (): undefined => undefined,
       poolNames: () => [],
+      ...LIFECYCLE_AND_CODEX_TEST_DEPS,
     });
     const server = createFrontDoorServer(
       async () => {
@@ -191,6 +193,18 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
     const wrongToken = frontDoorApiClient(port, ca.certPem, "not-the-control-token");
     await expect(wrongToken.usage.effectiveWindow({ identity: "work" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(wrongToken.check.run({ path: `${FAKE_HOME}/work` })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("serves the lifecycle and Codex procedures on the merged mount, with the frontdoor namespace carrying both the status reads and the restart", async () => {
+    const api = frontDoorApiClient(port, ca.certPem, CONTROL_TOKEN);
+    expect(await api.frontdoor.status()).toEqual(STATUS);
+    expect(await api.frontdoor.restart()).toEqual({ action: "restarting", previousPid: LIFECYCLE_AND_CODEX_TEST_DEPS.doorPid });
+    expect(await api.update.check()).toEqual({ current: "0.0.0", latest: "0.0.0", action: "current" });
+    expect(await api.codex.status()).toEqual({ signIn: { state: "none" }, codexProviders: [] });
+    expect(await api.codex.logout()).toEqual({ hadGrant: false, revoked: false });
+    const wrongToken = frontDoorApiClient(port, ca.certPem, "not-the-control-token");
+    await expect(wrongToken.frontdoor.restart()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(wrongToken.codex.logout()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 
   it("streams the door's events on the same merged mount, a source-tagged publish reaching a subscriber live", async () => {

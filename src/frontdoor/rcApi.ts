@@ -114,6 +114,8 @@ export interface RcApiDeps {
 /** The context every procedure on the door's typed API runs in: the request's own headers, which the control-token middleware reads the Bearer credential from. */
 export interface DoorApiContext {
   readonly headers: IncomingHttpHeaders;
+  /** Registers an action that runs once the response has been fully written, so a procedure whose effect ends the process serving the call (a door restart) never cuts its own answer off. */
+  readonly afterResponse: (action: () => void) => void;
 }
 
 /** Reads the Bearer credential a request presents, whichever surface it arrived on; undefined when nothing is presented in that form. */
@@ -352,11 +354,11 @@ export function doorApiNodeHandlerOf(router: AnyRouter, expectedToken: string): 
         }
         return { matched: true };
       }
-      const rest = await restHandler.handle(request, response, { context: { headers: request.headers }, prefix: RC_ORPC_PATH_PREFIX });
+      const rest = await restHandler.handle(request, response, { context: { headers: request.headers, afterResponse: (action: () => void) => { response.once("finish", action); } }, prefix: RC_ORPC_PATH_PREFIX });
       if (rest.matched) {
         return rest;
       }
-      return await rpcHandler.handle(request, response, { context: { headers: request.headers }, prefix: RC_ORPC_PATH_PREFIX });
+      return await rpcHandler.handle(request, response, { context: { headers: request.headers, afterResponse: (action: () => void) => { response.once("finish", action); } }, prefix: RC_ORPC_PATH_PREFIX });
     },
   };
 }
