@@ -24,6 +24,7 @@ import { createCredentialCustody } from "./custody";
 import { collectCheckReport } from "../checkReport";
 import { collectDoctorReport } from "../doctorReport";
 import { collectPoolPick } from "../poolPickReport";
+import { resolveClaudeLaunch } from "../launchWiring";
 import { readPools } from "../poolStore";
 import { listUsageSnapshots, readUsageSnapshot } from "../usage/read";
 import type { UsageSnapshot } from "../usage/schema";import { createDoorApiNodeHandler } from "./controlApi";
@@ -292,6 +293,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
           return pools[pool] === undefined ? undefined : collectPoolPick({ paths, fs: realFsPort, usageFs: realFarmFs, poolName: pool, pools, directory, nowMs: Date.now() });
         },
         poolNames: () => Object.keys(readPools(paths)).sort(),
+        // A read-only resolution of what a launch from one directory would do: the launcher's own decision with its effects left out, so a read never recovers or resyncs a farm, starts a daemon, records a pool pick or runs a credential command.
+        resolveLaunch: (request: { readonly path: string; readonly argv: readonly string[]; readonly env: Readonly<Record<string, string>> }) => resolveClaudeLaunch({ argv: request.argv, cwd: request.path, env: request.env, paths }),
       };
       // The lifecycle and Codex procedures: each the same function the CLI verb of that name runs. A restart replaces this very process, so it runs a detached copy of `frontdoor restart` (the restart's own wait for the old door to exit cannot run inside it), started only after the procedure's answer has been written.
       const lifecycleAndCodexDeps = {

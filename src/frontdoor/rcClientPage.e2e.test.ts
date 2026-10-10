@@ -152,6 +152,9 @@ describe("the door's web client page and its API calls over the door's own TLS",
       },
       poolNames: () => [],
       ...LIFECYCLE_AND_CODEX_TEST_DEPS,
+      resolveLaunch: () => {
+        throw new Error("this test resolves no launch");
+      },
     });
     const page = createRcClientPage(CONTROL_TOKEN);
     // Both pre-pipeline surfaces record the pathnames they serve, so the stream case can await a subscription having landed before publishing what it must deliver.
