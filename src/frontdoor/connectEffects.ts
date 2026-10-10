@@ -52,15 +52,15 @@ export class SourcePortRange {
 /**
  * The first port of the door's reserved source range. The range must stay below the operating system's ephemeral range (49152 upward on macOS and per IANA), so nothing else on the machine is ever handed a port the door's rotation may hold.
  */
-export const DOOR_SOURCE_PORT_START = 47900;
+const DOOR_SOURCE_PORT_START = 47900;
 
 /**
  * How many source ports the door reserves. A closed upstream connection keeps its local port out of use for the TCP TIME_WAIT interval (twice the maximum segment lifetime, 30 s on macOS), so a range sustains about its width divided by that interval in new connections per second; a Remote Control fleet of concurrent sessions each holding a read stream and posting receipts needs far more than a few dozen ports. The range ends at 48899, short of the ephemeral start.
  */
-export const DOOR_SOURCE_PORT_COUNT = 1000;
+const DOOR_SOURCE_PORT_COUNT = 1000;
 
 /** The last port of the door's reserved source range, inclusive. */
-export const DOOR_SOURCE_PORT_END = DOOR_SOURCE_PORT_START + DOOR_SOURCE_PORT_COUNT - 1;
+const DOOR_SOURCE_PORT_END = DOOR_SOURCE_PORT_START + DOOR_SOURCE_PORT_COUNT - 1;
 
 /** The pf exemption an interception deployment loads alongside the redirect covers exactly this range: without it, the door's dial to the real address would be redirected straight back into its own transparent surface, an endless loop. */
 const DOOR_SOURCE_PORTS = new SourcePortRange(DOOR_SOURCE_PORT_START, DOOR_SOURCE_PORT_END);
