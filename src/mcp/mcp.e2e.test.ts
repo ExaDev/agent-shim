@@ -10,6 +10,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { DoctorReport } from "../doctorReport";
 import { createDoorApiNodeHandler } from "../frontdoor/controlApi";
 import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "../frontdoor/lifecycleCodexTestDeps";
+import { buildLayoutPaths } from "../paths";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "../frontdoor/eventHub";
 import { RC_ORPC_PATH_PREFIX } from "../frontdoor/rcApi";
 import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "../frontdoor/rcSessions";
@@ -96,6 +97,7 @@ describe("the MCP server over a real door handler", () => {
       },
       poolNames: () => [],
       ...LIFECYCLE_AND_CODEX_TEST_DEPS,
+      paths: buildLayoutPaths("/nonexistent/agent-shim-mcp-config-unexercised"),
       resolveLaunch: (): never => {
         throw new Error("no MCP test drives launch.resolve");
       },
