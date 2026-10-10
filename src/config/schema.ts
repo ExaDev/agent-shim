@@ -133,6 +133,23 @@ const CommandSourceOptions = {
   timeoutMs: z.int().positive().optional(),
 };
 
+const EnvCredentialSourceSchema = z.strictObject({ env: z.string().min(1) });
+const FileCredentialSourceSchema = z.strictObject({
+  file: z
+    .string()
+    .min(1)
+    .refine((filePath) => filePath.startsWith("~/") || path.isAbsolute(filePath), {
+      message: "a credential file must be an absolute or ~-rooted path, since a launch can start in any directory",
+    }),
+});
+const CommandCredentialSourceSchema = z.strictObject({ command: ArgvSchema, ...CommandSourceOptions });
+const OpCredentialSourceSchema = z.strictObject({ op: z.string().startsWith("op://"), ...CommandSourceOptions });
+const KeychainCredentialSourceSchema = z.strictObject({
+  keychain: z.strictObject({ service: z.string().min(1), account: z.string().min(1).optional() }),
+  ...CommandSourceOptions,
+});
+const LiteralCredentialSourceSchema = z.strictObject({ literal: z.string().min(1) });
+
 /**
  * One place a credential can come from. Each kind is an object with exactly one kind-naming key, so the kinds are told apart by which key is present rather than by a separate tag, and `strictObject` rejects an object naming two.
  *
@@ -144,22 +161,23 @@ const CommandSourceOptions = {
  * - `literal`: a fixed value written in the file itself. It is NOT a place for a secret: it exists for local proxies that accept any placeholder token (a codex-translation proxy, say) and so have no real credential to keep out of committed config. Anything with a real credential must use one of the other kinds.
  */
 export const CredentialSourceSchema = z.union([
-  z.strictObject({ env: z.string().min(1) }),
-  z.strictObject({
-    file: z
-      .string()
-      .min(1)
-      .refine((filePath) => filePath.startsWith("~/") || path.isAbsolute(filePath), {
-        message: "a credential file must be an absolute or ~-rooted path, since a launch can start in any directory",
-      }),
-  }),
-  z.strictObject({ command: ArgvSchema, ...CommandSourceOptions }),
-  z.strictObject({ op: z.string().startsWith("op://"), ...CommandSourceOptions }),
-  z.strictObject({
-    keychain: z.strictObject({ service: z.string().min(1), account: z.string().min(1).optional() }),
-    ...CommandSourceOptions,
-  }),
-  z.strictObject({ literal: z.string().min(1) }),
+  EnvCredentialSourceSchema,
+  FileCredentialSourceSchema,
+  CommandCredentialSourceSchema,
+  OpCredentialSourceSchema,
+  KeychainCredentialSourceSchema,
+  LiteralCredentialSourceSchema,
+]);
+
+/**
+ * `CredentialSourceSchema` without the `command` kind, the sources a caller that is not at the machine's own command line may set: a `command` source runs an argv as the user at every launch, so accepting one from a network caller would be remote code execution for whoever holds the credential that authenticates it. Every other kind only reads a named place (a variable, a file, a 1Password reference, a Keychain item) or carries a placeholder.
+ */
+export const RemoteCredentialSourceSchema = z.union([
+  EnvCredentialSourceSchema,
+  FileCredentialSourceSchema,
+  OpCredentialSourceSchema,
+  KeychainCredentialSourceSchema,
+  LiteralCredentialSourceSchema,
 ]);
 export type CredentialSource = z.infer<typeof CredentialSourceSchema>;
 
