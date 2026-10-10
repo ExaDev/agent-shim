@@ -1,3 +1,13 @@
+## [9.5.0](https://github.com/ExaDev/agent-shim/compare/v9.4.3...v9.5.0) (2026-10-10)
+
+### Features
+
+* replace the serving front door in place, and do it on every automatic update ([28e391f](https://github.com/ExaDev/agent-shim/commit/28e391f3c3abc6f6354948e2595ea1e40f1f1c94))
+
+### Tests
+
+* expect the automatic update to spawn with the door restart ([8b97481](https://github.com/ExaDev/agent-shim/commit/8b97481e71b64b5474f3f527648cc8930c9a6623))
+
 ## [9.4.3](https://github.com/ExaDev/agent-shim/compare/v9.4.2...v9.4.3) (2026-10-10)
 
 ### Bug Fixes
