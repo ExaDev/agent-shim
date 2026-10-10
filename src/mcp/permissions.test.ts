@@ -1,0 +1,74 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ConfigValidationError } from "../config/load";
+import { buildLayoutPaths, type LayoutPaths } from "../paths";
+import { effectiveMcpPermissions, readStoredMcpPermissions, watchMcpPermissions, writeStoredMcpPermissions } from "./permissions";
+
+const MODE_BITS = 0o777;
+const OWNER_ONLY_MODE = 0o600;
+/** Long enough for a file-system event to have arrived had one been going to, which a negative assertion needs. */
+const QUIET_PERIOD_MS = 100;
+
+let root: string;
+let paths: LayoutPaths;
+
+beforeEach(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-mcp-permissions-"));
+  paths = buildLayoutPaths(root);
+});
+
+afterEach(() => {
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+describe("stored MCP permissions", () => {
+  it("grants nothing when no file exists", () => {
+    expect(readStoredMcpPermissions(paths)).toEqual({ writes: false, remoteControl: false });
+  });
+
+  it("round-trips what was written, owner-only", () => {
+    writeStoredMcpPermissions(paths, { writes: true, remoteControl: false });
+    expect(readStoredMcpPermissions(paths)).toEqual({ writes: true, remoteControl: false });
+    expect(fs.statSync(paths.mcpPermissionsFile).mode & MODE_BITS).toBe(OWNER_ONLY_MODE);
+  });
+
+  it("fails loudly on a damaged file instead of granting or denying", () => {
+    fs.mkdirSync(path.dirname(paths.mcpPermissionsFile), { recursive: true });
+    fs.writeFileSync(paths.mcpPermissionsFile, JSON.stringify({ writes: "yes" }));
+    expect(() => readStoredMcpPermissions(paths)).toThrow(ConfigValidationError);
+  });
+});
+
+describe("effectiveMcpPermissions", () => {
+  it("grants the union of the startup flags and the file, so a flag is a floor the file only raises", () => {
+    const none = { writes: false, remoteControl: false };
+    expect(effectiveMcpPermissions(none, none)).toEqual(none);
+    expect(effectiveMcpPermissions({ writes: true, remoteControl: false }, none)).toEqual({ writes: true, remoteControl: false });
+    expect(effectiveMcpPermissions(none, { writes: false, remoteControl: true })).toEqual({ writes: false, remoteControl: true });
+    expect(effectiveMcpPermissions({ writes: true, remoteControl: false }, { writes: false, remoteControl: true })).toEqual({ writes: true, remoteControl: true });
+  });
+});
+
+describe("watchMcpPermissions", () => {
+  it("reports a write to the permission file, including one that creates it, and stops when asked", async () => {
+    const changed = vi.fn();
+    const stop = watchMcpPermissions(paths, () => {
+      changed();
+    });
+    writeStoredMcpPermissions(paths, { writes: true, remoteControl: false });
+    await vi.waitFor(() => {
+      expect(changed).toHaveBeenCalled();
+    });
+    stop();
+    changed.mockClear();
+    writeStoredMcpPermissions(paths, { writes: false, remoteControl: false });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, QUIET_PERIOD_MS);
+    });
+    expect(changed).not.toHaveBeenCalled();
+  });
+});

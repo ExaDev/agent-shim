@@ -78,6 +78,8 @@ export interface LayoutPaths {
   readonly usageLogDir: string;
   /** Directory of the latest-state snapshots, one `<identity>.json` per identity: the stable file other tools read. */
   readonly usageSnapshotsDir: string;
+  /** Path to the file recording what the person has allowed the MCP server's agents to do (`agent-shim mcp permissions`), mode 0600 and written only by that command: the running server re-reads it on every request, so a change needs no restart. */
+  readonly mcpPermissionsFile: string;
   /** The last identity picked from a pool for each directory, so a conversation stays on the account whose prompt cache is warm. */
   readonly usagePicksFile: string;
 }
@@ -150,6 +152,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     usageLogDir: path.join(root, "usage", "log"),
     usageSnapshotsDir: path.join(root, "usage", "snapshots"),
     usagePicksFile: path.join(root, "usage", "picks.json"),
+    mcpPermissionsFile: path.join(root, "mcp", "permissions.json"),
   };
 }
 
