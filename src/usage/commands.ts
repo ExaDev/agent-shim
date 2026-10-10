@@ -1,12 +1,15 @@
+import path from "node:path";
+
 import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { parseDurationOption } from "../cli/parsers";
-import { IdentityNotFoundError, listIdentities } from "../identityStore";
+import { IdentityNotFoundError, listIdentities, readIdentity } from "../identityStore";
 import type { FarmFs } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, spawnDetachedSupervisor } from "../realPorts";
+import { realFarmFs, realRunPort, spawnDetachedSupervisor } from "../realPorts";
 import { createAccountReader, readAccountMetadata } from "./account";
+import { identitySignIn, type SignInAnswer, type SignInProbe } from "./signIn";
 import { listUsageSnapshots, readUsageLog, readUsageSnapshot, summariseUsage, type UsageSummary } from "./read";
 import { isAnthropicUsageProbeable } from "./anthropicUsageRefresh";
 import { ANTHROPIC_PROVIDER } from "./middleware";
@@ -206,12 +209,14 @@ export interface AccountView {
   readonly identity: string;
   /** Read live from the identity's stored login. */
   readonly account: AccountMetadata | undefined;
+  /** Whether the identity can authenticate as itself. The account metadata above survives a sign-out, so it alone cannot say. */
+  readonly signIn: SignInAnswer;
   /** The identity's latest usage snapshot, when the front door has recorded any request for it. */
   readonly usage: UsageSnapshot | undefined;
 }
 
 /** Collects `agent-shim account show`, read-only: one identity, or every identity when none is named. Throws `IdentityNotFoundError` for a named identity that does not exist. */
-export function collectAccounts(fs: ReportFs, paths: LayoutPaths, identity: string | undefined): readonly AccountView[] {
+export function collectAccounts(fs: ReportFs & Pick<FarmFs, "lstat">, paths: LayoutPaths, identity: string | undefined, probe: Readonly<SignInProbe>): readonly AccountView[] {
   if (identity !== undefined) {
     requireIdentity(paths, identity);
   }
@@ -219,6 +224,7 @@ export function collectAccounts(fs: ReportFs, paths: LayoutPaths, identity: stri
   return names.map((name) => ({
     identity: name,
     account: readAccountMetadata(fs, paths.identitiesDir, name),
+    signIn: identitySignIn(fs, probe, { farmRoot: path.join(paths.identitiesDir, name), hasCredentialBlock: readIdentity(paths, name)?.credential !== undefined }),
     usage: readUsageSnapshot(fs, paths.usageSnapshotsDir, name),
   }));
 }
@@ -231,6 +237,7 @@ function formatAccounts(views: readonly AccountView[]): string[] {
   return views.flatMap((view, index) => {
     const { account } = view;
     const lines = [...(index === 0 ? [] : [""]), `Identity: ${view.identity}`];
+    lines.push(`Sign-in: ${view.signIn.state === "signed-out" ? "signed out" : view.signIn.state === "token" ? "token" : "signed in"} (${view.signIn.detail})`);
     if (account === undefined) {
       lines.push("Account: (no stored login profile: never logged in, or a setup-token identity, which has no profile scope)");
     } else {
@@ -348,7 +355,7 @@ export function registerUsageCommands(program: Command, deps: CommandDeps): void
             console.error(warning);
           }
         }
-        const views = collectAccounts(realFarmFs, paths, identity);
+        const views = collectAccounts(realFarmFs, paths, identity, { platform: process.platform, run: realRunPort });
         if (options.json === true) {
           printJson(identity === undefined ? views : views[0]);
           return;

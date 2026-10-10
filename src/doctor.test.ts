@@ -3,48 +3,18 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { collectDoctorReport, formatDoctorReport, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type DoctorIdentityInput, type DoctorProviderInput, type RunDoctorParams } from "./doctorReport";
+import { collectDoctorReport, formatDoctorReport, refinePathShadow, runDoctor, type DoctorConfigProfileInput, type DoctorProviderInput, type RunDoctorParams } from "./doctorReport";
+import { baseParams, findingsFor, identity } from "./doctorTestFixtures";
 import type { CredentialCacheEnv } from "./credential";
 import type { RunPort } from "./launcher/ports";
 import { buildLayoutPaths } from "./paths";
 
-const DISCOVERED_BINARY = { ok: true, binary: { path: "/opt/claude/2.1.0", source: "versions-dir", version: "2.1.0" } } as const;
 
 const ALIVE_SUPERVISOR_PID = 11;
 const ALIVE_DAEMON_PID = 12;
 const REPLACEMENT_SUPERVISOR_PID = 21;
 const REPLACEMENT_DAEMON_PID = 22;
 const HEADROOM_SOCKET = "/agent-shim/headroom/run/8123.sock";
-
-function baseParams(overrides: Partial<RunDoctorParams> = {}): RunDoctorParams {
-  return {
-    env: {},
-    identities: [],
-    configProfiles: [],
-    providers: [],
-    directoryRules: { path: "/agent-shim/directory-rules.json", raw: undefined },
-    globalConfig: { path: "/agent-shim/config.json", raw: undefined },
-    categoriesLocal: { path: "/agent-shim/categories.local.json", raw: undefined },
-    activeIdentity: { path: "/agent-shim/active-identity", raw: undefined },
-    binaryDiscovery: DISCOVERED_BINARY,
-    claudeShim: { state: undefined, targetExists: false },
-    rootPath: "/home/u/.agent-shim",
-    pathResolution: { ownExecutablePath: "/home/u/.local/bin/agent-shim", agentShim: { status: "ok" } },
-    platform: "linux",
-    headroom: { state: { path: "/agent-shim/headroom/state.v2.json", raw: undefined }, isRunning: () => false },
-    ...overrides,
-  };
-}
-
-function identity(name: string, overrides: Partial<DoctorIdentityInput> = {}): DoctorIdentityInput {
-  return {
-    name,
-    path: `/agent-shim/identities/${name}/identity.json`,
-    raw: JSON.stringify({ name, allowAmbientCredential: false }),
-    farmRoot: `/agent-shim/identities/${name}`,
-    ...overrides,
-  };
-}
 
 function profile(name: string, body: Record<string, unknown> = {}, overrides: Partial<DoctorConfigProfileInput> = {}): DoctorConfigProfileInput {
   return {
@@ -53,10 +23,6 @@ function profile(name: string, body: Record<string, unknown> = {}, overrides: Pa
     raw: JSON.stringify(body),
     ...overrides,
   };
-}
-
-function findingsFor(report: ReturnType<typeof runDoctor>, section: string) {
-  return report.findings.filter((finding) => finding.section === section);
 }
 
 describe("runDoctor: headroom", () => {
@@ -461,12 +427,13 @@ describe("runDoctor: keychain", () => {
     expect(findingsFor(report, "keychain")).toEqual([{ section: "keychain", severity: "pass", message: "Skipped (not macOS)." }]);
   });
 
-  it("passes when found, warns (not fails) when not found, per identity", () => {
+  it("reports the service name when found and stays informational when not found, per identity", () => {
     const notFoundRun: RunPort = { run: () => ({ status: 44, stdout: "", stderr: "" }) };
     const foundReport = runDoctor(baseParams({ identities: [identity("work")], run: fakeRun, platform: "darwin" }));
     const notFoundReport = runDoctor(baseParams({ identities: [identity("work")], run: notFoundRun, platform: "darwin" }));
     expect(findingsFor(foundReport, "keychain")[0]?.severity).toBe("pass");
-    expect(findingsFor(notFoundReport, "keychain")[0]?.severity).toBe("warn");
+    expect(findingsFor(notFoundReport, "keychain")[0]?.severity).toBe("pass");
+    expect(findingsFor(notFoundReport, "keychain")[0]?.message).toContain("sign-in section");
     expect(notFoundReport.ok).toBe(true);
   });
 });

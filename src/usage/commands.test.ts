@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { EXIT_FAILURE, EXIT_USAGE } from "../cliError";
 import { reportFatalError } from "../cliReport";
-import { addIdentity, IdentityNotFoundError } from "../identityStore";
+import { addIdentity, IdentityNotFoundError, setIdentityCredential } from "../identityStore";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { buildProgram } from "../program";
 import { realFarmFs } from "../realPorts";
@@ -164,6 +164,7 @@ const UsageJsonSchema = z.object({
 const AccountJsonSchema = z.object({
   identity: z.string(),
   account: z.object({ emailAddress: z.string().optional(), billingType: z.string().optional(), seatTier: z.string().optional() }).optional(),
+  signIn: z.object({ state: z.enum(["signed-in", "signed-out", "token"]), detail: z.string() }),
   usage: z.object({ identity: z.string() }).optional(),
 });
 
@@ -373,6 +374,7 @@ describe("agent-shim account show", () => {
     expect(result.code).toBe(0);
     expect(result.stdout.split("\n")).toEqual([
       "Identity: work",
+      expect.stringMatching(/^Sign-in: signed out \(no /),
       "Account: me@example.com (Example Org, claude_team)",
       "Plan: billing stripe_subscription, seat tier team_standard",
       "Rate-limit tier: organisation default_claude_max_5x, user default_claude_max_20x",
@@ -387,6 +389,31 @@ describe("agent-shim account show", () => {
 
     expect(result.stdout).toContain("Identity: personal");
     expect(result.stdout).toContain("Account: (no stored login profile");
+  });
+
+  it("reports a signed-out identity even though its profile survives", async () => {
+    writeProfile("work", { emailAddress: "me@example.com" });
+
+    const result = await cli(["account", "show", "work"]);
+
+    expect(result.stdout).toContain("Sign-in: signed out (no ");
+    expect(result.stdout).toContain("Account: me@example.com");
+  });
+
+  it("reports an identity with a stored login as signed in", async () => {
+    fs.writeFileSync(path.join(paths.identitiesDir, "work", ".credentials.json"), "{}");
+
+    const result = await cli(["account", "show", "work"]);
+
+    expect(result.stdout).toContain("Sign-in: signed in (a login is stored in .credentials.json)");
+  });
+
+  it("does not call an identity with its own credential block signed out", async () => {
+    setIdentityCredential(paths, "work", { sources: [{ env: "WORK_TOKEN" }] });
+
+    const result = await cli(["account", "show", "work"]);
+
+    expect(result.stdout).toContain("Sign-in: token (supplies its own credential");
   });
 
   it("includes the latest recorded quota", async () => {
@@ -405,9 +432,12 @@ describe("agent-shim account show", () => {
     const one = AccountJsonSchema.parse(JSON.parse((await cli(["account", "show", "work", "--json"])).stdout));
     const all = z.array(AccountJsonSchema).parse(JSON.parse((await cli(["account", "show", "--json"])).stdout));
 
-    expect(one).toEqual({ identity: "work", account: { emailAddress: "me@example.com", billingType: "stripe_subscription", seatTier: "team_standard" }, usage: { identity: "work" } });
+    expect(one.account).toEqual({ emailAddress: "me@example.com", billingType: "stripe_subscription", seatTier: "team_standard" });
+    expect(one.signIn.state).toBe("signed-out");
+    expect(one.signIn.detail).toContain("no .credentials.json");
+    expect(one.usage).toEqual({ identity: "work" });
     expect(all.map((view) => view.identity)).toEqual(["personal", "work"]);
-    expect(all.find((view) => view.identity === "personal")).toEqual({ identity: "personal" });
+    expect(all.find((view) => view.identity === "personal")?.signIn.state).toBe("signed-out");
   });
 
   it("separates the blocks of several identities with a blank line", async () => {
@@ -431,7 +461,7 @@ describe("agent-shim account show", () => {
 
     expect(result.code).toBe(EXIT_FAILURE);
     expect(result.stderr).toContain('No identity named "ghost"');
-    expect(() => collectAccounts(realFarmFs, paths, "ghost")).toThrow(IdentityNotFoundError);
+    expect(() => collectAccounts(realFarmFs, paths, "ghost", { platform: "linux" })).toThrow(IdentityNotFoundError);
   });
 
   it("says there are no identities when none exist", async () => {

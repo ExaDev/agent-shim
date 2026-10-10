@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { z } from "zod";
 import { lookupKeychainService } from "./checkReport";
+import { credentialsFilePath, decideSignIn, keychainHasItem } from "./usage/signIn";
 import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
@@ -36,6 +37,7 @@ export const DOCTOR_SECTIONS = [
   "legacy-name",
   "config-profile",
   "identity",
+  "sign-in",
   "pool",
   "provider",
   "keychain",
@@ -68,6 +70,8 @@ export interface DoctorIdentityInput {
   readonly raw: string | undefined;
   /** The identity's own farm root (`identitiesDir/<name>`) — the account name the Keychain lookup uses. */
   readonly farmRoot: string;
+  /** Whether the identity's `.credentials.json` exists, pre-resolved by the wiring layer since it is a file-existence check. */
+  readonly credentialsFilePresent: boolean;
 }
 
 /** One configuration profile's raw `<name>.json`, unparsed. */
@@ -446,6 +450,20 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
         `${entry.name} is valid and authenticates with ${credential === undefined ? "its stored login" : `credential ${describeCredential(credential)}`}${cache.text}.`,
         entry.name,
       );
+      const signIn = decideSignIn({
+        hasCredentialBlock: credential !== undefined,
+        keychainItem: params.platform === "darwin" && params.run !== undefined ? keychainHasItem(params.run, entry.farmRoot) : undefined,
+        credentialsFile: entry.credentialsFilePresent,
+        platform: params.platform,
+      });
+      push(
+        "sign-in",
+        signIn.state === "signed-out" ? "warn" : "pass",
+        signIn.state === "signed-out"
+          ? `${entry.name} is signed out (${signIn.detail}). Run \`agent-shim run @${entry.name}\` and sign in.`
+          : `${entry.name} ${signIn.state === "token" ? "uses a credential block" : "is signed in"} (${signIn.detail}).`,
+        entry.name,
+      );
     }
   }
 
@@ -496,7 +514,8 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   } else {
     for (const entry of params.identities) {
       const result = lookupKeychainService(params.run, entry.farmRoot);
-      push("keychain", result.found ? "pass" : "warn", result.note, entry.name);
+      // Informational: whether the identity is signed in is the sign-in section's finding, which also counts a credentials file that stands in for the Keychain item.
+      push("keychain", "pass", result.found ? result.note : `${result.note} The sign-in section reports whether a login is stored elsewhere.`, entry.name);
     }
   }
 
@@ -641,6 +660,7 @@ const SECTION_TITLES: Readonly<Record<DoctorSection, string>> = {
   "legacy-name": "Former `claude-use` name",
   "config-profile": "Configuration profiles",
   identity: "Identities",
+  "sign-in": "Sign-in",
   pool: "Pools",
   provider: "Providers",
   keychain: "macOS Keychain",
@@ -658,6 +678,7 @@ const SECTION_ORDER: readonly DoctorSection[] = [
   "path-resolution",
   "config-profile",
   "identity",
+  "sign-in",
   "pool",
   "provider",
   "keychain",
@@ -730,7 +751,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
   const identities: DoctorIdentityInput[] = identityNames.map((name) => {
     const farmRoot = path.join(paths.identitiesDir, name);
     const identityPath = path.join(farmRoot, "identity.json");
-    return { name, path: identityPath, raw: realFsPort.readFileUtf8(identityPath), farmRoot };
+    return { name, path: identityPath, raw: realFsPort.readFileUtf8(identityPath), farmRoot, credentialsFilePresent: fs.existsSync(credentialsFilePath(farmRoot)) };
   });
 
   const profileNames = fs.existsSync(paths.configProfilesDir)
