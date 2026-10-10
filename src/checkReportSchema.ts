@@ -72,7 +72,7 @@ const CredentialSourceSummarySchema = z.union([
 ]);
 
 /** A credential block as the report summarises it: the target and each source's summary, plus the cache setting when the block asks for one. */
-const CredentialSummarySchema = z.strictObject({
+export const CredentialSummarySchema = z.strictObject({
   target: z.enum(CREDENTIAL_TARGETS),
   sources: z.readonly(z.array(CredentialSourceSummarySchema)),
   cache: CredentialCacheSchema.optional(),

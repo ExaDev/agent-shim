@@ -23,6 +23,7 @@ import {
 import { createCodexApiRouter, type CodexApiDeps } from "./codexApi";
 import { createEventsApiRouter, type DoorEventsApiDeps } from "./eventsApi";
 import { createLifecycleApiRouter, type LifecycleApiDeps } from "./lifecycleApi";
+import { createLaunchApiRouter, type LaunchApiDeps } from "./launchApi";
 import { createRcApiRouter, doorApiAuth, doorApiNodeHandlerOf, frontDoorApiLink, type RcApiDeps } from "./rcApi";
 import { RcSessionQuerySchema, type RcLiveRateLimit } from "./rcSchemas";
 import type { RcSessionSummary } from "./rcSessions";
@@ -175,14 +176,14 @@ export type ControlApiRouter = ReturnType<typeof createControlApiRouter>;
 export type ControlApiClient = RouterClient<ControlApiRouter>;
 
 /** Everything the door's whole typed API needs: the Remote Control operations, the control-plane reads and the door-wide event stream, one deps object because one mount serves them under one token. */
-export interface DoorApiDeps extends RcApiDeps, ControlApiDeps, DoorEventsApiDeps, LifecycleApiDeps, CodexApiDeps {}
+export interface DoorApiDeps extends RcApiDeps, ControlApiDeps, DoorEventsApiDeps, LifecycleApiDeps, CodexApiDeps, LaunchApiDeps {}
 
 /** Builds the door's whole typed API: the Remote Control router, the control-plane routers and the events router beside them, one object for the one handler the provider listener mounts. */
 export function createDoorApiRouter(deps: DoorApiDeps) {
   const control = createControlApiRouter(deps);
   const lifecycle = createLifecycleApiRouter(deps);
   // `frontdoor` is one namespace two routers contribute to (the status reads and the restart), so it is merged beside the top-level spread, which would otherwise keep only the last.
-  return { ...createRcApiRouter(deps), ...control, ...lifecycle, ...createCodexApiRouter(deps), ...createEventsApiRouter(deps), frontdoor: { ...control.frontdoor, ...lifecycle.frontdoor } };
+  return { ...createRcApiRouter(deps), ...control, ...lifecycle, ...createCodexApiRouter(deps), ...createLaunchApiRouter(deps), ...createEventsApiRouter(deps), frontdoor: { ...control.frontdoor, ...lifecycle.frontdoor } };
 }
 
 /** The door's whole typed API, as the client the door's own verbs and library consumers use is derived from it. */

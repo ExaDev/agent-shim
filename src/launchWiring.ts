@@ -9,7 +9,7 @@ import type { Pool, UpdateMode } from "./config/schema";
 import { agentShimCliPath } from "./ownCli";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { realFrontDoorPort } from "./frontdoor/realFrontDoorPort";
-import { prepareLaunch, type FarmRuntime, type LaunchPlan, type PrepareLaunchParams } from "./launcher";
+import { prepareLaunch, resolveLaunch, type FarmRuntime, type LaunchPlan, type LaunchResolution, type PrepareLaunchParams } from "./launcher";
 import { resolveUpdateMode } from "./update/launchHook";
 import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import type { LogPort, ProcPort } from "./launcher/ports";
@@ -174,4 +174,45 @@ export function prepareClaudeLaunch(options: PrepareClaudeLaunchOptions): Launch
   };
   const spawnDaemon = daemonSpawnerFor(options.agentShim);
   return prepareLaunch(realPrepareLaunchParams(paths, { proc, log, spawnDaemon, farm: buildFarmRuntime(paths, options.cwd) }));
+}
+
+/** What `resolveClaudeLaunch` needs from its caller: the launch `prepareClaudeLaunch` takes, less the daemon executable, since a resolution starts no daemon. */
+export type ResolveClaudeLaunchOptions = Omit<PrepareClaudeLaunchOptions, "agentShim">;
+
+/** A launch's resolution and the warnings resolving it raised (a quota the front door last saw, a pool member whose identity is gone). */
+export interface ClaudeLaunchResolution {
+  readonly resolution: LaunchResolution;
+  readonly warnings: readonly string[];
+}
+
+/**
+ * Reports what a launch for `options.cwd` would resolve to on this machine, changing nothing: the identity (and the pool pick behind it), configuration profile, provider, launch flags, pinned version, binary, arguments, the credential by its block and the names of the environment variables it would set. It recovers and resyncs no farm, starts no daemon, registers no session, records no pool pick and runs no credential command, so it is safe to call from a read.
+ *
+ * A launch that would be refused throws `LaunchRefusedError` carrying the launcher's own message, exactly as `prepareClaudeLaunch` does.
+ */
+export function resolveClaudeLaunch(options: ResolveClaudeLaunchOptions): ClaudeLaunchResolution {
+  const paths = options.paths ?? resolveLayoutPaths();
+  const refusals: string[] = [];
+  const warnings: string[] = [];
+  const log: LogPort = {
+    info: () => undefined,
+    warn: (message) => {
+      warnings.push(message);
+    },
+    error: (message) => {
+      refusals.push(message);
+    },
+  };
+  const proc: ProcPort = {
+    env: options.env,
+    argv: options.argv,
+    exit: (code) => {
+      throw new LaunchRefusedError(refusals.join("\n") || `the launch was refused (exit ${String(code)})`, code);
+    },
+  };
+  // A read-only decision reaches no daemon, so a spawner that is ever called is a bug in that guarantee and fails loudly instead of starting one.
+  const spawnDaemon: DaemonSpawner = () => {
+    throw new Error("resolving a launch starts no daemon");
+  };
+  return { resolution: resolveLaunch(realPrepareLaunchParams(paths, { proc, log, spawnDaemon, farm: buildFarmRuntime(paths, options.cwd) })), warnings };
 }

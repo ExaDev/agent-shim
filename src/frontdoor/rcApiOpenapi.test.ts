@@ -38,6 +38,7 @@ const EXPECTED_REST_PATHS = [
   "/rest/frontdoor/restart",
   "/rest/frontdoor/sessions",
   "/rest/frontdoor/status",
+  "/rest/launch/resolve",
   "/rest/pool/pick",
   "/rest/rc/answer",
   "/rest/rc/end-session",
@@ -158,6 +159,9 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
       },
       poolNames: () => [],
       ...LIFECYCLE_AND_CODEX_TEST_DEPS,
+      resolveLaunch: () => {
+        throw new Error("this test resolves no launch");
+      },
       events: doorEvents,
     });
     // The listener shape the door's own listener takes: it owns the not-matched 404, the mount owns everything under the prefix.
@@ -282,6 +286,8 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
     }
     const send = parsed.paths["/rest/rc/send"]?.post?.requestBody?.content?.["application/json"]?.schema;
     expect(send).toMatchObject({ type: "object", properties: { session: { type: "string", minLength: 1 }, text: { type: "string", minLength: 1 } } });
+    const resolve = parsed.paths["/rest/launch/resolve"]?.post?.requestBody?.content?.["application/json"]?.schema;
+    expect(resolve).toMatchObject({ type: "object", properties: { path: { type: "string", minLength: 1 }, argv: { type: "array" }, env: { type: "object" } }, required: ["path"] });
   });
 
   it("still serves the RPC protocol beside the REST routes, on the procedure paths the typed clients use", async () => {

@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { checkReportToJson, runCheck, type CheckReport, type RunCheckParams } from "../checkReport";
 import type { DoctorReport } from "../doctorReport";
-import { createFakeFarmFs, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, shippedClassification } from "../test-helpers";
+import { resolveLaunch } from "../launcher";
+import { createFakeFarmFs, discovered, FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, fakeFarm, fakeFs, fakeLog, fakeProc, paths, shippedClassification } from "../test-helpers";
 import { USAGE_SCHEMA_VERSION, type UsageSnapshot } from "../usage/schema";
 import { generateCa, LOOPBACK_LEAF_NAMES, mintLeaf, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
@@ -150,6 +151,18 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       poolPick: (): undefined => undefined,
       poolNames: () => [],
       ...LIFECYCLE_AND_CODEX_TEST_DEPS,
+      // A real resolution over the launcher's own fakes, so the door's output validation proves the schema matches what the launcher produces across real transport.
+      resolveLaunch: (request) => ({
+        resolution: resolveLaunch({
+          paths,
+          fs: fakeFs({}),
+          proc: fakeProc(request.env, request.argv),
+          log: fakeLog(),
+          resolveClaudeBinary: () => discovered,
+          farm: fakeFarm(createFakeFarmFs({})),
+        }),
+        warnings: [],
+      }),
     });
     const server = createFrontDoorServer(
       async () => {
@@ -189,10 +202,16 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
     expect(await api.check.run({ path: `${FAKE_HOME}/work` })).toEqual(checkReportToJson(CHECK));
     expect(await api.doctor.run()).toEqual(DOCTOR);
 
+    // The launch resolution rides the same mount: the launcher's decision for a directory, without a spawn.
+    const resolved = await api.launch.resolve({ path: `${FAKE_HOME}/work`, argv: ["@work", "--headroom", "--print"] });
+    expect(resolved).toMatchObject({ decision: { identity: "work", identitySource: "argv" }, flags: { headroom: true }, bin: discovered.path, routing: { frontDoor: true, headroom: true }, warnings: [] });
+    expect(resolved.args).toEqual(["--print"]);
+
     // A caller without this generation's control token is refused by the control plane exactly as the Remote Control surface refuses it.
     const wrongToken = frontDoorApiClient(port, ca.certPem, "not-the-control-token");
     await expect(wrongToken.usage.effectiveWindow({ identity: "work" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(wrongToken.check.run({ path: `${FAKE_HOME}/work` })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(wrongToken.launch.resolve({ path: `${FAKE_HOME}/work` })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 
   it("serves the lifecycle and Codex procedures on the merged mount, with the frontdoor namespace carrying both the status reads and the restart", async () => {
