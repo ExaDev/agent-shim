@@ -3,6 +3,7 @@ import * as http from "node:http";
 import { RPCLink } from "@orpc/client/fetch";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { CheckReport } from "../checkReport";
@@ -145,21 +146,22 @@ describe("the MCP server over a real door handler", () => {
     await close();
   });
 
-  /** The server's ports over plain HTTP to the stand-in door, the same shape `doorMcpPorts` has over the pinned TLS link. */
-  function portsFor(permissions: McpWritePermissions): McpServerPorts {
+  /** The server's ports over plain HTTP to the stand-in door, the same shape `doorMcpPorts` has over the pinned TLS link, with the permissions read on every request as the command reads them. */
+  function portsFor(permissions: () => McpWritePermissions): McpServerPorts {
     const link = new RPCLink({ origin, url: RC_ORPC_PATH_PREFIX, headers: { authorization: `Bearer ${CONTROL_TOKEN}` } });
     return {
       listTools: async () => {
         const answered = await fetch(`${origin}${RC_ORPC_PATH_PREFIX}/openapi.json`, { headers: { authorization: `Bearer ${CONTROL_TOKEN}` } });
-        return toolsFromOpenApiDocument(await answered.json(), permissions);
+        return toolsFromOpenApiDocument(await answered.json(), permissions());
       },
       callProcedure: async (procedure, input) => await link.call([...procedure], input, { context: {} }),
     };
   }
 
-  async function connect(permissions: McpWritePermissions): Promise<Client> {
+  async function connect(permissions: McpWritePermissions | (() => McpWritePermissions), whileConnected?: Parameters<typeof serveMcp>[2]): Promise<Client> {
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-    void serveMcp(createMcpServer({ name: "agent-shim", version: "0.0.0-test" }, portsFor(permissions)), serverSide);
+    const inForce = typeof permissions === "function" ? permissions : () => permissions;
+    void serveMcp(createMcpServer({ name: "agent-shim", version: "0.0.0-test" }, portsFor(inForce)), serverSide, whileConnected);
     const client = new Client({ name: "test", version: "0.0.0" });
     await client.connect(clientSide);
     return client;
@@ -194,6 +196,41 @@ describe("the MCP server over a real door handler", () => {
     expect(sent.isError).not.toBe(true);
     expect(JSON.parse(textOf(sent))).toMatchObject({ session: SESSION_ID, sequenceNums: WRITE_SEQUENCE_NUMS });
     expect(injected).toEqual(["hello"]);
+    await client.close();
+  });
+
+  it("follows a change of permissions on the next request, in both directions, without a new server", async () => {
+    let granted: McpWritePermissions = { writes: false, remoteControl: false };
+    const client = await connect(() => granted);
+    expect((await client.listTools()).tools.map((tool) => tool.name)).not.toContain("rc_send");
+
+    granted = { writes: false, remoteControl: true };
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toContain("rc_send");
+    const sent = await client.callTool({ name: "rc_send", arguments: { session: SESSION_ID, text: "now allowed" } });
+    expect(sent.isError).not.toBe(true);
+
+    granted = { writes: false, remoteControl: false };
+    expect((await client.listTools()).tools.map((tool) => tool.name)).not.toContain("rc_send");
+    const refused = await client.callTool({ name: "rc_send", arguments: { session: SESSION_ID, text: "no longer allowed" } });
+    expect(refused.isError).toBe(true);
+    expect(textOf(refused)).toContain("no tool named rc_send");
+    expect(injected).not.toContain("no longer allowed");
+    await client.close();
+  });
+
+  it("tells a connected client its tool list changed when the command announces it", async () => {
+    let announce: (() => void) | undefined;
+    const client = await connect({ writes: false, remoteControl: false }, (announceToolListChanged) => {
+      announce = announceToolListChanged;
+      return () => undefined;
+    });
+    const changed = new Promise<void>((resolve) => {
+      client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+        resolve();
+      });
+    });
+    announce?.();
+    await changed;
     await client.close();
   });
 

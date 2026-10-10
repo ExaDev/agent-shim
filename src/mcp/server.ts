@@ -33,8 +33,8 @@ function failureText(error: unknown): string {
  * Builds the MCP server that exposes the door's typed API as tools. A call's arguments pass to the procedure unchanged, since the door validates them through the same Zod schemas the tool's input schema was derived from; a refusal or failure comes back as an error result the agent can read, never as a protocol error.
  */
 export function createMcpServer(identity: Readonly<McpServerIdentity>, ports: McpServerPorts): McpServer {
-  // The tool list is dynamic (it is the door's current document), so the low-level request handlers are set directly on the protocol server the high-level one wraps, and the tools capability is declared up front because no registered tool would declare it lazily.
-  const mcp = new McpServer(identity, { capabilities: { tools: {} } });
+  // The tool list is dynamic (it is the door's current document and the permissions in force), so the low-level request handlers are set directly on the protocol server the high-level one wraps, and the tools capability is declared up front, with `listChanged` because the list changes while the server runs, since no registered tool would declare it lazily.
+  const mcp = new McpServer(identity, { capabilities: { tools: { listChanged: true } } });
   const { server } = mcp;
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const tools = await ports.listTools();
@@ -64,11 +64,23 @@ export function createMcpServer(identity: Readonly<McpServerIdentity>, ports: Mc
   return mcp;
 }
 
-/** Connects a server to a transport and resolves once the transport has closed, so a stdio command stays alive exactly as long as its client does. */
-export async function serveMcp(mcp: McpServer, transport: Readonly<Transport>): Promise<void> {
+/**
+ * Connects a server to a transport and resolves once the transport has closed, so a stdio command stays alive exactly as long as its client does.
+ *
+ * `whileConnected` runs once the connection is up and receives a function that tells the client its tool list changed; what it returns is called when the connection ends. It is how the command announces a permission change without the server knowing where permissions live.
+ */
+export async function serveMcp(
+  mcp: McpServer,
+  transport: Readonly<Transport>,
+  whileConnected?: (announceToolListChanged: () => void) => () => void,
+): Promise<void> {
   const closed = new Promise<void>((resolve) => {
     mcp.server.onclose = resolve;
   });
   await mcp.connect(transport);
+  const stop = whileConnected?.(() => {
+    void mcp.server.sendToolListChanged();
+  });
   await closed;
+  stop?.();
 }
