@@ -123,7 +123,7 @@ export interface BuildEnvParams {
   readonly resolvedIdentityName?: string;
   readonly identitiesDir: string;
   /** The provider resolved for this launch, when one was resolved. Its credential is resolved by the caller because refusing an unusable one needs the caller's log/exit ports; the credential itself is never handed to the child, only used for that refusal, because the door attaches it at the provider's route. */
-  readonly provider?: ResolvedProvider;
+  readonly provider?: Pick<ResolvedProvider, "name" | "definition">;
   /** The launching identity's own resolved credential, when it has a credential block and no provider was selected. A provider's credential authenticates against the provider's endpoint, so the identity's is never applied alongside one. */
   readonly identityCredential?: ResolvedCredential;
   /** The front door this launch routes through, when one is engaged (a provider is selected, or headroom resolved on). It is what the child talks to: its CONNECT surface for every session, provider and OAuth alike, since the door decides where the traffic goes from there. */
