@@ -67,7 +67,7 @@ import { doorApiAuth } from "./rcApi";
  *
  * Each procedure calls the store function its verb calls (and the shared rules extracted beside them), so a write through the API and a write through the CLI are the same write: the same validation, the same atomic store write, the same refusals. A refusal is the CLI's own message carried as an oRPC error (`NOT_FOUND` for a name that does not exist, `CONFLICT` for one that already does, `BAD_REQUEST` for anything else the store refuses), and every outcome is the `--json` object the verb prints.
  *
- * What the API deliberately does not accept: a credential source of the `command` kind and a provider's `env` block, both of which would let a holder of the control token run a program of their choosing at the next launch; the interactive wizards and `configure`, which need a terminal; and a removal without `confirm: true`. Those stay on the CLI.
+ * What the API deliberately does not accept: a credential source of the `command` kind and a provider's `env` block, both of which would let a holder of the control token run a program of their choosing at the next launch; the interactive wizards and `configure`, which need a terminal; a removal without `confirm: true`, and a change of an existing provider's `baseUrl` that does not restate its credential block. Those stay on the CLI.
  */
 
 /** Everything the configuration procedures need: the token to gate them with and the layout the stores read and write. */
@@ -373,6 +373,10 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
                 throw new ProviderNotFoundError(input.name);
               }
               const credential = input.credential;
+              // The provider's stored credential would be attached to requests for the new endpoint, so a holder of the control token could point it at a host they run and collect the token. Moving the endpoint must restate the credential in the same call, which makes the caller supply the value's source rather than inherit it.
+              if (input.baseUrl !== undefined && !isCodexProvider(existing) && input.baseUrl !== existing.baseUrl && credential?.sources === undefined) {
+                throw new ORPCError("BAD_REQUEST", { message: `Changing the base URL of provider "${input.name}" requires a credential block in the same call: the stored credential is not sent to a different endpoint.` });
+              }
               const cache =
                 credential?.cache === undefined ? undefined : mergeCredentialCache(credential.cache === false ? { enabled: false } : { ...credential.cache, enabled: true }, existing.credential.cache);
               const updated = updateProvider(paths, input.name, {
