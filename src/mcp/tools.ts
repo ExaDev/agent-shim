@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { READ_ONLY_OPERATION_EXTENSION } from "../frontdoor/rcApi";
+
 /**
  * The subset of an OpenAPI operation the MCP adapter reads. The door's own generator produces the document, so this is validated rather than trusted: a document that stops matching surfaces as a refusal naming the field, not as a silently empty tool list.
  */
@@ -10,6 +12,7 @@ const OperationSchema = z.object({
   summary: z.string().optional(),
   description: z.string().optional(),
   tags: z.array(z.string()).optional(),
+  [READ_ONLY_OPERATION_EXTENSION]: z.boolean().optional(),
   parameters: z
     .array(z.object({ in: z.string(), name: z.string(), required: z.boolean().optional(), schema: z.unknown().optional(), description: z.string().optional() }))
     .optional(),
@@ -30,7 +33,7 @@ export interface McpToolSpec {
   readonly inputSchema: { readonly type: "object"; readonly [key: string]: unknown };
   /** The procedure path a typed client or link calls: the operation id split on its dots. */
   readonly procedure: readonly string[];
-  /** Whether the operation only reads: the HTTP method is GET. */
+  /** Whether the operation only reads: the HTTP method is GET, or the operation carries the read-only extension a POST read declares. */
   readonly readOnly: boolean;
   /** The operation's first OpenAPI tag, which names the domain it belongs to. */
   readonly tag: string | undefined;
@@ -96,7 +99,7 @@ export function toolsFromOpenApiDocument(document: unknown, permissions: McpWrit
       if (isStream(operation)) {
         continue;
       }
-      const readOnly = method === "get";
+      const readOnly = method === "get" || operation[READ_ONLY_OPERATION_EXTENSION] === true;
       const tag = operation.tags?.[0];
       if (!permitted(tag, readOnly, permissions)) {
         continue;

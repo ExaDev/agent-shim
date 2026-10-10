@@ -111,6 +111,9 @@ export interface RcApiDeps {
   readonly fanout: RcEventFanout;
 }
 
+/** The OpenAPI operation extension that marks a POST operation as one that only reads: a read whose input is an object with nested values cannot travel as query parameters, so it is a POST, and a consumer that gates on read versus write (the MCP server) must not take the method for the effect. */
+export const READ_ONLY_OPERATION_EXTENSION = "x-agent-shim-read-only";
+
 /** The context every procedure on the door's typed API runs in: the request's own headers, which the control-token middleware reads the Bearer credential from. */
 export interface DoorApiContext {
   readonly headers: IncomingHttpHeaders;

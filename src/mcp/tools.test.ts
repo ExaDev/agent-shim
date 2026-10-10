@@ -92,4 +92,25 @@ describe("toolsFromOpenApiDocument", () => {
   it("refuses a document without the OpenAPI shape instead of answering an empty list", () => {
     expect(() => toolsFromOpenApiDocument({ nothing: true }, READ_ONLY)).toThrow();
   });
+
+  it("treats a POST that declares the read-only extension as a read, without any write permission", () => {
+    const document = {
+      paths: {
+        "/rest/launch/resolve": {
+          post: {
+            operationId: "launch.resolve",
+            summary: "Resolve a launch without performing it",
+            tags: ["launch"],
+            "x-agent-shim-read-only": true,
+            requestBody: { content: { "application/json": { schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } } },
+            responses: { "200": { content: { "application/json": { schema: { type: "object" } } } } },
+          },
+        },
+        "/rest/config/pools": DOCUMENT.paths["/rest/config/pools"],
+      },
+    };
+    const tools = toolsFromOpenApiDocument(document, READ_ONLY);
+    expect(tools.map((tool) => tool.name)).toEqual(["launch_resolve"]);
+    expect(tools[0]).toMatchObject({ readOnly: true, procedure: ["launch", "resolve"] });
+  });
 });
