@@ -158,10 +158,10 @@ describe("the MCP server over a real door handler", () => {
     };
   }
 
-  async function connect(permissions: McpWritePermissions | (() => McpWritePermissions), whileConnected?: Parameters<typeof serveMcp>[2]): Promise<Client> {
+  async function connect(permissions: McpWritePermissions | (() => McpWritePermissions), options?: Parameters<typeof serveMcp>[2]): Promise<Client> {
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     const inForce = typeof permissions === "function" ? permissions : () => permissions;
-    void serveMcp(createMcpServer({ name: "agent-shim", version: "0.0.0-test" }, portsFor(inForce)), serverSide, whileConnected);
+    void serveMcp(createMcpServer({ name: "agent-shim", version: "0.0.0-test" }, portsFor(inForce)), serverSide, options);
     const client = new Client({ name: "test", version: "0.0.0" });
     await client.connect(clientSide);
     return client;
@@ -220,10 +220,15 @@ describe("the MCP server over a real door handler", () => {
 
   it("tells a connected client its tool list changed when the command announces it", async () => {
     let announce: (() => void) | undefined;
-    const client = await connect({ writes: false, remoteControl: false }, (announceToolListChanged) => {
-      announce = announceToolListChanged;
-      return () => undefined;
-    });
+    const client = await connect(
+      { writes: false, remoteControl: false },
+      {
+        whileConnected: (announceToolListChanged) => {
+          announce = announceToolListChanged;
+          return () => undefined;
+        },
+      },
+    );
     const changed = new Promise<void>((resolve) => {
       client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
         resolve();
@@ -231,6 +236,30 @@ describe("the MCP server over a real door handler", () => {
     });
     announce?.();
     await changed;
+    await client.close();
+  });
+
+  it("closes the server, and stops what the command held open, when the client's input ends", async () => {
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    let release: () => void = () => undefined;
+    const inputEnded = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let stopped = false;
+    const served = serveMcp(createMcpServer({ name: "agent-shim", version: "0.0.0-test" }, portsFor(() => ({ writes: false, remoteControl: false }))), serverSide, {
+      whileConnected: () => () => {
+        stopped = true;
+      },
+      inputEnded,
+    });
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await client.connect(clientSide);
+    expect(stopped).toBe(false);
+
+    release();
+    await served;
+
+    expect(stopped).toBe(true);
     await client.close();
   });
 
