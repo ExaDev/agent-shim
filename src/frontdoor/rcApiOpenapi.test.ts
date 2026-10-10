@@ -1,4 +1,7 @@
+import * as fs from "node:fs";
 import * as http from "node:http";
+import * as os from "node:os";
+import * as nodePath from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -12,6 +15,7 @@ import { createRcSessionTracker, RC_IDLE_EXPIRY_MS, type RcSessionTracker } from
 import type { RcStreamEvent } from "./rcSchemas";
 import { createRcEventFanout } from "./rcStream";
 import type { FrontDoorStatus } from "./status";
+import { buildLayoutPaths } from "../paths";
 
 /** The token the mounted door accepts, standing in for the per-generation value the real door writes owner-only. */
 const CONTROL_TOKEN = "unit-openapi-token";
@@ -33,6 +37,24 @@ const EXPECTED_REST_PATHS = [
   "/rest/check",
   "/rest/codex/logout",
   "/rest/codex/status",
+  "/rest/config/identity/add",
+  "/rest/config/identity/remove",
+  "/rest/config/identity/set",
+  "/rest/config/identity/use",
+  "/rest/config/pool/add",
+  "/rest/config/pool/remove",
+  "/rest/config/pool/set",
+  "/rest/config/pool/use",
+  "/rest/config/profile/add",
+  "/rest/config/profile/remove",
+  "/rest/config/profile/set",
+  "/rest/config/profile/use",
+  "/rest/config/provider/add",
+  "/rest/config/provider/remove",
+  "/rest/config/provider/set",
+  "/rest/config/rule/add",
+  "/rest/config/rule/remove",
+  "/rest/config/rule/set",
   "/rest/doctor",
   "/rest/events",
   "/rest/frontdoor/restart",
@@ -113,15 +135,19 @@ function seedSession(tracker: RcSessionTracker, id: string): void {
 describe("the door's typed API served as REST with an OpenAPI document", () => {
   let base: string;
   let close: () => Promise<void>;
+  /** The configuration tree the mount's `config.*` routes write, a throwaway layout so no test touches a real home. */
+  let configRoot: string;
   /** The fan-out the subscribe route reads, wrapped on a door hub exactly as the door wires it, so the SSE test publishes the way the held stream does. */
   const doorEvents = createDoorEventHub();
   const fanout = rcFanoutOnDoorHub(createRcEventFanout(), doorEvents);
 
   beforeAll(async () => {
+    configRoot = fs.mkdtempSync(nodePath.join(os.tmpdir(), "agent-shim-openapi-config-"));
     const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
     seedSession(tracker, SESSION_ID);
     const surface = createDoorApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
+      paths: buildLayoutPaths(configRoot),
       list: tracker.list,
       statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
       pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
@@ -207,6 +233,7 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
 
   afterAll(async () => {
     await close();
+    fs.rmSync(configRoot, { recursive: true, force: true });
   });
 
   /** One plain HTTP call, the shape a non-TypeScript consumer makes: no client library, no envelope. `token: null` sends none (a default parameter would swallow an explicit `undefined`, so absence is spelled `null`). */
@@ -253,6 +280,33 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
     const unknown = await call("GET", "/rest/rc/status?session=cse_00000000-0000-4000-8000-0000000000ff");
     expect(unknown.status).toBe(HTTP_STATUS.notFound);
     expect(unknown.text).toContain("has not observed Remote Control session");
+  });
+
+  it("serves the configuration writes over REST, behind the control token, in the verbs' own result shape", async () => {
+    const refused = await call("POST", "/rest/config/identity/add", { name: "work" }, null);
+    expect(refused.status).toBe(HTTP_STATUS.unauthorized);
+    expect(fs.existsSync(nodePath.join(configRoot, "identities", "work"))).toBe(false);
+
+    const created = await call("POST", "/rest/config/identity/add", { name: "work" });
+    expect(created.status).toBe(HTTP_STATUS.ok);
+    expect(JSON.parse(created.text)).toEqual({ action: "created", kind: "identity", name: "work", value: { name: "work", allowAmbientCredential: false } });
+
+    const duplicate = await call("POST", "/rest/config/identity/add", { name: "work" });
+    expect(duplicate.status).toBe(HTTP_STATUS.conflict);
+    expect(JSON.parse(duplicate.text)).toMatchObject({ code: "CONFLICT" });
+
+    const unconfirmed = await call("POST", "/rest/config/identity/remove", { name: "work", confirm: false });
+    expect(unconfirmed.status).toBe(HTTP_STATUS.badRequest);
+    expect(JSON.parse(unconfirmed.text)).toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("refuses a command credential source over REST and leaves the identity without a credential", async () => {
+    await call("POST", "/rest/config/identity/add", { name: "scripted" });
+    const refused = await call("POST", "/rest/config/identity/set", { name: "scripted", credential: { sources: [{ command: ["sh", "-c", "echo token"] }] } });
+    expect(refused.status).toBe(HTTP_STATUS.badRequest);
+    const shown = await call("POST", "/rest/config/identity/set", { name: "scripted", allowAmbientCredential: false });
+    expect(JSON.parse(shown.text)).toMatchObject({ value: { name: "scripted", allowAmbientCredential: false } });
+    expect(JSON.parse(shown.text)).not.toHaveProperty("value.credential");
   });
 
   it("serves the OpenAPI document under the same token, describing exactly the annotated surface", async () => {

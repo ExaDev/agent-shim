@@ -158,7 +158,9 @@ function providerValue(name: string, provider: Provider) {
 
 /** The `$schema` pointer a profile file may carry is editor-only and never part of what a write reports. */
 function profileValue(name: string, paths: LayoutPaths) {
-  return { ...readProfile(paths, name), $schema: undefined };
+  const profile = { ...readProfile(paths, name) };
+  delete profile.$schema;
+  return profile;
 }
 
 /** Builds the configuration router: one procedure per write, every one behind the control-token middleware. */

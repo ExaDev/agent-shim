@@ -21,6 +21,7 @@ import {
   UsageWindowsOutputSchema,
 } from "./controlSchemas";
 import { createCodexApiRouter, type CodexApiDeps } from "./codexApi";
+import { createConfigApiRouter, type ConfigApiDeps } from "./configApi";
 import { createEventsApiRouter, type DoorEventsApiDeps } from "./eventsApi";
 import { createLifecycleApiRouter, type LifecycleApiDeps } from "./lifecycleApi";
 import { createLaunchApiRouter, type LaunchApiDeps } from "./launchApi";
@@ -39,7 +40,7 @@ import type { PrePipelineApi } from "./server";
  * - `check.run` and `doctor.run` return the reports `agent-shim check` and `agent-shim doctor` print, as data, `check.run` parameterised by an absolute directory path.
  * - `pool.pick` returns what `agent-shim pool pick` prints, the ranked pick for one pool exactly as a launch from the named absolute directory would make it right now, so a programmatic consumer can ask which identity to use without reading the door host's files.
  *
- * This router is reads only; the door's writes live in routers of their own so each is a decision of its own (`lifecycleApi.ts` for the restart and the update check, `codexApi.ts` for the Codex sign-in), and identity, configuration-profile, provider, pool and directory-rule management stay CLI-side. `createDoorApiNodeHandler` mounts these routers and the door-wide `events.subscribe` router beside the Remote Control router on the one prefix the provider listener already serves, so a consumer dials one address with one token for the whole door.
+ * This router is reads only; the door's writes live in routers of their own so each is a decision of its own (`lifecycleApi.ts` for the restart and the update check, `codexApi.ts` for the Codex sign-in, `configApi.ts` for identity, configuration-profile, provider, pool and directory-rule management). `createDoorApiNodeHandler` mounts these routers and the door-wide `events.subscribe` router beside the Remote Control router on the one prefix the provider listener already serves, so a consumer dials one address with one token for the whole door.
  */
 
 /** Everything the control-plane procedures need, injected so they serve against fakes in tests exactly as the door's real wiring serves against this machine. */
@@ -175,15 +176,15 @@ export type ControlApiRouter = ReturnType<typeof createControlApiRouter>;
 /** The control plane alone as a client sees it: every call presents the control token, over TLS trusting only the CA file the door's own state names. */
 export type ControlApiClient = RouterClient<ControlApiRouter>;
 
-/** Everything the door's whole typed API needs: the Remote Control operations, the control-plane reads and the door-wide event stream, one deps object because one mount serves them under one token. */
-export interface DoorApiDeps extends RcApiDeps, ControlApiDeps, DoorEventsApiDeps, LifecycleApiDeps, CodexApiDeps, LaunchApiDeps {}
+/** Everything the door's whole typed API needs: the Remote Control operations, the control-plane reads, the configuration writes and the door-wide event stream, one deps object because one mount serves them under one token. */
+export interface DoorApiDeps extends RcApiDeps, ControlApiDeps, ConfigApiDeps, DoorEventsApiDeps, LifecycleApiDeps, CodexApiDeps, LaunchApiDeps {}
 
-/** Builds the door's whole typed API: the Remote Control router, the control-plane routers and the events router beside them, one object for the one handler the provider listener mounts. */
+/** Builds the door's whole typed API: the Remote Control router, the control-plane routers, the configuration router and the events router beside them, one object for the one handler the provider listener mounts. */
 export function createDoorApiRouter(deps: DoorApiDeps) {
   const control = createControlApiRouter(deps);
   const lifecycle = createLifecycleApiRouter(deps);
   // `frontdoor` is one namespace two routers contribute to (the status reads and the restart), so it is merged beside the top-level spread, which would otherwise keep only the last.
-  return { ...createRcApiRouter(deps), ...control, ...lifecycle, ...createCodexApiRouter(deps), ...createLaunchApiRouter(deps), ...createEventsApiRouter(deps), frontdoor: { ...control.frontdoor, ...lifecycle.frontdoor } };
+  return { ...createRcApiRouter(deps), ...control, ...lifecycle, ...createConfigApiRouter(deps), ...createCodexApiRouter(deps), ...createLaunchApiRouter(deps), ...createEventsApiRouter(deps), frontdoor: { ...control.frontdoor, ...lifecycle.frontdoor } };
 }
 
 /** The door's whole typed API, as the client the door's own verbs and library consumers use is derived from it. */
