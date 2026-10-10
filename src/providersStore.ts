@@ -374,12 +374,23 @@ export type ProviderResolution =
   | { readonly ok: true; readonly provider: ResolvedProvider; readonly warnings: readonly string[] }
   | { readonly ok: false; readonly status: number; readonly message: string };
 
+/** The provider a launch selected and its definition, before any credential is resolved: the part of provider resolution that reads no secret and runs nothing. */
+export interface SelectedProvider {
+  readonly name: string;
+  readonly definition: Provider;
+}
+
+/** The outcome of selecting a launch's provider: the provider and its definition, or a refusal. */
+export type ProviderSelection =
+  | { readonly ok: true; readonly provider: SelectedProvider }
+  | { readonly ok: false; readonly status: number; readonly message: string };
+
 /**
- * Resolves which API provider this launch routes through, if any: the `--provider` flag first, then the cascade's `launch.provider` selection. Returns undefined when nothing selected a provider at all.
+ * Selects which API provider this launch routes through, if any: the `--provider` flag first, then the cascade's `launch.provider` selection. Returns undefined when nothing selected a provider at all.
  *
- * Pure over its injected ports, so the launcher's tests exercise refusals without touching a real providers directory, secret store or terminal: this function decides, and the caller owns the log/exit side effects.
+ * Reads the provider's definition only: its credential is neither resolved nor run, so a read-only caller can name the provider a launch would use without touching a secret store or a credential command.
  */
-export function resolveProvider(params: ResolveProviderParams): ProviderResolution | undefined {
+export function selectProvider(params: Pick<ResolveProviderParams, "paths" | "port" | "cliProvider" | "cascade">): ProviderSelection | undefined {
   const cliName = params.cliProvider !== undefined && params.cliProvider !== "" ? params.cliProvider : undefined;
   const name = cliName ?? (params.cascade === undefined ? undefined : cascadeProviderName(params.cascade));
   if (name === undefined) {
@@ -397,7 +408,20 @@ export function resolveProvider(params: ResolveProviderParams): ProviderResoluti
         (known.length > 0 ? `Known providers: ${known.join(", ")}.` : "No providers are defined yet; run `agent-shim provider add`."),
     };
   }
+  return { ok: true, provider: { name, definition } };
+}
 
+/**
+ * Resolves which API provider this launch routes through, if any, with its credential resolved: `selectProvider`'s selection, then the provider's credential block through the injected port. Returns undefined when nothing selected a provider at all.
+ *
+ * Pure over its injected ports, so the launcher's tests exercise refusals without touching a real providers directory, secret store or terminal: this function decides, and the caller owns the log/exit side effects.
+ */
+export function resolveProvider(params: ResolveProviderParams): ProviderResolution | undefined {
+  const selection = selectProvider(params);
+  if (selection?.ok !== true) {
+    return selection;
+  }
+  const { name, definition } = selection.provider;
   if (params.credentials === undefined) {
     return { ok: false, status: 1, message: `agent-shim: provider ${name} needs its credential resolved, but this launcher has no credential port wired` };
   }

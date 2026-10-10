@@ -9,23 +9,23 @@ import { buildCliOverride, type CliOverride } from "./launcher/cliOverride";
 import { recoverFarm, recoveryDiagnostics, resyncFarm } from "./launcher/farm";
 import { evaluateAmbientCredentialGuard } from "./launcher/guard";
 import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDecisionSource, type IdentityDecision, type IdentityDecisionSource } from "./launcher/identity";
-import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider } from "./launcher/flags";
+import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { resolvePoolLaunch } from "./launcher/pool";
 import { IdentityLockBusyError } from "./launcher/lock";
 import type { FarmFs, FsPort, FrontDoorPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
 import { childExitCode } from "./launcher/spawn";
-import { resolveProvider } from "./providersStore";
+import { resolveProvider, selectProvider, type SelectedProvider } from "./providersStore";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
 import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool, type UpdateMode } from "./config/schema";
-import { CREDENTIAL_UNAVAILABLE_EXIT, describeSource, resolveCredential, type CredentialPort, type ResolvedCredential } from "./credential";
+import { CREDENTIAL_UNAVAILABLE_EXIT, credentialVariables, describeSource, resolveCredential, summariseCredential, type CredentialPort, type CredentialSummary, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
 import { ANTHROPIC_PROVIDER } from "./usage/middleware";
 import { quotaWarnings } from "./usage/preflight";
 import { readUsageSnapshot, UsageSnapshotError } from "./usage/read";
 import type { ClaudeBinaryResolver } from "./versionDiscovery";
-import { resolveClaudeVersion } from "./launcher/claudeVersion";
+import { resolveClaudeVersion, type PinnedClaudeVersion } from "./launcher/claudeVersion";
 import { runLaunchUpdateCheck, type UpdateLaunchPort } from "./update/launchHook";
 
 /**
@@ -168,6 +168,7 @@ function pickFromPool(
   decided: IdentityDecision,
   params: PrepareLaunchParams,
   parsedArgv: ParsedLauncherArgv,
+  readOnly: boolean,
 ): { readonly identityDecision: IdentityDecision; readonly poolExplanation?: string; readonly poolPick?: LaunchPoolDecision } {
   const { paths, fs, proc, log } = params;
   if (decided.pool === undefined) {
@@ -189,7 +190,9 @@ function pickFromPool(
     now: farmRuntime.now,
     sleep: farmRuntime.lock.sleep,
     passthrough: parsedArgv.rest,
-    wait: parsedArgv.wait === true,
+    // A read-only decision never sleeps for a refused pool and never records its pick, so asking what a launch would pick leaves the next real launch's keep-warm preference as it was.
+    wait: !readOnly && parsedArgv.wait === true,
+    recordPick: !readOnly,
     log,
   });
   if (!resolution.ok) {
@@ -204,15 +207,41 @@ function pickFromPool(
 }
 
 /**
- * Prepares one `claude` launch, in order:
- *
- * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, the config-gated launch-time update check (fired after the decision line and never awaited; see `runLaunchUpdateCheck`), farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and the final argument list and environment, returned as a `LaunchPlan` for the caller to spawn. It refuses through `params.proc.exit`, so a caller that is not a command line process passes a `proc` whose `exit` throws.
- *
- * A launch that resolves an identity with no `identity.json`, or a configuration profile with no file, is refused with exit 1 naming the missing name and how it was selected: silently proceeding would create a brand-new login for a mistyped `@name`, or launch with a whole cascade layer missing. On a terminal, `src/runClaude.ts` offers to create either before this runs.
- *
- * The farm resync is skipped when `CLAUDE_CONFIG_DIR` was already set (the escape hatch means the user has named a configuration directory explicitly, and agent-shim manages neither its contents nor its lifetime) and when no identity resolved at all (a bare launch against plain `~/.claude`, matching the legacy tool's own behaviour). In both cases there is no agent-shim-managed farm for a resync to act on.
+ * Everything a launch decides before any daemon is started or registered and before the farm is written: the identity (and the pool pick behind it), the configuration profile, the provider, the identity's own credential, the resolved launch flags, the pinned Claude Code version, the real binary and the argument list.
  */
-export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
+interface DecidedLaunch {
+  readonly parsedArgv: ParsedLauncherArgv;
+  readonly identityDecision: IdentityDecision;
+  readonly poolExplanation: string | undefined;
+  readonly poolPick: LaunchPoolDecision | undefined;
+  readonly configDirEscapeHatch: boolean;
+  /** The identity whose farm this launch manages: absent when the caller named a configuration directory or no identity resolved. */
+  readonly farmIdentity: string | undefined;
+  readonly farmContext: { readonly farm: FarmRuntime; readonly identity: string; readonly cascade: CascadeInput } | undefined;
+  readonly configProfileDecision: ReturnType<typeof decideConfigProfile>;
+  /** The provider the launch routes through, by name and definition. */
+  readonly provider: SelectedProvider | undefined;
+  /** The same provider with its credential resolved; absent from a read-only decision, which resolves none. */
+  readonly resolvedProvider: ResolvedProvider | undefined;
+  /** The identity's credential block when it applies to this launch (no provider selected, and the identity owns the configuration directory). */
+  readonly identityCredentialBlock: Credential | undefined;
+  /** That block resolved to a token; absent from a read-only decision, which resolves none. */
+  readonly identityCredential: ResolvedCredential | undefined;
+  readonly pinnedVersion: PinnedClaudeVersion | undefined;
+  readonly flags: ResolvedLaunchFlags;
+  readonly bin: string;
+  readonly args: readonly string[];
+  readonly decision: LaunchDecision;
+}
+
+/**
+ * Decides one launch, in order: the `CLAUDE_CONFIG_DIR` escape-hatch check, the identity and configuration-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, the resolved launch flags, the pinned Claude Code version, binary discovery and the argument list.
+ *
+ * With `readOnly` false this is the launch's own first half: a crashed farm swap is recovered before the identity is read, a pool pick is recorded and may wait for a refused pool, and the provider's and the identity's credentials are resolved, which may run a credential command or ask a keychain. With `readOnly` true nothing is written, started or resolved: the farm is left as it is, the pick is not recorded and never waits, and credentials are reported by their block only, so a caller asking what a launch would do changes nothing on the machine.
+ *
+ * A refusal is logged through `params.log` and ends in `params.proc.exit`, exactly as a launch is refused.
+ */
+function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLaunch {
   const { paths, fs, proc, log } = params;
   const { env, argv } = proc;
 
@@ -240,14 +269,14 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   });
 
   // A pool selector is resolved to one member here, ahead of everything that reads the identity: farm recovery, loading, the credential and the resync all work on the chosen name exactly as if it had been typed.
-  const { identityDecision, poolExplanation, poolPick } = pickFromPool(decidedIdentity, params, parsedArgv);
+  const { identityDecision, poolExplanation, poolPick } = pickFromPool(decidedIdentity, params, parsedArgv, readOnly);
 
   // There is a farm to manage only when an identity resolved and the caller did not name a configuration directory itself.
   const farmIdentity = configDirEscapeHatchApplies ? undefined : identityDecision.name;
   const farm = farmIdentity === undefined ? undefined : params.farm;
 
   // Recovery runs before the identity is loaded, not merely before the farm is rebuilt: `identity.json` lives inside the farm root, so a crash between the swap's two renames leaves it in a superseded directory. Reading it first would launch with the identity's own configuration profile silently unset.
-  if (farm !== undefined && farmIdentity !== undefined) {
+  if (!readOnly && farm !== undefined && farmIdentity !== undefined) {
     let recovery;
     try {
       recovery = recoverFarm({
@@ -307,32 +336,40 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
       ? { farm, identity: farmIdentity, cascade: farm.loadCascade(configProfileDecision.name, cliOverride) }
       : undefined;
 
-  // `--no-provider` opts this one launch out of whatever provider the cascade would otherwise select, so resolution is skipped outright rather than asked to ignore its own cascade input.
-  const provider =
-    parsedArgv.provider === false
-      ? undefined
-      : resolveProvider({
-          paths,
-          port: fs,
-          env,
-          ...(params.credentials === undefined ? {} : { credentials: params.credentials }),
-          ...(parsedArgv.provider === undefined ? {} : { cliProvider: parsedArgv.provider }),
-          ...(farmContext === undefined ? {} : { cascade: farmContext.cascade }),
-        });
-  if (provider !== undefined && !provider.ok) {
-    log.error(provider.message);
-    proc.exit(provider.status);
-  }
-  const resolvedProvider: ResolvedProvider | undefined = provider?.ok === true ? provider.provider : undefined;
-  for (const warning of provider?.ok === true ? provider.warnings : []) {
-    log.warn(warning);
+  // `--no-provider` opts this one launch out of whatever provider the cascade would otherwise select, so selection is skipped outright rather than asked to ignore its own cascade input. A read-only decision names the provider from its definition alone and resolves no credential.
+  const providerParams = {
+    paths,
+    port: fs,
+    ...(parsedArgv.provider === undefined || parsedArgv.provider === false ? {} : { cliProvider: parsedArgv.provider }),
+    ...(farmContext === undefined ? {} : { cascade: farmContext.cascade }),
+  };
+  let selectedProvider: SelectedProvider | undefined;
+  let resolvedProvider: ResolvedProvider | undefined;
+  if (parsedArgv.provider !== false && readOnly) {
+    const selection = selectProvider(providerParams);
+    if (selection !== undefined && !selection.ok) {
+      log.error(selection.message);
+      proc.exit(selection.status);
+    }
+    selectedProvider = selection?.ok === true ? selection.provider : undefined;
+  } else if (parsedArgv.provider !== false) {
+    const provider = resolveProvider({ ...providerParams, env, ...(params.credentials === undefined ? {} : { credentials: params.credentials }) });
+    if (provider !== undefined && !provider.ok) {
+      log.error(provider.message);
+      proc.exit(provider.status);
+    }
+    resolvedProvider = provider?.ok === true ? provider.provider : undefined;
+    selectedProvider = resolvedProvider;
+    for (const warning of provider?.ok === true ? provider.warnings : []) {
+      log.warn(warning);
+    }
   }
 
   // A launch is never blocked by quota: the warning only says what the front door last saw for the provider this launch will use.
   if (farm !== undefined && farmIdentity !== undefined) {
     try {
       const snapshot = readUsageSnapshot(farm.fs, paths.usageSnapshotsDir, farmIdentity);
-      for (const warning of quotaWarnings(snapshot, resolvedProvider?.name ?? ANTHROPIC_PROVIDER, farm.now())) {
+      for (const warning of quotaWarnings(snapshot, selectedProvider?.name ?? ANTHROPIC_PROVIDER, farm.now())) {
         log.warn(warning);
       }
     } catch (error) {
@@ -343,10 +380,10 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     }
   }
 
-  // The identity's own credential applies only when no provider was selected (the provider's credential authenticates against its endpoint instead) and the identity owns this launch's configuration directory (under the CLAUDE_CONFIG_DIR escape hatch, the directory and whatever login it holds are the caller's).
-  const identityCredentialBlock = loadedIdentity?.config.credential;
+  // The identity's own credential applies only when no provider was selected (the provider's credential authenticates against its endpoint instead) and the identity owns this launch's configuration directory (under the CLAUDE_CONFIG_DIR escape hatch, the directory and whatever login it holds are the caller's). A read-only decision reports the block and resolves nothing.
+  const identityCredentialBlock = selectedProvider === undefined && farmIdentity !== undefined ? loadedIdentity?.config.credential : undefined;
   const identityResolution =
-    resolvedProvider === undefined && farmIdentity !== undefined && identityCredentialBlock !== undefined
+    !readOnly && identityCredentialBlock !== undefined && farmIdentity !== undefined
       ? resolveIdentityCredential(farmIdentity, identityCredentialBlock, env, params.credentials)
       : undefined;
   if (identityResolution !== undefined && !identityResolution.ok) {
@@ -363,7 +400,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     allowAmbientCredential: loadedIdentity?.config.allowAmbientCredential ?? false,
     allowAmbientCredentialOverride: parseEnvBool("AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL", env.AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL) === true,
     identityName: identityDecision.name,
-    providerSelected: resolvedProvider !== undefined,
+    providerSelected: selectedProvider !== undefined,
     ...(identityCredential === undefined
       ? {}
       : { injectedCredential: { variable: CREDENTIAL_TARGET_VARS[identityCredential.target], token: identityCredential.token } }),
@@ -372,6 +409,82 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     log.error(guardResult.message);
     proc.exit(1);
   }
+
+  // Launch flags come from the cascade's `launch` block: the same flattening of the same assembled cascade the farm resync computes, so a decision made before the resync reports what the resync will carry. Escape-hatch and bare launches have no farm to resync, but launch flags are agent-shim's own behaviour, not the farm's: a global `launch.headroom` (or any other launch setting) must still apply when CLAUDE_CONFIG_DIR was already set or no identity resolved. This reads and flattens the cascade and writes nothing.
+  const launchCascade = farmContext?.cascade ?? (params.farm === undefined ? undefined : params.farm.loadCascade(configProfileDecision.name, cliOverride));
+  const cascadeLaunch: LaunchFlags | undefined =
+    launchCascade === undefined || params.farm === undefined ? undefined : flattenLayers(assembleCascade(launchCascade).layers, { home: params.farm.home }).launch;
+
+  // A pinned Claude Code version comes from the same three forms as every launch setting, and is resolved before discovery because discovery has to run that exact version or fail.
+  const pinnedVersion = resolveClaudeVersion({ env, ...(parsedArgv.claudeVersion === undefined ? {} : { flag: parsedArgv.claudeVersion }), ...(cascadeLaunch?.claudeVersion === undefined ? {} : { cascade: cascadeLaunch.claudeVersion }) });
+  const discovered = params.resolveClaudeBinary(pinnedVersion === undefined ? undefined : { version: pinnedVersion.version });
+
+  const flags = resolveLaunchFlags({
+    env,
+    // A pool pick reads the usage the front door records, so a pool launch records its own unless something says otherwise.
+    ...(poolExplanation === undefined ? {} : { trackUsageDefault: true }),
+    ...(cascadeLaunch === undefined ? {} : { cascade: cascadeLaunch }),
+    flags: {
+      ...(parsedArgv.skipPermissions === undefined ? {} : { skipPermissions: parsedArgv.skipPermissions }),
+      ...(parsedArgv.remoteControl === undefined ? {} : { remoteControl: parsedArgv.remoteControl }),
+      ...(parsedArgv.headroom === undefined ? {} : { headroom: parsedArgv.headroom }),
+      ...(parsedArgv.trackUsage === undefined ? {} : { trackUsage: parsedArgv.trackUsage }),
+    },
+  });
+
+  const args = buildArgv({
+    toolFlags: buildFlagArgs(flags),
+    extraFlags: splitExtraFlags(env.CLAUDE_EXTRA_FLAGS),
+    passthrough: parsedArgv.rest,
+  });
+
+  // The configuration directory the child runs with, as `buildEnv` will set it: the identity's own directory unless the caller named one.
+  const configDir = configDirEscapeHatchApplies || identityDecision.name === undefined ? env.CLAUDE_CONFIG_DIR : path.join(paths.identitiesDir, identityDecision.name);
+  const decision: LaunchDecision = {
+    identitySource: identityDecision.source,
+    configDirEscapeHatch: identityDecision.configDirEscapeHatch,
+    configProfileSource: configProfileDecision.source,
+    ...(identityDecision.name === undefined ? {} : { identity: identityDecision.name }),
+    ...(poolPick === undefined ? {} : { pool: poolPick }),
+    ...(configDir === undefined || configDir === "" ? {} : { configDir }),
+    ...(configProfileDecision.name === undefined ? {} : { configProfile: configProfileDecision.name }),
+    ...(selectedProvider === undefined ? {} : { provider: selectedProvider.name }),
+  };
+  return {
+    parsedArgv,
+    identityDecision,
+    poolExplanation,
+    poolPick,
+    configDirEscapeHatch: configDirEscapeHatchApplies,
+    farmIdentity,
+    farmContext,
+    configProfileDecision,
+    provider: selectedProvider,
+    resolvedProvider,
+    identityCredentialBlock,
+    identityCredential,
+    pinnedVersion,
+    flags,
+    bin: discovered.path,
+    args,
+    decision,
+  };
+}
+
+/**
+ * Prepares one `claude` launch, in order:
+ *
+ * `CLAUDE_CONFIG_DIR` escape-hatch check, then the identity/config-profile decision, the provider decision, the identity's own credential, the ambient-credential guard, the config-gated launch-time update check (fired after the decision line and never awaited; see `runLaunchUpdateCheck`), farm resync, version discovery, flag resolution (and, when headroom resolved on, daemon bring-up), the extra-flags split, and the final argument list and environment, returned as a `LaunchPlan` for the caller to spawn. It refuses through `params.proc.exit`, so a caller that is not a command line process passes a `proc` whose `exit` throws.
+ *
+ * A launch that resolves an identity with no `identity.json`, or a configuration profile with no file, is refused with exit 1 naming the missing name and how it was selected: silently proceeding would create a brand-new login for a mistyped `@name`, or launch with a whole cascade layer missing. On a terminal, `src/runClaude.ts` offers to create either before this runs.
+ *
+ * The farm resync is skipped when `CLAUDE_CONFIG_DIR` was already set (the escape hatch means the user has named a configuration directory explicitly, and agent-shim manages neither its contents nor its lifetime) and when no identity resolved at all (a bare launch against plain `~/.claude`, matching the legacy tool's own behaviour). In both cases there is no agent-shim-managed farm for a resync to act on.
+ */
+export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
+  const { paths, proc, log } = params;
+  const { env } = proc;
+  const decided = decideLaunch(params, false);
+  const { identityDecision, configProfileDecision, resolvedProvider, identityCredential, poolExplanation, flags: resolvedFlags, args: finalArgv, configDirEscapeHatch: configDirEscapeHatchApplies, decision } = decided;
 
   log.info(
     `agent-shim: identity ${identityDecision.name ?? "(none)"} (${identityDecision.source}${poolExplanation === undefined ? "" : `, ${poolExplanation}`}), ` +
@@ -392,10 +505,9 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     port: params.update,
   });
 
-  // The farm resync sits here, between the identity/profile decision above and flag resolution below, because it needs the first and produces an input to the second: the cascade it resolves carries this launch's `launch` flags, which is why `resolveLaunchFlags` is called with them rather than with the environment alone.
-  let cascadeLaunch: LaunchFlags | undefined;
-  if (farmContext !== undefined) {
-    const { farm: resyncFarmRuntime, identity: resyncIdentity, cascade } = farmContext;
+  // The farm resync sits here, between the identity/profile decision above and the daemons below, because it needs the first: the launch flags it would otherwise have produced are already in `decided`, computed from the same assembled cascade it consumes.
+  if (decided.farmContext !== undefined) {
+    const { farm: resyncFarmRuntime, identity: resyncIdentity, cascade } = decided.farmContext;
     let result;
     try {
       result = resyncFarm({
@@ -436,31 +548,11 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
         : `agent-shim: farm at ${result.farmRoot} resynced (${String(result.manifest.links.length)} link(s), ` +
           `${String(result.manifest.materialised.length)} built director(ies)${result.adopted.length === 0 ? "" : `, ${String(result.adopted.length)} adopted into ${resyncFarmRuntime.claudeHome}`})`,
     );
-    cascadeLaunch = result.resolved.flattened.launch;
-  } else if (params.farm !== undefined) {
-    // Escape-hatch and bare launches have no farm to resync (the local `farm` is undefined exactly then), but launch flags are agent-shim's own behaviour, not the farm's: a global `launch.headroom` (or any other launch setting) must still apply when CLAUDE_CONFIG_DIR was already set or no identity resolved. Provider selection above already read this same cascade; this resolves only its launch block and writes nothing.
-    cascadeLaunch = flattenLayers(assembleCascade(params.farm.loadCascade(configProfileDecision.name, cliOverride)).layers, { home: params.farm.home }).launch;
   }
 
-  // A pinned Claude Code version comes from the same three forms as every launch setting, and is resolved before discovery because discovery has to run that exact version or fail.
-  const pinnedVersion = resolveClaudeVersion({ env, ...(parsedArgv.claudeVersion === undefined ? {} : { flag: parsedArgv.claudeVersion }), ...(cascadeLaunch?.claudeVersion === undefined ? {} : { cascade: cascadeLaunch.claudeVersion }) });
-  const discovered = params.resolveClaudeBinary(pinnedVersion === undefined ? undefined : { version: pinnedVersion.version });
-  if (pinnedVersion !== undefined) {
-    log.info(`agent-shim: Claude Code ${pinnedVersion.version} (pinned by ${pinnedVersion.source})`);
+  if (decided.pinnedVersion !== undefined) {
+    log.info(`agent-shim: Claude Code ${decided.pinnedVersion.version} (pinned by ${decided.pinnedVersion.source})`);
   }
-
-  const resolvedFlags = resolveLaunchFlags({
-    env,
-    // A pool pick reads the usage the front door records, so a pool launch records its own unless something says otherwise.
-    ...(poolExplanation === undefined ? {} : { trackUsageDefault: true }),
-    ...(cascadeLaunch === undefined ? {} : { cascade: cascadeLaunch }),
-    flags: {
-      ...(parsedArgv.skipPermissions === undefined ? {} : { skipPermissions: parsedArgv.skipPermissions }),
-      ...(parsedArgv.remoteControl === undefined ? {} : { remoteControl: parsedArgv.remoteControl }),
-      ...(parsedArgv.headroom === undefined ? {} : { headroom: parsedArgv.headroom }),
-      ...(parsedArgv.trackUsage === undefined ? {} : { trackUsage: parsedArgv.trackUsage }),
-    },
-  });
 
   // The front door comes up first, before headroom: every routed session (a provider's, or headroom's) enters through it, and headroom's allowlist is fixed when its daemon starts and must already contain the door's origin, which is what a codex session routed through headroom is forwarded back to. `ensure` authenticates the door's listener over TLS before returning anything, so the address the child is handed below (and sends its credential to) belongs to a listener holding a leaf from agent-shim's CA.
   const frontDoorPort = params.frontdoor;
@@ -488,11 +580,6 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   }
   const frontDoorRelease = frontDoor === undefined ? undefined : frontDoorPort?.release;
 
-  const finalArgv = buildArgv({
-    toolFlags: buildFlagArgs(resolvedFlags),
-    extraFlags: splitExtraFlags(env.CLAUDE_EXTRA_FLAGS),
-    passthrough: parsedArgv.rest,
-  });
   const finalEnv = buildEnv({
     baseEnv: env,
     configDirEscapeHatch: configDirEscapeHatchApplies,
@@ -512,18 +599,69 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
       registered();
     }
   };
-  const configDir = finalEnv.CLAUDE_CONFIG_DIR;
-  const decision: LaunchDecision = {
-    identitySource: identityDecision.source,
-    configDirEscapeHatch: identityDecision.configDirEscapeHatch,
-    configProfileSource: configProfileDecision.source,
-    ...(identityDecision.name === undefined ? {} : { identity: identityDecision.name }),
-    ...(poolPick === undefined ? {} : { pool: poolPick }),
-    ...(configDir === undefined || configDir === "" ? {} : { configDir }),
-    ...(configProfileDecision.name === undefined ? {} : { configProfile: configProfileDecision.name }),
-    ...(resolvedProvider === undefined ? {} : { provider: resolvedProvider.name }),
+  return { bin: decided.bin, args: finalArgv, env: finalEnv, release, markChildStarted: updateCheck.markChildStarted, decision };
+}
+
+/**
+ * What one launch would resolve to, reported without performing it: the decision, the resolved launch flags, the binary and argument list, the credential that would apply (by its block, never a token) and the names of the environment variables the launch would set.
+ */
+export interface LaunchResolution {
+  /** What the launch resolved to, as data: the same decision a real launch reports. */
+  readonly decision: LaunchDecision;
+  /** The launch flags after the command line, the environment and the cascade have each had their say. */
+  readonly flags: ResolvedLaunchFlags;
+  /** The Claude Code version the launch pins, and what pinned it, when it pins one. */
+  readonly claudeVersion?: PinnedClaudeVersion;
+  /** The real `claude` binary the launch would spawn. */
+  readonly bin: string;
+  /** The arguments the launch would pass it. */
+  readonly args: readonly string[];
+  /** The credential the launch would authenticate with, summarised by target and source kinds. Absent when none applies. */
+  readonly credential?: { readonly subject: "provider" | "identity"; readonly name: string; readonly summary: CredentialSummary };
+  /** Which daemons the launch would route through. */
+  readonly routing: { readonly frontDoor: boolean; readonly headroom: boolean };
+  /** The names of the environment variables the launch would set or unset, sorted. Values are never reported: the launcher's environment carries tokens and per-launch capabilities that mean nothing outside it. */
+  readonly environment: readonly string[];
+}
+
+/**
+ * Resolves one launch exactly as `prepareLaunch` decides it and reports the result, changing nothing: no farm recovery or resync, no daemon started or session registered, no pool pick recorded or waited for, no credential command run or token read.
+ *
+ * Refusals surface as `prepareLaunch` surfaces them: logged through `params.log` and ended in `params.proc.exit`.
+ */
+export function resolveLaunch(params: PrepareLaunchParams): LaunchResolution {
+  const decided = decideLaunch(params, true);
+  const { env } = params.proc;
+  const frontDoor = decided.provider !== undefined || decided.flags.headroom || decided.flags.trackUsage;
+  // The environment the launch would build, with placeholders for what a daemon would supply: only which names it sets is reported, and the placeholders never leave this function.
+  const built = buildEnv({
+    baseEnv: env,
+    configDirEscapeHatch: decided.configDirEscapeHatch,
+    resolvedIdentityName: decided.identityDecision.name,
+    identitiesDir: params.paths.identitiesDir,
+    ...(decided.provider === undefined ? {} : { provider: decided.provider }),
+    ...(frontDoor ? { frontdoor: { port: 0, connectPort: 0, trustBundlePath: "", sessionToken: "" } } : {}),
+    ...(decided.flags.headroom ? { headroom: { socketPath: "", projectId: "" } } : {}),
+    sessionId: "",
+  });
+  const credentialNames = decided.identityCredentialBlock === undefined ? [] : Object.keys(credentialVariables(decided.identityCredentialBlock.target ?? "bearer", ""));
+  const environment = [...new Set([...Object.keys(built).filter((name) => built[name] !== env[name]), ...credentialNames])].sort();
+  const credential =
+    decided.provider !== undefined
+      ? { subject: "provider" as const, name: decided.provider.name, summary: summariseCredential(decided.provider.definition.credential) }
+      : decided.identityCredentialBlock !== undefined && decided.farmIdentity !== undefined
+        ? { subject: "identity" as const, name: decided.farmIdentity, summary: summariseCredential(decided.identityCredentialBlock) }
+        : undefined;
+  return {
+    decision: decided.decision,
+    flags: decided.flags,
+    ...(decided.pinnedVersion === undefined ? {} : { claudeVersion: decided.pinnedVersion }),
+    bin: decided.bin,
+    args: decided.args,
+    ...(credential === undefined ? {} : { credential }),
+    routing: { frontDoor, headroom: decided.flags.headroom },
+    environment,
   };
-  return { bin: discovered.path, args: finalArgv, env: finalEnv, release, markChildStarted: updateCheck.markChildStarted, decision };
 }
 
 /**

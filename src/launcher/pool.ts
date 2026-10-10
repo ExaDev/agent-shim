@@ -31,6 +31,8 @@ export interface ResolvePoolParams {
   readonly passthrough: readonly string[];
   /** Sleep until the earliest member returns, instead of refusing, when every member is refused. */
   readonly wait: boolean;
+  /** Whether the chosen member is recorded as this directory's last pick. A caller that only reports what a launch would pick passes false, so the report leaves the next launch's keep-warm preference as it was. */
+  readonly recordPick: boolean;
   readonly log: LogPort;
 }
 
@@ -106,7 +108,9 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
     }
     const { pick, earliestReturn, movedOff } = graph.ranking;
     if (pick !== undefined) {
-      recordStickyPick(params.usageFs, params.paths.usagePicksFile, params.cwd, pick.identity, nowMs);
+      if (params.recordPick) {
+        recordStickyPick(params.usageFs, params.paths.usagePicksFile, params.cwd, pick.identity, nowMs);
+      }
       // The move a resumed conversation made, one sentence beside the pick's own reasons: which member it left and why the ranking could not keep it.
       const move = movedOff === undefined ? "" : `moved off ${movedOff.identity} (${movedOff.reason}); `;
       return {
