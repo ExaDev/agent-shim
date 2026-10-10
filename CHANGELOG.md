@@ -1,3 +1,13 @@
+## [9.9.0](https://github.com/ExaDev/agent-shim/compare/v9.8.0...v9.9.0) (2026-10-10)
+
+### Features
+
+* read a Codex home's account and rate limits through codex app-server ([65b6123](https://github.com/ExaDev/agent-shim/commit/65b612314de7ebb8870248af8e761b982efb17cf))
+
+### Documentation
+
+* describe the Codex account and rate-limit reader ([cece8a5](https://github.com/ExaDev/agent-shim/commit/cece8a5b8af9fe823a32a6e03b1ff0ea2db78f80))
+
 ## [9.8.0](https://github.com/ExaDev/agent-shim/compare/v9.7.2...v9.8.0) (2026-10-10)
 
 ### Features
