@@ -1,3 +1,9 @@
+## [9.3.2](https://github.com/ExaDev/agent-shim/compare/v9.3.1...v9.3.2) (2026-10-10)
+
+### Documentation
+
+* say which window a pool member's score is divided by ([67eb10f](https://github.com/ExaDev/agent-shim/commit/67eb10fb51932c4b6d138afccf3a61a3800b5c5b))
+
 ## [9.3.1](https://github.com/ExaDev/agent-shim/compare/v9.3.0...v9.3.1) (2026-10-09)
 
 ### Documentation
