@@ -1,3 +1,9 @@
+## [9.5.1](https://github.com/ExaDev/agent-shim/compare/v9.5.0...v9.5.1) (2026-10-10)
+
+### Bug Fixes
+
+* serve the OpenAPI document with each operation's Zod schemas on oRPC v2 ([c4600ce](https://github.com/ExaDev/agent-shim/commit/c4600ce59b60764f7d17a45a6cb3ae9f02d6a6dd))
+
 ## [9.5.0](https://github.com/ExaDev/agent-shim/compare/v9.4.3...v9.5.0) (2026-10-10)
 
 ### Features
