@@ -406,14 +406,31 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
       : { injectedCredential: { variable: CREDENTIAL_TARGET_VARS[identityCredential.target], token: identityCredential.token } }),
   });
   if (!guardResult.ok) {
-    log.error(guardResult.message);
-    proc.exit(1);
+    // A read-only decision resolves no credential, so it cannot tell an ambient variable that merely equals the identity's own injected token (a nested launch inheriting its parent's environment, which the real launch exempts) from a foreign one. With a credential block that could be the case, the outcome is indeterminate and is reported as a warning instead of a refusal.
+    if (readOnly && identityCredentialBlock !== undefined) {
+      log.warn(`${guardResult.message} (not resolved here: the launch proceeds only if that value is the identity's own injected credential)`);
+    } else {
+      log.error(guardResult.message);
+      proc.exit(1);
+    }
   }
 
   // Launch flags come from the cascade's `launch` block: the same flattening of the same assembled cascade the farm resync computes, so a decision made before the resync reports what the resync will carry. Escape-hatch and bare launches have no farm to resync, but launch flags are agent-shim's own behaviour, not the farm's: a global `launch.headroom` (or any other launch setting) must still apply when CLAUDE_CONFIG_DIR was already set or no identity resolved. This reads and flattens the cascade and writes nothing.
   const launchCascade = farmContext?.cascade ?? (params.farm === undefined ? undefined : params.farm.loadCascade(configProfileDecision.name, cliOverride));
-  const cascadeLaunch: LaunchFlags | undefined =
-    launchCascade === undefined || params.farm === undefined ? undefined : flattenLayers(assembleCascade(launchCascade).layers, { home: params.farm.home }).launch;
+  let cascadeLaunch: LaunchFlags | undefined;
+  if (launchCascade !== undefined && params.farm !== undefined) {
+    const assembled = assembleCascade(launchCascade);
+    const flattened = flattenLayers(assembled.layers, { home: params.farm.home });
+    cascadeLaunch = flattened.launch;
+    // A real launch reports these when the farm resyncs; a read-only decision resyncs nothing, so it reports them itself rather than answering as if the configuration were clean while a layer is partly ignored.
+    if (readOnly) {
+      for (const diagnostic of [...assembled.diagnostics, ...flattened.diagnostics]) {
+        if (diagnostic.severity !== "info") {
+          log.warn(`agent-shim: ${diagnostic.code}: ${diagnostic.message}`);
+        }
+      }
+    }
+  }
 
   // A pinned Claude Code version comes from the same three forms as every launch setting, and is resolved before discovery because discovery has to run that exact version or fail.
   const pinnedVersion = resolveClaudeVersion({ env, ...(parsedArgv.claudeVersion === undefined ? {} : { flag: parsedArgv.claudeVersion }), ...(cascadeLaunch?.claudeVersion === undefined ? {} : { cascade: cascadeLaunch.claudeVersion }) });

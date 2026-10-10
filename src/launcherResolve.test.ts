@@ -34,7 +34,7 @@ const POOLS: Readonly<Record<string, Pool>> = { main: { identities: ["work", "pe
 /** `work` carries a credential block whose sources would each run something or hold a value if resolved. */
 const CREDENTIALED = { [`${paths.identitiesDir}/work/identity.json`]: { name: "work", credential: { target: "oauthToken", sources: [{ command: ["op", "read", "op://vault/item/token"] }, { literal: TOKEN_SHAPED }] } } };
 
-function ports(options: { readonly argv: readonly string[]; readonly env?: Record<string, string>; readonly files?: Record<string, unknown> }) {
+function ports(options: { readonly argv: readonly string[]; readonly env?: Record<string, string>; readonly files?: Record<string, unknown>; readonly cliOverride?: Parameters<typeof fakeFarm>[1] }) {
   const farmFs = createFakeFarmFs(SEED);
   const log = fakeLog();
   const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
@@ -45,7 +45,7 @@ function ports(options: { readonly argv: readonly string[]; readonly env?: Recor
     proc: fakeProc(options.env ?? {}, options.argv),
     log,
     resolveClaudeBinary: () => discovered,
-    farm: fakeFarm(farmFs),
+    farm: fakeFarm(farmFs, options.cliOverride),
     frontdoor,
     credentials,
     pools: POOLS,
@@ -103,5 +103,23 @@ describe("resolveLaunch", () => {
     const { params, log } = ports({ argv: ["@nobody", "--print"], files: {} });
     expect(() => resolveLaunch(params)).toThrow();
     expect(log.errors.join("\n")).toContain('no identity named "nobody"');
+  });
+
+  it("reports the cascade's diagnostics a real launch reports at its resync", () => {
+    const { params, log } = ports({ argv: ["@work", "--print"], cliOverride: { entries: { "secret/.credentials.json": true } } });
+    resolveLaunch(params);
+    expect(log.warns.join("\n")).toContain("SECRET_ENTRY_KEY");
+  });
+
+  it("does not refuse an ambient credential it cannot tell from the identity's own injected token", () => {
+    const { params, log } = ports({ argv: ["@work", "--print"], files: CREDENTIALED, env: { CLAUDE_CODE_OAUTH_TOKEN: TOKEN_SHAPED } });
+    expect(() => resolveLaunch(params)).not.toThrow();
+    expect(log.errors).toEqual([]);
+    expect(log.warns.join("\n")).toContain("not resolved here");
+  });
+
+  it("still refuses an ambient credential when no credential block could account for it", () => {
+    const { params } = ports({ argv: ["@work", "--print"], env: { CLAUDE_CODE_OAUTH_TOKEN: TOKEN_SHAPED } });
+    expect(() => resolveLaunch(params)).toThrow();
   });
 });
