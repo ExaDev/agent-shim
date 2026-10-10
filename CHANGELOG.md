@@ -1,3 +1,9 @@
+## [9.10.1](https://github.com/ExaDev/agent-shim/compare/v9.10.0...v9.10.1) (2026-10-10)
+
+### Bug Fixes
+
+* end the MCP server when its client's input ends ([ecba06f](https://github.com/ExaDev/agent-shim/commit/ecba06fa73f4f6bb8033f1d63a390849fe5c5e9a))
+
 ## [9.10.0](https://github.com/ExaDev/agent-shim/compare/v9.9.0...v9.10.0) (2026-10-10)
 
 ### Features
