@@ -496,6 +496,70 @@ describe("the headroom hop", () => {
     }
   });
 
+  /** A daemon that resets its first `resets` connections after reading the whole request and answers every later one, recording each request body it read. */
+  async function resettingDaemon(resets: number): Promise<{ readonly bodies: readonly string[]; readonly close: () => Promise<void> }> {
+    const bodies: string[] = [];
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk: Buffer) => {
+        body += chunk.toString("utf8");
+      });
+      request.on("end", () => {
+        bodies.push(body);
+        if (bodies.length <= resets) {
+          request.socket.destroy();
+          return;
+        }
+        response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
+        response.end(JSON.stringify({ answered: bodies.length }));
+      });
+    });
+    await listenOnHeadroomSocket(server);
+    return {
+      bodies,
+      close: async () => {
+        await closeServer(server);
+      },
+    };
+  }
+
+  it("replays a hop the daemon reset before any response byte, so the client sees the answer and no error", async () => {
+    const daemon = await resettingDaemon(1);
+    const logged: string[] = [];
+    const door = await startDoor({
+      files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider },
+      log: (line) => {
+        logged.push(line);
+      },
+    });
+    try {
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(await response.json()).toEqual({ answered: 2 });
+      expect(daemon.bodies).toEqual([MESSAGES_BODY, MESSAGES_BODY]);
+      expect(logged.filter((line) => line.includes("replaying once"))).toHaveLength(1);
+      expect(logged.filter((line) => line.includes("failed (POST"))).toHaveLength(0);
+    } finally {
+      await door.close();
+      await daemon.close();
+    }
+  });
+
+  it("answers 502 when the daemon resets the replay too, having sent it exactly twice", async () => {
+    const daemon = await resettingDaemon(Number.POSITIVE_INFINITY);
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
+    try {
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
+      expect(response.status).toBe(HTTP_STATUS.badGateway);
+      expect(daemon.bodies).toHaveLength(2);
+    } finally {
+      await door.close();
+      await daemon.close();
+    }
+  });
+
   it("serves a headroom-ineligible or flag-less session directly, never through the hop", async () => {
     const headroom = await fakeHeadroom();
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
