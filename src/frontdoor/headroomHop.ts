@@ -1,5 +1,6 @@
 import * as http from "node:http";
 import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
+import { buffer } from "node:stream/consumers";
 
 import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomSocketTarget } from "../headroom/socket";
@@ -105,14 +106,54 @@ async function answerBadGateway(response: RoutedResponse, message: string): Prom
  */
 const HOP_AGENT = new http.Agent({ keepAlive: false });
 
-/** Streams one request to headroom and its response back to the client, resolving once the response has ended, failed, or been abandoned. */
+/**
+ * How many times a hop is replayed after the daemon reset it before sending a response byte. Once: a reset that survives a second, fresh connection is the daemon being unwell, and further replays would only stack load on it.
+ */
+const HOP_RESET_RETRIES = 1;
+
+/** The socket errors that say the daemon (or its listener backlog) dropped a connection it had already accepted, as opposed to one that could never be opened. Only these are replayed. */
+const HOP_RESET_CODES: ReadonlySet<string> = new Set(["ECONNRESET", "EPIPE"]);
+
+/** Reads the whole request body so a reset hop can be replayed byte for byte; undefined when the client failed mid-upload, in which case there is nothing to forward. */
+async function collectBody(request: RoutedRequest): Promise<Buffer | undefined> {
+  try {
+    return await buffer(request.body);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Streams one request to headroom and its response back to the client, resolving once the response has ended, failed, or been abandoned. A hop the daemon resets before any response byte is replayed on a fresh connection (the request produced no output, so replaying it is what the client's own retry would do, minus the visible error); a reset after the response started cannot be replayed and ends the response.
+ */
 async function forwardThroughHeadroom(
   request: RoutedRequest,
   response: RoutedResponse,
   target: { readonly socketPath: string; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void },
 ): Promise<void> {
+  const body = await collectBody(request);
+  if (body === undefined) {
+    response.destroy();
+    return;
+  }
+  for (let retriesLeft = HOP_RESET_RETRIES; ; retriesLeft -= 1) {
+    const outcome = await hopOnce(request, response, target, body, retriesLeft > 0);
+    if (outcome === "settled") {
+      return;
+    }
+  }
+}
+
+/** One attempt at the hop: `retry` only when the daemon reset it before the response started and a replay is allowed, so the response is still untouched. */
+async function hopOnce(
+  request: RoutedRequest,
+  response: RoutedResponse,
+  target: { readonly socketPath: string; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void },
+  body: Buffer,
+  mayRetry: boolean,
+): Promise<"settled" | "retry"> {
   const { socketPath, headers } = target;
-  await new Promise<void>((resolve) => {
+  return await new Promise<"settled" | "retry">((resolve) => {
     const onUpstreamResponse = (upstreamResponse: IncomingMessage): void => {
       response.start(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, responseHeaders(upstreamResponse.headers));
       // Headers go out before the first body byte: a streaming (SSE) response must reach the client as its chunks arrive, not when it completes.
@@ -135,13 +176,19 @@ async function forwardThroughHeadroom(
           }
           response.destroy();
         }
-        resolve(undefined);
+        resolve("settled");
       };
       void stream();
     };
     // `socketPath` is the whole address: no host or port is given, so nothing listening on a TCP port can ever receive this request.
     const hop = http.request({ socketPath, method: request.method, path: request.url, headers, agent: HOP_AGENT }, onUpstreamResponse);
     hop.on("error", (error: Error) => {
+      const resetCode = "code" in error && typeof error.code === "string" ? error.code : undefined;
+      if (mayRetry && !response.headersSent && !request.signal.aborted && resetCode !== undefined && HOP_RESET_CODES.has(resetCode)) {
+        target.log(`front door: headroom hop to ${socketPath} reset before the response started (${request.method} ${new URL(request.url, "http://127.0.0.1").pathname}, ${String(body.length)} request bytes): ${error.message} ${resetCode}; replaying once`);
+        resolve("retry");
+        return;
+      }
       // Which request and which phase decide whether this is a daemon that closed on a request it had accepted (mid-stream), one that was never reachable (before the response started), or neither: the line carries both, with the error's own code, so a recurring failure can be told apart without reproducing it.
       const phase = response.headersSent ? "mid-stream" : "before the response started";
       const code = "code" in error && typeof error.code === "string" ? ` ${error.code}` : "";
@@ -156,15 +203,12 @@ async function forwardThroughHeadroom(
       } else {
         response.destroy();
       }
-      resolve(undefined);
+      resolve("settled");
     });
     // The client going away aborts the hop, which is what cancels the daemon's request (and, one hop later, the upstream's).
     request.signal.addEventListener("abort", () => {
       hop.destroy();
     });
-    request.body.pipe(hop);
-    request.body.on("error", () => {
-      hop.destroy();
-    });
+    hop.end(body);
   });
 }
