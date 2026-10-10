@@ -128,7 +128,7 @@ async function bundleDeclarations(): Promise<void> {
 }
 
 /** Dependencies that exist for the command line alone. The library must work for a consumer that has installed neither. */
-const CLI_ONLY_PACKAGES = ["commander", "@clack/prompts"] as const;
+const CLI_ONLY_PACKAGES = ["commander", "@clack/prompts", "@modelcontextprotocol/sdk"] as const;
 
 function assertNoCliOnlyImports(metafile: esbuild.Metafile): void {
   for (const output of Object.values(metafile.outputs)) {

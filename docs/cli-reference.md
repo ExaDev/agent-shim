@@ -131,6 +131,7 @@ agent-shim frontdoor rc teleport --session <cse_id> --marker <text> [--json]
 agent-shim frontdoor rc watch [<cse_id>] [--json]
 agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--json]
 agent-shim account show [<identity>] [--refresh] [--json]
+agent-shim mcp [--allow-writes] [--allow-remote-control]      # serve the door's typed API as MCP tools on stdio; read-only without the flags
 agent-shim update [--check] [--restart-door] [--mode <off|notify|auto>] [--json]
 agent-shim completion <bash|zsh|fish>
 agent-shim shim enable [--dir <path>] [--force]

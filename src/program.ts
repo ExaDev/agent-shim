@@ -4,6 +4,7 @@ import packageJson from "../package.json";
 import { registerCheckCommand } from "./check";
 import { registerCodexCommand } from "./codex/commands";
 import { registerFrontDoorCommand } from "./frontdoor/commands";
+import { registerMcpCommand } from "./mcp/command";
 import type { CommandDeps } from "./cli/commandDeps";
 import { registerCompletionCommand } from "./completion";
 import { registerConfigureCommand } from "./configure";
@@ -99,6 +100,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   registerHeadroomCommand(program, deps);
   registerCodexCommand(program, deps);
   registerFrontDoorCommand(program, deps);
+  registerMcpCommand(program, deps);
   registerUsageCommands(program, deps);
   registerRunCommand(program, deps.runClaude);
   registerUpdateCommand(program, deps, deps.updatePorts);
