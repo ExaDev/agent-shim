@@ -153,6 +153,19 @@ export {
   type RcApiDeps,
   type RcApiRouter,
 } from "./frontdoor/rcApi";
+export {
+  CODEX_APP_SERVER_TIMEOUT_MS,
+  CodexAppServerProtocolError,
+  CodexAppServerRequestError,
+  CodexAppServerUnavailableError,
+  readCodexAccount,
+  readCodexRateLimits,
+  type CodexAppServerConnection,
+  type CodexAppServerPort,
+  type CodexAppServerReadOptions,
+} from "./codex/appServer";
+export { CODEX_APP_SERVER_GENERATED_AGAINST, CodexAccountReadSchema, CodexRateLimitsReadSchema, type CodexAccountRead, type CodexRateLimitsRead } from "./codex/appServerSchemas";
+export { realCodexAppServerPort } from "./codex/realAppServer";
 export { FrontDoorControlMaterialError, FrontDoorNotServingError, frontDoorApiFromState, readFrontDoorControlMaterial, type FrontDoorControlMaterial } from "./frontdoor/doorClient";
 export {
   createControlApiRouter,
