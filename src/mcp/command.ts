@@ -57,7 +57,12 @@ export function registerMcpCommand(program: Command, deps: CommandDeps): void {
       // Re-read on every request, so `agent-shim mcp permissions allow` takes effect on a server that is already running.
       const inForce = (): McpWritePermissions => effectiveMcpPermissions(flags, readStoredMcpPermissions(deps.paths));
       const server = createMcpServer({ name: "agent-shim", version: packageJson.version }, doorMcpPorts(deps.paths, inForce));
-      await serveMcp(server, new StdioServerTransport(), (announce) => watchMcpPermissions(deps.paths, announce));
+      await serveMcp(server, new StdioServerTransport(), {
+        whileConnected: (announce) => watchMcpPermissions(deps.paths, announce),
+        inputEnded: new Promise<void>((resolve) => {
+          process.stdin.once("end", resolve);
+        }),
+      });
     });
   withExamples(mcp, ["agent-shim mcp", "agent-shim mcp --allow-writes"]);
 

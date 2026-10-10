@@ -64,22 +64,29 @@ export function createMcpServer(identity: Readonly<McpServerIdentity>, ports: Mc
   return mcp;
 }
 
-/**
- * Connects a server to a transport and resolves once the transport has closed, so a stdio command stays alive exactly as long as its client does.
- *
- * `whileConnected` runs once the connection is up and receives a function that tells the client its tool list changed; what it returns is called when the connection ends. It is how the command announces a permission change without the server knowing where permissions live.
- */
-export async function serveMcp(
-  mcp: McpServer,
-  transport: Readonly<Transport>,
-  whileConnected?: (announceToolListChanged: () => void) => () => void,
-): Promise<void> {
+/** What a served connection can add to the server's own lifetime. */
+export interface ServeMcpOptions {
+  /**
+   * Runs once the connection is up and receives a function that tells the client its tool list changed; what it returns is called when the connection ends. It is how the command announces a permission change without the server knowing where permissions live.
+   */
+  readonly whileConnected?: (announceToolListChanged: () => void) => () => void;
+  /**
+   * Resolves when the client's input has ended. The SDK's stdio transport does not treat that as a close, and anything the command holds open (a watcher) would otherwise keep the process alive after its client is gone, so the server is closed when this resolves.
+   */
+  readonly inputEnded?: Promise<void>;
+}
+
+/** Connects a server to a transport and resolves once the transport has closed, so a stdio command stays alive exactly as long as its client does. */
+export async function serveMcp(mcp: McpServer, transport: Readonly<Transport>, options: Readonly<ServeMcpOptions> = {}): Promise<void> {
   const closed = new Promise<void>((resolve) => {
     mcp.server.onclose = resolve;
   });
   await mcp.connect(transport);
-  const stop = whileConnected?.(() => {
+  const stop = options.whileConnected?.(() => {
     void mcp.server.sendToolListChanged();
+  });
+  void options.inputEnded?.then(async () => {
+    await mcp.close();
   });
   await closed;
   stop?.();
