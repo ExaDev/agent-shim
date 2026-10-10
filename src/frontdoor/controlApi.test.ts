@@ -159,7 +159,7 @@ async function mountClient(deps: ControlApiDeps, token: string): Promise<{ reado
     throw new Error("expected a bound TCP server");
   }
   return {
-    client: createORPCClient(new RPCLink({ url: `http://127.0.0.1:${String(address.port)}${RC_ORPC_PATH_PREFIX}`, headers: { authorization: `Bearer ${token}` } })),
+    client: createORPCClient(new RPCLink({ origin: `http://127.0.0.1:${String(address.port)}`, url: RC_ORPC_PATH_PREFIX, headers: { authorization: `Bearer ${token}` } })),
     close: async () => {
       await new Promise<void>((resolve) => {
         server.close(() => {

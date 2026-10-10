@@ -1,4 +1,5 @@
 import { createORPCClient, ORPCError } from "@orpc/client";
+import { openapi } from "@orpc/openapi";
 import type { RouterClient } from "@orpc/server";
 
 import { type CheckReport, checkReportToJson } from "../checkReport";
@@ -79,11 +80,11 @@ export function createControlApiRouter(deps: ControlApiDeps) {
   return {
     usage: {
       list: authed
-        .route({ method: "GET", path: "/rest/usage/snapshots", summary: "List every identity's usage snapshot", tags: [USAGE_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/usage/snapshots", summary: "List every identity's usage snapshot", tags: [USAGE_API_TAG] }))
         .output(UsageListOutputSchema)
         .handler(() => ({ snapshots: deps.usageSnapshots() })),
       effectiveWindow: authed
-        .route({ method: "GET", path: "/rest/usage/windows", summary: "Read one identity's effective quota windows", tags: [USAGE_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/usage/windows", summary: "Read one identity's effective quota windows", tags: [USAGE_API_TAG] }))
         .input(UsageWindowsInputSchema)
         .output(UsageWindowsOutputSchema)
         .handler(({ input }) => {
@@ -106,7 +107,7 @@ export function createControlApiRouter(deps: ControlApiDeps) {
           };
         }),
       live: authed
-        .route({ method: "GET", path: "/rest/usage/live", summary: "Read the live rate-limit observations the event backbone files", tags: [USAGE_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/usage/live", summary: "Read the live rate-limit observations the event backbone files", tags: [USAGE_API_TAG] }))
         .input(RcSessionQuerySchema)
         .output(UsageLiveOutputSchema)
         .handler(({ input }) => {
@@ -123,31 +124,31 @@ export function createControlApiRouter(deps: ControlApiDeps) {
     },
     frontdoor: {
       status: authed
-        .route({ method: "GET", path: "/rest/frontdoor/status", summary: "Read the front door's status", tags: [FRONTDOOR_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/frontdoor/status", summary: "Read the front door's status", tags: [FRONTDOOR_API_TAG] }))
         .output(FrontDoorStatusOutputSchema)
         .handler(() => deps.frontDoorStatus()),
       sessions: authed
-        .route({ method: "GET", path: "/rest/frontdoor/sessions", summary: "Read the front door's session registry", tags: [FRONTDOOR_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/frontdoor/sessions", summary: "Read the front door's session registry", tags: [FRONTDOOR_API_TAG] }))
         .output(FrontDoorSessionsOutputSchema)
         .handler(() => ({ sessions: deps.frontDoorStatus().sessions })),
     },
     check: {
       // The report's own JSON shape is the contract (the same one `check --json` prints and `checkReportSchema.ts` defines), so the procedure returns exactly that conversion.
       run: authed
-        .route({ method: "GET", path: "/rest/check", summary: "Run the check report for one directory", tags: [CHECK_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/check", summary: "Run the check report for one directory", tags: [CHECK_API_TAG] }))
         .input(CheckRunInputSchema)
         .output(CheckReportJsonSchema)
         .handler(({ input }) => checkReportToJson(deps.checkReport(input.path, input.identity))),
     },
     doctor: {
       run: authed
-        .route({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report", tags: [DOCTOR_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/doctor", summary: "Run the doctor report", tags: [DOCTOR_API_TAG] }))
         .output(DoctorRunOutputSchema)
         .handler(() => deps.doctorReport()),
     },
     pool: {
       pick: authed
-        .route({ method: "GET", path: "/rest/pool/pick", summary: "Rank one pool exactly as a launch from a directory would right now", tags: [POOL_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/pool/pick", summary: "Rank one pool exactly as a launch from a directory would right now", tags: [POOL_API_TAG] }))
         .input(PoolPickInputSchema)
         .output(PoolPickReportSchema)
         .handler(({ input }) => {
