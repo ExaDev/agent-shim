@@ -1,3 +1,9 @@
+## [9.7.1](https://github.com/ExaDev/agent-shim/compare/v9.7.0...v9.7.1) (2026-10-10)
+
+### Bug Fixes
+
+* expose launch.resolve to the read-only MCP tool set ([7cc484e](https://github.com/ExaDev/agent-shim/commit/7cc484eb0e0f278d8579f12642ee2b61483cde8b))
+
 ## [9.7.0](https://github.com/ExaDev/agent-shim/compare/v9.6.0...v9.7.0) (2026-10-10)
 
 ### Features
