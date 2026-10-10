@@ -1,11 +1,10 @@
 import type { Command } from "commander";
-import type { ConfigProfile, LaunchFlags } from "./config/schema";
+import type { ConfigProfile } from "./config/schema";
 import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { collectBoolPair, collectRepeated } from "./cli/parsers";
 import { PromptCancelledError, UsageError } from "./cliError";
 import { runProfileWizard } from "./configure";
-import type { LayoutPaths } from "./paths";
-import { ProfileNotFoundError, profileExists, requireProfileExists, readProfile, createProfile, listProfiles, readGlobalConfig, setGlobalDefaultProfile, setProfileCategories, setProfileEntries, setProfileLaunchFlags, setProfileMetadata, removeProfile } from "./configProfilesStore";
+import { applyProfileChange, ProfileNotFoundError, profileExists, type ProfileChange, requireProfileExists, readProfile, createProfile, listProfiles, readGlobalConfig, setGlobalDefaultProfile, removeProfile } from "./configProfilesStore";
 
 /**
  * Makes sure configuration profile `name` exists before something is pointed at it (`identity set --default-profile`, `rule add --config-profile`, `profile use`). An existing profile passes straight through. A missing one is offered for creation, via `runProfileWizard` under that exact name, when standard input is a terminal; declining raises `PromptCancelledError`. With no terminal it raises `ProfileNotFoundError`, since there is nothing to prompt on and pointing at a missing profile would only fail later.
@@ -44,63 +43,9 @@ interface ProfileAddOptions {
   readonly json?: boolean;
 }
 
-/** Options `profile set` accepts. Each `launch*` value is `false` for its `--no-` form. */
-interface ProfileSetOptions {
+/** Options `profile set` accepts: the shared change plus the output switch. */
+interface ProfileSetOptions extends ProfileChange {
   readonly json?: boolean;
-  readonly category?: Record<string, boolean>;
-  readonly entry?: Record<string, boolean>;
-  readonly extends?: readonly string[] | false;
-  readonly description?: string | false;
-  readonly launchSkipPermissions?: boolean;
-  readonly launchRemoteControl?: boolean;
-  readonly launchHeadroom?: boolean;
-  readonly launchTrackUsage?: boolean;
-  readonly launchProvider?: string | false;
-  readonly launchClaudeVersion?: string | false;
-}
-
-/** Applies every field `profile set`'s options name, returning whether any were given. */
-function applyProfileSet(paths: LayoutPaths, name: string, options: ProfileSetOptions): boolean {
-  let touched = false;
-  if (options.category !== undefined) {
-    setProfileCategories(paths, name, options.category);
-    touched = true;
-  }
-  if (options.entry !== undefined) {
-    setProfileEntries(paths, name, options.entry);
-    touched = true;
-  }
-  if (options.extends !== undefined || options.description !== undefined) {
-    setProfileMetadata(paths, name, {
-      ...(options.extends === undefined ? {} : { extends: options.extends === false ? [] : options.extends }),
-      ...(options.description === undefined ? {} : { description: options.description }),
-    });
-    touched = true;
-  }
-  const launchPatch: LaunchFlags = {};
-  if (options.launchSkipPermissions !== undefined) {
-    launchPatch.skipPermissions = options.launchSkipPermissions;
-  }
-  if (options.launchRemoteControl !== undefined) {
-    launchPatch.remoteControl = options.launchRemoteControl;
-  }
-  if (options.launchHeadroom !== undefined) {
-    launchPatch.headroom = options.launchHeadroom;
-  }
-  if (options.launchTrackUsage !== undefined) {
-    launchPatch.trackUsage = options.launchTrackUsage;
-  }
-  if (options.launchProvider !== undefined) {
-    launchPatch.provider = options.launchProvider === false ? undefined : options.launchProvider;
-  }
-  if (options.launchClaudeVersion !== undefined) {
-    launchPatch.claudeVersion = options.launchClaudeVersion === false ? undefined : options.launchClaudeVersion;
-  }
-  if (Object.keys(launchPatch).length > 0) {
-    setProfileLaunchFlags(paths, name, launchPatch);
-    touched = true;
-  }
-  return touched;
 }
 
 /** Registers the `agent-shim profile` subcommand tree onto `program`. */
@@ -184,7 +129,7 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
             throw new PromptCancelledError();
           }
         } else {
-          applyProfileSet(paths, name, options);
+          applyProfileChange(paths, name, options);
         }
         reportMutation(json, { action: "updated", kind: "profile", name, value: readProfile(paths, name) }, () => {
           console.log(`Updated configuration profile "${name}".`);
