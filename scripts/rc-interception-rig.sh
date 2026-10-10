@@ -44,7 +44,7 @@ PROXY_BUNDLE="$REPO_ROOT/dist/rc-sni-proxy.mjs"
 INTERCEPT_PORT=47472
 
 # Source ports the terminating listener's own upstream dials leave through, excluded from the redirect so the dial cannot be captured and looped back through the same listener. This is the door's own upstream dial range (src/frontdoor/connectEffects.ts); the standalone proxy borrows it, so one rule serves both modes.
-EXEMPT_SOURCE_PORTS=47900:47919
+EXEMPT_SOURCE_PORTS=47900:48899
 
 # The four Anthropic hosts that share one address; scripts/rc-sni-proxy-core.mts mints one leaf per host from the same list. The door terminates only its own intercept set (DOOR_INTERCEPT_HOSTS below) and refuses the rest.
 INTERCEPT_HOSTS="api.anthropic.com platform.claude.com bridge.claudeusercontent.com claude.ai"
