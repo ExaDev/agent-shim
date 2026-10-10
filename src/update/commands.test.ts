@@ -180,7 +180,7 @@ describe("agent-shim update", () => {
     const built = buildProgram({ ...fakeCommandDeps(paths), runClaude: vi.fn<(args: readonly string[]) => Promise<void>>() });
     const command = built.commands.find((candidate) => candidate.name() === "update");
     expect(command).toBeDefined();
-    expect(command?.options.map((option) => option.long)).toEqual(["--check", "--mode", "--json"]);
+    expect(command?.options.map((option) => option.long)).toEqual(["--check", "--restart-door", "--mode", "--json"]);
   });
 
   it("reports already being at the latest release and exits 0, downloading nothing and writing no lock", async () => {

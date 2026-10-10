@@ -4,7 +4,7 @@ import { CliError } from "../cliError";
 import type { LayoutPaths } from "../paths";
 import { readStartLock, type HeadroomFs, type HeadroomLock } from "../headroom/state";
 import type { ListenerVerdict } from "./probe";
-import { FRONT_DOOR_PROTOCOL, readFrontDoorState, writeFrontDoorSession } from "./state";
+import { FRONT_DOOR_PROTOCOL, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession } from "./state";
 
 /** How long one launch waits for the front door. The listener is this same binary binding one loopback port, so a cold start takes a second or two; the bound only bites when something is genuinely broken. */
 const FRONTDOOR_START_TIMEOUT_MS = 30_000;
@@ -40,7 +40,13 @@ export interface EnsureFrontDoorPorts {
  *
  * A live pid in state proves nothing about who holds the port it names: the door may have crashed and left the port to anyone, or the pid may have been reused by an unrelated process. So before anything is registered or returned, the provider listener is authenticated over TLS against agent-shim's CA. A listener that fails (wrong certificate, nothing answering, a bad answer) is treated as a stale or hostile owner: its pid is distrusted for the rest of this call and a replacement supervisor is spawned, which binds a free port when the sticky one is held and is then verified in turn. If a supervisor this call spawned also fails verification, the launch is refused naming the reason and the daemon log; no capability is written and no address is handed to the child.
  */
-export function ensureFrontDoor(params: { readonly paths: LayoutPaths; readonly launcherPid: number; readonly ports: EnsureFrontDoorPorts }): { readonly port: number; readonly connectPort: number; readonly token: string } {
+export function ensureFrontDoor(params: {
+  readonly paths: LayoutPaths;
+  readonly launcherPid: number;
+  readonly ports: EnsureFrontDoorPorts;
+  /** Replaces a serving door whatever its protocol, once: the restart a binary update asks for, so the new generation serves the sessions already running without waiting for the registry to empty. */
+  readonly replace?: boolean;
+}): { readonly port: number; readonly connectPort: number; readonly token: string } {
   const { paths, ports } = params;
   const deadline = ports.now() + FRONTDOOR_START_TIMEOUT_MS;
   let spawned = false;
@@ -54,12 +60,12 @@ export function ensureFrontDoor(params: { readonly paths: LayoutPaths; readonly 
     if (supervisorPid !== undefined && !distrusted.has(supervisorPid) && ports.isRunning(supervisorPid)) {
       if (state?.port !== undefined && state.connectPort !== undefined) {
         const verdict = ports.verifyListener(state.port);
-        if (verdict.ok && (state.protocol ?? 0) < FRONT_DOOR_PROTOCOL && !replaced) {
+        if (verdict.ok && !replaced && !spawned && (params.replace === true || (state.protocol ?? 0) < FRONT_DOOR_PROTOCOL)) {
           // A door older than this launcher speaks a protocol this launcher's sessions cannot use (a door from before the protocol field is protocol 0). It is replaced, never joined: the registry is on disk and the replacement binds the same sticky ports, so sessions already running reach it on the addresses they froze. The listener has authenticated as this tool's own, which is what makes the recorded pid safe to stop.
           ports.stopSupervisor(supervisorPid);
           while (ports.isRunning(supervisorPid)) {
             if (ports.now() >= deadline) {
-              throw new FrontDoorStartError(`the front door (pid ${String(supervisorPid)}, protocol ${String(state.protocol ?? 0)}) is older than this launcher (protocol ${String(FRONT_DOOR_PROTOCOL)}) and did not exit when asked. Daemon log: ${paths.frontdoorLogPath}`);
+              throw new FrontDoorStartError(`the front door (pid ${String(supervisorPid)}, protocol ${String(state.protocol ?? 0)}; this launcher speaks protocol ${String(FRONT_DOOR_PROTOCOL)}) was asked to be replaced and did not exit. Daemon log: ${paths.frontdoorLogPath}`);
             }
             ports.sleep(FRONTDOOR_LAUNCHER_POLL_MS);
           }
@@ -109,4 +115,30 @@ export function ensureFrontDoor(params: { readonly paths: LayoutPaths; readonly 
     }
     ports.sleep(FRONTDOOR_LAUNCHER_POLL_MS);
   }
+}
+
+/** The outcome of `restartFrontDoor`: `not-running` when no door was serving (nothing is started: a door exists only for sessions that need one), else the pid replaced and the pid now serving. */
+export type RestartFrontDoorResult = { readonly action: "not-running" } | { readonly action: "restarted"; readonly previousPid: number; readonly pid: number };
+
+/**
+ * Replaces the serving front door in place: the running supervisor is asked to exit and a fresh one from the installed binary binds the same sticky ports, and the session registry is on disk, so every session already running reaches the new door on its next request. Requests in flight when the old door exits fail once, and Remote Control attachments resume from their persisted cursors.
+ *
+ * Nothing is started when no door is serving. The restart's own registry entry is removed again before returning, so it never keeps the new door awake.
+ */
+export function restartFrontDoor(params: { readonly paths: LayoutPaths; readonly pid: number; readonly ports: EnsureFrontDoorPorts }): RestartFrontDoorResult {
+  const { paths, ports } = params;
+  const previousPid = readFrontDoorState(ports.fs, paths.frontdoorStateFile)?.supervisorPid;
+  if (previousPid === undefined || !ports.isRunning(previousPid)) {
+    return { action: "not-running" };
+  }
+  try {
+    ensureFrontDoor({ paths, launcherPid: params.pid, replace: true, ports });
+  } finally {
+    removeFrontDoorSession(ports.fs, paths.frontdoorSessionsDir, params.pid);
+  }
+  const pid = readFrontDoorState(ports.fs, paths.frontdoorStateFile)?.supervisorPid;
+  if (pid === undefined) {
+    throw new FrontDoorStartError(`the front door was replaced but its state records no supervisor. Daemon log: ${paths.frontdoorLogPath}`);
+  }
+  return { action: "restarted", previousPid, pid };
 }

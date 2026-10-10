@@ -204,7 +204,7 @@ describe("runLaunchUpdateCheck", () => {
     expect(port.spawns).toEqual([]);
     port.settle(NEWER_TAG_URL);
     await flush();
-    expect(port.spawns).toEqual([["update"]]);
+    expect(port.spawns).toEqual([["update", "--restart-door"]]);
     expect(port.errLines).toEqual([updateNotifyLine(CURRENT, "9.0.0")]);
   });
 
@@ -214,7 +214,7 @@ describe("runLaunchUpdateCheck", () => {
     handle.markChildStarted();
     port.settle(NEWER_TAG_URL);
     await flush();
-    expect(port.spawns).toEqual([["update"]]);
+    expect(port.spawns).toEqual([["update", "--restart-door"]]);
     expect(port.errLines).toEqual([]);
   });
 
