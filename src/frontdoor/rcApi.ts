@@ -2,7 +2,7 @@ import type { IncomingHttpHeaders } from "node:http";
 
 import { createORPCClient, ORPCError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
-import { OpenAPIGenerator, type OpenAPI } from "@orpc/openapi";
+import { openapi, OpenAPIGenerator, type OpenAPIDocument } from "@orpc/openapi";
 import { OpenAPIHandler } from "@orpc/openapi/node";
 import { eventIterator, os, withEventMeta, type AnyRouter, type RouterClient } from "@orpc/server";
 import { BodyLimitPlugin, RPCHandler } from "@orpc/server/node";
@@ -162,11 +162,11 @@ export function createRcApiRouter(deps: RcApiDeps) {
   return {
     rc: {
       list: authed
-        .route({ method: "GET", path: "/rest/rc/sessions", summary: "List the observed Remote Control sessions", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/rc/sessions", summary: "List the observed Remote Control sessions", tags: [RC_API_TAG] }))
         .output(RcListOutputSchema)
         .handler(() => ({ sessions: deps.list() })),
       status: authed
-        .route({ method: "GET", path: "/rest/rc/status", summary: "Read session status, one session's when named", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/rc/status", summary: "Read session status, one session's when named", tags: [RC_API_TAG] }))
         .input(RcSessionQuerySchema)
         .output(RcStatusOutputSchema)
         .handler(({ input }) => {
@@ -178,7 +178,7 @@ export function createRcApiRouter(deps: RcApiDeps) {
           return { statuses };
         }),
       pending: authed
-        .route({ method: "GET", path: "/rest/rc/pending", summary: "Read the control requests awaiting an answer", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/rc/pending", summary: "Read the control requests awaiting an answer", tags: [RC_API_TAG] }))
         .input(RcSessionQuerySchema)
         .output(RcPendingOutputSchema)
         .handler(({ input }) => {
@@ -189,12 +189,12 @@ export function createRcApiRouter(deps: RcApiDeps) {
           return { pending };
         }),
       send: authed
-        .route({ method: "POST", path: "/rest/rc/send", summary: "Send one message into a session", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/send", summary: "Send one message into a session", tags: [RC_API_TAG] }))
         .input(RcSendInputSchema)
         .output(RcWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.inject(input.session, input.text)) })),
       answer: authed
-        .route({ method: "POST", path: "/rest/rc/answer", summary: "Answer one pending control request", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/answer", summary: "Answer one pending control request", tags: [RC_API_TAG] }))
         .input(RcAnswerInputSchema)
         .output(RcAnswerOutputSchema)
         .handler(async ({ input }) => {
@@ -202,77 +202,77 @@ export function createRcApiRouter(deps: RcApiDeps) {
           return { session: input.session, request: input.request, sequenceNums: delivered(input.session, await deps.answer(input.session, input.request, decision)) };
         }),
       interrupt: authed
-        .route({ method: "POST", path: "/rest/rc/interrupt", summary: "Interrupt a session's running turn", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/interrupt", summary: "Interrupt a session's running turn", tags: [RC_API_TAG] }))
         .input(RcInterruptInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.interrupt(input.session)) })),
       setModel: authed
-        .route({ method: "POST", path: "/rest/rc/set-model", summary: "Switch a session's model", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/set-model", summary: "Switch a session's model", tags: [RC_API_TAG] }))
         .input(RcSetModelInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.setModel(input.session, input.model)) })),
       setPermissionMode: authed
-        .route({ method: "POST", path: "/rest/rc/set-permission-mode", summary: "Switch a session's permission mode", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/set-permission-mode", summary: "Switch a session's permission mode", tags: [RC_API_TAG] }))
         .input(RcSetPermissionModeInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.setPermissionMode(input.session, input.mode)) })),
       endSession: authed
-        .route({ method: "POST", path: "/rest/rc/end-session", summary: "End a session", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/end-session", summary: "End a session", tags: [RC_API_TAG] }))
         .input(RcEndSessionInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.endSession(input.session, input.reason)) })),
       getUsage: authed
-        .route({ method: "POST", path: "/rest/rc/get-usage", summary: "Ask a session for its usage snapshot", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/get-usage", summary: "Ask a session for its usage snapshot", tags: [RC_API_TAG] }))
         .input(RcGetUsageInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.getUsage(input.session, input.skipBehaviors)) })),
       getContextUsage: authed
-        .route({ method: "POST", path: "/rest/rc/get-context-usage", summary: "Ask a session for its context usage", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/get-context-usage", summary: "Ask a session for its context usage", tags: [RC_API_TAG] }))
         .input(RcGetContextUsageInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.getContextUsage(input.session, input.detail)) })),
       readFile: authed
-        .route({ method: "POST", path: "/rest/rc/read-file", summary: "Ask a session to read one file", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/read-file", summary: "Ask a session to read one file", tags: [RC_API_TAG] }))
         .input(RcReadFileInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.readFile(input.session, input.path, { ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }), ...(input.encoding === undefined ? {} : { encoding: input.encoding }) })) })),
       fileSuggestions: authed
-        .route({ method: "POST", path: "/rest/rc/file-suggestions", summary: "Ask a session for file-path suggestions", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/file-suggestions", summary: "Ask a session for file-path suggestions", tags: [RC_API_TAG] }))
         .input(RcFileSuggestionsInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.fileSuggestions(input.session, input.query)) })),
       keepAlive: authed
-        .route({ method: "POST", path: "/rest/rc/keep-alive", summary: "Keep a session's bridge alive", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/keep-alive", summary: "Keep a session's bridge alive", tags: [RC_API_TAG] }))
         .input(RcKeepAliveInputSchema)
         .output(RcWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.keepAlive(input.session)) })),
       mcpStatus: authed
-        .route({ method: "POST", path: "/rest/rc/mcp-status", summary: "Ask a session for its MCP servers' status", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/mcp-status", summary: "Ask a session for its MCP servers' status", tags: [RC_API_TAG] }))
         .input(RcMcpStatusInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpStatus(input.session)) })),
       mcpReconnect: authed
-        .route({ method: "POST", path: "/rest/rc/mcp-reconnect", summary: "Ask a session to reconnect one MCP server", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/mcp-reconnect", summary: "Ask a session to reconnect one MCP server", tags: [RC_API_TAG] }))
         .input(RcMcpReconnectInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpReconnect(input.session, input.serverName)) })),
       mcpAuthenticate: authed
-        .route({ method: "POST", path: "/rest/rc/mcp-authenticate", summary: "Start OAuth for one MCP server on a session", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/mcp-authenticate", summary: "Start OAuth for one MCP server on a session", tags: [RC_API_TAG] }))
         .input(RcMcpAuthenticateInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpAuthenticate(input.session, input.serverName, input.redirectUri)) })),
       mcpOAuthCallbackUrl: authed
-        .route({ method: "POST", path: "/rest/rc/mcp-oauth-callback-url", summary: "Hand a completed MCP OAuth callback to a session", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/mcp-oauth-callback-url", summary: "Hand a completed MCP OAuth callback to a session", tags: [RC_API_TAG] }))
         .input(RcMcpOAuthCallbackUrlInputSchema)
         .output(RcControlWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, ...deliveredControl(input.session, await deps.mcpOAuthCallbackUrl(input.session, input.serverName, input.callbackUrl)) })),
       teleport: authed
-        .route({ method: "POST", path: "/rest/rc/teleport", summary: "Teleport a session to a conversation marker", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "POST", path: "/rest/rc/teleport", summary: "Teleport a session to a conversation marker", tags: [RC_API_TAG] }))
         .input(RcTeleportInputSchema)
         .output(RcWriteOutputSchema)
         .handler(async ({ input }) => ({ session: input.session, sequenceNums: delivered(input.session, await deps.teleport(input.session, input.marker)) })),
       subscribe: authed
-        .route({ method: "GET", path: "/rest/rc/events", summary: "Stream a session's Remote Control events (SSE)", tags: [RC_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/rc/events", summary: "Stream a session's Remote Control events (SSE)", tags: [RC_API_TAG] }))
         .input(RcSessionQuerySchema)
         .output(eventIterator(RcStreamEventSchema))
         .handler(async function* ({ input, signal }) {
@@ -327,8 +327,8 @@ export function doorApiNodeHandlerOf(router: AnyRouter, expectedToken: string): 
   const rpcHandler = new RPCHandler(router, { plugins });
   const restHandler = new OpenAPIHandler(router, { plugins });
   // Generated from the same router the two handlers serve, on the first request that asks for it and never again: the router cannot change after the mount is built, and the memoised promise (success or failure) is what later requests read, so a schema that cannot convert surfaces on every read of the document rather than flapping between attempts.
-  let document: Promise<OpenAPI.Document> | undefined;
-  const documentOf = async () => (document ??= new OpenAPIGenerator().generate(router, { info: { title: "agent-shim front door API", version: packageJson.version } }));
+  let document: Promise<OpenAPIDocument<"3.2.0">> | undefined;
+  const documentOf = async () => (document ??= new OpenAPIGenerator().generate(router, { base: { info: { title: "agent-shim front door API", version: packageJson.version } } }));
   return {
     pathPrefix: RC_ORPC_PATH_PREFIX,
     handle: async (request, response) => {
@@ -376,10 +376,12 @@ export function frontDoorApiLink(port: number, ca: string, token: string) {
   // One dispatcher for the link's lifetime, trusting only the door's CA, so a process merely holding the port cannot answer as the door (the same trust rule the bespoke transport applies).
   const dispatcher = new Agent({ connect: { ca } });
   return new RPCLink({
-    url: `https://127.0.0.1:${String(port)}${RC_ORPC_PATH_PREFIX}`,
+    origin: `https://127.0.0.1:${String(port)}`,
+    url: RC_ORPC_PATH_PREFIX,
     headers: { authorization: `Bearer ${token}` },
     // undici's own Request and Response types and the global ones are distinct declarations of the same standard shapes (the package's bundled types sit beside @types/node's own), and its fetch refuses the global Request instance outright, so the call is rebuilt from the request's parts and the answer re-wrapped through the global constructors, never cast between the two. The request body is one bounded JSON object (the same protocol cap the handler enforces), so reading it whole costs nothing; it is the answer that streams.
-    fetch: async (request, _init, options) => {
+    fetch: async (url, init, options) => {
+      const request = new Request(url, init);
       const body = request.body === null ? undefined : Buffer.from(await request.arrayBuffer());
       const answered = await undiciFetch(request.url, {
         method: request.method,

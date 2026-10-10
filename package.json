@@ -51,9 +51,9 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.292",
     "@clack/prompts": "^1.8.0",
-    "@orpc/client": "1.15.4",
-    "@orpc/openapi": "1.15.4",
-    "@orpc/server": "1.15.4",
+    "@orpc/client": "2.0.0-beta.41",
+    "@orpc/openapi": "2.0.0-beta.41",
+    "@orpc/server": "2.0.0-beta.41",
     "commander": "^15.0.0",
     "cosmiconfig": "^10.0.1",
     "picomatch": "^4.0.7",

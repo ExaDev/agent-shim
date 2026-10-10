@@ -31,6 +31,8 @@
 
 The door's typed API (Remote Control, the control plane and the events surface, over RPC and REST alike) carries no path version: its contract is versioned by the package release, because every procedure, route annotation and schema change rides a semver release of agent-shim, and the OpenAPI document served at `/__agent-shim/orpc/openapi.json` states the running version as its own `info.version`, so a consumer can always name which contract it dialled. A breaking change to the served surface would arrive as a new namespace served beside `/rest` (the same separation that keeps the REST routes from the RPC protocol's procedure paths), introduced in the release that breaks and documented there; no second version is pre-built.
 
+Every operation's request and response schema in that document is the JSON Schema its Zod definition produces through the standard JSON Schema interface oRPC's generator reads, so no converter package sits between the Zod schema and the document and constraints (`minLength`, `maximum`, integer typing) arrive intact. A test asserts every JSON response and the write inputs carry a real schema, so the document cannot silently go empty.
+
 ## Example
 
 ```ts

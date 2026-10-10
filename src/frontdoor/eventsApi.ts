@@ -1,4 +1,5 @@
 import { ORPCError } from "@orpc/client";
+import { openapi } from "@orpc/openapi";
 import { eventIterator, withEventMeta } from "@orpc/server";
 
 import { doorApiAuth } from "./rcApi";
@@ -28,7 +29,7 @@ export function createEventsApiRouter(deps: DoorEventsApiDeps) {
   return {
     events: {
       subscribe: authed
-        .route({ method: "GET", path: "/rest/events", summary: "Stream the door's every event source (SSE)", tags: [EVENTS_API_TAG] })
+        .meta(openapi({ method: "GET", path: "/rest/events", summary: "Stream the door's every event source (SSE)", tags: [EVENTS_API_TAG] }))
         .input(DoorEventSourceQuerySchema)
         .output(eventIterator(DoorEventSchema))
         .handler(async function* ({ input, signal }) {

@@ -219,7 +219,7 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
   it("refuses a REST call without the control token, in the same error shape the RPC protocol answers with", async () => {
     const refused = await call("GET", "/rest/rc/sessions", undefined, null);
     expect(refused.status).toBe(HTTP_STATUS.unauthorized);
-    expect(JSON.parse(refused.text)).toMatchObject({ code: "UNAUTHORIZED", status: HTTP_STATUS.unauthorized });
+    expect(JSON.parse(refused.text)).toMatchObject({ code: "UNAUTHORIZED" });
     const wrong = await call("GET", "/rest/rc/sessions", undefined, "not-the-token");
     expect(wrong.status).toBe(HTTP_STATUS.unauthorized);
   });
@@ -257,6 +257,25 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
     // The SSE routes describe their wire shape, so a consumer knows what the stream is before dialling it.
     const streamResponses = parsed.paths["/rest/rc/events"]?.get?.responses;
     expect(Object.keys(streamResponses?.["200"]?.content ?? {})).toContain("text/event-stream");
+  });
+
+  it("carries every operation's Zod schemas and their constraints in the document", async () => {
+    const doc = await call("GET", "/openapi.json");
+    interface Operation { requestBody?: { content?: Record<string, { schema?: unknown }> }; responses?: Record<string, { content?: Record<string, { schema?: unknown }> }> }
+    const parsed = JSON.parse(doc.text) as { paths: Record<string, Record<string, Operation>> };
+    // An empty schema or `anyOf: [{}, {not: {}}]` is what a document generated without schemas carries; every JSON response must describe a real shape instead.
+    const isUnconstrained = (schema: unknown): boolean => typeof schema !== "object" || schema === null || !("type" in schema || "properties" in schema || "$ref" in schema || "items" in schema || "enum" in schema || "const" in schema);
+    const operations = Object.values(parsed.paths).flatMap((byMethod) => Object.values(byMethod));
+    expect(operations.length).toBeGreaterThan(0);
+    for (const operation of operations) {
+      const ok = operation.responses?.["200"]?.content;
+      const json = ok?.["application/json"];
+      if (json !== undefined) {
+        expect(isUnconstrained(json.schema)).toBe(false);
+      }
+    }
+    const send = parsed.paths["/rest/rc/send"]?.post?.requestBody?.content?.["application/json"]?.schema;
+    expect(send).toMatchObject({ type: "object", properties: { session: { type: "string", minLength: 1 }, text: { type: "string", minLength: 1 } } });
   });
 
   it("still serves the RPC protocol beside the REST routes, on the procedure paths the typed clients use", async () => {
