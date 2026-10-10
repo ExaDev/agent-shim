@@ -1,3 +1,23 @@
+## [9.7.0](https://github.com/ExaDev/agent-shim/compare/v9.6.0...v9.7.0) (2026-10-10)
+
+### Features
+
+* add configuration-management procedures to the typed door API ([25f7046](https://github.com/ExaDev/agent-shim/commit/25f7046fa317adcb6ebab202f7ff06daa0bbf1b3))
+* mount the configuration procedures on the door's whole typed API ([21497d4](https://github.com/ExaDev/agent-shim/commit/21497d4d47e2f8f1cb4c0c874144ba04d506bb40))
+* require the credential block when a provider's base URL moves over the API ([bd80797](https://github.com/ExaDev/agent-shim/commit/bd8079770960b6cf5f2c15abb7a0b9e1d07765fc))
+
+### Code Refactoring
+
+* share the profile, rule-target, pool-member and credential-cache rules with the stores ([09febbb](https://github.com/ExaDev/agent-shim/commit/09febbb66443a3bea027f31be1f3af1d8315635f))
+
+### Documentation
+
+* describe the configuration procedures and export them from the library ([765422d](https://github.com/ExaDev/agent-shim/commit/765422de67b98f1151ffcb728f046c7dfc159699))
+
+### Tests
+
+* supply the configuration deps to the MCP end-to-end door ([db668f6](https://github.com/ExaDev/agent-shim/commit/db668f6edc5c5473a20b8119fa5c2973c403f8a9))
+
 ## [9.6.0](https://github.com/ExaDev/agent-shim/compare/v9.5.1...v9.6.0) (2026-10-10)
 
 ### Features
