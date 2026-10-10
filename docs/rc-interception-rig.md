@@ -29,14 +29,14 @@ The script runs wherever the repo is checked out and talks to whatever Docker `D
 One Docker container from `node:24-slim`, in its own network namespace, containing the pieces both modes share:
 
 - `/etc/hosts` entries pointing the four Anthropic hosts that share one address (`api.anthropic.com`, `platform.claude.com`, `bridge.claudeusercontent.com`, `claude.ai`) at 127.0.0.1, written inside the container.
-- An iptables REDIRECT from local 443 to the interception port (47472), exempting the source-port range 47900 to 47919: the door's own upstream dial range (`src/frontdoor/connectEffects.ts`), which the standalone proxy borrows, so the one rule serves both modes.
+- An iptables REDIRECT from local 443 to the interception port (47472), exempting the source-port range 47900 to 48899: the door's own upstream dial range (`src/frontdoor/connectEffects.ts`), which the standalone proxy borrows, so the one rule serves both modes.
 - Claude Code, installed before the redirect exists.
 - Whichever listener the mode selects, listening on 127.0.0.1:47472: the standalone SNI proxy, or the door's transparent surface.
 
 Two environment behaviours the rig depends on, both confirmed on live rigs:
 
 - Claude Code resolves via DNS-over-HTTPS on a macOS or Linux host and ignores `/etc/hosts`. Inside the container the DoH lookup fails (the redirect sends the DoH resolver's own TLS to the terminating listener, which serves only the intercepted hosts) and resolution falls back to the system resolver, where `/etc/hosts` works. Host-level `/etc/hosts` redirection is not viable; container-level is.
-- The terminating listener's own upstream dial must leave through the exempt source-port range (47900 to 47919), or the redirect captures it and the listener loops through itself. In door mode that range is the door's own dial range by construction, and the door also resolves upstreams through real DNS (`dns.resolve4`, bypassing the hosts file) with the real hostname as SNI, so its dials reach the real hosts untouched.
+- The terminating listener's own upstream dial must leave through the exempt source-port range (47900 to 48899), or the redirect captures it and the listener loops through itself. In door mode that range is the door's own dial range by construction, and the door also resolves upstreams through real DNS (`dns.resolve4`, bypassing the hosts file) with the real hostname as SNI, so its dials reach the real hosts untouched.
 
 A consequence of the redirect worth knowing before you debug: once the rule is in, every TLS host in the container except the intercepted ones is unreachable. Packages, Claude Code and (in door mode) agent-shim are installed before the rule is added for exactly that reason, and a re-run that needs to install something new should `down` and `up` first.
 

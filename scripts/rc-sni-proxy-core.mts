@@ -30,7 +30,7 @@ const UPSTREAM_PORT = 443;
  * The source-port range this proxy's own upstream dials bind, matching the redirect's exemption in `scripts/rc-interception-rig.sh`: without it, the proxy's dial to the real address would be redirected straight back into itself, an endless loop. The range is the door's own upstream dial range (`src/frontdoor/connectEffects.ts`), so the same exemption keeps holding when the rig's redirect is retargeted at the door's transparent port.
  */
 const UPSTREAM_SOURCE_PORT_START = 47900;
-const UPSTREAM_SOURCE_PORT_END = 47919;
+const UPSTREAM_SOURCE_PORT_END = 48899;
 
 /** The four Anthropic hosts that share one address, so one redirect carries them all and each needs its own leaf to pass hostname verification. */
 const HOSTS = ["api.anthropic.com", "platform.claude.com", "bridge.claudeusercontent.com", "claude.ai"] as const;

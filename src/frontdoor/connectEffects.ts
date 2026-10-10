@@ -49,10 +49,32 @@ export class SourcePortRange {
   }
 }
 
+/**
+ * The first port of the door's reserved source range. The range must stay below the operating system's ephemeral range (49152 upward on macOS and per IANA), so nothing else on the machine is ever handed a port the door's rotation may hold.
+ */
+export const DOOR_SOURCE_PORT_START = 47900;
+
+/**
+ * How many source ports the door reserves. A closed upstream connection keeps its local port out of use for the TCP TIME_WAIT interval (twice the maximum segment lifetime, 30 s on macOS), so a range sustains about its width divided by that interval in new connections per second; a Remote Control fleet of concurrent sessions each holding a read stream and posting receipts needs far more than a few dozen ports. The range ends at 48899, short of the ephemeral start.
+ */
+export const DOOR_SOURCE_PORT_COUNT = 1000;
+
+/** The last port of the door's reserved source range, inclusive. */
+export const DOOR_SOURCE_PORT_END = DOOR_SOURCE_PORT_START + DOOR_SOURCE_PORT_COUNT - 1;
+
 /** The pf exemption an interception deployment loads alongside the redirect covers exactly this range: without it, the door's dial to the real address would be redirected straight back into its own transparent surface, an endless loop. */
-const DOOR_SOURCE_PORT_START = 47900;
-const DOOR_SOURCE_PORT_END = 47919;
 const DOOR_SOURCE_PORTS = new SourcePortRange(DOOR_SOURCE_PORT_START, DOOR_SOURCE_PORT_END);
+
+/**
+ * How long a pooled connection may sit idle before the agent closes it. An idle socket holds a reserved source port, and an intermediary (a NAT, a load balancer) can drop an idle flow without telling either end, so a pooled connection is retired well inside the shortest idle timeout those commonly apply (60 s) instead of being reused dead.
+ */
+const POOLED_SOCKET_IDLE_MS = 30_000;
+
+/** How many idle connections one agent keeps pooled: enough to serve a session's sequential requests over one connection, while every further idle connection would only hold a port. */
+const POOLED_SOCKETS_KEPT_IDLE = 2;
+
+/** The pooling both exempt agents share: without `keepAlive` node's agent opens a fresh connection (and so takes a fresh reserved port) for every request, which is what exhausted the range under per-chunk receipts and per-turn presence calls. */
+const POOLING = { keepAlive: true, timeout: POOLED_SOCKET_IDLE_MS, maxFreeSockets: POOLED_SOCKETS_KEPT_IDLE } as const;
 
 const realAddressLookup: LookupFunction = (host, _options, callback) => {
   // An address literal is not a name to resolve; resolve4 would query DNS for it as a hostname and fail. Hand it straight back, so a loopback or otherwise-literal upstream (every test's local fake, and any loopback provider) keeps working under this lookup.
@@ -141,7 +163,7 @@ function requestServername(options: http.ClientRequestArgs, fallback: string): s
 /** The plain-HTTP sibling; http.Agent and https.Agent each carry their protocol, and one cannot serve the other's requests. */
 export class ExemptHttpAgent extends http.Agent {
   constructor(private readonly ports: SourcePortRange = DOOR_SOURCE_PORTS) {
-    super();
+    super(POOLING);
   }
 
   // A reserved-port dial that has to retry cannot produce its socket synchronously, so it settles first and arrives through the callback (node's documented asynchronous createConnection form); a literal dial has nothing to retry and keeps node's own synchronous shape.
@@ -160,7 +182,7 @@ export class ExemptHttpAgent extends http.Agent {
 /** The TLS sibling: the door's keep-alive agent for https upstreams, every real-name socket in the pf-exempt source-port range. */
 export class ExemptTlsAgent extends https.Agent {
   constructor(private readonly ports: SourcePortRange = DOOR_SOURCE_PORTS) {
-    super();
+    super(POOLING);
   }
 
   // The same split as the plain sibling: a literal dial wraps TLS around the socket node's own agent would have returned, a reserved dial settles (retries included) first and arrives through the callback, which is exactly where node's own agent wraps its own dials.

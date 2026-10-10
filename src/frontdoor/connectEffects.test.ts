@@ -102,15 +102,20 @@ async function startUpstream(): Promise<{ readonly port: number; readonly arriva
 
 /** Performs one real request through a fresh exempt agent against the stand-in, resolving with the answer body and the source port the request left from. */
 async function requestThrough(port: number): Promise<{ readonly body: string; readonly sourcePort: number }> {
+  return await requestVia(new ExemptHttpAgent(PRIVATE_RANGE), port);
+}
+
+/** Performs one real request through the given exempt agent, so a test can prove what a pooled agent does across requests. */
+async function requestVia(agent: ExemptHttpAgent, port: number): Promise<{ readonly body: string; readonly sourcePort: number }> {
   return await new Promise((resolve, reject) => {
-    const request = http.request({ host: DIAL_NAME, port, method: "GET", path: "/", agent: new ExemptHttpAgent(PRIVATE_RANGE) }, (response) => {
+    const request = http.request({ host: DIAL_NAME, port, method: "GET", path: "/", agent }, (response) => {
+      // The client side of the same socket, read as the response starts: a pooled socket is released back to its agent before `end`, after which the response no longer holds it.
+      const sourcePort = response.socket.localPort;
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
       });
       response.on("end", () => {
-        // The client side of the same socket: its local port is the source port the stand-in saw.
-        const sourcePort = response.socket.localPort;
         if (sourcePort === undefined) {
           reject(new Error("the client socket did not report its local port"));
           return;
@@ -234,6 +239,22 @@ describe("the exempt agents' reserved source-port rotation", () => {
         }
       }
     } finally {
+      await upstream.close();
+    }
+  });
+
+  it("serves sequential requests from one agent over one pooled connection, so they take one reserved port", async () => {
+    const upstream = await startUpstream();
+    const agent = new ExemptHttpAgent(PRIVATE_RANGE);
+    try {
+      const first = await requestVia(agent, upstream.port);
+      const second = await requestVia(agent, upstream.port);
+      expect(first.body).toBe("stand-in-answer");
+      expect(second.body).toBe("stand-in-answer");
+      expect(second.sourcePort).toBe(first.sourcePort);
+      expect(upstream.arrivals).toEqual([first.sourcePort, first.sourcePort]);
+    } finally {
+      agent.destroy();
       await upstream.close();
     }
   });
