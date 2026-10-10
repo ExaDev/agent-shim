@@ -17,6 +17,7 @@ import type { RcEventWriteResult } from "./rcWrites";
 import { createRcEventFanout } from "./rcStream";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import type { FrontDoorStatus } from "./status";
+import { buildLayoutPaths } from "../paths";
 
 /** The token the mounted door accepts, standing in for the per-generation value the real door writes owner-only. */
 const CONTROL_TOKEN = "e2e-control-token";
@@ -114,6 +115,7 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
     const rcLiveUsage = createRcLiveUsage({ now: () => NOW_MS, hub: doorEvents });
     const doorApi = createDoorApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
+      paths: buildLayoutPaths("/nonexistent/agent-shim-config-api-unexercised"),
       list: tracker.list,
       statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
       pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),

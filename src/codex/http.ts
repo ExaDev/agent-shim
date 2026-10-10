@@ -6,6 +6,7 @@ export const HTTP_STATUS = {
   forbidden: 403,
   notFound: 404,
   methodNotAllowed: 405,
+  conflict: 409,
   payloadTooLarge: 413,
   tooManyRequests: 429,
   /** Not sent to anyone: the client is gone. Recorded for a response abandoned because the client disconnected, following the convention nginx uses for the same case. */

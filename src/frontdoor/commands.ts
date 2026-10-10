@@ -319,6 +319,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         [
           createDoorApiNodeHandler({
             expectedToken: rcControlToken,
+            paths,
             statusOf: rcTracker.statusOf,
             pendingOf: rcTracker.pendingOf,
             inject: rcInject,

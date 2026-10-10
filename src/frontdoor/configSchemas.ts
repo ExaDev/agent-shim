@@ -33,7 +33,7 @@ const CredentialWriteSchema = <Target extends readonly [string, ...string[]]>(ta
 /** A credential block as every response reports it: the effective target, each source's kind and its identifying detail, in order, and the cache setting. Never a value: a `literal` source reports only its kind. */
 export const CredentialSummarySchema = z.strictObject({
   target: z.enum(CREDENTIAL_TARGETS),
-  sources: z.array(
+  sources: z.readonly(z.array(
     z.discriminatedUnion("kind", [
       z.strictObject({ kind: z.literal("env"), variable: z.string() }),
       z.strictObject({ kind: z.literal("file"), path: z.string() }),
@@ -42,18 +42,17 @@ export const CredentialSummarySchema = z.strictObject({
       z.strictObject({ kind: z.literal("keychain"), service: z.string(), account: z.string().optional() }),
       z.strictObject({ kind: z.literal("literal") }),
     ]),
-  ),
+  )),
   cache: CredentialCacheSchema.optional(),
 });
 
-/** The shape every management procedure answers with: what it did, to which noun and name, and the stored object after the change (absent for a removal and a selection). The `--json` output of the CLI's mutating verbs, so a consumer reads one result shape from either surface. */
-const mutationOutput = <Kind extends string, Action extends "created" | "updated" | "removed" | "selected", Value extends z.ZodType | undefined>(kind: Kind, action: Action, value: Value) =>
-  z.strictObject({
-    action: z.literal(action),
-    kind: z.literal(kind),
-    name: z.string(),
-    ...(value === undefined ? {} : { value }),
-  });
+/** The shape a management procedure answers with when it leaves nothing stored to report (a removal, a selection): what it did, to which noun and name. The `--json` object of the CLI's mutating verbs, so a consumer reads one result shape from either surface. */
+const mutationOutput = <Kind extends string, Action extends "removed" | "selected">(kind: Kind, action: Action) =>
+  z.strictObject({ action: z.literal(action), kind: z.literal(kind), name: z.string() });
+
+/** The same shape for a creation or update, carrying the stored object after the change. */
+const storedMutationOutput = <Kind extends string, Action extends "created" | "updated", Value extends z.ZodType>(kind: Kind, action: Action, value: Value) =>
+  z.strictObject({ action: z.literal(action), kind: z.literal(kind), name: z.string(), value });
 
 /** One identity as a write reports it. The stored credential block is reported as its summary, never its sources' values. */
 const IdentityValueSchema = z.strictObject({
@@ -80,7 +79,7 @@ const ProviderValueSchema = z.strictObject({
 /** The input of the procedures that act on one named identity, profile or pool and take nothing else (`add` for an identity, `use` for each). The stores' own naming rules refuse a malformed name with the rule it broke. */
 export const ConfigNameInputSchema = z.strictObject({ name: z.string().min(1) });
 
-export const ConfigIdentityAddOutputSchema = mutationOutput("identity", "created", IdentityValueSchema);
+export const ConfigIdentityAddOutputSchema = storedMutationOutput("identity", "created", IdentityValueSchema);
 
 /** `defaultConfigProfile: false` clears it; `credential: false` removes the credential block, returning the identity to its stored login. At least one field must be present. */
 export const ConfigIdentitySetInputSchema = z.strictObject({
@@ -89,19 +88,19 @@ export const ConfigIdentitySetInputSchema = z.strictObject({
   allowAmbientCredential: z.boolean().optional(),
   credential: z.union([z.literal(false), CredentialWriteSchema(CREDENTIAL_TARGETS)]).optional(),
 });
-export const ConfigIdentitySetOutputSchema = mutationOutput("identity", "updated", IdentityValueSchema);
+export const ConfigIdentitySetOutputSchema = storedMutationOutput("identity", "updated", IdentityValueSchema);
 
 export const ConfigIdentityRemoveInputSchema = z.strictObject({ name: z.string().min(1), confirm: RemovalConfirmationSchema });
-export const ConfigIdentityRemoveOutputSchema = mutationOutput("identity", "removed", undefined);
+export const ConfigIdentityRemoveOutputSchema = mutationOutput("identity", "removed");
 
-export const ConfigIdentityUseOutputSchema = mutationOutput("identity", "selected", undefined);
+export const ConfigIdentityUseOutputSchema = mutationOutput("identity", "selected");
 
 export const ConfigProfileAddInputSchema = z.strictObject({
   name: z.string().min(1),
   extends: z.array(z.string().min(1)).optional(),
   description: z.string().optional(),
 });
-export const ConfigProfileAddOutputSchema = mutationOutput("profile", "created", ProfileValueSchema);
+export const ConfigProfileAddOutputSchema = storedMutationOutput("profile", "created", ProfileValueSchema);
 
 /** `category` and `entry` merge toggles into the profile's own maps; `extends` replaces the list (`false` clears it); `description` replaces the text (`false` clears it); `launch` merges the launch settings, each `provider` and `claudeVersion` clearable with `false`. At least one field must be present. */
 export const ConfigProfileSetInputSchema = z.strictObject({
@@ -121,12 +120,12 @@ export const ConfigProfileSetInputSchema = z.strictObject({
     })
     .optional(),
 });
-export const ConfigProfileSetOutputSchema = mutationOutput("profile", "updated", ProfileValueSchema);
+export const ConfigProfileSetOutputSchema = storedMutationOutput("profile", "updated", ProfileValueSchema);
 
 export const ConfigProfileRemoveInputSchema = z.strictObject({ name: z.string().min(1), confirm: RemovalConfirmationSchema });
-export const ConfigProfileRemoveOutputSchema = mutationOutput("profile", "removed", undefined);
+export const ConfigProfileRemoveOutputSchema = mutationOutput("profile", "removed");
 
-export const ConfigProfileUseOutputSchema = mutationOutput("profile", "selected", undefined);
+export const ConfigProfileUseOutputSchema = mutationOutput("profile", "selected");
 
 /** A pool's members are identity names or `pool:<name>` selectors; an existing member's condition is kept by `set` when the list is not restated. */
 const PoolMembersInputSchema = z.array(z.string().min(1)).min(1);
@@ -136,7 +135,7 @@ export const ConfigPoolAddInputSchema = z.strictObject({
   identities: PoolMembersInputSchema,
   preference: z.enum(POOL_PREFERENCES).optional(),
 });
-export const ConfigPoolAddOutputSchema = mutationOutput("pool", "created", PoolSchema);
+export const ConfigPoolAddOutputSchema = storedMutationOutput("pool", "created", PoolSchema);
 
 /** `identities` replaces the full member list; `preference: false` clears it back to the default, score. At least one field must be present. */
 export const ConfigPoolSetInputSchema = z.strictObject({
@@ -144,12 +143,12 @@ export const ConfigPoolSetInputSchema = z.strictObject({
   identities: PoolMembersInputSchema.optional(),
   preference: z.union([z.enum(POOL_PREFERENCES), z.literal(false)]).optional(),
 });
-export const ConfigPoolSetOutputSchema = mutationOutput("pool", "updated", PoolSchema);
+export const ConfigPoolSetOutputSchema = storedMutationOutput("pool", "updated", PoolSchema);
 
 export const ConfigPoolRemoveInputSchema = z.strictObject({ name: z.string().min(1), confirm: RemovalConfirmationSchema });
-export const ConfigPoolRemoveOutputSchema = mutationOutput("pool", "removed", undefined);
+export const ConfigPoolRemoveOutputSchema = mutationOutput("pool", "removed");
 
-export const ConfigPoolUseOutputSchema = mutationOutput("pool", "selected", undefined);
+export const ConfigPoolUseOutputSchema = mutationOutput("pool", "selected");
 
 /** A new provider: an `http` one names `baseUrl`, a `codex` one names none and may carry `codex` settings. `env` is deliberately absent: set it from the CLI. */
 export const ConfigProviderAddInputSchema = z.strictObject({
@@ -160,7 +159,7 @@ export const ConfigProviderAddInputSchema = z.strictObject({
   credential: CredentialWriteSchema(PROVIDER_CREDENTIAL_TARGETS).required({ sources: true }),
   codex: CodexProviderConfigSchema.optional(),
 });
-export const ConfigProviderAddOutputSchema = mutationOutput("provider", "created", ProviderValueSchema);
+export const ConfigProviderAddOutputSchema = storedMutationOutput("provider", "created", ProviderValueSchema);
 
 /** The fields to change; `credential.sources` replaces the whole ordered list, `codex.models` entries merge per tier. At least one field must be present. */
 export const ConfigProviderSetInputSchema = z.strictObject({
@@ -170,10 +169,10 @@ export const ConfigProviderSetInputSchema = z.strictObject({
   credential: CredentialWriteSchema(PROVIDER_CREDENTIAL_TARGETS).optional(),
   codex: CodexProviderConfigSchema.optional(),
 });
-export const ConfigProviderSetOutputSchema = mutationOutput("provider", "updated", ProviderValueSchema);
+export const ConfigProviderSetOutputSchema = storedMutationOutput("provider", "updated", ProviderValueSchema);
 
 export const ConfigProviderRemoveInputSchema = z.strictObject({ name: z.string().min(1), confirm: RemovalConfirmationSchema });
-export const ConfigProviderRemoveOutputSchema = mutationOutput("provider", "removed", undefined);
+export const ConfigProviderRemoveOutputSchema = mutationOutput("provider", "removed");
 
 /** A rule's `name` in a response is its path, as the CLI reports it. */
 export const ConfigRuleAddInputSchema = z.strictObject({
@@ -181,7 +180,7 @@ export const ConfigRuleAddInputSchema = z.strictObject({
   configProfile: z.string().min(1).optional(),
   identity: z.string().min(1).optional(),
 });
-export const ConfigRuleAddOutputSchema = mutationOutput("rule", "created", DirectoryRuleSchema);
+export const ConfigRuleAddOutputSchema = storedMutationOutput("rule", "created", DirectoryRuleSchema);
 
 /** `configProfile` and `identity` each replace the rule's target, `false` stops pinning it. At least one field must be present. */
 export const ConfigRuleSetInputSchema = z.strictObject({
@@ -189,7 +188,7 @@ export const ConfigRuleSetInputSchema = z.strictObject({
   configProfile: z.union([z.string().min(1), z.literal(false)]).optional(),
   identity: z.union([z.string().min(1), z.literal(false)]).optional(),
 });
-export const ConfigRuleSetOutputSchema = mutationOutput("rule", "updated", DirectoryRuleSchema);
+export const ConfigRuleSetOutputSchema = storedMutationOutput("rule", "updated", DirectoryRuleSchema);
 
 export const ConfigRuleRemoveInputSchema = z.strictObject({ path: z.string().min(1), confirm: RemovalConfirmationSchema });
-export const ConfigRuleRemoveOutputSchema = mutationOutput("rule", "removed", undefined);
+export const ConfigRuleRemoveOutputSchema = mutationOutput("rule", "removed");

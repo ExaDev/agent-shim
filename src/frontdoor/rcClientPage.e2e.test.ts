@@ -14,6 +14,7 @@ import type { RcEventWriteResult } from "./rcWrites";
 import { generateCa, LOOPBACK_LEAF_NAMES, mintLeaf, type CaMaterial } from "./connect";
 import { KEYGEN_TIMEOUT_MS } from "./connectTestWorld";
 import { createFrontDoorServer, listenFrontDoor, type PrePipelineApi } from "./server";
+import { buildLayoutPaths } from "../paths";
 
 /** The token the mounted door accepts, standing in for the per-generation value the real door writes owner-only. */
 const CONTROL_TOKEN = "e2e-page-control-token";
@@ -108,6 +109,7 @@ describe("the door's web client page and its API calls over the door's own TLS",
     const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: RC_IDLE_EXPIRY_MS });
     const doorApi = createDoorApiNodeHandler({
       expectedToken: CONTROL_TOKEN,
+      paths: buildLayoutPaths("/nonexistent/agent-shim-config-api-unexercised"),
       list: tracker.list,
       statusOf: (sessionId?: string) => tracker.statusOf(sessionId),
       pendingOf: (sessionId?: string) => tracker.pendingOf(sessionId),
