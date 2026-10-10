@@ -397,6 +397,20 @@ export function frontDoorApiLink(port: number, ca: string, token: string) {
   });
 }
 
+/** Fetches the OpenAPI document of the door's whole typed surface over TLS trusting only the CA the door's own state names, presenting the per-generation control token. Resolves to the parsed JSON, whose shape the caller validates. */
+export async function fetchFrontDoorOpenApiDocument(port: number, ca: string, token: string): Promise<unknown> {
+  const dispatcher = new Agent({ connect: { ca } });
+  try {
+    const answered = await undiciFetch(`https://127.0.0.1:${String(port)}${RC_ORPC_PATH_PREFIX}${RC_OPENAPI_DOC_PATH}`, { headers: { authorization: `Bearer ${token}` }, dispatcher });
+    if (!answered.ok) {
+      throw new Error(`the front door refused its OpenAPI document with HTTP ${String(answered.status)}`);
+    }
+    return await answered.json();
+  } finally {
+    await dispatcher.close();
+  }
+}
+
 /** Builds the typed API's client for the door's provider listener: the same address, CA and per-generation control token the bespoke control client uses. */
 export function frontDoorRcApiClient(port: number, ca: string, token: string): RcApiClient {
   return createORPCClient(frontDoorApiLink(port, ca, token));
