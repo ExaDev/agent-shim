@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { ensureFrontDoor, FrontDoorStartError } from "./ensure";
+import { ensureFrontDoor, FrontDoorStartError, restartFrontDoor } from "./ensure";
 import type { ListenerVerdict } from "./probe";
 import { FRONT_DOOR_PROTOCOL, writeFrontDoorSession, writeFrontDoorState } from "./state";
 
@@ -165,6 +165,23 @@ describe("ensureFrontDoor", () => {
     expect(world.spawns).toEqual([REPLACEMENT_PID]);
   });
 
+  it("replaces a door of the current protocol when asked to, once, and the replacement comes up on the same port", () => {
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT });
+    world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+    const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports, replace: true });
+    expect(world.stops).toEqual([SUPERVISOR_PID]);
+    expect(world.spawns).toEqual([REPLACEMENT_PID]);
+    expect(ensured.port).toBe(PORT);
+  });
+
+  it("does not stop a door whose listener did not authenticate even when asked to replace it", () => {
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: REPLACEMENT_PORT });
+    world.authentic.add(REPLACEMENT_PORT);
+    world.writeReadyState(HOSTILE_PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+    ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports, replace: true });
+    expect(world.stops).toEqual([]);
+  });
+
   it("joins a door of the same or a newer protocol without stopping it, so an older launcher never downgrades a newer door", () => {
     for (const protocol of [FRONT_DOOR_PROTOCOL, FRONT_DOOR_PROTOCOL + 1]) {
       const world = makeWorld();
@@ -189,7 +206,7 @@ describe("ensureFrontDoor", () => {
     world.ports.stopSupervisor = (pid: number) => {
       world.stops.push(pid);
     };
-    expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(/older than this launcher/);
+    expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(/asked to be replaced and did not exit/);
   });
 
   it("spawns a replacement supervisor when the recorded one is dead, the crash-recovery path every frozen base URL depends on", () => {
@@ -297,5 +314,20 @@ describe("ensureFrontDoor", () => {
     expect(world.probed).toEqual([PORT, REPLACEMENT_PORT]);
     expect(world.sessionToken(LAUNCHER_PID)).toBe(ensured.token);
   });
-});
 
+  it("restarts a serving door in place: the old one is stopped, the replacement serves the same port, and the restart leaves no registry entry of its own", () => {
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT });
+    world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+    const result = restartFrontDoor({ paths, pid: LAUNCHER_PID, ports: world.ports });
+    expect(result).toEqual({ action: "restarted", previousPid: SUPERVISOR_PID, pid: REPLACEMENT_PID });
+    expect(world.stops).toEqual([SUPERVISOR_PID]);
+    expect(world.sessionToken(LAUNCHER_PID)).toBeUndefined();
+  });
+
+  it("starts nothing when no door is serving", () => {
+    const world = makeWorld();
+    expect(restartFrontDoor({ paths, pid: LAUNCHER_PID, ports: world.ports })).toEqual({ action: "not-running" });
+    expect(world.spawns).toEqual([]);
+    expect(world.stops).toEqual([]);
+  });
+});

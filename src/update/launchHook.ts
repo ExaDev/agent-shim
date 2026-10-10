@@ -97,7 +97,7 @@ export function runLaunchUpdateCheck(params: {
       }
       if (mode === "auto") {
         // The detached child does the downloading behind the update command's own lock; the launch process never awaits it.
-        port.spawnDetached(["update"]);
+        port.spawnDetached(["update", "--restart-door"]);
       }
       if (!childStarted) {
         port.writeErr(updateNotifyLine(currentVersion, latest));

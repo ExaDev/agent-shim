@@ -33,6 +33,7 @@ import { createQuotaExpiringPublisher } from "./quotaExpiringEvents";
 import { createLaunchEventPublisher } from "./launchEvents";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
+import { realRestartFrontDoor } from "./realFrontDoorPort";
 import { MINTED_TOKEN_RANDOM_BYTES, registerRcCommand } from "./rcCommands";
 import { createRcControlHandler } from "./rcControl";
 import { createRcCredentialStore } from "./rcCredentialStore";
@@ -451,6 +452,24 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
         }
       }),
     ["agent-shim frontdoor status", "agent-shim frontdoor status --json"],
+  );
+
+  withExamples(
+    frontdoor
+      .command("restart")
+      .description(
+        "Replace the serving front door with one started from the installed binary, in place: it binds the same ports, so running sessions reach it on their next request. A request in flight when the old door exits fails once. Does nothing when no door is serving.",
+      )
+      .option("--json", "Print the result as JSON.")
+      .action((options: Readonly<{ json?: boolean }>) => {
+        const result = realRestartFrontDoor(paths, spawnDetachedSupervisor);
+        if (options.json === true) {
+          printJson(result);
+          return;
+        }
+        console.log(result.action === "not-running" ? "no front door is serving; nothing to restart" : `front door restarted: pid ${String(result.previousPid)} -> ${String(result.pid)}`);
+      }),
+    ["agent-shim frontdoor restart", "agent-shim frontdoor restart --json"],
   );
 
 

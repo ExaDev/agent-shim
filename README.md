@@ -133,6 +133,7 @@ agent-shim codex status [--json]
 agent-shim codex login [--no-open] [--json]       # Sign in with ChatGPT, for providers with `codex.login: chatgpt-sign-in`
 agent-shim codex logout [--json]
 agent-shim frontdoor status [--json]
+agent-shim frontdoor restart [--json]        # replace the serving door in place; running sessions reach it on their next request
 agent-shim frontdoor rc list [--json]
 agent-shim frontdoor rc status [<cse_id>] [--json]
 agent-shim frontdoor rc pending [<cse_id>] [--json]
@@ -155,7 +156,7 @@ agent-shim frontdoor rc watch [<cse_id>] [--json]
 agent-shim frontdoor rc selfhost mint <identity> [--force] [--json]
 agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--json]
 agent-shim account show [<identity>] [--refresh] [--json]
-agent-shim update [--check] [--mode <off|notify|auto>] [--json]
+agent-shim update [--check] [--restart-door] [--mode <off|notify|auto>] [--json]
 agent-shim completion <bash|zsh|fish>
 agent-shim shim enable [--dir <path>] [--force]
 agent-shim shim disable [--dir <path>] [--force]

@@ -11,7 +11,8 @@ import { readGlobalConfig } from "../configProfilesStore";
 import { applyPatch, writeTextAtomic } from "../config/store";
 import { UPDATE_MODES, GlobalConfigSchema, type UpdateMode } from "../config/schema";
 import type { LayoutPaths } from "../paths";
-import { realOwnExecutablePath, selfInvocation } from "../realPorts";
+import { realRestartFrontDoor } from "../frontdoor/realFrontDoorPort";
+import { realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor } from "../realPorts";
 import { runSelfUpdate, type UpdateReport, type UpdatePorts } from "./update";
 import type { UpdateLaunchPort } from "./launchHook";
 
@@ -182,9 +183,10 @@ export function registerUpdateCommand(program: Command, deps: CommandDeps, ports
         "Download the newest release binary and install it over the running one. An installation that belongs to a package manager (Homebrew, npm, Scoop) names its channel and its upgrade command instead of updating in place. With --mode, set the launch-time update mode in the global config instead of updating now.",
       )
       .option("--check", "Only report whether a newer release exists; download and change nothing.")
+      .option("--restart-door", "After installing a newer release, replace the serving front door with one started from it, in place, instead of leaving the old one until its sessions end.")
       .addOption(new Option("--mode <mode>", "Set what a launch does about a newer release (off: nothing; notify: print one line; auto: also apply it in the background) in the global config, then exit.").choices(UPDATE_MODES))
       .option("--json", "Print the result as JSON.")
-      .action(async (options: Readonly<{ check?: boolean; json?: boolean; mode?: UpdateMode }>) => {
+      .action(async (options: Readonly<{ check?: boolean; json?: boolean; mode?: UpdateMode; restartDoor?: boolean }>) => {
         const mode = options.mode;
         if (mode !== undefined) {
           setUpdateMode(deps.paths, mode);
@@ -202,11 +204,16 @@ export function registerUpdateCommand(program: Command, deps: CommandDeps, ports
           checkOnly: options.check === true,
           pid: process.pid,
         });
+        // Only an applied update has a newer binary for the door to restart into; every other outcome (current, check-only, a channel refusal) leaves the door as it is.
+        const doorRestart = options.restartDoor === true && report.action === "updated" ? realRestartFrontDoor(deps.paths, spawnDetachedSupervisor) : undefined;
         if (options.json === true) {
-          printJson(report);
+          printJson(doorRestart === undefined ? report : { ...report, frontdoor: doorRestart });
           return;
         }
         console.log(formatUpdateReport(report));
+        if (doorRestart?.action === "restarted") {
+          console.log(`front door restarted: pid ${String(doorRestart.previousPid)} -> ${String(doorRestart.pid)}`);
+        }
       }),
     ["agent-shim update", "agent-shim update --check", "agent-shim update --mode auto", "agent-shim update --json"],
   );
