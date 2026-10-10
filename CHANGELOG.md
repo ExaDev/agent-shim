@@ -1,3 +1,13 @@
+## [9.10.0](https://github.com/ExaDev/agent-shim/compare/v9.9.0...v9.10.0) (2026-10-10)
+
+### Features
+
+* change the MCP server's permissions while it runs ([19d1580](https://github.com/ExaDev/agent-shim/commit/19d1580fd538bbf76436b58c7a45e1520485ce82))
+
+### Documentation
+
+* describe changing the MCP server's permissions at runtime ([8a664c7](https://github.com/ExaDev/agent-shim/commit/8a664c7265d48605ce26003e12a1b4a1519fb7e8))
+
 ## [9.9.0](https://github.com/ExaDev/agent-shim/compare/v9.8.0...v9.9.0) (2026-10-10)
 
 ### Features
