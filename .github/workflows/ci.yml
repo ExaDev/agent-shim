@@ -629,15 +629,6 @@ jobs:
             install.sh
             schema/*.schema.json
           generate_release_notes: true
-          body: |
-            ## Platform support
-
-            - **macOS arm64** (`agent-shim-macos-arm64`): verified. Node core tests and supports `--build-sea` on this target.
-            - **macOS x64** (`agent-shim-macos-x64-unverified`): best-effort only. Node core does not test or verify single-executable-application support on x64 — this binary is provided for convenience, not as a supported target. If it's missing from this release, the best-effort build failed and was skipped rather than silently shipping a broken binary.
-            - **Linux x64 / arm64** (`agent-shim-linux-x64`, `agent-shim-linux-arm64`): verified. Node core tests `--build-sea` on every Linux distribution it supports except Alpine, and every architecture except s390x.
-            - **Windows x64 / arm64** (`agent-shim-windows-x64.zip`, `agent-shim-windows-arm64.zip`): verified. Node core documents Windows support for `--build-sea` without the x64-only carve-out that applies to macOS.
-            - **npm** (`npx agent-shim` / `npm install -g agent-shim`): the plain bundle, not a SEA binary — runs under whatever Node (22.18 or later, or 24 and above) you already have.
-            - **Homebrew** (`brew install ExaDev/agent-shim/agent-shim`) and **Scoop** (`scoop install agent-shim` after `scoop bucket add agent-shim https://github.com/ExaDev/scoop-agent-shim`) are updated automatically to this release by the jobs below.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
