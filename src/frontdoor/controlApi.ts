@@ -20,7 +20,9 @@ import {
   UsageWindowsInputSchema,
   UsageWindowsOutputSchema,
 } from "./controlSchemas";
+import { createCodexApiRouter, type CodexApiDeps } from "./codexApi";
 import { createEventsApiRouter, type DoorEventsApiDeps } from "./eventsApi";
+import { createLifecycleApiRouter, type LifecycleApiDeps } from "./lifecycleApi";
 import { createRcApiRouter, doorApiAuth, doorApiNodeHandlerOf, frontDoorApiLink, type RcApiDeps } from "./rcApi";
 import { RcSessionQuerySchema, type RcLiveRateLimit } from "./rcSchemas";
 import type { RcSessionSummary } from "./rcSessions";
@@ -36,7 +38,7 @@ import type { PrePipelineApi } from "./server";
  * - `check.run` and `doctor.run` return the reports `agent-shim check` and `agent-shim doctor` print, as data, `check.run` parameterised by an absolute directory path.
  * - `pool.pick` returns what `agent-shim pool pick` prints, the ranked pick for one pool exactly as a launch from the named absolute directory would make it right now, so a programmatic consumer can ask which identity to use without reading the door host's files.
  *
- * Read-only by design: identity, configuration-profile, provider, pool and directory-rule management stay CLI-side, and adding writes over this mount is a decision of its own rather than a gap here. `createDoorApiNodeHandler` mounts these routers and the door-wide `events.subscribe` router beside the Remote Control router on the one prefix the provider listener already serves, so a consumer dials one address with one token for the whole door.
+ * This router is reads only; the door's writes live in routers of their own so each is a decision of its own (`lifecycleApi.ts` for the restart and the update check, `codexApi.ts` for the Codex sign-in), and identity, configuration-profile, provider, pool and directory-rule management stay CLI-side. `createDoorApiNodeHandler` mounts these routers and the door-wide `events.subscribe` router beside the Remote Control router on the one prefix the provider listener already serves, so a consumer dials one address with one token for the whole door.
  */
 
 /** Everything the control-plane procedures need, injected so they serve against fakes in tests exactly as the door's real wiring serves against this machine. */
@@ -173,11 +175,14 @@ export type ControlApiRouter = ReturnType<typeof createControlApiRouter>;
 export type ControlApiClient = RouterClient<ControlApiRouter>;
 
 /** Everything the door's whole typed API needs: the Remote Control operations, the control-plane reads and the door-wide event stream, one deps object because one mount serves them under one token. */
-export interface DoorApiDeps extends RcApiDeps, ControlApiDeps, DoorEventsApiDeps {}
+export interface DoorApiDeps extends RcApiDeps, ControlApiDeps, DoorEventsApiDeps, LifecycleApiDeps, CodexApiDeps {}
 
 /** Builds the door's whole typed API: the Remote Control router, the control-plane routers and the events router beside them, one object for the one handler the provider listener mounts. */
 export function createDoorApiRouter(deps: DoorApiDeps) {
-  return { ...createRcApiRouter(deps), ...createControlApiRouter(deps), ...createEventsApiRouter(deps) };
+  const control = createControlApiRouter(deps);
+  const lifecycle = createLifecycleApiRouter(deps);
+  // `frontdoor` is one namespace two routers contribute to (the status reads and the restart), so it is merged beside the top-level spread, which would otherwise keep only the last.
+  return { ...createRcApiRouter(deps), ...control, ...lifecycle, ...createCodexApiRouter(deps), ...createEventsApiRouter(deps), frontdoor: { ...control.frontdoor, ...lifecycle.frontdoor } };
 }
 
 /** The door's whole typed API, as the client the door's own verbs and library consumers use is derived from it. */

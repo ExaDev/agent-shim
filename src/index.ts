@@ -168,13 +168,18 @@ export {
 } from "./frontdoor/controlApi";
 export {
   CheckRunInputSchema,
+  CodexLogoutOutputSchema,
+  CodexSignInSchema,
+  CodexStatusOutputSchema,
   DoctorFindingSchema,
   DoctorRunOutputSchema,
   EffectiveWindowSchema,
   FrontDoorSessionsOutputSchema,
+  FrontDoorRestartOutputSchema,
   FrontDoorSessionStatusSchema,
   FrontDoorStatusOutputSchema,
   HeadroomSocketTargetSchema,
+  UpdateCheckOutputSchema,
   UsageListOutputSchema,
   UsageLiveOutputSchema,
   UsageWindowsInputSchema,
@@ -183,6 +188,8 @@ export {
 export { collectFrontDoorStatus, formatFrontDoorStatus, headroomSocketTarget, type FrontDoorSessionStatus, type FrontDoorStatus } from "./frontdoor/status";
 export { FrontDoorStateSchema } from "./frontdoor/state";
 export { createEventsApiRouter, type DoorEventsApiDeps } from "./frontdoor/eventsApi";
+export { createLifecycleApiRouter, type LifecycleApiClient, type LifecycleApiDeps, type LifecycleApiRouter } from "./frontdoor/lifecycleApi";
+export { createCodexApiRouter, type CodexApiClient, type CodexApiDeps, type CodexApiRouter } from "./frontdoor/codexApi";
 export {
   DOOR_EVENT_BUFFER_EVENTS,
   createDoorEventHub,

@@ -103,3 +103,35 @@ export const DoctorRunOutputSchema = z.strictObject({
   ok: z.boolean(),
   findings: z.readonly(z.array(DoctorFindingSchema)),
 });
+
+/** The restart's answer: the pid of the door being replaced, which is the only part of the new generation the caller cannot yet know. The caller reopens its client from the state root once the door's supervisor pid differs from this one, because the replacement mints its own control token. */
+export const FrontDoorRestartOutputSchema = z.strictObject({
+  action: z.literal("restarting"),
+  previousPid: z.int().positive(),
+});
+
+/** `update --check`'s report: the running version, the latest release, and whether they differ (`available`) or match (`current`). A check never installs, so `updated` is not an answer here. */
+export const UpdateCheckOutputSchema = z.strictObject({
+  current: z.string(),
+  latest: z.string(),
+  action: z.enum(["current", "available", "updated"]),
+});
+
+/** The Sign in with ChatGPT login's state as `codex status` reports it: no sign-in yet, signed in (with who, whether the plan scope was granted, and when the access token lapses), or a file that cannot be read. */
+export const CodexSignInSchema = z.discriminatedUnion("state", [
+  z.strictObject({ state: z.literal("none") }),
+  z.strictObject({ state: z.literal("signed-in"), email: z.string().optional(), planScope: z.boolean(), accessTokenExpiresAt: z.number() }),
+  z.strictObject({ state: z.literal("unreadable"), message: z.string() }),
+]);
+
+/** What `codex status` reports about the translation's sign-in and the codex providers the machine defines; the door's own status and sessions are `frontdoor.status` and `frontdoor.sessions`. */
+export const CodexStatusOutputSchema = z.strictObject({
+  signIn: CodexSignInSchema,
+  codexProviders: z.readonly(z.array(z.string())),
+});
+
+/** `codex logout`'s result: whether there was a login to remove, and whether the issuer was told to revoke it (a failed revocation still removes the login here). */
+export const CodexLogoutOutputSchema = z.strictObject({
+  hadGrant: z.boolean(),
+  revoked: z.boolean(),
+});

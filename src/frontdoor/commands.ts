@@ -6,9 +6,10 @@ import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { HTTP_STATUS } from "../codex/http";
 import { readGlobalConfig } from "../configProfilesStore";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
-import { createCodexRoutePorts } from "../codex/commands";
+import { collectCodexStatus, createCodexRoutePorts, runCodexLogout } from "../codex/commands";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, realOwnExecutablePath, spawnDetachedSupervisor } from "../realPorts";
+import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, realOwnExecutablePath, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
+import { checkForUpdate } from "../update/commands";
 import { refreshStalePoolMembers } from "../launcher/poolRefresh";
 import { ANTHROPIC_USAGE_FRESHNESS_MS } from "../usage/anthropicUsageRefresh";
 import { loadPoolMembers } from "../usage/poolPick";
@@ -292,6 +293,16 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         },
         poolNames: () => Object.keys(readPools(paths)).sort(),
       };
+      // The lifecycle and Codex procedures: each the same function the CLI verb of that name runs. A restart replaces this very process, so it runs a detached copy of `frontdoor restart` (the restart's own wait for the old door to exit cannot run inside it), started only after the procedure's answer has been written.
+      const lifecycleAndCodexDeps = {
+        doorPid: process.pid,
+        restartDoor: () => {
+          spawnSelfDetached(paths, ["frontdoor", "restart"]);
+        },
+        checkForUpdate: async () => await checkForUpdate(paths),
+        codexStatus: () => collectCodexStatus(realFarmFs, paths, realIsProcessRunning),
+        codexLogout: async () => await runCodexLogout(paths),
+      };
       // Written before the listener binds, so a listener that answers control requests is always one whose token exists; removed when this listener closes, so an idle-shut door leaves no token behind that a squatter on the port could be probed with.
       realFarmFs.mkdirp(paths.frontdoorDir);
       realFarmFs.writeFilePrivate(paths.frontdoorControlTokenFile, `${rcControlToken}\n`);
@@ -325,6 +336,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
             teleport: rcTeleport,
             fanout: rcFanout,
             ...controlDeps,
+            ...lifecycleAndCodexDeps,
             events: doorEvents,
           }),
           // The self-hosted web client rides the same listener under the same per-generation token as the typed API it speaks: no extra process, no new trust surface.

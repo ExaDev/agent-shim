@@ -3,6 +3,7 @@ import { Agent, fetch as undiciFetch } from "undici";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
+import { LIFECYCLE_AND_CODEX_TEST_DEPS } from "./lifecycleCodexTestDeps";
 import { createDoorApiNodeHandler } from "./controlApi";
 import { DOOR_EVENT_SOURCE_RC, LAUNCH_EVENT_SOURCE } from "./eventSchemas";
 import { createDoorEventHub } from "./eventHub";
@@ -150,6 +151,7 @@ describe("the door's web client page and its API calls over the door's own TLS",
         throw new Error("the e2e page drives no pool pick");
       },
       poolNames: () => [],
+      ...LIFECYCLE_AND_CODEX_TEST_DEPS,
     });
     const page = createRcClientPage(CONTROL_TOKEN);
     // Both pre-pipeline surfaces record the pathnames they serve, so the stream case can await a subscription having landed before publishing what it must deliver.
