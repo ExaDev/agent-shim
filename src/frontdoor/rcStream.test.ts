@@ -504,6 +504,8 @@ describe("the client read stream attachment", () => {
     exchange(tracker, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/events`, authorization: FRESH_BEARER }).respond(HTTP_STATUS.ok);
     resolveSleep();
     await tick();
+    // DEBUG-ONLY
+    process.stderr.write(`DEBUG order=${JSON.stringify(order)} streams=${String(scripted.streamCalls.length)} presences=${String(scripted.presenceCalls.length)} tracked=${JSON.stringify(tracker.list().map((x) => x.id))} cred=${JSON.stringify(tracker.credentialOf(SESSION_ID))}\n`);
     expect(scripted.streamCalls.length).toBe(STREAM_CALLS_AFTER_BACKOFF);
     expect(scripted.streamCalls[STREAM_CALLS_AFTER_BACKOFF - 1]?.headers.authorization).toBe(FRESH_BEARER);
     hub.close();
