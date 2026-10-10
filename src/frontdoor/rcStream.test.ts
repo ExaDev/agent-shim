@@ -10,6 +10,8 @@ const SESSION_ID = "cse_00000000-0000-4000-8000-000000000001";
 const OTHER_SESSION_ID = "cse_00000000-0000-4000-8000-000000000002";
 /** The bearers the fakes present: the OAuth-kind prefix alone (the shortest string the prefix check still accepts). */
 const CREATE_BEARER = "Bearer sk-ant-oat";
+/** A bearer observed after the create, standing for the CLI refreshing its token. */
+const FRESH_BEARER = "Bearer sk-ant-REDACTED";
 /** The request id a scripted control request carries, which a `control_response` must echo. */
 const REQUEST_ID = "req_00000000-0000-4000-8000-00000000000a";
 /** Where the fake clocks start, so the expected timestamps are the constants the tests name. */
@@ -477,7 +479,7 @@ describe("the client read stream attachment", () => {
     expect(saves).toEqual([{ sessionId: SESSION_ID, sequenceNum: STREAM_EVENT_LAST_SEQUENCE_NUM }]);
   });
 
-  it("re-reads the credential and retries once on a 401, then backs off rather than hammering", async () => {
+  it("re-reads the credential and retries once on a 401, then waits for a fresh bearer rather than redialling the refused one", async () => {
     const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: IDLE_MS });
     birthSession(tracker);
     const scripted = scriptedDial();
@@ -490,13 +492,20 @@ describe("the client read stream attachment", () => {
     await tick();
     // The first 401 retried at once, with the credential accessor re-read at the top of the attempt, and only the second 401 backed off: presence, stream, presence, stream, then sleep, in that order.
     expect(order).toEqual(["presence", "stream", "presence", "stream", "sleep"]);
-    // The backoff holds: no third attempt until the sleep resolves.
     expect(scripted.streamCalls.length).toBe(2);
 
+    // The refused bearer is still the observed one when the backoff ends: the loop sleeps again and dials nothing.
+    resolveSleep();
+    await tick();
+    expect(order).toEqual(["presence", "stream", "presence", "stream", "sleep", "sleep"]);
+    expect(scripted.streamCalls.length).toBe(2);
+
+    // A different bearer observed on the session ends the wait: the next backoff expiry dials with it.
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/events`, authorization: FRESH_BEARER }).respond(HTTP_STATUS.ok);
     resolveSleep();
     await tick();
     expect(scripted.streamCalls.length).toBe(STREAM_CALLS_AFTER_BACKOFF);
-    expect(order).toEqual(["presence", "stream", "presence", "stream", "sleep", "presence", "stream"]);
+    expect(scripted.streamCalls[STREAM_CALLS_AFTER_BACKOFF - 1]?.headers.authorization).toBe(FRESH_BEARER);
     hub.close();
   });
 
