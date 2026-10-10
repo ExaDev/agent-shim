@@ -325,7 +325,7 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
 
   it("carries every operation's Zod schemas and their constraints in the document", async () => {
     const doc = await call("GET", "/openapi.json");
-    interface Operation { requestBody?: { content?: Record<string, { schema?: unknown }> }; responses?: Record<string, { content?: Record<string, { schema?: unknown }> }> }
+    interface Operation { "x-agent-shim-read-only"?: boolean; requestBody?: { content?: Record<string, { schema?: unknown }> }; responses?: Record<string, { content?: Record<string, { schema?: unknown }> }> }
     const parsed = JSON.parse(doc.text) as { paths: Record<string, Record<string, Operation>> };
     // An empty schema or `anyOf: [{}, {not: {}}]` is what a document generated without schemas carries; every JSON response must describe a real shape instead.
     const isUnconstrained = (schema: unknown): boolean => typeof schema !== "object" || schema === null || !("type" in schema || "properties" in schema || "$ref" in schema || "items" in schema || "enum" in schema || "const" in schema);
@@ -340,6 +340,8 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
     }
     const send = parsed.paths["/rest/rc/send"]?.post?.requestBody?.content?.["application/json"]?.schema;
     expect(send).toMatchObject({ type: "object", properties: { session: { type: "string", minLength: 1 }, text: { type: "string", minLength: 1 } } });
+    expect(parsed.paths["/rest/launch/resolve"]?.post?.["x-agent-shim-read-only"]).toBe(true);
+    expect(parsed.paths["/rest/rc/send"]?.post?.["x-agent-shim-read-only"]).toBeUndefined();
     const resolve = parsed.paths["/rest/launch/resolve"]?.post?.requestBody?.content?.["application/json"]?.schema;
     expect(resolve).toMatchObject({ type: "object", properties: { path: { type: "string", minLength: 1 }, argv: { type: "array" }, env: { type: "object" } }, required: ["path"] });
   });

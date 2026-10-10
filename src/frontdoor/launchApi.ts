@@ -4,7 +4,7 @@ import { openapi } from "@orpc/openapi";
 import { CliError } from "../cliError";
 import type { LaunchResolution } from "../launcher";
 import { LaunchResolveInputSchema, LaunchResolveOutputSchema } from "./launchSchemas";
-import { doorApiAuth } from "./rcApi";
+import { doorApiAuth, READ_ONLY_OPERATION_EXTENSION } from "./rcApi";
 
 /**
  * The door's launch resolution as a typed oRPC API: what a launch from one directory would resolve to, as data, so a consumer that picks identities and spawns sessions elsewhere can ask the door for the decision without running the launcher.
@@ -29,7 +29,16 @@ export function createLaunchApiRouter(deps: LaunchApiDeps) {
   return {
     launch: {
       resolve: authed
-        .meta(openapi({ method: "POST", path: "/rest/launch/resolve", summary: "Resolve what a launch from one directory would do, without performing it", tags: [LAUNCH_API_TAG] }))
+        .meta(
+          openapi({
+            method: "POST",
+            path: "/rest/launch/resolve",
+            summary: "Resolve what a launch from one directory would do, without performing it",
+            tags: [LAUNCH_API_TAG],
+            // A POST because the launch's environment and arguments are a body, but the answer changes nothing.
+            spec: (current) => ({ ...current, [READ_ONLY_OPERATION_EXTENSION]: true }),
+          }),
+        )
         .input(LaunchResolveInputSchema)
         .output(LaunchResolveOutputSchema)
         .handler(({ input }) => {
