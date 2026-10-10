@@ -17,7 +17,7 @@ export class PoolNotFoundError extends CliError {
 }
 
 /** Raised by `addPool` when a pool with the given name is already defined. */
-class PoolAlreadyExistsError extends CliError {
+export class PoolAlreadyExistsError extends CliError {
   constructor(readonly poolName: string) {
     super(`A pool named "${poolName}" already exists. Use \`agent-shim pool set ${poolName}\` to change its members.`);
     this.name = "PoolAlreadyExistsError";
