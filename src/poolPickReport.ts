@@ -13,6 +13,7 @@ function candidateView(candidate: Candidate): PoolPickCandidateView {
     identity: candidate.identity,
     class: candidate.class,
     ...(candidate.score === undefined ? {} : { score: candidate.score }),
+    ...(candidate.scoreWindow === undefined ? {} : { scoreWindow: candidate.scoreWindow }),
     feasible: candidate.feasible,
     ...(candidate.blockedUntilMs === undefined ? {} : { blockedUntil: new Date(candidate.blockedUntilMs).toISOString() }),
     plan: candidate.plan,

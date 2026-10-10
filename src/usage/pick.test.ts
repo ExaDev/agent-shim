@@ -185,6 +185,15 @@ describe("rankPool", () => {
     expect(ranking.candidates[0]?.score).toBeCloseTo((U50 * MAX_20X_CAPACITY) / SEVEN_DAYS_HOURS);
   });
 
+  it("names the window the score is divided by: seven-day when reported, five-hour otherwise", () => {
+    const ranking = rank([
+      member("weekly", { five: { utilization: U10, resetsInMs: HOUR_MS }, seven: { utilization: U50, resetsInMs: DAY_MS } }),
+      member("five-only", { five: { utilization: U50, resetsInMs: HOUR_MS } }),
+    ]);
+    const windows = Object.fromEntries(ranking.candidates.map((candidate) => [candidate.identity, candidate.scoreWindow]));
+    expect(windows).toEqual({ weekly: "sevenDay", "five-only": "fiveHour" });
+  });
+
   it("demotes a member whose five-hour window would run dry at its own pace, below one that would not", () => {
     const burning = member("hot", { five: { utilization: U80, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U10, resetsInMs: HOUR_MS } }, MAX_20X, [burnRecord("hot", HALF_HOUR_MS, U50, FOUR_HOURS_MS), burnRecord("hot", 0, U80, FOUR_HOURS_MS)]);
     const calm = member("calm", { five: { utilization: U10, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U90, resetsInMs: SIX_DAYS_MS } }, MAX_20X, [burnRecord("calm", HALF_HOUR_MS, U09, FOUR_HOURS_MS), burnRecord("calm", 0, U10, FOUR_HOURS_MS)]);

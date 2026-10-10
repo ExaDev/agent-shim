@@ -20,7 +20,7 @@ function formatPoolPick(report: PoolPickReport, nowMs: number): string[] {
       ? `Pool ${report.pool}: every member is refused right now${report.earliestReturn === undefined ? "" : `; ${report.earliestReturn.identity} returns at ${report.earliestReturn.at} (in ${formatAge(Date.parse(report.earliestReturn.at) - nowMs)})`}`
       : `Pool ${report.pool}: a launch from ${report.directory} would run as ${report.pick}`;
   const rows = report.candidates.map((candidate, index) => {
-    const score = candidate.score === undefined ? "" : ` score ${candidate.score.toFixed(2)}`;
+    const score = candidate.score === undefined ? "" : ` score ${candidate.score.toFixed(2)}${candidate.scoreWindow === "fiveHour" ? " by 5h reset" : " by 7d reset"}`;
     const dry = candidate.feasible ? "" : " (5h would run dry)";
     return `  ${String(index + 1)}. ${candidate.identity} [${candidate.class}${score}]${dry}\n     ${candidate.reasons.join("; ")}`;
   });

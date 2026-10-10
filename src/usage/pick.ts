@@ -77,6 +77,8 @@ export interface Candidate {
   readonly class: CandidateClass;
   /** Plan-size-weighted remaining quota per hour until its reset: higher is more wasted if left unused. Present for `scored` only. */
   readonly score?: number;
+  /** The window the score's hours-until-reset come from: the seven-day window, or the five-hour one when the member reports no seven-day utilisation. Present with `score`. */
+  readonly scoreWindow?: "sevenDay" | "fiveHour";
   /** False when a quota window would run dry, at the observed pace, before it resets (the five-hour at its own or the rescaled shared pace, the seven-day at its own). A `scored` candidate that is not feasible ranks below every feasible one. */
   readonly feasible: boolean;
   /** The fraction of the extra-usage allowance still unspent, for a `pay-per-use` member whose only budget is that allowance (an Enterprise account). A member reporting none ranks as having all of it: no cap is known to bind. */
@@ -260,7 +262,12 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
     return { candidate: { ...base, class: "pay-per-use", ...(headroom === undefined ? {} : { headroom }), reasons: [...(plan.kind === "pay-per-use" ? planReasons : ["no plan windows reported, so usage bills as extra usage"]), ...overageReasons] } };
   }
 
-  const basis = seven?.utilization !== undefined ? { window: seven, windowMs: SEVEN_DAY_WINDOW_MS } : five?.utilization !== undefined ? { window: five, windowMs: FIVE_HOUR_WINDOW_MS } : undefined;
+  const basis =
+    seven?.utilization !== undefined
+      ? { window: seven, windowMs: SEVEN_DAY_WINDOW_MS, name: "sevenDay" as const }
+      : five?.utilization !== undefined
+        ? { window: five, windowMs: FIVE_HOUR_WINDOW_MS, name: "fiveHour" as const }
+        : undefined;
   if (basis?.window.utilization === undefined) {
     return { candidate: { ...base, class: "unknown", reasons: ["quota windows reported no utilisation", ...windowReasons, ...planReasons] } };
   }
@@ -275,7 +282,7 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
   const sevenUntil = seven?.resetsAtMs === undefined ? SEVEN_DAY_WINDOW_MS : Math.max(seven.resetsAtMs - nowMs, MS_PER_SECOND);
   const sevenDayBurn = windowBurn(member.records, "sevenDay");
   return {
-    candidate: { ...base, class: "scored", score, reasons: [...windowReasons.map((reason, index) => (index === windowReasons.length - 1 ? `${reason}${observedAgo}` : reason)), ...planReasons] },
+    candidate: { ...base, class: "scored", score, scoreWindow: basis.name, reasons: [...windowReasons.map((reason, index) => (index === windowReasons.length - 1 ? `${reason}${observedAgo}` : reason)), ...planReasons] },
     ...(fiveRemaining === undefined ? {} : { fiveHour: { remaining: fiveRemaining, untilResetMs: fiveUntil } }),
     ...(burn === undefined ? {} : { burn }),
     ...(sevenRemaining === undefined ? {} : { sevenDay: { remaining: sevenRemaining, untilResetMs: sevenUntil } }),

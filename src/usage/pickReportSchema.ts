@@ -13,6 +13,8 @@ const PoolPickCandidateViewSchema = z.strictObject({
   class: z.enum(["scored", "unknown", "pay-per-use", "ineligible"]),
   /** Plan-size-weighted remaining quota per hour until its reset; present for `scored` only. */
   score: z.number().optional(),
+  /** Which window's reset divides the score: the seven-day window, or the five-hour one when the member reports no seven-day utilisation; present with `score`. */
+  scoreWindow: z.enum(["sevenDay", "fiveHour"]).optional(),
   /** False when the five-hour window would run dry, at the observed pace, before it resets. */
   feasible: z.boolean(),
   /** When an `ineligible` member can be used again, as an ISO instant. */

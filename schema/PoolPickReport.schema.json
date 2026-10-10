@@ -32,6 +32,13 @@
           "score": {
             "type": "number"
           },
+          "scoreWindow": {
+            "type": "string",
+            "enum": [
+              "sevenDay",
+              "fiveHour"
+            ]
+          },
           "feasible": {
             "type": "boolean"
           },
