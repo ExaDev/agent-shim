@@ -1,3 +1,10 @@
+## [9.4.2](https://github.com/ExaDev/agent-shim/compare/v9.4.1...v9.4.2) (2026-10-10)
+
+### Bug Fixes
+
+* keep the door's source-port range constants module-private ([1614121](https://github.com/ExaDev/agent-shim/commit/1614121dfd05702f3535f8abeb2a03456f7a5c35))
+* pool the door's upstream connections and widen its reserved source-port range ([f155194](https://github.com/ExaDev/agent-shim/commit/f1551943e482bd216f2ca0d19a78e671b40327da))
+
 ## [9.4.1](https://github.com/ExaDev/agent-shim/compare/v9.4.0...v9.4.1) (2026-10-10)
 
 ### Bug Fixes
