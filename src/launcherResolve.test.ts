@@ -123,3 +123,20 @@ describe("resolveLaunch", () => {
     expect(() => resolveLaunch(params)).toThrow();
   });
 });
+
+describe("a launch with no farm to resync", () => {
+  const SECRET_KEY_OVERRIDE = { entries: { "secret/.credentials.json": true } } as const;
+
+  it("reports the cascade's diagnostics itself, since no resync will", () => {
+    const { params, log } = ports({ argv: ["--print"], env: { CLAUDE_CONFIG_DIR: "/somewhere/else" }, cliOverride: SECRET_KEY_OVERRIDE });
+    prepareLaunch(params);
+    expect(log.errors.join("\n")).toContain("SECRET_ENTRY_KEY");
+  });
+
+  it("leaves reporting to the resync when there is a farm, so a diagnostic appears once", () => {
+    const { params, log } = ports({ argv: ["@work", "--print"], cliOverride: SECRET_KEY_OVERRIDE });
+    prepareLaunch(params);
+    const reported = [...log.errors, ...log.warns].filter((line) => line.includes("SECRET_ENTRY_KEY"));
+    expect(reported).toHaveLength(1);
+  });
+});

@@ -422,11 +422,17 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
     const assembled = assembleCascade(launchCascade);
     const flattened = flattenLayers(assembled.layers, { home: params.farm.home });
     cascadeLaunch = flattened.launch;
-    // A real launch reports these when the farm resyncs; a read-only decision resyncs nothing, so it reports them itself rather than answering as if the configuration were clean while a layer is partly ignored.
-    if (readOnly) {
+    // A launch that resyncs a farm reports these through the resync. One with no farm (the escape hatch, or no identity resolved) and a read-only decision resync nothing, so they are reported here rather than leaving a layer partly ignored without a word. A read-only decision has no way to refuse, so it reports an error as a warning.
+    if (readOnly || farmContext === undefined) {
       for (const diagnostic of [...assembled.diagnostics, ...flattened.diagnostics]) {
-        if (diagnostic.severity !== "info") {
-          log.warn(`agent-shim: ${diagnostic.code}: ${diagnostic.message}`);
+        if (diagnostic.severity === "info") {
+          continue;
+        }
+        const message = `agent-shim: ${diagnostic.code}: ${diagnostic.message}`;
+        if (diagnostic.severity === "error" && !readOnly) {
+          log.error(message);
+        } else {
+          log.warn(message);
         }
       }
     }
