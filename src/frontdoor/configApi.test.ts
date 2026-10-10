@@ -31,7 +31,7 @@ afterEach(() => {
 /** The router under test as a typed client presenting `token` as its Bearer credential. */
 function clientWith(token: string | undefined) {
   return createRouterClient(createConfigApiRouter({ expectedToken: TOKEN, paths }), {
-    context: { headers: token === undefined ? {} : { authorization: `Bearer ${token}` } },
+    context: { headers: token === undefined ? {} : { authorization: `Bearer ${token}` }, afterResponse: () => undefined },
   });
 }
 
@@ -229,6 +229,11 @@ describe("config API: providers", () => {
     expect(await codeOf(api.provider.add({ name: "z", displayName: "z.ai", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } }))).toBe("CONFLICT");
     expect(await codeOf(api.provider.set({ name: "ghost", displayName: "x" }))).toBe("NOT_FOUND");
     expect(await codeOf(api.provider.set({ name: "z" }))).toBe("BAD_REQUEST");
+    expect(await codeOf(api.provider.set({ name: "z", baseUrl: "https://elsewhere.example.com" }))).toBe("BAD_REQUEST");
+    expect(readProvider(paths, "z")).toMatchObject({ baseUrl: "https://api.z.ai/api/anthropic" });
+    const moved = await api.provider.set({ name: "z", baseUrl: "https://elsewhere.example.com", credential: { sources: [{ env: "Z2" }] } });
+    expect(moved.value).toMatchObject({ baseUrl: "https://elsewhere.example.com" });
+    expect((await api.provider.set({ name: "z", baseUrl: "https://elsewhere.example.com", displayName: "z" })).value).toMatchObject({ displayName: "z" });
     expect(await codeOf(api.provider.remove({ name: "z", confirm: false }))).toBe("BAD_REQUEST");
     expect(await codeOf(api.provider.remove({ name: "ghost", confirm: true }))).toBe("NOT_FOUND");
   });
