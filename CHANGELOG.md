@@ -1,3 +1,13 @@
+## [9.4.3](https://github.com/ExaDev/agent-shim/compare/v9.4.2...v9.4.3) (2026-10-10)
+
+### Bug Fixes
+
+* wait for a fresh bearer once the read stream refuses the observed one ([c391532](https://github.com/ExaDev/agent-shim/commit/c391532f4abb76d29480265b640ae04d28122897))
+
+### Tests
+
+* derive the refreshed bearer from the create bearer ([3ad2bcf](https://github.com/ExaDev/agent-shim/commit/3ad2bcf54b685a434f9e32833f768d7d1f2d0b39))
+
 ## [9.4.2](https://github.com/ExaDev/agent-shim/compare/v9.4.1...v9.4.2) (2026-10-10)
 
 ### Bug Fixes
