@@ -304,6 +304,13 @@ export function selfInvocation(args: readonly string[]): { readonly command: str
   return { command: process.execPath, args: isSea() ? [...args] : [realContentSourcePath(), ...args] };
 }
 
+/** Runs this very executable with `args` as a detached background process whose output is discarded, unref'd so the caller never waits on it, with `AGENT_SHIM_HOME` pinned to `paths.root` so it acts on the same state root as the caller. */
+export function spawnSelfDetached(paths: LayoutPaths, args: readonly string[]): void {
+  const invocation = selfInvocation(args);
+  const child = spawn(invocation.command, [...invocation.args], { detached: true, stdio: "ignore", env: { ...process.env, AGENT_SHIM_HOME: paths.root } });
+  child.unref();
+}
+
 /**
  * The spawn options every background daemon agent-shim starts shares. `detached: true` puts the child in a new session with no controlling terminal, so closing the terminal a launch started from (SIGHUP to that terminal's session) never reaches it: a second session still using the daemon keeps working after the first one's terminal is gone. Standard input is closed and both output streams go to the daemon's log file.
  */

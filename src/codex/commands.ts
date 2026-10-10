@@ -15,7 +15,7 @@ import { createCodexAuthStore, type CodexAuthFs } from "./auth";
 import type { UsageSnapshot } from "./quota";
 import type { CodexRoutePorts } from "./route";
 import { SIWC_PLAN_SCOPE } from "./siwc";
-import { runSiwcLogin, runSiwcLogout, type SiwcLoginPorts } from "./siwcLogin";
+import { runSiwcLogin, runSiwcLogout, type SiwcLoginPorts, type SiwcLogoutResult } from "./siwcLogin";
 import { listenForCallback, openInBrowser, realSiwcPorts } from "./siwcPorts";
 import { createSiwcStore, parseSiwcFile } from "./siwcStore";
 import { realTimers, RESPONSES_API_TARGET } from "./upstream";
@@ -205,6 +205,11 @@ export function formatCodexStatus(status: CodexStatus): string[] {
   lines.push(`usage snapshot: ${status.usageSnapshotPath}${status.usageSnapshotExists ? "" : " (not created yet)"}`);
   lines.push(`daemon log: ${status.logPath}${status.logExists ? "" : " (not created yet)"}`);
   return lines;
+}
+
+/** `agent-shim codex logout` as a function: revokes the sign-in at the issuer and removes it from this machine. */
+export async function runCodexLogout(paths: LayoutPaths): Promise<SiwcLogoutResult> {
+  return await runSiwcLogout(realSiwcLoginPorts(paths));
 }
 
 /** The real ports for a sign-in: the sign-in file, the process's own fetch, a loopback listener and the system browser. */
