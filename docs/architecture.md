@@ -105,6 +105,7 @@ src/
     http.ts, quota.ts         # named HTTP statuses, and upstream quota/limit responses forwarded as Anthropic-shaped errors
     siwc.ts, siwcStore.ts     # Sign in with ChatGPT: the OAuth/PKCE protocol steps and ID-token verification, and the grant file whose store implements the same credentials interface as the Codex CLI login
     siwcLogin.ts, siwcPorts.ts   # the `codex login` and `codex logout` flows over injected ports, and the real loopback listener and browser opener
+    appServer.ts, appServerSchemas.ts, realAppServer.ts   # the reader for what Codex itself knows about a login: `account/read` and `account/rateLimits/read` asked of a short-lived `codex app-server` over stdio under a given `CODEX_HOME`, over an injected port (the real one is a child process), validated against schemas written from the app-server's generated protocol and pinned to the release they were checked against; it starts no login and sends no prompt
     commands.ts               # the real translation ports (both logins' auth stores, upstream fetch, usage snapshot) the front door mounts, and `codex status`, `codex login` and `codex logout`
   directoryRules.ts       # the `rule` noun: add/set/list/show/remove
   configure.ts            # `agent-shim configure` interactive picker (@clack/prompts)
