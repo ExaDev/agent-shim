@@ -8,6 +8,7 @@ import { isSea } from "node:sea";
 import { cosmiconfigReader } from "./config/load";
 import type { CredentialPort } from "./credential";
 import { defaultVersionsDir, discoverClaudeBinary, installedVersions, type ClaudeBinaryResolver, type VersionsDirEntry } from "./versionDiscovery";
+import { parseFrontDoorSupervisorPids } from "./frontdoor/supervisorProcesses";
 import { ensureHeadroom } from "./headroom/ensure";
 import { currentHeadroomAllowlist } from "./headroom/supervisor";
 import type { HeadroomSocketTrustPorts } from "./headroom/socket";
@@ -206,15 +207,12 @@ export function realIsProcessRunning(pid: number): boolean {
   return realIsProcessAlive(pid) && !realIsProcessZombie(pid);
 }
 
-/** The hidden subcommand the front-door supervisor process is spawned with, which stays in its command line for as long as it runs. */
-const FRONT_DOOR_SUPERVISOR_SUBCOMMAND = "__frontdoor-supervisor";
-
 /**
  * Whether `pid` is a live process running this tool's front-door supervisor, read from its command line. Without `ps` (no POSIX userland) the answer is false: an unprovable identity must never be signalled.
  */
 export function realIsFrontDoorSupervisor(pid: number): boolean {
-  const result = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" });
-  return result.status === 0 && result.stdout.split(/\s+/).includes(FRONT_DOOR_SUPERVISOR_SUBCOMMAND);
+  const result = spawnSync("ps", ["-o", "pid=,command=", "-p", String(pid)], { encoding: "utf8" });
+  return result.status === 0 && parseFrontDoorSupervisorPids(result.stdout).includes(pid);
 }
 
 /** The real `RunPort`, used for auxiliary commands whose output this process needs to read — git branch detection for `when: { branch }` conditions, and `check.ts`'s macOS Keychain lookup. */
