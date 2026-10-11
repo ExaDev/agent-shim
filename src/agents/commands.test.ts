@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { createFakeFarmFs } from "../test-helpers";
-import { collectSessionList, formatSessionList, formatSessionTree, locateSession, SessionLookupError, type SessionCommandFs } from "./commands";
+import { formatSessionList, formatSessionTree } from "./commands";
 import { readSessionAgentTree } from "./read";
+import type { SessionCommandFs } from "./realFs";
+import { collectSessionList, locateSession, SessionLookupError } from "./sessions";
 
 const IDENTITIES = "/state/identities";
 const WORK = `${IDENTITIES}/work`;

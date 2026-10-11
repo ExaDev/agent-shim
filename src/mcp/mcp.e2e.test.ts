@@ -99,6 +99,10 @@ describe("the MCP server over a real door handler", () => {
       poolNames: () => [],
       ...LIFECYCLE_AND_CODEX_TEST_DEPS,
       paths: buildLayoutPaths("/nonexistent/agent-shim-mcp-config-unexercised"),
+      sessionList: () => [],
+      sessionShow: () => {
+        throw new Error("this test serves no sessions");
+      },
       resolveLaunch: (): never => {
         throw new Error("no MCP test drives launch.resolve");
       },

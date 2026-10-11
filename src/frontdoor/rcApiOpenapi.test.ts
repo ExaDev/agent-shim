@@ -34,6 +34,8 @@ const SETTLE_MS = 50;
 
 /** The exact REST surface the document must describe: every procedure annotated, and nothing beyond it (an unannotated procedure would leak its router-segment path into this set, so equality proves both halves at once). Every path sits under the mount's one `/rest` namespace, which no RPC procedure path begins with, and the writes are flat verb paths carrying the session in the body, mirroring the CLI's own verbs, because the door's one input shape (the same Zod schema over RPC and REST) must stay one object. */
 const EXPECTED_REST_PATHS = [
+  "/rest/agent-trees/list",
+  "/rest/agent-trees/show",
   "/rest/check",
   "/rest/codex/logout",
   "/rest/codex/status",
@@ -186,6 +188,10 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
       },
       poolNames: () => [],
       ...LIFECYCLE_AND_CODEX_TEST_DEPS,
+      sessionList: () => [],
+      sessionShow: () => {
+        throw new Error("this test serves no sessions");
+      },
       resolveLaunch: () => {
         throw new Error("this test resolves no launch");
       },

@@ -109,6 +109,20 @@ const AgentTreeProblemSchema = z.strictObject({
   reason: z.string(),
 });
 
+/** One session in a listing: the cheap facts read from directory listings and one stat, and every identity whose configuration exposes it. */
+export const SessionSummarySchema = z.strictObject({
+  project: z.string(),
+  sessionId: z.string(),
+  superseded: z.boolean(),
+  /** The directory and transcript stem exactly as on disk, which differs from `sessionId` for a superseded session. */
+  entry: z.string(),
+  agentCount: z.number().int().nonnegative(),
+  workflowRunCount: z.number().int().nonnegative(),
+  /** When the transcript was last written, as an ISO instant; absent when there is no transcript file. */
+  updatedAt: z.iso.datetime().optional(),
+  identities: z.array(z.string()),
+});
+
 /** The whole picture of one session's agents, tasks and workflow runs. */
 export const SessionAgentTreeSchema = z.strictObject({
   project: z.string(),
@@ -128,3 +142,4 @@ export type TaskItem = z.output<typeof TaskItemSchema>;
 export type WorkflowRun = z.output<typeof WorkflowRunSchema>;
 export type AgentTreeProblem = z.output<typeof AgentTreeProblemSchema>;
 export type SessionAgentTree = z.output<typeof SessionAgentTreeSchema>;
+export type SessionSummaryView = z.output<typeof SessionSummarySchema>;

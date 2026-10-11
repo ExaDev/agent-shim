@@ -237,6 +237,7 @@ export {
   UsageWindowsOutputSchema,
 } from "./frontdoor/controlSchemas";
 export { createLaunchApiRouter, type LaunchApiDeps, type LaunchApiRouter } from "./frontdoor/launchApi";
+export { createAgentTreesApiRouter, AgentTreesListInputSchema, AgentTreesListOutputSchema, AgentTreesShowInputSchema, AgentTreesShowOutputSchema, type AgentTreesApiDeps, type AgentTreesApiRouter } from "./frontdoor/agentTreesApi";
 export { LaunchResolveInputSchema, LaunchResolveOutputSchema } from "./frontdoor/launchSchemas";
 export { collectFrontDoorStatus, formatFrontDoorStatus, headroomSocketTarget, type FrontDoorSessionStatus, type FrontDoorStatus } from "./frontdoor/status";
 export { FrontDoorStateSchema } from "./frontdoor/state";
@@ -325,12 +326,15 @@ export { planOf, PlanClassSchema, type PlanClass } from "./usage/plan";
 export { PoolGraphError, poolIdentities } from "./usage/poolPick";
 export { collectPoolPick } from "./poolPickReport";
 export { PoolPickReportSchema, type PoolPickReport } from "./usage/pickReportSchema";
-export { listSessions, readSessionAgentTree, type AgentReadFs, type ReadSessionOptions, type SessionRef } from "./agents/read";
+export { listSessions, readSessionAgentTree, summariseSession, type AgentReadFs, type ReadSessionOptions, type SessionRef, type SessionSummary } from "./agents/read";
+export { collectSessionList, locateSession, showSession, SessionLookupError, type IdentitySession, type LocatedSession, type SessionListFilters, type SessionView } from "./agents/sessions";
+export { realSessionFs, type SessionCommandFs } from "./agents/realFs";
 export {
   AgentKindSchema,
   AgentMetaSchema,
   AgentNodeSchema,
   SessionAgentTreeSchema,
+  SessionSummarySchema,
   TaskItemSchema,
   WorkflowRunSchema,
   type AgentKind,
