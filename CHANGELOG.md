@@ -1,3 +1,22 @@
+## [9.12.0](https://github.com/ExaDev/agent-shim/compare/v9.11.0...v9.12.0) (2026-10-11)
+
+### Features
+
+* add a subagent and background-task walk to the rig's mock provider ([5f111e3](https://github.com/ExaDev/agent-shim/commit/5f111e309d49819911b3d7038efd027e5d3d13fe))
+* list every quota window's reset in one view ([695a809](https://github.com/ExaDev/agent-shim/commit/695a809a6566217a8bea24b84afeae460ed4dec7))
+
+### Bug Fixes
+
+* run the mock provider's subagent walk once per prompt ([e80381e](https://github.com/ExaDev/agent-shim/commit/e80381e9cd235a68cf474ce45dba938d3082a79b))
+
+### Documentation
+
+* describe the agent and task events on the Remote Control read stream ([84f2c1f](https://github.com/ExaDev/agent-shim/commit/84f2c1fcd8aa3646b969a35125dbbbae87cfb3a8))
+
+### Tests
+
+* wait for the permission watcher to register instead of racing it ([b1e9bf2](https://github.com/ExaDev/agent-shim/commit/b1e9bf227ce0e1043fdb97f0a9a6cedc8375c142))
+
 ## [9.11.0](https://github.com/ExaDev/agent-shim/compare/v9.10.1...v9.11.0) (2026-10-11)
 
 ### Features
