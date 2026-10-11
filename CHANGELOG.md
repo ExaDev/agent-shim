@@ -1,3 +1,16 @@
+## [9.13.0](https://github.com/ExaDev/agent-shim/compare/v9.12.1...v9.13.0) (2026-10-11)
+
+### Features
+
+* drain and exit a front door superseded by another live supervisor ([dc2d341](https://github.com/ExaDev/agent-shim/commit/dc2d34152838e81c927a8ae6824dadae57ea7100)), references [#371](https://github.com/ExaDev/agent-shim/issues/371)
+* hold a --wait launch for an exhausted plan to return instead of spending extra usage ([4a43360](https://github.com/ExaDev/agent-shim/commit/4a4336056860c9b3e91bb3d2189fe313e9d81668))
+* record which door a launch was sent to and drain on that door's sessions only ([ef9da01](https://github.com/ExaDev/agent-shim/commit/ef9da01b72c98def998fa23370e1f01020620c82))
+* report duplicate front doors and an allowlist that excludes the serving door ([daab002](https://github.com/ExaDev/agent-shim/commit/daab002a357b26aaded658388ed343f193813bbd))
+
+### Code Refactoring
+
+* read the front-door supervisor identity through the shared process parser ([25be7d4](https://github.com/ExaDev/agent-shim/commit/25be7d42d27cfdee9c67b1d79f6324255e93d5e2))
+
 ## [9.12.1](https://github.com/ExaDev/agent-shim/compare/v9.12.0...v9.12.1) (2026-10-11)
 
 ### Bug Fixes
