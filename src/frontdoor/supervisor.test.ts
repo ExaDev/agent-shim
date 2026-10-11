@@ -549,6 +549,30 @@ describe("runFrontDoorSupervisor", () => {
     expect(world.logs.some((line) => line.includes(`supervisor ${String(SUCCESSOR_PID)} now owns the front door`))).toBe(true);
   });
 
+  it("does not wait for a launch that recorded the owner as the door it was sent to, even one registered before the takeover", async () => {
+    const world = makeWorld();
+    world.alive.add(LIVE_SESSION);
+    world.alive.add(NEW_SESSION);
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0, token: SESSION_TOKEN, supervisorPid: OWN_PID });
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: NEW_SESSION, startedAt: 0, token: SESSION_TOKEN, supervisorPid: SUCCESSOR_PID });
+    let ticks = 0;
+    const takeOverOn = 1;
+    const endServedSessionOn = 3;
+    world.onSleep = () => {
+      ticks += 1;
+      if (ticks === takeOverOn) {
+        world.alive.add(SUCCESSOR_PID);
+        writeFrontDoorState(world.fs, paths.frontdoorStateFile, SUCCESSOR_STATE);
+      }
+      if (ticks === endServedSessionOn) {
+        world.alive.delete(LIVE_SESSION);
+      }
+    };
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(0);
+    expect(world.clock()).toBe(endServedSessionOn * FRONTDOOR_POLL_MS);
+    expect(world.stopOrder).toEqual(["direct", "connect", "provider", "hub"]);
+  });
+
   it("counts a launch that registers in the tick after the takeover as its own, since that launch may have read the state before the owner replaced it", async () => {
     const world = makeWorld();
     let ticks = 0;
