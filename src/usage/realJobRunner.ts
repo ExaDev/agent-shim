@@ -8,8 +8,10 @@ import { withIdentityClaude, type IdentityClaudeParams } from "./identityClaude"
 /** The launch flags a job run adds: no daemons beyond the identity's own routing, and usage tracking on so the door records the run against the identity. */
 const JOB_LAUNCH_FLAGS = ["--no-headroom", "--no-remote-control", "--track-usage"] as const;
 
-/** The settings an unattended run loads: the user's own, never the project's or local ones. A repository's committed settings can change after the job was defined (a pulled change adds a hook or widens a permission), and the front door would then run that as the person's identity without another authorisation. */
-export const JOB_SETTING_SOURCES = ["user"] as const;
+/**
+ * What an unattended run takes from the repository it works in: nothing that can run code. Only the user's own settings load, never the project's or local ones, and no MCP server starts, including those a project's `.mcp.json` names (`strictMcpConfig` ignores every source but the empty map given). A repository's committed settings and MCP file can change after the job was defined, so a pulled change could otherwise add a hook, widen a permission or start a command-backed server that the front door then runs as the person's identity without another authorisation.
+ */
+export const JOB_ISOLATION_OPTIONS = { settingSources: ["user"], mcpServers: {}, strictMcpConfig: true } as const;
 
 /** What a run appends to its job's log: when it ended, who ran it, and the result or the error. */
 function logEntry(name: string, identity: string, endedAt: Readonly<Date>, outcome: string): string {
@@ -40,7 +42,9 @@ export function createRealJobRunner(params: Omit<IdentityClaudeParams, "cwd" | "
             env,
             cwd,
             abortController: abort,
-            settingSources: [...JOB_SETTING_SOURCES],
+            settingSources: [...JOB_ISOLATION_OPTIONS.settingSources],
+            mcpServers: JOB_ISOLATION_OPTIONS.mcpServers,
+            strictMcpConfig: JOB_ISOLATION_OPTIONS.strictMcpConfig,
             permissionMode: "dontAsk",
             ...(job.model === undefined ? {} : { model: job.model }),
             ...(job.allowedTools === undefined ? {} : { allowedTools: [...job.allowedTools] }),
