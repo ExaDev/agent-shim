@@ -20,6 +20,7 @@ import { registerProviderCommand } from "./providers";
 import { registerRuleCommand } from "./directoryRules";
 import { registerRunCommand } from "./runCommand";
 import { registerUpdateCommand } from "./update/commands";
+import { registerSessionCommands } from "./agents/commands";
 import { registerUsageCommands } from "./usage/commands";
 import type { UpdatePorts } from "./update/update";
 
@@ -104,6 +105,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   registerFrontDoorCommand(program, deps);
   registerMcpCommand(program, deps);
   registerUsageCommands(program, deps);
+  registerSessionCommands(program, deps);
   registerRunCommand(program, deps.runClaude);
   registerUpdateCommand(program, deps, deps.updatePorts);
   registerCompletionCommand(program);
