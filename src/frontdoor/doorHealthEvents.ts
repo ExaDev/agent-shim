@@ -2,7 +2,7 @@ import { DOOR_HEALTH_EVENT_SOURCE, type DoorHealthEvent } from "./eventSchemas";
 import type { DoorEventHub } from "./eventHub";
 
 /**
- * The door health publisher: the supervisor's own state transitions as backbone events, so a consumer of the door learns the door itself changed and not only its sessions. The publisher emits nothing of its own: the supervisor tells it the moments it already lives through (every listener bound, a start failure that ends the generation, the binary turnover, the idle shutdown), each published the moment it happens rather than at a tick, because these are process facts, not registry facts diffed between observations.
+ * The door health publisher: the supervisor's own state transitions as backbone events, so a consumer of the door learns the door itself changed and not only its sessions. The publisher emits nothing of its own: the supervisor tells it the moments it already lives through (every listener bound, a start failure that ends the generation, the binary turnover, the idle shutdown, the supersession and the drained exit that follows it), each published the moment it happens rather than at a tick, because these are process facts, not registry facts diffed between observations.
  */
 
 /** Everything the door health publisher needs: the backbone it publishes on and the clock its events are observed at. */
@@ -15,6 +15,10 @@ export interface DoorHealthPublisher {
   readonly binaryTurnover: () => void;
   /** Publishes the idle shutdown: the door closing itself with an empty session registry. */
   readonly idleShutdown: () => void;
+  /** Publishes the supersession: the state file naming another live supervisor, `ownerPid`, so this door takes no new sessions and serves only those it already had. */
+  readonly superseded: (ownerPid: number) => void;
+  /** Publishes the drained exit: a superseded door closing itself because every session it served has ended. */
+  readonly drained: () => void;
 }
 
 /** Creates the door health publisher. One per door process, fed by the supervisor. */
@@ -32,6 +36,12 @@ export function createDoorHealthPublisher(hub: DoorEventHub, now: () => number, 
     },
     binaryTurnover: () => {
       publisher.publish({ kind: "binaryTurnover", pid, observedAt: now() } satisfies DoorHealthEvent);
+    },
+    superseded: (ownerPid) => {
+      publisher.publish({ kind: "superseded", pid, ownerPid, observedAt: now() } satisfies DoorHealthEvent);
+    },
+    drained: () => {
+      publisher.publish({ kind: "drained", pid, observedAt: now() } satisfies DoorHealthEvent);
     },
   };
 }

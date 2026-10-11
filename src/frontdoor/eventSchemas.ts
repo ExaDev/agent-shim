@@ -53,13 +53,15 @@ export const LaunchLifecycleEventSchema = z.strictObject({
 export type LaunchLifecycleEvent = z.output<typeof LaunchLifecycleEventSchema>;
 
 /**
- * One door health event: the supervisor's own state transitions, observed at the moment they happened in this process. `generation` is the door fully serving (every listener bound and the state file naming it); `listenerFailed` is a start failure that ends the generation, naming which listener and why; `binaryTurnover` is the door retiring because the installed binary changed and no session is live, so the next launch serves from the new one; `idleShutdown` is the door closing itself with an empty session registry.
+ * One door health event: the supervisor's own state transitions, observed at the moment they happened in this process. `generation` is the door fully serving (every listener bound and the state file naming it); `listenerFailed` is a start failure that ends the generation, naming which listener and why; `binaryTurnover` is the door retiring because the installed binary changed and no session is live, so the next launch serves from the new one; `idleShutdown` is the door closing itself with an empty session registry; `superseded` is the state file coming to name another live supervisor, `ownerPid`, after which this door takes no new sessions; `drained` is a superseded door closing itself because every session it served has ended.
  */
 export const DoorHealthEventSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("generation"), pid: z.number().int().positive(), providerPort: z.number().int().positive(), connectPort: z.number().int().positive(), directPort: z.number().int().positive(), observedAt: z.number() }),
   z.strictObject({ kind: z.literal("listenerFailed"), pid: z.number().int().positive(), listener: z.enum(["provider", "connect", "direct"]), message: z.string(), observedAt: z.number() }),
   z.strictObject({ kind: z.literal("binaryTurnover"), pid: z.number().int().positive(), observedAt: z.number() }),
   z.strictObject({ kind: z.literal("idleShutdown"), pid: z.number().int().positive(), observedAt: z.number() }),
+  z.strictObject({ kind: z.literal("superseded"), pid: z.number().int().positive(), ownerPid: z.number().int().positive(), observedAt: z.number() }),
+  z.strictObject({ kind: z.literal("drained"), pid: z.number().int().positive(), observedAt: z.number() }),
 ]);
 
 /** One door health event, as the TypeScript the publisher emits and its consumers handle. */
