@@ -60,6 +60,7 @@ src/
     poolPick.ts             # the store-backed side of picking: walks a pool and everything it nests (each pool under its own preference, cycles refused), loads each member's snapshot, login metadata and recent log records for `rankPool`, and keeps the per-directory last-pick record
     anchor.ts               # anchors: parsing and formatting `<days>@<HH:MM>[/<zone>]`, and the pure next-and-due arithmetic over an injected zone and clock, daylight saving included
     windowKeeper.ts         # the front door's window keeper: at each anchor that has fallen, opens a five-hour window when none is open, once per anchor, over injected ports
+    childRun.ts             # runs headless identity work in a short-lived child of this executable, so a launch routed through the door never probes the door from inside it
     realWindowOpener.ts     # the real opener: one toolless single-turn request through the Agent SDK as the identity
     identityClaude.ts       # plans a launch of the real `claude` as an identity and runs a callback against it under a time limit, shared by the usage probe, the opener and the job runner
     handledStamps.ts        # the file recording per key the instant up to which a keeper has dealt with its triggers, so a restart neither repeats nor skips one

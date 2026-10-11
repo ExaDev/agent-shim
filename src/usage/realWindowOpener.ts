@@ -13,7 +13,7 @@ const WINDOW_OPENING_PROMPT = "ok";
 const WINDOW_OPENING_SYSTEM_PROMPT = "Reply with one word.";
 
 /** The longest one opening may take: the CLI's start-up and one model turn, against the ten seconds a usage-endpoint call is given. */
-const WINDOW_OPEN_TIMEOUT_MS = 60_000;
+export const WINDOW_OPEN_TIMEOUT_MS = 60_000;
 
 /**
  * Opens a five-hour window for an identity by sending one real request through the Agent SDK as that identity: no tools, no MCP servers, no settings sources, nothing persisted, the cheapest model and a single turn. The request is real because a window starts at the first request the account serves, which the usage-endpoint probe (no model request) never makes. Throws with the SDK's own error when the turn fails, and `LaunchRefusedError` when the identity cannot be launched.
