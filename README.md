@@ -265,6 +265,7 @@ Issues and pull requests are welcome. Please keep the tool itself free of assump
 - [docs/rc-interception-rig.md](docs/rc-interception-rig.md): the Remote Control interception rig: bring-up, per-host TLS proof, teardown, and the manual login step.
 - [docs/rc-web-client.md](docs/rc-web-client.md): the self-hosted Remote Control web client: the page the door serves behind its control token for browser control of its sessions, how it authenticates and speaks the typed API, and how it is tested.
 - [docs/rc-agent-events.md](docs/rc-agent-events.md): the task and subagent lifecycle events a Remote Control session's read stream carries, and the keys that join them to the transcripts on disk.
+- [docs/agent-transcripts.md](docs/agent-transcripts.md): how Claude Code lays out a session's subagents, forks, workflow runs, tasks, teams and jobs on disk, and which fields are always present.
 
 ## License
 
