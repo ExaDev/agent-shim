@@ -1,3 +1,13 @@
+## [9.11.0](https://github.com/ExaDev/agent-shim/compare/v9.10.1...v9.11.0) (2026-10-11)
+
+### Features
+
+* rank pool members on the five-hour reset as well as the weekly one ([ef8148c](https://github.com/ExaDev/agent-shim/commit/ef8148cb890f5ccad9776d6eb91cd3b4531a0efe))
+
+### Documentation
+
+* describe the five-hour term in the pick report's score window ([144e27a](https://github.com/ExaDev/agent-shim/commit/144e27afede81fc95b8413ae5f747df0acbda17c))
+
 ## [9.10.1](https://github.com/ExaDev/agent-shim/compare/v9.10.0...v9.10.1) (2026-10-10)
 
 ### Bug Fixes
