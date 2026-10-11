@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import type { FrontDoorPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, realIsProcessRunning, realSleepSync, type DaemonSpawner } from "../realPorts";
+import { realFarmFs, realIsFrontDoorSupervisor, realIsProcessRunning, realSleepSync, type DaemonSpawner } from "../realPorts";
 import { ensureFrontDoor, restartFrontDoor, type EnsureFrontDoorPorts, type RestartFrontDoorResult } from "./ensure";
 import { removeFrontDoorSession } from "./state";
 import { probeFrontDoorSync } from "./probe";
@@ -28,6 +28,7 @@ function realEnsurePorts(paths: LayoutPaths, spawnDaemon: DaemonSpawner): Ensure
     now: () => Date.now(),
     sleep: realSleepSync,
     spawnSupervisor: (layout) => spawnDaemon(layout, "__frontdoor-supervisor", layout.frontdoorLogPath),
+    isFrontDoorSupervisor: realIsFrontDoorSupervisor,
     stopSupervisor: (pid) => {
       process.kill(pid, "SIGTERM");
     },

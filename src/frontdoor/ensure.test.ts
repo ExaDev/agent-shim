@@ -32,7 +32,7 @@ const START_TIMEOUT_MS = 30_000;
 /**
  * The fake world `ensureFrontDoor` runs against: a fake filesystem, a clock that only advances when the code sleeps, a live-pid set, and a `spawnSupervisor` that records itself and can simulate the freshly spawned supervisor writing a ready state (immediately, or lazily on a later poll via `onSleep`).
  */
-function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly spawnedPid?: number; readonly spawnedPort?: number } = {}) {
+function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly spawnedPid?: number; readonly spawnedPort?: number; readonly transientProbeFailures?: number } = {}) {
   const fs = createFakeFarmFs({});
   let clock = 0;
   let onSleep: (() => void) | undefined;
@@ -42,6 +42,10 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
   /** Ports whose listener authenticates; every other port fails the probe, the way a listener without a leaf from agent-shim's CA does. */
   const authentic = new Set<number>([PORT]);
   const probed: number[] = [];
+  /** Pids whose command line is this tool's front-door supervisor, as opposed to an unrelated process that reuses the recorded pid. */
+  const ownSupervisors = new Set<number>();
+  /** Probes of an authentic port that still fail before it answers, the way a busy door misses the probe's deadline. */
+  let transientProbeFailures = options.transientProbeFailures ?? 0;
   const spawnedPid = options.spawnedPid ?? SUPERVISOR_PID;
   const spawnedPort = options.spawnedPort ?? PORT;
 
@@ -52,6 +56,7 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
     stops,
     authentic,
     probed,
+    ownSupervisors,
     clock: () => clock,
     set onSleep(hook: (() => void) | undefined) {
       onSleep = hook;
@@ -98,8 +103,13 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
         stops.push(pid);
         alive.delete(pid);
       },
+      isFrontDoorSupervisor: (pid: number) => ownSupervisors.has(pid),
       verifyListener: (port: number): ListenerVerdict => {
         probed.push(port);
+        if (authentic.has(port) && transientProbeFailures > 0) {
+          transientProbeFailures -= 1;
+          return { ok: false, reason: "the probe did not finish within the deadline" };
+        }
         return authentic.has(port) ? { ok: true } : { ok: false, reason: "SELF_SIGNED_CERT_IN_CHAIN: self-signed certificate in certificate chain" };
       },
     },
@@ -209,6 +219,34 @@ describe("ensureFrontDoor", () => {
     expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(/asked to be replaced and did not exit/);
   });
 
+  it("keeps the live door when its listener misses a probe or two and then answers, spawning nothing and stopping nothing", () => {
+    const world = makeWorld({ transientProbeFailures: 2 });
+    world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+    const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(world.spawns).toEqual([]);
+    expect(world.stops).toEqual([]);
+    expect(ensured.port).toBe(PORT);
+  });
+
+  it("stops this tool's own supervisor whose listener stays unreachable and brings the replacement up on the same port, rather than leaving two doors", () => {
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT, transientProbeFailures: Number.MAX_SAFE_INTEGER });
+    world.ownSupervisors.add(SUPERVISOR_PID);
+    world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+    world.ports.spawnSupervisor = () => {
+      world.spawns.push(REPLACEMENT_PID);
+      world.alive.add(REPLACEMENT_PID);
+      world.writeReadyState(PORT, REPLACEMENT_PID);
+      return REPLACEMENT_PID;
+    };
+    // The replacement's listener answers; only the wedged predecessor's does not.
+    const realVerify = world.ports.verifyListener;
+    world.ports.verifyListener = (port) => (world.spawns.length > 0 ? { ok: true } : realVerify(port));
+    const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(world.stops).toEqual([SUPERVISOR_PID]);
+    expect(world.spawns).toEqual([REPLACEMENT_PID]);
+    expect(ensured.port).toBe(PORT);
+  });
+
   it("spawns a replacement supervisor when the recorded one is dead, the crash-recovery path every frozen base URL depends on", () => {
     const world = makeWorld();
     writeFrontDoorState(world.fs, paths.frontdoorStateFile, { supervisorPid: DEAD_SUPERVISOR_PID, port: PORT, lastPort: PORT, connectPort: CONNECT_PORT, lastConnectPort: CONNECT_PORT });
@@ -311,7 +349,10 @@ describe("ensureFrontDoor", () => {
     const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
     expect(world.spawns).toEqual([REPLACEMENT_PID]);
     expect(ensured.port).toBe(REPLACEMENT_PORT);
-    expect(world.probed).toEqual([PORT, REPLACEMENT_PORT]);
+    // The recorded port is probed repeatedly before it is believed, and the replacement's port once.
+    expect(world.probed.slice(0, -1).length).toBeGreaterThan(1);
+    expect(world.probed.slice(0, -1).every((probedPort) => probedPort === PORT)).toBe(true);
+    expect(world.probed.at(-1)).toBe(REPLACEMENT_PORT);
     expect(world.sessionToken(LAUNCHER_PID)).toBe(ensured.token);
   });
 
