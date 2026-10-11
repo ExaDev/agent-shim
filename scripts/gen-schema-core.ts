@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
+import { SessionAgentTreeSchema } from "../src/agents/schema";
 import {
   CategoryClassificationSchema,
   CategoryMapSchema,
@@ -46,6 +47,7 @@ const schemas: Record<string, z.ZodType> = {
   UsageRecord: UsageRecordSchema,
   UsageSnapshot: UsageSnapshotSchema,
   PoolPickReport: PoolPickReportSchema,
+  AgentTree: SessionAgentTreeSchema,
   ResetSchedule: ResetScheduleSchema,
 };
 
