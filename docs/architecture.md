@@ -48,6 +48,7 @@ src/
     headers.ts              # ANTHROPIC_CUSTOM_HEADERS merge (Name: Value lines, later block wins per name)
     commands.ts             # real ports for the supervisor, `headroom status`, command registration
   usage/                    # usage and quota tracking: the front door's response middleware, the append-only store it writes, and the `usage` and `account` readers
+  agents/                   # the agent tree reader: `schema.ts` (the tree and the meta file's lenient shape), `read.ts` (session listing and the tree, pure over an injected filesystem)
     middleware.ts           # the response observer: records one metadata-only record per finished request (never prompt, response or token content), deferred off the response path so a store failure never reaches a request
     rateLimit.ts, scan.ts   # the unified rate-limit header parser and limit classifier, and the streaming SSE and JSON body scanners that read a response's `usage` and error type
     schema.ts               # the Zod definitions of the log record, the per-identity snapshot and the account metadata, versioned

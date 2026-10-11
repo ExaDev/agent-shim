@@ -5,6 +5,7 @@
  * - routing: the front door's Remote-Control-preserving, capability-authenticated CONNECT surface and its certificate authority, the Remote Control session tracker (pending control requests and worker status included) with prompt injection and control-request answering over the same observed protocol, the control surface that lists, reads status and writes through, the client read stream attachment (the SSE parser, the fan-out and the per-session hub that holds the stream open over the door's own dials), the same operations as a typed oRPC API with its node handler and TLS-pinned client, the door's control-plane routers beside it (usage snapshots and effective quota windows, the front door's status and session registry, check and doctor as data), the front-door supervisor and ensure lifecycle, and the headroom supervisor and ensure lifecycle, each pure over its injected ports;
  * - the ambient-credential guard;
  * - the per-identity usage snapshot a statusline or launcher reads: its schema and the reader over an injected filesystem, `effectiveWindow` (how a window past its reset reads), and the pool ranking (`rankPool` over snapshots and a clock, `collectPoolPick` reading this machine, and the schema of the report `pool pick --json` prints);
+ * - the agent tree of a session (`listSessions`, `readSessionAgentTree` over an injected filesystem, and the schema of the tree): its subagents, forks and workflow agents with their parents, the session's task list and its workflow runs, read from the transcripts on disk;
  * - `evaluateWhen` and `matchBranch`, the condition evaluator behind a rule's or entry's `when`, so a consumer reading directory rules applies the same semantics;
  * - the state root's layout (`resolveAgentShimHome`, `resolveLayoutPaths`, `buildLayoutPaths`), which includes adopting an existing `~/.claude-use` in place, and the Zod schema and inferred type of every configuration file (identity, configuration profile, provider, pool, directory rules, global config, credential), so a tool can validate or generate them with the same definitions the CLI uses.
  *
@@ -324,6 +325,20 @@ export { planOf, PlanClassSchema, type PlanClass } from "./usage/plan";
 export { PoolGraphError, poolIdentities } from "./usage/poolPick";
 export { collectPoolPick } from "./poolPickReport";
 export { PoolPickReportSchema, type PoolPickReport } from "./usage/pickReportSchema";
+export { listSessions, readSessionAgentTree, type AgentReadFs, type SessionRef } from "./agents/read";
+export {
+  AgentKindSchema,
+  AgentMetaSchema,
+  AgentNodeSchema,
+  SessionAgentTreeSchema,
+  TaskItemSchema,
+  WorkflowRunSchema,
+  type AgentKind,
+  type AgentNode,
+  type SessionAgentTree,
+  type TaskItem,
+  type WorkflowRun,
+} from "./agents/schema";
 export { evaluateWhen, matchBranch, type ConditionContext, type WhenEvaluation } from "./resolve/conditions";
 export { ensureHeadroom, HeadroomStartError, type EnsureHeadroomPorts } from "./headroom/ensure";
 export { resolveSupervisorConfig, runSupervisor, type HeadroomSupervisorConfig, type RunSupervisorOptions, type SupervisorPorts } from "./headroom/supervisor";
