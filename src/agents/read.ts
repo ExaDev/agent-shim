@@ -31,8 +31,8 @@ const META_SUFFIX = ".meta.json";
 const TRANSCRIPT_SUFFIX = ".jsonl";
 const JSON_SUFFIX = ".json";
 const WORKFLOW_RUN_PREFIX = "wf_";
-/** The suffix a resume appends to a session directory it superseded: a dot, the word, a dash and the epoch milliseconds. */
-const SUPERSEDED_RE = /^(.+)\.superseded-\d+$/;
+/** The suffix of an archived copy: a resume appends `.superseded-<epoch ms>` to the session directory it replaced, and Claude Code archives a replaced transcript as `.orphaned-<epoch ms>-<hash>`. */
+const ARCHIVED_RE = /^(.+)\.(?:superseded|orphaned)-.+$/;
 const FORK_AGENT_TYPE = "fork";
 const WORKFLOW_AGENT_TYPE = "workflow-subagent";
 const TEAMMATE_TASK_KIND = "in_process_teammate";
@@ -40,17 +40,17 @@ const BACKGROUND_REQUEST_SHAPE = "background";
 /** A spawn depth of 1 is an agent the session itself spawned. */
 const SESSION_SPAWN_DEPTH = 1;
 
-/** One session found under a project: its directory name split into the session id and whether a resume superseded it. */
+/** One session found under a project: its directory name split into the session id and whether the entry is an archived copy (superseded by a resume, or orphaned) rather than the live session. */
 export interface SessionRef {
   readonly project: string;
   readonly sessionId: string;
   readonly superseded: boolean;
-  /** The directory (and transcript stem) name exactly as on disk, which differs from `sessionId` for a superseded session. */
+  /** The directory (and transcript stem) name exactly as on disk, which differs from `sessionId` for an archived copy. */
   readonly entry: string;
 }
 
 function parseEntry(project: string, entry: string): SessionRef {
-  const match = SUPERSEDED_RE.exec(entry);
+  const match = ARCHIVED_RE.exec(entry);
   const base = match?.[1];
   return base === undefined ? { project, sessionId: entry, superseded: false, entry } : { project, sessionId: base, superseded: true, entry };
 }
@@ -87,9 +87,9 @@ interface LocatedAgent {
   readonly workflowRunId: string | undefined;
 }
 
-function locateAgents(fs: AgentReadFs, dir: string, relativeDir: string, workflowRunId: string | undefined): LocatedAgent[] {
+function locateAgents(fs: AgentReadFs, configDir: string, relativeDir: string, workflowRunId: string | undefined, report: ReportProblem): LocatedAgent[] {
   const located: LocatedAgent[] = [];
-  for (const name of fs.readdir(dir)) {
+  for (const name of listDirOrReport(fs, configDir, relativeDir, report)) {
     if (!name.startsWith(AGENT_FILE_PREFIX) || !name.endsWith(META_SUFFIX)) {
       continue;
     }
@@ -147,6 +147,30 @@ function toNode(read: ReadAgent, children: readonly AgentNode[]): AgentNode {
 /** Receives one unusable file's report. */
 type ReportProblem = (problem: Readonly<AgentTreeProblem>) => void;
 
+function describeFailure(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Reads a file, reporting a failure (permissions, a transient I/O error) against its configuration-relative path and returning undefined, so one inaccessible file costs the tree that file and nothing else. A file that simply is not there is undefined without a report. */
+function readFileOrReport(fs: AgentReadFs, configDir: string, relative: string, report: ReportProblem): string | undefined {
+  try {
+    return fs.readFileUtf8(path.join(configDir, relative));
+  } catch (error: unknown) {
+    report({ path: relative, reason: `could not be read: ${describeFailure(error)}` });
+    return undefined;
+  }
+}
+
+/** Lists a directory with the same contract as `readFileOrReport`. */
+function listDirOrReport(fs: AgentReadFs, configDir: string, relative: string, report: ReportProblem): readonly string[] {
+  try {
+    return fs.readdir(path.join(configDir, relative));
+  } catch (error: unknown) {
+    report({ path: relative, reason: `could not be listed: ${describeFailure(error)}` });
+    return [];
+  }
+}
+
 /** Parses JSON text to `unknown`, or undefined when it is not JSON. */
 function parseJson(text: string): unknown {
   try {
@@ -158,7 +182,7 @@ function parseJson(text: string): unknown {
 }
 
 /** The task file's own shape: unknown keys are stripped, and the link lists default to empty because older writers omitted them. */
-const TaskFileSchema = z.object({ ...TaskItemSchema.shape, blocks: z.array(z.string()).default([]), blockedBy: z.array(z.string()).default([]) });
+const TaskFileSchema = z.object({ ...TaskItemSchema.omit({ team: true }).shape, blocks: z.array(z.string()).default([]), blockedBy: z.array(z.string()).default([]) });
 
 /** The workflow run file's own shape, narrowed to what the tree reports. */
 const WorkflowRunFileSchema = z.object({
@@ -182,19 +206,17 @@ export function readSessionAgentTree(fs: AgentReadFs, configDir: string, ref: Se
 
   const subagentsRelative = path.join(sessionRelative, SUBAGENTS_DIR);
   const workflowsUnderSubagents = path.join(subagentsRelative, WORKFLOWS_DIR);
-  const located: LocatedAgent[] = locateAgents(fs, path.join(configDir, subagentsRelative), subagentsRelative, undefined);
-  for (const runDir of fs.readdir(path.join(configDir, workflowsUnderSubagents))) {
+  const located: LocatedAgent[] = locateAgents(fs, configDir, subagentsRelative, undefined, report);
+  for (const runDir of listDirOrReport(fs, configDir, workflowsUnderSubagents, report)) {
     if (runDir.startsWith(WORKFLOW_RUN_PREFIX)) {
-      const runRelative = path.join(workflowsUnderSubagents, runDir);
-      located.push(...locateAgents(fs, path.join(configDir, runRelative), runRelative, runDir));
+      located.push(...locateAgents(fs, configDir, path.join(workflowsUnderSubagents, runDir), runDir, report));
     }
   }
 
   const agents = new Map<string, ReadAgent>();
   for (const candidate of located) {
-    const text = fs.readFileUtf8(path.join(configDir, candidate.metaPath));
+    const text = readFileOrReport(fs, configDir, candidate.metaPath, report);
     if (text === undefined) {
-      report({ path: candidate.metaPath, reason: "meta file disappeared between listing and reading" });
       continue;
     }
     const parsed = AgentMetaSchema.safeParse(parseJson(text));
@@ -205,6 +227,7 @@ export function readSessionAgentTree(fs: AgentReadFs, configDir: string, ref: Se
     agents.set(candidate.id, { located: candidate, meta: parsed.data });
   }
 
+  const teamNames = [...new Set([...agents.values()].flatMap((agent) => (agent.meta.teamName === undefined ? [] : [agent.meta.teamName])))].sort();
   const parentOf = resolveParents(fs, configDir, agents, report);
   const childrenOf = new Map<string, string[]>();
   const roots: string[] = [];
@@ -229,7 +252,7 @@ export function readSessionAgentTree(fs: AgentReadFs, configDir: string, ref: Se
     sessionId: ref.sessionId,
     superseded: ref.superseded,
     agents: roots.sort().map(build),
-    tasks: readTasks(fs, configDir, ref.sessionId, report),
+    tasks: readTasks(fs, configDir, [ref.sessionId, ...teamNames], report),
     workflowRuns: readWorkflowRuns(fs, configDir, path.join(sessionRelative, WORKFLOWS_DIR), report),
     problems,
   };
@@ -246,7 +269,7 @@ function resolveParents(fs: AgentReadFs, configDir: string, agents: ReadonlyMap<
     if (cached !== undefined) {
       return cached;
     }
-    const text = fs.readFileUtf8(path.join(configDir, agent.located.transcriptPath)) ?? "";
+    const text = readFileOrReport(fs, configDir, agent.located.transcriptPath, report) ?? "";
     transcriptCache.set(agent.located.id, text);
     return text;
   };
@@ -273,56 +296,71 @@ function resolveParents(fs: AgentReadFs, configDir: string, agents: ReadonlyMap<
       continue;
     }
     const depth = meta.spawnDepth;
-    if (depth === undefined || depth <= SESSION_SPAWN_DEPTH || meta.toolUseId === undefined) {
+    if ((depth !== undefined && depth <= SESSION_SPAWN_DEPTH) || meta.toolUseId === undefined) {
       if (meta.parentAgentId !== undefined) {
         report({ path: located.metaPath, reason: `parentAgentId ${meta.parentAgentId} names no agent in this session` });
       }
       continue;
     }
     const toolUseId = meta.toolUseId;
+    // A recorded depth narrows the candidates to the level above. Without one (formats that never wrote it) every other agent in the same workflow scope is a candidate, and finding no owner then means the session itself spawned it, which is not a problem.
     const owners = [...agents.values()].filter(
-      (candidate) => candidate.meta.spawnDepth === depth - 1 && candidate.located.workflowRunId === located.workflowRunId && transcriptOf(candidate).includes(toolUseId),
+      (candidate) =>
+        candidate.located.id !== located.id &&
+        (depth === undefined || candidate.meta.spawnDepth === depth - 1) &&
+        candidate.located.workflowRunId === located.workflowRunId &&
+        transcriptOf(candidate).includes(toolUseId),
     );
     const owner = owners[0];
     if (owners.length === 1 && owner !== undefined) {
       attach(agent, owner.located.id);
-    } else {
-      report({ path: located.metaPath, reason: owners.length === 0 ? "no agent transcript records the call that spawned it" : "more than one agent transcript records the call that spawned it" });
+    } else if (owners.length > 1) {
+      report({ path: located.metaPath, reason: "more than one agent transcript records the call that spawned it" });
+    } else if (depth !== undefined) {
+      report({ path: located.metaPath, reason: "no agent transcript records the call that spawned it" });
     }
   }
   return parentOf;
 }
 
-function readTasks(fs: AgentReadFs, configDir: string, sessionId: string, report: ReportProblem): TaskItem[] {
+/**
+ * Reads the task lists a session can see: its own `tasks/<session-id>`, and the shared store of each team a teammate of the session belongs to (`tasks/<team-name>`), whose tasks carry the team's name.
+ */
+function readTasks(fs: AgentReadFs, configDir: string, scopes: readonly string[], report: ReportProblem): TaskItem[] {
   const tasks: TaskItem[] = [];
-  const relativeDir = path.join(TASKS_DIR, sessionId);
-  for (const name of [...fs.readdir(path.join(configDir, relativeDir))].sort()) {
-    if (name.startsWith(".") || !name.endsWith(JSON_SUFFIX)) {
-      continue;
+  scopes.forEach((scope, index) => {
+    const relativeDir = path.join(TASKS_DIR, scope);
+    for (const name of [...listDirOrReport(fs, configDir, relativeDir, report)].sort()) {
+      if (name.startsWith(".") || !name.endsWith(JSON_SUFFIX)) {
+        continue;
+      }
+      const relative = path.join(relativeDir, name);
+      const text = readFileOrReport(fs, configDir, relative, report);
+      const parsed = TaskFileSchema.safeParse(text === undefined ? undefined : parseJson(text));
+      if (parsed.success) {
+        // The first scope is the session's own; every later one is a team's.
+        tasks.push(index === 0 ? parsed.data : { ...parsed.data, team: scope });
+      } else if (text !== undefined) {
+        report({ path: relative, reason: "task file is not a task" });
+      }
     }
-    const relative = path.join(relativeDir, name);
-    const text = fs.readFileUtf8(path.join(configDir, relative));
-    const parsed = TaskFileSchema.safeParse(text === undefined ? undefined : parseJson(text));
-    if (parsed.success) {
-      tasks.push(parsed.data);
-    } else {
-      report({ path: relative, reason: "task file is not a task" });
-    }
-  }
+  });
   return tasks;
 }
 
 function readWorkflowRuns(fs: AgentReadFs, configDir: string, relativeDir: string, report: ReportProblem): WorkflowRun[] {
   const runs: WorkflowRun[] = [];
-  for (const name of [...fs.readdir(path.join(configDir, relativeDir))].sort()) {
+  for (const name of [...listDirOrReport(fs, configDir, relativeDir, report)].sort()) {
     if (!name.startsWith(WORKFLOW_RUN_PREFIX) || !name.endsWith(JSON_SUFFIX)) {
       continue;
     }
     const relative = path.join(relativeDir, name);
-    const text = fs.readFileUtf8(path.join(configDir, relative));
+    const text = readFileOrReport(fs, configDir, relative, report);
     const parsed = WorkflowRunFileSchema.safeParse(text === undefined ? undefined : parseJson(text));
     if (!parsed.success) {
-      report({ path: relative, reason: "workflow run file is not a run record" });
+      if (text !== undefined) {
+        report({ path: relative, reason: "workflow run file is not a run record" });
+      }
       continue;
     }
     const { phases, ...rest } = parsed.data;

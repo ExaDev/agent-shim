@@ -73,7 +73,7 @@ export const AgentNodeSchema: z.ZodType<AgentNode> = z.lazy(() =>
   }),
 );
 
-/** One entry of a session's task list (`tasks/<session-id>/<n>.json`). `status` is an open string: non-standard values occur. */
+/** One entry of a task list: the session's own (`tasks/<session-id>/<n>.json`) or a team's shared one (`tasks/<team-name>/<n>.json`). `status` is an open string: non-standard values occur. */
 export const TaskItemSchema = z.strictObject({
   id: z.string(),
   subject: z.string(),
@@ -81,6 +81,8 @@ export const TaskItemSchema = z.strictObject({
   status: z.string(),
   blocks: z.array(z.string()),
   blockedBy: z.array(z.string()),
+  /** The team whose shared task list this task belongs to, absent for the session's own list. */
+  team: z.string().optional(),
 });
 
 /** One workflow run's record (`workflows/wf_<run-id>.json`), narrowed to what identifies and summarises it. */

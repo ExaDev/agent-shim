@@ -46,6 +46,9 @@
             "items": {
               "type": "string"
             }
+          },
+          "team": {
+            "type": "string"
           }
         },
         "required": [
