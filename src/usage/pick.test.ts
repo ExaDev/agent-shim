@@ -156,6 +156,16 @@ function bothWindowsRecord(identity: string, agoMs: number, fiveHourUtilization:
 }
 
 describe("rankPool", () => {
+  it("names when an exhausted plan returns for a pick that continues on extra usage, and not for one on plan quota", () => {
+    const exhausted = member("out", { seven: { utilization: FULL, status: "rejected", resetsInMs: SIX_HOURS_MS }, overage: "allowed" });
+    const held = rank([exhausted]);
+    expect(held.pick).toMatchObject({ identity: "out", class: "pay-per-use", planReturnsAtMs: NOW_MS + SIX_HOURS_MS });
+    expect(held.planReturn).toEqual({ identity: "out", atMs: NOW_MS + SIX_HOURS_MS });
+    const onPlan = rank([exhausted, member("fresh", { seven: { utilization: U10, resetsInMs: DAY_MS } })]);
+    expect(onPlan.pick?.identity).toBe("fresh");
+    expect(onPlan.planReturn).toBeUndefined();
+  });
+
   it("never picks a member whose plan window is rejected and has not reset, and reports when it returns", () => {
     const ranking = rank([member("a", { seven: { utilization: FULL, status: "rejected", resetsInMs: TWO_DAYS_MS } }), member("b", { seven: { utilization: U90, status: "allowed", resetsInMs: DAY_MS } })]);
     expect(ranking.pick?.identity).toBe("b");

@@ -85,6 +85,8 @@ export interface Candidate {
   readonly headroom?: number;
   /** When an `ineligible` candidate can be used again. */
   readonly blockedUntilMs?: number;
+  /** When the exhausted plan window of a `pay-per-use` candidate that is only on extra usage because its plan ran out resets, so a launch can hold for it rather than spend. Absent for a candidate that bills by use with no plan allowance. */
+  readonly planReturnsAtMs?: number;
   readonly plan: PlanClass;
   /** True when the member's policy condition could not be decided and it is ranked last within its class, naming the missing fact in its reasons. */
   readonly policyDemoted?: boolean;
@@ -99,6 +101,8 @@ export interface PoolRanking {
   readonly pick?: Candidate;
   /** When nothing can be picked, the soonest any member comes back. */
   readonly earliestReturn?: { readonly identity: string; readonly atMs: number };
+  /** When the pick continues on extra usage only because its plan ran out, the identity and the instant its plan window resets: what a launch that would rather wait than spend sleeps until. Absent when the pick is on plan quota, bills by use with no plan, or no member can be picked. */
+  readonly planReturn?: { readonly identity: string; readonly atMs: number };
   /** The member a resumed or continued conversation started on but moved off, and why, when a launch that resumes could not keep it. One sentence for the launch decision line and `check`. */
   readonly movedOff?: { readonly identity: string; readonly reason: string };
 }
@@ -275,7 +279,7 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
   );
   if (blockedUntil > nowMs) {
     if (unified.overageStatus === "allowed") {
-      return { candidate: { ...base, class: "pay-per-use", reasons: [`plan exhausted until ${new Date(blockedUntil).toISOString()}, continues as extra usage`, ...windowReasons, ...planReasons] } };
+      return { candidate: { ...base, class: "pay-per-use", planReturnsAtMs: blockedUntil, reasons: [`plan exhausted until ${new Date(blockedUntil).toISOString()} (in ${formatAge(blockedUntil - nowMs)}), continues as extra usage`, ...windowReasons, ...planReasons] } };
     }
     return { candidate: { ...base, class: "ineligible", blockedUntilMs: blockedUntil, reasons: [`refused until ${new Date(blockedUntil).toISOString()} (in ${formatAge(blockedUntil - nowMs)})`, ...(unified.fallbackAvailable === true ? ["a fallback is on offer, so requests for some models may still be served"] : []), ...windowReasons, ...overageReasons, ...planReasons] } };
   }
@@ -445,5 +449,6 @@ export function rankPool(input: RankPoolInput): PoolRanking {
     candidates: ordered,
     ...(pick === undefined ? { ...(earliestReturn === undefined ? {} : { earliestReturn }) } : { pick }),
     ...(movedOff === undefined || pick === undefined ? {} : { movedOff }),
+    ...(pick?.planReturnsAtMs === undefined ? {} : { planReturn: { identity: pick.identity, atMs: pick.planReturnsAtMs } }),
   };
 }
