@@ -271,8 +271,8 @@ describe("readSessionAgentTree", () => {
   });
   it("reads the short session-prefixed task list and keeps a task's owner", () => {
     const fs = createFakeFarmFs({
-      [`${CONFIG}/tasks/session-00000000/1.json`]: meta({ id: "1", subject: "mine", status: "pending", owner: "tidy", activeForm: "Tidying" }),
+      [`${CONFIG}/tasks/session-00000000/1.json`]: meta({ id: "1", subject: "mine", status: "pending", owner: "tidy", activeForm: "Tidying", metadata: { origin: "x" } }),
     });
-    expect(readSessionAgentTree(fs, CONFIG, REF).tasks).toEqual([{ id: "1", subject: "mine", status: "pending", owner: "tidy", activeForm: "Tidying", blocks: [], blockedBy: [] }]);
+    expect(readSessionAgentTree(fs, CONFIG, REF).tasks).toEqual([{ id: "1", subject: "mine", status: "pending", owner: "tidy", activeForm: "Tidying", metadata: { origin: "x" }, blocks: [], blockedBy: [] }]);
   });
 });

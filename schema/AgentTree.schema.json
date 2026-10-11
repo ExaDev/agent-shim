@@ -41,6 +41,13 @@
           "owner": {
             "type": "string"
           },
+          "metadata": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
           "blocks": {
             "type": "array",
             "items": {
