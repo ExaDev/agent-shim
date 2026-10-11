@@ -130,6 +130,11 @@ agent-shim frontdoor rc mcp-authenticate --session <cse_id> --server <name> --re
 agent-shim frontdoor rc mcp-oauth-callback-url --session <cse_id> --server <name> --callback-url <url> [--json]
 agent-shim frontdoor rc teleport --session <cse_id> --marker <text> [--json]
 agent-shim frontdoor rc watch [<cse_id>] [--json]
+agent-shim job add <name> (--identity <name> | --pool <name>) (--at <days>@<HH:MM>[/<zone>]... | --before-reset <fiveHour|sevenDay> --lead <duration>) --prompt <text> --timeout <duration> [--cwd <dir>] [--model <model>] [--allowed-tool <tool>]... [--json]
+agent-shim job list [--json]
+agent-shim job show <name> [--json]
+agent-shim job remove <name> [--yes] [--json]
+agent-shim job run <name>
 agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--resets] [--json]
 agent-shim account show [<identity>] [--refresh] [--json]
 agent-shim mcp [--allow-writes] [--allow-remote-control]      # serve the door's typed API as MCP tools on stdio; read-only without the flags

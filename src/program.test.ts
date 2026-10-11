@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EXIT_FAILURE, EXIT_USAGE } from "./cliError";
 import { reportFatalError } from "./cliReport";
 import { addIdentity, readActiveIdentity, readIdentity, useIdentity } from "./identityStore";
+import { readJobs } from "./jobStore";
 import { createProfile, readGlobalConfig, readProfile } from "./configProfilesStore";
 import { readProvider } from "./providersStore";
 import { listDirectoryRules } from "./directoryRulesStore";
@@ -96,7 +97,7 @@ describe("buildProgram", () => {
     const built = program(runClaude);
 
     expect(built.commands.map((command) => command.name()).sort()).toEqual(
-      ["__frontdoor-supervisor", "__headroom-supervisor", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "mcp", "pool", "profile", "provider", "rule", "run", "shim", "update", "usage"].sort(),
+      ["__frontdoor-supervisor", "__headroom-supervisor", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "job", "mcp", "pool", "profile", "provider", "rule", "run", "shim", "update", "usage"].sort(),
     );
     expect(runClaude).not.toHaveBeenCalled();
     expect(fs.readdirSync(root)).toEqual([]);
@@ -106,6 +107,7 @@ describe("buildProgram", () => {
     const built = program();
     expect(subcommandNames(built, "identity")).toEqual(["add", "list", "remove", "resolve-conflicts", "set", "show", "use"]);
     expect(subcommandNames(built, "pool")).toEqual(["add", "list", "pick", "remove", "set", "show", "use"]);
+    expect(subcommandNames(built, "job")).toEqual(["add", "list", "remove", "run", "show"]);
     expect(subcommandNames(built, "profile")).toEqual(["add", "list", "remove", "set", "show", "use"]);
     expect(subcommandNames(built, "provider")).toEqual(["add", "list", "remove", "set", "show"]);
     expect(subcommandNames(built, "rule")).toEqual(["add", "list", "remove", "set", "show"]);
@@ -258,6 +260,31 @@ describe("identity commands", () => {
     expect((await cli(["identity", "set", "work", "--no-credential"])).code).toBe(0);
     expect(readIdentity(paths, "work")?.credential).toBeUndefined();
     expect((await cli(["identity", "show", "work"])).stdout).toContain("Credential: (none; uses its stored login)");
+  });
+
+  it("defines, lists, shows and removes jobs, refusing contradictory or incomplete ones as usage errors", async () => {
+    await cli(["identity", "add", "work"]);
+    await cli(["pool", "add", "subs", "--identity", "work"]);
+    const base = ["job", "add", "digest", "--prompt", "summarise", "--timeout", "30m", "--cwd", "/work"];
+    expect((await cli([...base, "--at", "mon-fri@06:00"])).code).toBe(EXIT_USAGE);
+    expect((await cli([...base, "--identity", "work", "--pool", "subs", "--at", "mon@06:00"])).code).toBe(EXIT_USAGE);
+    expect((await cli([...base, "--identity", "work"])).code).toBe(EXIT_USAGE);
+    expect((await cli([...base, "--identity", "work", "--before-reset", "fiveHour"])).code).toBe(EXIT_USAGE);
+    expect((await cli([...base, "--identity", "work", "--at", "mon@06:00", "--lead", "1h"])).code).toBe(EXIT_USAGE);
+    expect((await cli([...base, "--identity", "ghost", "--at", "mon@06:00"])).code).not.toBe(0);
+    expect((await cli([...base, "--identity", "work", "--at", "mon-fri@06:00", "--allowed-tool", "Read"])).code).toBe(0);
+    expect((await cli([...base, "--identity", "work", "--at", "mon@06:00"])).code).not.toBe(0);
+    expect((await cli(["job", "add", "burn", "--pool", "subs", "--before-reset", "sevenDay", "--lead", "6h", "--prompt", "go", "--timeout", "20m", "--cwd", "/work"])).code).toBe(0);
+    expect(readJobs(paths).digest).toEqual({ target: { identity: "work" }, trigger: { at: [{ days: ["mon", "tue", "wed", "thu", "fri"], time: "06:00" }] }, prompt: "summarise", cwd: "/work", timeout: "30m", allowedTools: ["Read"] });
+    expect(readJobs(paths).burn?.trigger).toEqual({ beforeReset: "sevenDay", lead: "6h" });
+    const listed = (await cli(["job", "list"])).stdout;
+    expect(listed).toContain("burn: the pick of pool subs, 6h before the sevenDay window resets");
+    expect(listed).toContain("digest: identity work, at mon,tue,wed,thu,fri@06:00");
+    expect((await cli(["job", "show", "digest"])).stdout).toContain("Allowed tools: Read");
+    expect(parseJson((await cli(["job", "show", "burn", "--json"])).stdout)).toMatchObject({ name: "burn", target: { pool: "subs" } });
+    expect((await cli(["job", "remove", "digest", "--yes"])).code).toBe(0);
+    expect(readJobs(paths).digest).toBeUndefined();
+    expect((await cli(["job", "show", "digest"])).code).not.toBe(0);
   });
 
   it("sets, shows and clears an identity's anchors, refusing a malformed one as a usage error", async () => {

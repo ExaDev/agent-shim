@@ -14,6 +14,7 @@ import { registerDoctorCommand } from "./doctor";
 import { registerHeadroomCommand } from "./headroom/commands";
 import { registerIdentityCommand } from "./identityManager";
 import { registerProfileCommand } from "./configProfiles";
+import { registerJobCommand } from "./jobs";
 import { registerPoolCommand } from "./pools";
 import { registerProviderCommand } from "./providers";
 import { registerRuleCommand } from "./directoryRules";
@@ -90,6 +91,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   registerIdentityCommand(program, deps);
   registerProfileCommand(program, deps);
   registerPoolCommand(program, deps);
+  registerJobCommand(program, deps);
   registerProviderCommand(program, deps);
   registerRuleCommand(program, deps);
   registerCredentialCommand(program, deps, deps.credentialPorts);

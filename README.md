@@ -80,7 +80,7 @@ The full mechanics, including the credential block, the merge algorithm, conditi
 ## CLI reference
 
 ```
-agent-shim <noun> <verb> [name] [options]      # nouns: identity, profile, pool, provider, rule
+agent-shim <noun> <verb> [name] [options]      # nouns: identity, profile, pool, provider, rule, job
 
 agent-shim identity add <name> [--json]
 agent-shim identity list [--json]
@@ -103,6 +103,9 @@ agent-shim profile list [--json]
 agent-shim profile show <name> [--json]
 agent-shim profile remove <name> [--yes] [--json]
 agent-shim profile use <name>               # the global default configuration profile [--json]
+
+agent-shim job add <name> (--identity <name> | --pool <name>) (--at <spec>... | --before-reset <fiveHour|sevenDay> --lead <duration>) --prompt <text> --timeout <duration> [--cwd <dir>] [--model <model>] [--allowed-tool <tool>]... [--json]
+agent-shim job list|show|remove|run [name]
 
 agent-shim pool add <name> --identity <member>... [--preference <score|listed>] [--json]
 agent-shim pool set <name> [--identity <member>...] [--preference <score|listed> | --no-preference] [--json]
