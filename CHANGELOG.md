@@ -1,3 +1,10 @@
+## [9.15.1](https://github.com/ExaDev/agent-shim/compare/v9.15.0...v9.15.1) (2026-10-11)
+
+### Bug Fixes
+
+* report an errored SDK turn as a failure and keep the door up on an unreadable config ([d448e2a](https://github.com/ExaDev/agent-shim/commit/d448e2ad4b7a6df3489749e8c67b3fcb6feb08dd))
+* treat a window's reset reported a fraction of a second apart as one instance ([a70c4fd](https://github.com/ExaDev/agent-shim/commit/a70c4fdeeb45e0a99cdaa74709daf990a464f9ee))
+
 ## [9.15.0](https://github.com/ExaDev/agent-shim/compare/v9.14.0...v9.15.0) (2026-10-11)
 
 ### Features
