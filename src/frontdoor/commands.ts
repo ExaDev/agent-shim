@@ -219,8 +219,15 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   // A pool member that has made no request lately has no current quota for a launch to rank on, so the door asks the usage endpoint about stale members on the cadence at which a fresh answer could differ from the recorded one. The timer never keeps the process alive.
   const anthropicRefresher = createRealAnthropicUsageRefresher({ paths, store: usageStore, cwd: process.cwd(), spawnDaemon: spawnDetachedSupervisor, log });
   setInterval(() => {
-    const pools = readPools(paths);
-    void refreshStalePoolMembers({ poolNames: Object.keys(pools), pools, loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now()), refresher: anthropicRefresher });
+    // A configuration this door cannot read (a key from a newer agent-shim sharing the file) is logged each tick and never ends the process: every session routed through this door depends on it.
+    try {
+      const pools = readPools(paths);
+      refreshStalePoolMembers({ poolNames: Object.keys(pools), pools, loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now()), refresher: anthropicRefresher }).catch((error: unknown) => {
+        log(`pool usage refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    } catch (error) {
+      log(`pool usage refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
   // The window keeper acts on each identity's anchors on the same cadence: a window opened up to one period late still resets at the hour the anchor names. One run at a time, so a slow opening never overlaps the next tick; the timer never keeps the process alive.
   const windowOpener = createRealWindowOpener({ paths, cwd: process.cwd(), spawnDaemon: spawnDetachedSupervisor });
