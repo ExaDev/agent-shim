@@ -269,6 +269,75 @@ describe("runLauncher with a pool selector", () => {
     });
   });
 
+  describe("when the pick would run dry before its window resets and another member returns first", () => {
+    const FOUR_HOURS_MS = 14_400_000;
+    const HALF_HOUR_MS = 1_800_000;
+    const TEN_MINUTES_MS = 600_000;
+    const U50 = 0.5;
+    const U80 = 0.8;
+    const MS_PER_SECOND = 1000;
+    const DAY_LENGTH = 10;
+    const epoch = (offsetMs: number): string => String(Math.floor((FAKE_NOW_MS + offsetMs) / MS_PER_SECOND));
+    const logRecord = (agoMs: number, utilization: number): string =>
+      JSON.stringify({
+        schemaVersion: 1,
+        at: iso(-agoMs),
+        identity: "work",
+        provider: "anthropic",
+        route: "anthropic",
+        method: "POST",
+        endpoint: "/v1/messages",
+        status: 200,
+        latencyMs: 1,
+        durationMs: 1,
+        outcome: "completed",
+        rateLimitHeaders: { "anthropic-ratelimit-unified-5h-utilization": String(utilization), "anthropic-ratelimit-unified-5h-reset": epoch(FOUR_HOURS_MS) },
+      });
+    const seen = iso(-HOUR_MS);
+    const hotSnapshot = JSON.stringify({
+      schemaVersion: 1,
+      identity: "work",
+      updatedAt: seen,
+      account: { organizationRateLimitTier: MAX_20X },
+      providers: { anthropic: { lastRequestAt: seen, lastStatus: 200, rateLimit: { observedAt: seen, headers: {}, unified: { fiveHour: { utilization: U80, resetsAt: iso(FOUR_HOURS_MS) }, sevenDay: { utilization: U10, resetsAt: iso(SIX_DAYS_MS) } } } } },
+    });
+    const seed = {
+      [snapshotPath("work")]: hotSnapshot,
+      [snapshotPath("personal")]: snapshotOf("personal", { utilization: FULL, resetsInMs: TEN_MINUTES_MS, status: "rejected" }),
+      [`${paths.usageLogDir}/${new Date(FAKE_NOW_MS).toISOString().slice(0, DAY_LENGTH)}.1.jsonl`]: `${logRecord(HALF_HOUR_MS, U50)}\n${logRecord(0, U80)}\n`,
+    };
+
+    it("launches on the pick straight away without --wait", () => {
+      const { code, spawn } = launch({ seed, argv: ["@pool:main", "--print"] });
+      expect(code).toBe(0);
+      expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
+    });
+
+    it("sleeps until the returning member is back under --wait, then launches as it", () => {
+      let clock = FAKE_NOW_MS;
+      const slept: number[] = [];
+      const { code, spawn, log } = launch({
+        seed,
+        argv: ["@pool:main", "--wait", "--print"],
+        farm: (base) => ({
+          ...base,
+          now: () => clock,
+          lock: {
+            ...base.lock,
+            sleep: (ms) => {
+              slept.push(ms);
+              clock += ms;
+            },
+          },
+        }),
+      });
+      expect(code).toBe(0);
+      expect(slept).toEqual([TEN_MINUTES_MS]);
+      expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/personal`);
+      expect(log.infos.join("\n")).toContain("would run dry before its window resets; waiting until");
+    });
+  });
+
   describe("keeping the account whose prompt cache is warm", () => {
     /** Runs two launches in one directory over one filesystem; between them the other member becomes the better pick. */
     function twoLaunches(secondAtMs: number, secondArgv: readonly string[], between?: (farmFs: ReturnType<typeof createFakeFarmFs>) => void): { readonly first: Launch; readonly second: Launch } {

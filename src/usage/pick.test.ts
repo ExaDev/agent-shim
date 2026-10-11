@@ -166,6 +166,29 @@ describe("rankPool", () => {
     expect(onPlan.planReturn).toBeUndefined();
   });
 
+  describe("holding for a member that returns before the pick runs dry", () => {
+    // `hot` burns 0.3 of its five-hour window per half hour from 0.5, so it is dry in 50 minutes, long before it resets in four hours.
+    const hot = (): PoolMember => member("hot", { five: { utilization: U80, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U10, resetsInMs: SIX_DAYS_MS } }, MAX_20X, [burnRecord("hot", HALF_HOUR_MS, U50, FOUR_HOURS_MS), burnRecord("hot", 0, U80, FOUR_HOURS_MS)]);
+    const returning = (inMs: number): PoolMember => member("back", { five: { utilization: FULL, status: "rejected", resetsInMs: inMs } });
+
+    it("names the refused member that is back before the pick would run dry", () => {
+      const ranking = rank([hot(), returning(TEN_MINUTES_MS)]);
+      expect(ranking.pick).toMatchObject({ identity: "hot", feasible: false });
+      expect(ranking.pick?.runsDryAtMs).toBeGreaterThan(NOW_MS);
+      expect(ranking.holdForReturn).toEqual({ identity: "back", atMs: NOW_MS + TEN_MINUTES_MS });
+    });
+
+    it("names nothing when the refused member is back only after the pick would run dry", () => {
+      expect(rank([hot(), returning(SIX_HOURS_MS)]).holdForReturn).toBeUndefined();
+    });
+
+    it("names nothing for a pick projected to last, or when nobody is refused", () => {
+      const calm = member("calm", { five: { utilization: U10, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U90, resetsInMs: SIX_DAYS_MS } });
+      expect(rank([calm, returning(TEN_MINUTES_MS)]).holdForReturn).toBeUndefined();
+      expect(rank([hot()]).holdForReturn).toBeUndefined();
+    });
+  });
+
   it("never picks a member whose plan window is rejected and has not reset, and reports when it returns", () => {
     const ranking = rank([member("a", { seven: { utilization: FULL, status: "rejected", resetsInMs: TWO_DAYS_MS } }), member("b", { seven: { utilization: U90, status: "allowed", resetsInMs: DAY_MS } })]);
     expect(ranking.pick?.identity).toBe("b");
