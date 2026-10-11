@@ -5,7 +5,8 @@ import type { Command } from "commander";
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { HTTP_STATUS } from "../codex/http";
 import { readGlobalConfig } from "../configProfilesStore";
-import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
+import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES, type Job } from "../config/schema";
+import { parseDuration } from "../resolve/conditions";
 import { collectCodexStatus, createCodexRoutePorts, runCodexLogout } from "../codex/commands";
 import type { LayoutPaths } from "../paths";
 import { realSessionFs } from "../agents/realFs";
@@ -19,8 +20,8 @@ import { refreshStalePoolMembers } from "../launcher/poolRefresh";
 import { ANTHROPIC_USAGE_FRESHNESS_MS } from "../usage/anthropicUsageRefresh";
 import { loadPoolMembers } from "../usage/poolPick";
 import { createRealAnthropicUsageRefresher } from "../usage/realAnthropicUsageProbe";
-import { createRealJobRunner } from "../usage/realJobRunner";
-import { createRealWindowOpener } from "../usage/realWindowOpener";
+import { runChild } from "../usage/childRun";
+import { WINDOW_OPEN_TIMEOUT_MS } from "../usage/realWindowOpener";
 import { runJobs } from "../usage/jobKeeper";
 import { resolveJobIdentity } from "../usage/jobTarget";
 import { machineTimeZone } from "../usage/anchor";
@@ -233,7 +234,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     }
   }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
   // The window keeper acts on each identity's anchors on the same cadence: a window opened up to one period late still resets at the hour the anchor names. One run at a time, so a slow opening never overlaps the next tick; the timer never keeps the process alive.
-  const windowOpener = createRealWindowOpener({ paths, cwd: process.cwd(), spawnDaemon: spawnDetachedSupervisor });
+  // Each opening and each job runs in a child process of this executable, never in the door itself: a launch routed through the door probes it, and that probe cannot be answered by the process making it.
+  const windowOpener = async (identity: string): Promise<void> => {
+    await runChild({ paths, args: ["__open-window", identity], timeoutMs: WINDOW_OPEN_TIMEOUT_MS });
+  };
   let keeperRunning = false;
   setInterval(() => {
     if (keeperRunning) {
@@ -258,7 +262,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       });
   }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
   // The job keeper starts each job whose trigger has fired on the same cadence. A run can last as long as the job's timeout, so the tick only starts it; the set of running jobs outlives the tick so a job is never started again while it is still going.
-  const jobRunner = createRealJobRunner({ paths, spawnDaemon: spawnDetachedSupervisor, fs: realFarmFs, now: () => new Date() });
+  const jobRunner = async (name: string, identity: string, job: Job): Promise<void> => {
+    await runChild({ paths, args: ["__run-job", name, identity], timeoutMs: parseDuration(job.timeout) });
+  };
   const runningJobs = new Set<string>();
   setInterval(() => {
     try {
