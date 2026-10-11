@@ -59,8 +59,11 @@ describe("watchMcpPermissions", () => {
     const stop = watchMcpPermissions(paths, () => {
       changed();
     });
-    writeStoredMcpPermissions(paths, { writes: true, remoteControl: false });
+    // A watcher does not see writes made before it is registered with the operating system, and how long that takes depends on machine load, so a single write straight after `watchMcpPermissions` can be lost. Writing again on each poll until an event arrives makes the test wait for registration instead of racing it.
+    let writes = false;
     await vi.waitFor(() => {
+      writes = !writes;
+      writeStoredMcpPermissions(paths, { writes, remoteControl: false });
       expect(changed).toHaveBeenCalled();
     });
     stop();
