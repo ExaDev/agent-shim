@@ -19,7 +19,7 @@ import {
  */
 
 /** The filesystem reads the agent tree reader needs. */
-export type AgentReadFs = Pick<FarmFs, "readFileUtf8" | "readdir">;
+export type AgentReadFs = Pick<FarmFs, "readFileUtf8" | "readdir" | "lstat">;
 
 /** The directory under an identity's configuration directory that holds every project's transcripts. */
 const PROJECTS_DIR = "projects";
@@ -79,6 +79,16 @@ export function listSessions(fs: AgentReadFs, configDir: string): readonly Sessi
     }
   }
   return found.sort((left, right) => left.project.localeCompare(right.project) || left.entry.localeCompare(right.entry));
+}
+
+/** One session in a listing: the cheap facts read from directory listings and one stat, without parsing any agent. */
+export interface SessionSummary extends SessionRef {
+  /** How many agent meta files the session has, across its top-level agents and every workflow run. */
+  readonly agentCount: number;
+  /** How many workflow run records the session has. */
+  readonly workflowRunCount: number;
+  /** When the session's transcript was last written, as an ISO instant; absent when there is no transcript file. */
+  readonly updatedAt?: string;
 }
 
 /** A meta file located on disk, before it is read. */
@@ -201,6 +211,23 @@ const WorkflowRunFileSchema = z.object({
 export interface ReadSessionOptions {
   /** Task lists the session was pointed at with `CLAUDE_CODE_TASK_LIST_ID`, which is a property of the process environment and is written nowhere in the session's files. Each is read from `tasks/<id>` and its tasks carry the id as `taskList`. */
   readonly taskListIds?: readonly string[];
+}
+
+/** Summarises one session without reading any agent file: listings and one stat only, so it is cheap over every session an identity has. */
+export function summariseSession(fs: AgentReadFs, configDir: string, ref: Readonly<SessionRef>): SessionSummary {
+  const sessionRelative = path.join(PROJECTS_DIR, ref.project, ref.entry);
+  const subagentsRelative = path.join(sessionRelative, SUBAGENTS_DIR);
+  const workflowsUnderSubagents = path.join(subagentsRelative, WORKFLOWS_DIR);
+  const isMeta = (name: string): boolean => name.startsWith(AGENT_FILE_PREFIX) && name.endsWith(META_SUFFIX);
+  let agentCount = fs.readdir(path.join(configDir, subagentsRelative)).filter(isMeta).length;
+  for (const runDir of fs.readdir(path.join(configDir, workflowsUnderSubagents))) {
+    if (runDir.startsWith(WORKFLOW_RUN_PREFIX)) {
+      agentCount += fs.readdir(path.join(configDir, workflowsUnderSubagents, runDir)).filter(isMeta).length;
+    }
+  }
+  const workflowRunCount = fs.readdir(path.join(configDir, sessionRelative, WORKFLOWS_DIR)).filter((name) => name.startsWith(WORKFLOW_RUN_PREFIX) && name.endsWith(JSON_SUFFIX)).length;
+  const transcript = fs.lstat(path.join(configDir, PROJECTS_DIR, ref.project, `${ref.entry}${TRANSCRIPT_SUFFIX}`));
+  return { ...ref, agentCount, workflowRunCount, ...(transcript === undefined ? {} : { updatedAt: new Date(transcript.mtimeMs).toISOString() }) };
 }
 
 /**

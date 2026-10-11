@@ -159,6 +159,8 @@ agent-shim frontdoor rc mcp-oauth-callback-url --session <cse_id> --server <name
 agent-shim frontdoor rc watch [<cse_id>] [--json]
 agent-shim frontdoor rc selfhost mint <identity> [--force] [--json]
 agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--json]
+agent-shim session list [--identity <name>] [--all] [--json]   # sessions that spawned agents or ran workflows, from the transcripts on disk
+agent-shim session show <session> [--identity <name>] [--json]   # one session's subagents, forks, workflow agents, tasks and workflow runs
 agent-shim account show [<identity>] [--refresh] [--json]
 agent-shim mcp [--allow-writes] [--allow-remote-control]      # serve the door's typed API as MCP tools on stdio; read-only without the flags
 agent-shim mcp permissions show [--json]               # what the stored file allows
