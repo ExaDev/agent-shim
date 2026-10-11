@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { readJson, writeJsonAtomic } from "../config/store";
 import type { LayoutPaths } from "../paths";
-import type { McpWritePermissions } from "./tools";
+import type { McpPermissions } from "./tools";
 
 /**
  * The permissions the person has given the MCP server's agents, kept in the state root so they can change while the server runs.
@@ -15,28 +15,30 @@ import type { McpWritePermissions } from "./tools";
 const StoredMcpPermissionsSchema = z.strictObject({
   writes: z.boolean(),
   remoteControl: z.boolean(),
+  // Absent from a file written before the grant existed, which meant not allowed.
+  history: z.boolean().default(false),
 });
 
 /** The file's mode: readable and writable by its owner alone, so no other user can raise what an agent may do. */
 const OWNER_ONLY_MODE = 0o600;
 
 /** What no permission file means: reads only. */
-const NONE: McpWritePermissions = { writes: false, remoteControl: false };
+const NONE: McpPermissions = { writes: false, remoteControl: false, history: false };
 
 /** Reads the stored permissions: none granted when the file does not exist. A file that exists but is not valid throws `ConfigValidationError`, so a damaged file fails the request loudly instead of silently granting or denying. */
-export function readStoredMcpPermissions(paths: LayoutPaths): McpWritePermissions {
+export function readStoredMcpPermissions(paths: LayoutPaths): McpPermissions {
   return readJson(paths.mcpPermissionsFile, StoredMcpPermissionsSchema) ?? NONE;
 }
 
 /** Writes the stored permissions atomically and owner-only, so no other user can raise them. */
-export function writeStoredMcpPermissions(paths: LayoutPaths, permissions: McpWritePermissions): void {
-  writeJsonAtomic(paths.mcpPermissionsFile, { writes: permissions.writes, remoteControl: permissions.remoteControl });
+export function writeStoredMcpPermissions(paths: LayoutPaths, permissions: McpPermissions): void {
+  writeJsonAtomic(paths.mcpPermissionsFile, { writes: permissions.writes, remoteControl: permissions.remoteControl, history: permissions.history });
   fs.chmodSync(paths.mcpPermissionsFile, OWNER_ONLY_MODE);
 }
 
 /** The permissions in force: what the startup flags grant plus what the file grants. */
-export function effectiveMcpPermissions(flags: McpWritePermissions, stored: McpWritePermissions): McpWritePermissions {
-  return { writes: flags.writes || stored.writes, remoteControl: flags.remoteControl || stored.remoteControl };
+export function effectiveMcpPermissions(flags: McpPermissions, stored: McpPermissions): McpPermissions {
+  return { writes: flags.writes || stored.writes, remoteControl: flags.remoteControl || stored.remoteControl, history: flags.history || stored.history };
 }
 
 /**
