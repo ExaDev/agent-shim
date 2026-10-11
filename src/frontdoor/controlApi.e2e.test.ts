@@ -154,6 +154,10 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       poolNames: () => [],
       ...LIFECYCLE_AND_CODEX_TEST_DEPS,
       // A real resolution over the launcher's own fakes, so the door's output validation proves the schema matches what the launcher produces across real transport.
+      sessionList: () => [],
+      sessionShow: () => {
+        throw new Error("this test serves no sessions");
+      },
       resolveLaunch: (request) => ({
         resolution: resolveLaunch({
           paths,

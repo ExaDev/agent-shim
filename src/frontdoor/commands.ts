@@ -8,6 +8,9 @@ import { readGlobalConfig } from "../configProfilesStore";
 import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
 import { collectCodexStatus, createCodexRoutePorts, runCodexLogout } from "../codex/commands";
 import type { LayoutPaths } from "../paths";
+import { realSessionFs } from "../agents/realFs";
+import { collectSessionList, showSession } from "../agents/sessions";
+import { listIdentities } from "../identityStore";
 import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, realOwnExecutablePath, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { checkForUpdate } from "../update/commands";
 import { identityExists, listAnchoredIdentities } from "../identityStore";
@@ -356,6 +359,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         poolNames: () => Object.keys(readPools(paths)).sort(),
         // A read-only resolution of what a launch from one directory would do: the launcher's own decision with its effects left out, so a read never recovers or resyncs a farm, starts a daemon, records a pool pick or runs a credential command.
         resolveLaunch: (request: { readonly path: string; readonly argv: readonly string[]; readonly env: Readonly<Record<string, string>> }) => resolveClaudeLaunch({ argv: request.argv, cwd: request.path, env: request.env, paths }),
+        // The identities are read per call, like the pool table, so an identity added after the door started is listed the moment the CLI would see it.
+        sessionList: (filters: { readonly identity?: string | undefined; readonly all?: boolean | undefined }) =>
+          collectSessionList(realSessionFs, paths.identitiesDir, listIdentities(paths).map((entry) => entry.name), { ...(filters.identity === undefined ? {} : { identity: filters.identity }), ...(filters.all === undefined ? {} : { all: filters.all }) }),
+        sessionShow: (query: string, identity: string | undefined) => showSession(realSessionFs, paths.identitiesDir, listIdentities(paths).map((entry) => entry.name), query, identity),
       };
       // The lifecycle and Codex procedures: each the same function the CLI verb of that name runs. A restart replaces this very process, so it runs a detached copy of `frontdoor restart` (the restart's own wait for the old door to exit cannot run inside it), started only after the procedure's answer has been written.
       const lifecycleAndCodexDeps = {
