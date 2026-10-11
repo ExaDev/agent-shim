@@ -1,4 +1,5 @@
 import { withIdentityClaude, type IdentityClaudeParams } from "./identityClaude";
+import { successfulResult } from "./sdkResult";
 import type { WindowOpener } from "./windowKeeper";
 
 /** The launch flags an opener adds: no daemons beyond the identity's own routing, and usage tracking on so the door records the rate-limit headers of the request, which is what shows the window opened. */
@@ -43,9 +44,7 @@ export function createRealWindowOpener(params: Omit<IdentityClaudeParams, "timeo
       try {
         for await (const message of session) {
           if (message.type === "result") {
-            if (message.subtype !== "success") {
-              throw new Error(`the opening request ended as ${message.subtype}`);
-            }
+            successfulResult(message);
             return;
           }
         }

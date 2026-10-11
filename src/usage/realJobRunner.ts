@@ -4,6 +4,7 @@ import type { Job } from "../config/schema";
 import type { FarmFs } from "../launcher/ports";
 import { parseDuration } from "../resolve/conditions";
 import { withIdentityClaude, type IdentityClaudeParams } from "./identityClaude";
+import { successfulResult } from "./sdkResult";
 
 /** The launch flags a job run adds: no daemons beyond the identity's own routing, and usage tracking on so the door records the run against the identity. */
 const JOB_LAUNCH_FLAGS = ["--no-headroom", "--no-remote-control", "--track-usage"] as const;
@@ -53,10 +54,7 @@ export function createRealJobRunner(params: Omit<IdentityClaudeParams, "cwd" | "
         try {
           for await (const message of session) {
             if (message.type === "result") {
-              if (message.subtype !== "success") {
-                throw new Error(`the run ended as ${message.subtype}`);
-              }
-              return message.result;
+              return successfulResult(message);
             }
           }
           throw new Error("the run ended without a result");

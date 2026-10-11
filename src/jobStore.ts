@@ -42,9 +42,11 @@ export function requireJob(paths: LayoutPaths, name: string): Job {
   return job;
 }
 
-/** Writes the whole `jobs` map back, because `applyPatch` replaces top-level keys wholesale. */
+/**
+ * Writes the whole `jobs` map back, because `applyPatch` replaces top-level keys wholesale. An empty map removes the key instead of leaving `jobs: {}`, so a configuration that no longer defines a job reads again as one from before jobs existed to any older agent-shim sharing the file, whose strict schema rejects an unknown key even when it is empty.
+ */
 function writeJobs(paths: LayoutPaths, jobs: Readonly<Record<string, Job>>): void {
-  applyPatch(paths.globalConfigFile, GlobalConfigSchema, { jobs }, { defaults: {} });
+  applyPatch(paths.globalConfigFile, GlobalConfigSchema, { jobs: Object.keys(jobs).length === 0 ? undefined : jobs }, { defaults: {} });
 }
 
 /** Defines a new job. Throws `InvalidJobNameError` for a name `PoolNameSchema`, the shape a pool name has rejects and `JobAlreadyExistsError` for one already defined. Whether the target identity or pool exists is the caller's concern, since the command that has the layout checks it. */
