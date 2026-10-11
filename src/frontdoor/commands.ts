@@ -10,10 +10,14 @@ import { collectCodexStatus, createCodexRoutePorts, runCodexLogout } from "../co
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, realOwnExecutablePath, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { checkForUpdate } from "../update/commands";
+import { listAnchoredIdentities } from "../identityStore";
 import { refreshStalePoolMembers } from "../launcher/poolRefresh";
 import { ANTHROPIC_USAGE_FRESHNESS_MS } from "../usage/anthropicUsageRefresh";
 import { loadPoolMembers } from "../usage/poolPick";
 import { createRealAnthropicUsageRefresher } from "../usage/realAnthropicUsageProbe";
+import { createRealWindowOpener } from "../usage/realWindowOpener";
+import { machineTimeZone } from "../usage/anchor";
+import { runWindowKeeper } from "../usage/windowKeeper";
 import { realCredentialCacheEnv } from "../realCredentialCache";
 import { createDoorPipelines } from "./assembly";
 import { isLiveCapability } from "./capability";
@@ -213,6 +217,31 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   setInterval(() => {
     const pools = readPools(paths);
     void refreshStalePoolMembers({ poolNames: Object.keys(pools), pools, loadMembers: (identities) => loadPoolMembers(realFarmFs, paths, identities, Date.now()), refresher: anthropicRefresher });
+  }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
+  // The window keeper acts on each identity's anchors on the same cadence: a window opened up to one period late still resets at the hour the anchor names. One run at a time, so a slow opening never overlaps the next tick; the timer never keeps the process alive.
+  const windowOpener = createRealWindowOpener({ paths, cwd: process.cwd(), spawnDaemon: spawnDetachedSupervisor });
+  let keeperRunning = false;
+  setInterval(() => {
+    if (keeperRunning) {
+      return;
+    }
+    keeperRunning = true;
+    void runWindowKeeper({
+      fs: realFarmFs,
+      stampsFile: paths.usageAnchorsFile,
+      nowMs: () => Date.now(),
+      timeZone: machineTimeZone(),
+      anchored: () => listAnchoredIdentities(paths),
+      snapshot: (identity) => readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity),
+      open: windowOpener,
+      log,
+    })
+      .catch((error: unknown) => {
+        log(`window keeper failed: ${error instanceof Error ? error.message : String(error)}`);
+      })
+      .finally(() => {
+        keeperRunning = false;
+      });
   }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
   const usageMiddleware = createUsageMiddleware({
     record: withQuotaRefresh(usageStore.record, quotaRefresher),

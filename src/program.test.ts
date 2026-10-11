@@ -260,6 +260,18 @@ describe("identity commands", () => {
     expect((await cli(["identity", "show", "work"])).stdout).toContain("Credential: (none; uses its stored login)");
   });
 
+  it("sets, shows and clears an identity's anchors, refusing a malformed one as a usage error", async () => {
+    await cli(["identity", "add", "work"]);
+    expect((await cli(["identity", "set", "work", "--anchor", "sometimes@06:00"])).code).toBe(EXIT_USAGE);
+    expect((await cli(["identity", "set", "work", "--anchor", "mon-fri@06:00", "--anchor", "sat@08:30/Europe/London"])).code).toBe(0);
+    expect(readIdentity(paths, "work")?.anchors).toEqual([{ days: ["mon", "tue", "wed", "thu", "fri"], time: "06:00" }, { days: ["sat"], time: "08:30", timeZone: "Europe/London" }]);
+    expect((await cli(["identity", "show", "work"])).stdout).toContain("Anchors: mon,tue,wed,thu,fri@06:00 sat@08:30/Europe/London");
+    expect(parseJson((await cli(["identity", "show", "work", "--json"])).stdout)).toMatchObject({ anchors: [{ time: "06:00" }, { time: "08:30" }] });
+    expect((await cli(["identity", "set", "work", "--no-anchor"])).code).toBe(0);
+    expect(readIdentity(paths, "work")?.anchors).toBeUndefined();
+    expect((await cli(["identity", "show", "work"])).stdout).toContain("Anchors: (none)");
+  });
+
   it("requires --yes to remove without a terminal, then deletes the directory and clears the active selection", async () => {
     addIdentity(paths, "work");
     useIdentity(paths, "work");

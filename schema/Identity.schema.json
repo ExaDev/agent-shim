@@ -185,6 +185,43 @@
         "sources"
       ],
       "additionalProperties": false
+    },
+    "anchors": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "mon",
+                "tue",
+                "wed",
+                "thu",
+                "fri",
+                "sat",
+                "sun"
+              ]
+            }
+          },
+          "time": {
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+          },
+          "timeZone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "days",
+          "time"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [

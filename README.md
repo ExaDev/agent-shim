@@ -87,6 +87,7 @@ agent-shim identity list [--json]
 agent-shim identity show <name> [--json]
 agent-shim identity set <name> [--default-profile <profile> | --no-default-profile] [--[no-]allow-ambient-credential] [--json]
 agent-shim identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential] [--json]
+agent-shim identity set <name> [--anchor <days>@<HH:MM>[/<zone>]]... [--no-anchor] [--json]
 agent-shim identity remove <name> [--yes] [--json]
 agent-shim identity use <name> [--json]
 agent-shim @<name>                          # shorthand for `identity use <name>`

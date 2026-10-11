@@ -55,6 +55,7 @@ agent-shim identity list [--json]
 agent-shim identity show <name> [--json]
 agent-shim identity set <name> [--default-profile <profile> | --no-default-profile] [--[no-]allow-ambient-credential]
 agent-shim identity set <name> [--credential <source>]... [--credential-target <bearer|apiKey|oauthToken>] [--no-credential]
+agent-shim identity set <name> [--anchor <days>@<HH:MM>[/<zone>]]... [--no-anchor]
 agent-shim identity set <name> [--credential-cache] [--credential-cache-ttl <ttl>] [--credential-cache-store <keychain|file>] [--no-credential-cache]
 agent-shim identity remove <name> [--yes]
 agent-shim identity use <name>

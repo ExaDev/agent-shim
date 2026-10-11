@@ -1,4 +1,6 @@
 import { InvalidArgumentError } from "commander";
+import type { Anchor } from "../config/schema";
+import { parseAnchor } from "../usage/anchor";
 import { parseDuration } from "../resolve/conditions";
 import { parsePair, parseBool } from "./pairs";
 
@@ -41,6 +43,11 @@ export function collectStringPair(value: string, previous: Readonly<Record<strin
 /** Commander repeatable-option collector for a plain repeated value (`--extends a --extends b`), preserving the order given. */
 export function collectRepeated(value: string, previous: readonly string[] = []): string[] {
   return [...previous, value];
+}
+
+/** Commander repeatable-option collector for `--anchor <days>@<HH:MM>[/<zone>]`: each occurrence appends one anchor, and a malformed one is a usage error naming what is wrong. */
+export function collectAnchor(value: string, previous: readonly Anchor[] = []): Anchor[] {
+  return [...previous, asInvalidArgument(() => parseAnchor(value))];
 }
 
 /** Commander option parser for a duration such as `30m`, `5h` or `7d` (a count followed by ms, s, m, h, d or w), returning milliseconds. A malformed value is a usage error naming the option. */

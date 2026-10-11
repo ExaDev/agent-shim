@@ -94,6 +94,17 @@ describe("config API: identities", () => {
     expect(identityExists(paths, "work")).toBe(true);
   });
 
+  it("sets an identity's anchors, replaces them, and clears them with false", async () => {
+    const api = clientWith(TOKEN).config;
+    await api.identity.add({ name: "work" });
+    const set = await api.identity.set({ name: "work", anchors: [{ days: ["mon", "fri"], time: "06:00", timeZone: "Europe/London" }] });
+    expect(set.value.anchors).toEqual([{ days: ["mon", "fri"], time: "06:00", timeZone: "Europe/London" }]);
+    expect(readIdentity(paths, "work")?.anchors).toEqual([{ days: ["mon", "fri"], time: "06:00", timeZone: "Europe/London" }]);
+    const cleared = await api.identity.set({ name: "work", anchors: false });
+    expect(cleared.value.anchors).toBeUndefined();
+    expect(await codeOf(api.identity.set({ name: "work", anchors: [{ days: ["mon"], time: "6am" }] }))).toBe("BAD_REQUEST");
+  });
+
   it("sets a credential from a named source and reports its kind, never a source's value", async () => {
     const api = clientWith(TOKEN).config;
     await api.identity.add({ name: "work" });
