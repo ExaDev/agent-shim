@@ -1,3 +1,9 @@
+## [9.17.0](https://github.com/ExaDev/agent-shim/compare/v9.16.0...v9.17.0) (2026-10-11)
+
+### Features
+
+* add session list and show commands ([9281914](https://github.com/ExaDev/agent-shim/commit/928191425d574d64e5daa74b313eac9ca91be532))
+
 ## [9.16.0](https://github.com/ExaDev/agent-shim/compare/v9.15.1...v9.16.0) (2026-10-11)
 
 ### Features
