@@ -13,15 +13,17 @@ import { hashSettings, settingsArgs, settingsEnv, settingsOf, type HeadroomSetti
 import { parseInstalledCommit } from "./source";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realHeadroomSocketTrust, realIsProcessRunning, realSleepSync } from "../realPorts";
+import { diagnoseAllowlistDrift, type AllowlistDriftInput } from "./allowlistDrift";
 import {
-  hashAllowlist,
+  headroomAllowlist,
+  headroomUpstreams,
   listSessions,
   resolveServingHeadroomState,
   type HeadroomFs,
   type HeadroomSession,
   type HeadroomState,
 } from "./state";
-import { currentHeadroomAllowlist, resolveSupervisorConfig, runSupervisor, stopSupervisedProcess, type SupervisorPorts } from "./supervisor";
+import { currentHeadroomAllowlistInputs, resolveSupervisorConfig, runSupervisor, stopSupervisedProcess, type SupervisorPorts } from "./supervisor";
 
 /** One session-registry entry plus whether its launcher pid is still running. */
 interface HeadroomSessionStatus extends HeadroomSession {
@@ -38,6 +40,10 @@ export interface HeadroomStatus {
   readonly allowlist: readonly string[];
   /** True when that allowlist differs from the one the running daemon was started with, i.e. a drift restart is pending. */
   readonly allowlistDrifted: boolean;
+  /** The front door's direct origin the allowlist is computed with, or undefined before the door has ever served. */
+  readonly frontDoorOrigin: string | undefined;
+  /** Which inputs could explain the drift (see `diagnoseAllowlistDrift`); undefined when the allowlist has not drifted. */
+  readonly allowlistDriftInputs: readonly AllowlistDriftInput[] | undefined;
   /** The token-saving settings the daemon WOULD be started with now, from the global config. */
   readonly settings: HeadroomSettings;
   /** True when those settings differ from the ones the running daemon was started with, i.e. a drift restart is pending. */
@@ -54,7 +60,9 @@ export function collectHeadroomStatus(
 ): HeadroomStatus {
   // Read-only: the resolver surfaces a live previous-release supervisor's record beside the shared name without migrating anything, so `headroom status` reports the daemon a launch would join.
   const state = resolveServingHeadroomState(fsPort, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, isRunning)?.state ?? {};
-  const allowlist = currentHeadroomAllowlist(fsPort, paths);
+  const inputs = currentHeadroomAllowlistInputs(fsPort, paths);
+  const allowlist = headroomAllowlist(headroomUpstreams(inputs.providers, inputs.frontDoorOrigin));
+  const allowlistDriftInputs = diagnoseAllowlistDrift({ recordedHash: state.allowlistHash, providers: inputs.providers, frontDoorOrigin: inputs.frontDoorOrigin });
   const settings = settingsOf(readGlobalConfig(paths)?.headroom ?? {});
   return {
     state,
@@ -65,12 +73,28 @@ export function collectHeadroomStatus(
       alive: isRunning(session.pid),
     })),
     allowlist,
-    allowlistDrifted: state.allowlistHash !== undefined && state.allowlistHash !== hashAllowlist(allowlist),
+    allowlistDrifted: allowlistDriftInputs !== undefined,
+    frontDoorOrigin: inputs.frontDoorOrigin,
+    allowlistDriftInputs,
     settings,
     settingsDrifted: state.settingsHash !== undefined && state.settingsHash !== hashSettings(settings),
     logPath: paths.headroomLogPath,
     logExists: fsPort.readFileUtf8(paths.headroomLogPath) !== undefined,
   };
+}
+
+/** Why the allowlist drifted, naming the input that changed. A door origin that is a candidate cause also says what it means for launches: the daemon refuses every request a provider launch sends back through the door until it restarts. */
+function describeAllowlistDrift(status: HeadroomStatus): string {
+  const inputs = status.allowlistDriftInputs ?? [];
+  if (!inputs.includes("front-door-origin")) {
+    return "DRIFTED: current provider files differ from the running daemon's allowlist; a restart is pending";
+  }
+  const origin = status.frontDoorOrigin ?? "";
+  const consequence = "provider launches through headroom are refused until the daemon restarts, which waits for the launches registered against it to end";
+  if (!inputs.includes("provider-files")) {
+    return `DRIFTED: the daemon was started before the serving front door's direct origin ${origin} existed, so its allowlist excludes it; ${consequence}`;
+  }
+  return `DRIFTED: the provider files or the serving front door's direct origin ${origin} changed since the daemon started, so its allowlist may exclude the door; ${consequence}`;
 }
 
 /** Formats `agent-shim headroom status`'s output, one line per array entry. */
@@ -92,7 +116,7 @@ export function formatHeadroomStatus(status: HeadroomStatus): string[] {
         (status.state.version === undefined ? "" : `, ${status.state.version}`),
     );
   }
-  const drift = status.allowlistDrifted ? " (DRIFTED: current provider files differ from the running daemon's allowlist; a restart is pending)" : "";
+  const drift = status.allowlistDrifted ? ` (${describeAllowlistDrift(status)})` : "";
   lines.push(`allowlist: ${status.allowlist.join(", ")}${drift}`);
   const configured = Object.entries(status.settings).map(([name, value]) => `${name} ${String(value)}`);
   const settingsDrift = status.settingsDrifted ? " (DRIFTED: the configured settings differ from the running daemon's; a restart is pending)" : "";

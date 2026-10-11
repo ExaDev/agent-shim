@@ -16,7 +16,13 @@ import { describeCredential, type CredentialCacheEnv } from "./credential";
 import { describeCachedCredential, formatCachedCredentialState } from "./credentialCache";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { isMovingGitSource } from "./headroom/source";
+import type { AllowlistDriftInput } from "./headroom/allowlistDrift";
+import { diagnoseAllowlistDrift } from "./headroom/allowlistDrift";
 import { HeadroomStateSchema, resolveServingHeadroomState } from "./headroom/state";
+import { currentHeadroomAllowlistInputs } from "./headroom/supervisor";
+import { FrontDoorStateSchema } from "./frontdoor/state";
+import { pushFrontDoor } from "./doctorFrontDoor";
+import { listFrontDoorSupervisors, type FrontDoorSupervisorListing } from "./frontdoor/supervisorProcesses";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providersStore";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
@@ -27,7 +33,7 @@ import { lineariseProfile, type ProfileLoader, type ProfileSource } from "./reso
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 
 export const DOCTOR_SEVERITIES = ["pass", "warn", "fail"] as const;
-type DoctorSeverity = (typeof DOCTOR_SEVERITIES)[number];
+export type DoctorSeverity = (typeof DOCTOR_SEVERITIES)[number];
 
 export const DOCTOR_SECTIONS = [
   "ambient-credential",
@@ -46,8 +52,9 @@ export const DOCTOR_SECTIONS = [
   "categories-local",
   "active-identity",
   "headroom",
+  "frontdoor",
 ] as const;
-type DoctorSection = (typeof DOCTOR_SECTIONS)[number];
+export type DoctorSection = (typeof DOCTOR_SECTIONS)[number];
 
 /** One line of `agent-shim doctor`'s report. `subject` names the identity/profile/rule the finding is about, when the section has more than one of those. */
 interface DoctorFinding {
@@ -157,6 +164,18 @@ export interface RunDoctorParams {
   readonly headroom: {
     readonly state: DoctorFileInput;
     readonly isRunning: (pid: number) => boolean;
+    /** What the daemon's allowlist is measured against. Omit to skip the allowlist check; with it, a daemon whose allowlist may exclude the serving door's direct origin is a failure. */
+    readonly allowlist?: {
+      /** The inputs that could explain the recorded allowlist hash not matching the current allowlist, or undefined when it matches. */
+      readonly driftInputs: readonly AllowlistDriftInput[] | undefined;
+      /** The serving front door's direct origin, or undefined before it has ever served. */
+      readonly frontDoorOrigin: string | undefined;
+    };
+  };
+  /** The front door's state.json and the supervisor processes alive for this user. Omit to skip the front-door checks (the platform cannot list processes); with it, more than one supervisor alive at once is a failure naming each superseded one. */
+  readonly frontDoor?: {
+    readonly state: DoctorFileInput;
+    readonly supervisors: FrontDoorSupervisorListing;
   };
 }
 
@@ -623,6 +642,18 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
           `Headroom daemon is up on unix socket ${state.socketPath} (supervisor ${String(state.supervisorPid)}, daemon ${String(state.headroomPid)}).`,
         );
       }
+      const allowlist = params.headroom.allowlist;
+      if (supervisorAlive && headroomAlive && state.socketPath !== undefined && allowlist?.driftInputs?.includes("front-door-origin") === true) {
+        const origin = allowlist.frontDoorOrigin ?? "";
+        const certainty = allowlist.driftInputs.includes("provider-files") ? "may exclude" : "excludes";
+        push(
+          "headroom",
+          "fail",
+          `Headroom daemon ${String(state.headroomPid)} was started with an allowlist that ${certainty} the serving front door's direct origin ${origin}, so it refuses every request a provider launch sends back through the door. ` +
+            "Its supervisor restarts it once no launch is registered against it; `agent-shim headroom status` lists the registered launches, and `--no-headroom` launches are unaffected.",
+          String(state.headroomPid),
+        );
+      }
       if (state.lastError !== undefined && supervisorAlive) {
         push("headroom", "warn", `Headroom recorded a previous error: ${state.lastError}`);
       }
@@ -634,6 +665,11 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
         );
       }
     }
+  }
+
+  if (params.frontDoor !== undefined) {
+    const validated = params.frontDoor.state.raw === undefined ? undefined : validateJson(FrontDoorStateSchema, params.frontDoor.state);
+    pushFrontDoor(push, params.frontDoor.supervisors, validated?.ok === true ? validated.data.supervisorPid : undefined);
   }
 
   if (params.activeIdentity.raw === undefined) {
@@ -667,6 +703,7 @@ const SECTION_TITLES: Readonly<Record<DoctorSection, string>> = {
   "directory-rules": "Directory rules",
   "global-config": "Global config",
   headroom: "Headroom daemon",
+  frontdoor: "Front door",
   "categories-local": "categories.local.json",
   "active-identity": "Active identity",
 };
@@ -685,6 +722,7 @@ const SECTION_ORDER: readonly DoctorSection[] = [
   "directory-rules",
   "global-config",
   "headroom",
+  "frontdoor",
   "categories-local",
   "active-identity",
 ];
@@ -805,6 +843,11 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
           realpathOrSelf,
         );
 
+  // Process listing needs a POSIX uid; where there is none the front-door check is skipped rather than guessed.
+  const uid = process.getuid?.();
+  const allowlistInputs = currentHeadroomAllowlistInputs(realFarmFs, paths);
+  const servingHeadroom = resolveServingHeadroomState(realFarmFs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, realIsProcessRunning);
+
   const report = runDoctor({
     env: params.env,
     credentialCache: realCredentialCacheEnv(paths),
@@ -844,7 +887,14 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
         return { path: statePath, raw: realFarmFs.readFileUtf8(statePath) };
       })(),
       isRunning: realIsProcessRunning,
+      allowlist: {
+        driftInputs: diagnoseAllowlistDrift({ recordedHash: servingHeadroom?.state.allowlistHash, ...allowlistInputs }),
+        frontDoorOrigin: allowlistInputs.frontDoorOrigin,
+      },
     },
+    ...(uid === undefined
+      ? {}
+      : { frontDoor: { state: { path: paths.frontdoorStateFile, raw: realFsPort.readFileUtf8(paths.frontdoorStateFile) }, supervisors: listFrontDoorSupervisors(realRunPort, uid) } }),
   });
   return report;
 }
