@@ -325,7 +325,7 @@ export { planOf, PlanClassSchema, type PlanClass } from "./usage/plan";
 export { PoolGraphError, poolIdentities } from "./usage/poolPick";
 export { collectPoolPick } from "./poolPickReport";
 export { PoolPickReportSchema, type PoolPickReport } from "./usage/pickReportSchema";
-export { listSessions, readSessionAgentTree, type AgentReadFs, type SessionRef } from "./agents/read";
+export { listSessions, readSessionAgentTree, type AgentReadFs, type ReadSessionOptions, type SessionRef } from "./agents/read";
 export {
   AgentKindSchema,
   AgentMetaSchema,

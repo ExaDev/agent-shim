@@ -182,7 +182,7 @@ function parseJson(text: string): unknown {
 }
 
 /** The task file's own shape: unknown keys are stripped, and the link lists default to empty because older writers omitted them. */
-const TaskFileSchema = z.object({ ...TaskItemSchema.omit({ team: true }).shape, blocks: z.array(z.string()).default([]), blockedBy: z.array(z.string()).default([]) });
+const TaskFileSchema = z.object({ ...TaskItemSchema.omit({ taskList: true }).shape, blocks: z.array(z.string()).default([]), blockedBy: z.array(z.string()).default([]) });
 
 /** The workflow run file's own shape, narrowed to what the tree reports. */
 const WorkflowRunFileSchema = z.object({
@@ -194,10 +194,16 @@ const WorkflowRunFileSchema = z.object({
   summary: z.string().optional(),
 });
 
+/** What a caller knows about a session that the disk does not record. */
+export interface ReadSessionOptions {
+  /** Task lists the session was pointed at with `CLAUDE_CODE_TASK_LIST_ID`, which is a property of the process environment and is written nowhere in the session's files. Each is read from `tasks/<id>` and its tasks carry the id as `taskList`. */
+  readonly taskListIds?: readonly string[];
+}
+
 /**
  * Reads one session's agents, task list and workflow runs. Every file that cannot be used is listed in `problems` with the reason; a missing directory is simply an empty section, because a session that never spawned an agent has none.
  */
-export function readSessionAgentTree(fs: AgentReadFs, configDir: string, ref: SessionRef): SessionAgentTree {
+export function readSessionAgentTree(fs: AgentReadFs, configDir: string, ref: SessionRef, options: Readonly<ReadSessionOptions> = {}): SessionAgentTree {
   const problems: AgentTreeProblem[] = [];
   const report: ReportProblem = (problem) => {
     problems.push(problem);
@@ -252,7 +258,7 @@ export function readSessionAgentTree(fs: AgentReadFs, configDir: string, ref: Se
     sessionId: ref.sessionId,
     superseded: ref.superseded,
     agents: roots.sort().map(build),
-    tasks: readTasks(fs, configDir, [ref.sessionId, ...teamNames], report),
+    tasks: readTasks(fs, configDir, ref.sessionId, [...new Set([...teamNames, ...(options.taskListIds ?? [])])].filter((id) => id !== ref.sessionId), report),
     workflowRuns: readWorkflowRuns(fs, configDir, path.join(sessionRelative, WORKFLOWS_DIR), report),
     problems,
   };
@@ -303,11 +309,11 @@ function resolveParents(fs: AgentReadFs, configDir: string, agents: ReadonlyMap<
       continue;
     }
     const toolUseId = meta.toolUseId;
-    // A recorded depth narrows the candidates to the level above. Without one (formats that never wrote it) every other agent in the same workflow scope is a candidate, and finding no owner then means the session itself spawned it, which is not a problem.
+    // A recorded depth narrows the candidates to the level above, but a candidate that recorded no depth (formats that never wrote it) stays eligible. Without a depth on the child every other agent in the same workflow scope is a candidate, and finding no owner then means the session itself spawned it, which is not a problem.
     const owners = [...agents.values()].filter(
       (candidate) =>
         candidate.located.id !== located.id &&
-        (depth === undefined || candidate.meta.spawnDepth === depth - 1) &&
+        (depth === undefined || candidate.meta.spawnDepth === undefined || candidate.meta.spawnDepth === depth - 1) &&
         candidate.located.workflowRunId === located.workflowRunId &&
         transcriptOf(candidate).includes(toolUseId),
     );
@@ -324,11 +330,11 @@ function resolveParents(fs: AgentReadFs, configDir: string, agents: ReadonlyMap<
 }
 
 /**
- * Reads the task lists a session can see: its own `tasks/<session-id>`, and the shared store of each team a teammate of the session belongs to (`tasks/<team-name>`), whose tasks carry the team's name.
+ * Reads the task lists a session can see: its own `tasks/<session-id>`, and each shared list (`tasks/<list-id>`): a team's, named by its teammates' meta, or one the caller names. Shared tasks carry the list id.
  */
-function readTasks(fs: AgentReadFs, configDir: string, scopes: readonly string[], report: ReportProblem): TaskItem[] {
+function readTasks(fs: AgentReadFs, configDir: string, sessionId: string, sharedLists: readonly string[], report: ReportProblem): TaskItem[] {
   const tasks: TaskItem[] = [];
-  scopes.forEach((scope, index) => {
+  [sessionId, ...sharedLists].forEach((scope, index) => {
     const relativeDir = path.join(TASKS_DIR, scope);
     for (const name of [...listDirOrReport(fs, configDir, relativeDir, report)].sort()) {
       if (name.startsWith(".") || !name.endsWith(JSON_SUFFIX)) {
@@ -338,8 +344,8 @@ function readTasks(fs: AgentReadFs, configDir: string, scopes: readonly string[]
       const text = readFileOrReport(fs, configDir, relative, report);
       const parsed = TaskFileSchema.safeParse(text === undefined ? undefined : parseJson(text));
       if (parsed.success) {
-        // The first scope is the session's own; every later one is a team's.
-        tasks.push(index === 0 ? parsed.data : { ...parsed.data, team: scope });
+        // The first scope is the session's own; every later one is a shared list.
+        tasks.push(index === 0 ? parsed.data : { ...parsed.data, taskList: scope });
       } else if (text !== undefined) {
         report({ path: relative, reason: "task file is not a task" });
       }
