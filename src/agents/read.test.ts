@@ -235,16 +235,38 @@ describe("readSessionAgentTree", () => {
     expect(tree.agents[0]?.children.map((node) => node.id)).toEqual(["c"]);
   });
 
-  it("reads a team's shared task list beside the session's own, marking each task with its team", () => {
+  it("reads a team's shared task list beside the session's own, marking each task with its list", () => {
     const sub = `${SESSION_DIR}/subagents`;
     const fs = createFakeFarmFs({
       ...agent(sub, "t", { agentType: "general-purpose", taskKind: "in_process_teammate", teamName: "squad" }),
       [`${CONFIG}/tasks/${SESSION}/1.json`]: meta({ id: "1", subject: "own", status: "pending" }),
-      [`${CONFIG}/tasks/squad/1.json`]: meta({ id: "1", subject: "shared", status: "in_progress", team: "ignored" }),
+      [`${CONFIG}/tasks/squad/1.json`]: meta({ id: "1", subject: "shared", status: "in_progress", taskList: "ignored" }),
     });
     expect(readSessionAgentTree(fs, CONFIG, REF).tasks).toEqual([
       { id: "1", subject: "own", status: "pending", blocks: [], blockedBy: [] },
-      { id: "1", subject: "shared", status: "in_progress", blocks: [], blockedBy: [], team: "squad" },
+      { id: "1", subject: "shared", status: "in_progress", blocks: [], blockedBy: [], taskList: "squad" },
+    ]);
+  });
+  it("keeps a parent eligible when it recorded no spawn depth but the child did", () => {
+    const sub = `${SESSION_DIR}/subagents`;
+    const fs = createFakeFarmFs({
+      ...agent(sub, "p", { agentType: "Plan" }, '{"id":"toolu_child"}'),
+      ...agent(sub, "c", { agentType: "Explore", spawnDepth: 2, toolUseId: "toolu_child" }),
+    });
+    const tree = readSessionAgentTree(fs, CONFIG, REF);
+    expect(tree.problems).toEqual([]);
+    expect(tree.agents.map((node) => node.id)).toEqual(["p"]);
+    expect(tree.agents[0]?.children.map((node) => node.id)).toEqual(["c"]);
+  });
+
+  it("reads a custom task list the caller names, once, tagged with its id", () => {
+    const fs = createFakeFarmFs({
+      [`${CONFIG}/tasks/${SESSION}/1.json`]: meta({ id: "1", subject: "own", status: "pending" }),
+      [`${CONFIG}/tasks/shared-list/7.json`]: meta({ id: "7", subject: "custom", status: "pending" }),
+    });
+    expect(readSessionAgentTree(fs, CONFIG, REF, { taskListIds: ["shared-list", "shared-list", SESSION] }).tasks).toEqual([
+      { id: "1", subject: "own", status: "pending", blocks: [], blockedBy: [] },
+      { id: "7", subject: "custom", status: "pending", blocks: [], blockedBy: [], taskList: "shared-list" },
     ]);
   });
 });
