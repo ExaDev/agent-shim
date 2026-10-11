@@ -77,7 +77,7 @@ export interface Candidate {
   readonly class: CandidateClass;
   /** Plan-size-weighted remaining quota per hour until its reset: higher is more wasted if left unused. Present for `scored` only. */
   readonly score?: number;
-  /** The window the score's hours-until-reset come from: the seven-day window, or the five-hour one when the member reports no seven-day utilisation. Present with `score`. */
+  /** The window the score's hours-until-reset come from: the seven-day window, the five-hour one when the member reports no seven-day utilisation, or the five-hour one when its measured-ratio term outranks the weekly one. Present with `score`. */
   readonly scoreWindow?: "sevenDay" | "fiveHour";
   /** False when a quota window would run dry, at the observed pace, before it resets (the five-hour at its own or the rescaled shared pace, the seven-day at its own). A `scored` candidate that is not feasible ranks below every feasible one. */
   readonly feasible: boolean;
@@ -156,6 +156,29 @@ function windowBurn(records: readonly UsageRecord[], which: "fiveHour" | "sevenD
     return undefined;
   }
   return (last.utilization - first.utilization) / (last.atMs - first.atMs);
+}
+
+/**
+ * How much seven-day utilisation one unit of five-hour utilisation costs this member, measured over the readings in its current instance of both windows, or undefined without two readings in which both rose. It is what converts unused five-hour quota into the seven-day units the score is measured in, so the two windows' capacities are never guessed. The headers report whole percentages, so the ratio is only as fine as that granularity.
+ */
+function windowRatio(records: readonly UsageRecord[]): number | undefined {
+  const points: { fiveResetsAt: string; sevenResetsAt: string; five: number; seven: number }[] = [];
+  for (const record of records) {
+    const unified = record.rateLimitHeaders === undefined ? undefined : parseUnifiedRateLimit(record.rateLimitHeaders);
+    const five = unified?.fiveHour;
+    const seven = unified?.sevenDay;
+    if (five?.utilization !== undefined && five.resetsAt !== undefined && seven?.utilization !== undefined && seven.resetsAt !== undefined) {
+      points.push({ fiveResetsAt: five.resetsAt, sevenResetsAt: seven.resetsAt, five: five.utilization, seven: seven.utilization });
+    }
+  }
+  const latest = points.at(-1);
+  const current = points.filter((point) => point.fiveResetsAt === latest?.fiveResetsAt && point.sevenResetsAt === latest.sevenResetsAt);
+  const first = current.at(0);
+  const last = current.at(-1);
+  if (first === undefined || last === undefined || last.five <= first.five || last.seven <= first.seven) {
+    return undefined;
+  }
+  return (last.seven - first.seven) / (last.five - first.five);
 }
 
 function percent(fraction: number): string {
@@ -273,16 +296,33 @@ function assessIdentity(member: PoolMember, nowMs: number): Assessment {
   }
   const remaining = Math.max(0, 1 - basis.window.utilization);
   const untilResetMs = basis.window.resetsAtMs === undefined ? basis.windowMs : Math.max(basis.window.resetsAtMs - nowMs, MS_PER_SECOND);
-  const score = (remaining * plan.capacity) / (untilResetMs / MS_PER_HOUR);
+  const weeklyScore = (remaining * plan.capacity) / (untilResetMs / MS_PER_HOUR);
 
   const fiveRemaining = five?.utilization === undefined ? undefined : Math.max(0, 1 - five.utilization);
   const fiveUntil = five?.resetsAtMs === undefined ? FIVE_HOUR_WINDOW_MS : Math.max(five.resetsAtMs - nowMs, MS_PER_SECOND);
+  // A seven-day-scored member's five-hour quota expires far sooner than its weekly one, but is only spendable as far as the week allows: its unused fraction, converted to seven-day units by the member's measured ratio, capped at what the week has left. Without a measured ratio the term is omitted rather than guessed.
+  const ratio = windowRatio(member.records);
+  const fiveHourScore =
+    basis.name === "sevenDay" && fiveRemaining !== undefined && ratio !== undefined
+      ? (Math.min(fiveRemaining * ratio, remaining) * plan.capacity) / (fiveUntil / MS_PER_HOUR)
+      : undefined;
+  const fiveHourLeads = fiveHourScore !== undefined && fiveHourScore > weeklyScore;
+  const score = fiveHourLeads ? fiveHourScore : weeklyScore;
+  const scoreWindow = fiveHourLeads ? "fiveHour" : basis.name;
+  const fiveHourTermReasons =
+    basis.name !== "sevenDay" || fiveRemaining === undefined
+      ? []
+      : ratio === undefined
+        ? ["5h reset not scored: no measured 5h to 7d ratio yet"]
+        : fiveHourLeads
+          ? [`5h term leads: ${percent(fiveRemaining)} of 5h unused is about ${percent(Math.min(fiveRemaining * ratio, remaining))} of the week at the measured ratio, resets in ${formatAge(fiveUntil)}`]
+          : [];
   const burn = windowBurn(member.records, "fiveHour");
   const sevenRemaining = seven?.utilization === undefined ? undefined : Math.max(0, 1 - seven.utilization);
   const sevenUntil = seven?.resetsAtMs === undefined ? SEVEN_DAY_WINDOW_MS : Math.max(seven.resetsAtMs - nowMs, MS_PER_SECOND);
   const sevenDayBurn = windowBurn(member.records, "sevenDay");
   return {
-    candidate: { ...base, class: "scored", score, scoreWindow: basis.name, reasons: [...windowReasons.map((reason, index) => (index === windowReasons.length - 1 ? `${reason}${observedAgo}` : reason)), ...planReasons] },
+    candidate: { ...base, class: "scored", score, scoreWindow, reasons: [...fiveHourTermReasons, ...windowReasons.map((reason, index) => (index === windowReasons.length - 1 ? `${reason}${observedAgo}` : reason)), ...planReasons] },
     ...(fiveRemaining === undefined ? {} : { fiveHour: { remaining: fiveRemaining, untilResetMs: fiveUntil } }),
     ...(burn === undefined ? {} : { burn }),
     ...(sevenRemaining === undefined ? {} : { sevenDay: { remaining: sevenRemaining, untilResetMs: sevenUntil } }),
