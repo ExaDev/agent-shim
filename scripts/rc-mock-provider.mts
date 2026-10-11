@@ -25,7 +25,7 @@ const HTTP_NOT_FOUND = 404;
 const RIG_TOOL_NAME = "mcp__rigtools__rig_echo";
 /** The MCP tool the MCP OAuth driver asks for: the rig's OAuth-protected HTTP MCP server's only tool, fully qualified the same way. */
 const RIG_AUTH_TOOL_NAME = "mcp__rigoauth__rig_secret";
-/** The prompt the subagent driver hands the subagent, and so the first user message of the subagent's own conversation: how a request from that conversation is told apart from the parent's. */
+/** The prompt the subagent driver hands the subagent, and so a user message of the subagent's own conversation: how a request from that conversation is told apart from the parent's. */
 const SUBAGENT_PROMPT = "rig-subagent-proof";
 /** The command the subagent driver backgrounds: read-only, so it runs without a permission request and the task lifecycle is the only thing the walk raises. */
 const BACKGROUND_TASK_COMMAND = "echo BACKGROUND-TASK-PROOF";
@@ -120,13 +120,36 @@ function lastUserMessage(body: MessagesRequest) {
   return undefined;
 }
 
-/** The text of the conversation's first message: for a subagent's conversation, the prompt its parent handed it. */
-function firstMessageText(body: MessagesRequest): string {
-  const first = body.messages[0];
-  if (first === undefined) {
-    return "";
+/** Whether this request belongs to a subagent's own conversation: the prompt its parent handed it arrives as its own text block of a user message, behind the harness's reminder block, and never in the parent's conversation, where it appears only inside the parent's `tool_use` input. */
+function isSubagentConversation(body: MessagesRequest): boolean {
+  return body.messages.some((message) => message.role === "user" && typeof message.content !== "string" && message.content.some((block) => block.type === "text" && block.text === SUBAGENT_PROMPT));
+}
+
+/** The tool names the assistant side called since the conversation's latest real prompt: a user message that carries no tool result and is not a harness-injected reminder. Unlike the whole-history list it lets one long-lived session run the walk once per prompt. */
+function assistantToolUseNamesSinceLastPrompt(body: MessagesRequest): string[] {
+  let promptIndex = -1;
+  body.messages.forEach((message, index) => {
+    if (message.role !== "user") {
+      return;
+    }
+    const blocks = typeof message.content === "string" ? [{ type: "text", text: message.content }] : message.content;
+    const isPrompt = blocks.every((block) => block.type === "text" && !(block.text ?? "").startsWith("<system-reminder>"));
+    if (isPrompt) {
+      promptIndex = index;
+    }
+  });
+  const names: string[] = [];
+  for (const message of body.messages.slice(promptIndex + 1)) {
+    if (message.role !== "assistant" || typeof message.content === "string") {
+      continue;
+    }
+    for (const block of message.content) {
+      if (block.type === "tool_use" && typeof block.name === "string") {
+        names.push(block.name);
+      }
+    }
   }
-  return typeof first.content === "string" ? first.content : first.content.map((block) => block.text ?? "").join("");
+  return names;
 }
 
 /** Every tool name the assistant side of the history has ever called, in order, which is how the ToolSearch driver tells which step of the walk the conversation is on. */
@@ -175,8 +198,8 @@ function messageFor(body: MessagesRequest): { id: string; type: "message"; role:
   const last = lastUserMessage(body);
   const lastResultText = last === undefined || typeof last.content === "string" ? "" : toolResultText(last.content);
   if (subagentDriver) {
-    // The walk the subagent and task capture needs: the parent backgrounds a read-only Bash command, then spawns a subagent, then answers. The subagent's own conversation reaches this server as a separate request whose first message is SUBAGENT_PROMPT, which it answers with plain text so the subagent ends in one turn.
-    if (firstMessageText(body) === SUBAGENT_PROMPT) {
+    // The walk the subagent and task capture needs: the parent backgrounds a read-only Bash command, then spawns a subagent, then answers. The subagent's own conversation reaches this server as a separate request carrying SUBAGENT_PROMPT as a user message, which it answers with plain text so the subagent ends in one turn.
+    if (isSubagentConversation(body)) {
       return {
         id: `msg_mock_${String(Date.now())}`,
         type: "message",
@@ -189,7 +212,7 @@ function messageFor(body: MessagesRequest): { id: string; type: "message"; role:
       };
     }
     const subagentTool = body.toolNames.find((name) => name === "Agent" || name === "Task") ?? "Agent";
-    const called = assistantToolUseNames(body);
+    const called = assistantToolUseNamesSinceLastPrompt(body);
     if (called.includes(subagentTool)) {
       return {
         id: `msg_mock_${String(Date.now())}`,
