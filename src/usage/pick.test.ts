@@ -31,6 +31,9 @@ const U89 = 0.89;
 const U92 = 0.92;
 const U95 = 0.95;
 const U25 = 0.25;
+const U48 = 0.48;
+const U18 = 0.18;
+const HALF_AN_HOUR = 0.5;
 const U09 = 0.09;
 const FULL = 1;
 const MAX_20X = "default_claude_max_20x";
@@ -139,6 +142,19 @@ function sevenDayBurnRecord(identity: string, agoMs: number, sevenDayUtilization
   };
 }
 
+/** A record carrying both windows' readings, so the member's five-hour to seven-day ratio can be measured. */
+function bothWindowsRecord(identity: string, agoMs: number, fiveHourUtilization: number, sevenDayUtilization: number, fiveResetsInMs: number, sevenResetsInMs: number): UsageRecord {
+  return {
+    ...burnRecord(identity, agoMs, fiveHourUtilization, fiveResetsInMs),
+    rateLimitHeaders: {
+      "anthropic-ratelimit-unified-5h-utilization": String(fiveHourUtilization),
+      "anthropic-ratelimit-unified-5h-reset": epochSeconds(fiveResetsInMs),
+      "anthropic-ratelimit-unified-7d-utilization": String(sevenDayUtilization),
+      "anthropic-ratelimit-unified-7d-reset": epochSeconds(sevenResetsInMs),
+    },
+  };
+}
+
 describe("rankPool", () => {
   it("never picks a member whose plan window is rejected and has not reset, and reports when it returns", () => {
     const ranking = rank([member("a", { seven: { utilization: FULL, status: "rejected", resetsInMs: TWO_DAYS_MS } }), member("b", { seven: { utilization: U90, status: "allowed", resetsInMs: DAY_MS } })]);
@@ -192,6 +208,37 @@ describe("rankPool", () => {
     ]);
     const windows = Object.fromEntries(ranking.candidates.map((candidate) => [candidate.identity, candidate.scoreWindow]));
     expect(windows).toEqual({ weekly: "sevenDay", "five-only": "fiveHour" });
+  });
+
+  describe("five-hour reset term", () => {
+    const soonWindows = { five: { utilization: U10, resetsInMs: HALF_HOUR_MS }, seven: { utilization: U50, resetsInMs: SIX_DAYS_MS } };
+    const richWeekly = member("rich", { seven: { utilization: U10, resetsInMs: TWO_DAYS_MS } });
+    // Five-hour use rose 0.1 while seven-day use rose 0.02, so a unit of five-hour quota costs 0.2 of the week. The readings are far enough apart that neither window's pace projects it dry.
+    const measured = [bothWindowsRecord("soon", SIX_DAYS_MS, 0, U48, HALF_HOUR_MS, SIX_DAYS_MS), bothWindowsRecord("soon", 0, U10, U50, HALF_HOUR_MS, SIX_DAYS_MS)];
+
+    it("ranks a member whose mostly unused five-hour window is about to reset ahead of one with a bigger weekly score", () => {
+      const ranking = rank([richWeekly, member("soon", soonWindows, MAX_20X, measured)]);
+      expect(order(ranking)).toEqual(["soon", "rich"]);
+      const soon = ranking.candidates[0];
+      expect(soon?.scoreWindow).toBe("fiveHour");
+      // 0.9 of the five-hour window unused is 0.18 of the week, over half an hour of runway, at 20x.
+      expect(soon?.score).toBeCloseTo((U18 * MAX_20X_CAPACITY) / HALF_AN_HOUR);
+      expect(soon?.reasons[0]).toContain("5h term leads");
+    });
+
+    it("leaves the weekly order alone and says so when no ratio can be measured", () => {
+      const ranking = rank([richWeekly, member("soon", soonWindows)]);
+      expect(order(ranking)).toEqual(["rich", "soon"]);
+      expect(ranking.candidates[1]?.scoreWindow).toBe("sevenDay");
+      expect(ranking.candidates[1]?.reasons[0]).toContain("5h reset not scored");
+    });
+
+    it("caps the five-hour term at what the week has left", () => {
+      // Seven-day use rose 0.2 for 0.1 of five-hour use, a ratio of 2, so 0.9 unused would be 1.8 weeks but only 0.5 of the week remains.
+      const steep = [bothWindowsRecord("soon", SIX_DAYS_MS, 0, U30, HALF_HOUR_MS, SIX_DAYS_MS), bothWindowsRecord("soon", 0, U10, U50, HALF_HOUR_MS, SIX_DAYS_MS)];
+      const ranking = rank([member("soon", soonWindows, MAX_20X, steep)]);
+      expect(ranking.candidates[0]?.score).toBeCloseTo((U50 * MAX_20X_CAPACITY) / HALF_AN_HOUR);
+    });
   });
 
   it("demotes a member whose five-hour window would run dry at its own pace, below one that would not", () => {
