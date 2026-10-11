@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { JOB_SETTING_SOURCES } from "./realJobRunner";
+import { JOB_ISOLATION_OPTIONS } from "./realJobRunner";
 
-describe("JOB_SETTING_SOURCES", () => {
-  it("loads only the user's own settings, so a repository's committed settings can never add a hook or permission to an unattended run", () => {
-    expect(JOB_SETTING_SOURCES).toEqual(["user"]);
+describe("JOB_ISOLATION_OPTIONS", () => {
+  it("loads only the user's own settings and starts no MCP server, so a repository's committed files can never add code an unattended run executes", () => {
+    expect(JOB_ISOLATION_OPTIONS).toEqual({ settingSources: ["user"], mcpServers: {}, strictMcpConfig: true });
   });
 });
