@@ -1,3 +1,17 @@
+## [9.16.0](https://github.com/ExaDev/agent-shim/compare/v9.15.1...v9.16.0) (2026-10-11)
+
+### Features
+
+* read a session's agent tree from the transcripts on disk ([104136e](https://github.com/ExaDev/agent-shim/commit/104136e3df5defa2db55ce39aa311f223cbff95b))
+
+### Bug Fixes
+
+* keep depth-less parents eligible and read caller-named task lists in the agent tree ([f44cc16](https://github.com/ExaDev/agent-shim/commit/f44cc169c592d3b1c0290eb7255e22d8fc37eb34))
+* keep task metadata and describe the recorded model accurately in the agent tree ([4dd39cf](https://github.com/ExaDev/agent-shim/commit/4dd39cfdbb262cbaaefaaf373e6534bbae688e9c))
+* keep the problem schema private to the agent tree schema ([fe7658c](https://github.com/ExaDev/agent-shim/commit/fe7658ccbbdeb8f882c0cee0a1a06fe08426350f))
+* read the session-prefixed task list and keep task owners in the agent tree ([8f88271](https://github.com/ExaDev/agent-shim/commit/8f8827134dfb20d8191f28a56beb2ccf6290f26a))
+* tolerate unreadable files and read team task stores in the agent tree ([acacae7](https://github.com/ExaDev/agent-shim/commit/acacae7d76f1f1315463083b3bfeeab333345e81))
+
 ## [9.15.1](https://github.com/ExaDev/agent-shim/compare/v9.15.0...v9.15.1) (2026-10-11)
 
 ### Bug Fixes
