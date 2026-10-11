@@ -1,3 +1,15 @@
+## [9.18.0](https://github.com/ExaDev/agent-shim/compare/v9.17.0...v9.18.0) (2026-10-11)
+
+### Features
+
+* gate the MCP server's reads of session history behind their own grant ([179de1d](https://github.com/ExaDev/agent-shim/commit/179de1d981e2ce2c33f333ccfdeb7362f29c3a72))
+* hold a --wait launch for a member that returns before the pick would run dry ([a8c8a73](https://github.com/ExaDev/agent-shim/commit/a8c8a738c25ee2990a6ab0fb0fd2184bb4e6abd2))
+* serve the agent tree on the door's typed API ([037b0ac](https://github.com/ExaDev/agent-shim/commit/037b0ac5e02545680e5ccb44045c53e5e0d40cfb))
+
+### Bug Fixes
+
+* drop the unused session summary view type ([9d90d2f](https://github.com/ExaDev/agent-shim/commit/9d90d2f02f92e8462d675ea6f04faded35d9cbe2))
+
 ## [9.17.0](https://github.com/ExaDev/agent-shim/compare/v9.16.0...v9.17.0) (2026-10-11)
 
 ### Features
