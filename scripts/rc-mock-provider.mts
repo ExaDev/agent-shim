@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // A deterministic Anthropic-messages provider for the Remote Control interception rig: no model, no credential of its own, loopback only. The rig's self-hosted proof needs somewhere for inference to land ("a provider of your own", docs/rc-interception-rig.md), and this server also verifies the one property that proof is about: every request must arrive carrying the provider file's own credential (the front door attaches it at the provider route, whatever the CLI presented), so a wrong or missing credential is answered with the 401 a real provider would give and the mismatch is logged.
 //
-// Behaviour: the first turn of a conversation answers with a Bash tool_use running PROOF_COMMAND, which makes a real CLI raise a real permission request for an attached Remote Control client to answer; once the tool result comes back it answers with final text naming what the tool printed. With RC_MOCK_TOOLSEARCH=1 the driver instead walks the deferred-tool-loading flow: a ToolSearch tool_use first, then a tool_use for the rig MCP tool once the search result is in the history, then final text, which is what drives a real CLI through the tool_reference capture behind issue #226. With RC_MOCK_WEBFETCH=1 it walks the web proxy flow instead: a WebFetch tool_use for RC_MOCK_WEBFETCH_URL (https://example.com/ unless overridden) first, then final text naming what the fetch returned, which is what drives a real CLI through the door's served worker web-fetch endpoint when its environment sets CLAUDE_CODE_WEBFETCH_USE_CCR_PROXY. With RC_MOCK_MCPAUTH=1 it walks the MCP OAuth flow behind the mcp_authenticate and mcp_oauth_callback_url control verbs: a tool_use for the OAuth-protected rig MCP tool first (which the unauthenticated 401 answers, so the need for the handshake is real on the wire), the same tool_use again once an attached Remote Control client has completed the handshake through the door's two writes, then final text naming what the protected tool answered, which is what drives a real CLI through the OAuth proof on the rig's HTTP MCP server (scripts/rc-mcp-oauth-server.mts, all values synthetic). Both streaming and non-streaming shapes are answered. Usage: node scripts/rc-mock-provider.mts [--port 47474] [--token <expected credential>] [--target bearer|apiKey]; the token defaults to RC_MOCK_TOKEN so it never has to appear in a process listing, and RC_MOCK_DUMP=<file> additionally appends every request body verbatim as JSON lines (bodies only, never headers, so the credential never reaches the dump).
+// Behaviour: the first turn of a conversation answers with a Bash tool_use running PROOF_COMMAND, which makes a real CLI raise a real permission request for an attached Remote Control client to answer; once the tool result comes back it answers with final text naming what the tool printed. With RC_MOCK_SUBAGENT=1 the driver backgrounds a Bash command and spawns a subagent, the walk the agent-tree capture needs. With RC_MOCK_TOOLSEARCH=1 the driver instead walks the deferred-tool-loading flow: a ToolSearch tool_use first, then a tool_use for the rig MCP tool once the search result is in the history, then final text, which is what drives a real CLI through the tool_reference capture behind issue #226. With RC_MOCK_WEBFETCH=1 it walks the web proxy flow instead: a WebFetch tool_use for RC_MOCK_WEBFETCH_URL (https://example.com/ unless overridden) first, then final text naming what the fetch returned, which is what drives a real CLI through the door's served worker web-fetch endpoint when its environment sets CLAUDE_CODE_WEBFETCH_USE_CCR_PROXY. With RC_MOCK_MCPAUTH=1 it walks the MCP OAuth flow behind the mcp_authenticate and mcp_oauth_callback_url control verbs: a tool_use for the OAuth-protected rig MCP tool first (which the unauthenticated 401 answers, so the need for the handshake is real on the wire), the same tool_use again once an attached Remote Control client has completed the handshake through the door's two writes, then final text naming what the protected tool answered, which is what drives a real CLI through the OAuth proof on the rig's HTTP MCP server (scripts/rc-mcp-oauth-server.mts, all values synthetic). Both streaming and non-streaming shapes are answered. Usage: node scripts/rc-mock-provider.mts [--port 47474] [--token <expected credential>] [--target bearer|apiKey]; the token defaults to RC_MOCK_TOKEN so it never has to appear in a process listing, and RC_MOCK_DUMP=<file> additionally appends every request body verbatim as JSON lines (bodies only, never headers, so the credential never reaches the dump).
 
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
@@ -25,6 +25,10 @@ const HTTP_NOT_FOUND = 404;
 const RIG_TOOL_NAME = "mcp__rigtools__rig_echo";
 /** The MCP tool the MCP OAuth driver asks for: the rig's OAuth-protected HTTP MCP server's only tool, fully qualified the same way. */
 const RIG_AUTH_TOOL_NAME = "mcp__rigoauth__rig_secret";
+/** The prompt the subagent driver hands the subagent, and so the first user message of the subagent's own conversation: how a request from that conversation is told apart from the parent's. */
+const SUBAGENT_PROMPT = "rig-subagent-proof";
+/** The command the subagent driver backgrounds: read-only, so it runs without a permission request and the task lifecycle is the only thing the walk raises. */
+const BACKGROUND_TASK_COMMAND = "echo BACKGROUND-TASK-PROOF";
 
 /** One content block as this server reads it: identified by its type, everything else carried loosely. */
 interface Block {
@@ -39,6 +43,8 @@ interface MessagesRequest {
   readonly model: string;
   readonly stream: boolean;
   readonly messages: readonly { readonly role: string; readonly content: string | readonly Block[] }[];
+  /** The names of the tools the request offers, which is how the subagent driver picks the name the running CLI version gives its subagent tool. */
+  readonly toolNames: readonly string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -70,7 +76,8 @@ function parseMessagesRequest(value: unknown): MessagesRequest | undefined {
     }
     messages.push({ role: raw.role, content });
   }
-  return { model: typeof value.model === "string" ? value.model : "", stream: value.stream === true, messages };
+  const toolNames = Array.isArray(value.tools) ? value.tools.filter(isRecord).flatMap((tool) => (typeof tool.name === "string" ? [tool.name] : [])) : [];
+  return { model: typeof value.model === "string" ? value.model : "", stream: value.stream === true, messages, toolNames };
 }
 
 function argument(name: string, fallback: string): string {
@@ -85,6 +92,7 @@ const dumpFile = process.env.RC_MOCK_DUMP ?? "";
 const toolSearchDriver = process.env.RC_MOCK_TOOLSEARCH === "1";
 const webFetchDriver = process.env.RC_MOCK_WEBFETCH === "1";
 const mcpAuthDriver = process.env.RC_MOCK_MCPAUTH === "1";
+const subagentDriver = process.env.RC_MOCK_SUBAGENT === "1";
 /** The URL the web-fetch driver tells the CLI to fetch: a real public page by default, because the CLI rewrites any http URL to https before it reaches the door's proxy, so the rig's loopback stand-ins cannot serve it and the public internet is the honest target. */
 const WEBFETCH_URL = process.env.RC_MOCK_WEBFETCH_URL ?? "https://example.com/";
 
@@ -110,6 +118,15 @@ function lastUserMessage(body: MessagesRequest) {
     }
   }
   return undefined;
+}
+
+/** The text of the conversation's first message: for a subagent's conversation, the prompt its parent handed it. */
+function firstMessageText(body: MessagesRequest): string {
+  const first = body.messages[0];
+  if (first === undefined) {
+    return "";
+  }
+  return typeof first.content === "string" ? first.content : first.content.map((block) => block.text ?? "").join("");
 }
 
 /** Every tool name the assistant side of the history has ever called, in order, which is how the ToolSearch driver tells which step of the walk the conversation is on. */
@@ -157,6 +174,63 @@ function usage(): { input_tokens: number; output_tokens: number } {
 function messageFor(body: MessagesRequest): { id: string; type: "message"; role: "assistant"; model: string; content: readonly ({ type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> })[]; stop_reason: string; stop_sequence: null; usage: { input_tokens: number; output_tokens: number } } {
   const last = lastUserMessage(body);
   const lastResultText = last === undefined || typeof last.content === "string" ? "" : toolResultText(last.content);
+  if (subagentDriver) {
+    // The walk the subagent and task capture needs: the parent backgrounds a read-only Bash command, then spawns a subagent, then answers. The subagent's own conversation reaches this server as a separate request whose first message is SUBAGENT_PROMPT, which it answers with plain text so the subagent ends in one turn.
+    if (firstMessageText(body) === SUBAGENT_PROMPT) {
+      return {
+        id: `msg_mock_${String(Date.now())}`,
+        type: "message",
+        role: "assistant",
+        model: body.model,
+        content: [{ type: "text", text: "the subagent proof ran" }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: usage(),
+      };
+    }
+    const subagentTool = body.toolNames.find((name) => name === "Agent" || name === "Task") ?? "Agent";
+    const called = assistantToolUseNames(body);
+    if (called.includes(subagentTool)) {
+      return {
+        id: `msg_mock_${String(Date.now())}`,
+        type: "message",
+        role: "assistant",
+        model: body.model,
+        content: [{ type: "text", text: `the subagent answered: ${lastResultText}` }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: usage(),
+      };
+    }
+    if (called.includes("Bash")) {
+      return {
+        id: `msg_mock_${String(Date.now())}`,
+        type: "message",
+        role: "assistant",
+        model: body.model,
+        content: [
+          { type: "text", text: "the background task is running, spawning the subagent" },
+          { type: "tool_use", id: `toolu_mock_${String(Date.now())}`, name: subagentTool, input: { description: "rig subagent proof", prompt: SUBAGENT_PROMPT, subagent_type: "general-purpose" } },
+        ],
+        stop_reason: "tool_use",
+        stop_sequence: null,
+        usage: usage(),
+      };
+    }
+    return {
+      id: `msg_mock_${String(Date.now())}`,
+      type: "message",
+      role: "assistant",
+      model: body.model,
+      content: [
+        { type: "text", text: "starting a background task first" },
+        { type: "tool_use", id: `toolu_mock_${String(Date.now())}`, name: "Bash", input: { command: BACKGROUND_TASK_COMMAND, run_in_background: true } },
+      ],
+      stop_reason: "tool_use",
+      stop_sequence: null,
+      usage: usage(),
+    };
+  }
   if (mcpAuthDriver) {
     // The walk the MCP OAuth proof needs, shaped around deferred tool loading (a direct call by name never loads a deferred tool, so each call is preceded by the ToolSearch that makes the CLI connect and load it): search for the protected tool, call it while the server still refuses the CLI unauthenticated (the round whose error names the missing handshake), search again once an attached Remote Control client has completed the handshake through the door's mcp_authenticate and mcp_oauth_callback_url writes, call it again (the round that runs with the token), then name what it answered.
     const called = assistantToolUseNames(body);
