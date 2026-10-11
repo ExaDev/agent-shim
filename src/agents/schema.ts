@@ -94,7 +94,7 @@ export const WorkflowRunSchema = z.strictObject({
 });
 
 /** A file the reader met and could not use: reported with the reason, never silently dropped. */
-export const AgentTreeProblemSchema = z.strictObject({
+const AgentTreeProblemSchema = z.strictObject({
   /** Relative to the identity's configuration directory. */
   path: z.string(),
   reason: z.string(),
