@@ -229,6 +229,46 @@ describe("runLauncher with a pool selector", () => {
     });
   });
 
+  describe("when every plan is exhausted but extra usage is allowed", () => {
+    // `personal` returns first; both would otherwise continue on extra usage.
+    const exhausted = {
+      [snapshotPath("work")]: snapshotOf("work", { utilization: FULL, resetsInMs: TWO_HOURS_MS, status: "rejected" }, "allowed"),
+      [snapshotPath("personal")]: snapshotOf("personal", { utilization: FULL, resetsInMs: HOUR_MS, status: "rejected" }, "allowed"),
+    };
+
+    it("continues on extra usage straight away without --wait, saying when the plan returns", () => {
+      const { code, spawn, log } = launch({ seed: exhausted, argv: ["@pool:main", "--print"] });
+      expect(code).toBe(0);
+      expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/personal`);
+      expect(log.infos.join("\n")).toContain("plan exhausted until");
+    });
+
+    it("sleeps until the earliest plan window resets under --wait, then launches on plan quota", () => {
+      let clock = FAKE_NOW_MS;
+      const slept: number[] = [];
+      const { code, spawn, log } = launch({
+        seed: exhausted,
+        argv: ["@pool:main", "--wait", "--print"],
+        farm: (base) => ({
+          ...base,
+          now: () => clock,
+          lock: {
+            ...base.lock,
+            sleep: (ms) => {
+              slept.push(ms);
+              clock += ms;
+            },
+          },
+        }),
+      });
+      expect(code).toBe(0);
+      expect(slept).toEqual([HOUR_MS]);
+      expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/personal`);
+      expect(log.infos.join("\n")).toContain("on extra usage; waiting until");
+      expect(log.infos.join("\n")).not.toContain("plan exhausted until");
+    });
+  });
+
   describe("keeping the account whose prompt cache is warm", () => {
     /** Runs two launches in one directory over one filesystem; between them the other member becomes the better pick. */
     function twoLaunches(secondAtMs: number, secondArgv: readonly string[], between?: (farmFs: ReturnType<typeof createFakeFarmFs>) => void): { readonly first: Launch; readonly second: Launch } {

@@ -59,7 +59,7 @@ function isResuming(passthrough: readonly string[]): boolean {
 /**
  * Picks the identity a launch of pool `poolName` runs as.
  *
- * The pool is ranked with everything it nests, each pool under its own preference. Members without an `identity.json` are skipped with a warning, since a pool may outlive an identity it names; a nested member naming an undefined pool or a cycle (config edited since it was written) refuses the launch. When every remaining member is refused right now the launch is refused, naming the earliest return, unless `wait` is set, which sleeps until then and ranks again. The chosen member is recorded as this directory's last pick so the next launch here keeps its warm prompt cache.
+ * The pool is ranked with everything it nests, each pool under its own preference. Members without an `identity.json` are skipped with a warning, since a pool may outlive an identity it names; a nested member naming an undefined pool or a cycle (config edited since it was written) refuses the launch. When every remaining member is refused right now the launch is refused, naming the earliest return, unless `wait` is set, which sleeps until then and ranks again; `wait` also holds a pick that would only continue on extra usage because its plan ran out, until that plan window resets. The chosen member is recorded as this directory's last pick so the next launch here keeps its warm prompt cache.
  */
 export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
   const { poolName, log } = params;
@@ -106,7 +106,13 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
     if (graph.ranking.candidates.length === 0) {
       return { ok: false, message: `agent-shim: no member of pool "${poolName}" is an existing identity.` };
     }
-    const { pick, earliestReturn, movedOff } = graph.ranking;
+    const { pick, earliestReturn, movedOff, planReturn } = graph.ranking;
+    // Under --wait the person has said they will sit out a reset, so a pick that would spend extra usage because its plan ran out is held for the plan's return instead.
+    if (pick !== undefined && params.wait && planReturn !== undefined) {
+      log.info(`agent-shim: pool "${poolName}" would continue ${planReturn.identity} on extra usage; waiting until ${new Date(planReturn.atMs).toISOString()} for its plan window`);
+      params.sleep(Math.max(planReturn.atMs - nowMs, 0));
+      continue;
+    }
     if (pick !== undefined) {
       if (params.recordPick) {
         recordStickyPick(params.usageFs, params.paths.usagePicksFile, params.cwd, pick.identity, nowMs);
