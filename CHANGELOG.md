@@ -1,3 +1,14 @@
+## [9.12.1](https://github.com/ExaDev/agent-shim/compare/v9.12.0...v9.12.1) (2026-10-11)
+
+### Bug Fixes
+
+* retire an unresponsive front door instead of spawning a second beside it ([1817a11](https://github.com/ExaDev/agent-shim/commit/1817a11774109f536cd9093f258acf0e5e21e60b))
+
+### Documentation
+
+* describe how an unresponsive front door is retired before its replacement starts ([8990e8e](https://github.com/ExaDev/agent-shim/commit/8990e8e62ecd9b6dc94ad812ab5aa925193b6bd4))
+* describe how Claude Code lays out agents and tasks on disk ([2b82286](https://github.com/ExaDev/agent-shim/commit/2b822864539d06423546b366f387a9c2beccb2fb))
+
 ## [9.12.0](https://github.com/ExaDev/agent-shim/compare/v9.11.0...v9.12.0) (2026-10-11)
 
 ### Features
