@@ -8,6 +8,9 @@ import { withIdentityClaude, type IdentityClaudeParams } from "./identityClaude"
 /** The launch flags a job run adds: no daemons beyond the identity's own routing, and usage tracking on so the door records the run against the identity. */
 const JOB_LAUNCH_FLAGS = ["--no-headroom", "--no-remote-control", "--track-usage"] as const;
 
+/** The settings an unattended run loads: the user's own, never the project's or local ones. A repository's committed settings can change after the job was defined (a pulled change adds a hook or widens a permission), and the front door would then run that as the person's identity without another authorisation. */
+export const JOB_SETTING_SOURCES = ["user"] as const;
+
 /** What a run appends to its job's log: when it ended, who ran it, and the result or the error. */
 function logEntry(name: string, identity: string, endedAt: Readonly<Date>, outcome: string): string {
   return `${endedAt.toISOString()} job ${name} as ${identity}\n${outcome.trimEnd()}\n\n`;
@@ -17,7 +20,7 @@ function logEntry(name: string, identity: string, endedAt: Readonly<Date>, outco
 type JobLogFs = Pick<FarmFs, "mkdirPrivate" | "appendFilePrivate">;
 
 /**
- * Runs a job as an identity through the Agent SDK, unattended: the user's, project and local settings apply, the job's `allowedTools` are the only tools it may use beyond what those settings allow, and nothing can be asked of a person, so a tool outside them is refused (`dontAsk`) rather than waited on. The run is bounded by the job's `timeout`. Its result, or why it failed, is appended to `<jobLogsDir>/<name>.log`, and a failure also throws.
+ * Runs a job as an identity through the Agent SDK, unattended: only the user's own settings apply, the job's `allowedTools` are the only tools it may use beyond what those settings allow, and nothing can be asked of a person, so a tool outside them is refused (`dontAsk`) rather than waited on. The run is bounded by the job's `timeout`. Its result, or why it failed, is appended to `<jobLogsDir>/<name>.log`, and a failure also throws.
  */
 export function createRealJobRunner(params: Omit<IdentityClaudeParams, "cwd" | "timeoutMs"> & { readonly fs: JobLogFs; readonly now: () => Date }): (name: string, identity: string, job: Job) => Promise<void> {
   return async (name, identity, job) => {
@@ -37,7 +40,7 @@ export function createRealJobRunner(params: Omit<IdentityClaudeParams, "cwd" | "
             env,
             cwd,
             abortController: abort,
-            settingSources: ["user", "project", "local"],
+            settingSources: [...JOB_SETTING_SOURCES],
             permissionMode: "dontAsk",
             ...(job.model === undefined ? {} : { model: job.model }),
             ...(job.allowedTools === undefined ? {} : { allowedTools: [...job.allowedTools] }),
