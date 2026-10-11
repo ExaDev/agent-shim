@@ -81,6 +81,8 @@ export interface Candidate {
   readonly scoreWindow?: "sevenDay" | "fiveHour";
   /** False when a quota window would run dry, at the observed pace, before it resets (the five-hour at its own or the rescaled shared pace, the seven-day at its own). A `scored` candidate that is not feasible ranks below every feasible one. */
   readonly feasible: boolean;
+  /** When the soonest window projected to run dry is projected to, for a `scored` candidate that is not feasible: the instant its quota is gone at the observed pace, which is what a launch weighs a returning member against. Absent for a feasible candidate. */
+  readonly runsDryAtMs?: number;
   /** The fraction of the extra-usage allowance still unspent, for a `pay-per-use` member whose only budget is that allowance (an Enterprise account). A member reporting none ranks as having all of it: no cap is known to bind. */
   readonly headroom?: number;
   /** When an `ineligible` candidate can be used again. */
@@ -103,6 +105,8 @@ export interface PoolRanking {
   readonly earliestReturn?: { readonly identity: string; readonly atMs: number };
   /** When the pick continues on extra usage only because its plan ran out, the identity and the instant its plan window resets: what a launch that would rather wait than spend sleeps until. Absent when the pick is on plan quota, bills by use with no plan, or no member can be picked. */
   readonly planReturn?: { readonly identity: string; readonly atMs: number };
+  /** When the pick would run dry before its window resets and a refused member returns before that happens, the earliest such member and when it returns: what a launch that would rather have a full window than start one that dies partway holds for. Absent when the pick is projected to last, nothing is refused, or every refused member returns after the pick would run dry. */
+  readonly holdForReturn?: { readonly identity: string; readonly atMs: number };
   /** The member a resumed or continued conversation started on but moved off, and why, when a launch that resumes could not keep it. One sentence for the launch decision line and `check`. */
   readonly movedOff?: { readonly identity: string; readonly reason: string };
 }
@@ -390,22 +394,25 @@ export function rankPool(input: RankPoolInput): PoolRanking {
       return { ...candidate, feasible: true };
     }
     const drySpots: string[] = [];
+    const dryAfterMs: number[] = [];
     if (fiveHour !== undefined && pace !== undefined) {
       const runsDryInMs = fiveHour.remaining / pace;
       if (runsDryInMs < fiveHour.untilResetMs) {
+        dryAfterMs.push(runsDryInMs);
         drySpots.push(`5h window would run dry in ${formatAge(runsDryInMs)}, before it resets in ${formatAge(fiveHour.untilResetMs)}`);
       }
     }
     if (sevenDay !== undefined && sevenDayBurn !== undefined) {
       const runsDryInMs = sevenDay.remaining / sevenDayBurn;
       if (runsDryInMs < sevenDay.untilResetMs) {
+        dryAfterMs.push(runsDryInMs);
         drySpots.push(`7d window would run dry in ${formatAge(runsDryInMs)}, before it resets in ${formatAge(sevenDay.untilResetMs)}`);
       }
     }
     if (drySpots.length === 0) {
       return { ...candidate, feasible: true };
     }
-    return { ...candidate, feasible: false, reasons: [...drySpots, ...candidate.reasons] };
+    return { ...candidate, feasible: false, runsDryAtMs: nowMs + Math.min(...dryAfterMs), reasons: [...drySpots, ...candidate.reasons] };
   });
 
   // "listed" keeps the members' own order, which is the pool's stated preference; "score" (the default) is the use-it-or-lose-it order.
@@ -445,10 +452,13 @@ export function rankPool(input: RankPoolInput): PoolRanking {
   const pick = ordered.find((candidate) => candidate.class !== "ineligible");
   const returns = ordered.flatMap((candidate) => (candidate.blockedUntilMs === undefined ? [] : [{ identity: candidate.identity, atMs: candidate.blockedUntilMs }]));
   const earliestReturn = returns.length === 0 ? undefined : returns.reduce((soonest, entry) => (entry.atMs < soonest.atMs ? entry : soonest));
+  // A pick that will run dry before its window resets ends a long session partway; a refused member that is back before that point gives a full window instead, so a launch that waits for returns waits for it.
+  const holdForReturn = pick?.runsDryAtMs === undefined ? undefined : returns.filter((entry) => entry.atMs < (pick.runsDryAtMs ?? 0)).reduce<{ readonly identity: string; readonly atMs: number } | undefined>((soonest, entry) => (soonest === undefined || entry.atMs < soonest.atMs ? entry : soonest), undefined);
   return {
     candidates: ordered,
     ...(pick === undefined ? { ...(earliestReturn === undefined ? {} : { earliestReturn }) } : { pick }),
     ...(movedOff === undefined || pick === undefined ? {} : { movedOff }),
     ...(pick?.planReturnsAtMs === undefined ? {} : { planReturn: { identity: pick.identity, atMs: pick.planReturnsAtMs } }),
+    ...(holdForReturn === undefined ? {} : { holdForReturn }),
   };
 }
