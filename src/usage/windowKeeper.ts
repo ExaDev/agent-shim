@@ -1,10 +1,6 @@
-import path from "node:path";
-
-import { z } from "zod";
-
 import type { Anchor } from "../config/schema";
-import type { FarmFs } from "../launcher/ports";
 import { dueAnchor } from "./anchor";
+import { readHandled, writeHandled, type StampsFs } from "./handledStamps";
 import { effectiveWindow, formatAge } from "./preflight";
 import { rankPool } from "./pick";
 import { ANTHROPIC_PROVIDER } from "./middleware";
@@ -13,18 +9,6 @@ import type { UsageSnapshot } from "./schema";
 /**
  * The window keeper: at each of an identity's anchors, opens a five-hour window when none is open, so the window's reset falls where the person wants it. Pure orchestration over injected ports (clock, snapshots, the opener, the handled-anchor file), so the front door's timer and the tests share one decision.
  */
-
-const STAMPS_SCHEMA_VERSION = 1;
-
-/** The `usage/anchors.json` file: for each identity, the instant up to which its anchors have been dealt with, whether by opening a window or by finding a reason not to. */
-const StampsFileSchema = z.strictObject({
-  schemaVersion: z.literal(STAMPS_SCHEMA_VERSION),
-  handled: z.record(z.string().min(1), z.iso.datetime()),
-});
-type StampsFile = z.infer<typeof StampsFileSchema>;
-
-/** The filesystem effects the keeper performs on its own file. */
-type KeeperFs = Pick<FarmFs, "readFileUtf8" | "writeFilePrivate" | "mkdirPrivate">;
 
 /** Opens a five-hour window for an identity by sending the smallest real request, or throws with why it could not. */
 export type WindowOpener = (identity: string) => Promise<void>;
@@ -36,7 +20,7 @@ export interface AnchoredIdentity {
 }
 
 export interface WindowKeeperPorts {
-  readonly fs: KeeperFs;
+  readonly fs: StampsFs;
   readonly stampsFile: string;
   readonly nowMs: () => number;
   /** The zone an anchor without one is read in. */
@@ -55,26 +39,13 @@ export interface KeeperOutcome {
   readonly detail: string;
 }
 
-function readStamps(fs: Pick<FarmFs, "readFileUtf8">, file: string): Record<string, number> {
-  const raw = fs.readFileUtf8(file);
-  if (raw === undefined) {
-    return {};
+/** Why an identity cannot be served right now, or undefined when it can: the account is refused, or the snapshot says so. Shared by everything that acts on an identity unattended. */
+export function refusalReason(identity: string, snapshot: UsageSnapshot | undefined, nowMs: number): string | undefined {
+  if (snapshot === undefined) {
+    return undefined;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    parsed = undefined;
-  }
-  const result = StampsFileSchema.safeParse(parsed);
-  // An unreadable file reads as "nothing handled": every anchored identity is armed afresh, which loses at most the anchors that fell while it was unreadable, never opens a window the person did not ask for.
-  return result.success ? Object.fromEntries(Object.entries(result.data.handled).map(([identity, at]) => [identity, Date.parse(at)])) : {};
-}
-
-function writeStamps(fs: KeeperFs, file: string, handled: Readonly<Record<string, number>>): void {
-  const next: StampsFile = { schemaVersion: STAMPS_SCHEMA_VERSION, handled: Object.fromEntries(Object.entries(handled).map(([identity, at]) => [identity, new Date(at).toISOString()])) };
-  fs.mkdirPrivate(path.dirname(file));
-  fs.writeFilePrivate(file, `${JSON.stringify(next, null, 2)}\n`);
+  const candidate = rankPool({ members: [{ identity, snapshot, records: [] }], nowMs, resuming: false }).candidates[0];
+  return candidate?.class === "ineligible" ? `it is refused right now (${candidate.reasons[0] ?? "no reason recorded"})` : undefined;
 }
 
 /** Why a window should not be opened for this identity right now, or undefined when one should. A window is already open, the account is refused, or it reports no five-hour window to anchor (an API key, or an account metered by extra usage alone). */
@@ -90,8 +61,7 @@ export function reasonNotToOpen(identity: string, snapshot: UsageSnapshot | unde
   if (five?.resetsAtMs !== undefined) {
     return `a five-hour window is already open, resetting in ${formatAge(five.resetsAtMs - nowMs)}`;
   }
-  const candidate = rankPool({ members: [{ identity, snapshot, records: [] }], nowMs, resuming: false }).candidates[0];
-  return candidate?.class === "ineligible" ? `it is refused right now (${candidate.reasons[0] ?? "no reason recorded"})` : undefined;
+  return refusalReason(identity, snapshot, nowMs);
 }
 
 /**
@@ -100,7 +70,7 @@ export function reasonNotToOpen(identity: string, snapshot: UsageSnapshot | unde
 export async function runWindowKeeper(ports: Readonly<WindowKeeperPorts>): Promise<readonly KeeperOutcome[]> {
   const nowMs = ports.nowMs();
   const anchored = ports.anchored();
-  const previous = readStamps(ports.fs, ports.stampsFile);
+  const previous = readHandled(ports.fs, ports.stampsFile);
   // Identities that lost their anchors drop out of the file with them.
   const handled: Record<string, number> = Object.fromEntries(anchored.flatMap(({ identity }) => (previous[identity] === undefined ? [] : [[identity, previous[identity]]])));
   const outcomes: KeeperOutcome[] = [];
@@ -129,7 +99,7 @@ export async function runWindowKeeper(ports: Readonly<WindowKeeperPorts>): Promi
       outcomes.push({ identity, status: "failed", detail: `anchor ${new Date(due).toISOString()}: could not open a window: ${error instanceof Error ? error.message : String(error)}` });
     }
   }
-  writeStamps(ports.fs, ports.stampsFile, handled);
+  writeHandled(ports.fs, ports.stampsFile, handled);
   for (const outcome of outcomes) {
     if (outcome.status === "opened" || outcome.status === "skipped" || outcome.status === "failed") {
       ports.log(`window keeper: ${outcome.identity}: ${outcome.detail}`);

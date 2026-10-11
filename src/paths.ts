@@ -84,6 +84,10 @@ export interface LayoutPaths {
   readonly usagePicksFile: string;
   /** The last anchor the front door's window keeper handled for each identity, so a restart neither replays an anchor nor skips one. */
   readonly usageAnchorsFile: string;
+  /** The last trigger instance the front door's job keeper handled for each job, so a restart neither repeats nor skips a run. */
+  readonly usageJobsFile: string;
+  /** Directory of one append-only `<job>.log` per job: the result of each unattended run. */
+  readonly jobLogsDir: string;
 }
 
 /**
@@ -155,6 +159,8 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     usageSnapshotsDir: path.join(root, "usage", "snapshots"),
     usagePicksFile: path.join(root, "usage", "picks.json"),
     usageAnchorsFile: path.join(root, "usage", "anchors.json"),
+    usageJobsFile: path.join(root, "usage", "jobs.json"),
+    jobLogsDir: path.join(root, "logs", "jobs"),
     mcpPermissionsFile: path.join(root, "mcp", "permissions.json"),
   };
 }

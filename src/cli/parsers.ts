@@ -50,6 +50,14 @@ export function collectAnchor(value: string, previous: readonly Anchor[] = []): 
   return [...previous, asInvalidArgument(() => parseAnchor(value))];
 }
 
+/** Commander option parser for a duration kept as its literal (`30m`, `2h`), for a setting stored in configuration as written. A malformed value is a usage error naming the option. */
+export function parseDurationLiteral(value: string): string {
+  return asInvalidArgument(() => {
+    parseDuration(value);
+    return value;
+  });
+}
+
 /** Commander option parser for a duration such as `30m`, `5h` or `7d` (a count followed by ms, s, m, h, d or w), returning milliseconds. A malformed value is a usage error naming the option. */
 export function parseDurationOption(value: string): number {
   return asInvalidArgument(() => parseDuration(value));

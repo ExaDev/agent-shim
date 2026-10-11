@@ -10,12 +10,16 @@ import { collectCodexStatus, createCodexRoutePorts, runCodexLogout } from "../co
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, realOwnExecutablePath, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { checkForUpdate } from "../update/commands";
-import { listAnchoredIdentities } from "../identityStore";
+import { identityExists, listAnchoredIdentities } from "../identityStore";
+import { readJobs } from "../jobStore";
 import { refreshStalePoolMembers } from "../launcher/poolRefresh";
 import { ANTHROPIC_USAGE_FRESHNESS_MS } from "../usage/anthropicUsageRefresh";
 import { loadPoolMembers } from "../usage/poolPick";
 import { createRealAnthropicUsageRefresher } from "../usage/realAnthropicUsageProbe";
+import { createRealJobRunner } from "../usage/realJobRunner";
 import { createRealWindowOpener } from "../usage/realWindowOpener";
+import { runJobs } from "../usage/jobKeeper";
+import { resolveJobIdentity } from "../usage/jobTarget";
 import { machineTimeZone } from "../usage/anchor";
 import { runWindowKeeper } from "../usage/windowKeeper";
 import { realCredentialCacheEnv } from "../realCredentialCache";
@@ -242,6 +246,27 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       .finally(() => {
         keeperRunning = false;
       });
+  }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
+  // The job keeper starts each job whose trigger has fired on the same cadence. A run can last as long as the job's timeout, so the tick only starts it; the set of running jobs outlives the tick so a job is never started again while it is still going.
+  const jobRunner = createRealJobRunner({ paths, spawnDaemon: spawnDetachedSupervisor, fs: realFarmFs, now: () => new Date() });
+  const runningJobs = new Set<string>();
+  setInterval(() => {
+    try {
+      runJobs({
+        fs: realFarmFs,
+        stampsFile: paths.usageJobsFile,
+        nowMs: () => Date.now(),
+        timeZone: machineTimeZone(),
+        jobs: () => Object.entries(readJobs(paths)).map(([name, job]) => ({ name, job })),
+        resolveIdentity: (target) => resolveJobIdentity({ paths, fs: realFarmFs, pools: readPools(paths), nowMs: Date.now(), identityExists: (name) => identityExists(paths, name) }, target),
+        snapshot: (identity) => readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity),
+        run: jobRunner,
+        running: runningJobs,
+        log,
+      });
+    } catch (error) {
+      log(`job keeper failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
   const usageMiddleware = createUsageMiddleware({
     record: withQuotaRefresh(usageStore.record, quotaRefresher),

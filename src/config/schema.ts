@@ -386,6 +386,60 @@ export const PoolSchema = z.strictObject({
 });
 export type Pool = z.infer<typeof PoolSchema>;
 
+/** The weekdays an anchor can name, Monday first, as the lowercase three-letter names `--anchor` takes. */
+export const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+export type Weekday = (typeof WEEKDAYS)[number];
+
+/** Whether `name` is an IANA time zone the runtime knows. */
+function isTimeZone(name: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: name });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A wall-clock time on some weekdays at which an identity should have a five-hour window open: the front door opens one at each anchor when none is. `timeZone` is an IANA name; absent, the machine's own zone at the time the anchor is evaluated.
+ */
+export const AnchorSchema = z.strictObject({
+  days: z
+    .array(z.enum(WEEKDAYS))
+    .min(1)
+    .refine((days) => new Set(days).size === days.length, "an anchor names each weekday at most once"),
+  time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "a 24-hour time such as 06:00"),
+  timeZone: z.string().refine(isTimeZone, "an IANA time zone such as Europe/London").optional(),
+});
+export type Anchor = z.infer<typeof AnchorSchema>;
+
+/** The quota windows a job can be timed against. */
+export const JOB_WINDOWS = ["fiveHour", "sevenDay"] as const;
+export type JobWindow = (typeof JOB_WINDOWS)[number];
+
+/**
+ * When a job runs: at wall-clock times (the same anchors an identity has), or once per instance of a quota window, when the window has `lead` or less left before it resets. The second is for spending quota that would otherwise expire.
+ */
+const JobTriggerSchema = z.union([z.strictObject({ at: z.array(AnchorSchema).min(1) }), z.strictObject({ beforeReset: z.enum(JOB_WINDOWS), lead: z.string().regex(DURATION_RE) })]);
+
+/** What a job runs as: one identity, or whichever member of a pool the ranking picks when the job fires. */
+const JobTargetSchema = z.union([z.strictObject({ identity: IdentitySelectorSchema }), z.strictObject({ pool: PoolNameSchema })]);
+
+/**
+ * A prompt run unattended through the Agent SDK as an identity, in a directory, when its trigger fires. `timeout` bounds one run. The run has the permissions its settings and `allowedTools` grant and no more: an unattended run cannot answer a permission prompt, so a tool it was not allowed is refused rather than waited on.
+ */
+const JobSchema = z.strictObject({
+  target: JobTargetSchema,
+  trigger: JobTriggerSchema,
+  prompt: z.string().min(1),
+  /** The absolute directory the run works in. */
+  cwd: z.string().min(1),
+  timeout: z.string().regex(DURATION_RE),
+  model: z.string().min(1).optional(),
+  allowedTools: z.array(z.string().min(1)).min(1).optional(),
+});
+export type Job = z.infer<typeof JobSchema>;
+
 /** One directory rule in `~/.agent-shim/directory-rules.json`, scoped to an explicit absolute (or `~`-rooted) path. */
 export const DirectoryRuleSchema = ConfigProfileSchema.omit({ description: true }).extend({
   path: z.string().min(1),
@@ -504,35 +558,9 @@ export const GlobalConfigSchema = z.strictObject({
   frontdoor: FrontDoorGlobalConfigSchema.optional(),
   update: UpdateGlobalConfigSchema.optional(),
   pools: z.record(PoolNameSchema, PoolSchema).optional(),
+  jobs: z.record(PoolNameSchema, JobSchema).optional(),
 });
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
-
-/** The weekdays an anchor can name, Monday first, as the lowercase three-letter names `--anchor` takes. */
-export const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
-export type Weekday = (typeof WEEKDAYS)[number];
-
-/** Whether `name` is an IANA time zone the runtime knows. */
-function isTimeZone(name: string): boolean {
-  try {
-    new Intl.DateTimeFormat("en", { timeZone: name });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * A wall-clock time on some weekdays at which an identity should have a five-hour window open: the front door opens one at each anchor when none is. `timeZone` is an IANA name; absent, the machine's own zone at the time the anchor is evaluated.
- */
-export const AnchorSchema = z.strictObject({
-  days: z
-    .array(z.enum(WEEKDAYS))
-    .min(1)
-    .refine((days) => new Set(days).size === days.length, "an anchor names each weekday at most once"),
-  time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "a 24-hour time such as 06:00"),
-  timeZone: z.string().refine(isTimeZone, "an IANA time zone such as Europe/London").optional(),
-});
-export type Anchor = z.infer<typeof AnchorSchema>;
 
 /**
  * An identity's own `identity.json`. `credential`, when present, authenticates the identity from a token instead of (or ahead of) its stored login: the launcher resolves it and exports it as its target (typically `oauthToken`, a `claude setup-token` token) in the child's environment only. Without it the identity uses the login stored in its own directory.

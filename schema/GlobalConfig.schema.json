@@ -293,6 +293,154 @@
         ],
         "additionalProperties": false
       }
+    },
+    "jobs": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "identity": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]*)$"
+                  }
+                },
+                "required": [
+                  "identity"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "pool": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+                  }
+                },
+                "required": [
+                  "pool"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "at": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "days": {
+                          "minItems": 1,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "mon",
+                              "tue",
+                              "wed",
+                              "thu",
+                              "fri",
+                              "sat",
+                              "sun"
+                            ]
+                          }
+                        },
+                        "time": {
+                          "type": "string",
+                          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                        },
+                        "timeZone": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "days",
+                        "time"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "at"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "beforeReset": {
+                    "type": "string",
+                    "enum": [
+                      "fiveHour",
+                      "sevenDay"
+                    ]
+                  },
+                  "lead": {
+                    "type": "string",
+                    "pattern": "^(?:0|[1-9][0-9]*)(?:ms|s|m|h|d|w)$"
+                  }
+                },
+                "required": [
+                  "beforeReset",
+                  "lead"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cwd": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timeout": {
+            "type": "string",
+            "pattern": "^(?:0|[1-9][0-9]*)(?:ms|s|m|h|d|w)$"
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "allowedTools": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "target",
+          "trigger",
+          "prompt",
+          "cwd",
+          "timeout"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false,
