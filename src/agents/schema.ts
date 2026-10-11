@@ -142,4 +142,3 @@ export type TaskItem = z.output<typeof TaskItemSchema>;
 export type WorkflowRun = z.output<typeof WorkflowRunSchema>;
 export type AgentTreeProblem = z.output<typeof AgentTreeProblemSchema>;
 export type SessionAgentTree = z.output<typeof SessionAgentTreeSchema>;
-export type SessionSummaryView = z.output<typeof SessionSummarySchema>;
