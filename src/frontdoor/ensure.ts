@@ -12,6 +12,9 @@ const FRONTDOOR_START_TIMEOUT_MS = 30_000;
 /** The launcher's poll rate while waiting for the door. */
 const FRONTDOOR_LAUNCHER_POLL_MS = 100;
 
+/** How many times a listener that fails authentication is probed before it is believed. One failed probe is what a busy door looks like (sessions reattaching all at once miss the probe's own deadline), so a listener is distrusted only after consecutive failures: three misses in a row are a wedged or foreign listener, not slowness. */
+const FRONTDOOR_PROBE_ATTEMPTS = 3;
+
 /** Raised when the front door cannot be brought up in time or has recorded a fatal error: a routed launch has no other way to reach its provider, so it must fail rather than start a session that can never answer. */
 export class FrontDoorStartError extends CliError {
   constructor(message: string) {
@@ -31,8 +34,10 @@ export interface EnsureFrontDoorPorts {
   readonly spawnSupervisor: (paths: LayoutPaths) => number;
   /** Authenticates the provider listener on `port`: a TLS handshake chaining to agent-shim's CA and a healthy answer, with no capability sent (see `probeFrontDoorSync`). */
   readonly verifyListener: (port: number) => ListenerVerdict;
-  /** Asks a running front-door supervisor to exit, without waiting for it to: the caller polls `isRunning`. Only ever called for a pid whose recorded listener has just authenticated as agent-shim's own. */
+  /** Asks a running front-door supervisor to exit, without waiting for it to: the caller polls `isRunning`. Only ever called for a pid whose recorded listener has just authenticated as agent-shim's own, or whose process is agent-shim's front-door supervisor (`isFrontDoorSupervisor`). */
   readonly stopSupervisor: (pid: number) => void;
+  /** Whether `pid` is a live agent-shim front-door supervisor process, read from the process's own command line. This is what separates a wedged door of this tool, which a replacement must retire so the two never coexist, from an unrelated process that reuses the recorded pid, which must never be signalled. */
+  readonly isFrontDoorSupervisor: (pid: number) => boolean;
 }
 
 /**
@@ -54,21 +59,39 @@ export function ensureFrontDoor(params: {
   const distrusted = new Set<number>();
   let lastRejection: string | undefined;
 
+  /** Probes the listener until it authenticates or `FRONTDOOR_PROBE_ATTEMPTS` consecutive probes have failed, returning the last verdict. */
+  const verifyWithRetry = (port: number): ListenerVerdict => {
+    let verdict = ports.verifyListener(port);
+    for (let attempt = 1; !verdict.ok && attempt < FRONTDOOR_PROBE_ATTEMPTS; attempt += 1) {
+      ports.sleep(FRONTDOOR_LAUNCHER_POLL_MS);
+      verdict = ports.verifyListener(port);
+    }
+    return verdict;
+  };
+
+  /** Asks `supervisorPid` to exit and waits until it has, so the replacement that follows binds the sticky ports instead of moving off them. */
+  const stopAndAwaitExit = (supervisorPid: number, failure: string): void => {
+    ports.stopSupervisor(supervisorPid);
+    while (ports.isRunning(supervisorPid)) {
+      if (ports.now() >= deadline) {
+        throw new FrontDoorStartError(`${failure}. Daemon log: ${paths.frontdoorLogPath}`);
+      }
+      ports.sleep(FRONTDOOR_LAUNCHER_POLL_MS);
+    }
+  };
+
   for (;;) {
     const state = readFrontDoorState(ports.fs, paths.frontdoorStateFile);
     const supervisorPid = state?.supervisorPid;
     if (supervisorPid !== undefined && !distrusted.has(supervisorPid) && ports.isRunning(supervisorPid)) {
       if (state?.port !== undefined && state.connectPort !== undefined) {
-        const verdict = ports.verifyListener(state.port);
+        const verdict = verifyWithRetry(state.port);
         if (verdict.ok && !replaced && !spawned && (params.replace === true || (state.protocol ?? 0) < FRONT_DOOR_PROTOCOL)) {
           // A door older than this launcher speaks a protocol this launcher's sessions cannot use (a door from before the protocol field is protocol 0). It is replaced, never joined: the registry is on disk and the replacement binds the same sticky ports, so sessions already running reach it on the addresses they froze. The listener has authenticated as this tool's own, which is what makes the recorded pid safe to stop.
-          ports.stopSupervisor(supervisorPid);
-          while (ports.isRunning(supervisorPid)) {
-            if (ports.now() >= deadline) {
-              throw new FrontDoorStartError(`the front door (pid ${String(supervisorPid)}, protocol ${String(state.protocol ?? 0)}; this launcher speaks protocol ${String(FRONT_DOOR_PROTOCOL)}) was asked to be replaced and did not exit. Daemon log: ${paths.frontdoorLogPath}`);
-            }
-            ports.sleep(FRONTDOOR_LAUNCHER_POLL_MS);
-          }
+          stopAndAwaitExit(
+            supervisorPid,
+            `the front door (pid ${String(supervisorPid)}, protocol ${String(state.protocol ?? 0)}; this launcher speaks protocol ${String(FRONT_DOOR_PROTOCOL)}) was asked to be replaced and did not exit`,
+          );
           replaced = true;
           continue;
         }
@@ -81,6 +104,11 @@ export function ensureFrontDoor(params: {
         lastRejection = `the listener on 127.0.0.1:${String(state.port)} (recorded for pid ${String(supervisorPid)}) failed authentication: ${verdict.reason}`;
         if (spawned) {
           throw new FrontDoorStartError(`${lastRejection}; refusing to send this session's credentials to it. Daemon log: ${paths.frontdoorLogPath}`);
+        }
+        if (ports.isFrontDoorSupervisor(supervisorPid)) {
+          // This tool's own door that no longer answers: leaving it running makes the replacement move every sticky port (the headroom allowlist then excludes the serving door) and strands whatever sessions still point at it. It is retired first, so the replacement binds the same ports. A pid that is not a front-door supervisor is only distrusted, never signalled.
+          stopAndAwaitExit(supervisorPid, `the front door (pid ${String(supervisorPid)}) stopped answering and did not exit when asked to`);
+          continue;
         }
         distrusted.add(supervisorPid);
         continue;
