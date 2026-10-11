@@ -2,8 +2,9 @@ import path from "node:path";
 import { Option, type Command } from "commander";
 import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { addCredentialCacheOptions, cacheChange, collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX, type CredentialCacheOptions } from "./cli/credentialOption";
+import { collectAnchor } from "./cli/parsers";
 import { loadClassification } from "./config/classify";
-import { CREDENTIAL_TARGETS, IdentitySchema, type CredentialSource, type CredentialTarget } from "./config/schema";
+import { CREDENTIAL_TARGETS, IdentitySchema, type Anchor, type CredentialSource, type CredentialTarget } from "./config/schema";
 import { describeCredential, summariseCredential, type CredentialSummary } from "./credential";
 import { runProfileWizard, type PromptsPort } from "./configure";
 import { PromptCancelledError, UsageError } from "./cliError";
@@ -12,7 +13,8 @@ import { ensureProfileExists } from "./configProfiles";
 import { poolNameOf } from "./launcher/identity";
 import type { LayoutPaths } from "./paths";
 import { realFarmFs } from "./realPorts";
-import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setAllowAmbientCredential, setIdentityCredential, removeIdentity } from "./identityStore";
+import { IdentityNotFoundError, InvalidIdentityNameError, identityExists, readIdentity, addIdentity, useIdentity, type IdentityListing, listIdentities, setDefaultConfigProfile, setAllowAmbientCredential, setIdentityCredential, setIdentityAnchors, removeIdentity } from "./identityStore";
+import { ANCHOR_SYNTAX, formatAnchor } from "./usage/anchor";
 
 /**
  * The interactive setup wizard for a new identity, offered by the `@<name>` shortcut, `identity use`, and a launch naming an identity that doesn't exist yet, whenever stdin is a real terminal.
@@ -116,6 +118,8 @@ interface IdentityView {
   readonly allowAmbientCredential?: boolean;
   /** How the identity authenticates when it has a credential block: its target and each source's kind, never a value. Absent when it uses its stored login. */
   readonly credential?: CredentialSummary;
+  /** When the front door should have a five-hour window open for the identity; absent when it opens none on a schedule. */
+  readonly anchors?: readonly Anchor[];
   readonly problem?: string;
 }
 
@@ -129,6 +133,7 @@ function toIdentityView(paths: LayoutPaths, entry: IdentityListing): IdentityVie
           ...(entry.identity.defaultConfigProfile === undefined ? {} : { defaultConfigProfile: entry.identity.defaultConfigProfile }),
           allowAmbientCredential: entry.identity.allowAmbientCredential,
           ...(entry.identity.credential === undefined ? {} : { credential: summariseCredential(entry.identity.credential) }),
+          ...(entry.identity.anchors === undefined ? {} : { anchors: entry.identity.anchors }),
         }
       : { problem: entry.problem }),
   };
@@ -147,12 +152,13 @@ function formatIdentityLine(entry: IdentityListing): string {
   return `${marker}${entry.name}${defaultProfile}${ambient}${credential}`;
 }
 
-/** Options `identity set` accepts. `defaultProfile` is `false` for `--no-default-profile`, and `credential` is `false` for `--no-credential`. */
+/** Options `identity set` accepts. `defaultProfile` is `false` for `--no-default-profile`, `credential` is `false` for `--no-credential` and `anchor` is `false` for `--no-anchor`. */
 interface IdentitySetOptions extends CredentialCacheOptions {
   readonly defaultProfile?: string | false;
   readonly allowAmbientCredential?: boolean;
   readonly credential?: CredentialSource[] | false;
   readonly credentialTarget?: CredentialTarget;
+  readonly anchor?: Anchor[] | false;
   readonly json?: boolean;
 }
 
@@ -227,6 +233,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         console.log(`Default configuration profile: ${view.defaultConfigProfile ?? "(none)"}`);
         console.log(`Allows ambient credential: ${view.allowAmbientCredential === true ? "yes" : "no"}`);
         console.log(`Credential: ${entry.identity?.credential === undefined ? "(none; uses its stored login)" : describeCredential(entry.identity.credential)}`);
+        console.log(`Anchors: ${view.anchors === undefined ? "(none)" : view.anchors.map(formatAnchor).join(" ")}`);
       }),
     ["agent-shim identity show work", "agent-shim identity show work --json"],
   );
@@ -245,6 +252,12 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         collectCredentialSource,
       )
       .option("--no-credential", "Remove this identity's credential, returning it to its stored login.")
+      .option(
+        "--anchor <spec>",
+        `Have the front door open a five-hour window for this identity at these times when none is open, so its window resets when you want (repeatable, replacing any existing anchors): ${ANCHOR_SYNTAX}.`,
+        collectAnchor,
+      )
+      .option("--no-anchor", "Remove this identity's anchors.")
       .addOption(
         new Option(
           "--credential-target <target>",
@@ -258,7 +271,7 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
         const { json, ...options } = allOptions;
         if (Object.entries(allOptions).every(([key, value]) => key === "json" || value === undefined)) {
           throw new UsageError(
-            "Nothing to change: pass --default-profile, --no-default-profile, --allow-ambient-credential, --no-allow-ambient-credential, --credential, --no-credential, --credential-target or a --credential-cache option.",
+            "Nothing to change: pass --default-profile, --no-default-profile, --allow-ambient-credential, --no-allow-ambient-credential, --credential, --no-credential, --credential-target, --anchor, --no-anchor or a --credential-cache option.",
           );
         }
         if (!identityExists(paths, name)) {
@@ -295,6 +308,10 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
             messages.push(`Identity "${name}" now authenticates with credential ${describeCredential(updated.credential)}.`);
           }
         }
+        if (options.anchor !== undefined) {
+          const updated = setIdentityAnchors(paths, name, options.anchor === false ? undefined : options.anchor);
+          messages.push(updated.anchors === undefined ? `Identity "${name}" no longer has anchors.` : `Identity "${name}" now has anchors ${updated.anchors.map(formatAnchor).join(" ")}.`);
+        }
         reportMutation(json, { action: "updated", kind: "identity", name, value: readIdentity(paths, name) }, () => {
           for (const message of messages) {
             console.log(message);
@@ -306,6 +323,8 @@ export function registerIdentityCommand(program: Command, deps: CommandDeps): vo
       "agent-shim identity set work --allow-ambient-credential",
       "agent-shim identity set work --credential-target oauthToken --credential op:op://vault/claude-work/token",
       "agent-shim identity set work --no-credential",
+      "agent-shim identity set work --anchor mon-fri@06:00",
+      "agent-shim identity set work --no-anchor",
     ],
   );
 

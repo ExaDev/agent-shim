@@ -507,6 +507,33 @@ export const GlobalConfigSchema = z.strictObject({
 });
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 
+/** The weekdays an anchor can name, Monday first, as the lowercase three-letter names `--anchor` takes. */
+export const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+export type Weekday = (typeof WEEKDAYS)[number];
+
+/** Whether `name` is an IANA time zone the runtime knows. */
+function isTimeZone(name: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: name });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A wall-clock time on some weekdays at which an identity should have a five-hour window open: the front door opens one at each anchor when none is. `timeZone` is an IANA name; absent, the machine's own zone at the time the anchor is evaluated.
+ */
+export const AnchorSchema = z.strictObject({
+  days: z
+    .array(z.enum(WEEKDAYS))
+    .min(1)
+    .refine((days) => new Set(days).size === days.length, "an anchor names each weekday at most once"),
+  time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "a 24-hour time such as 06:00"),
+  timeZone: z.string().refine(isTimeZone, "an IANA time zone such as Europe/London").optional(),
+});
+export type Anchor = z.infer<typeof AnchorSchema>;
+
 /**
  * An identity's own `identity.json`. `credential`, when present, authenticates the identity from a token instead of (or ahead of) its stored login: the launcher resolves it and exports it as its target (typically `oauthToken`, a `claude setup-token` token) in the child's environment only. Without it the identity uses the login stored in its own directory.
  */
@@ -520,6 +547,8 @@ export const IdentitySchema = z.strictObject({
   defaultConfigProfile: z.string().min(1).optional(),
   allowAmbientCredential: z.boolean().default(false),
   credential: CredentialSchema.optional(),
+  /** When this identity's five-hour window should be open: the front door opens one at each anchor if none is. Absent, nothing is opened on a schedule. */
+  anchors: z.array(AnchorSchema).min(1).optional(),
 });
 export type Identity = z.infer<typeof IdentitySchema>;
 

@@ -17,6 +17,7 @@ import {
   requireIdentityNames,
   setAllowAmbientCredential,
   setDefaultConfigProfile,
+  setIdentityAnchors,
   setIdentityCredential,
   useIdentity,
   type IdentityCredentialChange,
@@ -141,6 +142,7 @@ function identityValue(name: string, paths: LayoutPaths) {
     ...(identity.defaultConfigProfile === undefined ? {} : { defaultConfigProfile: identity.defaultConfigProfile }),
     allowAmbientCredential: identity.allowAmbientCredential,
     ...(identity.credential === undefined ? {} : { credential: summariseCredential(identity.credential) }),
+    ...(identity.anchors === undefined ? {} : { anchors: identity.anchors }),
   };
 }
 
@@ -180,12 +182,12 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
               return { action: "created" as const, kind: "identity" as const, name: input.name, value: identityValue(input.name, paths) };
             }),
           ),
-        set: route("/rest/config/identity/set", "Update an identity's default profile, ambient-credential setting or credential")
+        set: route("/rest/config/identity/set", "Update an identity's default profile, ambient-credential setting, credential or anchors")
           .input(ConfigIdentitySetInputSchema)
           .output(ConfigIdentitySetOutputSchema)
           .handler(({ input }) =>
             guarded(() => {
-              requireChange(input.defaultConfigProfile !== undefined || input.allowAmbientCredential !== undefined || input.credential !== undefined, "defaultConfigProfile, allowAmbientCredential or credential");
+              requireChange(input.defaultConfigProfile !== undefined || input.allowAmbientCredential !== undefined || input.credential !== undefined || input.anchors !== undefined, "defaultConfigProfile, allowAmbientCredential, credential or anchors");
               if (!identityExists(paths, input.name)) {
                 throw new IdentityNotFoundError(input.name);
               }
@@ -209,6 +211,9 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
                   ...(merged === undefined ? {} : { cache: merged }),
                 };
                 setIdentityCredential(paths, input.name, change);
+              }
+              if (input.anchors !== undefined) {
+                setIdentityAnchors(paths, input.name, input.anchors === false ? undefined : input.anchors);
               }
               return { action: "updated" as const, kind: "identity" as const, name: input.name, value: identityValue(input.name, paths) };
             }),

@@ -82,6 +82,8 @@ export interface LayoutPaths {
   readonly mcpPermissionsFile: string;
   /** The last identity picked from a pool for each directory, so a conversation stays on the account whose prompt cache is warm. */
   readonly usagePicksFile: string;
+  /** The last anchor the front door's window keeper handled for each identity, so a restart neither replays an anchor nor skips one. */
+  readonly usageAnchorsFile: string;
 }
 
 /**
@@ -152,6 +154,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     usageLogDir: path.join(root, "usage", "log"),
     usageSnapshotsDir: path.join(root, "usage", "snapshots"),
     usagePicksFile: path.join(root, "usage", "picks.json"),
+    usageAnchorsFile: path.join(root, "usage", "anchors.json"),
     mcpPermissionsFile: path.join(root, "mcp", "permissions.json"),
   };
 }

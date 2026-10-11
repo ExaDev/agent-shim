@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  AnchorSchema,
   CodexProviderConfigSchema,
   ConfigProfileSchema,
   CREDENTIAL_TARGETS,
@@ -60,6 +61,7 @@ const IdentityValueSchema = z.strictObject({
   defaultConfigProfile: z.string().optional(),
   allowAmbientCredential: z.boolean(),
   credential: CredentialSummarySchema.optional(),
+  anchors: z.array(AnchorSchema).optional(),
 });
 
 /** One configuration profile as a write reports it: the file's own content, less its editor-only `$schema` pointer. */
@@ -87,6 +89,8 @@ export const ConfigIdentitySetInputSchema = z.strictObject({
   defaultConfigProfile: z.union([z.string().min(1), z.literal(false)]).optional(),
   allowAmbientCredential: z.boolean().optional(),
   credential: z.union([z.literal(false), CredentialWriteSchema(CREDENTIAL_TARGETS)]).optional(),
+  /** `false` removes the anchors; a list replaces them. */
+  anchors: z.union([z.literal(false), z.array(AnchorSchema).min(1)]).optional(),
 });
 export const ConfigIdentitySetOutputSchema = storedMutationOutput("identity", "updated", IdentityValueSchema);
 

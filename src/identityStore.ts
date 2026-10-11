@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ConfigValidationError } from "./config/load";
 import { applyPatch, readJson, writeJsonAtomic, writeTextAtomic } from "./config/store";
-import { IdentitySchema, type CredentialCache, type CredentialSource, type CredentialTarget, type Identity } from "./config/schema";
+import { IdentitySchema, type Anchor, type CredentialCache, type CredentialSource, type CredentialTarget, type Identity } from "./config/schema";
 import { CliError, UsageError } from "./cliError";
 import { poolNameOf } from "./launcher/identity";
 import { requirePool } from "./poolStore";
@@ -171,6 +171,24 @@ export function listIdentities(paths: LayoutPaths): readonly IdentityListing[] {
     result.push("problem" in read ? { name, isActive, problem: read.problem } : { name, identity: read, isActive });
   }
   return result;
+}
+
+/** Every identity that has anchors, with them, read from each `identity.json` fresh. An identity whose file cannot be read is left out, as `listIdentities` reports it separately. */
+export function listAnchoredIdentities(paths: LayoutPaths): readonly { readonly identity: string; readonly anchors: readonly Anchor[] }[] {
+  return listIdentities(paths).flatMap(({ name }) => {
+    const anchors = readIdentity(paths, name)?.anchors;
+    return anchors === undefined ? [] : [{ identity: name, anchors }];
+  });
+}
+
+/**
+ * Sets `identity`'s anchors, or clears them when `anchors` is undefined. Throws `IdentityNotFoundError` when the identity does not exist.
+ */
+export function setIdentityAnchors(paths: LayoutPaths, identityName: string, anchors: readonly Anchor[] | undefined): Identity {
+  if (!identityExists(paths, identityName)) {
+    throw new IdentityNotFoundError(identityName);
+  }
+  return applyPatch(identityJsonPath(paths, identityName), IdentitySchema, { anchors: anchors === undefined ? undefined : [...anchors] });
 }
 
 /**
