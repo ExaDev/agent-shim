@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { SessionSummary } from "../agents/read";
 import { SessionAgentTreeSchema, SessionSummarySchema } from "../agents/schema";
 import { CliError } from "../cliError";
-import { doorApiAuth, READ_ONLY_OPERATION_EXTENSION } from "./rcApi";
+import { doorApiAuth, READ_ONLY_OPERATION_EXTENSION, SESSION_HISTORY_TAG } from "./rcApi";
 
 /**
  * A session's agents as a typed oRPC API: the sessions that spawned agents or ran workflows, and one session's agent tree, task list and workflow runs, read from the transcripts on disk. The same data `agent-shim session list` and `session show` print, so a consumer that is not the CLI (an MCP client, the library) asks the door for it.
@@ -43,9 +43,6 @@ export interface AgentTreesApiDeps {
   readonly sessionShow: (query: string, identity: string | undefined) => { readonly identities: readonly string[]; readonly tree: z.infer<typeof SessionAgentTreeSchema> };
 }
 
-/** The OpenAPI tag the agent trees routers group under in the document. */
-const AGENT_TREES_API_TAG = "agent-trees";
-
 /** A lookup the caller got wrong (no such identity, an id that matches nothing or several) is the request being impossible, answered with the reader's own message; anything else is a bug and stays a server error. */
 function asBadRequest(error: unknown): never {
   if (error instanceof CliError) {
@@ -65,7 +62,7 @@ export function createAgentTreesApiRouter(deps: AgentTreesApiDeps) {
             method: "POST",
             path: "/rest/agent-trees/list",
             summary: "List the sessions that spawned agents or ran workflows, newest transcript first",
-            tags: [AGENT_TREES_API_TAG],
+            tags: [SESSION_HISTORY_TAG],
             // A POST because the filters are a body, but the answer changes nothing.
             spec: (current) => ({ ...current, [READ_ONLY_OPERATION_EXTENSION]: true }),
           }),
@@ -85,7 +82,7 @@ export function createAgentTreesApiRouter(deps: AgentTreesApiDeps) {
             method: "POST",
             path: "/rest/agent-trees/show",
             summary: "Show one session's agent tree, task list and workflow runs",
-            tags: [AGENT_TREES_API_TAG],
+            tags: [SESSION_HISTORY_TAG],
             spec: (current) => ({ ...current, [READ_ONLY_OPERATION_EXTENSION]: true }),
           }),
         )

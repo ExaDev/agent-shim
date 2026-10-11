@@ -18,7 +18,7 @@ import { createRcSessionTracker, RC_IDLE_EXPIRY_MS } from "../frontdoor/rcSessio
 import { createRcEventFanout } from "../frontdoor/rcStream";
 import type { FrontDoorStatus } from "../frontdoor/status";
 import { createMcpServer, serveMcp, type McpServerPorts } from "./server";
-import { toolsFromOpenApiDocument, type McpWritePermissions } from "./tools";
+import { toolsFromOpenApiDocument, type McpPermissions } from "./tools";
 
 const CONTROL_TOKEN = "unit-mcp-token";
 const SESSION_ID = "cse_00000000-0000-4000-8000-000000000002";
@@ -151,7 +151,7 @@ describe("the MCP server over a real door handler", () => {
   });
 
   /** The server's ports over plain HTTP to the stand-in door, the same shape `doorMcpPorts` has over the pinned TLS link, with the permissions read on every request as the command reads them. */
-  function portsFor(permissions: () => McpWritePermissions): McpServerPorts {
+  function portsFor(permissions: () => McpPermissions): McpServerPorts {
     const link = new RPCLink({ origin, url: RC_ORPC_PATH_PREFIX, headers: { authorization: `Bearer ${CONTROL_TOKEN}` } });
     return {
       listTools: async () => {
@@ -162,7 +162,7 @@ describe("the MCP server over a real door handler", () => {
     };
   }
 
-  async function connect(permissions: McpWritePermissions | (() => McpWritePermissions), options?: Parameters<typeof serveMcp>[2]): Promise<Client> {
+  async function connect(permissions: McpPermissions | (() => McpPermissions), options?: Parameters<typeof serveMcp>[2]): Promise<Client> {
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     const inForce = typeof permissions === "function" ? permissions : () => permissions;
     void serveMcp(createMcpServer({ name: "agent-shim", version: "0.0.0-test" }, portsFor(inForce)), serverSide, options);
@@ -172,7 +172,7 @@ describe("the MCP server over a real door handler", () => {
   }
 
   it("lists the door's reads as tools and answers a call from the door's own output", async () => {
-    const client = await connect({ writes: false, remoteControl: false });
+    const client = await connect({ writes: false, remoteControl: false, history: false });
     const { tools } = await client.listTools();
     const names = tools.map((tool) => tool.name);
     expect(names).toContain("frontdoor_status");
@@ -184,7 +184,7 @@ describe("the MCP server over a real door handler", () => {
   });
 
   it("returns a refusal as an error result naming its code, not as a protocol failure", async () => {
-    const client = await connect({ writes: false, remoteControl: false });
+    const client = await connect({ writes: false, remoteControl: false, history: false });
     const refused = await client.callTool({ name: "usage_effectiveWindow", arguments: { identity: "nobody" } });
     expect(refused.isError).toBe(true);
     expect(textOf(refused)).toContain("NOT_FOUND");
@@ -192,10 +192,10 @@ describe("the MCP server over a real door handler", () => {
   });
 
   it("exposes a Remote Control write only when its opt-in is given, and the call reaches the door's operation", async () => {
-    const withoutOptIn = await connect({ writes: true, remoteControl: false });
+    const withoutOptIn = await connect({ writes: true, remoteControl: false, history: false });
     expect((await withoutOptIn.listTools()).tools.map((tool) => tool.name)).not.toContain("rc_send");
     await withoutOptIn.close();
-    const client = await connect({ writes: false, remoteControl: true });
+    const client = await connect({ writes: false, remoteControl: true, history: false });
     const sent = await client.callTool({ name: "rc_send", arguments: { session: SESSION_ID, text: "hello" } });
     expect(sent.isError).not.toBe(true);
     expect(JSON.parse(textOf(sent))).toMatchObject({ session: SESSION_ID, sequenceNums: WRITE_SEQUENCE_NUMS });
@@ -204,16 +204,16 @@ describe("the MCP server over a real door handler", () => {
   });
 
   it("follows a change of permissions on the next request, in both directions, without a new server", async () => {
-    let granted: McpWritePermissions = { writes: false, remoteControl: false };
+    let granted: McpPermissions = { writes: false, remoteControl: false, history: false };
     const client = await connect(() => granted);
     expect((await client.listTools()).tools.map((tool) => tool.name)).not.toContain("rc_send");
 
-    granted = { writes: false, remoteControl: true };
+    granted = { writes: false, remoteControl: true, history: false };
     expect((await client.listTools()).tools.map((tool) => tool.name)).toContain("rc_send");
     const sent = await client.callTool({ name: "rc_send", arguments: { session: SESSION_ID, text: "now allowed" } });
     expect(sent.isError).not.toBe(true);
 
-    granted = { writes: false, remoteControl: false };
+    granted = { writes: false, remoteControl: false, history: false };
     expect((await client.listTools()).tools.map((tool) => tool.name)).not.toContain("rc_send");
     const refused = await client.callTool({ name: "rc_send", arguments: { session: SESSION_ID, text: "no longer allowed" } });
     expect(refused.isError).toBe(true);
@@ -225,7 +225,7 @@ describe("the MCP server over a real door handler", () => {
   it("tells a connected client its tool list changed when the command announces it", async () => {
     let announce: (() => void) | undefined;
     const client = await connect(
-      { writes: false, remoteControl: false },
+      { writes: false, remoteControl: false, history: false },
       {
         whileConnected: (announceToolListChanged) => {
           announce = announceToolListChanged;
@@ -250,7 +250,7 @@ describe("the MCP server over a real door handler", () => {
       release = resolve;
     });
     let stopped = false;
-    const served = serveMcp(createMcpServer({ name: "agent-shim", version: "0.0.0-test" }, portsFor(() => ({ writes: false, remoteControl: false }))), serverSide, {
+    const served = serveMcp(createMcpServer({ name: "agent-shim", version: "0.0.0-test" }, portsFor(() => ({ writes: false, remoteControl: false, history: false }))), serverSide, {
       whileConnected: () => () => {
         stopped = true;
       },
@@ -268,7 +268,7 @@ describe("the MCP server over a real door handler", () => {
   });
 
   it("refuses an unknown tool as an error result", async () => {
-    const client = await connect({ writes: false, remoteControl: false });
+    const client = await connect({ writes: false, remoteControl: false, history: false });
     const missing = await client.callTool({ name: "nothing_here", arguments: {} });
     expect(missing.isError).toBe(true);
     await client.close();

@@ -162,9 +162,9 @@ agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [-
 agent-shim session list [--identity <name>] [--all] [--json]   # sessions that spawned agents or ran workflows, from the transcripts on disk
 agent-shim session show <session> [--identity <name>] [--json]   # one session's subagents, forks, workflow agents, tasks and workflow runs
 agent-shim account show [<identity>] [--refresh] [--json]
-agent-shim mcp [--allow-writes] [--allow-remote-control]      # serve the door's typed API as MCP tools on stdio; read-only without the flags
+agent-shim mcp [--allow-writes] [--allow-remote-control] [--allow-history]      # serve the door's typed API as MCP tools on stdio; read-only without the flags
 agent-shim mcp permissions show [--json]               # what the stored file allows
-agent-shim mcp permissions allow|deny <writes|remote-control>   # change it; a running server follows on its next request, with no restart
+agent-shim mcp permissions allow|deny <writes|remote-control|history>   # change it; a running server follows on its next request, with no restart
 agent-shim update [--check] [--restart-door] [--mode <off|notify|auto>] [--json]
 agent-shim completion <bash|zsh|fish>
 agent-shim shim enable [--dir <path>] [--force]

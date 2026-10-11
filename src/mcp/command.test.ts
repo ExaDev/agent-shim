@@ -35,17 +35,19 @@ async function run(argv: readonly string[]): Promise<string> {
 describe("agent-shim mcp permissions", () => {
   it("allows and denies each permission in the stored file, one at a time", async () => {
     expect(await run(["mcp", "permissions", "allow", "writes"])).toBe("writes: allowed");
-    expect(readStoredMcpPermissions(paths)).toEqual({ writes: true, remoteControl: false });
+    expect(readStoredMcpPermissions(paths)).toEqual({ writes: true, remoteControl: false, history: false });
     expect(await run(["mcp", "permissions", "allow", "remote-control"])).toBe("remote-control: allowed");
-    expect(readStoredMcpPermissions(paths)).toEqual({ writes: true, remoteControl: true });
+    expect(readStoredMcpPermissions(paths)).toEqual({ writes: true, remoteControl: true, history: false });
     expect(await run(["mcp", "permissions", "deny", "writes"])).toBe("writes: not allowed");
-    expect(readStoredMcpPermissions(paths)).toEqual({ writes: false, remoteControl: true });
+    expect(readStoredMcpPermissions(paths)).toEqual({ writes: false, remoteControl: true, history: false });
+    expect(await run(["mcp", "permissions", "allow", "history"])).toBe("history: allowed");
+    expect(readStoredMcpPermissions(paths)).toEqual({ writes: false, remoteControl: true, history: true });
   });
 
   it("shows the stored permissions as text and as JSON", async () => {
     await run(["mcp", "permissions", "allow", "writes"]);
-    expect(await run(["mcp", "permissions", "show"])).toBe("writes: allowed\nremote-control: not allowed");
-    expect(JSON.parse(await run(["mcp", "permissions", "show", "--json"]))).toEqual({ writes: true, remoteControl: false });
+    expect(await run(["mcp", "permissions", "show"])).toBe("writes: allowed\nremote-control: not allowed\nhistory: not allowed");
+    expect(JSON.parse(await run(["mcp", "permissions", "show", "--json"]))).toEqual({ writes: true, remoteControl: false, history: false });
   });
 
   it("refuses a permission it does not know, leaving the file untouched", async () => {
