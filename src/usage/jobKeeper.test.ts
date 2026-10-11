@@ -10,6 +10,7 @@ const STAMPS_FILE = `${STAMPS_DIR}/jobs.json`;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
 const U40 = 0.4;
+const JITTER_MS = 223;
 const TWENTY = 20;
 const TWENTY_FIVE = 25;
 const TEN = 10;
@@ -204,6 +205,18 @@ describe("runJobs, before-reset jobs", () => {
     nextKeeper.fs.writeFilePrivate(STAMPS_FILE, keeper.fs.readFileUtf8(STAMPS_FILE) ?? "");
     await nextKeeper.run(nextReset - TWENTY_FIVE_MINUTES_MS).settled;
     expect(nextKeeper.ran).toEqual(["burn as work"]);
+  });
+
+  it("treats a reset instant a fraction of a second off the handled one as the same window, as the usage endpoint and the headers report it", async () => {
+    const keeper = harness({ jobs: [{ name: "burn", job: BEFORE_RESET }], snapshot: open });
+    await keeper.run(resetsAt - TWENTY_FIVE_MINUTES_MS).settled;
+    const jittered = harness({ jobs: [{ name: "burn", job: BEFORE_RESET }], snapshot: snapshotWith({ fiveHour: { utilization: U40, resetsAt: at(resetsAt - JITTER_MS) } }, AFTER_ANCHOR) });
+    jittered.fs.mkdirPrivate(STAMPS_DIR);
+    jittered.fs.writeFilePrivate(STAMPS_FILE, keeper.fs.readFileUtf8(STAMPS_FILE) ?? "");
+    const result = jittered.run(resetsAt - TWENTY_MINUTES_MS);
+    await result.settled;
+    expect(result.outcomes[0]).toMatchObject({ status: "waiting" });
+    expect(jittered.ran).toEqual([]);
   });
 
   it("skips when the identity has no such window", () => {

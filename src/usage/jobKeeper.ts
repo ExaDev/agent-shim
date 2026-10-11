@@ -3,6 +3,7 @@ import type { Job, JobWindow } from "../config/schema";
 import { parseDuration } from "../resolve/conditions";
 import { readHandled, writeHandled, type StampsFs } from "./handledStamps";
 import { ANTHROPIC_PROVIDER } from "./middleware";
+import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "./pick";
 import { effectiveWindow, formatAge } from "./preflight";
 import type { UsageSnapshot } from "./schema";
 import { refusalReason } from "./windowKeeper";
@@ -46,6 +47,15 @@ interface JobOutcome {
 export interface JobKeeperResult {
   readonly outcomes: readonly JobOutcome[];
   readonly settled: Promise<void>;
+}
+
+const WINDOW_LENGTH_MS: Readonly<Record<JobWindow, number>> = { fiveHour: FIVE_HOUR_WINDOW_MS, sevenDay: SEVEN_DAY_WINDOW_MS };
+
+/**
+ * Whether a reset instant already handled belongs to the same window instance as the one now reported. The usage endpoint and the response headers state the same window's reset a fraction of a second apart, so exact equality would treat one window as two and run its job twice; instants of different instances are at least a window length apart, so closer than half of one is the same instance.
+ */
+function sameWindowInstance(handledMs: number | undefined, resetsAtMs: number, window: JobWindow): boolean {
+  return handledMs !== undefined && Math.abs(handledMs - resetsAtMs) < WINDOW_LENGTH_MS[window] / 2;
 }
 
 /** The named window of an identity's Anthropic snapshot as it stands, with when it resets; undefined when the snapshot holds no such window or it has reset. */
@@ -141,7 +151,7 @@ export function runJobs(ports: Readonly<JobKeeperPorts>): JobKeeperResult {
       outcomes.push({ name, status: "skipped", detail: `${identity} has no ${trigger.beforeReset} window to run before` });
       continue;
     }
-    if (resetsAtMs - parseDuration(trigger.lead) > nowMs || handled[name] === resetsAtMs) {
+    if (resetsAtMs - parseDuration(trigger.lead) > nowMs || sameWindowInstance(handled[name], resetsAtMs, trigger.beforeReset)) {
       outcomes.push({ name, status: "waiting", detail: `${trigger.beforeReset} window resets in ${formatAge(resetsAtMs - nowMs)}` });
       continue;
     }
