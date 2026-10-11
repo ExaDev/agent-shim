@@ -1,5 +1,6 @@
 import type { IncomingHttpHeaders } from "node:http";
 
+import { applyAgentTaskEvent, type LiveTask, type LiveTaskBook } from "../agents/liveTasks";
 import { HTTP_STATUS } from "../codex/http";
 import type { PassthroughObserver } from "./capture";
 import type { RcCredentialStore } from "./rcCredentialStore";
@@ -80,6 +81,8 @@ interface RcSessionRecord {
   workerIdleSeconds: RcWorkerFact<number> | undefined;
   /** The highest sequence number the door has seen for this session, from the client read stream's envelopes or from its own confirmed writes: the value a stream resume continues after. */
   sequenceNum: number | undefined;
+  /** The background tasks and subagents the session's events described, by `task_id`. Memory only, like everything here; the transcripts on disk are the authoritative record. */
+  liveTasks: LiveTaskBook;
 }
 
 /** One pending control request as the tracker holds it. */
@@ -180,6 +183,8 @@ export interface RcSessionTracker {
    * Files one client read stream envelope: advances the session's sequence cursor, and treats the payload exactly as an observed event-batch body's would be treated, which is how an approval reaches the pending list from the stream (the live finding behind the client attachment: the CLI routes `control_request`s only toward attached clients, so the stream, not the worker's own writes, is where a `can_use_tool` the door must answer becomes visible). A `control_request` whose envelope names the worker as its source births a pending entry; a `control_response` retires the request it answers, whoever answered it.
    */
   readonly fileStreamEvent: (sessionId: string, event: RcStreamEnvelope) => void;
+  /** The live background tasks and subagents the observed events described, for one session or every tracked one, each carrying the session that reported it and when it was last observed. */
+  readonly liveTasksOf: (sessionId?: string) => readonly LiveTask[];
   /** Retires one pending control request as answered: what a successful answer write calls, so the request stops being listed the moment it is answered. */
   readonly completePending: (sessionId: string, requestId: string) => void;
   /** Stops the idle sweep timer. The entries themselves are unreachable the moment the door drops them. */
@@ -324,6 +329,8 @@ interface RcRequestBodyFacts {
   readonly idleSeconds: number | undefined;
   /** The state a worker registration named. */
   readonly workerStatus: string | undefined;
+  /** The payloads of the batch, which the live task book reads the system events out of. */
+  readonly payloads: readonly Record<string, unknown>[];
 }
 
 /** The kinds of request body the tracker reads, one per exchange shape; each names the fields its parser reads. */
@@ -332,15 +339,16 @@ type RcRequestBodyKind = "worker-events" | "client-events" | "heartbeat" | "work
 /** Reads one bounded request body of the given kind into the facts the tracker files. */
 function parseRcRequestBody(kind: RcRequestBodyKind, body: string): RcRequestBodyFacts {
   if (kind === "heartbeat") {
-    return { controlRequests: [], answeredRequestIds: [], idleSeconds: finiteNumber(parseJsonObject(body), "idle_seconds"), workerStatus: undefined };
+    return { controlRequests: [], answeredRequestIds: [], idleSeconds: finiteNumber(parseJsonObject(body), "idle_seconds"), workerStatus: undefined, payloads: [] };
   }
   if (kind === "worker-registration") {
     // The field the CLI's own worker state update sends is `worker_status` (its `UpdateSessionWorkerState` call, verified in the 2.1.88 source dump and the 2.1.289 bundle's strings), so that is the field the tracker reads.
-    return { controlRequests: [], answeredRequestIds: [], idleSeconds: undefined, workerStatus: nonEmptyString(parseJsonObject(body), "worker_status") };
+    return { controlRequests: [], answeredRequestIds: [], idleSeconds: undefined, workerStatus: nonEmptyString(parseJsonObject(body), "worker_status"), payloads: [] };
   }
   const controlRequests: Omit<RcPendingRequestRecord, "sessionId" | "observedAt">[] = [];
   const answeredRequestIds: string[] = [];
-  for (const payload of payloadEventsOf(body)) {
+  const payloads = payloadEventsOf(body);
+  for (const payload of payloads) {
     const pending = pendingOfControlRequestPayload(payload);
     if (pending !== undefined) {
       controlRequests.push({ requestId: pending.requestId, type: pending.type, summary: pending.summary });
@@ -348,7 +356,7 @@ function parseRcRequestBody(kind: RcRequestBodyKind, body: string): RcRequestBod
     }
     answeredRequestIds.push(...answeredRequestIdsOfControlResponsePayload(payload));
   }
-  return { controlRequests, answeredRequestIds, idleSeconds: undefined, workerStatus: undefined };
+  return { controlRequests, answeredRequestIds, idleSeconds: undefined, workerStatus: undefined, payloads };
 }
 
 /** Creates the tracker. One per door process; everything it holds dies with it. */
@@ -378,7 +386,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
   timer.unref();
 
   const birth = (id: string, facts: Readonly<{ oauthAuthorization: string | undefined; anthropicVersion: string | undefined; anthropicClientPlatform: string | undefined }>): RcSessionRecord => {
-    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), workerState: undefined, workerIdleSeconds: undefined, sequenceNum: undefined };
+    const record: RcSessionRecord = { id, createdAt: deps.now(), lastSeenAt: deps.now(), ...facts, pending: new Map(), workerState: undefined, workerIdleSeconds: undefined, sequenceNum: undefined, liveTasks: new Map() };
     entries.set(id, record);
     return record;
   };
@@ -483,6 +491,9 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       }
       for (const requestId of factsOfBody.answeredRequestIds) {
         entryNow.pending.delete(requestId);
+      }
+      for (const payload of factsOfBody.payloads) {
+        entryNow.liveTasks = applyAgentTaskEvent(entryNow.liveTasks, id, payload, now);
       }
       if (factsOfBody.idleSeconds !== undefined) {
         entryNow.workerIdleSeconds = { value: factsOfBody.idleSeconds, observedAt: now };
@@ -591,6 +602,7 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       if (!isRecord(event.payload)) {
         return;
       }
+      entry.liveTasks = applyAgentTaskEvent(entry.liveTasks, sessionId, event.payload, deps.now());
       const pending = pendingOfControlRequestPayload(event.payload);
       if (pending !== undefined) {
         // Only the worker emits control requests (the ground truth of the client half: the stream's `control_request` envelopes name the worker as their source), so a request from anyone else is not birthed.
@@ -602,6 +614,12 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
       for (const requestId of answeredRequestIdsOfControlResponsePayload(event.payload)) {
         entry.pending.delete(requestId);
       }
+    },
+    liveTasksOf: (sessionId) => {
+      sweep();
+      return sortedEntries()
+        .filter((entry) => sessionId === undefined || entry.id === sessionId)
+        .flatMap((entry) => [...entry.liveTasks.values()].sort((left, right) => left.observedAt - right.observedAt || (left.taskId < right.taskId ? -1 : 1)));
     },
     completePending: (sessionId, requestId) => {
       entries.get(sessionId)?.pending.delete(requestId);

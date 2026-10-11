@@ -189,6 +189,7 @@ describe("the door's typed API served as REST with an OpenAPI document", () => {
       poolNames: () => [],
       ...LIFECYCLE_AND_CODEX_TEST_DEPS,
       sessionList: () => [],
+      liveTasks: () => [],
       sessionShow: () => {
         throw new Error("this test serves no sessions");
       },
