@@ -444,4 +444,35 @@ describe("the RoutedResponse tee the door's resolver applies", () => {
     expect(tracker.list()).toEqual([{ id: SESSION_ID, createdAt: CLOCK_START_MS, lastSeenAt: CLOCK_START_MS }]);
     expect(tracker.credentialOf(SESSION_ID)?.authorization).toBe("Bearer sk-ant-oat");
   });
+
+  describe("live agent tasks", () => {
+    const WORKER_EVENTS_PATH = `/v1/code/sessions/${SESSION_ID}/worker/events`;
+    const started = { type: "system", subtype: "task_started", task_id: "a1", tool_use_id: "toolu_1", task_type: "local_agent", description: "look" };
+
+    it("reads task events out of a successful worker event batch", () => {
+      const { tracker } = trackerWithClock();
+      exchange(tracker, { method: "POST", url: HEARTBEAT_PATH }).respond(HTTP_STATUS.ok);
+      exchange(tracker, { method: "POST", url: WORKER_EVENTS_PATH, requestBody: JSON.stringify({ events: [{ payload: started }] }) }).respond(HTTP_STATUS.ok);
+      expect(tracker.liveTasksOf(SESSION_ID)).toEqual([expect.objectContaining({ taskId: "a1", sessionId: SESSION_ID, toolUseId: "toolu_1", status: "running" })]);
+    });
+
+    it("reads them from the client read stream too, and the same event twice is one task", () => {
+      const { tracker } = trackerWithClock();
+      exchange(tracker, { method: "POST", url: HEARTBEAT_PATH }).respond(HTTP_STATUS.ok);
+      exchange(tracker, { method: "POST", url: WORKER_EVENTS_PATH, requestBody: JSON.stringify({ events: [{ payload: started }] }) }).respond(HTTP_STATUS.ok);
+      tracker.fileStreamEvent(SESSION_ID, { event_id: "e", sequence_num: 1, event_type: "system", source: "worker", payload: { type: "system", subtype: "task_updated", task_id: "a1", patch: { status: "completed" } }, created_at: "2026-01-01T00:00:00Z" });
+      tracker.fileStreamEvent(SESSION_ID, { event_id: "e2", sequence_num: 2, event_type: "system", source: "worker", payload: started, created_at: "2026-01-01T00:00:00Z" });
+      expect(tracker.liveTasksOf()).toHaveLength(1);
+    });
+
+    it("files nothing from a refused batch and drops the tasks with the idle session", () => {
+      const { tracker, advance } = trackerWithClock();
+      exchange(tracker, { method: "POST", url: HEARTBEAT_PATH }).respond(HTTP_STATUS.ok);
+      exchange(tracker, { method: "POST", url: WORKER_EVENTS_PATH, requestBody: JSON.stringify({ events: [{ payload: started }] }) }).respond(HTTP_STATUS.unauthorized);
+      expect(tracker.liveTasksOf()).toEqual([]);
+      exchange(tracker, { method: "POST", url: WORKER_EVENTS_PATH, requestBody: JSON.stringify({ events: [{ payload: started }] }) }).respond(HTTP_STATUS.ok);
+      advance(RC_IDLE_EXPIRY_MS);
+      expect(tracker.liveTasksOf()).toEqual([]);
+    });
+  });
 });

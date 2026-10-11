@@ -6,6 +6,7 @@ import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { RouterClient } from "@orpc/server";
 
+import type { LiveTask } from "../agents/liveTasks";
 import type { SessionAgentTree } from "../agents/schema";
 import { SessionLookupError } from "../agents/sessions";
 import { RC_ORPC_PATH_PREFIX, doorApiNodeHandlerOf } from "./rcApi";
@@ -44,6 +45,8 @@ const TREE: SessionAgentTree = {
   workflowRuns: [],
   problems: [],
 };
+
+const LIVE_TASK: LiveTask = { taskId: "a1", sessionId: "cse_00000000-0000-4000-8000-000000000001", taskType: "local_agent", status: "running", observedAt: 1_000 };
 
 async function mountClient(deps: AgentTreesApiDeps, token: string): Promise<{ readonly client: SessionsClient; readonly close: () => Promise<void> }> {
   const surface = doorApiNodeHandlerOf(createAgentTreesApiRouter(deps), CONTROL_TOKEN);
@@ -93,6 +96,7 @@ describe("the door's agent trees API", () => {
       }
       return { identities: ["work"], tree: TREE };
     },
+    liveTasks: () => [LIVE_TASK],
   };
   let client: SessionsClient;
   let refused: SessionsClient;
@@ -121,7 +125,9 @@ describe("the door's agent trees API", () => {
 
   it("shows one session's tree beside the identities that expose it", async () => {
     const answer = await client.agentTrees.show({ session: "aaaa", identity: "work" });
-    expect(answer).toEqual({ identities: ["work"], ...TREE });
+    expect(answer).toMatchObject({ identities: ["work"], sessionId: "aaaa1111", remoteSessions: [LIVE_TASK.sessionId], liveOnly: [] });
+    expect(answer.agents[0]).toMatchObject({ id: "a1", provenance: "both", live: LIVE_TASK });
+    expect(answer.agents[0]?.children[0]).toMatchObject({ id: "a2", provenance: "disk" });
     expect(asked).toMatchObject({ query: "aaaa", identity: "work" });
   });
 

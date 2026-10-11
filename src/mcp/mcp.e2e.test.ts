@@ -100,6 +100,7 @@ describe("the MCP server over a real door handler", () => {
       ...LIFECYCLE_AND_CODEX_TEST_DEPS,
       paths: buildLayoutPaths("/nonexistent/agent-shim-mcp-config-unexercised"),
       sessionList: () => [],
+      liveTasks: () => [],
       sessionShow: () => {
         throw new Error("this test serves no sessions");
       },

@@ -155,6 +155,7 @@ describe("the door's web client page and its API calls over the door's own TLS",
       poolNames: () => [],
       ...LIFECYCLE_AND_CODEX_TEST_DEPS,
       sessionList: () => [],
+      liveTasks: () => [],
       sessionShow: () => {
         throw new Error("this test serves no sessions");
       },

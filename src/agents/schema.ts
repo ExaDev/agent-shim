@@ -53,26 +53,26 @@ export interface AgentNode {
   readonly children: readonly AgentNode[];
 }
 
+/** The fields of an agent node other than its children, shared by the disk node and the merged node that adds the stream's view. */
+export const AgentNodeFields = {
+  id: z.string(),
+  kind: AgentKindSchema,
+  agentType: z.string(),
+  description: z.string().optional(),
+  name: z.string().optional(),
+  toolUseId: z.string().optional(),
+  spawnDepth: z.number().int().nonnegative().optional(),
+  model: z.string().optional(),
+  background: z.boolean().optional(),
+  workflowRunId: z.string().optional(),
+  workflowPhase: z.string().optional(),
+  teamName: z.string().optional(),
+  stoppedByUser: z.boolean().optional(),
+  transcript: z.string(),
+};
+
 /** The node schema, written out so the recursive `children` field has a lazy reference to itself. */
-export const AgentNodeSchema: z.ZodType<AgentNode> = z.lazy(() =>
-  z.strictObject({
-    id: z.string(),
-    kind: AgentKindSchema,
-    agentType: z.string(),
-    description: z.string().optional(),
-    name: z.string().optional(),
-    toolUseId: z.string().optional(),
-    spawnDepth: z.number().int().nonnegative().optional(),
-    model: z.string().optional(),
-    background: z.boolean().optional(),
-    workflowRunId: z.string().optional(),
-    workflowPhase: z.string().optional(),
-    teamName: z.string().optional(),
-    stoppedByUser: z.boolean().optional(),
-    transcript: z.string(),
-    children: z.array(AgentNodeSchema),
-  }),
-);
+export const AgentNodeSchema: z.ZodType<AgentNode> = z.lazy(() => z.strictObject({ ...AgentNodeFields, children: z.array(AgentNodeSchema) }));
 
 /** One entry of a task list: the session's own (`tasks/<session-id>/<n>.json`, or `tasks/session-<first-eight-characters>/<n>.json` in current versions) or a shared one (`tasks/<list-id>/<n>.json`), a team's or one named by `CLAUDE_CODE_TASK_LIST_ID`. `status` is an open string: non-standard values occur. */
 export const TaskItemSchema = z.strictObject({

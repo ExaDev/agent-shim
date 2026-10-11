@@ -362,6 +362,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         // The identities are read per call, like the pool table, so an identity added after the door started is listed the moment the CLI would see it.
         sessionList: (filters: { readonly identity?: string | undefined; readonly all?: boolean | undefined }) =>
           collectSessionList(realSessionFs, paths.identitiesDir, listIdentities(paths).map((entry) => entry.name), { ...(filters.identity === undefined ? {} : { identity: filters.identity }), ...(filters.all === undefined ? {} : { all: filters.all }) }),
+        liveTasks: () => rcTracker.liveTasksOf(),
         sessionShow: (query: string, identity: string | undefined) => showSession(realSessionFs, paths.identitiesDir, listIdentities(paths).map((entry) => entry.name), query, identity),
       };
       // The lifecycle and Codex procedures: each the same function the CLI verb of that name runs. A restart replaces this very process, so it runs a detached copy of `frontdoor restart` (the restart's own wait for the old door to exit cannot run inside it), started only after the procedure's answer has been written.
