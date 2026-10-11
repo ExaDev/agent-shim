@@ -84,6 +84,7 @@ const EXPECTED_REST_PATHS = [
   "/rest/rc/teleport",
   "/rest/update/check",
   "/rest/usage/live",
+  "/rest/usage/resets",
   "/rest/usage/snapshots",
   "/rest/usage/windows",
 ].sort();

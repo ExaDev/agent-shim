@@ -10,11 +10,12 @@ import type { LayoutPaths } from "../paths";
 import { realFarmFs, realRunPort, spawnDetachedSupervisor } from "../realPorts";
 import { createAccountReader, readAccountMetadata } from "./account";
 import { identitySignIn, type SignInAnswer, type SignInProbe } from "./signIn";
+import { collectResets, formatPeriod, formatResetRow } from "./resets";
 import { listUsageSnapshots, readUsageLog, readUsageSnapshot, summariseUsage, type UsageSummary } from "./read";
 import { isAnthropicUsageProbeable } from "./anthropicUsageRefresh";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import { overageWindowOf } from "./rateLimit";
-import type { AccountMetadata, LimitEvent, ProviderQuota, ProviderQuotaWindow, QuotaWindow, RateLimitState, UnifiedRateLimit, UsageSnapshot } from "./schema";
+import type { AccountMetadata, LimitEvent, ProviderQuota, QuotaWindow, RateLimitState, UnifiedRateLimit, UsageSnapshot } from "./schema";
 import { createRealAnthropicUsageRefresher } from "./realAnthropicUsageProbe";
 import { createRealQuotaRefresher } from "./realQuotaRefresher";
 import { createUsageStore, USAGE_RETENTION_MS } from "./store";
@@ -128,17 +129,6 @@ function formatLimit(limit: LimitEvent): string {
 }
 
 const MONEY_DECIMALS = 2;
-const MS_PER_HOUR = 3_600_000;
-const HOURS_PER_DAY = 24;
-
-/** A window's length as its largest whole unit, `5h` or `30d`, or the provider's own wording when the unit was not recognised. */
-function formatPeriod(window: Readonly<ProviderQuotaWindow>): string {
-  if (window.periodMs === undefined) {
-    return window.period ?? "unknown period";
-  }
-  const hours = window.periodMs / MS_PER_HOUR;
-  return hours >= HOURS_PER_DAY && Number.isInteger(hours / HOURS_PER_DAY) ? `${String(hours / HOURS_PER_DAY)}d` : `${String(hours)}h`;
-}
 
 /** A count to at most two decimals, since a spend figure arrives with far more than anyone reads. */
 function formatCount(value: number): string {
@@ -317,8 +307,9 @@ export function registerUsageCommands(program: Command, deps: CommandDeps): void
       .option("--provider <name>", "Only this provider's requests (anthropic for OAuth sessions).")
       .option("--since <duration>", "Only requests from this long ago on: a count followed by m, h, d or w, such as 5h or 7d.", parseDurationOption)
       .option("--refresh", "First fetch the quota of providers that report it through their own usage endpoint (z.ai) or a plan-window usage endpoint (Anthropic subscriptions), regardless of how fresh the stored one is.")
+      .option("--resets", "Instead of the usage report, list every recorded quota window with when it resets, soonest first.")
       .option("--json", "Print the report as JSON.")
-      .action(async (options: Readonly<{ identity?: string; provider?: string; since?: number; refresh?: boolean; json?: boolean }>) => {
+      .action(async (options: Readonly<{ identity?: string; provider?: string; since?: number; refresh?: boolean; resets?: boolean; json?: boolean }>) => {
         if (options.refresh === true) {
           for (const warning of await refreshQuotas(paths, { ...(options.identity === undefined ? {} : { identity: options.identity }), ...(options.provider === undefined ? {} : { provider: options.provider }) })) {
             console.error(warning);
@@ -329,6 +320,18 @@ export function registerUsageCommands(program: Command, deps: CommandDeps): void
           ...(options.provider === undefined ? {} : { provider: options.provider }),
           ...(options.since === undefined ? {} : { sinceMs: Date.now() - options.since }),
         });
+        if (options.resets === true) {
+          const nowMs = Date.now();
+          const schedule = collectResets(report.snapshots, nowMs);
+          if (options.json === true) {
+            printJson(schedule);
+            return;
+          }
+          for (const line of schedule.resets.length === 0 ? ["no quota windows recorded yet"] : schedule.resets.map((row) => formatResetRow(row, nowMs))) {
+            console.log(line);
+          }
+          return;
+        }
         if (options.json === true) {
           printJson(report);
           return;
@@ -337,7 +340,7 @@ export function registerUsageCommands(program: Command, deps: CommandDeps): void
           console.log(line);
         }
       }),
-    ["agent-shim usage", "agent-shim usage --identity work --since 5h", "agent-shim usage --provider z --refresh --json"],
+    ["agent-shim usage", "agent-shim usage --identity work --since 5h", "agent-shim usage --provider z --refresh --json", "agent-shim usage --resets"],
   );
 
   const account = withExamples(program.command("account").description("Inspect the Claude account behind each identity: plan, tier and latest quota."), [
