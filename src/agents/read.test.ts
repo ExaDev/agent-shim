@@ -42,6 +42,19 @@ describe("listSessions", () => {
   });
 });
 
+describe("archived copies", () => {
+  it("lists a superseded or orphaned copy against the session it archives, flagged as archived", () => {
+    const fs = createFakeFarmFs({
+      [`${CONFIG}/projects/${PROJECT}/aaa.orphaned-1788265839607-1a2b3c.jsonl`]: "",
+      [`${CONFIG}/projects/${PROJECT}/bbb.superseded-1788265839607/subagents/agent-x.meta.json`]: "{}",
+    });
+    expect(listSessions(fs, CONFIG)).toEqual([
+      { project: PROJECT, sessionId: "aaa", superseded: true, entry: "aaa.orphaned-1788265839607-1a2b3c" },
+      { project: PROJECT, sessionId: "bbb", superseded: true, entry: "bbb.superseded-1788265839607" },
+    ]);
+  });
+});
+
 describe("readSessionAgentTree", () => {
   it("reads an empty session as an empty tree", () => {
     const tree = readSessionAgentTree(createFakeFarmFs(), CONFIG, REF);
@@ -186,5 +199,52 @@ describe("readSessionAgentTree", () => {
       [`${CONFIG}/tasks/${SESSION}/1.json`]: meta({ id: "1", subject: "s", status: "pending" }),
     });
     expect(SessionAgentTreeSchema.safeParse(readSessionAgentTree(fs, CONFIG, REF)).success).toBe(true);
+  });
+
+  it("reports a file that cannot be read and still returns the rest of the tree", () => {
+    const sub = `${SESSION_DIR}/subagents`;
+    const base = createFakeFarmFs({
+      ...agent(sub, "ok", { agentType: "Explore" }),
+      ...agent(sub, "locked", { agentType: "Plan" }),
+      [`${CONFIG}/tasks/${SESSION}/1.json`]: meta({ id: "1", subject: "s", status: "pending" }),
+    });
+    const fs = {
+      ...base,
+      readFileUtf8: (candidate: string) => {
+        if (candidate.endsWith("agent-locked.meta.json") || candidate.endsWith("/1.json")) {
+          throw new Error("EACCES: permission denied");
+        }
+        return base.readFileUtf8(candidate);
+      },
+    };
+    const tree = readSessionAgentTree(fs, CONFIG, REF);
+    expect(tree.agents.map((node) => node.id)).toEqual(["ok"]);
+    expect(tree.tasks).toEqual([]);
+    expect(tree.problems.map((problem) => problem.reason)).toEqual([expect.stringContaining("EACCES"), expect.stringContaining("EACCES")]);
+  });
+
+  it("infers a parent from the transcript when no depth was recorded, and leaves an unowned agent at the top without a problem", () => {
+    const sub = `${SESSION_DIR}/subagents`;
+    const fs = createFakeFarmFs({
+      ...agent(sub, "p", { agentType: "Plan", toolUseId: "toolu_top" }, '{"id":"toolu_child"}'),
+      ...agent(sub, "c", { agentType: "Explore", toolUseId: "toolu_child" }),
+    });
+    const tree = readSessionAgentTree(fs, CONFIG, REF);
+    expect(tree.problems).toEqual([]);
+    expect(tree.agents.map((node) => node.id)).toEqual(["p"]);
+    expect(tree.agents[0]?.children.map((node) => node.id)).toEqual(["c"]);
+  });
+
+  it("reads a team's shared task list beside the session's own, marking each task with its team", () => {
+    const sub = `${SESSION_DIR}/subagents`;
+    const fs = createFakeFarmFs({
+      ...agent(sub, "t", { agentType: "general-purpose", taskKind: "in_process_teammate", teamName: "squad" }),
+      [`${CONFIG}/tasks/${SESSION}/1.json`]: meta({ id: "1", subject: "own", status: "pending" }),
+      [`${CONFIG}/tasks/squad/1.json`]: meta({ id: "1", subject: "shared", status: "in_progress", team: "ignored" }),
+    });
+    expect(readSessionAgentTree(fs, CONFIG, REF).tasks).toEqual([
+      { id: "1", subject: "own", status: "pending", blocks: [], blockedBy: [] },
+      { id: "1", subject: "shared", status: "in_progress", blocks: [], blockedBy: [], team: "squad" },
+    ]);
   });
 });

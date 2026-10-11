@@ -15,7 +15,7 @@ projects/<project-slug>/<session-id>/subagents/workflows/wf_<run-id>/agent-<agen
 projects/<project-slug>/<session-id>/workflows/wf_<run-id>.json
 ```
 
-A session that was superseded keeps its directory under `<session-id>.superseded-<epoch-ms>`.
+A session that was superseded keeps its directory under `<session-id>.superseded-<epoch-ms>`. A replaced transcript may also be archived as `<session-id>.orphaned-<epoch-ms>-<hash>.jsonl` (reported upstream in [anthropics/claude-code#85404](https://github.com/anthropics/claude-code/issues/85404)); the reader treats both as archived copies of the session they name, not as live sessions.
 
 The stem after `agent-` is the agent id, and for an unnamed agent it equals the `task_id` of the matching `task_started` event on the Remote Control read stream. An agent spawned with a name has a longer stem, the name and a hash, whose correspondence to the stream's `task_id` has not been observed.
 
@@ -50,7 +50,7 @@ JSON lines in the same shape as a session transcript: `type` (`user`, `assistant
 
 ## Tasks, todos, teams and jobs
 
-- `tasks/<session-id>/<n>.json`: the session's task list, one file per task: `id`, `subject`, `description`, `status`, `blocks`, `blockedBy`. Status values seen include `pending`, `in_progress`, `completed`, and a few non-standard ones (`todo`, `done`), so treat it as an open string. A `.highwatermark` and a `.lock` file sit beside them.
+- `tasks/<session-id>/<n>.json`, and for a session with teammates `tasks/<team-name>/<n>.json`, the team's shared list: one file per task: `id`, `subject`, `description`, `status`, `blocks`, `blockedBy`. Status values seen include `pending`, `in_progress`, `completed`, and a few non-standard ones (`todo`, `done`), so treat it as an open string. A `.highwatermark` and a `.lock` file sit beside them.
 - `todos/<session-id>-agent-<agent-id>.json`: a per-agent todo array, empty when unused.
 - `teams/<team>/config.json`: `name`, `createdAt`, `leadAgentId`, `leadSessionId` and `members` (`agentId`, `name`, `agentType`, `joinedAt`, `cwd`, `backendType`, `subscriptions`). Messages live in `teams/<team>/inboxes/<member>.json`, an array of `from`, `text`, `timestamp`, `color`, `read`.
 - `jobs/<id>/state.json`: a background job's `state` (`running`, `working`, `blocked`, `done`, `failed`, `stopped` seen), `detail`, `inFlight`, `sessionId`, `resumeSessionId`, `cwd`, `createdAt` and `updatedAt`; `timeline.jsonl` beside it holds `at`, `state`, `detail`, `text` rows.
