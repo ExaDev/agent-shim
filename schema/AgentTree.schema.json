@@ -35,6 +35,12 @@
           "status": {
             "type": "string"
           },
+          "activeForm": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
           "blocks": {
             "type": "array",
             "items": {
