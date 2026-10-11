@@ -1,3 +1,13 @@
+## [9.14.0](https://github.com/ExaDev/agent-shim/compare/v9.13.0...v9.14.0) (2026-10-11)
+
+### Features
+
+* open an identity's five-hour window at its anchors ([b87aee0](https://github.com/ExaDev/agent-shim/commit/b87aee007675c60aef9a803be62067ca18459baa))
+
+### Bug Fixes
+
+* keep unattended identity runs off configured providers ([33bf4ea](https://github.com/ExaDev/agent-shim/commit/33bf4ea3a0a114ee33f805a60b1c02fb6244e4e8))
+
 ## [9.13.0](https://github.com/ExaDev/agent-shim/compare/v9.12.1...v9.13.0) (2026-10-11)
 
 ### Features
