@@ -42,6 +42,7 @@ src/
   headroom/                # the headroom routing daemon: coordination state, the launcher-side ensure step, the supervisor loop, and the `headroom status` / hidden `__headroom-supervisor` commands
     state.ts               # the versioned state file, the session registry, the start lock, allowlist computation; pure over an injected HeadroomFs
     socket.ts               # the daemon's unix socket: the owner-only directory it lives in, the checks the supervisor and the door's hop make before using it, stale-socket pruning; pure over injected HeadroomSocketTrustPorts
+    allowlistDrift.ts       # which allowlist inputs (provider files, the door's direct origin) could explain a daemon's recorded allowlist hash no longer matching; shared by `headroom status` and `doctor`
     ensure.ts               # the launcher's lock-and-poll bring-up: start at most one supervisor, wait for ready state (the daemon's socket), register the session
     supervisor.ts           # install/start/restart/drift/idle decision loop for the daemon, pure over injected SupervisorPorts
     headers.ts              # ANTHROPIC_CUSTOM_HEADERS merge (Name: Value lines, later block wins per name)
@@ -64,6 +65,7 @@ src/
     pipeline.ts             # the ordered pipeline (identify, admit, response middleware at each response head, headroom hop then route) and the typed hook point where the usage-tracking middleware registers
     assembly.ts             # builds both listeners' pipelines from one place: launch-capability admission for the client-facing ones, hop-secret and custody admission for the direct one
     headroomHop.ts, passthrough.ts   # the hop that forwards an Anthropic-shaped request to the daemon and back, and the pass-through route that streams to an Anthropic-compatible upstream
+    supervisorProcesses.ts  # lists the front-door supervisor processes alive for a user from the process table, for `doctor`'s duplicate-door check; read-only
     custody.ts              # holds a provider session's real credential headers in memory while its request crosses headroom, behind a hop id the direct listener redeems
     providerRoute.ts        # resolves /providers/<name> requests to a route by reading the provider file fresh per request, attaching an http provider's own credential in place of whatever the child presented; a bare /v1/ request whose session names a provider is rewritten under that provider's path first
     codexMount.ts           # the codex translation mounted as one route (an adapter over createCodexRoute, not a second implementation)

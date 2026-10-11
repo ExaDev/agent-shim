@@ -1,4 +1,4 @@
-import { HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES, HEADROOM_DEFAULT_SOURCE, type HeadroomGlobalConfig } from "../config/schema";
+import { HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES, HEADROOM_DEFAULT_SOURCE, type HeadroomGlobalConfig, type Provider } from "../config/schema";
 import type { LayoutPaths } from "../paths";
 import { frontDoorOrigin, readFrontDoorState } from "../frontdoor/state";
 import { hashSettings, settingsOf, type HeadroomSettings } from "./settings";
@@ -435,10 +435,18 @@ export async function runSupervisor(
   }
 }
 
+/** The two inputs the headroom allowlist is computed from, as they stand right now: every provider definition on disk and the front door's direct origin (undefined before the door has ever served). */
+export function currentHeadroomAllowlistInputs(fs: HeadroomFs, paths: LayoutPaths): { readonly providers: readonly Provider[]; readonly frontDoorOrigin: string | undefined } {
+  return {
+    providers: readAllProviders(fs, paths.providersDir).map((entry) => entry.provider),
+    frontDoorOrigin: frontDoorOrigin(readFrontDoorState(fs, paths.frontdoorStateFile)),
+  };
+}
+
 /** The allowlist as it stands right now: every provider's upstream (the front door's origin for a codex provider, which headroom forwards codex traffic back to) plus Claude Code's own API. */
 export function currentHeadroomAllowlist(fs: HeadroomFs, paths: LayoutPaths): readonly string[] {
-  const providers = readAllProviders(fs, paths.providersDir).map((entry) => entry.provider);
-  return headroomAllowlist(headroomUpstreams(providers, frontDoorOrigin(readFrontDoorState(fs, paths.frontdoorStateFile))));
+  const inputs = currentHeadroomAllowlistInputs(fs, paths);
+  return headroomAllowlist(headroomUpstreams(inputs.providers, inputs.frontDoorOrigin));
 }
 
 function allowlistOf(ports: SupervisorPorts): readonly string[] {

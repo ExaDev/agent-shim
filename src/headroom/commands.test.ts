@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureCa, generateCa, realConnectCertStore } from "../frontdoor/connect";
 import { realTrustBundleFs } from "../frontdoor/realFrontDoorPort";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
+import { writeFrontDoorState } from "../frontdoor/state";
 import { createFakeFarmFs } from "../test-helpers";
 import { collectHeadroomStatus, formatHeadroomStatus, headroomProxyArgs, headroomSpawnEnv, resolveHeadroomTrustBundle } from "./commands";
 import { headroomSocketPath } from "./socket";
@@ -18,6 +19,8 @@ const SUPERVISOR_PID = 11;
 const HEADROOM_PID = 12;
 const SESSION_PID = 13;
 const SOCKET_PATH = headroomSocketPath(paths, SUPERVISOR_PID);
+const DOOR_DIRECT_PORT = 50123;
+const DOOR_ORIGIN = `http://127.0.0.1:${String(DOOR_DIRECT_PORT)}`;
 
 /** A distinct supervisor generation, alive, recorded only under the legacy state name. */
 const LEGACY_SUPERVISOR_PID = 7070;
@@ -64,6 +67,41 @@ describe("collectHeadroomStatus", () => {
     expect(status.headroomAlive).toBe(false);
     expect(status.sessions.map((session) => session.alive)).toEqual([false]);
     expect(status.allowlistDrifted).toBe(true);
+  });
+
+  it("names the door's origin as the cause when the daemon was started before the door had served", () => {
+    const { fs, alive } = aliveWorld();
+    writeFrontDoorState(fs, paths.frontdoorStateFile, { directPort: DOOR_DIRECT_PORT });
+    const status = collectHeadroomStatus(fs, paths, (pid) => alive.has(pid));
+    expect(status.allowlistDrifted).toBe(true);
+    expect(status.frontDoorOrigin).toBe(DOOR_ORIGIN);
+    expect(status.allowlistDriftInputs).toEqual(["front-door-origin"]);
+    const line = formatHeadroomStatus(status).find((entry) => entry.startsWith("allowlist:"));
+    expect(line).toContain(`started before the serving front door's direct origin ${DOOR_ORIGIN} existed`);
+    expect(line).toContain("excludes it");
+  });
+
+  it("names both candidate inputs when the door's origin moved after the daemon started", () => {
+    const { fs, alive } = aliveWorld();
+    const startedWith = hashAllowlist(headroomAllowlist([{ baseUrl: "https://api.z.ai/api/anthropic" }, { baseUrl: "http://127.0.0.1:1" }]));
+    writeHeadroomState(fs, paths.headroomStateFile, { supervisorPid: SUPERVISOR_PID, headroomPid: HEADROOM_PID, socketPath: SOCKET_PATH, allowlistHash: startedWith });
+    writeFrontDoorState(fs, paths.frontdoorStateFile, { directPort: DOOR_DIRECT_PORT });
+    const status = collectHeadroomStatus(fs, paths, (pid) => alive.has(pid));
+    expect(status.allowlistDriftInputs).toEqual(["provider-files", "front-door-origin"]);
+    const line = formatHeadroomStatus(status).find((entry) => entry.startsWith("allowlist:"));
+    expect(line).toContain(`provider files or the serving front door's direct origin ${DOOR_ORIGIN} changed`);
+  });
+
+  it("names only the provider files when the door's origin is not part of the drift", () => {
+    const { fs, alive } = aliveWorld();
+    fs.writeFileUtf8(
+      `${paths.providersDir}/m.json`,
+      JSON.stringify({ displayName: "MiniMax", baseUrl: "https://api.minimax.io", credential: { sources: [{ env: "T" }] } }),
+    );
+    const status = collectHeadroomStatus(fs, paths, (pid) => alive.has(pid));
+    // No door has served, so there is no origin to blame.
+    expect(status.allowlistDriftInputs).toEqual(["provider-files"]);
+    expect(formatHeadroomStatus(status).find((entry) => entry.startsWith("allowlist:"))).toContain("current provider files differ");
   });
 
   it("reports a live previous-release supervisor recorded under the legacy state name as the serving daemon", () => {
