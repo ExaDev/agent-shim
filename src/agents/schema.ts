@@ -40,6 +40,7 @@ export interface AgentNode {
   /** The `tool_use` block in the parent's transcript that spawned this agent. */
   readonly toolUseId?: string;
   readonly spawnDepth?: number;
+  /** The model the spawn recorded: an alias or `inherit` as often as a concrete id, and not necessarily the model that served the agent's requests. */
   readonly model?: string;
   readonly background?: boolean;
   /** The workflow run this agent belongs to, when it was spawned by one. */
@@ -83,6 +84,8 @@ export const TaskItemSchema = z.strictObject({
   activeForm: z.string().optional(),
   /** The teammate or agent name the task is assigned to, as Agent Teams writes it. */
   owner: z.string().optional(),
+  /** Free-form data the harness attaches to a task, kept as written. */
+  metadata: z.record(z.string(), z.unknown()).optional(),
   blocks: z.array(z.string()),
   blockedBy: z.array(z.string()),
   /** The id of the shared task list this task belongs to (a team's name, or a custom list id), absent for the session's own list. */

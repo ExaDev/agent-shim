@@ -31,7 +31,7 @@ One JSON object. Always present: `agentType`. Everything else is optional and ap
 | `toolUseId` | The id of the `tool_use` block in the parent transcript that spawned it. The parent link. |
 | `spawnDepth` | Nesting depth, where 1 is spawned by the session itself. |
 | `parentAgentId` | The spawning agent, when that is another subagent. |
-| `model` | The model the agent ran on, or `inherit`. |
+| `model` | The model the spawn recorded, or `inherit`; not necessarily the model that served its requests. |
 | `requestShape`, `requestNonInteractive` | `foreground` or `background`, and whether the request was non-interactive. |
 | `workflowPhase` | The workflow phase title an agent belongs to. |
 | `taskKind`, `teamName` | `in_process_teammate` and the team, for a teammate. |
@@ -50,7 +50,7 @@ JSON lines in the same shape as a session transcript: `type` (`user`, `assistant
 
 ## Tasks, todos, teams and jobs
 
-- `tasks/session-<first eight characters of the session id>/<n>.json` in current versions and `tasks/<session-id>/<n>.json` in older ones, and for a session with teammates `tasks/<team-name>/<n>.json`, the team's shared list: one file per task: `id`, `subject`, `description`, `status`, `blocks`, `blockedBy`, and optionally `activeForm`, `owner` (the assigned teammate) and `metadata`. Status values seen include `pending`, `in_progress`, `completed`, and a few non-standard ones (`todo`, `done`), so treat it as an open string. A `.highwatermark` and a `.lock` file sit beside them. A session pointed at a shared list with `CLAUDE_CODE_TASK_LIST_ID` writes to `tasks/<that-id>` instead; the variable belongs to the process environment and appears in no session file, so a reader can only be told the id.
+- `tasks/session-<first eight characters of the session id>/<n>.json` in current versions and `tasks/<session-id>/<n>.json` in older ones, and for a session with teammates `tasks/<team-name>/<n>.json`, the team's shared list: one file per task: `id`, `subject`, `description`, `status`, `blocks`, `blockedBy`, and optionally `activeForm`, `owner` (the assigned teammate) and `metadata`. Status values seen include `pending`, `in_progress`, `completed`, and a few non-standard ones (`todo`, `done`), so treat it as an open string. A `.highwatermark` and a `.lock` file sit beside them. A session pointed at a shared list with `CLAUDE_CODE_TASK_LIST_ID` writes to `tasks/<that-id>` instead; the variable belongs to the process environment and appears in no session file, so a reader can only be told the id. A resumed session may write under a new runtime id, which is likewise unrecorded; the same option covers it.
 - `todos/<session-id>-agent-<agent-id>.json`: a per-agent todo array, empty when unused.
 - `teams/<team>/config.json`: `name`, `createdAt`, `leadAgentId`, `leadSessionId` and `members` (`agentId`, `name`, `agentType`, `joinedAt`, `cwd`, `backendType`, `subscriptions`). Messages live in `teams/<team>/inboxes/<member>.json`, an array of `from`, `text`, `timestamp`, `color`, `read`.
 - `jobs/<id>/state.json`: a background job's `state` (`running`, `working`, `blocked`, `done`, `failed`, `stopped` seen), `detail`, `inFlight`, `sessionId`, `resumeSessionId`, `cwd`, `createdAt` and `updatedAt`; `timeline.jsonl` beside it holds `at`, `state`, `detail`, `text` rows.
