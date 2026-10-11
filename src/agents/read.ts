@@ -29,6 +29,9 @@ const WORKFLOWS_DIR = "workflows";
 const AGENT_FILE_PREFIX = "agent-";
 const META_SUFFIX = ".meta.json";
 const TRANSCRIPT_SUFFIX = ".jsonl";
+/** Current Claude Code names a session's own list `session-` plus this many leading characters of its id. */
+const SHORT_SESSION_ID_LENGTH = 8;
+const SHORT_SESSION_LIST_PREFIX = "session-";
 const JSON_SUFFIX = ".json";
 const WORKFLOW_RUN_PREFIX = "wf_";
 /** The suffix of an archived copy: a resume appends `.superseded-<epoch ms>` to the session directory it replaced, and Claude Code archives a replaced transcript as `.orphaned-<epoch ms>-<hash>`. */
@@ -258,7 +261,7 @@ export function readSessionAgentTree(fs: AgentReadFs, configDir: string, ref: Se
     sessionId: ref.sessionId,
     superseded: ref.superseded,
     agents: roots.sort().map(build),
-    tasks: readTasks(fs, configDir, ref.sessionId, [...new Set([...teamNames, ...(options.taskListIds ?? [])])].filter((id) => id !== ref.sessionId), report),
+    tasks: readTasks(fs, configDir, ownTaskLists(ref.sessionId), [...new Set([...teamNames, ...(options.taskListIds ?? [])])].filter((id) => !ownTaskLists(ref.sessionId).includes(id)), report),
     workflowRuns: readWorkflowRuns(fs, configDir, path.join(sessionRelative, WORKFLOWS_DIR), report),
     problems,
   };
@@ -329,12 +332,17 @@ function resolveParents(fs: AgentReadFs, configDir: string, agents: ReadonlyMap<
   return parentOf;
 }
 
+/** The `tasks` directory name Claude Code derives from a session id: the full id in older versions, `session-` and the id's first eight characters in current ones. */
+function ownTaskLists(sessionId: string): readonly string[] {
+  return [sessionId, `${SHORT_SESSION_LIST_PREFIX}${sessionId.slice(0, SHORT_SESSION_ID_LENGTH)}`];
+}
+
 /**
- * Reads the task lists a session can see: its own `tasks/<session-id>`, and each shared list (`tasks/<list-id>`): a team's, named by its teammates' meta, or one the caller names. Shared tasks carry the list id.
+ * Reads the task lists a session can see: its own (see `ownTaskLists`), and each shared list (`tasks/<list-id>`): a team's, named by its teammates' meta, or one the caller names. Shared tasks carry the list id.
  */
-function readTasks(fs: AgentReadFs, configDir: string, sessionId: string, sharedLists: readonly string[], report: ReportProblem): TaskItem[] {
+function readTasks(fs: AgentReadFs, configDir: string, ownLists: readonly string[], sharedLists: readonly string[], report: ReportProblem): TaskItem[] {
   const tasks: TaskItem[] = [];
-  [sessionId, ...sharedLists].forEach((scope, index) => {
+  [...ownLists, ...sharedLists].forEach((scope, index) => {
     const relativeDir = path.join(TASKS_DIR, scope);
     for (const name of [...listDirOrReport(fs, configDir, relativeDir, report)].sort()) {
       if (name.startsWith(".") || !name.endsWith(JSON_SUFFIX)) {
@@ -344,8 +352,8 @@ function readTasks(fs: AgentReadFs, configDir: string, sessionId: string, shared
       const text = readFileOrReport(fs, configDir, relative, report);
       const parsed = TaskFileSchema.safeParse(text === undefined ? undefined : parseJson(text));
       if (parsed.success) {
-        // The first scope is the session's own; every later one is a shared list.
-        tasks.push(index === 0 ? parsed.data : { ...parsed.data, taskList: scope });
+        // The leading scopes are the session's own; every later one is a shared list.
+        tasks.push(index < ownLists.length ? parsed.data : { ...parsed.data, taskList: scope });
       } else if (text !== undefined) {
         report({ path: relative, reason: "task file is not a task" });
       }

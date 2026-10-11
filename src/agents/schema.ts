@@ -73,12 +73,16 @@ export const AgentNodeSchema: z.ZodType<AgentNode> = z.lazy(() =>
   }),
 );
 
-/** One entry of a task list: the session's own (`tasks/<session-id>/<n>.json`) or a shared one (`tasks/<list-id>/<n>.json`), a team's or one named by `CLAUDE_CODE_TASK_LIST_ID`. `status` is an open string: non-standard values occur. */
+/** One entry of a task list: the session's own (`tasks/<session-id>/<n>.json`, or `tasks/session-<first-eight-characters>/<n>.json` in current versions) or a shared one (`tasks/<list-id>/<n>.json`), a team's or one named by `CLAUDE_CODE_TASK_LIST_ID`. `status` is an open string: non-standard values occur. */
 export const TaskItemSchema = z.strictObject({
   id: z.string(),
   subject: z.string(),
   description: z.string().optional(),
   status: z.string(),
+  /** What a spinner shows while the task runs. */
+  activeForm: z.string().optional(),
+  /** The teammate or agent name the task is assigned to, as Agent Teams writes it. */
+  owner: z.string().optional(),
   blocks: z.array(z.string()),
   blockedBy: z.array(z.string()),
   /** The id of the shared task list this task belongs to (a team's name, or a custom list id), absent for the session's own list. */
