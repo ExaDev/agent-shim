@@ -29,6 +29,11 @@ const MS_PER_MINUTE = 60_000;
 /** Ticks beyond the idle window itself, so an unwanted shutdown cannot hide behind the tick limit. */
 const SLACK_TICKS = 5;
 const FULL_IDLE_WINDOW_TICKS = Math.ceil((IDLE_MINUTES * MS_PER_MINUTE) / FRONTDOOR_POLL_MS) + SLACK_TICKS;
+const SUCCESSOR_PORT = 5101;
+const SUCCESSOR_CONNECT_PORT = 5102;
+const SUCCESSOR_DIRECT_PORT = 5103;
+/** The state a newer supervisor records once it serves, on ports of its own because the superseded door still holds the sticky ones. */
+const SUCCESSOR_STATE = { protocol: FRONT_DOOR_PROTOCOL, supervisorPid: SUCCESSOR_PID, port: SUCCESSOR_PORT, connectPort: SUCCESSOR_CONNECT_PORT, directPort: SUCCESSOR_DIRECT_PORT, lastPort: SUCCESSOR_PORT, lastConnectPort: SUCCESSOR_CONNECT_PORT, lastDirectPort: SUCCESSOR_DIRECT_PORT };
 /** The installed binary as the door starts serving it: every field differs in the replacement, the way a rename-install's new inode does. */
 const INSTALLED_BINARY: OwnExecutableStat = { dev: 1, ino: 10, size: 4096, mtimeMs: 0 };
 const REPLACED_BINARY: OwnExecutableStat = { dev: 1, ino: 11, size: 4097, mtimeMs: 1 };
@@ -510,6 +515,110 @@ describe("runFrontDoorSupervisor", () => {
     detach();
     // No generation event: the door never fully served.
     expect(received).toEqual([{ source: DOOR_HEALTH_EVENT_SOURCE, sequence: 1, payload: { kind: "listenerFailed", pid: OWN_PID, listener: "connect", message: "connect chaos", observedAt: 0 } }]);
+  });
+
+  it("stops taking sessions once another live supervisor owns the state file, and exits when the sessions it served have ended, leaving the owner's record untouched", async () => {
+    const world = makeWorld();
+    world.alive.add(LIVE_SESSION);
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0, token: SESSION_TOKEN });
+    let ticks = 0;
+    const takeOverOn = 1;
+    const registerWithOwnerOn = 3;
+    const endServedSessionOn = 4;
+    world.onSleep = () => {
+      ticks += 1;
+      if (ticks === takeOverOn) {
+        world.alive.add(SUCCESSOR_PID);
+        writeFrontDoorState(world.fs, paths.frontdoorStateFile, SUCCESSOR_STATE);
+      }
+      if (ticks === registerWithOwnerOn) {
+        // A launch made against the new owner: it lives on past the end of this test, and must not keep the superseded door serving.
+        world.alive.add(NEW_SESSION);
+        writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: NEW_SESSION, startedAt: world.clock(), token: SESSION_TOKEN });
+      }
+      if (ticks === endServedSessionOn) {
+        world.alive.delete(LIVE_SESSION);
+      }
+    };
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(0);
+    // The exit came on the first tick after the served session ended, not after an idle window, and with the owner's launch still live.
+    expect(world.clock()).toBe(endServedSessionOn * FRONTDOOR_POLL_MS);
+    expect(world.stopOrder).toEqual(["direct", "connect", "provider", "hub"]);
+    expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)).toEqual(SUCCESSOR_STATE);
+    expect(listFrontDoorSessions(world.fs, paths.frontdoorSessionsDir).map((session) => session.pid)).toEqual([NEW_SESSION]);
+    expect(world.logs.some((line) => line.includes(`supervisor ${String(SUCCESSOR_PID)} now owns the front door`))).toBe(true);
+  });
+
+  it("counts a launch that registers in the tick after the takeover as its own, since that launch may have read the state before the owner replaced it", async () => {
+    const world = makeWorld();
+    let ticks = 0;
+    const takeOverOn = 1;
+    const lateRegistrationOn = 2;
+    world.onSleep = () => {
+      ticks += 1;
+      if (ticks === takeOverOn) {
+        world.alive.add(SUCCESSOR_PID);
+        writeFrontDoorState(world.fs, paths.frontdoorStateFile, SUCCESSOR_STATE);
+      }
+      if (ticks === lateRegistrationOn) {
+        world.alive.add(LIVE_SESSION);
+        writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: world.clock(), token: SESSION_TOKEN });
+      }
+    };
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
+    expect(world.closes).toEqual([]);
+    expect(world.hubCloses()).toBe(0);
+  });
+
+  it("exits a superseded door with no sessions of its own at once, ignoring the door-minted sessions keyed by its own pid and the owner's", async () => {
+    const world = makeWorld();
+    world.onSleep = () => {
+      if (!world.alive.has(SUCCESSOR_PID)) {
+        world.alive.add(SUCCESSOR_PID);
+        writeFrontDoorState(world.fs, paths.frontdoorStateFile, SUCCESSOR_STATE);
+        // Each door's transparent surface registers a session under the door's own pid, which lives exactly as long as that door: counting either would keep the superseded door serving for as long as one of the two doors runs.
+        writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: OWN_PID, startedAt: 0, token: SESSION_TOKEN });
+        writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: SUCCESSOR_PID, startedAt: world.clock(), token: SESSION_TOKEN });
+      }
+    };
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(0);
+    // Noticed at the second tick, drained at the third: the grace tick after the notice, and no idle window.
+    const drainedAtMs = FRONTDOOR_POLL_MS + FRONTDOOR_POLL_MS;
+    expect(world.clock()).toBe(drainedAtMs);
+    expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)).toEqual(SUCCESSOR_STATE);
+  });
+
+  it("publishes the supersession when it is noticed and the drained exit before it happens", async () => {
+    const world = makeWorld();
+    const received: DoorEvent[] = [];
+    const detach = world.doorEvents.subscribe([DOOR_HEALTH_EVENT_SOURCE], (event) => {
+      received.push(event);
+    });
+    world.onSleep = () => {
+      world.alive.add(SUCCESSOR_PID);
+      writeFrontDoorState(world.fs, paths.frontdoorStateFile, SUCCESSOR_STATE);
+    };
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports)).toBe(0);
+    detach();
+    const drainedAtMs = FRONTDOOR_POLL_MS + FRONTDOOR_POLL_MS;
+    expect(received).toEqual([
+      { source: DOOR_HEALTH_EVENT_SOURCE, sequence: 1, payload: { kind: "generation", pid: OWN_PID, providerPort: FRESH_PORT, connectPort: FRESH_PORT, directPort: FRESH_PORT, observedAt: 0 } },
+      { source: DOOR_HEALTH_EVENT_SOURCE, sequence: 2, payload: { kind: "superseded", pid: OWN_PID, ownerPid: SUCCESSOR_PID, observedAt: FRONTDOOR_POLL_MS } },
+      { source: DOOR_HEALTH_EVENT_SOURCE, sequence: 3, payload: { kind: "drained", pid: OWN_PID, observedAt: drainedAtMs } },
+    ]);
+  });
+
+  it("keeps serving as the owner when the state file names a supervisor that is no longer running", async () => {
+    const world = makeWorld();
+    world.alive.add(LIVE_SESSION);
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0, token: SESSION_TOKEN });
+    world.onSleep = () => {
+      // A record naming a dead supervisor is claimable, the same rule the headroom supervisor applies: nothing serves at its addresses, so it supersedes nobody.
+      writeFrontDoorState(world.fs, paths.frontdoorStateFile, SUCCESSOR_STATE);
+    };
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
+    expect(world.closes).toEqual([]);
+    expect(world.logs.some((line) => line.includes("now owns the front door"))).toBe(false);
   });
 
   it("runs the expiring-quota check on every tick", async () => {

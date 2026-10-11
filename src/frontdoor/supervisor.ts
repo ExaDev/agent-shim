@@ -94,7 +94,7 @@ export const FRONTDOOR_POLL_MS = 1_000;
 const MS_PER_MINUTE = 60_000;
 
 /**
- * Runs the front-door supervisor: binds all three listeners (the HTTPS provider listener, the CONNECT surface and the plain-HTTP direct listener, each on its sticky port), records the serving state, and shuts down with an empty session registry, either at the first such tick after the executable it serves as has been replaced on disk (so an applied update reaches the door without waiting out the idle window) or after `idleShutdownMinutes` of it. Returns the exit code: 0 for either retirement, 1 for a fatal start failure.
+ * Runs the front-door supervisor: binds all three listeners (the HTTPS provider listener, the CONNECT surface and the plain-HTTP direct listener, each on its sticky port), records the serving state, and shuts down with an empty session registry, either at the first such tick after the executable it serves as has been replaced on disk (so an applied update reaches the door without waiting out the idle window) or after `idleShutdownMinutes` of it. A door whose state file comes to name another live supervisor is superseded: from then on it takes no new sessions, never writes the state file again, and exits as soon as the sessions it was serving have ended. Returns the exit code: 0 for any of these retirements, 1 for a fatal start failure.
  *
  * The listeners live in this process, so there is no child to keep alive: a crash of this process is a crash of every routed session's door at once, and recovery is the next launch's ensure spawning a replacement on the same sticky ports, which is exactly the failure model the issue asks to settle with tests. Keeping the headroom daemon alive is the headroom supervisor's job, not this one's; the two daemons idle out independently.
  */
@@ -174,20 +174,36 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
 
   let idleSince: number | undefined;
   let ticks = 0;
+  /**
+   * The live supervisor the state file names in place of this one, or undefined while this door is still the one launches are sent to. An absent or unreadable record, this door's own pid and a dead owner all leave the door serving as the owner, the same claimability the headroom supervisor's ownership check applies: nothing serves at a dead owner's addresses, so it supersedes nobody.
+   */
+  const supersedingOwner = (): number | undefined => {
+    const owner = readFrontDoorState(fs, paths.frontdoorStateFile)?.supervisorPid;
+    return owner !== undefined && owner !== ports.ownPid && ports.isRunning(owner) ? owner : undefined;
+  };
+  // Set on the tick that first sees another live owner, and never cleared: from that moment launches are sent to the owner's addresses, and should that owner die, the next launch's ensure brings up a fresh door rather than returning to this one, which no longer appears in the state file.
+  let supersededBy: number | undefined;
+  // The sessions this superseded door still serves, captured one tick after the supersession is noticed, so a launch that read the state just before the owner rewrote it has registered by then (the same one-tick allowance the first tick's turnover grace gives the ensuring launch). Counting a launch made against the new owner in that tick only keeps this door up until that launch ends; leaving out one made against this door would close the listeners its child still points at.
+  let served: readonly FrontDoorSessionSummary[] | undefined;
   const binaryReplaced = (): boolean => {
     const current = ports.statOwnExecutable();
     // A present-but-different stat is the turnover signal; an absent one (a deleted binary, or a remove-then-link install between its removal and its relink) is not, and a stat returning to the exact captured identity after such a window is equally not, so a half-applied install never flaps the door.
     return current !== undefined && servingBinary !== undefined && (current.dev !== servingBinary.dev || current.ino !== servingBinary.ino || current.size !== servingBinary.size || current.mtimeMs !== servingBinary.mtimeMs);
   };
-  // The one graceful exit both retirements share: listeners down in the established order, the RC stream hub's cursor save last, sticky addresses preserved for the successor.
-  const shutdown = async (): Promise<number> => {
+  // The graceful stop every retirement shares: listeners down in the established order, the RC stream hub's cursor save last.
+  const closeServing = async (): Promise<void> => {
     await direct.close();
     await connect.close();
     await http.close();
     // Last of the serving machinery to stop, and deliberately last: with every listener down no observed exchange can settle and re-attach a stream, so the hub's synchronous cursor persistence is the final word on every attachment before the process exits.
     ports.closeRcStreamHub();
-    // The sticky addresses survive the shutdown so the next generation starts where this one served.
-    writeFrontDoorState(fs, paths.frontdoorStateFile, sticky());
+  };
+  // The owner's retirement: the serving machinery stopped, then the sticky addresses written so the next generation starts where this one served, unless another live supervisor has claimed the state file since this tick looked, whose record is never rewritten.
+  const shutdown = async (): Promise<number> => {
+    await closeServing();
+    if (supersedingOwner() === undefined) {
+      writeFrontDoorState(fs, paths.frontdoorStateFile, sticky());
+    }
     return 0;
   };
   for (;;) {
@@ -201,7 +217,31 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
     ports.observeLaunchRegistry(listed, pruned);
     ports.checkQuotaExpiry();
     const prunedPids = new Set(pruned);
-    if (listed.filter((session) => !prunedPids.has(session.pid)).length === 0) {
+    const live = listed.filter((session) => !prunedPids.has(session.pid));
+    if (supersededBy === undefined) {
+      supersededBy = supersedingOwner();
+      if (supersededBy !== undefined) {
+        ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: supervisor ${String(supersededBy)} now owns the front door; taking no new sessions and exiting once the sessions this door serves have ended`);
+        ports.doorHealth.superseded(supersededBy);
+        await ports.sleep(FRONTDOOR_POLL_MS);
+        continue;
+      }
+    } else {
+      const owner = supersededBy;
+      // Records keyed by a door's own pid are the sessions a transparent surface mints for itself, living exactly as long as that door does: neither this door's nor the owner's is a launch this door serves.
+      // A served session is matched by pid and start time together, so a later launch that reuses an ended launcher's pid is not mistaken for it.
+      served = (served ?? live.filter((session) => session.pid !== ports.ownPid && session.pid !== owner)).filter((own) => live.some((session) => session.pid === own.pid && session.startedAt === own.startedAt));
+      if (served.length === 0) {
+        ports.log("agent-shim frontdoor supervisor: the sessions this superseded door served have ended; closing the front door and exiting");
+        ports.doorHealth.drained();
+        // No state write: the file names the owner, and this door's sticky addresses are not the owner's to inherit.
+        await closeServing();
+        return 0;
+      }
+      await ports.sleep(FRONTDOOR_POLL_MS);
+      continue;
+    }
+    if (live.length === 0) {
       // The first tick never retires the door: the ensuring launch's session record lands shortly after the bind (see the capture comment above), and this grace is what lets a startup-window update turn over on tick two with the record already in place.
       if (ticks > 1 && binaryReplaced()) {
         ports.log("agent-shim frontdoor supervisor: the installed binary changed and no sessions are live; turning the door over for the next launch");
