@@ -1,3 +1,18 @@
+## [9.15.0](https://github.com/ExaDev/agent-shim/compare/v9.14.0...v9.15.0) (2026-10-11)
+
+### Features
+
+* run prompts unattended on a schedule or shortly before a quota window resets ([59af33b](https://github.com/ExaDev/agent-shim/commit/59af33bfa203f85de761258a31339152f7cceb41))
+
+### Bug Fixes
+
+* load only the user's settings in an unattended job run ([1a123d2](https://github.com/ExaDev/agent-shim/commit/1a123d28c9d67bcf0852456d8cf7931bec9d3b63))
+* start no MCP server in an unattended job run ([10339c9](https://github.com/ExaDev/agent-shim/commit/10339c9f8ea972ea57fead0cd5369c80d3ac8e3e))
+
+### Documentation
+
+* list the reset-timing modules in the architecture layout ([35e43eb](https://github.com/ExaDev/agent-shim/commit/35e43ebc045a41669a56e4cd166a1a3f1baae484))
+
 ## [9.14.0](https://github.com/ExaDev/agent-shim/compare/v9.13.0...v9.14.0) (2026-10-11)
 
 ### Features
