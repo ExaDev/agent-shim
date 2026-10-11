@@ -129,7 +129,7 @@ agent-shim frontdoor rc mcp-authenticate --session <cse_id> --server <name> --re
 agent-shim frontdoor rc mcp-oauth-callback-url --session <cse_id> --server <name> --callback-url <url> [--json]
 agent-shim frontdoor rc teleport --session <cse_id> --marker <text> [--json]
 agent-shim frontdoor rc watch [<cse_id>] [--json]
-agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--json]
+agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--resets] [--json]
 agent-shim account show [<identity>] [--refresh] [--json]
 agent-shim mcp [--allow-writes] [--allow-remote-control]      # serve the door's typed API as MCP tools on stdio; read-only without the flags
 agent-shim mcp permissions show [--json]               # what the stored file allows

@@ -7,6 +7,8 @@ import { CheckReportJsonSchema } from "../checkReportSchema";
 import type { DoctorReport } from "../doctorReport";
 import { ANTHROPIC_PROVIDER } from "../usage/middleware";
 import { effectiveWindow } from "../usage/preflight";
+import { collectResets } from "../usage/resets";
+import { ResetScheduleSchema } from "../usage/resetsSchema";
 import { PoolPickReportSchema, type PoolPickReport } from "../usage/pickReportSchema";
 import type { UsageSnapshot } from "../usage/schema";
 import {
@@ -87,6 +89,10 @@ export function createControlApiRouter(deps: ControlApiDeps) {
         .meta(openapi({ method: "GET", path: "/rest/usage/snapshots", summary: "List every identity's usage snapshot", tags: [USAGE_API_TAG] }))
         .output(UsageListOutputSchema)
         .handler(() => ({ snapshots: deps.usageSnapshots() })),
+      resets: authed
+        .meta(openapi({ method: "GET", path: "/rest/usage/resets", summary: "List every recorded quota window with when it resets", tags: [USAGE_API_TAG] }))
+        .output(ResetScheduleSchema)
+        .handler(() => collectResets(deps.usageSnapshots(), deps.now())),
       effectiveWindow: authed
         .meta(openapi({ method: "GET", path: "/rest/usage/windows", summary: "Read one identity's effective quota windows", tags: [USAGE_API_TAG] }))
         .input(UsageWindowsInputSchema)

@@ -198,6 +198,13 @@ describe("the door's control-plane API", () => {
       expect(listed.snapshots[0]?.providers.anthropic?.rateLimit?.unified?.fiveHour?.utilization).toBe(FIVE_HOUR_UTILIZATION);
     });
 
+    it("lists every recorded window with its reset, read at the door's own clock", async () => {
+      const { resets } = await client.usage.resets();
+      expect(resets.length).toBeGreaterThan(0);
+      expect(resets.find((row) => row.identity === "work" && row.window === "7d")).toMatchObject({ reset: true, utilization: 0 });
+      expect(resets.find((row) => row.identity === "work" && row.window === "5h")).toMatchObject({ reset: false, utilization: FIVE_HOUR_UTILIZATION });
+    });
+
     it("reads a provider's windows through the effective-window semantics, at the door's own clock", async () => {
       const windows = await client.usage.effectiveWindow({ identity: "work" });
       // The default provider is the OAuth one, and a window past its reset reads as reset and empty, exactly as every in-process consumer reads it.

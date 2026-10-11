@@ -317,6 +317,8 @@ export { runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPo
 export { listUsageSnapshots, readUsageSnapshot, snapshotPath, UsageSnapshotError, type UsageReadFs } from "./usage/read";
 export { UsageSnapshotSchema, type UsageSnapshot } from "./usage/schema";
 export { effectiveWindow, type EffectiveWindow } from "./usage/preflight";
+export { collectResets } from "./usage/resets";
+export { ResetRowSchema, ResetScheduleSchema, type ResetRow, type ResetSchedule } from "./usage/resetsSchema";
 export { PROMPT_CACHE_TTL_MS, rankPool, type Candidate, type NestedContribution, type PoolMember, type PoolRanking, type RankPoolInput, type StickyPick } from "./usage/pick";
 export { planOf, PlanClassSchema, type PlanClass } from "./usage/plan";
 export { PoolGraphError, poolIdentities } from "./usage/poolPick";
