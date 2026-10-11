@@ -11,6 +11,14 @@ function definedEnvironment(env: Readonly<Record<string, string | undefined>>): 
   return Object.fromEntries(Object.entries(env).flatMap(([name, value]) => (value === undefined ? [] : [[name, value]])));
 }
 
+/** The launch flag every headless run adds: the identity's own account, never a provider. A provider a profile or directory rule selects would receive the run's requests at its own URL with its own credential, which an unattended run must not do on a configuration it never chose. */
+const IDENTITY_ONLY_FLAG = "--no-provider";
+
+/** The launcher argv for a headless run as `identity`: the identity, the account-only flag, then the caller's flags. */
+export function identityLaunchArgv(identity: string, flags: readonly string[]): readonly string[] {
+  return [`@${identity}`, IDENTITY_ONLY_FLAG, ...flags];
+}
+
 /** What running the real `claude` as an identity needs beyond the state root. */
 export interface IdentityClaudeParams {
   readonly paths: LayoutPaths;
@@ -39,7 +47,7 @@ export async function withIdentityClaude<T>(params: Readonly<IdentityClaudeParam
     realPrepareLaunchParams(params.paths, {
       proc: {
         env: Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== CONFIG_DIR_VARIABLE)),
-        argv: [`@${identity}`, ...flags],
+        argv: [...identityLaunchArgv(identity, flags)],
         exit: (code) => {
           throw new LaunchRefusedError(refusals.join("\n") || `the launch was refused (exit ${String(code)})`, code);
         },
