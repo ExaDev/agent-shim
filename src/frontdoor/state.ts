@@ -14,8 +14,10 @@ import type { HeadroomFs } from "../headroom/state";
  */
 export const FRONT_DOOR_PROTOCOL = 3;
 
-/** The record held in one front-door session-registry file: the launcher's pid plus the per-launch capability token its child presents on every request. */
-const FrontDoorSessionSchema = z.strictObject({ pid: z.number().int().positive(), startedAt: z.number(), token: z.string().min(1) });
+/**
+ * The record held in one front-door session-registry file: the launcher's pid plus the per-launch capability token its child presents on every request, and the supervisor of the door the launch was sent to. `supervisorPid` is absent on a record written before it existed and on a door's own transparent-surface record; such a launch cannot be attributed to a door, so a superseded door treats it as its own.
+ */
+const FrontDoorSessionSchema = z.strictObject({ pid: z.number().int().positive(), startedAt: z.number(), token: z.string().min(1), supervisorPid: z.number().int().positive().optional() });
 export type FrontDoorSession = z.infer<typeof FrontDoorSessionSchema>;
 
 /**
@@ -95,7 +97,7 @@ export function writeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, sessi
 }
 
 /** A registered launch as status and the idle decision see it: the pid and start time, never the token, so nothing that prints or serialises a session can leak the capability. */
-export type FrontDoorSessionSummary = Pick<FrontDoorSession, "pid" | "startedAt">;
+export type FrontDoorSessionSummary = Pick<FrontDoorSession, "pid" | "startedAt" | "supervisorPid">;
 
 /**
  * Every registered launch, unreadable or malformed files skipped, sorted by pid. Read through `FrontDoorSessionSchema`, which carries the token: headroom's token-less `listSessions` is strict and rejects every front-door record, which would make a live session invisible to the supervisor's idle decision and close the listeners (releasing the sticky ports) under a running child.
@@ -109,7 +111,7 @@ export function listFrontDoorSessions(fs: HeadroomFs, sessionsDir: string): read
     try {
       const parsed = FrontDoorSessionSchema.safeParse(JSON.parse(fs.readFileUtf8(path.join(sessionsDir, name)) ?? ""));
       if (parsed.success) {
-        sessions.push({ pid: parsed.data.pid, startedAt: parsed.data.startedAt });
+        sessions.push({ pid: parsed.data.pid, startedAt: parsed.data.startedAt, ...(parsed.data.supervisorPid === undefined ? {} : { supervisorPid: parsed.data.supervisorPid }) });
       }
     } catch {
       continue;

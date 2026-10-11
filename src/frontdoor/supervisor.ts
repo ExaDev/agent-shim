@@ -229,8 +229,9 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
     } else {
       const owner = supersededBy;
       // Records keyed by a door's own pid are the sessions a transparent surface mints for itself, living exactly as long as that door does: neither this door's nor the owner's is a launch this door serves.
+      // A launch records the supervisor of the door it was sent to, so one sent to the owner is not this door's to wait for; a record with no attribution is counted as this door's, since leaving it out could close listeners a session still points at.
       // A served session is matched by pid and start time together, so a later launch that reuses an ended launcher's pid is not mistaken for it.
-      served = (served ?? live.filter((session) => session.pid !== ports.ownPid && session.pid !== owner)).filter((own) => live.some((session) => session.pid === own.pid && session.startedAt === own.startedAt));
+      served = (served ?? live.filter((session) => session.pid !== ports.ownPid && session.pid !== owner && (session.supervisorPid === undefined || session.supervisorPid === ports.ownPid))).filter((own) => live.some((session) => session.pid === own.pid && session.startedAt === own.startedAt));
       if (served.length === 0) {
         ports.log("agent-shim frontdoor supervisor: the sessions this superseded door served have ended; closing the front door and exiting");
         ports.doorHealth.drained();
