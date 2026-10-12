@@ -32,4 +32,26 @@ describe("lineageOf", () => {
     expect(lineageOf(Buffer.from("not json"))).toBeUndefined();
     expect(lineageOf(Buffer.from(JSON.stringify({ model: "m" })))).toBeUndefined();
   });
+
+  it("ignores the cache marker wherever it sits, including inside the system prompt and tools", () => {
+    const history = [user("a"), assistant("b"), user("c")];
+    const plain = lineageOf(body(history, { system: [{ type: "text", text: "s" }] }));
+    const marked = lineageOf(body(history, { system: [{ type: "text", text: "s", cache_control: { type: "ephemeral", ttl: "1h" } }] }));
+    expect(marked?.ownKey).toBe(plain?.ownKey);
+  });
+
+  it("is not thrown by commas, colons and escaped quotes inside strings", () => {
+    const tricky = [user('he said "a, b": {c}'), assistant("ok"), user("x")];
+    const same = lineageOf(body(tricky));
+    expect(same?.ownKey).toBe(lineageOf(body(tricky))?.ownKey);
+    expect(same?.ownKey).not.toBe(lineageOf(body([user('he said "a, b": {d}'), assistant("ok"), user("x")]))?.ownKey);
+  });
+
+  it("walks a body of a very large number of empty messages without building them", () => {
+    const MESSAGE_COUNT = 400_000;
+    const flood = Buffer.from(`{"model":"m","messages":[${new Array<string>(MESSAGE_COUNT).fill("{}").join(",")}]}`);
+    const lineage = lineageOf(flood);
+    expect(lineage?.parentKey).toBeDefined();
+    expect(lineage?.ownKey).not.toBe(lineage?.parentKey);
+  });
 });
