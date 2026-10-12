@@ -472,7 +472,7 @@ export function fakeFrontDoorEnv(identity?: string, extra: Readonly<Record<strin
 }
 
 /** A headroom decision that always takes the routing the session's launch asked for, for tests that exercise the pipeline without caring about a session's earlier choice. */
-export const followsLaunchFlag: HeadroomDecision = { decide: (_sessionId, wanted) => wanted, observe: () => undefined };
+export const followsLaunchFlag: HeadroomDecision = { decide: async (_sessionId, wanted) => await Promise.resolve(wanted), observe: () => undefined };
 
 /** An admission step that routes every request with its forwardable headers unchanged: for tests exercising the pipeline's other stages, never for one asserting what a listener admits. */
 export const admitEverything: PipelineDeps["admit"] = (request) => ({ ok: true, headers: { ...request.forwardable } });

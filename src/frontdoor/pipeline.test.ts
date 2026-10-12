@@ -186,7 +186,8 @@ describe("serveRouted", () => {
       const headroom = { headroomSocket: () => undefined, hopSecret: "secret", custody: createCredentialCustody(() => "id"), log: () => undefined };
       const serve = async (flagged: boolean): Promise<void> => {
         const { request } = pipelineRequest({ [SESSION_HEADER]: "s1", ...(flagged ? { [HEADROOM_FLAG_HEADER]: "1" } : {}) });
-        await serveRouted(request, { ...base, headroom, headroomDecision: decision });
+        // The probe needs a live daemon socket, which this pipeline test has none of: the daemon is stood in for as always ready.
+        await serveRouted(request, { ...base, headroom, headroomDecision: { decide: async (id, wanted, now) => await decision.decide(id, wanted, now, async () => await Promise.resolve(true)), observe: decision.observe } });
       };
       await serve(true);
       decision.observe({ sessionId: "s1", endedAtMs: 0, cacheReadInputTokens: 1000 });

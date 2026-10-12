@@ -24,9 +24,9 @@ interface ObservedResponse {
  */
 export interface HeadroomDecision {
   /**
-   * Whether this session's next request crosses headroom. `wanted` is what the routing policy would choose now; it is taken only at a boundary, and otherwise the session's earlier choice stands. A request with no session id has no cache to protect and takes `wanted` outright.
+   * Whether this session's next request crosses headroom. `wanted` is what the routing policy would choose now, and `available` asks whether the daemon can serve a request right now. Both are taken only at a boundary, where a session that wants headroom but finds the daemon unavailable goes direct, since it has no cache to lose and is better served than refused; it rejoins at its next boundary once the daemon is available. Between boundaries the session's earlier choice stands, so a session already using headroom keeps replaying through it rather than being sent uncompressed. A request with no session id has no cache to protect and takes the same choice outright.
    */
-  readonly decide: (sessionId: string | undefined, wanted: boolean, nowMs: number) => boolean;
+  readonly decide: (sessionId: string | undefined, wanted: boolean, nowMs: number, available: () => Promise<boolean>) => Promise<boolean>;
   /** Records a finished response, which is what makes the next boundary known. */
   readonly observe: (response: ObservedResponse) => void;
 }
@@ -35,13 +35,13 @@ export interface HeadroomDecision {
 export function createHeadroomDecision(): HeadroomDecision {
   const sessions = new Map<string, SessionState>();
   return {
-    decide: (sessionId, wanted, nowMs) => {
+    decide: async (sessionId, wanted, nowMs, available) => {
       if (sessionId === undefined) {
-        return wanted;
+        return wanted && (await available());
       }
       const state = sessions.get(sessionId);
       const atBoundary = state === undefined || nowMs - state.lastEndedAtMs > PROMPT_CACHE_TTL_MS || state.cacheReadInputTokens === 0;
-      const viaHeadroom = atBoundary ? wanted : state.viaHeadroom;
+      const viaHeadroom = atBoundary ? wanted && (await available()) : state.viaHeadroom;
       sessions.set(sessionId, { viaHeadroom, lastEndedAtMs: state?.lastEndedAtMs ?? nowMs, cacheReadInputTokens: state?.cacheReadInputTokens ?? 0 });
       return viaHeadroom;
     },
