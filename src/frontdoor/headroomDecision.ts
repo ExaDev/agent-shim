@@ -67,7 +67,7 @@ interface ThreadPoint {
 /** Creates the decision, holding its per-session memory in process. `setting` is the live routing setting, read on every decision. An entry older than the cache lifetime is a boundary anyway, so it is dropped as responses are observed and the memory stays bounded by the sessions active within one cache lifetime. */
 export function createHeadroomDecision(setting: () => RoutingSetting): HeadroomDecision {
   const sessions = new Map<string, SessionState>();
-  /** Each thread's latest point, by the hash of the history that produced it. */
+  /** Each thread's latest point, by launch session and the hash of the history that produced it: a session is only ever compared with its own threads, so one session cannot learn whether another has had a given history. */
   const threads = new Map<string, ThreadPoint>();
   return {
     decide: async (sessionId, launchFlag, nowMs, available) => {
@@ -100,12 +100,12 @@ export function createHeadroomDecision(setting: () => RoutingSetting): HeadroomD
       let { prefixMisses, prefixBroken } = state ?? { prefixMisses: 0, prefixBroken: false };
       if (lineage !== undefined) {
         // Only a response whose own thread's previous response is known, was recent, and also went through headroom can say anything about headroom: otherwise a subagent, a fork, a cache that expired or a switch of route would read as a miss.
-        const previous = lineage.parentKey === undefined ? undefined : threads.get(lineage.parentKey);
+        const previous = lineage.parentKey === undefined ? undefined : threads.get(`${sessionId}:${lineage.parentKey}`);
         if (previous !== undefined && previous.viaHeadroom && viaHeadroom && startedAtMs - previous.endedAtMs <= SHORTEST_PROMPT_CACHE_TTL_MS) {
           prefixMisses = cache.readTokens < previous.cachedTokens ? prefixMisses + 1 : 0;
           prefixBroken = prefixBroken || prefixMisses >= CONSECUTIVE_PREFIX_MISSES;
         }
-        threads.set(lineage.ownKey, { cachedTokens: cache.readTokens + cache.writtenTokens, endedAtMs, viaHeadroom });
+        threads.set(`${sessionId}:${lineage.ownKey}`, { cachedTokens: cache.readTokens + cache.writtenTokens, endedAtMs, viaHeadroom });
       }
       if (state !== undefined) {
         sessions.set(sessionId, { ...state, lastEndedAtMs: endedAtMs, cacheSurplusTokens, prefixMisses, prefixBroken });
