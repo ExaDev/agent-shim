@@ -199,3 +199,33 @@ describe("runDoctor: headroom allowlist file and the serving door", () => {
     expect(runDoctor(baseParams(headroomWith(undefined))).ok).toBe(true);
   });
 });
+
+describe("runDoctor: front door listeners", () => {
+  const baseDoor = { supervisorPid: SERVING_DOOR_PID, port: 4100, connectPort: 4200 };
+  const serving = { ok: true as const, pids: [SERVING_DOOR_PID] };
+
+  /** The door's report input with the listener readings a probe of it produced. */
+  function withListeners(listeners: NonNullable<NonNullable<RunDoctorParams["frontDoor"]>["listeners"]>): Partial<RunDoctorParams> {
+    const { frontDoor } = frontDoorParams(baseDoor, serving);
+    if (frontDoor === undefined) {
+      throw new Error("the helper always supplies a front door");
+    }
+    return { frontDoor: { ...frontDoor, listeners } };
+  }
+
+  it("passes a listener that accepted and says how long the probe took", () => {
+    const report = runDoctor({ ...baseParams(), ...withListeners([{ listener: "connect", port: 4200, ok: true, elapsedMs: 12.4 }]) });
+    expect(findingsFor(report, "frontdoor").some((finding) => finding.severity === "pass" && finding.message.includes("connect listener on 127.0.0.1:4200 accepted a probe in 12 ms"))).toBe(true);
+  });
+
+  it("fails a listener that did not accept, naming the sessions it cuts off and the way out", () => {
+    const report = runDoctor({
+      ...baseParams(),
+      ...withListeners([{ listener: "connect", port: 4200, ok: false, reason: "no connection accepted within 2000ms", elapsedMs: 2000 }]),
+    });
+    const failing = findingsFor(report, "frontdoor").find((finding) => finding.severity === "fail");
+    expect(failing?.message).toContain("every plain OAuth session");
+    expect(failing?.message).toContain("agent-shim frontdoor restart");
+  });
+});
+

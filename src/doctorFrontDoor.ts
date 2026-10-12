@@ -1,4 +1,5 @@
 import type { DoctorSection, DoctorSeverity } from "./doctorReport";
+import type { FrontDoorListenerReading } from "./frontdoor/listenerReadings";
 import type { FrontDoorSessionSummary } from "./frontdoor/state";
 import type { FrontDoorSupervisorListing } from "./frontdoor/supervisorProcesses";
 
@@ -48,6 +49,35 @@ export function pushFrontDoor(
       `Front door supervisor pid ${String(pid)} is running beside ${String(pids.length - 1)} other(s). ${serving} ` +
         `Stop it with \`kill ${String(pid)}\`; launches still connected to it lose their door.`,
       String(pid),
+    );
+  }
+}
+
+/** The sessions each listener carries, named in a finding so a person can tell which of their sessions a failing listener cuts off. */
+const LISTENER_ROUTES: Readonly<Record<FrontDoorListenerReading["listener"], string>> = {
+  provider: "provider sessions (`z`, `m` and the like)",
+  connect: "every plain OAuth session, which reaches Anthropic through it",
+};
+
+/**
+ * Reports whether each listener of the serving door accepts, which a live supervisor pid cannot say: a door whose event loop is blocked is alive and accepts nothing. A listener that does not accept within the probe's bound fails the check and names the sessions it cuts off; one that does is a pass that states how long it took on this machine now, as an observation, not a threshold.
+ */
+export function pushFrontDoorListeners(
+  push: (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string) => void,
+  readings: readonly FrontDoorListenerReading[],
+): void {
+  for (const reading of readings) {
+    const where = `127.0.0.1:${String(reading.port)}`;
+    if (reading.ok) {
+      push("frontdoor", "pass", `The front door's ${reading.listener} listener on ${where} accepted a probe in ${String(Math.round(reading.elapsedMs))} ms.`, reading.listener);
+      continue;
+    }
+    push(
+      "frontdoor",
+      "fail",
+      `The front door's ${reading.listener} listener on ${where} did not accept a probe${reading.reason === undefined ? "" : ` (${reading.reason})`}, so ${LISTENER_ROUTES[reading.listener]} cannot get through while it stays like this. ` +
+        "The supervisor is alive but is not serving: `agent-shim frontdoor restart` replaces it.",
+      reading.listener,
     );
   }
 }

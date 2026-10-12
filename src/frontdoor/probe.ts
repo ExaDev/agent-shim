@@ -61,11 +61,49 @@ request.on("error", (error) => finish(failed, (error.code ? error.code + ": " : 
  */
 export function probeFrontDoorSync(port: number, caPem: string): ListenerVerdict {
   refuseToBlockInRole("a synchronous probe of the front door");
+  return runProbeWorker(PROBE_SOURCE, { port, ca: caPem });
+}
+
+/**
+ * The accept probe, run on a worker thread for the same reason: one TCP connect to 127.0.0.1 that succeeds as soon as the listener accepts and is closed again at once, so nothing is sent to the surface it asks about.
+ */
+const ACCEPT_PROBE_SOURCE = `
+const { workerData } = require("node:worker_threads");
+const net = require("node:net");
+const { port, timeoutMs, shared, ok, failed, headerSlots } = workerData;
+const header = new Int32Array(shared, 0, headerSlots);
+const reason = new Uint8Array(shared, headerSlots * 4);
+let done = false;
+const finish = (verdict, message) => {
+  if (done) return;
+  done = true;
+  const bytes = Buffer.from(String(message), "utf8").subarray(0, reason.length);
+  reason.set(bytes);
+  Atomics.store(header, 1, bytes.length);
+  Atomics.store(header, 0, verdict);
+  Atomics.notify(header, 0);
+};
+const socket = net.connect({ host: "127.0.0.1", port });
+socket.once("connect", () => { socket.destroy(); finish(ok, ""); });
+socket.once("error", (error) => finish(failed, (error.code ? error.code + ": " : "") + error.message));
+setTimeout(() => { socket.destroy(); finish(failed, "no connection accepted within " + String(timeoutMs) + "ms"); }, timeoutMs);
+`;
+
+/**
+ * Whether a listener on 127.0.0.1 accepts a TCP connection within the probe's bound, which is all the CONNECT surface can be asked without presenting a launch's capability. Used by `doctor` and `frontdoor status` to tell a listener that accepts from one whose process is alive but whose event loop is not serving, which a supervisor pid check cannot.
+ */
+export function probeListenerAcceptSync(port: number): ListenerVerdict {
+  refuseToBlockInRole("a synchronous probe of a front door listener");
+  return runProbeWorker(ACCEPT_PROBE_SOURCE, { port });
+}
+
+/** Runs one probe source on a worker thread and blocks this thread on its verdict, whatever the probe asks. */
+function runProbeWorker(source: string, data: Readonly<Record<string, unknown>>): ListenerVerdict {
   const shared = new SharedArrayBuffer(HEADER_SLOTS * INT32_BYTES + REASON_BYTES);
   const header = new Int32Array(shared, 0, HEADER_SLOTS);
-  const worker = new Worker(PROBE_SOURCE, {
+  const worker = new Worker(source, {
     eval: true,
-    workerData: { port, ca: caPem, timeoutMs: PROBE_TIMEOUT_MS, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS },
+    workerData: { ...data, timeoutMs: PROBE_TIMEOUT_MS, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS },
   });
   // The worker must never keep the launcher alive: the verdict is all this thread needs from it.
   worker.unref();
