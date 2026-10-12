@@ -483,12 +483,12 @@ export const realHeadroomSocketTrust: HeadroomSocketTrustPorts = {
 /**
  * The real `HeadroomPort` for one launch: `ensure` runs the lock-and-poll coordination against the real filesystem and process table and derives the per-project identity from the real git repository containing the working directory; `release` removes this launcher's session-registry entry.
  */
-export function realHeadroomPort(paths: LayoutPaths, options: { readonly spawnDaemon: DaemonSpawner; readonly cwd: string }): HeadroomPort {
+export function realHeadroomPort(paths: LayoutPaths, options: { readonly spawnDaemon: DaemonSpawner; readonly cwd: string; /** The pid registered as the session that keeps the daemon alive: this process by default, or a long-lived one (the front door) when a launch is not the one asking. */ readonly registerAs?: number }): HeadroomPort {
   return {
     ensure: ({ routesProvider }) => {
       const up = ensureHeadroom({
         paths,
-        launcherPid: process.pid,
+        launcherPid: options.registerAs ?? process.pid,
         ...(routesProvider ? { requiredUpstreams: () => launchRequiredUpstreams(realFarmFs, paths) } : {}),
         ports: {
           fs: realFarmFs,
@@ -506,7 +506,7 @@ export function realHeadroomPort(paths: LayoutPaths, options: { readonly spawnDa
       };
     },
     release: () => {
-      removeSession(realFarmFs, paths.headroomSessionsDir, process.pid);
+      removeSession(realFarmFs, paths.headroomSessionsDir, options.registerAs ?? process.pid);
     },
   };
 }
