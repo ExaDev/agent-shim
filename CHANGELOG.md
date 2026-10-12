@@ -1,3 +1,9 @@
+## [11.2.0](https://github.com/ExaDev/agent-shim/compare/v11.1.0...v11.2.0) (2026-10-12)
+
+### Features
+
+* **frontdoor:** send a session direct while headroom is unavailable ([b6c408d](https://github.com/ExaDev/agent-shim/commit/b6c408df2f273b88891aa0bf775138364c464633))
+
 ## [11.1.0](https://github.com/ExaDev/agent-shim/compare/v11.0.0...v11.1.0) (2026-10-12)
 
 ### Features
