@@ -1,3 +1,9 @@
+## [11.5.1](https://github.com/ExaDev/agent-shim/compare/v11.5.0...v11.5.1) (2026-10-12)
+
+### Bug Fixes
+
+* **frontdoor:** never retire a door that has live sessions on a missed probe ([d51ea33](https://github.com/ExaDev/agent-shim/commit/d51ea3304848f47b7ef6ee96a7ab2a4caf7de8ce)), references [#420](https://github.com/ExaDev/agent-shim/issues/420)
+
 ## [11.5.0](https://github.com/ExaDev/agent-shim/compare/v11.4.1...v11.5.0) (2026-10-12)
 
 ### Features
