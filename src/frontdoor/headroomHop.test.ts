@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { NO_ROUTING_SETTING } from "../headroom/routingSetting";
 import { createHeadroomDecision, type HeadroomDecision } from "./headroomDecision";
 import fs from "node:fs";
 import http from "node:http";
@@ -387,7 +388,7 @@ describe("the headroom hop", () => {
 
   it("serves a session that wants headroom directly when no daemon is serving, instead of answering 502", async () => {
     // Nothing is recorded as serving: the state file names no socket.
-    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomDecision: createHeadroomDecision() });
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomDecision: createHeadroomDecision(() => NO_ROUTING_SETTING) });
     try {
       const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
         dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
@@ -399,7 +400,7 @@ describe("the headroom hop", () => {
 
   it("sends a session that wants headroom through a daemon that reports itself ready", async () => {
     const headroom = await fakeHeadroom();
-    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomDecision: createHeadroomDecision() });
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomDecision: createHeadroomDecision(() => NO_ROUTING_SETTING) });
     try {
       const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
         dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });

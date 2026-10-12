@@ -28,6 +28,7 @@ import { machineTimeZone } from "../usage/anchor";
 import { runWindowKeeper } from "../usage/windowKeeper";
 import { realCredentialCacheEnv } from "../realCredentialCache";
 import { createDoorPipelines } from "./assembly";
+import { createRoutingSettingReader } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
 import { isLiveCapability } from "./capability";
 import { captureFromEnv } from "./capture";
@@ -285,7 +286,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       log(`job keeper failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
-  const headroomDecision = createHeadroomDecision();
+  const headroomDecision = createHeadroomDecision(createRoutingSettingReader(paths));
   const recordUsage = withQuotaRefresh(usageStore.record, quotaRefresher);
   const usageMiddleware = createUsageMiddleware({
     // Each finished response also tells the per-session headroom decision when the session's cache was last touched and whether it read from it.

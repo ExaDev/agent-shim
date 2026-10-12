@@ -9,6 +9,7 @@ import { HTTP_STATUS } from "../codex/http";
 import { readGlobalConfig } from "../configProfilesStore";
 import { realTrustBundleFs } from "../frontdoor/realFrontDoorPort";
 import { resolveTrustBundle, type TrustBundle, type TrustBundleFs } from "../frontdoor/trust";
+import { registerHeadroomRoutingCommands } from "./routingCommands";
 import { hashSettings, settingsArgs, settingsEnv, settingsOf, type HeadroomSettings } from "./settings";
 import { parseInstalledCommit } from "./source";
 import type { LayoutPaths } from "../paths";
@@ -366,8 +367,9 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
 /** Registers the `agent-shim headroom` command tree and the hidden `__headroom-supervisor` internal subcommand. */
 export function registerHeadroomCommand(program: Command, deps: CommandDeps): void {
   const { paths } = deps;
-  const headroom = withExamples(program.command("headroom").description("Inspect the headroom routing daemon."), [
+  const headroom = withExamples(program.command("headroom").description("Inspect the headroom routing daemon and choose which sessions use it."), [
     "agent-shim headroom status",
+    "agent-shim headroom enable",
   ]);
 
   withExamples(
@@ -387,6 +389,8 @@ export function registerHeadroomCommand(program: Command, deps: CommandDeps): vo
       }),
     ["agent-shim headroom status", "agent-shim headroom status --json"],
   );
+
+  registerHeadroomRoutingCommands(headroom, deps);
 
   program
     .command("__headroom-supervisor", { hidden: true })

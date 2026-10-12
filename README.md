@@ -133,6 +133,7 @@ agent-shim configure [path] [--identity <identity>]
 agent-shim check [path] [--identity <identity>] [--json] [--strict]
 agent-shim doctor [--json]
 agent-shim headroom status [--json]
+agent-shim headroom enable|disable [--session <id>] [--now] [--json]   # which sessions go through headroom, live; applied at each session's next cache boundary unless --now
 agent-shim codex status [--json]
 agent-shim codex login [--no-open] [--json]       # Sign in with ChatGPT, for providers with `codex.login: chatgpt-sign-in`
 agent-shim codex logout [--json]

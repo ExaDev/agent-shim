@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { HTTP_STATUS } from "../codex/http";
 import { admitEverything, followsLaunchFlag } from "../test-helpers";
 import { createCredentialCustody } from "./custody";
+import { NO_ROUTING_SETTING } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
 import { createRoutedResponse, serveRouted, type PipelineDeps, type PipelineRequest, type ResponseBodyObserver, type ResponseObserver, type RouteResolution, type RoutedResponseEvent } from "./pipeline";
 import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse } from "./route";
@@ -176,7 +177,7 @@ describe("serveRouted", () => {
 
     it("keeps a session's routing across requests while its cache is warm, though a later request's flag differs", async () => {
       const seen: boolean[] = [];
-      const decision = createHeadroomDecision();
+      const decision = createHeadroomDecision(() => NO_ROUTING_SETTING);
       const { deps: base } = deps({ ok: true, route: recordingRoute() }, [
         (event) => {
           seen.push(event.viaHeadroom);
