@@ -1,3 +1,9 @@
+## [11.6.0](https://github.com/ExaDev/agent-shim/compare/v11.5.2...v11.6.0) (2026-10-12)
+
+### Features
+
+* **frontdoor:** refuse synchronous launcher coordination in the door process ([f98d231](https://github.com/ExaDev/agent-shim/commit/f98d2314f30515ab9e8db025339e17b9553bb623)), references [#426](https://github.com/ExaDev/agent-shim/issues/426)
+
 ## [11.5.2](https://github.com/ExaDev/agent-shim/compare/v11.5.1...v11.5.2) (2026-10-12)
 
 ### Bug Fixes
