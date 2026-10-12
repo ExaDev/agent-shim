@@ -93,6 +93,12 @@ export function ensureFrontDoor(params: {
     const supervisorPid = state?.supervisorPid;
     if (supervisorPid !== undefined && !distrusted.has(supervisorPid) && ports.isRunning(supervisorPid)) {
       if (state?.port !== undefined && state.connectPort !== undefined) {
+        if (supervisorPid === params.launcherPid && params.replace !== true) {
+          // This process is the serving door: a launch planned inside it (the usage probe, the window opener, a job) has nothing to authenticate, and probing itself would block the very event loop that has to answer the probe, stalling every session on the door for the whole wait. It registers the launch like any other and returns its own addresses.
+          const token = randomUUID();
+          writeFrontDoorSession(ports.fs, paths.frontdoorSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), token, supervisorPid });
+          return { port: state.port, connectPort: state.connectPort, token };
+        }
         const verdict = verifyWithRetry(state.port);
         if (verdict.ok && !replaced && !spawned && (params.replace === true || (state.protocol ?? 0) < FRONT_DOOR_PROTOCOL)) {
           // A door older than this launcher speaks a protocol this launcher's sessions cannot use (a door from before the protocol field is protocol 0). It is replaced, never joined: the registry is on disk and the replacement binds the same sticky ports, so sessions already running reach it on the addresses they froze. The listener has authenticated as this tool's own, which is what makes the recorded pid safe to stop.
