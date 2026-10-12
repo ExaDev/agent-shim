@@ -1,3 +1,9 @@
+## [11.4.1](https://github.com/ExaDev/agent-shim/compare/v11.4.0...v11.4.1) (2026-10-12)
+
+### Bug Fixes
+
+* **headroom:** pin the default install source to the reconciled fork ([d64d161](https://github.com/ExaDev/agent-shim/commit/d64d16146f6cf627f32ad38c7f061efde23db540)), references [#382](https://github.com/ExaDev/agent-shim/issues/382) [#403](https://github.com/ExaDev/agent-shim/issues/403)
+
 ## [11.4.0](https://github.com/ExaDev/agent-shim/compare/v11.3.0...v11.4.0) (2026-10-12)
 
 ### Features
