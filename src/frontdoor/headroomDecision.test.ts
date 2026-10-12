@@ -27,14 +27,14 @@ describe("the per-session headroom decision", () => {
   it("keeps a session's routing while its cache is warm, whatever is wanted now", async () => {
     const decision = createHeadroomDecision(() => NO_ROUTING_SETTING);
     expect(await decision.decide("s", true, START_MS, up)).toBe(true);
-    decision.observe({ sessionId: "s", startedAtMs: START_MS + SECOND_MS, endedAtMs: START_MS + SECOND_MS, viaHeadroom: true, cache: warmCache });
+    decision.observe({ sessionId: "s", startedAtMs: START_MS + SECOND_MS, endedAtMs: START_MS + SECOND_MS, viaHeadroom: true, lineage: undefined, cache: warmCache });
     expect(await decision.decide("s", false, START_MS + 2 * SECOND_MS, up)).toBe(true);
   });
 
   it("takes the wanted routing again once the cache lifetime has passed", async () => {
     const decision = createHeadroomDecision(() => NO_ROUTING_SETTING);
     await decision.decide("s", true, START_MS, up);
-    decision.observe({ sessionId: "s", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, cache: warmCache });
+    decision.observe({ sessionId: "s", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, lineage: undefined, cache: warmCache });
     expect(await decision.decide("s", false, START_MS + PROMPT_CACHE_TTL_MS, up)).toBe(true);
     expect(await decision.decide("s", false, START_MS + PROMPT_CACHE_TTL_MS + SECOND_MS, up)).toBe(false);
   });
@@ -42,28 +42,28 @@ describe("the per-session headroom decision", () => {
   it("takes the wanted routing again when the last response read nothing from the cache", async () => {
     const decision = createHeadroomDecision(() => NO_ROUTING_SETTING);
     await decision.decide("s", true, START_MS, up);
-    decision.observe({ sessionId: "s", startedAtMs: START_MS + SECOND_MS, endedAtMs: START_MS + SECOND_MS, viaHeadroom: true, cache: coldCache });
+    decision.observe({ sessionId: "s", startedAtMs: START_MS + SECOND_MS, endedAtMs: START_MS + SECOND_MS, viaHeadroom: true, lineage: undefined, cache: coldCache });
     expect(await decision.decide("s", false, START_MS + 2 * SECOND_MS, up)).toBe(false);
   });
 
   it("takes the wanted routing again when the cache carried no more of the context than was written afresh", async () => {
     const decision = createHeadroomDecision(() => NO_ROUTING_SETTING);
     await decision.decide("s", true, START_MS, up);
-    decision.observe({ sessionId: "s", startedAtMs: START_MS + SECOND_MS, endedAtMs: START_MS + SECOND_MS, viaHeadroom: true, cache: { readTokens: FRESH_TOKENS, writtenTokens: FRESH_TOKENS, uncachedTokens: 0 } });
+    decision.observe({ sessionId: "s", startedAtMs: START_MS + SECOND_MS, endedAtMs: START_MS + SECOND_MS, viaHeadroom: true, lineage: undefined, cache: { readTokens: FRESH_TOKENS, writtenTokens: FRESH_TOKENS, uncachedTokens: 0 } });
     expect(await decision.decide("s", false, START_MS + 2 * SECOND_MS, up)).toBe(false);
   });
 
   it("keeps the routing while the cache carried more of the context than was written afresh", async () => {
     const decision = createHeadroomDecision(() => NO_ROUTING_SETTING);
     await decision.decide("s", true, START_MS, up);
-    decision.observe({ sessionId: "s", startedAtMs: START_MS + SECOND_MS, endedAtMs: START_MS + SECOND_MS, viaHeadroom: true, cache: { readTokens: FRESH_TOKENS + 1, writtenTokens: FRESH_TOKENS, uncachedTokens: 0 } });
+    decision.observe({ sessionId: "s", startedAtMs: START_MS + SECOND_MS, endedAtMs: START_MS + SECOND_MS, viaHeadroom: true, lineage: undefined, cache: { readTokens: FRESH_TOKENS + 1, writtenTokens: FRESH_TOKENS, uncachedTokens: 0 } });
     expect(await decision.decide("s", false, START_MS + 2 * SECOND_MS, up)).toBe(true);
   });
 
   it("decides each session on its own", async () => {
     const decision = createHeadroomDecision(() => NO_ROUTING_SETTING);
     await decision.decide("a", true, START_MS, up);
-    decision.observe({ sessionId: "a", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, cache: warmCache });
+    decision.observe({ sessionId: "a", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, lineage: undefined, cache: warmCache });
     expect(await decision.decide("b", false, START_MS + SECOND_MS, up)).toBe(false);
     expect(await decision.decide("a", false, START_MS + SECOND_MS, up)).toBe(true);
   });
@@ -77,9 +77,9 @@ describe("the per-session headroom decision", () => {
   it("forgets a session whose last response is older than the cache lifetime once another response is observed", async () => {
     const decision = createHeadroomDecision(() => NO_ROUTING_SETTING);
     await decision.decide("old", true, START_MS, up);
-    decision.observe({ sessionId: "old", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, cache: warmCache });
+    decision.observe({ sessionId: "old", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, lineage: undefined, cache: warmCache });
     await decision.decide("new", true, START_MS + 2 * PROMPT_CACHE_TTL_MS, up);
-    decision.observe({ sessionId: "new", startedAtMs: START_MS + 2 * PROMPT_CACHE_TTL_MS, endedAtMs: START_MS + 2 * PROMPT_CACHE_TTL_MS, viaHeadroom: true, cache: warmCache });
+    decision.observe({ sessionId: "new", startedAtMs: START_MS + 2 * PROMPT_CACHE_TTL_MS, endedAtMs: START_MS + 2 * PROMPT_CACHE_TTL_MS, viaHeadroom: true, lineage: undefined, cache: warmCache });
     // A session still inside the lifetime would have kept true here; the forgotten one takes what is wanted.
     expect(await decision.decide("old", false, START_MS + 2 * PROMPT_CACHE_TTL_MS + SECOND_MS, up)).toBe(false);
   });
@@ -92,14 +92,14 @@ describe("the per-session headroom decision", () => {
   it("lets a session that went direct rejoin headroom at its next boundary once the daemon is available", async () => {
     const decision = createHeadroomDecision(() => NO_ROUTING_SETTING);
     expect(await decision.decide("s", true, START_MS, down)).toBe(false);
-    decision.observe({ sessionId: "s", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, cache: coldCache });
+    decision.observe({ sessionId: "s", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, lineage: undefined, cache: coldCache });
     expect(await decision.decide("s", true, START_MS + SECOND_MS, up)).toBe(true);
   });
 
   it("keeps a warm session on headroom through an unavailable daemon, so its request is replayed, not sent uncompressed", async () => {
     const decision = createHeadroomDecision(() => NO_ROUTING_SETTING);
     expect(await decision.decide("s", true, START_MS, up)).toBe(true);
-    decision.observe({ sessionId: "s", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, cache: warmCache });
+    decision.observe({ sessionId: "s", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, lineage: undefined, cache: warmCache });
     expect(await decision.decide("s", true, START_MS + SECOND_MS, down)).toBe(true);
   });
 
@@ -132,7 +132,7 @@ describe("the per-session headroom decision", () => {
       let setting: RoutingSetting = NO_ROUTING_SETTING;
       const decision = createHeadroomDecision(() => setting);
       expect(await decision.decide("s", true, START_MS, up)).toBe(true);
-      decision.observe({ sessionId: "s", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, cache: warmCache });
+      decision.observe({ sessionId: "s", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, lineage: undefined, cache: warmCache });
       setting = { schemaVersion: 1, global: { viaHeadroom: false }, sessions: {} };
       expect(await decision.decide("s", true, START_MS + SECOND_MS, up)).toBe(true);
       expect(await decision.decide("s", true, START_MS + PROMPT_CACHE_TTL_MS + SECOND_MS, up)).toBe(false);
@@ -142,10 +142,10 @@ describe("the per-session headroom decision", () => {
       let setting: RoutingSetting = NO_ROUTING_SETTING;
       const decision = createHeadroomDecision(() => setting);
       expect(await decision.decide("s", true, START_MS, up)).toBe(true);
-      decision.observe({ sessionId: "s", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, cache: warmCache });
+      decision.observe({ sessionId: "s", startedAtMs: START_MS, endedAtMs: START_MS, viaHeadroom: true, lineage: undefined, cache: warmCache });
       setting = { schemaVersion: 1, sessions: { s: { viaHeadroom: false, force: 7 } } };
       expect(await decision.decide("s", true, START_MS + SECOND_MS, up)).toBe(false);
-      decision.observe({ sessionId: "s", startedAtMs: START_MS + SECOND_MS, endedAtMs: START_MS + SECOND_MS, viaHeadroom: true, cache: warmCache });
+      decision.observe({ sessionId: "s", startedAtMs: START_MS + SECOND_MS, endedAtMs: START_MS + SECOND_MS, viaHeadroom: true, lineage: undefined, cache: warmCache });
       setting = { schemaVersion: 1, sessions: { s: { viaHeadroom: true, force: 7 } } };
       expect(await decision.decide("s", true, START_MS + 2 * SECOND_MS, up)).toBe(false);
       setting = { schemaVersion: 1, sessions: { s: { viaHeadroom: true, force: 8 } } };
@@ -166,8 +166,8 @@ describe("the per-session headroom decision", () => {
     /** Runs one request of a thread through the decision and its response back, a second after the last, returning whether it went through headroom. */
     async function turn(decision: ReturnType<typeof createHeadroomDecision>, index: number, lineage: Lineage, cache: { readonly readTokens: number; readonly writtenTokens: number; readonly uncachedTokens: number }, viaHeadroom = true): Promise<boolean> {
       const startedAtMs = START_MS + index * SECOND_MS;
-      const via = await decision.decide("s", true, startedAtMs, up, { receivedAtMs: startedAtMs, lineage });
-      decision.observe({ sessionId: "s", startedAtMs, endedAtMs: startedAtMs + SECOND_MS / 2, viaHeadroom, cache });
+      const via = await decision.decide("s", true, startedAtMs, up);
+      decision.observe({ sessionId: "s", startedAtMs, endedAtMs: startedAtMs + SECOND_MS / 2, viaHeadroom, lineage, cache });
       return via;
     }
     const link = (index: number): Lineage => ({ ownKey: THREAD_KEYS[index] ?? "", parentKey: index === 0 ? undefined : THREAD_KEYS[index - 1] });

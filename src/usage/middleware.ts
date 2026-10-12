@@ -15,7 +15,8 @@ const DOOR_ANSWERED_ROUTES = new Set(["(unauthorized)", "(unrouted)"]);
 /** Everything the usage middleware depends on, injected so it runs against fakes in tests. */
 export interface UsageMiddlewareDeps {
   /** Persists one finished request's record. It may throw; the middleware catches and logs, so a store failure never reaches a request. */
-  readonly record: (record: UsageRecord) => void;
+  /** Receives each finished record with the routed response event it was built from, for a consumer that needs more of the request than the record keeps (the thread a messages request belongs to). */
+  readonly record: (record: UsageRecord, event: RoutedResponseEvent) => void;
   /** Runs work after the current turn of the event loop, so recording never sits between a route's `end` and whatever the route does next (production: `setImmediate`). */
   readonly defer: (task: () => void) => void;
   readonly now: () => number;
@@ -131,7 +132,7 @@ export function createUsageMiddleware(deps: UsageMiddlewareDeps): ResponseObserv
       const endedAt = deps.now();
       deps.defer(() => {
         try {
-          deps.record(buildRecord(event, { headAt, endedAt, outcome, scan: scanning && scanner !== undefined ? scanner.result() : undefined }));
+          deps.record(buildRecord(event, { headAt, endedAt, outcome, scan: scanning && scanner !== undefined ? scanner.result() : undefined }), event);
         } catch (error) {
           deps.log(`usage: could not record ${event.method} ${event.path} (${String(event.status)}): ${error instanceof Error ? error.message : String(error)}`);
         }

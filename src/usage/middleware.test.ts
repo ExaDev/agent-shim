@@ -29,6 +29,7 @@ function event(overrides: Partial<RoutedResponseEvent> = {}): RoutedResponseEven
     path: "/v1/messages",
     receivedAt: RECEIVED_AT,
     viaHeadroom: false,
+    lineage: undefined,
     status: OK_STATUS,
     headers: SSE_HEADERS,
     ...overrides,

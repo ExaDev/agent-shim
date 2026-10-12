@@ -20,6 +20,8 @@ export interface RoutedResponseEvent {
   readonly receivedAt: number;
   /** Whether the request crossed the headroom hop on its way upstream, as decided by the pipeline for this request (a session's headroom flag alone does not say: the route may be ineligible or no daemon wired). */
   readonly viaHeadroom: boolean;
+  /** Where the request sits in its conversation thread, for a messages request read whole by the pipeline. Undefined for any other request. */
+  readonly lineage: Lineage | undefined;
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
 }
@@ -157,6 +159,7 @@ interface ObservedRequest {
   readonly path: string;
   readonly receivedAt: number;
   readonly viaHeadroom: boolean;
+  readonly lineage: Lineage | undefined;
 }
 
 /** The request target's path without its query string: the query is the client's business, and middleware has no use for it. */
@@ -226,7 +229,7 @@ export function createRoutedResponse(
     start: (status, headers) => {
       for (const observe of deps.responseObservers) {
         try {
-          const body = observe({ session, route, method: request.method, path: request.path, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, status, headers });
+          const body = observe({ session, route, method: request.method, path: request.path, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, lineage: request.lineage, status, headers });
           if (body !== undefined) {
             bodyObservers.push(body);
           }
@@ -274,7 +277,7 @@ export function createRoutedResponse(
  * The ordered pipeline every routed session's request runs through: identify the session (splitting the launcher-injected headers out of what may leave the machine), then route, with the response middleware running at each response head. A route that cannot be resolved is answered as an Anthropic-shaped error, and the observers see that error like any other response, since quota and rate-limit state lives in exactly those.
  */
 export async function serveRouted(request: PipelineRequest, deps: PipelineDeps): Promise<void> {
-  const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false };
+  const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false, lineage: undefined };
   const identified = identifyRequest(request.headers);
   const admission = deps.admit({ url: request.url, headers: request.headers, forwardable: identified.forwardableHeaders });
   if (!admission.ok) {
@@ -319,9 +322,9 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
   // Only the client-facing pipeline decides: a request coming back on the direct listener has already been through that decision, and asking again from there would let a daemon-less pipeline overwrite the session's choice.
   const wantsHeadroom =
     headroom !== undefined &&
-    (await deps.headroomDecision.decide(identified.session.sessionId, identified.session.headroom, deps.now(), async () => await headroomReady(headroom, request.signal), { receivedAtMs: observed.receivedAt, lineage }));
+    (await deps.headroomDecision.decide(identified.session.sessionId, identified.session.headroom, deps.now(), async () => await headroomReady(headroom, request.signal)));
   const viaHeadroom = wantsHeadroom && resolution.route.headroomEligible && deps.headroom !== undefined;
-  const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom } });
+  const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom, lineage } });
   try {
     if (viaHeadroom) {
       // The ordering the whole design turns on: headroom first, on the Anthropic-shaped request, then the route (a translator receives what headroom compressed). A route that opts out, or a listener that serves routes directly, falls through to serving.

@@ -30,8 +30,10 @@ interface SessionState {
 /** A finished response, as the decision learns it. */
 interface ObservedResponse {
   readonly sessionId: string | undefined;
-  /** When the request that produced the response arrived: with the session id, what ties the response back to the lineage the request was decided with. */
+  /** When the request that produced the response arrived. */
   readonly startedAtMs: number;
+  /** Where the request sat in its conversation thread; undefined for a request that was not a messages request. */
+  readonly lineage: Lineage | undefined;
   /** Whether the request really crossed headroom, which is the door's decision after the route's own eligibility. */
   readonly viaHeadroom: boolean;
   readonly endedAtMs: number;
@@ -50,7 +52,7 @@ export interface HeadroomDecision {
    *
    * Both are taken only at a boundary, where a session that wants headroom but finds the daemon unavailable goes direct, since it has no cache to lose and is better served than refused; it rejoins at its next boundary once the daemon is available. A setting made with `--now` is a boundary for the one request that first sees it, because the person chose to pay for the cache rewrite. A session whose responses through headroom keep missing what the response before them wrote has its prefix changed by headroom from turn to turn, which costs the whole context every time; at its next boundary it goes direct and stays direct for as long as it is remembered. Between boundaries the session's earlier choice stands, so a session already using headroom keeps replaying through it rather than being sent uncompressed. A request with no session id has no cache to protect and takes the same choice outright.
    */
-  readonly decide: (sessionId: string | undefined, launchFlag: boolean, nowMs: number, available: () => Promise<boolean>, request?: { readonly receivedAtMs: number; readonly lineage: Lineage | undefined }) => Promise<boolean>;
+  readonly decide: (sessionId: string | undefined, launchFlag: boolean, nowMs: number, available: () => Promise<boolean>) => Promise<boolean>;
   /** Records a finished response, which is what makes the next boundary known. */
   readonly observe: (response: ObservedResponse) => void;
 }
@@ -67,17 +69,12 @@ export function createHeadroomDecision(setting: () => RoutingSetting): HeadroomD
   const sessions = new Map<string, SessionState>();
   /** Each thread's latest point, by the hash of the history that produced it. */
   const threads = new Map<string, ThreadPoint>();
-  /** The lineage each decided request carried, until its response is observed. */
-  const pending = new Map<string, { readonly lineage: Lineage; readonly receivedAtMs: number }>();
   return {
-    decide: async (sessionId, launchFlag, nowMs, available, request) => {
+    decide: async (sessionId, launchFlag, nowMs, available) => {
       const choice = choiceFor(setting(), sessionId);
       const wanted = choice?.viaHeadroom ?? launchFlag;
       if (sessionId === undefined) {
         return wanted && (await available());
-      }
-      if (request?.lineage !== undefined) {
-        pending.set(`${sessionId}:${String(request.receivedAtMs)}`, { lineage: request.lineage, receivedAtMs: request.receivedAtMs });
       }
       const state = sessions.get(sessionId);
       const forced = choice?.force !== undefined && choice.force !== state?.appliedForce;
@@ -94,15 +91,12 @@ export function createHeadroomDecision(setting: () => RoutingSetting): HeadroomD
       });
       return viaHeadroom;
     },
-    observe: ({ sessionId, startedAtMs, endedAtMs, viaHeadroom, cache }) => {
+    observe: ({ sessionId, startedAtMs, endedAtMs, viaHeadroom, lineage, cache }) => {
       if (sessionId === undefined || cache === undefined) {
         return;
       }
       const cacheSurplusTokens = cache.readTokens - cache.writtenTokens - cache.uncachedTokens;
       const state = sessions.get(sessionId);
-      const key = `${sessionId}:${String(startedAtMs)}`;
-      const lineage = pending.get(key)?.lineage;
-      pending.delete(key);
       let { prefixMisses, prefixBroken } = state ?? { prefixMisses: 0, prefixBroken: false };
       if (lineage !== undefined) {
         // Only a response whose own thread's previous response is known, was recent, and also went through headroom can say anything about headroom: otherwise a subagent, a fork, a cache that expired or a switch of route would read as a miss.
@@ -124,11 +118,6 @@ export function createHeadroomDecision(setting: () => RoutingSetting): HeadroomD
       for (const [id, point] of threads) {
         if (endedAtMs - point.endedAtMs > PROMPT_CACHE_TTL_MS) {
           threads.delete(id);
-        }
-      }
-      for (const [id, entry] of pending) {
-        if (endedAtMs - entry.receivedAtMs > PROMPT_CACHE_TTL_MS) {
-          pending.delete(id);
         }
       }
     },

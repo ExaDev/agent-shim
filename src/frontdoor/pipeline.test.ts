@@ -102,7 +102,7 @@ function deps(resolution: RouteResolution, observers: readonly ResponseObserver[
 describe("createRoutedResponse", () => {
   it("applies backpressure: a write that the socket refuses waits for its drain", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, lineage: undefined } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -118,7 +118,7 @@ describe("createRoutedResponse", () => {
 
   it("settles a backpressured write when the client goes away, so a route is never left waiting on a dead socket", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, lineage: undefined } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -206,7 +206,7 @@ describe("serveRouted", () => {
         await serveRouted(request, { ...base, headroom, headroomDecision: { decide: async (id, wanted, now) => await decision.decide(id, wanted, now, async () => await Promise.resolve(true)), observe: decision.observe } });
       };
       await serve(true);
-      decision.observe({ sessionId: "s1", startedAtMs: 0, endedAtMs: 0, viaHeadroom: true, cache: { readTokens: 1000, writtenTokens: 0, uncachedTokens: 0 } });
+      decision.observe({ sessionId: "s1", startedAtMs: 0, endedAtMs: 0, viaHeadroom: true, lineage: undefined, cache: { readTokens: 1000, writtenTokens: 0, uncachedTokens: 0 } });
       await serve(false);
       expect(seen).toEqual([true, true]);
     });
@@ -353,7 +353,7 @@ function routedWith(response: FakeServerResponse, observers: readonly ResponseOb
     deps: d,
     session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined },
     route: "test",
-    request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false },
+    request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, lineage: undefined },
   });
   return { routed, logs };
 }
