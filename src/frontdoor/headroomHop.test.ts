@@ -14,7 +14,7 @@ import { HEADROOM_SOCKET_DIR_MODE, headroomSocketPath, type HeadroomSocketTarget
 import { writeHeadroomState } from "../headroom/state";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { realFarmFs, realHeadroomSocketTrust } from "../realPorts";
-import { FAKE_HOME, fakeCredentials, fakeFs } from "../test-helpers";
+import { FAKE_HOME, fakeCredentials, fakeFs, followsLaunchFlag } from "../test-helpers";
 import { createDoorPipelines } from "./assembly";
 import { headroomSocketTarget } from "./status";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
@@ -236,7 +236,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
     headroomSocket: home.target,
     hopSecret: HOP_SECRET,
     custody: createCredentialCustody(() => randomUUID()),
-    responseObservers: [],
+    headroomDecision: followsLaunchFlag, responseObservers: [],
     now: () => 0,
     log,
   });

@@ -3,8 +3,9 @@ import type { IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
-import { admitEverything } from "../test-helpers";
+import { admitEverything, followsLaunchFlag } from "../test-helpers";
 import { createCredentialCustody } from "./custody";
+import { createHeadroomDecision } from "./headroomDecision";
 import { createRoutedResponse, serveRouted, type PipelineDeps, type PipelineRequest, type ResponseBodyObserver, type ResponseObserver, type RouteResolution, type RoutedResponseEvent } from "./pipeline";
 import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse } from "./route";
 
@@ -85,7 +86,7 @@ function deps(resolution: RouteResolution, observers: readonly ResponseObserver[
     logs,
     deps: {
       resolveRoute: async () => await Promise.resolve(resolution),
-      responseObservers: observers,
+      headroomDecision: followsLaunchFlag, responseObservers: observers,
       admit: admitEverything,
       now: () => 0,
       log: (line) => {
@@ -173,6 +174,26 @@ describe("serveRouted", () => {
       return seen;
     }
 
+    it("keeps a session's routing across requests while its cache is warm, though a later request's flag differs", async () => {
+      const seen: boolean[] = [];
+      const decision = createHeadroomDecision();
+      const { deps: base } = deps({ ok: true, route: recordingRoute() }, [
+        (event) => {
+          seen.push(event.viaHeadroom);
+          return undefined;
+        },
+      ]);
+      const headroom = { headroomSocket: () => undefined, hopSecret: "secret", custody: createCredentialCustody(() => "id"), log: () => undefined };
+      const serve = async (flagged: boolean): Promise<void> => {
+        const { request } = pipelineRequest({ [SESSION_HEADER]: "s1", ...(flagged ? { [HEADROOM_FLAG_HEADER]: "1" } : {}) });
+        await serveRouted(request, { ...base, headroom, headroomDecision: decision });
+      };
+      await serve(true);
+      decision.observe({ sessionId: "s1", endedAtMs: 0, cacheReadInputTokens: 1000 });
+      await serve(false);
+      expect(seen).toEqual([true, true]);
+    });
+
     it("is true when the session asked for headroom, the route admits it and a daemon is wired", async () => {
       expect(await observedViaHeadroom({ flagged: true, eligible: true, wired: true })).toEqual([true]);
     });
@@ -197,7 +218,7 @@ describe("serveRouted", () => {
       request,
       {
         resolveRoute: async () => await Promise.resolve({ ok: true, route: recordingRoute() }),
-        responseObservers: [(event) => { statuses.push(event.status); return undefined; }],
+        headroomDecision: followsLaunchFlag, responseObservers: [(event) => { statuses.push(event.status); return undefined; }],
         admit: () => ({ ok: false, message: "agent-shim front door: this request carries no capability from a live agent-shim launch" }),
         now: () => 0,
         log: () => undefined,
@@ -228,7 +249,7 @@ describe("serveRouted", () => {
       request,
       {
         resolveRoute: async () => await Promise.resolve({ ok: true, route: recordingRoute() }),
-        responseObservers: [
+        headroomDecision: followsLaunchFlag, responseObservers: [
           (): undefined => {
             throw new Error("observer bug");
           },

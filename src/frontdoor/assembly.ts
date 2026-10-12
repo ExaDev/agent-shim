@@ -1,4 +1,5 @@
 import type { HeadroomSocketTarget } from "../headroom/socket";
+import type { HeadroomDecision } from "./headroomDecision";
 import { restoreCredentials, type CredentialCustody } from "./custody";
 import type { PipelineDeps, ResponseObserver, RouteResolution } from "./pipeline";
 import { AUTH_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, PROVIDER_HEADER, internalHeaderValue, parseProviderPath, type RoutedRequest } from "./route";
@@ -12,6 +13,8 @@ export interface DoorPipelineDeps {
   readonly headroomSocket: () => HeadroomSocketTarget | undefined;
   /** This generation's hop secret: held only in this process's memory, set on what the hop sends headroom and demanded back on the direct listener. */
   readonly hopSecret: string;
+  /** The per-session headroom decision both pipelines consult, shared so a session's choice is one fact across listeners. */
+  readonly headroomDecision: HeadroomDecision;
   /** Where the hop parks a provider session's real credentials while its request crosses headroom. */
   readonly custody: CredentialCustody;
   /** The response middleware the client-facing pipeline runs at every response head: usage tracking registers here. */
@@ -64,6 +67,7 @@ export function createDoorPipelines(deps: DoorPipelineDeps): { readonly clientFa
       responseObservers: deps.responseObservers,
       admit: admitLaunch(deps.isLiveToken),
       headroom: { headroomSocket: deps.headroomSocket, hopSecret: deps.hopSecret, custody: deps.custody, log: deps.log },
+      headroomDecision: deps.headroomDecision,
       now: deps.now,
       log: deps.log,
     },
@@ -71,6 +75,7 @@ export function createDoorPipelines(deps: DoorPipelineDeps): { readonly clientFa
       resolveRoute: deps.resolveRoute,
       responseObservers: [],
       admit: admitHop(deps.hopSecret, deps.custody),
+      headroomDecision: deps.headroomDecision,
       now: deps.now,
       log: deps.log,
     },

@@ -7,7 +7,7 @@ import { serveRouted } from "./pipeline";
 import { RC_SELF_HOST_KEEPALIVE_MS, createRcSelfHostSurface, type RcSelfHostCredentialRecord, type RcWebSearchBackend } from "./rcSelfHost";
 import { RC_WEB_FETCH_MAX_BYTES, type RcWebFetchOutcome, type RcWebFetcher } from "./rcWebFetch";
 import { createRcCredentialStore } from "./rcCredentialStore";
-import { createFakeFarmFs } from "../test-helpers";
+import { createFakeFarmFs, followsLaunchFlag } from "../test-helpers";
 
 /**
  * The self-hosted Remote Control surface's own semantics, driven over real loopback HTTP through the same `serveRouted` the door hands routes to: envelope shape, the conversation-keyed sequence space its sessions attach to, the two streams' delivery rules, resume, the epoch refusal, the local answers, and the web proxies. The minting's file shapes are `rcSelfHostMint.test.ts`'s, and the end-to-end assembly (door, tracker, client half, transparent surface) is `rcSelfHost.e2e.test.ts`'s.
@@ -115,7 +115,7 @@ async function makeWorld(record: RcSelfHostCredentialRecord | null = RECORD, opt
     });
     void serveRouted(
       { method: request.method ?? "GET", url: request.url ?? "/", headers: request.headers, body: request, signal: abort.signal, response },
-      { resolveRoute: async () => await Promise.resolve({ ok: true, route: surface.route } as const), responseObservers: [], admit: () => ({ ok: true, headers: { ...request.headers } }), now: clock.now, log: () => undefined },
+      { resolveRoute: async () => await Promise.resolve({ ok: true, route: surface.route } as const), headroomDecision: followsLaunchFlag, responseObservers: [], admit: () => ({ ok: true, headers: { ...request.headers } }), now: clock.now, log: () => undefined },
     ).catch(() => {
       if (!response.headersSent) {
         response.writeHead(HTTP_STATUS.internalServerError);

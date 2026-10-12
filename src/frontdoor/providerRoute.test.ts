@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
-import { FAKE_HOME, admitLaunchToken, fakeCredentials, fakeFs } from "../test-helpers";
+import { FAKE_HOME, admitLaunchToken, fakeCredentials, fakeFs, followsLaunchFlag } from "../test-helpers";
 import type { FsPort } from "../launcher/ports";
 import type { UsageSnapshot } from "../usage/schema";
 import { createProviderRouteResolver } from "./providerRoute";
@@ -146,7 +146,7 @@ async function fakeUpstream(): Promise<{ readonly port: number; readonly seen: (
 async function startDoor(resolve: ReturnType<typeof createProviderRouteResolver>): Promise<{ readonly url: string; readonly close: () => Promise<void> }> {
   const server = createFrontDoorServer(
     async (pipelineRequest) => {
-      await serveRouted(pipelineRequest, { resolveRoute: resolve, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
+      await serveRouted(pipelineRequest, { resolveRoute: resolve, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
     },
     () => undefined,
   );
@@ -377,7 +377,7 @@ describe("per-request routing by model", () => {
     const resolve = createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeCredentials(), usageSnapshotOf: (identity) => (identity === "work" ? snapshot : undefined) });
     const server = createFrontDoorServer(
       async (pipelineRequest) => {
-        await serveRouted(pipelineRequest, { resolveRoute: resolve, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
+        await serveRouted(pipelineRequest, { resolveRoute: resolve, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
       },
       () => undefined,
     );
