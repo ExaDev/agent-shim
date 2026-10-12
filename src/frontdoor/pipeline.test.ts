@@ -160,6 +160,19 @@ describe("serveRouted", () => {
     expect(response.writtenHead?.status).toBe(HTTP_STATUS.ok);
   });
 
+  it("answers 413 and routes nothing for a messages body past the Messages API's size limit, without reading it whole", async () => {
+    const route = recordingRoute();
+    const { request, response } = pipelineRequest();
+    const MEBIBYTE = 1_048_576;
+    const MESSAGES_API_LIMIT_MIB = 32;
+    const chunks = Array.from({ length: MESSAGES_API_LIMIT_MIB + 1 }, () => Buffer.alloc(MEBIBYTE));
+    const { deps: base } = deps({ ok: true, route });
+    const headroom = { headroomSocket: () => undefined, hopSecret: "secret", custody: createCredentialCustody(() => "id"), log: () => undefined };
+    await serveRouted({ ...request, body: Readable.from(chunks) as IncomingMessage }, { ...base, headroom });
+    expect(response.writtenHead?.status).toBe(HTTP_STATUS.payloadTooLarge);
+    expect(route.seen).toHaveLength(0);
+  });
+
   describe("viaHeadroom on the observed event", () => {
     /** Serves one request with the given session flag, route eligibility and headroom wiring, and returns what the response observer saw. */
     async function observedViaHeadroom(options: { readonly flagged: boolean; readonly eligible: boolean; readonly wired: boolean }): Promise<boolean[]> {
