@@ -1,3 +1,9 @@
+## [10.0.1](https://github.com/ExaDev/agent-shim/compare/v10.0.0...v10.0.1) (2026-10-12)
+
+### Bug Fixes
+
+* **frontdoor:** say which attempt failed and whether the client was waiting ([d5a7b8e](https://github.com/ExaDev/agent-shim/commit/d5a7b8ea16f24c6d24239dd81971fc634d906df1))
+
 ## [10.0.0](https://github.com/ExaDev/agent-shim/compare/v9.19.1...v10.0.0) (2026-10-12)
 
 ### ⚠ BREAKING CHANGES
