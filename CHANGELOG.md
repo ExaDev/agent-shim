@@ -1,3 +1,10 @@
+## [11.3.0](https://github.com/ExaDev/agent-shim/compare/v11.2.0...v11.3.0) (2026-10-12)
+
+### Features
+
+* **headroom:** enable or disable routing live, globally or per session ([f091127](https://github.com/ExaDev/agent-shim/commit/f0911275885c34b57e37e87066d6a8699ebf6000))
+* **pool:** weigh a resumed conversation's context size when picking ([d0e8bab](https://github.com/ExaDev/agent-shim/commit/d0e8babfdd7307c99cdcb4c9aaeb48f2b6e3cc4b))
+
 ## [11.2.0](https://github.com/ExaDev/agent-shim/compare/v11.1.0...v11.2.0) (2026-10-12)
 
 ### Features
