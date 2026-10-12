@@ -1,3 +1,9 @@
+## [9.19.1](https://github.com/ExaDev/agent-shim/compare/v9.19.0...v9.19.1) (2026-10-12)
+
+### Documentation
+
+* record the Claude Code version the Remote Control task event shapes were read from ([2136326](https://github.com/ExaDev/agent-shim/commit/21363267123844e60a06afbd18b43902d81ba6b3))
+
 ## [9.19.0](https://github.com/ExaDev/agent-shim/compare/v9.18.0...v9.19.0) (2026-10-12)
 
 ### Features
