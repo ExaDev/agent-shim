@@ -1,3 +1,11 @@
+## [11.5.2](https://github.com/ExaDev/agent-shim/compare/v11.5.1...v11.5.2) (2026-10-12)
+
+### Bug Fixes
+
+* **frontdoor:** confirm the process before the in-door shortcut ([0737dae](https://github.com/ExaDev/agent-shim/commit/0737dae7b0db9959753c00a59a26b236321063b0)), references [#424](https://github.com/ExaDev/agent-shim/issues/424)
+* **frontdoor:** let an explicit replace retire a door that is not answering ([4fa0960](https://github.com/ExaDev/agent-shim/commit/4fa0960705fc076dd7e974f6d1d5ac0fe0c4715e)), references [#424](https://github.com/ExaDev/agent-shim/issues/424)
+* **frontdoor:** never probe the door a launch is planned inside ([006106f](https://github.com/ExaDev/agent-shim/commit/006106f990ac9221dbb09bca0a405dd4827aebe7)), references [#424](https://github.com/ExaDev/agent-shim/issues/424)
+
 ## [11.5.1](https://github.com/ExaDev/agent-shim/compare/v11.5.0...v11.5.1) (2026-10-12)
 
 ### Bug Fixes
