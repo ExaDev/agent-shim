@@ -1,3 +1,15 @@
+## [11.0.0](https://github.com/ExaDev/agent-shim/compare/v10.1.0...v11.0.0) (2026-10-12)
+
+### ⚠ BREAKING CHANGES
+
+* **launcher:** a launch with no provider, headroom or usage setting now depends on the front
+  door being up. Opt out with --no-track-usage, AGENT_SHIM_TRACK_USAGE=0, launch.trackUsage:
+  false in a profile, rule or the global config, or run with --native.
+
+### Features
+
+* **launcher:** engage the front door for every launch by default ([5bd9cc1](https://github.com/ExaDev/agent-shim/commit/5bd9cc1e3bb488b6e3165ad5a993f3547c4c112a))
+
 ## [10.1.0](https://github.com/ExaDev/agent-shim/compare/v10.0.2...v10.1.0) (2026-10-12)
 
 ### Features
