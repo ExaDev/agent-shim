@@ -15,6 +15,8 @@ export interface RoutedResponseEvent {
   readonly path: string;
   /** When the pipeline received the request, in epoch milliseconds from the injected clock. */
   readonly receivedAt: number;
+  /** Whether the request crossed the headroom hop on its way upstream, as decided by the pipeline for this request (a session's headroom flag alone does not say: the route may be ineligible or no daemon wired). */
+  readonly viaHeadroom: boolean;
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
 }
@@ -115,6 +117,7 @@ interface ObservedRequest {
   /** The request target's path, without its query string. */
   readonly path: string;
   readonly receivedAt: number;
+  readonly viaHeadroom: boolean;
 }
 
 /** The request target's path without its query string: the query is the client's business, and middleware has no use for it. */
@@ -184,7 +187,7 @@ export function createRoutedResponse(
     start: (status, headers) => {
       for (const observe of deps.responseObservers) {
         try {
-          const body = observe({ session, route, method: request.method, path: request.path, receivedAt: request.receivedAt, status, headers });
+          const body = observe({ session, route, method: request.method, path: request.path, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, status, headers });
           if (body !== undefined) {
             bodyObservers.push(body);
           }
@@ -232,7 +235,7 @@ export function createRoutedResponse(
  * The ordered pipeline every routed session's request runs through: identify the session (splitting the launcher-injected headers out of what may leave the machine), then route, with the response middleware running at each response head. A route that cannot be resolved is answered as an Anthropic-shaped error, and the observers see that error like any other response, since quota and rate-limit state lives in exactly those.
  */
 export async function serveRouted(request: PipelineRequest, deps: PipelineDeps): Promise<void> {
-  const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now() };
+  const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false };
   const identified = identifyRequest(request.headers);
   const admission = deps.admit({ url: request.url, headers: request.headers, forwardable: identified.forwardableHeaders });
   if (!admission.ok) {
@@ -258,9 +261,10 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
     response.end();
     return;
   }
-  const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: observed });
+  const viaHeadroom = identified.session.headroom && resolution.route.headroomEligible && deps.headroom !== undefined;
+  const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom } });
   try {
-    if (identified.session.headroom && resolution.route.headroomEligible && deps.headroom !== undefined) {
+    if (viaHeadroom) {
       // The ordering the whole design turns on: headroom first, on the Anthropic-shaped request, then the route (a translator receives what headroom compressed). A route that opts out, or a listener that serves routes directly, falls through to serving.
       await applyHeadroomHop(routed, response, resolution.route.headroomUpstream, deps.headroom);
     } else {
