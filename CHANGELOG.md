@@ -1,3 +1,21 @@
+## [11.5.0](https://github.com/ExaDev/agent-shim/compare/v11.4.1...v11.5.0) (2026-10-12)
+
+### Features
+
+* **frontdoor:** match each response with its own thread's previous one ([da9e5e9](https://github.com/ExaDev/agent-shim/commit/da9e5e96c4f2e4858aef0091a3788cf91b181962))
+* **frontdoor:** take a session off headroom when it breaks the session's prefix ([57f51be](https://github.com/ExaDev/agent-shim/commit/57f51be75011bedb4891fde5a685d35581f2e997))
+
+### Bug Fixes
+
+* **frontdoor:** bound the messages body the pipeline reads whole ([846b66a](https://github.com/ExaDev/agent-shim/commit/846b66a553516ad15ac88aafb9b890fd88bb46f9))
+* **frontdoor:** budget a body's lexical tokens when hashing its thread ([2ce1d36](https://github.com/ExaDev/agent-shim/commit/2ce1d3667863539f6f244cfbb8bc4f9667d0eb91))
+* **frontdoor:** cap the work a body's lineage costs ([e0f6c51](https://github.com/ExaDev/agent-shim/commit/e0f6c513a803fdd65bd2f88f4381c5af38ebca81))
+* **frontdoor:** carry a request's thread on its response, not in a map ([0acf6ec](https://github.com/ExaDev/agent-shim/commit/0acf6ecd8b96318f0b4effa9e65ab484254e6dd6))
+* **frontdoor:** compare a response only with its own session's threads ([76261bd](https://github.com/ExaDev/agent-shim/commit/76261bdc6e5f1b49b9cc22b90d8c4ebba1783701))
+* **frontdoor:** give a deeply nested body no lineage ([3291492](https://github.com/ExaDev/agent-shim/commit/32914923d58ac1af0221b5f67fead244f00757b0))
+* **frontdoor:** hash a request's thread without parsing its body ([10c7981](https://github.com/ExaDev/agent-shim/commit/10c798108f6ceb5c99a9fb989e5fa8051e251823))
+* **frontdoor:** read the thread from the hop's own body, bounded ([1a17fd9](https://github.com/ExaDev/agent-shim/commit/1a17fd9a1ade735a79aa91ab4804a3f95e0a0835))
+
 ## [11.4.1](https://github.com/ExaDev/agent-shim/compare/v11.4.0...v11.4.1) (2026-10-12)
 
 ### Bug Fixes
