@@ -307,6 +307,36 @@ describe("ensureFrontDoor", () => {
     });
   });
 
+  describe("a launch planned inside the serving door itself", () => {
+    it("returns the door's own addresses and registers the launch without probing, spawning or stopping anything", () => {
+      const world = makeWorld({ transientProbeFailures: Number.MAX_SAFE_INTEGER });
+      world.ownSupervisors.add(SUPERVISOR_PID);
+      world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+      const ensured = ensureFrontDoor({ paths, launcherPid: SUPERVISOR_PID, ports: world.ports });
+      expect(ensured).toMatchObject({ port: PORT, connectPort: CONNECT_PORT });
+      expect(world.probed).toEqual([]);
+      expect(world.spawns).toEqual([]);
+      expect(world.stops).toEqual([]);
+      expect(world.sessionToken(SUPERVISOR_PID)).toBe(ensured.token);
+    });
+
+    it("still replaces itself when asked to, since a restart is the one launch that must act on its own door", () => {
+      const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT });
+      world.ownSupervisors.add(SUPERVISOR_PID);
+      world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+      world.authentic.add(PORT);
+      world.ports.spawnSupervisor = () => {
+        world.spawns.push(REPLACEMENT_PID);
+        world.alive.add(REPLACEMENT_PID);
+        world.writeReadyState(PORT, REPLACEMENT_PID);
+        return REPLACEMENT_PID;
+      };
+      const result = restartFrontDoor({ paths, pid: SUPERVISOR_PID, ports: world.ports });
+      expect(result).toEqual({ action: "restarted", previousPid: SUPERVISOR_PID, pid: REPLACEMENT_PID });
+      expect(world.stops).toEqual([SUPERVISOR_PID]);
+    });
+  });
+
   it("spawns a replacement supervisor when the recorded one is dead, the crash-recovery path every frozen base URL depends on", () => {
     const world = makeWorld();
     writeFrontDoorState(world.fs, paths.frontdoorStateFile, { supervisorPid: DEAD_SUPERVISOR_PID, port: PORT, lastPort: PORT, connectPort: CONNECT_PORT, lastConnectPort: CONNECT_PORT });
