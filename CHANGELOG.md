@@ -1,3 +1,34 @@
+## [10.0.0](https://github.com/ExaDev/agent-shim/compare/v9.19.1...v10.0.0) (2026-10-12)
+
+### ⚠ BREAKING CHANGES
+
+* **headroom:** ensureHeadroom takes requiredUpstreams in place of
+  requiredAllowlistHash, and launchRequiredUpstreams is exported to compute it.
+  EnsureHeadroomPorts gains daemonCommandLine. SupervisorPorts.spawnHeadroom
+  takes the allowlist file path in place of the allowlist; SupervisorPorts
+  gains daemonCommandLine, frontDoorLiveness, daemonLogSize and
+  readDaemonLogTail; SupervisorPorts.socketTrust gains readlink, and its lstat
+  must report a regular file as the new SocketPathStat kind "file".
+  RunDoctorParams.headroom.allowlist is now { drift, file, logPath,
+  undeterminedFrontDoors, fileProblem }, where fileProblem is
+  { message, repairable }, and RunDoctorParams.frontDoor gains liveSessions.
+  headroom status --json replaces allowlistDrifted, allowlistDriftInputs and
+  frontDoorOrigin with allowlistFile, allowlistDrift, allowlistFileProblem
+  ({ message, repairable }) and undeterminedFrontDoors. The daemon must be a
+  headroom build that accepts --allowed-base-urls-file; the default
+  headroom.source moves to commit ca7589c5 on the ExaDev headroom fork's main,
+  which carries it. An agent-shim root
+  whose ancestors fail headroom's rule, such as one under /tmp, can no longer
+  route through headroom.
+
+### Features
+
+* **headroom:** serve the allowlist from a file headroom re-reads ([c351b6c](https://github.com/ExaDev/agent-shim/commit/c351b6c94cee5d60bafdf3f196fac090c8eb0088))
+
+### Documentation
+
+* describe the headroom allowlist file and the waiting launch gate ([1d4ad0c](https://github.com/ExaDev/agent-shim/commit/1d4ad0cceb65755822903f14a4c12c1a255434f2))
+
 ## [9.19.1](https://github.com/ExaDev/agent-shim/compare/v9.19.0...v9.19.1) (2026-10-12)
 
 ### Documentation
