@@ -191,7 +191,7 @@ describe("serveRouted", () => {
         await serveRouted(request, { ...base, headroom, headroomDecision: { decide: async (id, wanted, now) => await decision.decide(id, wanted, now, async () => await Promise.resolve(true)), observe: decision.observe } });
       };
       await serve(true);
-      decision.observe({ sessionId: "s1", endedAtMs: 0, cacheReadInputTokens: 1000 });
+      decision.observe({ sessionId: "s1", endedAtMs: 0, cache: { readTokens: 1000, writtenTokens: 0, uncachedTokens: 0 } });
       await serve(false);
       expect(seen).toEqual([true, true]);
     });
