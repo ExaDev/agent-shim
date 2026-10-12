@@ -48,7 +48,7 @@ describe("lineageOf", () => {
   });
 
   it("walks a body of a very large number of empty messages without building them", () => {
-    const MESSAGE_COUNT = 400_000;
+    const MESSAGE_COUNT = 90_000;
     const flood = Buffer.from(`{"model":"m","messages":[${new Array<string>(MESSAGE_COUNT).fill("{}").join(",")}]}`);
     const lineage = lineageOf(flood);
     expect(lineage?.parentKey).toBeDefined();
@@ -59,5 +59,14 @@ describe("lineageOf", () => {
     const DEPTH = 100_000;
     const nested = Buffer.from(`{"model":"m","messages":[{"role":"user","content":${"[".repeat(DEPTH)}${"]".repeat(DEPTH)}}]}`);
     expect(lineageOf(nested)).toBeUndefined();
+  });
+
+  it("gives no lineage to a body past the largest conversation's size, or with more messages than the API accepts", () => {
+    const MESSAGE_LIMIT = 100_000;
+    const tooMany = Buffer.from(`{"model":"m","messages":[${new Array<string>(MESSAGE_LIMIT + 1).fill("{}").join(",")}]}`);
+    expect(lineageOf(tooMany)).toBeUndefined();
+    const FOUR_MEBIBYTES = 4_000_000;
+    const padded = Buffer.from(`{"model":"m","messages":[{"role":"user","content":"${"a".repeat(FOUR_MEBIBYTES + 1)}"}]}`);
+    expect(lineageOf(padded)).toBeUndefined();
   });
 });
