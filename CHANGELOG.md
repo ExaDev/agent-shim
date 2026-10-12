@@ -1,3 +1,9 @@
+## [10.0.2](https://github.com/ExaDev/agent-shim/compare/v10.0.1...v10.0.2) (2026-10-12)
+
+### Bug Fixes
+
+* keep a launch waiting while the headroom supervisor installs ([faed4c6](https://github.com/ExaDev/agent-shim/commit/faed4c6540e91e20381a3d330ee0573f71a663e6)), references [#403](https://github.com/ExaDev/agent-shim/issues/403)
+
 ## [10.0.1](https://github.com/ExaDev/agent-shim/compare/v10.0.0...v10.0.1) (2026-10-12)
 
 ### Bug Fixes
