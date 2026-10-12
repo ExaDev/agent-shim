@@ -1,6 +1,5 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
-import { buffer } from "node:stream/consumers";
 
 import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomDecision } from "./headroomDecision";
@@ -106,6 +105,8 @@ function errorTypeFor(status: number): string {
       return "permission_error";
     case HTTP_STATUS.notFound:
       return "not_found_error";
+    case HTTP_STATUS.payloadTooLarge:
+      return "request_too_large";
     case HTTP_STATUS.tooManyRequests:
       return "rate_limit_error";
     default:
@@ -115,6 +116,35 @@ function errorTypeFor(status: number): string {
 
 function errorBody(status: number, message: string): string {
   return JSON.stringify({ type: "error", error: { type: errorTypeFor(status), message } });
+}
+
+/** Bytes in one mebibyte, the unit the Messages API states its request size limit in. */
+const BYTES_PER_MIB = 1_048_576;
+
+/** The Messages API's request size limit, in mebibytes. */
+const MESSAGES_API_LIMIT_MIB = 32;
+
+/** The most a messages request body is read into memory: the Messages API's own request size limit (32 MB), so a larger body would be refused upstream anyway and reading it whole would only let one connection grow the door's memory without bound. */
+const MAX_MESSAGES_BODY_BYTES = MESSAGES_API_LIMIT_MIB * BYTES_PER_MIB;
+
+/** Reads a request body whole, or returns undefined once it has passed `limit` bytes, destroying the stream so nothing more is retained. */
+async function readBounded(body: Readable, limit: number): Promise<Buffer | undefined> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of body) {
+    const piece = typeof chunk === "string" ? Buffer.from(chunk) : chunk instanceof Uint8Array ? Buffer.from(chunk) : undefined;
+    if (piece === undefined) {
+      body.destroy();
+      return undefined;
+    }
+    size += piece.length;
+    if (size > limit) {
+      body.destroy();
+      return undefined;
+    }
+    chunks.push(piece);
+  }
+  return Buffer.concat(chunks);
 }
 
 /** The path suffix of the requests whose history identifies a conversation thread. */
@@ -258,7 +288,14 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
   let lineage: Lineage | undefined;
   let body: Readable = request.body;
   if (deps.headroom !== undefined && request.method === "POST" && observed.path.endsWith(MESSAGES_PATH_SUFFIX)) {
-    const whole = await buffer(request.body);
+    const whole = await readBounded(request.body, MAX_MESSAGES_BODY_BYTES);
+    if (whole === undefined) {
+      const response = createRoutedResponse(request.response, { deps, session: identified.session, route: "(oversized)", request: observed });
+      response.start(HTTP_STATUS.payloadTooLarge, { "Content-Type": "application/json" });
+      await response.write(errorBody(HTTP_STATUS.payloadTooLarge, "agent-shim front door: the request body is larger than the Messages API accepts"));
+      response.end();
+      return;
+    }
     lineage = lineageOf(whole);
     body = Readable.from([whole]);
   }
