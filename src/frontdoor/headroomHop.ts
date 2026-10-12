@@ -189,10 +189,12 @@ async function hopOnce(
         resolve("retry");
         return;
       }
-      // Which request and which phase decide whether this is a daemon that closed on a request it had accepted (mid-stream), one that was never reachable (before the response started), or neither: the line carries both, with the error's own code, so a recurring failure can be told apart without reproducing it.
+      // Which request and which phase decide whether this is a daemon that closed on a request it had accepted (mid-stream), one that was never reachable (before the response started), or neither: the line carries both, with the error's own code, so a recurring failure can be told apart without reproducing it; the attempt and whether the client was still waiting separate a daemon that reset the replay too from a request nobody was waiting on any more.
       const phase = response.headersSent ? "mid-stream" : "before the response started";
       const code = "code" in error && typeof error.code === "string" ? ` ${error.code}` : "";
-      target.log(`front door: headroom hop to ${socketPath} failed (${request.method} ${new URL(request.url, "http://127.0.0.1").pathname}, ${phase}): ${error.message}${code}`);
+      const attempt = mayRetry ? "first attempt" : "replay";
+      const client = request.signal.aborted ? "client had gone" : "client still waiting";
+      target.log(`front door: headroom hop to ${socketPath} failed (${request.method} ${new URL(request.url, "http://127.0.0.1").pathname}, ${phase}, ${attempt}, ${client}): ${error.message}${code}`);
       if (!response.headersSent) {
         response.start(HTTP_BAD_GATEWAY, { "Content-Type": "application/json" });
         void response

@@ -456,6 +456,7 @@ describe("the headroom hop", () => {
       expect(failures).toHaveLength(1);
       expect(failures[0]).toContain("POST /providers/codex/v1/messages");
       expect(failures[0]).toContain("before the response started");
+      expect(failures[0]).toContain("first attempt, client still waiting");
     } finally {
       await door.close();
     }
@@ -548,12 +549,19 @@ describe("the headroom hop", () => {
 
   it("answers 502 when the daemon resets the replay too, having sent it exactly twice", async () => {
     const daemon = await resettingDaemon(Number.POSITIVE_INFINITY);
-    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
+    const logged: string[] = [];
+    const door = await startDoor({
+      files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider },
+      log: (line) => {
+        logged.push(line);
+      },
+    });
     try {
       const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
         dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
       expect(response.status).toBe(HTTP_STATUS.badGateway);
       expect(daemon.bodies).toHaveLength(2);
+      expect(logged.filter((line) => line.includes("failed (POST") && line.includes("replay, client still waiting"))).toHaveLength(1);
     } finally {
       await door.close();
       await daemon.close();
