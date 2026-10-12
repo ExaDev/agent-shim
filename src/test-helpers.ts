@@ -8,6 +8,7 @@ import type { HeadroomSocketTrustPorts, SocketPathStat } from "./headroom/socket
 import type { FarmFs, FarmStat } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
 import type { EntryFact, EntryFacts } from "./resolve/types";
+import type { HeadroomDecision } from "./frontdoor/headroomDecision";
 import { expect, vi, type Mock } from "vitest";
 
 import { runLauncher, type FarmRuntime, type RunLauncherParams } from "./launcher";
@@ -469,6 +470,9 @@ export function fakeFrontDoorEnv(identity?: string, extra: Readonly<Record<strin
     ...extra,
   };
 }
+
+/** A headroom decision that always takes the routing the session's launch asked for, for tests that exercise the pipeline without caring about a session's earlier choice. */
+export const followsLaunchFlag: HeadroomDecision = { decide: (_sessionId, wanted) => wanted, observe: () => undefined };
 
 /** An admission step that routes every request with its forwardable headers unchanged: for tests exercising the pipeline's other stages, never for one asserting what a listener admits. */
 export const admitEverything: PipelineDeps["admit"] = (request) => ({ ok: true, headers: { ...request.forwardable } });

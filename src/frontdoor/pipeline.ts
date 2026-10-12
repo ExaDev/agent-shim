@@ -1,6 +1,7 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
+import type { HeadroomDecision } from "./headroomDecision";
 import { applyHeadroomHop, type HeadroomHopDeps } from "./headroomHop";
 import { identifyRequest, type FrontDoorRoute, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 
@@ -54,6 +55,8 @@ export interface PipelineDeps {
    * The headroom hop, applied BEFORE a route whose declaration admits it whenever the session's launch resolved headroom on: headroom needs the Anthropic-shaped request, so it always sits in front of a translator, never behind one. Omitted by a listener that serves routes directly (the direct listener headroom forwards an in-process route back to), or when no headroom is wired.
    */
   readonly headroom?: HeadroomHopDeps;
+  /** Decides per session whether a request crosses the hop, keeping a session's choice while its prompt cache could be warm. The session's launch flag is only the choice it asks for. */
+  readonly headroomDecision: HeadroomDecision;
   /** The clock response middleware times requests by, in epoch milliseconds. */
   readonly now: () => number;
   readonly log: (line: string) => void;
@@ -261,7 +264,8 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
     response.end();
     return;
   }
-  const viaHeadroom = identified.session.headroom && resolution.route.headroomEligible && deps.headroom !== undefined;
+  const wantsHeadroom = deps.headroomDecision.decide(identified.session.sessionId, identified.session.headroom, deps.now());
+  const viaHeadroom = wantsHeadroom && resolution.route.headroomEligible && deps.headroom !== undefined;
   const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom } });
   try {
     if (viaHeadroom) {

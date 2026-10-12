@@ -28,6 +28,7 @@ import { machineTimeZone } from "../usage/anchor";
 import { runWindowKeeper } from "../usage/windowKeeper";
 import { realCredentialCacheEnv } from "../realCredentialCache";
 import { createDoorPipelines } from "./assembly";
+import { createHeadroomDecision } from "./headroomDecision";
 import { isLiveCapability } from "./capability";
 import { captureFromEnv } from "./capture";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_LIMITS, CONNECT_TAP_HOSTS, HTTPS_PORT, LOOPBACK_LEAF_NAMES, createLeafCache, ensureCa, generateCa, mintLeaf, realConnectCertStore, startConnectServer, type CaMaterial } from "./connect";
@@ -284,8 +285,14 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       log(`job keeper failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
+  const headroomDecision = createHeadroomDecision();
+  const recordUsage = withQuotaRefresh(usageStore.record, quotaRefresher);
   const usageMiddleware = createUsageMiddleware({
-    record: withQuotaRefresh(usageStore.record, quotaRefresher),
+    // Each finished response also tells the per-session headroom decision when the session's cache was last touched and whether it read from it.
+    record: (record) => {
+      headroomDecision.observe({ sessionId: record.sessionId, endedAtMs: Date.parse(record.at) + record.durationMs, cacheReadInputTokens: record.usage?.cacheReadInputTokens });
+      recordUsage(record);
+    },
     defer: (task) => {
       setImmediate(task);
     },
@@ -301,6 +308,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     headroomSocket: () => headroomSocketTarget(realFarmFs, realHeadroomSocketTrust, paths),
     // The per-generation capability the direct listener demands: held only in this process's memory, so a loopback process that discovers the direct port still cannot use it.
     hopSecret: randomUUID(),
+    headroomDecision,
     custody: createCredentialCustody(() => randomUUID()),
     log,
   });

@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, fakeResponse, parseAnthropicSse, recordingFetch, sameUpstreamForEveryLogin, type RecordedCall } from "../codex/testing";
-import { FAKE_HOME, admitLaunchToken, fakeCredentials, fakeFs } from "../test-helpers";
+import { FAKE_HOME, admitLaunchToken, fakeCredentials, fakeFs, followsLaunchFlag } from "../test-helpers";
 import type { SessionIdentity } from "./route";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute } from "./route";
 import { serveRouted, type PipelineDeps, type RouteResolution } from "./pipeline";
@@ -52,7 +52,7 @@ async function startDoor(resolveRoute: PipelineDeps["resolveRoute"], preferredPo
   const logs: string[] = [];
   const server = createFrontDoorServer(
     async (request) => {
-      await serveRouted(request, { resolveRoute, responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: (line) => { logs.push(line); } });
+      await serveRouted(request, { resolveRoute, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: (line) => { logs.push(line); } });
     },
     (line) => {
       logs.push(line);
@@ -415,7 +415,7 @@ describe("the TLS provider listener", () => {
     const server = createFrontDoorServer(
       async (request) => {
         onRequest(request.headers.authorization);
-        await serveRouted(request, { resolveRoute: refuses(HTTP_STATUS.notFound, "nothing here"), responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: () => undefined });
+        await serveRouted(request, { resolveRoute: refuses(HTTP_STATUS.notFound, "nothing here"), headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: () => undefined });
       },
       () => undefined,
       leaf,
