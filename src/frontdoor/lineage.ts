@@ -24,6 +24,18 @@ const MESSAGES_KEY = '"messages"';
  */
 const NESTING_DEPTH_LIMIT = 64;
 
+/** The Messages API's limit on messages in one request. A body that holds more is not one it would accept, so the walk gives up on it. */
+const MESSAGES_PER_REQUEST_LIMIT = 100_000;
+
+/** The largest context window a model is offered with, in tokens, and the bytes a token takes in JSON text at the most: together the size of the biggest conversation a body can carry as text. */
+const CONTEXT_WINDOW_TOKENS = 1_000_000;
+const BYTES_PER_TOKEN = 4;
+
+/**
+ * The largest body given a lineage. A conversation that fills the largest context window is about this many bytes of text; a body past it is either carrying images or is not a conversation, and in both cases the walk's synchronous cost, linear in the body, is better not paid before upstream has seen the request. Skipping it costs only a verdict.
+ */
+const LINEAGE_BODY_BYTES_LIMIT = CONTEXT_WINDOW_TOKENS * BYTES_PER_TOKEN;
+
 /** The depth the messages array's own brackets sit at: the root object is depth one, and the array is its value. */
 const MESSAGES_ARRAY_DEPTH = 2;
 
@@ -105,8 +117,8 @@ function nextToken(body: Buffer, from: number): number {
 
 /** What one walk over a body found. */
 interface Walk {
-  /** True when the body nested deeper than `NESTING_DEPTH_LIMIT`; the walk stopped there and nothing else in it can be relied on. */
-  readonly tooDeep: boolean;
+  /** True when the walk gave up, on nesting past `NESTING_DEPTH_LIMIT` or on more messages than the API accepts; nothing else in it can be relied on. */
+  readonly abandoned: boolean;
   readonly sawMessages: boolean;
   readonly elements: number;
   readonly threadDigest: string;
@@ -133,12 +145,15 @@ function walk(body: Buffer, hashing: boolean, parentAfter: number | undefined): 
   let skipUntilDepth: number | undefined;
   let skipNextValue = false;
 
-  const elementEnded = (): void => {
+  /** Counts a finished message element, returning true when there are now more than the API accepts. */
+  const elementEnded = (): boolean => {
     elements += 1;
     if (hashing && parentAfter !== undefined && elements === parentAfter) {
       parentDigest = messages.copy().digest("hex");
     }
+    return elements > MESSAGES_PER_REQUEST_LIMIT;
   };
+  const overLimit = (): Walk => ({ abandoned: true, sawMessages, elements, threadDigest: "", messagesDigest: "", parentDigest: undefined });
 
   let cursor = 0;
   for (;;) {
@@ -207,7 +222,7 @@ function walk(body: Buffer, hashing: boolean, parentAfter: number | undefined): 
 
     if (kind === OPEN) {
       if (depth >= NESTING_DEPTH_LIMIT) {
-        return { tooDeep: true, sawMessages, elements, threadDigest: "", messagesDigest: "", parentDigest: undefined };
+        return { abandoned: true, sawMessages, elements, threadDigest: "", messagesDigest: "", parentDigest: undefined };
       }
       const startsMessages = depth === 1 && topKey === MESSAGES_KEY && body[start] === OPEN_BRACKET && !sawMessages;
       depth += 1;
@@ -221,17 +236,17 @@ function walk(body: Buffer, hashing: boolean, parentAfter: number | undefined): 
       depth -= 1;
       if (inMessages && depth === 1) {
         inMessages = false;
-      } else if (inMessages && depth === 2) {
-        elementEnded();
+      } else if (inMessages && depth === 2 && elementEnded()) {
+        return overLimit();
       }
-    } else if (inMessages && depth === 2 && kind === SCALAR) {
-      elementEnded();
+    } else if (inMessages && depth === 2 && kind === SCALAR && elementEnded()) {
+      return overLimit();
     }
     if (depth < 0) {
       break;
     }
   }
-  return { tooDeep: false, sawMessages, elements, threadDigest: thread.digest("hex"), messagesDigest: messages.digest("hex"), parentDigest };
+  return { abandoned: false, sawMessages, elements, threadDigest: thread.digest("hex"), messagesDigest: messages.digest("hex"), parentDigest };
 }
 
 /**
@@ -240,8 +255,11 @@ function walk(body: Buffer, hashing: boolean, parentAfter: number | undefined): 
  * The body is walked token by token and hashed as it goes, never parsed into objects, so the work is linear in its size and the memory constant however many messages or nested values it holds: the door reads these bodies from clients it does not otherwise vet. Commas are left out of the hashed stream and the cache marker's member is skipped, which makes the key a function of the content alone. Two walks, because the parent key needs the messages hash as it stood two elements before the end, which is only known once the end has been counted.
  */
 export function lineageOf(body: Buffer): Lineage | undefined {
+  if (body.length > LINEAGE_BODY_BYTES_LIMIT) {
+    return undefined;
+  }
   const counted = walk(body, false, undefined);
-  if (counted.tooDeep || !counted.sawMessages) {
+  if (counted.abandoned || !counted.sawMessages) {
     return undefined;
   }
   const parentAfter = counted.elements > MESSAGES_PER_TURN ? counted.elements - MESSAGES_PER_TURN : undefined;
