@@ -1,3 +1,9 @@
+## [11.4.0](https://github.com/ExaDev/agent-shim/compare/v11.3.0...v11.4.0) (2026-10-12)
+
+### Features
+
+* **frontdoor:** treat a small or compacted context as a cache boundary ([c699d21](https://github.com/ExaDev/agent-shim/commit/c699d21943ae78880b3f8e80e09b74afd49bf1d4))
+
 ## [11.3.0](https://github.com/ExaDev/agent-shim/compare/v11.2.0...v11.3.0) (2026-10-12)
 
 ### Features
