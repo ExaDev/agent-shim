@@ -47,6 +47,7 @@ export function makeWorld(seededProviders: readonly { name: string; baseUrl: str
   let autoReady = true;
   let version: string | undefined = "headroom 0.39.1";
   let installOk = true;
+  let onInstall: (() => void) | undefined;
   let installedCommit: string | undefined = pinnedGitCommit(HEADROOM_DEFAULT_SOURCE);
   const alive = new Set<number>([process.pid]);
   /** The pids whose command line is a front-door supervisor's; a live pid outside it is some other process that reused a door's pid. */
@@ -121,6 +122,9 @@ export function makeWorld(seededProviders: readonly { name: string; baseUrl: str
     /** When set, the MITM proxy cannot bind, the way a poisoned port or a missing certificate would fail a real bind. */
     set version(value: string | undefined) {
       version = value;
+    },
+    set onInstall(hook: (() => void) | undefined) {
+      onInstall = hook;
     },
     set installOk(value: boolean) {
       installOk = value;
@@ -212,6 +216,7 @@ export function makeWorld(seededProviders: readonly { name: string; baseUrl: str
       ready: async (socketPath: string) => await settled(readySockets.has(socketPath)),
       install: (spec: string) => {
         installs.push(spec);
+        onInstall?.();
         if (installOk) {
           installedCommit = pinnedGitCommit(spec);
           // A successful install puts the binary on PATH, like the real one does.

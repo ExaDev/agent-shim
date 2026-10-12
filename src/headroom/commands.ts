@@ -173,6 +173,9 @@ const ownedHeadroom = new Map<number, ChildProcess>();
  */
 const exitedHeadroom = new Set<number>();
 
+/** How long one `uv tool install` of the headroom source may run before the supervisor stops it and records the failure. A cold install resolves and builds a pinned git commit with its dependency set, which takes minutes on a slow link; an install past this bound is a hung resolver or a stalled transfer, and an unbounded wait would hold the supervisor and every launch behind it forever. */
+const HEADROOM_INSTALL_TIMEOUT_MS = 600_000;
+
 /** Per-attempt timeout on the readiness probe: a request over the local socket either answers quickly or the attempt has failed. */
 const READY_FETCH_TIMEOUT_MS = 2000;
 
@@ -330,9 +333,15 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
     },
     ready: readyOverSocket,
     install: (spec) => {
-      const result = spawnSync("uv", ["tool", "install", spec], { encoding: "utf8" });
+      const result = spawnSync("uv", ["tool", "install", spec], { encoding: "utf8", timeout: HEADROOM_INSTALL_TIMEOUT_MS });
       if (result.error !== undefined) {
-        return { ok: false, error: `uv is not installed or not on PATH (${result.error.message})` };
+        const timedOut = "code" in result.error && result.error.code === "ETIMEDOUT";
+        return {
+          ok: false,
+          error: timedOut
+            ? `uv tool install did not finish within ${String(HEADROOM_INSTALL_TIMEOUT_MS)}ms and was stopped`
+            : `uv is not installed or not on PATH (${result.error.message})`,
+        };
       }
       if (result.stdout !== "") {
         fs.appendFileSync(paths.headroomLogPath, result.stdout);

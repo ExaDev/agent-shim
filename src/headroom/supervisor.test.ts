@@ -134,6 +134,35 @@ describe("runSupervisor", () => {
     expect(state.installedSource).toBe(HEADROOM_DEFAULT_SOURCE);
   });
 
+  it("records the install in state while it runs and clears the record once headroom is up", async () => {
+    const world = makeWorld();
+    world.version = undefined;
+    let duringInstall: Record<string, unknown> | undefined;
+    world.onInstall = () => {
+      duringInstall = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    };
+
+    await supervise(world, config, { tickLimit: TICKS_INSTALL_TEST });
+
+    expect(duringInstall).toMatchObject({ supervisorPid: OWN_PID, installing: HEADROOM_DEFAULT_SOURCE });
+    expect(duringInstall?.socketPath).toBeUndefined();
+    const after = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    expect(after.installing).toBeUndefined();
+    expect(after.socketPath).toBe(OWN_SOCKET);
+  });
+
+  it("names the install's own reason when it fails", async () => {
+    const world = makeWorld();
+    world.version = undefined;
+    world.installOk = false;
+
+    await supervise(world, config);
+
+    const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
+    expect(state.lastError).toBe(`could not install headroom from ${HEADROOM_DEFAULT_SOURCE}: uv is not installed or not on PATH (spawn ENOENT)`);
+    expect(state.installing).toBeUndefined();
+  });
+
   it("does not install when the installed version already satisfies the configured source", async () => {
     const world = makeWorld();
     await supervise(world, resolveSupervisorConfig({ source: "headroom>=0.39" }), { tickLimit: TICKS_SHORT });

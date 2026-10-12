@@ -331,8 +331,10 @@ export async function runSupervisor(
 
   /**
    * Installs headroom when the binary is missing, its version fails the configured source's specifier, or the configured source changed since the last install this supervisor performed. An absent `installedSource` with a satisfying binary does NOT install: a user's own `uv tool install headroom` is a legitimate install to respect. A source that pins a commit is the exception: the install must have been built from exactly that commit, whatever the record says.
+   *
+   * Returns undefined when headroom is installed as configured, else why it is not. The install is recorded in state while it runs (see `HeadroomState.installing`), because it can outlast a launcher's start bound on a cold build and a launcher must be able to tell that from a supervisor that is stuck.
    */
-  const ensureInstalled = (): boolean => {
+  const ensureInstalled = (): string | undefined => {
     const version = ports.headroomVersion();
     const versionOk = version !== undefined && versionSatisfies(version, config.source);
     // A source that pins a commit is checked against the install itself, never against this supervisor's own record of what it installed: a record that was lost or rewritten would otherwise adopt whatever build happens to be present as the pinned one.
@@ -341,15 +343,16 @@ export async function runSupervisor(
     if (versionOk && commitOk && (installedSource === undefined || installedSource === config.source)) {
       // Adopting the satisfying install as this source's: an absent record with a healthy binary is a user's own install to respect, and recording it here is what stops every later tick reading as source drift.
       installedSource = config.source;
-      return true;
+      return undefined;
     }
     ports.log(`agent-shim headroom supervisor: installing headroom from ${config.source}`);
+    writeOwnState({ supervisorPid: ports.ownPid, installedSource, installing: config.source });
     const result = ports.install(config.source);
     if (!result.ok) {
-      return false;
+      return `could not install headroom from ${config.source}: ${result.error ?? "install failed"}`;
     }
     installedSource = config.source;
-    return true;
+    return undefined;
   };
 
   // The socket is settled before anything is installed: a platform without unix sockets, or a socket directory the door would refuse, can never serve, and installing first would only delay the refusal.
@@ -361,8 +364,9 @@ export async function runSupervisor(
   pruneStaleHeadroomSockets(fs, paths, ports.isRunning);
   pruneStaleAllowlistTemporaries(fs, paths.headroomAllowlistFile, ports.isRunning);
 
-  if (!ensureInstalled()) {
-    return fail(`could not install headroom from ${config.source}: install failed (is uv installed and on PATH?)`);
+  const installFailure = ensureInstalled();
+  if (installFailure !== undefined) {
+    return fail(installFailure);
   }
   const version = ports.headroomVersion() ?? "unknown";
 
@@ -457,8 +461,9 @@ export async function runSupervisor(
         );
       }
       // A plain crash-restart keeps the existing install; only a changed source needs another install pass.
-      if (installedSource !== config.source && !ensureInstalled()) {
-        return fail(`could not install headroom from ${config.source}: install failed (is uv installed and on PATH?)`);
+      const restartInstallFailure = installedSource !== config.source ? ensureInstalled() : undefined;
+      if (restartInstallFailure !== undefined) {
+        return fail(restartInstallFailure);
       }
       // Every restart in this generation serves on the same path: headroom replaces a socket nothing is listening on, so a crashed predecessor's leftover never blocks it.
       // Where this attempt's own output starts in the shared log, so an early exit reports what this daemon wrote rather than anything before it.
