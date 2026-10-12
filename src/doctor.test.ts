@@ -98,7 +98,7 @@ describe("runDoctor: headroom", () => {
       });
     const moving = findingsFor(runDoctor(stateFor("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@feat/branch")), "headroom");
     expect(moving.some((finding) => finding.severity === "warn" && finding.message.includes("can move"))).toBe(true);
-    const pinned = findingsFor(runDoctor(stateFor("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@ca7589c574bfd52919503a74f09f4d1fe5ecf106")), "headroom");
+    const pinned = findingsFor(runDoctor(stateFor("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@2dfa958e47814533751cdd0c5362d8f352ec5b75")), "headroom");
     expect(pinned.some((finding) => finding.message.includes("can move"))).toBe(false);
   });
 });

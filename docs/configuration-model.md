@@ -410,7 +410,7 @@ What the capability does and does not cover: every process in the launch's own t
 Two settings live in the global `~/.agent-shim/config.json` under `headroom` (they describe one daemon per machine, so they are deliberately global-only, never per-directory):
 
 ```json
-{ "headroom": { "source": "headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@ca7589c574bfd52919503a74f09f4d1fe5ecf106", "idleShutdownMinutes": 15 } }
+{ "headroom": { "source": "headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@2dfa958e47814533751cdd0c5362d8f352ec5b75", "idleShutdownMinutes": 15 } }
 ```
 
 `source` is the install spec handed to `uv tool install` (any PEP 508 form works: a git URL pinned to a full commit SHA, like the default, is checked against the commit the install was built from, and a version specifier such as `headroom-ai[proxy]>=<version>` against the installed version, on every start). Whatever form it takes, it must install a headroom whose `headroom proxy` accepts `--allowed-base-urls-file`, which the supervisor starts the daemon with: a build without it exits at once, each start attempt ends as soon as it does, and the error the supervisor records once it gives up (`lastError` in `state.json`, shown by `headroom status`, `doctor` and the failed launch) carries the last few lines of that attempt's own startup output from the daemon log, with credential-shaped text redacted, so the launch's error names the cause. `idleShutdownMinutes` is how long an idle daemon lingers before shutdown.
