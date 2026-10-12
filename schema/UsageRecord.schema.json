@@ -24,6 +24,9 @@
     "project": {
       "type": "string"
     },
+    "viaHeadroom": {
+      "type": "boolean"
+    },
     "route": {
       "type": "string"
     },
