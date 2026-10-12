@@ -209,4 +209,22 @@ describe("the per-session headroom decision", () => {
       expect(await turn(decision, FOURTH_TURN, link(FOURTH_TURN), missed, false)).toBe(true);
     });
   });
+
+  it("compares a response only with threads of its own session", async () => {
+    const decision = createHeadroomDecision(() => NO_ROUTING_SETTING);
+    const CACHED = 5000;
+    const chain = (index: number): { readonly ownKey: string; readonly parentKey: string | undefined } => ({ ownKey: `k${String(index)}`, parentKey: index === 0 ? undefined : `k${String(index - 1)}` });
+    const run = async (sessionId: string, index: number, readTokens: number): Promise<void> => {
+      const startedAtMs = START_MS + index * SECOND_MS;
+      await decision.decide(sessionId, true, startedAtMs, up);
+      decision.observe({ sessionId, startedAtMs, endedAtMs: startedAtMs + SECOND_MS / 2, viaHeadroom: true, lineage: chain(index), cache: { readTokens, writtenTokens: CACHED, uncachedTokens: 0 } });
+    };
+    // Session "a" has had history k0 and k1. Session "b" sends k2 and k3 with the same keys and reads nothing: nothing of its own precedes them, so they are not misses.
+    await run("a", 0, 0);
+    await run("a", 1, CACHED);
+    await run("b", 2, 0);
+    const lastIndex = 3;
+    await run("b", lastIndex, 0);
+    expect(await decision.decide("b", true, START_MS + (lastIndex + 1) * SECOND_MS, up)).toBe(true);
+  });
 });
