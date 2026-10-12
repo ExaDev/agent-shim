@@ -19,6 +19,11 @@ const THREAD_MEMBER_KEYS: ReadonlySet<string> = new Set(['"model"', '"system"', 
 
 const MESSAGES_KEY = '"messages"';
 
+/**
+ * How deeply a body may nest before it is given no lineage. A conversation is shallow: a message holds content blocks, a block holds a tool's arguments, and those are values of a JSON schema a person wrote, a few levels at most. A body nested far beyond that is not a conversation, and the walk keeps one entry per level, so the depth is what its memory is bounded by. Skipping it costs only a verdict, never a request.
+ */
+const NESTING_DEPTH_LIMIT = 64;
+
 /** The depth the messages array's own brackets sit at: the root object is depth one, and the array is its value. */
 const MESSAGES_ARRAY_DEPTH = 2;
 
@@ -100,6 +105,8 @@ function nextToken(body: Buffer, from: number): number {
 
 /** What one walk over a body found. */
 interface Walk {
+  /** True when the body nested deeper than `NESTING_DEPTH_LIMIT`; the walk stopped there and nothing else in it can be relied on. */
+  readonly tooDeep: boolean;
   readonly sawMessages: boolean;
   readonly elements: number;
   readonly threadDigest: string;
@@ -199,6 +206,9 @@ function walk(body: Buffer, hashing: boolean, parentAfter: number | undefined): 
     }
 
     if (kind === OPEN) {
+      if (depth >= NESTING_DEPTH_LIMIT) {
+        return { tooDeep: true, sawMessages, elements, threadDigest: "", messagesDigest: "", parentDigest: undefined };
+      }
       const startsMessages = depth === 1 && topKey === MESSAGES_KEY && body[start] === OPEN_BRACKET && !sawMessages;
       depth += 1;
       expectKey.push(body[start] === OPEN_BRACE);
@@ -221,7 +231,7 @@ function walk(body: Buffer, hashing: boolean, parentAfter: number | undefined): 
       break;
     }
   }
-  return { sawMessages, elements, threadDigest: thread.digest("hex"), messagesDigest: messages.digest("hex"), parentDigest };
+  return { tooDeep: false, sawMessages, elements, threadDigest: thread.digest("hex"), messagesDigest: messages.digest("hex"), parentDigest };
 }
 
 /**
@@ -231,7 +241,7 @@ function walk(body: Buffer, hashing: boolean, parentAfter: number | undefined): 
  */
 export function lineageOf(body: Buffer): Lineage | undefined {
   const counted = walk(body, false, undefined);
-  if (!counted.sawMessages) {
+  if (counted.tooDeep || !counted.sawMessages) {
     return undefined;
   }
   const parentAfter = counted.elements > MESSAGES_PER_TURN ? counted.elements - MESSAGES_PER_TURN : undefined;
