@@ -13,7 +13,7 @@ const FRONTDOOR_START_TIMEOUT_MS = 30_000;
 const FRONTDOOR_LAUNCHER_POLL_MS = 100;
 
 /** How many times a listener that fails authentication is probed before it is believed. One failed probe is what a busy door looks like (sessions reattaching all at once miss the probe's own deadline), so a listener is distrusted only after consecutive failures: three misses in a row are a wedged or foreign listener, not slowness. */
-const FRONTDOOR_PROBE_ATTEMPTS = 3;
+export const FRONTDOOR_PROBE_ATTEMPTS = 3;
 
 /** How long a supervisor asked to exit gets before it is killed outright. A door that is not wedged closes its listeners and its stream hub within a few polls; one still running after this cannot be running its signal handler (its event loop is blocked), so waiting longer only spends the launch's deadline. */
 const FRONTDOOR_EXIT_GRACE_MS = 5_000;

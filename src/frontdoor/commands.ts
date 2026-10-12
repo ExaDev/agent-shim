@@ -63,6 +63,7 @@ import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, g
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
+import { DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
 import { collectFrontDoorStatus, formatFrontDoorStatus, headroomSocketTarget } from "./status";
 import { liveSessionTokens, writeFrontDoorSession } from "./state";
 import { declareThisProcessTheFrontDoor } from "./selfIdentity";
@@ -528,6 +529,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       return { port: handle.port, close: handle.close };
     },
     closeRcStreamHub: rcHub.close,
+    startWatchdog: () =>
+      startThreadWatchdog({ stateFile: paths.frontdoorStateFile, ownPid: process.pid, boundMs: DOOR_STALL_BOUND_MS, checkEveryMs: DOOR_WATCHDOG_CHECK_MS, action: "kill-process" }),
     // The launch lifecycle publisher over the same backbone the typed API serves: the tick's registry facts go in here, and the door's own register, prune and end moments come out as source-tagged events.
     observeLaunchRegistry: createLaunchEventPublisher(doorEvents, () => Date.now()).observe,
     doorHealth,

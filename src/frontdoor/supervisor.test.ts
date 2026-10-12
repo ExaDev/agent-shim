@@ -53,6 +53,8 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
   const closes: number[] = [];
   /** Every stop in the order it happened, so a test can prove what the shutdown sequence closes before what. */
   const stopOrder: string[] = [];
+  /** The same stops with the watchdog's start, beats and stop among them, so a test can prove where in the sequence the watchdog was ended. */
+  const timeline: string[] = [];
   let hubCloses = 0;
   const logs: string[] = [];
   let failListener = false;
@@ -92,6 +94,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
         close: async () => {
           closes.push(port);
           stopOrder.push("provider");
+          timeline.push("provider");
           await Promise.resolve();
         },
       });
@@ -107,6 +110,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
         close: async () => {
           closes.push(port);
           stopOrder.push("connect");
+          timeline.push("connect");
           await Promise.resolve();
         },
       });
@@ -122,6 +126,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
         close: async () => {
           closes.push(port);
           stopOrder.push("direct");
+          timeline.push("direct");
           await Promise.resolve();
         },
       });
@@ -129,6 +134,18 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
     closeRcStreamHub: () => {
       hubCloses += 1;
       stopOrder.push("hub");
+      timeline.push("hub");
+    },
+    startWatchdog: () => {
+      timeline.push("watchdog-start");
+      return {
+        beat: () => {
+          timeline.push("beat");
+        },
+        stop: () => {
+          timeline.push("watchdog-stop");
+        },
+      };
     },
     observeLaunchRegistry: launchEvents.observe,
     // The door health publisher and the expiring-quota checker, the same pairing the real ports wire: the publisher over the same backbone the launch events ride, and the checker a recorder the tick calls.
@@ -150,6 +167,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
     connectBinds,
     closes,
     stopOrder,
+    timeline,
     hubCloses: () => hubCloses,
     doorEvents,
     quotaChecks: () => quotaChecks,
@@ -317,6 +335,26 @@ describe("runFrontDoorSupervisor", () => {
     // All three listeners close, the direct one included, and the sticky addresses seed the next generation: the plain listener rebinding its sticky port, the other two starting fresh.
     expect(world.closes.sort((a, b) => a - b)).toEqual([STICKY_PORT, FRESH_PORT, FRESH_PORT].sort((a, b) => a - b));
     expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)).toEqual({ lastPort: STICKY_PORT, lastConnectPort: FRESH_PORT, lastDirectPort: FRESH_PORT });
+  });
+
+  it("starts the watchdog once the listeners are bound, beats it every tick, and stops it before the first listener closes", async () => {
+    const world = makeWorld();
+    writeFrontDoorState(world.fs, paths.frontdoorStateFile, { lastPort: STICKY_PORT });
+    await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS });
+    expect(world.timeline[0]).toBe("watchdog-start");
+    expect(world.timeline.filter((entry) => entry === "watchdog-start")).toHaveLength(1);
+    expect(world.timeline.filter((entry) => entry === "beat").length).toBeGreaterThan(0);
+    const stopAt = world.timeline.indexOf("watchdog-stop");
+    expect(stopAt).toBeGreaterThan(world.timeline.lastIndexOf("beat"));
+    expect(stopAt).toBeLessThan(world.timeline.indexOf("direct"));
+    expect(world.timeline.filter((entry) => entry === "watchdog-stop")).toHaveLength(1);
+  });
+
+  it("never starts the watchdog for a door whose listener failed to bind", async () => {
+    const world = makeWorld();
+    world.failListener = true;
+    await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: 1 });
+    expect(world.timeline).not.toContain("watchdog-start");
   });
 
   it("turns the door over at the first empty registry once the installed binary changed, without waiting out the idle window", async () => {

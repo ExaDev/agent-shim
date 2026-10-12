@@ -1,4 +1,5 @@
 import { enterProcessRole } from "../processRole";
+import type { DoorWatchdog } from "./watchdog";
 import path from "node:path";
 
 import type { HeadroomFs } from "../headroom/state";
@@ -61,6 +62,10 @@ export interface FrontDoorSupervisorPorts {
    * Stops the Remote Control stream hub: persists every live attachment's sequence cursor synchronously, then frees the dials. Called exactly once on every exit the supervisor owns, after every listener it started is down (a live listener could still settle an observed Remote Control exchange, and the reconcile that follows would re-attach a stream the close had just ended) and before the final state write and the process's exit.
    */
   readonly closeRcStreamHub: () => void;
+  /**
+   * Starts the watchdog that ends this process when its main event loop stops running: it lives on its own thread, so a loop that is blocked cannot stall it. The supervisor beats it every tick and stops it before it begins to retire, so it only ever judges a door that is meant to be serving.
+   */
+  readonly startWatchdog: () => DoorWatchdog;
   /**
    * Reports one tick's session-registry facts to the door's event backbone: the sessions the tick's listing saw (taken before the prune, so a pruned launch's record is still there to name its start time) and the pids the tick's prune removed. The launch lifecycle publisher turns the diff between ticks into source-tagged events; the listing is also this loop's own idle input, so the two read one fact instead of two.
    */
@@ -186,6 +191,9 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
   fs.removeRecursive(paths.frontdoorLockFile);
   ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: front door on 127.0.0.1:${String(http.port)}, CONNECT surface on 127.0.0.1:${String(connect.port)}`);
 
+  // Started only now that every listener is bound and the serving state is written, so the watchdog never judges a door that is still starting, and stopped by `closeServing` before any retirement begins.
+  const watchdog = ports.startWatchdog();
+
   let idleSince: number | undefined;
   let ticks = 0;
   /**
@@ -206,6 +214,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
   };
   // The graceful stop every retirement shares: listeners down in the established order, the RC stream hub's cursor save last.
   const closeServing = async (): Promise<void> => {
+    watchdog.stop();
     await direct.close();
     await connect.close();
     await http.close();
@@ -223,7 +232,10 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     return 0;
   };
   for (;;) {
+    // The tick only runs while the main loop does, which is exactly what the watchdog thread is waiting to see.
+    watchdog.beat();
     if (options.tickLimit !== undefined && ticks >= options.tickLimit) {
+      watchdog.stop();
       return FRONTDOOR_SUPERVISOR_STILL_RUNNING;
     }
     ticks += 1;

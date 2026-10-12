@@ -5,7 +5,7 @@ import { Worker } from "node:worker_threads";
 export type ListenerVerdict = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
 /** How long the probe waits for the listener: a live door answers its health endpoint in milliseconds, so the bound only bites on a wedged or hostile listener. */
-const PROBE_TIMEOUT_MS = 2_000;
+export const PROBE_TIMEOUT_MS = 2_000;
 
 /** Extra time the waiting thread allows past the probe's own timeout, so the worker's own timeout verdict arrives rather than the outer wait expiring first. */
 const PROBE_WAIT_MARGIN_MS = 1_000;
