@@ -1,3 +1,4 @@
+import { refuseToBlockInRole } from "./processRole";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -184,6 +185,7 @@ const INT32_BYTE_LENGTH = 4;
  * The launcher is synchronous end to end, right through to `spawnSync`, so waiting on another process's identity lock cannot be done with a promise. `Atomics.wait` on a private buffer is the one way to sleep synchronously without burning the CPU in a spin loop.
  */
 export function realSleepSync(ms: number): void {
+  refuseToBlockInRole("a synchronous sleep");
   Atomics.wait(new Int32Array(new SharedArrayBuffer(INT32_BYTE_LENGTH)), 0, 0, ms);
 }
 
