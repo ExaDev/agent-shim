@@ -290,12 +290,13 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   const recordUsage = withQuotaRefresh(usageStore.record, quotaRefresher);
   const usageMiddleware = createUsageMiddleware({
     // Each finished response also tells the per-session headroom decision when the session's cache was last touched and whether it read from it.
-    record: (record) => {
+    record: (record, event) => {
       const { usage } = record;
       headroomDecision.observe({
         sessionId: record.sessionId,
         startedAtMs: Date.parse(record.at),
         viaHeadroom: record.viaHeadroom === true,
+        lineage: event.lineage,
         endedAtMs: Date.parse(record.at) + record.durationMs,
         cache: usage === undefined ? undefined : { readTokens: usage.cacheReadInputTokens ?? 0, writtenTokens: usage.cacheCreationInputTokens ?? 0, uncachedTokens: usage.inputTokens ?? 0 },
       });
