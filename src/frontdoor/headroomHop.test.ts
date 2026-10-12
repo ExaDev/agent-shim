@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createHeadroomDecision, type HeadroomDecision } from "./headroomDecision";
 import fs from "node:fs";
 import http from "node:http";
 import net, { type AddressInfo } from "node:net";
@@ -69,6 +70,12 @@ async function fakeHeadroom(options: { readonly hold?: () => Promise<void> } = {
   const requests: HopSeen[] = [];
   let closedRequests = 0;
   const server = http.createServer((request, response) => {
+    if (request.url === "/health") {
+      // The door's own readiness probe: answered like the daemon's health endpoint and not counted among the requests it was asked to compress.
+      response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
+      response.end(JSON.stringify({ status: "healthy", ready: true }));
+      return;
+    }
     request.on("close", () => {
       closedRequests += 1;
     });
@@ -219,7 +226,7 @@ beforeAll(() => {
 /**
  * The whole door assembly over a fake headroom, built from the production `createDoorPipelines`: the TLS provider listener (with the hop and launch admission) and the plain-HTTP direct listener (without the hop, admitting only the hop's own requests), sharing one resolver whose in-process routes name the direct address and one credential custody.
  */
-async function startDoor(options: { readonly files: Record<string, unknown>; readonly log?: (line: string) => void }): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly directPort: () => number }> {
+async function startDoor(options: { readonly files: Record<string, unknown>; readonly log?: (line: string) => void; readonly headroomDecision?: HeadroomDecision }): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly directPort: () => number }> {
   const upstream = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const ports: Omit<CodexRoutePorts, "loadProvider"> = {
     upstreams: sameUpstreamForEveryLogin({ fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }),
@@ -236,7 +243,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
     headroomSocket: home.target,
     hopSecret: HOP_SECRET,
     custody: createCredentialCustody(() => randomUUID()),
-    headroomDecision: followsLaunchFlag, responseObservers: [],
+    headroomDecision: options.headroomDecision ?? followsLaunchFlag, responseObservers: [],
     now: () => 0,
     log,
   });
@@ -375,6 +382,32 @@ describe("the headroom hop", () => {
       expect(await response.json()).toMatchObject({ type: "error", error: { type: "api_error" } });
     } finally {
       await door.close();
+    }
+  });
+
+  it("serves a session that wants headroom directly when no daemon is serving, instead of answering 502", async () => {
+    // Nothing is recorded as serving: the state file names no socket.
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomDecision: createHeadroomDecision() });
+    try {
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("sends a session that wants headroom through a daemon that reports itself ready", async () => {
+    const headroom = await fakeHeadroom();
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, headroomDecision: createHeadroomDecision() });
+    try {
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(headroom.seen()).toHaveLength(1);
+    } finally {
+      await door.close();
+      await headroom.close();
     }
   });
 

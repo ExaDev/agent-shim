@@ -2,7 +2,7 @@ import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:
 
 import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomDecision } from "./headroomDecision";
-import { applyHeadroomHop, type HeadroomHopDeps } from "./headroomHop";
+import { applyHeadroomHop, headroomReady, type HeadroomHopDeps } from "./headroomHop";
 import { identifyRequest, type FrontDoorRoute, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 
 /** What one routed response looked like as it started back to the client: the typed event response middleware observes. */
@@ -264,7 +264,8 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
     response.end();
     return;
   }
-  const wantsHeadroom = deps.headroomDecision.decide(identified.session.sessionId, identified.session.headroom, deps.now());
+  const { headroom } = deps;
+  const wantsHeadroom = await deps.headroomDecision.decide(identified.session.sessionId, identified.session.headroom, deps.now(), async () => headroom !== undefined && (await headroomReady(headroom, request.signal)));
   const viaHeadroom = wantsHeadroom && resolution.route.headroomEligible && deps.headroom !== undefined;
   const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom } });
   try {

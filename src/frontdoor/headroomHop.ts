@@ -9,7 +9,7 @@ import type { CredentialCustody } from "./custody";
 import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, SESSION_ATTRIBUTION_HEADER, parseProviderPath, type RoutedRequest, type RoutedResponse } from "./route";
 import { upstreamChunks } from "./server";
 
-/** What one hop answers when it cannot serve: the daemon is between restarts, unreachable, or its socket failed authentication. Answering with 502 (rather than bypassing headroom) is what keeps a launch that asked for compression from silently losing it. */
+/** What one hop answers when it cannot serve: the daemon is between restarts, unreachable, or its socket failed authentication. Answering with 502 (rather than bypassing headroom) is what keeps a session that is already using headroom from sending its history uncompressed and rewriting its prompt cache; a session at a cache boundary is sent direct before it gets here (see `headroomDecision.ts`). */
 const HTTP_BAD_GATEWAY = HTTP_STATUS.badGateway;
 
 /** Everything the headroom hop depends on, injected so the pipeline's ordering tests can point it at a scripted daemon. */
@@ -105,6 +105,37 @@ async function answerBadGateway(response: RoutedResponse, message: string): Prom
  * The hop's own agent, with keep-alive off: the headroom daemon closes idle keep-alive connections well inside any pooling window (observed against the live daemon, which dropped a connection inside a fifteen-second idle), and Node's global agent keeps such sockets pooled, so the first hop after an idle gap rode a dead connection and the door answered it "socket hang up", one sporadic 502 at a time. A fresh local connection per hop costs nothing, and a streaming response holds its socket for the stream's own life regardless of pooling.
  */
 const HOP_AGENT = new http.Agent({ keepAlive: false });
+
+/**
+ * Whether the daemon can serve a request right now: its authenticated socket is there and its own health endpoint reports it ready. Asked only where a session is choosing its routing, so a daemon that has stopped answering is noticed by the next session to start, not by every request. A client that goes away abandons the probe.
+ */
+export async function headroomReady(deps: Pick<HeadroomHopDeps, "headroomSocket">, signal: AbortSignal): Promise<boolean> {
+  const target = deps.headroomSocket();
+  if (target === undefined || target.refused !== undefined) {
+    return false;
+  }
+  const { socketPath } = target;
+  return await new Promise<boolean>((resolve) => {
+    const probe = http.get({ socketPath, path: "/health", agent: HOP_AGENT, signal }, (response) => {
+      void buffer(response).then(
+        (body) => {
+          try {
+            const parsed: unknown = JSON.parse(body.toString("utf8"));
+            resolve(response.statusCode === HTTP_STATUS.ok && typeof parsed === "object" && parsed !== null && "ready" in parsed && parsed.ready === true);
+          } catch {
+            resolve(false);
+          }
+        },
+        () => {
+          resolve(false);
+        },
+      );
+    });
+    probe.on("error", () => {
+      resolve(false);
+    });
+  });
+}
 
 /**
  * How many times a hop is replayed after the daemon reset it before sending a response byte. Once: a reset that survives a second, fresh connection is the daemon being unwell, and further replays would only stack load on it.
