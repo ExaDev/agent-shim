@@ -8,8 +8,8 @@ interface SessionState {
   readonly viaHeadroom: boolean;
   /** When the session's last response finished, in epoch milliseconds. */
   readonly lastEndedAtMs: number;
-  /** The tokens the session's last response read from the prompt cache. */
-  readonly cacheReadInputTokens: number;
+  /** How much more the session's last response read from the prompt cache than it had to write or send afresh: positive when the cache carried most of the context, zero or negative when most of it was written new. */
+  readonly cacheSurplusTokens: number;
   /** The force token of the last `--now` setting this session applied, so one request is applied once. */
   readonly appliedForce: number | undefined;
 }
@@ -18,7 +18,8 @@ interface SessionState {
 interface ObservedResponse {
   readonly sessionId: string | undefined;
   readonly endedAtMs: number;
-  readonly cacheReadInputTokens: number | undefined;
+  /** What the response read from the prompt cache, wrote to it and sent uncached; undefined when the response reported no usage. */
+  readonly cache: { readonly readTokens: number; readonly writtenTokens: number; readonly uncachedTokens: number } | undefined;
 }
 
 /**
@@ -49,23 +50,24 @@ export function createHeadroomDecision(setting: () => RoutingSetting): HeadroomD
       }
       const state = sessions.get(sessionId);
       const forced = choice?.force !== undefined && choice.force !== state?.appliedForce;
-      const atBoundary = forced || state === undefined || nowMs - state.lastEndedAtMs > PROMPT_CACHE_TTL_MS || state.cacheReadInputTokens === 0;
+      const atBoundary = forced || state === undefined || nowMs - state.lastEndedAtMs > PROMPT_CACHE_TTL_MS || state.cacheSurplusTokens <= 0;
       const viaHeadroom = atBoundary ? wanted && (await available()) : state.viaHeadroom;
       sessions.set(sessionId, {
         viaHeadroom,
         lastEndedAtMs: state?.lastEndedAtMs ?? nowMs,
-        cacheReadInputTokens: state?.cacheReadInputTokens ?? 0,
+        cacheSurplusTokens: state?.cacheSurplusTokens ?? 0,
         appliedForce: choice?.force ?? state?.appliedForce,
       });
       return viaHeadroom;
     },
-    observe: ({ sessionId, endedAtMs, cacheReadInputTokens }) => {
-      if (sessionId === undefined || cacheReadInputTokens === undefined) {
+    observe: ({ sessionId, endedAtMs, cache }) => {
+      if (sessionId === undefined || cache === undefined) {
         return;
       }
+      const cacheSurplusTokens = cache.readTokens - cache.writtenTokens - cache.uncachedTokens;
       const state = sessions.get(sessionId);
       if (state !== undefined) {
-        sessions.set(sessionId, { ...state, lastEndedAtMs: endedAtMs, cacheReadInputTokens });
+        sessions.set(sessionId, { ...state, lastEndedAtMs: endedAtMs, cacheSurplusTokens });
       }
       for (const [id, held] of sessions) {
         if (endedAtMs - held.lastEndedAtMs > PROMPT_CACHE_TTL_MS) {
