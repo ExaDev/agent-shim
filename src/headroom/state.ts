@@ -35,6 +35,8 @@ export const HeadroomStateSchema = z.strictObject({
   settingsHash: z.string().optional(),
   /** The install spec the running install was last installed from, so a `source` config change is detected as drift. */
   installedSource: z.string().optional(),
+  /** The install spec the supervisor is installing right now, present only while `uv tool install` runs, so a launcher that finds a live supervisor with no daemon yet keeps waiting for the install instead of counting it against its start bound. Cleared by the write that follows the install, whatever its outcome. */
+  installing: z.string().optional(),
   /** The last fatal error, kept across shutdowns so `headroom status` can explain a daemon that is not running. */
   lastError: z.string().optional(),
 });

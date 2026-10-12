@@ -82,6 +82,31 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean } = {}) {
 }
 
 describe("ensureHeadroom", () => {
+  it("keeps waiting past its start bound while a live supervisor reports an install, then registers once the daemon is up", () => {
+    const world = makeWorld({ spawnWritesReadyState: false });
+    writeHeadroomState(world.fs, paths.headroomStateFile, { supervisorPid: SUPERVISOR_PID, installing: "headroom-ai[proxy] @ git+https://example.test/headroom@abc" });
+    // 250 ms per poll: well past the 120 s start bound.
+    const SLEEPS_PAST_START_BOUND = 700;
+    let sleeps = 0;
+    world.onSleep = () => {
+      sleeps += 1;
+      if (sleeps === SLEEPS_PAST_START_BOUND) {
+        world.writeReadyState();
+      }
+    };
+
+    const result = ensureHeadroom({ paths, launcherPid: 43, ports: world.ports });
+
+    expect(result).toEqual({ socketPath: SOCKET_PATH });
+    expect(sleeps).toBe(SLEEPS_PAST_START_BOUND);
+  });
+
+  it("still gives up on a live supervisor that reports no install and never brings a daemon up", () => {
+    const world = makeWorld({ spawnWritesReadyState: false });
+    writeHeadroomState(world.fs, paths.headroomStateFile, { supervisorPid: SUPERVISOR_PID });
+    expect(() => ensureHeadroom({ paths, launcherPid: 44, ports: world.ports })).toThrow(/did not become ready within/);
+  });
+
   it("starts a supervisor when nothing is running and waits for its ready state, then registers the session", () => {
     const world = makeWorld();
     const result = ensureHeadroom({ paths, launcherPid: 42, ports: world.ports });

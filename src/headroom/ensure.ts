@@ -81,7 +81,7 @@ export function ensureHeadroom(params: {
   readonly requiredUpstreams?: () => readonly string[];
 }): { readonly socketPath: string } {
   const { paths, ports } = params;
-  const deadline = ports.now() + HEADROOM_START_TIMEOUT_MS;
+  let deadline = ports.now() + HEADROOM_START_TIMEOUT_MS;
   let spawnedSupervisor = false;
   // The one file-lifecycle step a launch owns: folding the previous release's state file onto the shared name, or removing it once its generation has drained, before any polling starts.
   migrateHeadroomState(ports.fs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, ports.isRunning);
@@ -100,6 +100,10 @@ export function ensureHeadroom(params: {
     let awaiting: { readonly daemonPid: number; readonly identity: DaemonIdentity } | undefined;
     const state = resolveServingHeadroomState(ports.fs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, ports.isRunning)?.state;
     if (state?.supervisorPid !== undefined && ports.isRunning(state.supervisorPid)) {
+      if (state.installing !== undefined) {
+        // A live supervisor in the middle of `uv tool install` is making the progress this launch is waiting for. The start bound runs from the install's end, so a cold build of a changed pin never fails the launch that happened to trigger it.
+        deadline = ports.now() + HEADROOM_START_TIMEOUT_MS;
+      }
       const daemonUp = state.socketPath !== undefined && state.headroomPid !== undefined && ports.isRunning(state.headroomPid);
       if (daemonUp && state.socketPath !== undefined && state.headroomPid !== undefined) {
         const required = params.requiredUpstreams?.();
