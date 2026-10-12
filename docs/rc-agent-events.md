@@ -1,6 +1,6 @@
 # Remote Control agent and task events
 
-What a Remote Control session's read stream carries about background tasks and subagents, and how those events join to the transcripts Claude Code writes to disk. Everything here was observed on a rig session against the door's self-hosted surface (see [rc-interception-rig.md](rc-interception-rig.md)), driven by the mock provider's `RC_MOCK_SUBAGENT=1` walk. The protocol is the CLI's, not this project's: it is pinned to the Claude Code version the rig installs and must be re-verified when that moves.
+What a Remote Control session's read stream carries about background tasks and subagents, and how those events join to the transcripts Claude Code writes to disk. Everything here was observed on a rig session against the door's self-hosted surface (see [rc-interception-rig.md](rc-interception-rig.md)), driven by the mock provider's `RC_MOCK_SUBAGENT=1` walk. The protocol is the CLI's, not this project's: the shapes below were read from a session whose `init` event reported Claude Code 2.1.296, and they must be re-verified when the CLI moves.
 
 ## Where the events are
 
