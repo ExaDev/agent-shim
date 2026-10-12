@@ -1,7 +1,9 @@
 import { Worker } from "node:worker_threads";
 
-/** The outcome of authenticating the listener a front-door state file names. */
-export type ListenerVerdict = { readonly ok: true } | { readonly ok: false; readonly reason: string };
+/**
+ * The outcome of authenticating the listener a front-door state file names. A failure says which kind it was: `timeout` when the listener produced no verdict within the probe's deadline (a busy listener, or one that accepts the connection and stays silent), and `rejected` for everything else (a certificate that does not chain to agent-shim's CA, a bad health answer, a refused or reset connection). Only the structural kind is ever acted on, never the reason text.
+ */
+export type ListenerVerdict = { readonly ok: true } | { readonly ok: false; readonly kind: "timeout" | "rejected"; readonly reason: string };
 
 /** How long the probe waits for the listener: a live door answers its health endpoint in milliseconds, so the bound only bites on a wedged or hostile listener. */
 const PROBE_TIMEOUT_MS = 2_000;
@@ -18,6 +20,7 @@ const INT32_BYTES = 4;
 const VERDICT_PENDING = 0;
 const VERDICT_OK = 1;
 const VERDICT_FAILED = 2;
+const VERDICT_TIMED_OUT = 3;
 
 /**
  * The probe itself, run on a worker thread so the synchronous launcher can wait on it with `Atomics.wait`: one HTTPS GET of `/healthz` on 127.0.0.1 that trusts only the agent-shim CA (`ca` replaces the default trust store) and checks the leaf names 127.0.0.1. No capability or credential is sent. Kept as plain CommonJS source because the worker evaluates it standalone, outside the bundle.
@@ -25,7 +28,7 @@ const VERDICT_FAILED = 2;
 const PROBE_SOURCE = `
 const { workerData } = require("node:worker_threads");
 const https = require("node:https");
-const { port, ca, timeoutMs, shared, ok, failed, headerSlots } = workerData;
+const { port, ca, timeoutMs, shared, ok, failed, timedOut, headerSlots } = workerData;
 const header = new Int32Array(shared, 0, headerSlots);
 const reason = new Uint8Array(shared, headerSlots * 4);
 let done = false;
@@ -49,7 +52,8 @@ const request = https.get({ host: "127.0.0.1", port, path: "/healthz", ca: [ca],
   response.on("error", (error) => finish(failed, error.message));
 });
 // A hard deadline over the whole exchange, handshake included: a listener that accepts the connection and then says nothing must still fail the probe.
-setTimeout(() => { request.destroy(new Error("no answer within " + String(timeoutMs) + "ms")); }, timeoutMs);
+// The verdict is posted before the request is destroyed, so the destroy's own error cannot claim the slot as an ordinary failure.
+setTimeout(() => { finish(timedOut, "no answer within " + String(timeoutMs) + "ms"); request.destroy(); }, timeoutMs);
 request.on("error", (error) => finish(failed, (error.code ? error.code + ": " : "") + error.message));
 `;
 
@@ -63,7 +67,7 @@ export function probeFrontDoorSync(port: number, caPem: string): ListenerVerdict
   const header = new Int32Array(shared, 0, HEADER_SLOTS);
   const worker = new Worker(PROBE_SOURCE, {
     eval: true,
-    workerData: { port, ca: caPem, timeoutMs: PROBE_TIMEOUT_MS, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS },
+    workerData: { port, ca: caPem, timeoutMs: PROBE_TIMEOUT_MS, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, timedOut: VERDICT_TIMED_OUT, headerSlots: HEADER_SLOTS },
   });
   // The worker must never keep the launcher alive: the verdict is all this thread needs from it.
   worker.unref();
@@ -71,13 +75,17 @@ export function probeFrontDoorSync(port: number, caPem: string): ListenerVerdict
     const waited = Atomics.wait(header, 0, VERDICT_PENDING, PROBE_TIMEOUT_MS + PROBE_WAIT_MARGIN_MS);
     const verdict = Atomics.load(header, 0);
     if (waited === "timed-out" || verdict === VERDICT_PENDING) {
-      return { ok: false, reason: `the probe did not finish within ${String(PROBE_TIMEOUT_MS + PROBE_WAIT_MARGIN_MS)}ms` };
+      return { ok: false, kind: "timeout", reason: `the probe did not finish within ${String(PROBE_TIMEOUT_MS + PROBE_WAIT_MARGIN_MS)}ms` };
     }
     if (verdict === VERDICT_OK) {
       return { ok: true };
     }
     const length = Atomics.load(header, 1);
-    return { ok: false, reason: Buffer.from(new Uint8Array(shared, HEADER_SLOTS * INT32_BYTES, length)).toString("utf8") };
+    return {
+      ok: false,
+      kind: verdict === VERDICT_TIMED_OUT ? "timeout" : "rejected",
+      reason: Buffer.from(new Uint8Array(shared, HEADER_SLOTS * INT32_BYTES, length)).toString("utf8"),
+    };
   } finally {
     void worker.terminate();
   }

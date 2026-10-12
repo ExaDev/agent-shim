@@ -110,9 +110,9 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
         probed.push(port);
         if (authentic.has(port) && transientProbeFailures > 0) {
           transientProbeFailures -= 1;
-          return { ok: false, reason: "the probe did not finish within the deadline" };
+          return { ok: false, kind: "timeout", reason: "no answer within 2000ms" };
         }
-        return authentic.has(port) ? { ok: true } : { ok: false, reason: "SELF_SIGNED_CERT_IN_CHAIN: self-signed certificate in certificate chain" };
+        return authentic.has(port) ? { ok: true } : { ok: false, kind: "rejected", reason: "SELF_SIGNED_CERT_IN_CHAIN: self-signed certificate in certificate chain" };
       },
     },
   };
@@ -259,19 +259,45 @@ describe("ensureFrontDoor", () => {
       return world;
     }
 
-    it("is never stopped or replaced, and the launch reports that it was left alone", () => {
+    it("is trusted and registered against when the miss is only a timeout, without stopping or spawning anything", () => {
       const world = busyDoorWorld({ supervisorPid: SUPERVISOR_PID });
-      const attempt = (): unknown => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
-      expect(attempt).toThrow(FrontDoorStartError);
-      expect(attempt).toThrow(/1 live session\(s\) are using it.*agent-shim frontdoor restart/);
+      const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+      expect(ensured.port).toBe(PORT);
+      expect(world.sessionToken(LAUNCHER_PID)).toBe(ensured.token);
       expect(world.stops).toEqual([]);
       expect(world.spawns).toEqual([]);
+    });
+
+    it("is not trusted when it presents a certificate that does not chain to the CA, and is still left alone", () => {
+      const world = busyDoorWorld({ supervisorPid: SUPERVISOR_PID });
+      world.ports.verifyListener = () => ({ ok: false, kind: "rejected", reason: "SELF_SIGNED_CERT_IN_CHAIN: self-signed certificate in certificate chain" });
+      const attempt = (): unknown => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+      expect(attempt).toThrow(/1 live session\(s\) are using it.*agent-shim frontdoor restart/);
       expect(world.sessionToken(LAUNCHER_PID)).toBeUndefined();
+      expect(world.stops).toEqual([]);
+      expect(world.spawns).toEqual([]);
+    });
+
+    it("is not trusted when it answers its health probe wrongly", () => {
+      const world = busyDoorWorld({ supervisorPid: SUPERVISOR_PID });
+      world.ports.verifyListener = () => ({ ok: false, kind: "rejected", reason: "the listener answered its health probe with HTTP 500" });
+      expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(FrontDoorStartError);
+      expect(world.sessionToken(LAUNCHER_PID)).toBeUndefined();
+    });
+
+    it("is not trusted when the recorded pid is not this tool's front door supervisor, even if it only timed out", () => {
+      const world = busyDoorWorld({ supervisorPid: SUPERVISOR_PID });
+      world.ownSupervisors.delete(SUPERVISOR_PID);
+      const attempt = (): unknown => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+      expect(attempt).toThrow(FrontDoorStartError);
+      expect(world.sessionToken(LAUNCHER_PID)).toBeUndefined();
+      expect(world.stops).toEqual([]);
     });
 
     it("is left alone when the session record predates the recorded door, since it cannot say which door it uses", () => {
       const world = busyDoorWorld({});
-      expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(FrontDoorStartError);
+      world.ports.verifyListener = () => ({ ok: false, kind: "rejected", reason: "the listener answered its health probe with HTTP 500" });
+      expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(/1 live session\(s\) are using it/);
       expect(world.stops).toEqual([]);
       expect(world.spawns).toEqual([]);
     });

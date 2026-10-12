@@ -103,7 +103,9 @@ export function ensureFrontDoor(params: {
           replaced = true;
           continue;
         }
-        if (verdict.ok) {
+        // A probe that only timed out against this tool's own front door, alive and with sessions using it, is trusted as that door. The door holds the port while it lives, so nothing else can be answering it, and an impostor would be a different process, which answers the handshake quickly with a certificate that does not chain to the CA: a `rejected` verdict, never a timeout. A dead pid, a pid that is not a front-door supervisor, a wrong certificate and a bad answer are never trusted here. A door nobody is using that stays silent is still retired below, so a wedged door that strands nobody does not keep the launch waiting.
+        const slowOwnDoor = !verdict.ok && verdict.kind === "timeout" && ports.isFrontDoorSupervisor(supervisorPid) && liveSessionsOn(supervisorPid) > 0;
+        if (verdict.ok || slowOwnDoor) {
           // The token is generated here, per launch: the registry entry is what the door's listeners check requests against, and a fresh launch invalidates nothing (its entry is added alongside the live ones).
           const token = randomUUID();
           writeFrontDoorSession(ports.fs, paths.frontdoorSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), token, supervisorPid });

@@ -87,6 +87,7 @@ describe("probeFrontDoorSync", () => {
       const verdict = probeFrontDoorSync(port, ca.certPem);
       expect(verdict.ok).toBe(false);
       expect(verdict.ok ? "" : verdict.reason).toMatch(/certificate/i);
+      expect(verdict.ok ? "" : verdict.kind).toBe("rejected");
     },
     KEYGEN_TIMEOUT_MS,
   );
@@ -112,6 +113,8 @@ describe("probeFrontDoorSync", () => {
     try {
       const verdict = probeFrontDoorSync(typeof address === "object" && address !== null ? address.port : 0, ca.certPem);
       expect(verdict.ok ? "" : verdict.reason).toContain("no answer within");
+      // A silent listener is the one failure that is a timeout; it is what a busy door and a silent squatter both look like, so callers decide on more than this kind.
+      expect(verdict.ok ? "" : verdict.kind).toBe("timeout");
     } finally {
       silent.close();
     }
@@ -119,8 +122,11 @@ describe("probeFrontDoorSync", () => {
 
   it("rejects a plain-HTTP listener and a port nothing holds", async () => {
     const plain = await listenerThread(undefined);
-    expect(probeFrontDoorSync(plain, ca.certPem).ok).toBe(false);
+    const wrongProtocol = probeFrontDoorSync(plain, ca.certPem);
+    expect(wrongProtocol.ok).toBe(false);
+    expect(wrongProtocol.ok ? "" : wrongProtocol.kind).toBe("rejected");
     const nothing = probeFrontDoorSync(await closedPort(), ca.certPem);
     expect(nothing.ok ? "" : nothing.reason).toContain("ECONNREFUSED");
+    expect(nothing.ok ? "" : nothing.kind).toBe("rejected");
   });
 });
