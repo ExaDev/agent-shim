@@ -4,8 +4,8 @@ import { InvalidEnvBoolError } from "../cli/envBool";
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedProvider } from "./flags";
 
 describe("resolveLaunchFlags", () => {
-  it("defaults both flags to off when nothing sets them — a deliberate change from the legacy always-on script", () => {
-    expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: false });
+  it("defaults skipPermissions, remoteControl and headroom to off and trackUsage to on when nothing sets them", () => {
+    expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: true });
   });
 
   it("turns skipPermissions on via the AGENT_SHIM_SKIP_PERMISSIONS=1 escape hatch", () => {
@@ -13,7 +13,7 @@ describe("resolveLaunchFlags", () => {
       skipPermissions: true,
       remoteControl: false,
       headroom: false,
-      trackUsage: false,
+      trackUsage: true,
     });
   });
 
@@ -22,14 +22,14 @@ describe("resolveLaunchFlags", () => {
       skipPermissions: false,
       remoteControl: true,
       headroom: false,
-      trackUsage: false,
+      trackUsage: true,
     });
   });
 
   it("treats an empty env value as unset", () => {
     expect(
       resolveLaunchFlags({ env: { AGENT_SHIM_SKIP_PERMISSIONS: "", AGENT_SHIM_REMOTE_CONTROL: "0" } }),
-    ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: false });
+    ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: true });
   });
 
   it("honours a cascade value once one is supplied, independent of the env escape hatch", () => {
@@ -37,14 +37,14 @@ describe("resolveLaunchFlags", () => {
       skipPermissions: true,
       remoteControl: true,
       headroom: false,
-      trackUsage: false,
+      trackUsage: true,
     });
   });
 
   it("combines settings from different sources independently, each setting decided on its own", () => {
     expect(
       resolveLaunchFlags({ env: { AGENT_SHIM_REMOTE_CONTROL: "1" }, cascade: { skipPermissions: true } }),
-    ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false, trackUsage: false });
+    ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false, trackUsage: true });
   });
 
   it.each(["skipPermissions", "remoteControl", "headroom", "trackUsage"] as const)(
@@ -84,15 +84,22 @@ describe("resolveLaunchFlags", () => {
       skipPermissions: false,
       remoteControl: false,
       headroom: true,
-      trackUsage: false,
+      trackUsage: true,
     });
   });
 
-  it("leaves trackUsage off unless a flag, its env variable or the cascade turns it on, each independent of headroom", () => {
-    expect(resolveLaunchFlags({ env: {} }).trackUsage).toBe(false);
-    expect(resolveLaunchFlags({ env: {}, cascade: { trackUsage: true } })).toMatchObject({ trackUsage: true, headroom: false });
-    expect(resolveLaunchFlags({ env: { AGENT_SHIM_TRACK_USAGE: "1" } })).toMatchObject({ trackUsage: true, headroom: false });
-    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true } }).trackUsage).toBe(false);
+  it("defaults trackUsage to on, so every launch engages the front door, independent of headroom", () => {
+    expect(resolveLaunchFlags({ env: {} })).toMatchObject({ trackUsage: true, headroom: false });
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true } })).toMatchObject({ trackUsage: true, headroom: true });
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: false } })).toMatchObject({ trackUsage: true, headroom: false });
+  });
+
+  it("turns trackUsage off through a flag, its env variable or the cascade, each independent of headroom", () => {
+    expect(resolveLaunchFlags({ env: {}, flags: { trackUsage: false } })).toMatchObject({ trackUsage: false, headroom: false });
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_TRACK_USAGE: "0" } })).toMatchObject({ trackUsage: false, headroom: false });
+    expect(resolveLaunchFlags({ env: {}, cascade: { trackUsage: false } })).toMatchObject({ trackUsage: false, headroom: false });
+    expect(resolveLaunchFlags({ env: {}, cascade: { trackUsage: false, headroom: true } })).toMatchObject({ trackUsage: false, headroom: true });
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "1", AGENT_SHIM_TRACK_USAGE: "0" } })).toMatchObject({ trackUsage: false, headroom: true });
   });
 
   it("resolves headroom from a cascade value and ORs it with the escape hatch", () => {

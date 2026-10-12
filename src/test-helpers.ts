@@ -8,7 +8,7 @@ import type { HeadroomSocketTrustPorts, SocketPathStat } from "./headroom/socket
 import type { FarmFs, FarmStat } from "./launcher/ports";
 import type { LayoutPaths } from "./paths";
 import type { EntryFact, EntryFacts } from "./resolve/types";
-import { vi, type Mock } from "vitest";
+import { expect, vi, type Mock } from "vitest";
 
 import { runLauncher, type FarmRuntime, type RunLauncherParams } from "./launcher";
 import type { CredentialCommandResult, CredentialPort } from "./credential";
@@ -457,6 +457,19 @@ export function fakeFrontDoorPort(
   };
 }
 
+/** The proxy, trust and session-header variables a launch through `fakeFrontDoorPort()` adds to the child's environment, with the one random value (the session id) matched by shape. `identity` names the header the launcher sends when it resolved one, and `extra` is merged over the result for the variables the test's own subject sets. */
+export function fakeFrontDoorEnv(identity?: string, extra: Readonly<Record<string, string>> = {}): Record<string, unknown> {
+  const identityHeader = identity === undefined ? "" : `x-agent-shim-identity: ${identity}\n`;
+  return {
+    HTTPS_PROXY: "http://agent-shim:launch-token-for-tests@127.0.0.1:4200",
+    NO_PROXY: "127.0.0.1,localhost,::1",
+    no_proxy: "127.0.0.1,localhost,::1",
+    NODE_EXTRA_CA_CERTS: FAKE_TRUST_BUNDLE,
+    ANTHROPIC_CUSTOM_HEADERS: expect.stringMatching(new RegExp(`^${identityHeader}x-agent-shim-session: [0-9a-f-]{36}\\nx-agent-shim-auth: launch-token-for-tests$`)),
+    ...extra,
+  };
+}
+
 /** An admission step that routes every request with its forwardable headers unchanged: for tests exercising the pipeline's other stages, never for one asserting what a listener admits. */
 export const admitEverything: PipelineDeps["admit"] = (request) => ({ ok: true, headers: { ...request.forwardable } });
 
@@ -535,9 +548,10 @@ export function captureExitCode(run: () => void): number {
   throw new Error("expected the run to reach proc.exit");
 }
 
+/** Runs the launcher to its `proc.exit`, returning the exit code. Every launch engages the front door unless it is switched off, so a fake door is wired unless the test supplies its own. */
 export function runAndCaptureExit(params: RunLauncherParams): number {
   try {
-    runLauncher(params);
+    runLauncher({ frontdoor: fakeFrontDoorPort(), ...params });
   } catch (error) {
     if (error instanceof ExitCalled) {
       return error.code;

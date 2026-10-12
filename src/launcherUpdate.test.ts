@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { prepareLaunch } from "./launcher";
 import type { UpdateLaunchPort } from "./update/launchHook";
-import { DAY_MS, FAKE_NOW_MS, discovered, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit } from "./test-helpers";
+import { DAY_MS, FAKE_NOW_MS, discovered, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit } from "./test-helpers";
 
 /** A scripted `UpdateLaunchPort`: the release check stays pending until the test settles it, and every operation is recorded in order, so the launcher-level tests prove both placement and late-answer suppression without touching the network. */
 function fakeUpdatePort(options: { readonly stamp?: string } = {}): UpdateLaunchPort & {
@@ -71,6 +71,7 @@ describe("launch-time update check", () => {
       proc: fakeProc({}, ["--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
+      frontdoor: fakeFrontDoorPort(),
       updateMode: "notify",
       update,
     });
@@ -93,6 +94,7 @@ describe("launch-time update check", () => {
         proc: fakeProc({}, ["--print"]),
         log: fakeLog(),
         resolveClaudeBinary: () => discovered,
+        frontdoor: fakeFrontDoorPort(),
         ...(params.updateMode === undefined ? {} : { updateMode: params.updateMode }),
         ...(params.update === undefined ? {} : { update: params.update }),
       });
@@ -108,6 +110,7 @@ describe("launch-time update check", () => {
       proc: fakeProc({}, ["--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
+      frontdoor: fakeFrontDoorPort(),
       updateMode: "notify",
       update,
     });
@@ -130,6 +133,7 @@ describe("launch-time update check", () => {
       proc: fakeProc({}, ["--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
+      frontdoor: fakeFrontDoorPort(),
       updateMode: "auto",
       update,
     });

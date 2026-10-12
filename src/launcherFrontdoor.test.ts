@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { HeadroomPort } from "./launcher/ports";
-import { discovered, FAKE_HOME, FAKE_TRUST_BUNDLE, fakeCredentials, fakeFs, fakeFrontDoorPort, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
+import { runLauncher } from "./launcher";
+import { captureExitCode, discovered, FAKE_HOME, FAKE_TRUST_BUNDLE, fakeCredentials, fakeFs, fakeFrontDoorPort, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
 const FRONTDOOR_PORT = 4100;
 const HEADROOM_SOCKET = "/home/testuser/.agent-shim/headroom/run/8123.sock";
@@ -121,28 +122,40 @@ describe("runLauncher with a provider", () => {
   it("refuses a provider launch when no front-door port is wired", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
-    const code = runAndCaptureExit({
-      paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/codex.json`]: codexProvider }),
-      spawn,
-      proc: fakeProc({}, ["--provider", "codex"]),
-      log,
-      resolveClaudeBinary: () => discovered,
-      credentials: fakeCredentials(),
+    // Driven through runLauncher directly: `runAndCaptureExit` wires a fake front door unless told otherwise, and this test is about none being wired.
+    const code = captureExitCode(() => {
+      runLauncher({
+        paths,
+        fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/codex.json`]: codexProvider }),
+        spawn,
+        proc: fakeProc({}, ["--provider", "codex"]),
+        log,
+        resolveClaudeBinary: () => discovered,
+        credentials: fakeCredentials(),
+      });
     });
     expect(code).toBe(1);
     expect(spawn.spawnSync).not.toHaveBeenCalled();
     expect(log.errors[0]).toContain("front-door");
   });
 
-  it("never touches the front door when neither a provider nor headroom resolved on", () => {
+  it("engages the front door for a bare launch, with no provider, no headroom and no flag", () => {
+    const spawn = fakeSpawn();
+    const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
+    runAndCaptureExit({ paths, fs: fakeFs({}), spawn, proc: fakeProc({}, ["--print"]), log: fakeLog(), resolveClaudeBinary: () => discovered, frontdoor });
+    expect(frontdoor.ensures()).toBe(1);
+    expect(spawnedEnv(spawn).HTTPS_PROXY).toContain("127.0.0.1:4200");
+    expect(spawnedEnv(spawn).ANTHROPIC_BASE_URL).toBeUndefined();
+  });
+
+  it("never touches the front door when neither a provider, headroom nor usage tracking resolved on", () => {
     const spawn = fakeSpawn();
     const frontdoor = fakeFrontDoorPort(FRONTDOOR_PORT);
     runAndCaptureExit({
       paths,
       fs: fakeFs({}),
       spawn,
-      proc: fakeProc({}, ["--print"]),
+      proc: fakeProc({}, ["--no-track-usage", "--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       frontdoor,
@@ -191,10 +204,12 @@ describe("runLauncher with a provider", () => {
     expect(spawnedEnv(spawn).HTTPS_PROXY).toBeUndefined();
   });
 
-  it("refuses to launch when tracking is on but no front-door port is wired", () => {
+  it("refuses to launch when tracking is on, as it is by default, but no front-door port is wired", () => {
     const spawn = fakeSpawn();
     const log = fakeLog();
-    runAndCaptureExit({ paths, fs: fakeFs({}), spawn, proc: fakeProc({}, ["--track-usage", "--print"]), log, resolveClaudeBinary: () => discovered });
+    captureExitCode(() => {
+      runLauncher({ paths, fs: fakeFs({}), spawn, proc: fakeProc({}, ["--print"]), log, resolveClaudeBinary: () => discovered });
+    });
     expect(spawn.spawnSync).not.toHaveBeenCalled();
     expect(log.errors[0]).toContain("front-door");
   });
