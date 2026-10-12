@@ -1,3 +1,9 @@
+## [10.1.0](https://github.com/ExaDev/agent-shim/compare/v10.0.2...v10.1.0) (2026-10-12)
+
+### Features
+
+* **usage:** record whether each request crossed headroom ([b8a788f](https://github.com/ExaDev/agent-shim/commit/b8a788fbecc160008f65c4aaec13603aab366c58))
+
 ## [10.0.2](https://github.com/ExaDev/agent-shim/compare/v10.0.1...v10.0.2) (2026-10-12)
 
 ### Bug Fixes
