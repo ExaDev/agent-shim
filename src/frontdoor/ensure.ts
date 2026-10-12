@@ -15,6 +15,9 @@ const FRONTDOOR_LAUNCHER_POLL_MS = 100;
 /** How many times a listener that fails authentication is probed before it is believed. One failed probe is what a busy door looks like (sessions reattaching all at once miss the probe's own deadline), so a listener is distrusted only after consecutive failures: three misses in a row are a wedged or foreign listener, not slowness. */
 const FRONTDOOR_PROBE_ATTEMPTS = 3;
 
+/** How long a supervisor asked to exit gets before it is killed outright. A door that is not wedged closes its listeners and its stream hub within a few polls; one still running after this cannot be running its signal handler (its event loop is blocked), so waiting longer only spends the launch's deadline. */
+const FRONTDOOR_EXIT_GRACE_MS = 5_000;
+
 /** Raised when the front door cannot be brought up in time or has recorded a fatal error: a routed launch has no other way to reach its provider, so it must fail rather than start a session that can never answer. */
 export class FrontDoorStartError extends CliError {
   constructor(message: string) {
@@ -36,6 +39,8 @@ export interface EnsureFrontDoorPorts {
   readonly verifyListener: (port: number) => ListenerVerdict;
   /** Asks a running front-door supervisor to exit, without waiting for it to: the caller polls `isRunning`. Only ever called for a pid whose recorded listener has just authenticated as agent-shim's own, or whose process is agent-shim's front-door supervisor (`isFrontDoorSupervisor`). */
   readonly stopSupervisor: (pid: number) => void;
+  /** Ends a supervisor that did not exit when asked to, without giving it the chance to refuse: a door whose event loop is blocked never runs its signal handler. Called only for a pid `isFrontDoorSupervisor` has just confirmed, after `stopSupervisor` and a grace period. */
+  readonly killSupervisor: (pid: number) => void;
   /** Whether `pid` is a live agent-shim front-door supervisor process, read from the process's own command line. This is what separates a wedged door of this tool, which a replacement must retire so the two never coexist, from an unrelated process that reuses the recorded pid, which must never be signalled. */
   readonly isFrontDoorSupervisor: (pid: number) => boolean;
 }
@@ -80,7 +85,13 @@ export function ensureFrontDoor(params: {
   /** Asks `supervisorPid` to exit and waits until it has, so the replacement that follows binds the sticky ports instead of moving off them. */
   const stopAndAwaitExit = (supervisorPid: number, failure: string): void => {
     ports.stopSupervisor(supervisorPid);
+    const graceEnds = ports.now() + FRONTDOOR_EXIT_GRACE_MS;
+    let killed = false;
     while (ports.isRunning(supervisorPid)) {
+      if (!killed && ports.now() >= graceEnds) {
+        ports.killSupervisor(supervisorPid);
+        killed = true;
+      }
       if (ports.now() >= deadline) {
         throw new FrontDoorStartError(`${failure}. Daemon log: ${paths.frontdoorLogPath}`);
       }
@@ -121,6 +132,12 @@ export function ensureFrontDoor(params: {
         }
         if (ports.isFrontDoorSupervisor(supervisorPid)) {
           const stranded = liveSessionsOn(supervisorPid);
+          if (params.replace === true && !replaced) {
+            // An explicit replace is the deliberate way to retire a door that is not answering, which is what a busy-door refusal tells the user to run: it must not be refused for the same reason.
+            stopAndAwaitExit(supervisorPid, `the front door (pid ${String(supervisorPid)}) stopped answering and did not exit when asked to`);
+            replaced = true;
+            continue;
+          }
           if (stranded > 0) {
             // A miss is what a busy door looks like, and this door has live sessions that retiring it would cut off (every connection and Remote Control stream drops), so it is waited on until this launch's own deadline and never signalled. Retiring on a miss turned a machine under load into a front door replaced again and again.
             busyDoor = { pid: supervisorPid, sessions: stranded };
