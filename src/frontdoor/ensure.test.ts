@@ -41,6 +41,9 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
   const alive = new Set<number>([SUPERVISOR_PID, process.pid, OTHER_LAUNCHER_PID]);
   const spawns: number[] = [];
   const stops: number[] = [];
+  const kills: number[] = [];
+  /** Pids that ignore a stop request, the way a door whose event loop is blocked never runs its signal handler. */
+  const ignoresStop = new Set<number>();
   /** Ports whose listener authenticates; every other port fails the probe, the way a listener without a leaf from agent-shim's CA does. */
   const authentic = new Set<number>([PORT]);
   const probed: number[] = [];
@@ -56,6 +59,8 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
     alive,
     spawns,
     stops,
+    kills,
+    ignoresStop,
     authentic,
     probed,
     ownSupervisors,
@@ -103,6 +108,12 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
       },
       stopSupervisor: (pid: number) => {
         stops.push(pid);
+        if (!ignoresStop.has(pid)) {
+          alive.delete(pid);
+        }
+      },
+      killSupervisor: (pid: number) => {
+        kills.push(pid);
         alive.delete(pid);
       },
       isFrontDoorSupervisor: (pid: number) => ownSupervisors.has(pid),
@@ -212,11 +223,14 @@ describe("ensureFrontDoor", () => {
     expect(world.stops).toEqual([]);
   });
 
-  it("fails loudly when an older door does not exit when asked", () => {
+  it("fails loudly when an older door survives being asked and being killed", () => {
     const world = makeWorld();
     world.writeReadyState(PORT, SUPERVISOR_PID, null);
     world.ports.stopSupervisor = (pid: number) => {
       world.stops.push(pid);
+    };
+    world.ports.killSupervisor = (pid: number) => {
+      world.kills.push(pid);
     };
     expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(/asked to be replaced and did not exit/);
   });
@@ -334,6 +348,48 @@ describe("ensureFrontDoor", () => {
       const result = restartFrontDoor({ paths, pid: SUPERVISOR_PID, ports: world.ports });
       expect(result).toEqual({ action: "restarted", previousPid: SUPERVISOR_PID, pid: REPLACEMENT_PID });
       expect(world.stops).toEqual([SUPERVISOR_PID]);
+    });
+  });
+
+  describe("an explicit replace of a door that is not answering", () => {
+    function wedgedDoorWorld() {
+      const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT, transientProbeFailures: Number.MAX_SAFE_INTEGER });
+      world.ownSupervisors.add(SUPERVISOR_PID);
+      world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+      writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: OTHER_LAUNCHER_PID, startedAt: 0, token: SESSION_TOKEN, supervisorPid: SUPERVISOR_PID });
+      world.ports.spawnSupervisor = () => {
+        world.spawns.push(REPLACEMENT_PID);
+        world.alive.add(REPLACEMENT_PID);
+        world.writeReadyState(PORT, REPLACEMENT_PID);
+        return REPLACEMENT_PID;
+      };
+      const realVerify = world.ports.verifyListener;
+      world.ports.verifyListener = (port) => (world.spawns.length > 0 ? { ok: true } : realVerify(port));
+      return world;
+    }
+
+    it("retires it although live sessions are registered, because the deliberate restart is what a busy-door refusal points at", () => {
+      const world = wedgedDoorWorld();
+      const result = restartFrontDoor({ paths, pid: LAUNCHER_PID, ports: world.ports });
+      expect(result).toEqual({ action: "restarted", previousPid: SUPERVISOR_PID, pid: REPLACEMENT_PID });
+      expect(world.stops).toEqual([SUPERVISOR_PID]);
+      expect(world.kills).toEqual([]);
+    });
+
+    it("kills a door that ignores the stop request once its grace has passed, since a blocked event loop never runs the handler", () => {
+      const world = wedgedDoorWorld();
+      world.ignoresStop.add(SUPERVISOR_PID);
+      const result = restartFrontDoor({ paths, pid: LAUNCHER_PID, ports: world.ports });
+      expect(result).toEqual({ action: "restarted", previousPid: SUPERVISOR_PID, pid: REPLACEMENT_PID });
+      expect(world.stops).toEqual([SUPERVISOR_PID]);
+      expect(world.kills).toEqual([SUPERVISOR_PID]);
+    });
+
+    it("leaves the door alone for an ordinary launch, which only waits on it", () => {
+      const world = wedgedDoorWorld();
+      expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(FrontDoorStartError);
+      expect(world.stops).toEqual([]);
+      expect(world.kills).toEqual([]);
     });
   });
 

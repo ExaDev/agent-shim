@@ -32,6 +32,9 @@ function realEnsurePorts(paths: LayoutPaths, spawnDaemon: DaemonSpawner): Ensure
     stopSupervisor: (pid) => {
       process.kill(pid, "SIGTERM");
     },
+    killSupervisor: (pid) => {
+      process.kill(pid, "SIGKILL");
+    },
     // Read fresh for each probe: a replacement supervisor may have regenerated an unparseable CA, and the probe must trust exactly what the serving door's leaf chains to.
     verifyListener: (port) => probeFrontDoorSync(port, fs.readFileSync(paths.frontdoorCaCertFile, "utf8")),
   };
