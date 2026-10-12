@@ -26,6 +26,8 @@ const HOSTILE_PORT = 4666;
 /** The pid and port a replacement supervisor comes up on after the recorded one was distrusted. */
 const REPLACEMENT_PID = 501;
 const REPLACEMENT_PORT = 4101;
+/** Probes a busy door misses before it answers: past two full rounds of the launcher's three probes, so the wait outlasts a round rather than being settled by the first. */
+const MISSED_PROBES_BEFORE_ANSWER = 7;
 /** The bring-up timeout the implementation documents, asserted so the waiting path really ran its course. */
 const START_TIMEOUT_MS = 30_000;
 
@@ -245,6 +247,64 @@ describe("ensureFrontDoor", () => {
     expect(world.stops).toEqual([SUPERVISOR_PID]);
     expect(world.spawns).toEqual([REPLACEMENT_PID]);
     expect(ensured.port).toBe(PORT);
+  });
+
+  describe("a door that fails its probe while sessions are registered against it", () => {
+    /** The door misses every probe for the whole launch, with one live session of another launcher registered against it. */
+    function busyDoorWorld(session: { readonly supervisorPid?: number }) {
+      const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT, transientProbeFailures: Number.MAX_SAFE_INTEGER });
+      world.ownSupervisors.add(SUPERVISOR_PID);
+      world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+      writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: OTHER_LAUNCHER_PID, startedAt: 0, token: SESSION_TOKEN, ...session });
+      return world;
+    }
+
+    it("is never stopped or replaced, and the launch reports that it was left alone", () => {
+      const world = busyDoorWorld({ supervisorPid: SUPERVISOR_PID });
+      const attempt = (): unknown => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+      expect(attempt).toThrow(FrontDoorStartError);
+      expect(attempt).toThrow(/1 live session\(s\) are using it.*agent-shim frontdoor restart/);
+      expect(world.stops).toEqual([]);
+      expect(world.spawns).toEqual([]);
+      expect(world.sessionToken(LAUNCHER_PID)).toBeUndefined();
+    });
+
+    it("is left alone when the session record predates the recorded door, since it cannot say which door it uses", () => {
+      const world = busyDoorWorld({});
+      expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(FrontDoorStartError);
+      expect(world.stops).toEqual([]);
+      expect(world.spawns).toEqual([]);
+    });
+
+    it("still serves the launch once it answers within the wait", () => {
+      const world = makeWorld({ transientProbeFailures: MISSED_PROBES_BEFORE_ANSWER });
+      world.ownSupervisors.add(SUPERVISOR_PID);
+      world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+      writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: OTHER_LAUNCHER_PID, startedAt: 0, token: SESSION_TOKEN, supervisorPid: SUPERVISOR_PID });
+      const ensured = ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+      expect(ensured.port).toBe(PORT);
+      expect(world.stops).toEqual([]);
+      expect(world.spawns).toEqual([]);
+    });
+
+    it("is retired when the only sessions registered belong to another door or to launches that have ended", () => {
+      const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT, transientProbeFailures: Number.MAX_SAFE_INTEGER });
+      world.ownSupervisors.add(SUPERVISOR_PID);
+      world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+      writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: OTHER_LAUNCHER_PID, startedAt: 0, token: SESSION_TOKEN, supervisorPid: DEAD_SUPERVISOR_PID });
+      writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: DEAD_LOCK_HOLDER, startedAt: 0, token: SESSION_TOKEN, supervisorPid: SUPERVISOR_PID });
+      world.ports.spawnSupervisor = () => {
+        world.spawns.push(REPLACEMENT_PID);
+        world.alive.add(REPLACEMENT_PID);
+        world.writeReadyState(PORT, REPLACEMENT_PID);
+        return REPLACEMENT_PID;
+      };
+      const realVerify = world.ports.verifyListener;
+      world.ports.verifyListener = (port) => (world.spawns.length > 0 ? { ok: true } : realVerify(port));
+      ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+      expect(world.stops).toEqual([SUPERVISOR_PID]);
+      expect(world.spawns).toEqual([REPLACEMENT_PID]);
+    });
   });
 
   it("spawns a replacement supervisor when the recorded one is dead, the crash-recovery path every frozen base URL depends on", () => {

@@ -4,7 +4,7 @@ import { CliError } from "../cliError";
 import type { LayoutPaths } from "../paths";
 import { readStartLock, type HeadroomFs, type HeadroomLock } from "../headroom/state";
 import type { ListenerVerdict } from "./probe";
-import { FRONT_DOOR_PROTOCOL, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession } from "./state";
 
 /** How long one launch waits for the front door. The listener is this same binary binding one loopback port, so a cold start takes a second or two; the bound only bites when something is genuinely broken. */
 const FRONTDOOR_START_TIMEOUT_MS = 30_000;
@@ -58,6 +58,14 @@ export function ensureFrontDoor(params: {
   let replaced = false;
   const distrusted = new Set<number>();
   let lastRejection: string | undefined;
+  /** The door this launch is waiting on because it failed its probe while holding live sessions, for the deadline message. */
+  let busyDoor: { readonly pid: number; readonly sessions: number } | undefined;
+
+  /** How many registered launches other than this one are running against the door `doorPid`. A record from a release before `supervisorPid` was recorded cannot say which door it uses, so it counts for every door. */
+  const liveSessionsOn = (doorPid: number): number =>
+    listFrontDoorSessions(ports.fs, paths.frontdoorSessionsDir).filter(
+      (session) => session.pid !== params.launcherPid && ports.isRunning(session.pid) && (session.supervisorPid === undefined || session.supervisorPid === doorPid),
+    ).length;
 
   /** Probes the listener until it authenticates or `FRONTDOOR_PROBE_ATTEMPTS` consecutive probes have failed, returning the last verdict. */
   const verifyWithRetry = (port: number): ListenerVerdict => {
@@ -106,12 +114,19 @@ export function ensureFrontDoor(params: {
           throw new FrontDoorStartError(`${lastRejection}; refusing to send this session's credentials to it. Daemon log: ${paths.frontdoorLogPath}`);
         }
         if (ports.isFrontDoorSupervisor(supervisorPid)) {
-          // This tool's own door that no longer answers: leaving it running makes the replacement move every sticky port (the headroom allowlist then has to be rewritten for the moved direct origin before a provider launch through headroom can proceed) and strands whatever sessions still point at it. It is retired first, so the replacement binds the same ports. A pid that is not a front-door supervisor is only distrusted, never signalled.
-          stopAndAwaitExit(supervisorPid, `the front door (pid ${String(supervisorPid)}) stopped answering and did not exit when asked to`);
+          const stranded = liveSessionsOn(supervisorPid);
+          if (stranded > 0) {
+            // A miss is what a busy door looks like, and this door has live sessions that retiring it would cut off (every connection and Remote Control stream drops), so it is waited on until this launch's own deadline and never signalled. Retiring on a miss turned a machine under load into a front door replaced again and again.
+            busyDoor = { pid: supervisorPid, sessions: stranded };
+          } else {
+            // This tool's own door that no longer answers and holds no live session: leaving it running makes the replacement move every sticky port (the headroom allowlist then has to be rewritten for the moved direct origin before a provider launch through headroom can proceed) and strands whatever sessions still point at it. It is retired first, so the replacement binds the same ports. A pid that is not a front-door supervisor is only distrusted, never signalled.
+            stopAndAwaitExit(supervisorPid, `the front door (pid ${String(supervisorPid)}) stopped answering and did not exit when asked to`);
+            continue;
+          }
+        } else {
+          distrusted.add(supervisorPid);
           continue;
         }
-        distrusted.add(supervisorPid);
-        continue;
       }
       if (state?.lastError !== undefined) {
         throw new FrontDoorStartError(`the front door reported a fatal error and is not serving: ${state.lastError} (daemon log: ${paths.frontdoorLogPath})`);
@@ -138,6 +153,9 @@ export function ensureFrontDoor(params: {
         `the front door did not become ready within ${String(FRONTDOOR_START_TIMEOUT_MS)}ms` +
           (lastError === undefined ? "" : ` (last error: ${lastError})`) +
           (lastRejection === undefined ? "" : ` (${lastRejection})`) +
+          (busyDoor === undefined
+            ? ""
+            : `. It was not replaced because ${String(busyDoor.sessions)} live session(s) are using it and would lose their connections; run \`agent-shim frontdoor restart\` to replace it deliberately`) +
           `. Daemon log: ${paths.frontdoorLogPath}`,
       );
     }
