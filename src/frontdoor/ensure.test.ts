@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
+import { enterProcessRole, BlockingInEventLoopError } from "../processRole";
+import { realSleepSync } from "../realPorts";
 import { ensureFrontDoor, FrontDoorStartError, restartFrontDoor } from "./ensure";
 import type { ListenerVerdict } from "./probe";
 import { FRONT_DOOR_PROTOCOL, writeFrontDoorSession, writeFrontDoorState } from "./state";
@@ -318,6 +320,32 @@ describe("ensureFrontDoor", () => {
       ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
       expect(world.stops).toEqual([SUPERVISOR_PID]);
       expect(world.spawns).toEqual([REPLACEMENT_PID]);
+    });
+  });
+
+  describe("inside the front door's process role", () => {
+    it("fails at the first wait instead of blocking when a launch has to wait on some other door", () => {
+      const world = makeWorld({ spawnWritesReadyState: false });
+      world.ports.sleep = realSleepSync;
+      const leave = enterProcessRole("frontdoor-supervisor");
+      try {
+        expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(BlockingInEventLoopError);
+      } finally {
+        leave();
+      }
+    });
+
+    it("still serves a launch planned inside its own door through the shortcut, which waits on nothing", () => {
+      const world = makeWorld();
+      world.ports.sleep = realSleepSync;
+      world.ownSupervisors.add(SUPERVISOR_PID);
+      world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+      const leave = enterProcessRole("frontdoor-supervisor");
+      try {
+        expect(ensureFrontDoor({ paths, launcherPid: SUPERVISOR_PID, ports: world.ports })).toMatchObject({ port: PORT });
+      } finally {
+        leave();
+      }
     });
   });
 

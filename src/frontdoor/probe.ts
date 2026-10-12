@@ -1,3 +1,4 @@
+import { refuseToBlockInRole } from "../processRole";
 import { Worker } from "node:worker_threads";
 
 /** The outcome of authenticating the listener a front-door state file names. */
@@ -59,6 +60,7 @@ request.on("error", (error) => finish(failed, (error.code ? error.code + ": " : 
  * Synchronous because the launcher is synchronous right through to `spawnSync`: the HTTPS request runs on a worker thread and this thread blocks on a shared buffer until the worker posts its verdict.
  */
 export function probeFrontDoorSync(port: number, caPem: string): ListenerVerdict {
+  refuseToBlockInRole("a synchronous probe of the front door");
   const shared = new SharedArrayBuffer(HEADER_SLOTS * INT32_BYTES + REASON_BYTES);
   const header = new Int32Array(shared, 0, HEADER_SLOTS);
   const worker = new Worker(PROBE_SOURCE, {

@@ -1,3 +1,4 @@
+import { enterProcessRole } from "../processRole";
 import path from "node:path";
 
 import type { HeadroomFs } from "../headroom/state";
@@ -99,6 +100,17 @@ const MS_PER_MINUTE = 60_000;
  * The listeners live in this process, so there is no child to keep alive: a crash of this process is a crash of every routed session's door at once, and recovery is the next launch's ensure spawning a replacement on the same sticky ports, which is exactly the failure model the issue asks to settle with tests. Keeping the headroom daemon alive is the headroom supervisor's job, not this one's; the two daemons idle out independently.
  */
 export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports: FrontDoorSupervisorPorts, options: RunFrontDoorSupervisorOptions = {}): Promise<number> {
+  // From here this process's event loop answers every session, so nothing in it may block the thread (see `refuseToBlockInRole`). Left again on return, which only an in-process host or a test ever reaches.
+  const leaveRole = enterProcessRole("frontdoor-supervisor");
+  try {
+    return await serveFrontDoor(idleShutdownMinutes, ports, options);
+  } finally {
+    leaveRole();
+  }
+}
+
+/** The supervisor's body, run by `runFrontDoorSupervisor` inside the front door's process role. */
+async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSupervisorPorts, options: RunFrontDoorSupervisorOptions): Promise<number> {
   const { fs, paths } = ports;
   // The binary identity this generation serves as, taken before any listener binds so an update landing during the door's own startup (CA load, binds, probes) is still a turnover for this generation rather than captured as the new normal. The turnover decision itself additionally waits for the second tick, because the launch that ensured this door writes its session record a few hundred milliseconds after the bind, and a door retiring on tick one would close its listeners under that launch's probe and refuse it outright.
   const servingBinary = ports.statOwnExecutable();
