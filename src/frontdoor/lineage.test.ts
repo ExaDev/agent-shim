@@ -69,4 +69,10 @@ describe("lineageOf", () => {
     const padded = Buffer.from(`{"model":"m","messages":[{"role":"user","content":"${"a".repeat(FOUR_MEBIBYTES + 1)}"}]}`);
     expect(lineageOf(padded)).toBeUndefined();
   });
+
+  it("gives no lineage to a body with more lexical tokens than a model's context could hold, however few messages it has", () => {
+    const SCALARS = 1_000_001;
+    const heavy = Buffer.from(`{"model":"m","messages":[{"role":"user","content":[${new Array<string>(SCALARS).fill("1").join(",")}]}]}`);
+    expect(lineageOf(heavy)).toBeUndefined();
+  });
 });

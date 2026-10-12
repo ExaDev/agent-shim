@@ -27,7 +27,9 @@ const NESTING_DEPTH_LIMIT = 64;
 /** The Messages API's limit on messages in one request. A body that holds more is not one it would accept, so the walk gives up on it. */
 const MESSAGES_PER_REQUEST_LIMIT = 100_000;
 
-/** The largest context window a model is offered with, in tokens, and the bytes a token takes in JSON text at the most: together the size of the biggest conversation a body can carry as text. */
+/**
+ * The largest context window a model is offered with, in tokens, and the bytes a token takes in JSON text at the most: together the size of the biggest conversation a body can carry as text. It is also the most lexical tokens (brackets, colons, commas, strings, numbers) a conversation's body can hold, since each of those costs a model at least one token of context.
+ */
 const CONTEXT_WINDOW_TOKENS = 1_000_000;
 const BYTES_PER_TOKEN = 4;
 
@@ -156,10 +158,15 @@ function walk(body: Buffer, hashing: boolean, parentAfter: number | undefined): 
   const overLimit = (): Walk => ({ abandoned: true, sawMessages, elements, threadDigest: "", messagesDigest: "", parentDigest: undefined });
 
   let cursor = 0;
+  let lexicalTokens = 0;
   for (;;) {
     const kind = nextToken(body, cursor);
     if (kind === END) {
       break;
+    }
+    lexicalTokens += 1;
+    if (lexicalTokens > CONTEXT_WINDOW_TOKENS) {
+      return overLimit();
     }
     const start = tokenStart;
     const end = tokenEnd;
