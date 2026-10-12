@@ -28,6 +28,7 @@ function event(overrides: Partial<RoutedResponseEvent> = {}): RoutedResponseEven
     method: "POST",
     path: "/v1/messages",
     receivedAt: RECEIVED_AT,
+    viaHeadroom: false,
     status: OK_STATUS,
     headers: SSE_HEADERS,
     ...overrides,
@@ -142,6 +143,7 @@ describe("createUsageMiddleware", () => {
       identity: "work",
       provider: ANTHROPIC_PROVIDER,
       sessionId: "session-1",
+      viaHeadroom: false,
       route: "passthrough",
       method: "POST",
       endpoint: "/v1/messages",
@@ -152,6 +154,17 @@ describe("createUsageMiddleware", () => {
       outcome: "completed",
       usage: EXPECTED_STREAM_USAGE,
     });
+  });
+
+  it("records that a request crossed headroom, taking it from the event rather than the session's flag", () => {
+    const h = harness();
+    const body = begin(h, event({ viaHeadroom: true }));
+
+    body.chunk(bytes(STREAM_BODY));
+    finishBody(h, body);
+    h.flush();
+
+    expect(singleRecord(h).viaHeadroom).toBe(true);
   });
 
   it("scans a stream split at arbitrary byte boundaries, including inside a multi-byte character", () => {

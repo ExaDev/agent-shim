@@ -84,6 +84,7 @@ function buildRecord(event: RoutedResponseEvent, context: { readonly headAt: num
     provider,
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(projectId === undefined ? {} : { project: projectId }),
+    viaHeadroom: event.viaHeadroom,
     route: event.route,
     method: event.method,
     endpoint,

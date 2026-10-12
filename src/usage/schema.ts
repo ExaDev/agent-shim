@@ -56,6 +56,8 @@ export const UsageRecordSchema = z.strictObject({
   sessionId: z.string().optional(),
   /** The project the launch ran in (its git repository root), when the launch sent one: headroom launches do. */
   project: z.string().optional(),
+  /** Whether the request crossed headroom on its way upstream. Absent on a record written before the door recorded it, and false when the request went direct. */
+  viaHeadroom: z.boolean().optional(),
   /** The front-door route that served the request. */
   route: z.string(),
   method: z.string(),

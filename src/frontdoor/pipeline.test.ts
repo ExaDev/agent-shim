@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import { admitEverything } from "../test-helpers";
+import { createCredentialCustody } from "./custody";
 import { createRoutedResponse, serveRouted, type PipelineDeps, type PipelineRequest, type ResponseBodyObserver, type ResponseObserver, type RouteResolution, type RoutedResponseEvent } from "./pipeline";
 import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse } from "./route";
 
@@ -97,7 +98,7 @@ function deps(resolution: RouteResolution, observers: readonly ResponseObserver[
 describe("createRoutedResponse", () => {
   it("applies backpressure: a write that the socket refuses waits for its drain", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0 } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -113,7 +114,7 @@ describe("createRoutedResponse", () => {
 
   it("settles a backpressured write when the client goes away, so a route is never left waiting on a dead socket", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0 } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -153,6 +154,40 @@ describe("serveRouted", () => {
     await serveRouted(request, deps({ ok: true, route: recordingRoute() }, observers).deps);
     expect(events).toEqual(["first:test:200:work", "second:text/plain"]);
     expect(response.writtenHead?.status).toBe(HTTP_STATUS.ok);
+  });
+
+  describe("viaHeadroom on the observed event", () => {
+    /** Serves one request with the given session flag, route eligibility and headroom wiring, and returns what the response observer saw. */
+    async function observedViaHeadroom(options: { readonly flagged: boolean; readonly eligible: boolean; readonly wired: boolean }): Promise<boolean[]> {
+      const seen: boolean[] = [];
+      const { request } = pipelineRequest(options.flagged ? { [HEADROOM_FLAG_HEADER]: "1" } : {});
+      const { deps: base } = deps({ ok: true, route: recordingRoute({ headroomEligible: options.eligible }) }, [
+        (event) => {
+          seen.push(event.viaHeadroom);
+          return undefined;
+        },
+      ]);
+      // A daemon between restarts: the hop answers 502 itself, so deciding to hop needs no live daemon.
+      const headroom = { headroomSocket: () => undefined, hopSecret: "secret", custody: createCredentialCustody(() => "id"), log: () => undefined };
+      await serveRouted(request, options.wired ? { ...base, headroom } : base);
+      return seen;
+    }
+
+    it("is true when the session asked for headroom, the route admits it and a daemon is wired", async () => {
+      expect(await observedViaHeadroom({ flagged: true, eligible: true, wired: true })).toEqual([true]);
+    });
+
+    it("is false when the session did not ask for headroom", async () => {
+      expect(await observedViaHeadroom({ flagged: false, eligible: true, wired: true })).toEqual([false]);
+    });
+
+    it("is false when the route does not admit headroom", async () => {
+      expect(await observedViaHeadroom({ flagged: true, eligible: false, wired: true })).toEqual([false]);
+    });
+
+    it("is false when no daemon is wired, though the session asked for one", async () => {
+      expect(await observedViaHeadroom({ flagged: true, eligible: true, wired: false })).toEqual([false]);
+    });
   });
 
   it("refuses an unauthorized request before any route or resolution, as an Anthropic-shaped 401 the observers still see", async () => {
@@ -280,7 +315,7 @@ function routedWith(response: FakeServerResponse, observers: readonly ResponseOb
     deps: d,
     session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined },
     route: "test",
-    request: { method: "POST", path: "/v1/messages", receivedAt: 0 },
+    request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false },
   });
   return { routed, logs };
 }
