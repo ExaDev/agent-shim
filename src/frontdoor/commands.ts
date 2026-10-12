@@ -64,7 +64,8 @@ import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcSt
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
-import { collectFrontDoorStatus, formatFrontDoorStatus, headroomSocketTarget } from "./status";
+import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
+import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
 import { liveSessionTokens, writeFrontDoorSession } from "./state";
 import { declareThisProcessTheFrontDoor } from "./selfIdentity";
 import { runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
@@ -555,11 +556,13 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       .option("--json", "Print the status as JSON.")
       .action((options: Readonly<{ json?: boolean }>) => {
         const status = collectFrontDoorStatus(realFarmFs, realHeadroomSocketTrust, paths, realIsProcessRunning);
+        // Probed here, not in the collected status: the collection is read-only and shared with the door's own typed API, while this is the CLI asking the listeners themselves whether they accept.
+        const listeners = readFrontDoorListeners(status.state, status.supervisorAlive, realFrontDoorListenerProbes(paths));
         if (options.json === true) {
-          printJson(status);
+          printJson({ ...status, listeners });
           return;
         }
-        for (const line of formatFrontDoorStatus(status, paths.frontdoorCaCertFile)) {
+        for (const line of [...formatFrontDoorStatus(status, paths.frontdoorCaCertFile), ...formatFrontDoorListeners(listeners)]) {
           console.log(line);
         }
       }),

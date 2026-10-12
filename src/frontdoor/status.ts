@@ -1,5 +1,6 @@
 import { verifyHeadroomSocket, type HeadroomSocketTarget, type HeadroomSocketTrustPorts } from "../headroom/socket";
 import { readHeadroomState, type HeadroomFs } from "../headroom/state";
+import type { FrontDoorListenerReading } from "./listenerReadings";
 import type { LayoutPaths } from "../paths";
 import { listFrontDoorSessions, readFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
 
@@ -81,4 +82,14 @@ export function formatFrontDoorStatus(status: FrontDoorStatus, caCertPath: strin
   }
   lines.push(`daemon log: ${status.logPath}${status.logExists ? "" : " (not created yet)"}`);
   return lines;
+}
+
+/** The lines `frontdoor status` adds when it has probed the serving door: one per listener, saying whether it accepted and how long that took on this machine now, so a door that is alive but not serving reads as such. */
+export function formatFrontDoorListeners(readings: readonly FrontDoorListenerReading[]): string[] {
+  return readings.map((reading) => {
+    const what = reading.listener === "provider" ? "provider listener" : "connect surface";
+    return reading.ok
+      ? `${what}: accepting on 127.0.0.1:${String(reading.port)} (probe took ${String(Math.round(reading.elapsedMs))} ms)`
+      : `${what}: NOT accepting on 127.0.0.1:${String(reading.port)}${reading.reason === undefined ? "" : ` (${reading.reason})`}`;
+  });
 }

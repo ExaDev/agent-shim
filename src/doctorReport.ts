@@ -22,8 +22,9 @@ import { reportableAllowlistFileProblem } from "./headroom/socket";
 import { pushHeadroomAllowlist, pushRefusedAllowlistFile, type DoctorHeadroomAllowlist } from "./doctorHeadroomAllowlist";
 import { HeadroomStateSchema, resolveServingHeadroomState } from "./headroom/state";
 import { currentHeadroomAllowlistInputs, undeterminedFrontDoors } from "./headroom/supervisor";
-import { FrontDoorStateSchema, listFrontDoorSessions, type FrontDoorSessionSummary } from "./frontdoor/state";
-import { pushFrontDoor } from "./doctorFrontDoor";
+import { FrontDoorStateSchema, listFrontDoorSessions, readFrontDoorState, type FrontDoorSessionSummary } from "./frontdoor/state";
+import { pushFrontDoor, pushFrontDoorListeners } from "./doctorFrontDoor";
+import { readFrontDoorListeners, realFrontDoorListenerProbes, type FrontDoorListenerReading } from "./frontdoor/listenerReadings";
 import { listFrontDoorSupervisors, type FrontDoorSupervisorListing } from "./frontdoor/supervisorProcesses";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providersStore";
@@ -175,6 +176,8 @@ export interface RunDoctorParams {
     readonly supervisors: FrontDoorSupervisorListing;
     /** The launches registered with the front door whose launcher is still running, each naming the door it was sent to: what tells a superseded door still serving its launches from one serving nothing. */
     readonly liveSessions: readonly FrontDoorSessionSummary[];
+    /** What probing the serving door's listeners found: empty when no door serves or the platform cannot say. Omit to skip the listener checks. */
+    readonly listeners?: readonly FrontDoorListenerReading[];
   };
 }
 
@@ -664,6 +667,9 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   if (params.frontDoor !== undefined) {
     const validated = params.frontDoor.state.raw === undefined ? undefined : validateJson(FrontDoorStateSchema, params.frontDoor.state);
     pushFrontDoor(push, params.frontDoor.supervisors, validated?.ok === true ? validated.data.supervisorPid : undefined, params.frontDoor.liveSessions);
+    if (params.frontDoor.listeners !== undefined) {
+      pushFrontDoorListeners(push, params.frontDoor.listeners);
+    }
   }
 
   if (params.activeIdentity.raw === undefined) {
@@ -766,6 +772,13 @@ function realpathOrSelf(target: string): string {
 export interface CollectDoctorReportParams {
   readonly paths: LayoutPaths;
   readonly env: NodeJS.ProcessEnv;
+}
+
+/** Probes the listeners of the door the state file names, or reads nothing when no supervisor of it is alive. */
+function servingDoorListeners(paths: LayoutPaths): readonly FrontDoorListenerReading[] {
+  const state = readFrontDoorState(realFarmFs, paths.frontdoorStateFile) ?? {};
+  const alive = state.supervisorPid !== undefined && realIsProcessRunning(state.supervisorPid);
+  return readFrontDoorListeners(state, alive, realFrontDoorListenerProbes(paths));
 }
 
 /**
@@ -901,7 +914,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     },
     ...(uid === undefined
       ? {}
-      : { frontDoor: { state: { path: paths.frontdoorStateFile, raw: realFsPort.readFileUtf8(paths.frontdoorStateFile) }, supervisors: listFrontDoorSupervisors(realRunPort, uid), liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => realIsProcessRunning(session.pid)) } }),
+      : { frontDoor: { state: { path: paths.frontdoorStateFile, raw: realFsPort.readFileUtf8(paths.frontdoorStateFile) }, supervisors: listFrontDoorSupervisors(realRunPort, uid), liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => realIsProcessRunning(session.pid)), listeners: servingDoorListeners(paths) } }),
   });
   return report;
 }

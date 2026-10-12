@@ -3,7 +3,7 @@ import { Worker } from "node:worker_threads";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
-import { probeFrontDoorSync } from "./probe";
+import { probeFrontDoorSync, probeListenerAcceptSync } from "./probe";
 
 /** Enough time for the pure-JS 2048-bit keypairs this file generates. */
 const KEYGEN_TIMEOUT_MS = 120_000;
@@ -124,3 +124,18 @@ describe("probeFrontDoorSync", () => {
     expect(nothing.ok ? "" : nothing.reason).toContain("ECONNREFUSED");
   });
 });
+
+describe("probeListenerAcceptSync", () => {
+  it("accepts a listener that accepts a connection, without asking it anything", async () => {
+    const port = await listenerThread(undefined);
+    expect(probeListenerAcceptSync(port)).toEqual({ ok: true });
+  });
+
+  it("fails a port nothing listens on, naming the refusal", async () => {
+    const port = await closedPort();
+    const verdict = probeListenerAcceptSync(port);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok ? "" : verdict.reason).toMatch(/ECONNREFUSED/);
+  });
+});
+

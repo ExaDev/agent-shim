@@ -109,7 +109,7 @@ agent-shim headroom enable|disable [--session <id>] [--now] [--json]   # which s
 agent-shim codex status [--json]
 agent-shim codex login [--no-open] [--json]       # Sign in with ChatGPT, for providers with `codex.login: chatgpt-sign-in`
 agent-shim codex logout [--json]
-agent-shim frontdoor status [--json]
+agent-shim frontdoor status [--json]        # also probes the serving door's two listeners and reports whether each accepted
 agent-shim frontdoor restart [--json]        # replace the serving door in place; running sessions reach it on their next request
 agent-shim frontdoor rc list [--json]
 agent-shim frontdoor rc status [<cse_id>] [--json]
