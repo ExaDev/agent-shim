@@ -309,6 +309,47 @@ describe("rankPool", () => {
     expect(ranking.pick?.reasons[0]).toContain("resuming");
   });
 
+  describe("a resumed conversation's context", () => {
+    const BILLED_TOKENS = 100_000;
+    const FIVE_HOUR_U40 = 0.4;
+    /** Two readings of one window with `BILLED_TOKENS` billed between them: the window rose 0.1 over 100k tokens, so one token costs 1e-6 of it. */
+    function measured(identity: string): UsageRecord[] {
+      const first = burnRecord(identity, HOUR_MS, FIVE_HOUR_U40, FOUR_HOURS_MS);
+      const second = { ...burnRecord(identity, MINUTE_MS, U50, FOUR_HOURS_MS), usage: { inputTokens: BILLED_TOKENS } };
+      return [first, second];
+    }
+    const members = (): PoolMember[] => [
+      member("old", { five: { utilization: U50, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U90, resetsInMs: SIX_DAYS_MS } }, MAX_20X, measured("old")),
+      member("better", { five: { utilization: U10, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U10, resetsInMs: HOUR_MS } }),
+    ];
+    const COLD = { identity: "old", at: at(-THREE_DAYS_MS) };
+
+    it("moves a cold resume off a member whose five-hour window cannot cover rewriting it, naming the cost", () => {
+      const ranking = rank(members(), { sticky: COLD, resuming: true, resumeContextTokens: 700_000 });
+      expect(ranking.pick?.identity).toBe("better");
+      expect(ranking.movedOff?.identity).toBe("old");
+      expect(ranking.movedOff?.reason).toContain("700000-token conversation");
+    });
+
+    it("keeps a cold resume on its account when the window covers the rewrite", () => {
+      const ranking = rank(members(), { sticky: COLD, resuming: true, resumeContextTokens: 100_000 });
+      expect(ranking.pick?.identity).toBe("old");
+    });
+
+    it("does not charge the rewrite to the account whose cache is still warm for the conversation", () => {
+      const ranking = rank(members(), { sticky: { identity: "old", at: at(-MINUTE_MS) }, resuming: true, resumeContextTokens: 700_000 });
+      expect(ranking.pick?.identity).toBe("old");
+    });
+
+    it("sets no constraint for a member whose cost per token has not been measured", () => {
+      const unmeasured = [
+        member("old", { five: { utilization: U50, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U90, resetsInMs: SIX_DAYS_MS } }),
+        member("better", { five: { utilization: U10, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U10, resetsInMs: HOUR_MS } }),
+      ];
+      expect(rank(unmeasured, { sticky: COLD, resuming: true, resumeContextTokens: 700_000 }).pick?.identity).toBe("old");
+    });
+  });
+
   it("does not keep a last pick that is refused or would run dry", () => {
     const members = [member("old", { seven: { utilization: U50, status: "rejected", resetsInMs: DAY_MS } }), member("other", { seven: { utilization: U50, resetsInMs: DAY_MS } })];
     expect(rank(members, { sticky: { identity: "old", at: at(-MINUTE_MS) } }).pick?.identity).toBe("other");

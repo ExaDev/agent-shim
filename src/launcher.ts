@@ -12,6 +12,7 @@ import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDe
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { resolvePoolLaunch } from "./launcher/pool";
+import { resumedContextTokens } from "./usage/resumeContext";
 import { IdentityLockBusyError } from "./launcher/lock";
 import type { FarmFs, FsPort, FrontDoorPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
 import { childExitCode } from "./launcher/spawn";
@@ -179,6 +180,7 @@ function pickFromPool(
     log.error(`agent-shim: pool "${decided.pool}" was selected, but this launcher has no farm wired to read usage and pick a member with.`);
     return proc.exit(1);
   }
+  const resumeContextTokens = resumedContextTokens(farmRuntime.fs, { claudeHome: farmRuntime.claudeHome, cwd: farmRuntime.cwd, passthrough: parsedArgv.rest });
   const resolution = resolvePoolLaunch({
     poolName: decided.pool,
     selectedVia: decided.source,
@@ -190,6 +192,7 @@ function pickFromPool(
     now: farmRuntime.now,
     sleep: farmRuntime.lock.sleep,
     passthrough: parsedArgv.rest,
+    ...(resumeContextTokens === undefined ? {} : { resumeContextTokens }),
     // A read-only decision never sleeps for a refused pool and never records its pick, so asking what a launch would pick leaves the next real launch's keep-warm preference as it was.
     wait: !readOnly && parsedArgv.wait === true,
     recordPick: !readOnly,
