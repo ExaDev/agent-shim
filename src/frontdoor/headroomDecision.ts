@@ -11,7 +11,7 @@ interface SessionState {
 }
 
 /** A finished response, as the decision learns it. */
-export interface ObservedResponse {
+interface ObservedResponse {
   readonly sessionId: string | undefined;
   readonly endedAtMs: number;
   readonly cacheReadInputTokens: number | undefined;
