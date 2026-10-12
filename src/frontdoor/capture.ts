@@ -81,8 +81,8 @@ export function redactHeaders(headers: Readonly<IncomingHttpHeaders>): IncomingH
   return result;
 }
 
-/** Redacts credential-shaped substrings in arbitrary text: the body of a non-JSON payload, and the fallback for anything JSON parsing cannot see into. */
-function redactText(text: string): string {
+/** Redacts credential-shaped substrings in arbitrary text: the body of a non-JSON payload, the fallback for anything JSON parsing cannot see into, and any other free text bound for a file or a report (a daemon's startup output). */
+export function redactText(text: string): string {
   return SECRET_BODY_PATTERNS.reduce((accumulated, { pattern, replacement }) => accumulated.replace(pattern, replacement), text);
 }
 

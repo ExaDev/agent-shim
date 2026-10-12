@@ -2,11 +2,8 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 
-import { isCodexProvider, ProviderSchema, type Provider } from "../config/schema";
+import { ProviderSchema, type Provider } from "../config/schema";
 import type { FarmFs } from "../launcher/ports";
-
-/** The upstream headroom serves when no provider's base URL claims the request: Claude Code's own API. */
-export const HEADROOM_ANTHROPIC_UPSTREAM = "https://api.anthropic.com";
 
 /**
  * The two names the headroom state has lived at: the one name every release shares (`LayoutPaths.headroomStateFile`, `state.json`), and the previous release's versioned name for it (`state.v2.json`), read only while a supervisor from that release is still alive and cleaned up once its generation has drained. A supervisor from an older release keeps running, and writing, until its own sessions end, which is why the shared name is arbitrated by ownership rather than by another version bump: a supervisor stands down while the state file names another live supervisor, treats an absent or dead-owner record (including one from a schema it cannot parse, such as the TCP-port era's) as claimable, and a superseded generation's last write is its own shutdown record, which the next claim heals. The realistic cost is that during the rare cross-era window a displaced record can cause one extra supervisor spawn, which then claims and serves; sessions are never cut off, because each generation's daemon serves only its own registered sessions on its own pid-named socket.
@@ -22,7 +19,7 @@ export interface HeadroomStateFiles {
 export const HeadroomStateSchema = z.strictObject({
   /** The supervisor process owning the daemon. Alive means someone is keeping headroom running. */
   supervisorPid: z.number().int().positive().optional(),
-  /** The headroom proxy process itself. Absent while the supervisor is between restarts. */
+  /** The headroom proxy process itself, recorded as soon as it is spawned (before it is ready, which `socketPath` signals) so a successor can find a daemon whose supervisor died during its start. Absent while the supervisor is between restarts. */
   headroomPid: z.number().int().positive().optional(),
   /**
    * The unix socket the proxy serves on, inside the owner-only socket directory. Absent until the proxy has passed its readiness check, so "socketPath is set" is itself the ready signal a launcher polls for. The front door reads it on every hop, so a restart (which keeps the generation's path) is followed without anything being relaunched.
@@ -30,7 +27,9 @@ export const HeadroomStateSchema = z.strictObject({
   socketPath: z.string().min(1).optional(),
   /** The `headroom --version` output of the running install. */
   version: z.string().optional(),
-  /** Hash of the allowlist the running proxy was started with, so a provider-file change is detected as drift. */
+  /**
+   * Hash of the allowlist the running proxy serves. The supervisor records it in the same tick it writes that allowlist to `LayoutPaths.headroomAllowlistFile`, which the proxy re-reads on its next request, so a provider launch, whose requests come back through its front door's direct origin, waits until this names an allowlist holding that origin. A supervisor from an earlier release records here the hash of the allowlist its daemon was started with instead (see `earlierRelease.ts`).
+   */
   allowlistHash: z.string().optional(),
   /** Hash of the token-saving settings the running proxy was started with, so a settings change is detected as drift. */
   settingsHash: z.string().optional(),
@@ -123,32 +122,98 @@ export function migrateHeadroomState(fs: HeadroomFs, files: HeadroomStateFiles, 
   fs.removeRecursive(files.legacyStateFile);
 }
 
-/** The allowlist the daemon is started with: every provider's base URL plus Claude Code's own API, so a session with no provider selected reaches the real Anthropic upstream through the same proxy. */
-export function headroomAllowlist(providers: readonly { readonly baseUrl: string }[]): readonly string[] {
-  const urls = new Set<string>([HEADROOM_ANTHROPIC_UPSTREAM]);
-  for (const provider of providers) {
-    urls.add(provider.baseUrl);
-  }
-  return [...urls].sort();
-}
-
-/**
- * The upstreams a set of providers routes to through headroom: every `http` provider's base URL, plus the front door's direct origin once the door has ever served. A provider session routed through headroom is forwarded by the door's hop back through its own direct listener (whatever route serves there, the in-process translator or the pass-through), so headroom must admit that address like any provider's; the direct port is sticky, so its origin stays stable across restarts. Before the front door has ever served there is no address to admit, and the first routed launch starts it before bringing headroom up, so a freshly started headroom daemon already sees it.
- */
-export function headroomUpstreams(providers: readonly Provider[], frontDoorOrigin: string | undefined): readonly { readonly baseUrl: string }[] {
-  const upstreams: { baseUrl: string }[] = providers.filter((provider) => !isCodexProvider(provider)).map((provider) => ({ baseUrl: provider.baseUrl }));
-  if (providers.length > 0 && frontDoorOrigin !== undefined) {
-    upstreams.push({ baseUrl: frontDoorOrigin });
-  }
-  return upstreams;
-}
-
 /** A stable hash of an allowlist, so drift detection compares one short string instead of recomputing set equality against a running process it cannot interrogate. */
 export function hashAllowlist(allowlist: readonly string[]): string {
   return createHash("sha256").update(allowlist.join("\n")).digest("hex");
 }
 
-/** Every provider definition under `providersDir`, best-effort: unreadable files are skipped, because the allowlist's job is to open every upstream a launch might use, not to fail a launch over one broken file. */
+/** The `headroom proxy` option naming the allowlist file the daemon reads and re-reads on change. */
+export const HEADROOM_ALLOWLIST_FILE_FLAG = "--allowed-base-urls-file";
+
+/** The allowlist file's content: one entry per line in the order given (the supervisor writes the live doors' origins sorted), newline-terminated. Headroom separates entries by commas, tabs, carriage returns and line breaks; one per line keeps it readable and lets the supervisor compare it byte for byte against what it would write. */
+export function formatAllowlistFile(allowlist: readonly string[]): string {
+  return allowlist.map((entry) => `${entry}\n`).join("");
+}
+
+/** The hash of the entries an allowlist file's content lists, as a set: what the supervisor records once the file is in place, since it writes the entries sorted and without repeats, and what a reader compares that record against, whatever order a hand edit left them in. */
+export function hashAllowlistFile(content: string): string {
+  return hashAllowlist([...new Set(parseAllowlistFile(content))].sort());
+}
+
+/** The line boundaries headroom's parser recognises (Python's `str.splitlines`): newline, carriage return, vertical tab, form feed, the file, group and record separators, next line, and the Unicode line and paragraph separators. Each ends a line, and so a comment, and separates entries. */
+// Regular-expression source, escaped, so the characters can sit inside a character class.
+const ALLOWLIST_LINE_BREAKS = "\\n\\r\\u000b\\u000c\\u001c\\u001d\\u001e\\u0085\\u2028\\u2029";
+
+/** The characters Python's `str.isspace` counts as whitespace, which headroom uses both to start a comment after and to reject an entry containing: wider than a JavaScript `\s` (the file, group, record and unit separators, and next line) and without its byte-order mark. */
+const ALLOWLIST_WHITESPACE = "\\t\\n\\u000b\\u000c\\r\\u001c-\\u001f \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+
+/** The entry separators headroom's allowlist file accepts: commas, tabs and every line boundary. */
+const ALLOWLIST_FILE_SEPARATORS = new RegExp(`[,\\t${ALLOWLIST_LINE_BREAKS}]`, "u");
+
+/** A comment in headroom's allowlist file: a `#` at the very start of the content, or after any whitespace character, through to the next line boundary. A `#` anywhere else is part of an entry. */
+const ALLOWLIST_FILE_COMMENT = new RegExp(`(?:^|(?<=[${ALLOWLIST_WHITESPACE}]))#[^${ALLOWLIST_LINE_BREAKS}]*`, "gu");
+
+/** Any whitespace character headroom counts, for rejecting an entry that contains one. */
+const ALLOWLIST_ENTRY_WHITESPACE = new RegExp(`[${ALLOWLIST_WHITESPACE}]`, "u");
+
+/** Leading and trailing whitespace as Python's `str.strip` removes it. */
+const ALLOWLIST_SURROUNDING_WHITESPACE = new RegExp(`^[${ALLOWLIST_WHITESPACE}]+|[${ALLOWLIST_WHITESPACE}]+$`, "gu");
+
+/** The URL schemes headroom's guard admits an origin for. */
+const ALLOWLIST_SAFE_SCHEMES: ReadonlySet<string> = new Set(["http:", "https:", "ws:", "wss:"]);
+
+/** Whether a scheme-less entry is a hostname and nothing else, as headroom requires of one: no path, query, fragment or userinfo, and no colon outside an IPv6 literal's brackets (a colon there could only start a port, which a bare host, admitting every port, may not name). */
+function isBareHost(entry: string): boolean {
+  if (/[/?#@]/.test(entry)) {
+    return false;
+  }
+  if (entry.startsWith("[")) {
+    const close = entry.indexOf("]");
+    return close > 1 && !entry.slice(close + 1).includes(":");
+  }
+  return entry !== "" && !entry.includes(":");
+}
+
+/** Whether a URL entry has a scheme headroom admits, a host, and a port that parses. */
+function isAdmissibleUrl(entry: string): boolean {
+  try {
+    const url = new URL(entry);
+    return ALLOWLIST_SAFE_SCHEMES.has(url.protocol) && url.hostname !== "";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The entries headroom would accept from an allowlist file's content, as written, following the rules of headroom's own parser (`headroom/proxy/upstream_guard.py` in the ExaDev fork): a leading byte-order mark is ignored; a `#` at the start of the content or after any whitespace character begins a comment that runs to the next line boundary; entries are separated by commas, tabs and line boundaries (`ALLOWLIST_LINE_BREAKS`), with surrounding whitespace and blank entries ignored; an entry containing whitespace, as Python's `str.isspace` counts it, is invalid; a scheme-less entry must be a hostname and nothing else (no port, even an empty one, and no path, userinfo, query or fragment); and a URL entry must use http, https, ws or wss and name a host with a port that parses. Invalid entries are dropped, as headroom skips them. Headroom then normalises each entry to a host or an origin; these are returned as written, so a caller compares them with the origins the supervisor writes, and a hand-written variant of the same origin reads as a different entry.
+ */
+export function parseAllowlistFile(content: string): readonly string[] {
+  return content
+    .replace(/^\uFEFF/, "")
+    .replace(ALLOWLIST_FILE_COMMENT, "")
+    .split(ALLOWLIST_FILE_SEPARATORS)
+    .map((entry) => entry.replace(ALLOWLIST_SURROUNDING_WHITESPACE, ""))
+    .filter((entry) => entry !== "" && !ALLOWLIST_ENTRY_WHITESPACE.test(entry) && (entry.includes("://") ? isAdmissibleUrl(entry) : isBareHost(entry)));
+}
+
+/** Replaces the allowlist file with `allowlist`, owner-only and atomically (a temporary sibling renamed into place): headroom notices the replacement by the file's changed identity and reads it whole, so it never serves a partial list. Throws when the write fails. */
+export function writeAllowlistFile(fs: HeadroomFs, allowlistFile: string, allowlist: readonly string[]): void {
+  fs.mkdirPrivate(path.dirname(allowlistFile));
+  fs.writeFilePrivate(allowlistFile, formatAllowlistFile(allowlist));
+}
+
+/** Removes a temporary allowlist file (`<allowlist file>.<writer pid>.tmp`) that `writeFilePrivate` left behind when its writer died between writing and renaming: a temporary file exists only while its writer is between the two, so one whose writer is no longer running is stale, and a live writer's is left alone. `isRunning` must be zombie-aware. */
+export function pruneStaleAllowlistTemporaries(fs: HeadroomFs, allowlistFile: string, isRunning: (pid: number) => boolean): void {
+  const prefix = `${path.basename(allowlistFile)}.`;
+  for (const name of fs.readdir(path.dirname(allowlistFile))) {
+    const writer = name.startsWith(prefix) ? /^([1-9]\d*)\.tmp$/.exec(name.slice(prefix.length))?.[1] : undefined;
+    if (writer !== undefined && !isRunning(Number(writer))) {
+      fs.removeRecursive(path.join(path.dirname(allowlistFile), name));
+    }
+  }
+}
+
+/** Every provider definition under `providersDir`, best-effort: an unreadable or invalid file is skipped, so a caller listing providers is not failed by one broken file. */
 export function readAllProviders(fs: HeadroomFs, providersDir: string): readonly { name: string; provider: Provider }[] {
   const result: { name: string; provider: Provider }[] = [];
   for (const name of fs.readdir(providersDir)) {

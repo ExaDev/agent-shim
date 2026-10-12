@@ -118,7 +118,7 @@ export interface HeadroomUp {
 /**
  * Everything the launcher needs from the headroom daemon, injected so its daemon-supervision side effects stay behind a port and the launcher's own logic stays pure over it (`src/realPorts.ts` wires the real one; tests wire fakes).
  *
- * `ensure` brings the daemon up (spawning the detached supervisor when nothing healthy is running) and registers this launch in its session registry; `release` removes that registration when the spawned `claude` exits. `routesProvider` says the launch sends a provider's traffic through the daemon, which needs the daemon to have been started with the front door's current address on its allowlist: `ensure` then waits for a restart that brings it, or refuses when live sessions hold the stale daemon up, instead of registering against a daemon that would reject every request.
+ * `ensure` brings the daemon up (spawning the detached supervisor when nothing healthy is running) and registers this launch in its session registry; `release` removes that registration when the spawned `claude` exits. `routesProvider` says the launch sends a provider's traffic through the daemon, which needs the daemon to be serving an allowlist holding the front door's current direct origin: `ensure` then waits until the supervisor has written it to the daemon's allowlist file and recorded it, instead of registering against a daemon that would reject every request.
  */
 export interface HeadroomPort {
   readonly ensure: (options: Readonly<{ routesProvider: boolean }>) => HeadroomUp;

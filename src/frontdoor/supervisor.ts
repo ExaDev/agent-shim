@@ -3,7 +3,7 @@ import path from "node:path";
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
 import type { DoorHealthPublisher } from "./doorHealthEvents";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorDirectRecord, writeFrontDoorDirectRecord, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
 
 /** A bound front-door listener in this process, and how to stop it. */
 interface FrontDoorListenerHandle {
@@ -162,9 +162,11 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
     return fail(`could not start the direct listener: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (previousStickyDirect !== undefined && direct.port !== previousStickyDirect) {
-    ports.log(`agent-shim frontdoor supervisor: sticky direct port ${String(previousStickyDirect)} was occupied; moving to ${String(direct.port)} (headroom must be restarted to admit the new address)`);
+    ports.log(`agent-shim frontdoor supervisor: sticky direct port ${String(previousStickyDirect)} was occupied; moving to ${String(direct.port)} (headroom admits the new address once its supervisor rewrites the allowlist file)`);
   }
   lastDirectPort = direct.port;
+  // Recorded under this door's own pid before launches can be sent here, and kept until this door exits: headroom must keep admitting this door's direct origin for as long as any of its sessions can route through it, including after another door supersedes it in `state.json`.
+  writeFrontDoorDirectRecord(fs, paths.frontdoorDirectRecordsDir, { pid: ports.ownPid, directPort: direct.port });
 
   writeFrontDoorState(fs, paths.frontdoorStateFile, { protocol: FRONT_DOOR_PROTOCOL, supervisorPid: ports.ownPid, port: http.port, connectPort: connect.port, directPort: direct.port, ...sticky() });
   ports.doorHealth.generation({ providerPort: http.port, connectPort: connect.port, directPort: direct.port });
@@ -197,6 +199,8 @@ export async function runFrontDoorSupervisor(idleShutdownMinutes: number, ports:
     await http.close();
     // Last of the serving machinery to stop, and deliberately last: with every listener down no observed exchange can settle and re-attach a stream, so the hub's synchronous cursor persistence is the final word on every attachment before the process exits.
     ports.closeRcStreamHub();
+    // Nothing can route through this door's direct listener any more, so headroom may stop admitting its origin.
+    removeFrontDoorDirectRecord(fs, paths.frontdoorDirectRecordsDir, ports.ownPid);
   };
   // The owner's retirement: the serving machinery stopped, then the sticky addresses written so the next generation starts where this one served, unless another live supervisor has claimed the state file since this tick looked, whose record is never rewritten.
   const shutdown = async (): Promise<number> => {

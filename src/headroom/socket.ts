@@ -35,7 +35,7 @@ const PLATFORMS_WITHOUT_UNIX_SOCKETS: readonly string[] = ["win32"];
 
 /** What an `lstat` (which never follows symlinks) reports about one path, narrowed to what authenticating the socket needs. */
 export interface SocketPathStat {
-  readonly kind: "dir" | "socket" | "symlink" | "other";
+  readonly kind: "dir" | "file" | "socket" | "symlink" | "other";
   /** The owning user id. */
   readonly uid: number;
   /** The permission bits, without the file type bits. */
@@ -50,6 +50,8 @@ export interface HeadroomSocketTrustPorts {
   readonly currentUid: () => number;
   /** Stats one path without following symlinks, or returns undefined when nothing is there. */
   readonly lstat: (target: string) => SocketPathStat | undefined;
+  /** The target a symlink holds, as written: how the allowlist file's path is resolved through a symlinked ancestor. */
+  readonly readlink: (target: string) => string;
 }
 
 /** Either a socket path the hop may dial, or the reason it must not: the two never appear together. */
@@ -67,16 +69,19 @@ function platformRefusal(platform: string): string | undefined {
     : undefined;
 }
 
+/** How a refusal names each kind a path is expected to be. */
+const KIND_NAMES: Readonly<Record<"dir" | "file" | "socket", string>> = { dir: "directory", file: "file", socket: "socket" };
+
 /** Why one stat fails the owner-only test (wrong kind, a symlink, another owner, or group or other access), or undefined when it passes. */
-function ownerOnlyRefusal(label: string, target: string, stat: SocketPathStat | undefined, expected: SocketPathStat["kind"], uid: number): string | undefined {
+function ownerOnlyRefusal(label: string, target: string, stat: SocketPathStat | undefined, expected: "dir" | "file" | "socket", uid: number): string | undefined {
   if (stat === undefined) {
     return `the headroom ${label} ${target} does not exist`;
   }
   if (stat.kind === "symlink") {
-    return `the headroom ${label} ${target} is a symlink; it must be the real ${expected === "dir" ? "directory" : "socket"}`;
+    return `the headroom ${label} ${target} is a symlink; it must be the real ${KIND_NAMES[expected]}`;
   }
   if (stat.kind !== expected) {
-    return `the headroom ${label} ${target} is not a ${expected === "dir" ? "directory" : "socket"}`;
+    return `the headroom ${label} ${target} is not a ${KIND_NAMES[expected]}`;
   }
   if (stat.uid !== uid) {
     return `the headroom ${label} ${target} is owned by uid ${String(stat.uid)}, not by this user (uid ${String(uid)})`;
@@ -100,6 +105,126 @@ export function verifyHeadroomSocket(socketPath: string, ports: HeadroomSocketTr
   const refusal =
     ownerOnlyRefusal("socket directory", directory, ports.lstat(directory), "dir", uid) ?? ownerOnlyRefusal("socket", socketPath, ports.lstat(socketPath), "socket", uid);
   return refusal === undefined ? { socketPath } : { refused: refusal };
+}
+
+/** How the allowlist file fails the rules it is held to: what is wrong, and whether the supervisor can repair it (only what lies in agent-shim's own directories can be). */
+export interface AllowlistFileProblem {
+  readonly message: string;
+  readonly repairable: boolean;
+}
+
+/** The most symlinks followed while resolving the allowlist file's path, headroom's own bound (Linux's MAXSYMLINKS, the larger of the common kernels' limits). */
+const MAX_SYMLINK_HOPS = 40;
+
+/** The uid that owns everything it likes anyway, so trusting it adds no one. */
+const ROOT_UID = 0;
+
+/** The write bits for group and others. */
+const GROUP_OR_OTHER_WRITE_BITS = 0o022;
+/** The sticky bit (`S_ISVTX`): a directory carrying it is shared on purpose, so narrowing it would break everything else that uses it. */
+const STICKY_BIT = 0o1000;
+
+/**
+ * Every directory resolving the absolute `target` passes through, from `/` down, each once, the way headroom's guard walks it: one entry at a time, following a symlink met on the way (with a relative target taken from the link's own directory) and recording the directory holding each entry looked up. A symlink at the final entry is not followed: agent-shim's own rule refuses a symlinked allowlist file before its target matters. Returns a reason instead when the symlinks go deeper than headroom follows.
+ */
+function pathDirectories(target: string, ports: HeadroomSocketTrustPorts): readonly string[] | string {
+  const pending = target.split("/").reverse();
+  let current = "/";
+  const directories: string[] = [];
+  let hops = 0;
+  for (let name = pending.pop(); name !== undefined; name = pending.pop()) {
+    if (name === "" || name === ".") {
+      continue;
+    }
+    if (name === "..") {
+      // `current` is symlink-free, so its lexical parent is its real one.
+      current = path.dirname(current);
+      continue;
+    }
+    if (!directories.includes(current)) {
+      directories.push(current);
+    }
+    const entry = path.join(current, name);
+    if (pending.length > 0 && ports.lstat(entry)?.kind === "symlink") {
+      hops += 1;
+      if (hops > MAX_SYMLINK_HOPS) {
+        return `the symlinks on the allowlist file's path go more than ${String(MAX_SYMLINK_HOPS)} deep`;
+      }
+      const linkTarget = ports.readlink(entry);
+      if (path.isAbsolute(linkTarget)) {
+        current = "/";
+      }
+      pending.push(...linkTarget.split("/").reverse());
+    } else if (pending.length > 0) {
+      current = entry;
+    }
+  }
+  return directories;
+}
+
+/** The remedy for a directory above the agent-shim root that is not this user's to change. */
+const MOVE_ROOT_REMEDY = "move the agent-shim root (AGENT_SHIM_HOME) to where every directory above it is owned by this user or root and not writable by group or others";
+
+/**
+ * Why headroom refuses the allowlist file over one directory on its path, or undefined when the directory passes headroom's rule: owned by this user or root, not writable by group or others, the sticky bit being no exception (mode bits only; access control lists are not judged). `remedy` says what fixes it for a directory agent-shim does not own and so cannot repair: narrowing it when this user owns it and it is not sticky, else moving the root, as headroom's own refusal advises; agent-shim's own directory needs none, since the supervisor repairs it.
+ */
+function headroomDirectoryRefusal(directory: string, stat: SocketPathStat | undefined, uid: number, remedy: boolean): string | undefined {
+  // As headroom advises: only a directory this user owns and that is not sticky is theirs to narrow; a sticky shared one such as /tmp, root's or another user's must not be, so the root moves instead.
+  if (stat?.kind !== "dir") {
+    return `the directory ${directory} on the allowlist file's path is ${stat === undefined ? "missing" : "not a directory"}, so headroom refuses the file`;
+  }
+  if (stat.uid !== uid && stat.uid !== ROOT_UID) {
+    return `the directory ${directory} on the allowlist file's path is owned by uid ${String(stat.uid)}, not by this user (uid ${String(uid)}) or root, so headroom refuses the file${remedy ? `; ${MOVE_ROOT_REMEDY}` : ""}`;
+  }
+  if ((stat.mode & GROUP_OR_OTHER_WRITE_BITS) !== 0) {
+    return `the directory ${directory} on the allowlist file's path is writable by group or others (mode ${stat.mode.toString(OCTAL_RADIX).padStart(MODE_DIGITS, "0")}), so headroom refuses the file${remedy ? `; ${stat.uid === uid && (stat.mode & STICKY_BIT) === 0 ? `run \`chmod go-w ${directory}\`` : MOVE_ROOT_REMEDY}` : ""}`;
+  }
+  return undefined;
+}
+
+/**
+ * How the allowlist file at `allowlistFile` fails the rules it is held to, or undefined when it keeps them. Headroom's guard refuses the file, and then admits nothing, unless every directory its path resolves through, from `/` down, is owned by its user or root and not writable by group or others (the sticky bit is no exception, and only mode bits are judged), and the file itself is owned by its user or root and not writable by group or others. Every directory on the path is judged here by that same rule, so a group-writable home directory or a shared `/tmp` above the agent-shim root is reported, as not repairable: those directories are not agent-shim's to change, and the message names the directory, its mode and the remedy. The two directories agent-shim owns on the path are its to repair: its parent, the headroom directory, by headroom's rule, and the allowlist file's own directory (the socket directory) and the file itself by agent-shim's stricter owner-only rule (the real thing, no symlink, owned by this user, no group or other access at all); of these, only something other than a file at the file's path is not repairable.
+ */
+/**
+ * The allowlist file problem `headroom status` and `doctor` report, or undefined when there is none worth reporting. A directory headroom refuses the file over that agent-shim cannot repair is reported whether or not a daemon has served the file, since every supervisor stops over it before serving; a break agent-shim repairs is reported only once a daemon has served the file (`served`), since until then the next supervisor repairs it before serving, and a root where headroom has not yet run lacks its directories and file by design.
+ */
+export function reportableAllowlistFileProblem(allowlistFile: string, ports: HeadroomSocketTrustPorts, served: boolean): AllowlistFileProblem | undefined {
+  const problem = verifyAllowlistFile(allowlistFile, ports);
+  return problem?.repairable === false || served ? problem : undefined;
+}
+
+export function verifyAllowlistFile(allowlistFile: string, ports: HeadroomSocketTrustPorts): AllowlistFileProblem | undefined {
+  const uid = ports.currentUid();
+  const directories = pathDirectories(allowlistFile, ports);
+  if (typeof directories === "string") {
+    return { message: directories, repairable: false };
+  }
+  // The resolved directory holding the file (the socket directory) and its parent (the headroom directory): agent-shim's own, which the supervisor repairs.
+  const socketDirectory = directories.at(-1);
+  const headroomDirectory = socketDirectory === undefined ? undefined : path.dirname(socketDirectory);
+  for (const directory of directories) {
+    const stat = ports.lstat(directory);
+    if (directory === socketDirectory) {
+      const refusal = ownerOnlyRefusal("allowlist directory", directory, stat, "dir", uid);
+      if (refusal !== undefined) {
+        return { message: refusal, repairable: true };
+      }
+      continue;
+    }
+    const own = directory === headroomDirectory;
+    const refusal = headroomDirectoryRefusal(directory, stat, uid, !own);
+    if (refusal !== undefined) {
+      return { message: refusal, repairable: own };
+    }
+  }
+  const fileStat = ports.lstat(allowlistFile);
+  const refusal = ownerOnlyRefusal("allowlist file", allowlistFile, fileStat, "file", uid);
+  if (refusal === undefined) {
+    return undefined;
+  }
+  // A rewrite renames a file into place, which replaces a symlink or another user's file but not a directory or other kind of entry.
+  const replaceable = fileStat === undefined || fileStat.kind === "file" || fileStat.kind === "symlink";
+  return { message: refusal, repairable: replaceable };
 }
 
 /**

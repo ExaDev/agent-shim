@@ -166,6 +166,8 @@ export interface FakeFarmFs extends FarmFs {
   readonly linkTarget: (path: string) => string | undefined;
   /** The permission mode recorded for `path` by `mkdirPrivate` or `writeFilePrivate`, or undefined for anything created without an explicit mode. */
   readonly modeOf: (path: string) => number | undefined;
+  /** Records `mode` for `path`, the way a `chmod` (or a creating umask) would, so a test can start from a directory left wider than this tool creates it. */
+  readonly setMode: (path: string, mode: number) => void;
 }
 
 /**
@@ -232,6 +234,9 @@ export function createFakeFarmFs(initial: Readonly<Record<string, FakeFsSeed>> =
     seed,
     writes,
     modeOf: (target: string) => modes.get(path.resolve(target)),
+    setMode: (target: string, mode: number) => {
+      modes.set(path.resolve(target), mode);
+    },
     snapshot: (root?: string) =>
       [...nodes.keys()].filter((candidate) => root === undefined || candidate === root || candidate.startsWith(`${root}/`)).sort(),
     linkTarget: (linkPath: string) => {
@@ -275,6 +280,10 @@ export function createFakeFarmFs(initial: Readonly<Record<string, FakeFsSeed>> =
       writes.push({ op: "write", path: resolved });
       if (nodes.get(path.dirname(resolved))?.kind !== "dir") {
         throw new Error(`Cannot write ${resolved}: its parent directory does not exist.`);
+      }
+      // The real write renames a temporary file into place, which a directory at the path refuses.
+      if (nodes.get(resolved)?.kind === "dir") {
+        throw new Error(`EISDIR: cannot replace the directory ${resolved} with a file`);
       }
       nodes.set(resolved, { kind: "file", mtimeMs: nextMtime(), content: contents });
       modes.set(resolved, OWNER_ONLY_FILE_MODE);
@@ -623,6 +632,9 @@ export function fakeCommandDeps(
 /** The uid the fake socket trust reports for this process and, unless overridden, for every path it stats. */
 export const FAKE_UID = 501;
 
+/** The uid the fake socket trust reports for `/`. */
+const FAKE_ROOT_UID = 0;
+
 /** The mode the fake socket trust reports for a fake directory created without an explicit one: an ordinary `mkdir` under a 022 umask. */
 const FAKE_DEFAULT_DIR_MODE = 0o755;
 
@@ -644,10 +656,18 @@ export function fakeSocketTrust(
       }
       const stat = fs.lstat(resolved);
       if (stat === undefined) {
-        return undefined;
+        // The root directory exists in every world, owned by root at an ordinary mode.
+        return resolved === "/" ? { kind: "dir", uid: FAKE_ROOT_UID, mode: FAKE_DEFAULT_DIR_MODE } : undefined;
       }
-      const kind = stat.kind === "dir" ? "dir" : stat.kind === "symlink" ? "symlink" : "other";
+      const kind = stat.kind === "dir" ? "dir" : stat.kind === "symlink" ? "symlink" : "file";
       return { kind, uid: FAKE_UID, mode: fs.modeOf(resolved) ?? FAKE_DEFAULT_DIR_MODE };
+    },
+    readlink: (target) => {
+      const linkTarget = fs.linkTarget(path.resolve(target));
+      if (linkTarget === undefined) {
+        throw new Error(`EINVAL: ${target} is not a symlink`);
+      }
+      return linkTarget;
     },
   };
 }

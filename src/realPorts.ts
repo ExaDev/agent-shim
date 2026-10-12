@@ -8,11 +8,12 @@ import { isSea } from "node:sea";
 import { cosmiconfigReader } from "./config/load";
 import type { CredentialPort } from "./credential";
 import { defaultVersionsDir, discoverClaudeBinary, installedVersions, type ClaudeBinaryResolver, type VersionsDirEntry } from "./versionDiscovery";
-import { parseFrontDoorSupervisorPids } from "./frontdoor/supervisorProcesses";
+import { frontDoorLivenessOf, parseFrontDoorSupervisorPids } from "./frontdoor/supervisorProcesses";
+import type { FrontDoorLiveness } from "./frontdoor/state";
 import { ensureHeadroom } from "./headroom/ensure";
-import { currentHeadroomAllowlist } from "./headroom/supervisor";
+import { launchRequiredUpstreams } from "./headroom/supervisor";
 import type { HeadroomSocketTrustPorts } from "./headroom/socket";
-import { hashAllowlist, removeSession } from "./headroom/state";
+import { removeSession } from "./headroom/state";
 import type { LayoutPaths } from "./paths";
 import type { FarmFs, FsPort, HeadroomPort, LogPort, ProcPort, RunPort, SpawnPort } from "./launcher/ports";
 
@@ -124,9 +125,15 @@ export const realFarmFs: FarmFs = {
   },
   writeFilePrivate(filePath, contents) {
     const temp = `${filePath}.${String(process.pid)}.tmp`;
-    fs.writeFileSync(temp, contents, { encoding: "utf8", mode: OWNER_ONLY_FILE_MODE });
-    fs.chmodSync(temp, OWNER_ONLY_FILE_MODE);
-    fs.renameSync(temp, filePath);
+    try {
+      fs.writeFileSync(temp, contents, { encoding: "utf8", mode: OWNER_ONLY_FILE_MODE });
+      fs.chmodSync(temp, OWNER_ONLY_FILE_MODE);
+      fs.renameSync(temp, filePath);
+    } catch (error) {
+      // A failed write, chmod or rename leaves the temporary sibling behind, and nothing else would ever remove it; the failure itself still reaches the caller.
+      fs.rmSync(temp, { force: true });
+      throw error;
+    }
   },
   appendFilePrivate(filePath, contents) {
     const descriptor = fs.openSync(filePath, "a", OWNER_ONLY_FILE_MODE);
@@ -213,6 +220,82 @@ export function realIsProcessRunning(pid: number): boolean {
 export function realIsFrontDoorSupervisor(pid: number): boolean {
   const result = spawnSync("ps", ["-o", "pid=,command=", "-p", String(pid)], { encoding: "utf8" });
   return result.status === 0 && parseFrontDoorSupervisorPids(result.stdout).includes(pid);
+}
+
+/** The byte value of a line feed. */
+const LINE_FEED = 0x0a;
+/** The mask and value that mark a UTF-8 continuation byte (`10xxxxxx`): one that cannot start a character. */
+const UTF8_CONTINUATION_MASK = 0xc0;
+const UTF8_CONTINUATION_BITS = 0x80;
+
+/** How many bytes at the start of `bytes` are UTF-8 continuation bytes, the tail of a character whose first byte lies before the read. */
+function leadingContinuationBytes(bytes: Buffer): number {
+  let count = 0;
+  while (count < bytes.length && (bytes.readUInt8(count) & UTF8_CONTINUATION_MASK) === UTF8_CONTINUATION_BITS) {
+    count += 1;
+  }
+  return count;
+}
+
+/** The size of `filePath` in bytes, or 0 when it does not exist yet. */
+export function realFileSize(filePath: string): number {
+  try {
+    return fs.statSync(filePath).size;
+  } catch (error) {
+    if (isEnoent(error)) {
+      return 0;
+    }
+    throw error;
+  }
+}
+
+/**
+ * The text of `filePath` from byte `fromByte` to its end, but at most its last `maxBytes`: one bounded read, never the whole file, for a log nothing rotates. When the bound cuts into the range, the cut line is dropped up to the first line break, or, when the read holds no line break, only the bytes of a multi-byte character the cut split, so the text never starts inside a UTF-8 sequence. Any other invalid UTF-8 decodes to the replacement character. An absent file reads as empty.
+ */
+export function realReadFileTail(filePath: string, fromByte: number, maxBytes: number): string {
+  const size = realFileSize(filePath);
+  const start = Math.max(fromByte, size - maxBytes);
+  if (start >= size) {
+    return "";
+  }
+  const buffer = Buffer.alloc(size - start);
+  const descriptor = fs.openSync(filePath, "r");
+  try {
+    let read = 0;
+    // A read may return fewer bytes than asked; the rest follows until the range is filled or the file ends.
+    while (read < buffer.length) {
+      const got = fs.readSync(descriptor, buffer, read, buffer.length - read, start + read);
+      if (got === 0) {
+        break;
+      }
+      read += got;
+    }
+    const bytes = buffer.subarray(0, read);
+    if (start === fromByte) {
+      return bytes.toString("utf8");
+    }
+    const lineBreak = bytes.indexOf(LINE_FEED);
+    return bytes.subarray(lineBreak === -1 ? leadingContinuationBytes(bytes) : lineBreak + 1).toString("utf8");
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+/** How long one process-table read may take before it counts as unreadable: a `ps` over a handful of pids answers far inside this, and one that does not is stuck, and must not hold the supervisor's event loop or a launch. */
+const PS_TIMEOUT_MS = 2000;
+
+/** The command line `ps` reports for `pid`, or undefined when that is unknown: the pid has gone, there is no `ps` (no POSIX userland), or `ps` did not answer within `PS_TIMEOUT_MS`. Read-only: used to tell which release started a headroom daemon. */
+export function realProcessCommandLine(pid: number): string | undefined {
+  const result = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: PS_TIMEOUT_MS });
+  return result.status === 0 ? result.stdout.trim() : undefined;
+}
+
+/** Which of `pids` are running front-door supervisors, from bounded `ps` runs (see `frontDoorLivenessOf`). */
+export function realFrontDoorLiveness(pids: readonly number[]): FrontDoorLiveness {
+  return frontDoorLivenessOf(pids, (asked) => {
+    const result = spawnSync("ps", ["-o", "pid=,stat=,command=", "-p", asked.map(String).join(",")], { encoding: "utf8", timeout: PS_TIMEOUT_MS });
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr, ...(result.error === undefined ? {} : { error: result.error }) };
+  });
 }
 
 /** The real `RunPort`, used for auxiliary commands whose output this process needs to read — git branch detection for `when: { branch }` conditions, and `check.ts`'s macOS Keychain lookup. */
@@ -368,7 +451,7 @@ function spawnHeadroomSupervisor(paths: LayoutPaths, spawnDaemon: DaemonSpawner)
 }
 
 /** The permission bits of a stat's mode, without its file type bits, as the headroom socket checks compare them. */
-const SOCKET_PERMISSION_BITS = 0o777;
+const SOCKET_PERMISSION_BITS = 0o7777;
 
 /**
  * The real `HeadroomSocketTrustPorts`: this process's platform and user id, and an `lstat` that never follows symlinks, so a symlinked socket or socket directory is seen as the symlink it is and refused.
@@ -391,9 +474,10 @@ export const realHeadroomSocketTrust: HeadroomSocketTrustPorts = {
       }
       throw error;
     }
-    const kind = stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "dir" : stat.isSocket() ? "socket" : "other";
+    const kind = stat.isSymbolicLink() ? "symlink" : stat.isDirectory() ? "dir" : stat.isFile() ? "file" : stat.isSocket() ? "socket" : "other";
     return { kind, uid: stat.uid, mode: stat.mode & SOCKET_PERMISSION_BITS };
   },
+  readlink: (target) => fs.readlinkSync(target, "utf8"),
 };
 
 /**
@@ -405,13 +489,14 @@ export function realHeadroomPort(paths: LayoutPaths, options: { readonly spawnDa
       const up = ensureHeadroom({
         paths,
         launcherPid: process.pid,
-        ...(routesProvider ? { requiredAllowlistHash: () => hashAllowlist(currentHeadroomAllowlist(realFarmFs, paths)) } : {}),
+        ...(routesProvider ? { requiredUpstreams: () => launchRequiredUpstreams(realFarmFs, paths) } : {}),
         ports: {
           fs: realFarmFs,
           // Zombie-aware on purpose: a supervisor that died while still a child of this launcher sits unreaped until the launcher itself exits, and a defunct supervisor answering signal 0 as alive would stretch every launch to the full start timeout.
           isRunning: realIsProcessRunning,
           now: () => Date.now(),
           sleep: realSleepSync,
+          daemonCommandLine: realProcessCommandLine,
           spawnSupervisor: (layout) => spawnHeadroomSupervisor(layout, options.spawnDaemon),
         },
       });

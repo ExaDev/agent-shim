@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES, HEADROOM_DEFAULT_SOURCE } from "../config/schema";
 import { buildLayoutPaths } from "../paths";
-import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
+import { FAKE_UID } from "../test-helpers";
 import {
   backoffForAttempt,
+  DAEMON_EXIT_LOG_LINE_CHARS,
   HEADROOM_SUPERVISOR_STILL_RUNNING,
   HEADROOM_BACKOFF_BASE_MS,
   HEADROOM_BACKOFF_CAP_MS,
@@ -14,33 +15,38 @@ import {
   resolveSupervisorConfig,
   runSupervisor,
   type HeadroomSupervisorConfig,
-  type RunSupervisorOptions,
   stopSupervisedProcess,
+  type SupervisorPorts,
   TERM_GRACE_MS,
   versionSatisfies,
-  type SupervisorPorts,
 } from "./supervisor";
 import type { HeadroomSettings } from "./settings";
-import { HEADROOM_SOCKET_DIR_MODE, headroomSocketPath, UNIX_SOCKET_PATH_MAX_BYTES, type SocketPathStat } from "./socket";
-import { pinnedGitCommit } from "./source";
-import { hashAllowlist, headroomAllowlist, writeHeadroomState, writeSession } from "./state";
+import { HEADROOM_SOCKET_DIR_MODE, headroomSocketPath, UNIX_SOCKET_PATH_MAX_BYTES } from "./socket";
+import { hashAllowlist, readHeadroomState, writeHeadroomState } from "./state";
 
-const paths = buildLayoutPaths("/home/testuser/.agent-shim");
+import {
+  paths,
+  OWN_PID,
+  OTHER_SUPERVISOR_PID,
+  OTHER_DAEMON_PID,
+  OWN_SOCKET,
+  OTHER_SOCKET,
+  SESSION_PID,
+  TICKS_INSTALL_TEST,
+  TICKS_SHORT,
+  TICKS_DRIFT_TEST,
+  IDLE_NEVER_MINUTES,
+  makeWorld,
+  config,
+  supervise,
+} from "./supervisorTestWorld";
 
-const SESSION_PID = 321;
 const ZOMBIE_SESSION_PID = 322;
 const ORPHAN_DAEMON_PID = 888;
-const OWN_PID = 4242;
 /** A supervisor from the previous release whose generation has ended, recorded only under the legacy state name. */
 const DRAINED_SUPERVISOR_PID = 424242;
 /** A supervisor from the previous release still serving, recorded only under the legacy state name. */
 const DRAINING_SUPERVISOR_PID = 424243;
-const OTHER_SUPERVISOR_PID = 5151;
-const OTHER_DAEMON_PID = 5152;
-/** The socket this supervisor generation serves on. */
-const OWN_SOCKET = headroomSocketPath(paths, OWN_PID);
-/** The socket another live supervisor's daemon serves on. */
-const OTHER_SOCKET = headroomSocketPath(paths, OTHER_SUPERVISOR_PID);
 /** A supervisor pid nothing is running as: whatever socket it left is stale. */
 const DEAD_SUPERVISOR_PID = 6161;
 /** Another user's uid, for a socket directory this user does not own. */
@@ -49,13 +55,9 @@ const OTHER_UID = 0;
 const GROUP_READABLE_DIR_MODE = 0o750;
 /** A full commit SHA that is not the default source's pinned commit. */
 const OTHER_COMMIT = "0123456789abcdef0123456789abcdef01234567";
-const TICKS_INSTALL_TEST = 3;
-const TICKS_SHORT = 2;
 const TICKS_CRASH_RESTART = 6;
-const TICKS_DRIFT_TEST = 40;
 const TICKS_LONG_SESSION = 100;
 const IDLE_ONE_MINUTE = 1;
-const IDLE_NEVER_MINUTES = 60;
 const DEFERRAL_TICKS = 5;
 const FIRST_BACKOFF_ATTEMPT = 1;
 const LAST_BACKOFF_ATTEMPT = 5;
@@ -63,187 +65,6 @@ const BIG_ATTEMPT = 20;
 const ATTEMPT_THREE = 3;
 const ATTEMPT_FOUR = 4;
 const DRIFT_DONE_PHASE = 3;
-
-/**
- * The fake world `runSupervisor` runs against: a fake filesystem seeded with providers, a clock advanced only by the supervisor's own sleeps, a modelled process table, and controllable readiness, install, and version results. `onSleep` lets a test script the outside world (a provider file appearing, a session ending) between ticks.
- *
- * The process model distinguishes exactly what the real one does: `alive` is signal-0-style existence, `zombies` holds pids that exited without being reaped (still "existing", never running), and `kill` models the ChildProcess exit event (death observed and the child reaped, the way the real supervisor's exit listener does).
- */
-function makeWorld(seededProviders: readonly { name: string; baseUrl: string }[] = []) {
-  const fs = createFakeFarmFs({});
-  fs.mkdirp(paths.providersDir);
-  for (const provider of seededProviders) {
-    fs.writeFileUtf8(
-      `${paths.providersDir}/${provider.name}.json`,
-      JSON.stringify({ displayName: provider.name, baseUrl: provider.baseUrl, credential: { sources: [{ env: "T" }] } }),
-    );
-  }
-
-  let clock = 0;
-  let nextPid = 1000;
-  const readySockets = new Set<string>();
-  let autoReady = true;
-  let version: string | undefined = "headroom 0.39.1";
-  let installOk = true;
-  let installedCommit: string | undefined = pinnedGitCommit(HEADROOM_DEFAULT_SOURCE);
-  const alive = new Set<number>([process.pid]);
-  const zombies = new Set<number>();
-  const spawns: { pid: number; socketPath: string; allowlist: readonly string[]; settings: HeadroomSettings }[] = [];
-  let platform = "linux";
-  let socketStatOverrides: Record<string, SocketPathStat> = {};
-  let currentConfig: HeadroomSupervisorConfig = resolveSupervisorConfig({});
-  const stops: number[] = [];
-  const installs: string[] = [];
-  const logLines: string[] = [];
-  const sleepDelays: number[] = [];
-  let onSleep: (() => void) | undefined;
-
-  /** Resolves on a later microtask, the way a real readiness probe awaits I/O; also keeps the promise-shaped fakes honest under the async rules. */
-  async function settled<T>(value: T): Promise<T> {
-    return await Promise.resolve(value);
-  }
-
-  /** A dead daemon closes its listener: without this, a generation's reused socket path would keep answering /readyz from beyond the grave. */
-  function dropReadySocket(pid: number): void {
-    for (let index = spawns.length - 1; index >= 0; index -= 1) {
-      const spawn = spawns[index];
-      if (spawn?.pid === pid) {
-        readySockets.delete(spawn.socketPath);
-        return;
-      }
-    }
-  }
-
-  const world = {
-    setConfig: (next: HeadroomSupervisorConfig) => {
-      currentConfig = next;
-    },
-    fs,
-    alive,
-    zombies,
-    spawns,
-    stops,
-    installs,
-    logLines,
-    sleepDelays,
-    set onSleep(hook: (() => void) | undefined) {
-      onSleep = hook;
-    },
-    /** The platform the socket checks see. */
-    set platform(value: string) {
-      platform = value;
-    },
-    /** Socket-check stats that replace the fake filesystem's, keyed by resolved path: another owner, a wide mode, a symlink. */
-    set socketStats(value: Record<string, SocketPathStat>) {
-      socketStatOverrides = value;
-    },
-    /** When false, spawned proxies never answer /readyz. */
-    set autoReady(value: boolean) {
-      autoReady = value;
-    },
-    /** When set, the MITM proxy cannot bind, the way a poisoned port or a missing certificate would fail a real bind. */
-    set version(value: string | undefined) {
-      version = value;
-    },
-    set installOk(value: boolean) {
-      installOk = value;
-    },
-    /** The commit the installed binary was built from, as its direct_url.json records it. Defaults to the default source's pinned commit, so a test that does not care sees a matching install. */
-    set installedCommit(value: string | undefined) {
-      installedCommit = value;
-    },
-    /** The ChildProcess exit event arriving: death observed, child reaped, no zombie remains. */
-    kill(pid: number): void {
-      alive.delete(pid);
-      zombies.delete(pid);
-      dropReadySocket(pid);
-    },
-    /** The observed macOS failure mode: the process died but nothing reaped it, so signal 0 still answers while nothing is running. */
-    zombify(pid: number): void {
-      zombies.add(pid);
-      dropReadySocket(pid);
-    },
-    /** Registers a live launcher against `supervisorPid`: this supervisor unless a test says another one owns the session. */
-    writeSessionFile(pid: number, supervisorPid: number = OWN_PID): void {
-      alive.add(pid);
-      writeSession(fs, paths.headroomSessionsDir, { pid, startedAt: clock, supervisorPid });
-    },
-    /** Another supervisor taking ownership of the state file: alive, with its own daemon and socket recorded, the way a second supervisor's startup or crash-restart leaves the file. */
-    handOwnershipToAnotherSupervisor(): void {
-      alive.add(OTHER_SUPERVISOR_PID);
-      alive.add(OTHER_DAEMON_PID);
-      writeHeadroomState(fs, paths.headroomStateFile, {
-        supervisorPid: OTHER_SUPERVISOR_PID,
-        headroomPid: OTHER_DAEMON_PID,
-        socketPath: OTHER_SOCKET,
-        installedSource: HEADROOM_DEFAULT_SOURCE,
-      });
-    },
-    ports: {
-      fs,
-      paths,
-      ownPid: OWN_PID,
-      now: () => clock,
-      sleep: async (ms: number) => {
-        clock += ms;
-        sleepDelays.push(ms);
-        if (onSleep !== undefined) {
-          onSleep();
-        }
-        await settled(undefined);
-      },
-      isRunning: (pid: number) => alive.has(pid) && !zombies.has(pid),
-      // Read through getters, so a test can switch the platform or replace a stat after the world is built.
-      socketTrust: {
-        get platform() {
-          return platform;
-        },
-        currentUid: () => FAKE_UID,
-        lstat: (target: string) => fakeSocketTrust(fs, { overrides: socketStatOverrides }).lstat(target),
-      },
-      readConfig: () => currentConfig,
-      spawnHeadroom: (socketPath: string, allowlist: readonly string[], settings: Readonly<HeadroomSettings>) => {
-        nextPid += 1;
-        alive.add(nextPid);
-        zombies.delete(nextPid);
-        spawns.push({ pid: nextPid, socketPath, allowlist: [...allowlist], settings });
-        if (autoReady) {
-          readySockets.add(socketPath);
-        }
-        return nextPid;
-      },
-      stopProcess: (pid: number) => {
-        alive.delete(pid);
-        stops.push(pid);
-      },
-      ready: async (socketPath: string) => await settled(readySockets.has(socketPath)),
-      install: (spec: string) => {
-        installs.push(spec);
-        if (installOk) {
-          installedCommit = pinnedGitCommit(spec);
-          // A successful install puts the binary on PATH, like the real one does.
-          version ??= "headroom 0.39.1";
-          return { ok: true };
-        }
-        return { ok: false, error: "uv is not installed or not on PATH (spawn ENOENT)" };
-      },
-      headroomVersion: () => version,
-      installedCommit: () => installedCommit,
-      log: (line: string) => {
-        logLines.push(line);
-      },
-    } satisfies SupervisorPorts,
-  };
-  return world;
-}
-
-const config = resolveSupervisorConfig({});
-
-/** Runs the supervisor against `world` with `supervisorConfig` as both its starting configuration and what it reads from disk each tick. */
-async function supervise(world: ReturnType<typeof makeWorld>, supervisorConfig: HeadroomSupervisorConfig, options?: RunSupervisorOptions): Promise<number> {
-  world.setConfig(supervisorConfig);
-  return await runSupervisor(supervisorConfig, world.ports, options);
-}
 
 describe("resolveSupervisorConfig", () => {
   it("defaults source and idle shutdown from the named constants", () => {
@@ -302,16 +123,14 @@ describe("runSupervisor", () => {
     if (spawn === undefined) {
       throw new Error("expected a headroom spawn");
     }
-    expect(spawn.allowlist).toEqual([
-      "https://api.anthropic.com",
-      "https://api.z.ai/api/anthropic",
-    ]);
+    // No front door has served yet, so there is no direct origin to admit.
+    expect(spawn.allowlist).toEqual([]);
     const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
     expect(state.supervisorPid).toBe(OWN_PID);
     expect(state.headroomPid).toBe(spawn.pid);
     expect(spawn.socketPath).toBe(OWN_SOCKET);
     expect(state.socketPath).toBe(OWN_SOCKET);
-    expect(state.allowlistHash).toBe(hashAllowlist(headroomAllowlist([{ baseUrl: "https://api.z.ai/api/anthropic" }])));
+    expect(state.allowlistHash).toBe(hashAllowlist([]));
     expect(state.installedSource).toBe(HEADROOM_DEFAULT_SOURCE);
   });
 
@@ -394,7 +213,8 @@ describe("runSupervisor", () => {
     await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_SHORT });
     const state = JSON.parse(world.fs.readFileUtf8(paths.headroomStateFile) ?? "{}") as Record<string, unknown>;
     expect(state.socketPath).toBeUndefined();
-    expect(state.headroomPid).toBeUndefined();
+    // The replacement is recorded the moment it is spawned, and its socket only once it is ready, which it never is here.
+    expect(state.headroomPid).toBe(world.spawns.at(-1)?.pid);
     expect(state.supervisorPid).toBe(OWN_PID);
     expect(world.spawns.length).toBeGreaterThanOrEqual(2);
   });
@@ -408,11 +228,61 @@ describe("runSupervisor", () => {
       socketPath: headroomSocketPath(paths, 1),
       installedSource: HEADROOM_DEFAULT_SOURCE,
     });
+    world.commandLines.set(ORPHAN_DAEMON_PID, `python -m headroom.cli proxy --uds ${headroomSocketPath(paths, 1)} --allowed-base-urls-file ${paths.headroomAllowlistFile}`);
     const code = await supervise(world, config, { tickLimit: TICKS_SHORT });
     expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
     expect(world.stops).toContain(ORPHAN_DAEMON_PID);
     expect(world.spawns).toHaveLength(1);
     expect(world.alive.has(ORPHAN_DAEMON_PID)).toBe(false);
+  });
+
+  it("stops an orphan recorded before its daemon was ready, identified by its generation's socket", async () => {
+    const world = makeWorld();
+    world.alive.add(ORPHAN_DAEMON_PID);
+    // The predecessor died between spawning its daemon and that daemon's readiness: the pid is recorded, the socket not yet.
+    writeHeadroomState(world.fs, paths.headroomStateFile, { supervisorPid: 1, headroomPid: ORPHAN_DAEMON_PID, installedSource: HEADROOM_DEFAULT_SOURCE });
+    world.commandLines.set(ORPHAN_DAEMON_PID, `python -m headroom.cli proxy --uds ${headroomSocketPath(paths, 1)} --allowed-base-urls-file ${paths.headroomAllowlistFile}`);
+    await supervise(world, config, { tickLimit: TICKS_SHORT });
+    expect(world.stops).toContain(ORPHAN_DAEMON_PID);
+  });
+
+  it("never signals a recorded orphan pid that is now running something else, or whose command line cannot be read", async () => {
+    for (const commandLine of ["/usr/bin/vim notes.md", undefined]) {
+      const world = makeWorld();
+      world.alive.add(ORPHAN_DAEMON_PID);
+      writeHeadroomState(world.fs, paths.headroomStateFile, { supervisorPid: 1, headroomPid: ORPHAN_DAEMON_PID, socketPath: headroomSocketPath(paths, 1), installedSource: HEADROOM_DEFAULT_SOURCE });
+      if (commandLine !== undefined) {
+        world.commandLines.set(ORPHAN_DAEMON_PID, commandLine);
+      }
+      await supervise(world, config, { tickLimit: TICKS_SHORT });
+      expect(world.stops).not.toContain(ORPHAN_DAEMON_PID);
+      expect(world.alive.has(ORPHAN_DAEMON_PID)).toBe(true);
+    }
+  });
+
+  it("records the daemon's pid as soon as it is spawned, before it is ready, so a successor can find it", async () => {
+    const world = makeWorld();
+    world.autoReady = false;
+    const recorded: (number | undefined)[] = [];
+    world.onSleep = () => {
+      if (world.spawns.length === 1 && recorded.length === 0) {
+        const state = readHeadroomState(world.fs, paths.headroomStateFile);
+        recorded.push(state?.headroomPid);
+        expect(state?.socketPath).toBeUndefined();
+      }
+    };
+    await supervise(world, config, { tickLimit: 1 });
+    expect(recorded).toEqual([world.spawns[0]?.pid]);
+  });
+
+  it("removes a temporary allowlist file whose writer has exited when it starts, and keeps a live writer's", async () => {
+    const world = makeWorld();
+    world.fs.mkdirPrivate(paths.headroomSocketDir);
+    world.fs.writeFileUtf8(`${paths.headroomAllowlistFile}.${String(DEAD_SUPERVISOR_PID)}.tmp`, "partial");
+    world.fs.writeFileUtf8(`${paths.headroomAllowlistFile}.${String(OTHER_SUPERVISOR_PID)}.tmp`, "partial");
+    world.alive.add(OTHER_SUPERVISOR_PID);
+    await supervise(world, config, { tickLimit: 1 });
+    expect(world.fs.readdir(paths.headroomSocketDir)).toEqual(["allowlist.txt", `allowlist.txt.${String(OTHER_SUPERVISOR_PID)}.tmp`]);
   });
 
   it("serves every restart in one generation on the same socket, inside a directory created owner-only", async () => {
@@ -444,7 +314,7 @@ describe("runSupervisor", () => {
     world.fs.writeFileUtf8(OTHER_SOCKET, "");
     world.fs.writeFileUtf8(`${paths.headroomSocketDir}/notes.txt`, "");
     await supervise(world, config, { tickLimit: TICKS_SHORT });
-    expect(world.fs.readdir(paths.headroomSocketDir)).toEqual([`${String(OTHER_SUPERVISOR_PID)}.sock`, "notes.txt"]);
+    expect(world.fs.readdir(paths.headroomSocketDir)).toEqual([`${String(OTHER_SUPERVISOR_PID)}.sock`, "allowlist.txt", "notes.txt"]);
     expect(world.spawns).toHaveLength(1);
   });
 
@@ -512,44 +382,91 @@ describe("runSupervisor", () => {
     expect(String(state.lastError)).toContain("failed to become ready");
   });
 
-  it("defers a drift restart while a session is live and restarts once the registry empties", async () => {
-    const world = makeWorld([{ name: "z", baseUrl: "https://api.z.ai/api/anthropic" }]);
-    let phase = 0;
-    world.onSleep = () => {
-      if (phase === 0 && world.spawns.length === 1) {
-        world.writeSessionFile(SESSION_PID);
-        phase = 1;
-        return;
-      }
-      if (phase === 1) {
-        // A new provider appears: the allowlist drifts while a session is live.
-        world.fs.writeFileUtf8(
-          `${paths.providersDir}/m.json`,
-          JSON.stringify({ displayName: "MiniMax", baseUrl: "https://api.minimax.io", credential: { sources: [{ env: "T" }] } }),
-        );
-        phase = 2;
-        return;
-      }
-      if (phase === 2 && world.spawns.length === 1 && world.stops.length === 0) {
-        // Give the deferral a few ticks to prove it does not restart under a live session.
-        if (world.sleepDelays.filter((delay) => delay === HEADROOM_POLL_MS).length >= DEFERRAL_TICKS) {
-          world.alive.delete(SESSION_PID);
-          world.fs.removeRecursive(`${paths.headroomSessionsDir}/${String(SESSION_PID)}.json`);
-          phase = DRIFT_DONE_PHASE;
-        }
-      }
+  it("ends an attempt the moment the daemon exits before it is ready, and gives up with the end of the daemon's log in lastError", async () => {
+    const world = makeWorld();
+    world.autoReady = false;
+    world.fs.mkdirp(paths.logsDir);
+    world.fs.writeFileUtf8(paths.headroomLogPath, "earlier output that predates every attempt\n");
+    const ports: SupervisorPorts = {
+      ...world.ports,
+      spawnHeadroom: (socketPath, allowlistFile, settings) => {
+        const pid = world.ports.spawnHeadroom(socketPath, allowlistFile, settings);
+        // A build without the flag: click prints its usage error and the process exits at once. Each attempt is marked, so the report can be checked to hold only the last attempt's own output.
+        world.fs.writeFileUtf8(paths.headroomLogPath, `${world.fs.readFileUtf8(paths.headroomLogPath) ?? ""}attempt ${String(world.spawns.length)}\nUsage: headroom proxy [OPTIONS]\nTry 'headroom proxy --help' for help.\n\nError: No such option: --allowed-base-urls-file\n`);
+        world.kill(pid);
+        return pid;
+      },
     };
+    // The log is never read whole: nothing rotates it, so each attempt reads only its size and a bounded tail through the ports.
+    const wholeLogReads: string[] = [];
+    const readFileUtf8 = world.fs.readFileUtf8;
+    const guarded: SupervisorPorts = {
+      ...ports,
+      fs: {
+        ...world.fs,
+        readFileUtf8: (file: string) => {
+          if (file === paths.headroomLogPath) {
+            wholeLogReads.push(file);
+          }
+          return readFileUtf8(file);
+        },
+      },
+    };
+    world.setConfig(config);
+    const code = await runSupervisor(config, guarded);
+    expect(code).toBe(1);
+    expect(wholeLogReads).toEqual([]);
+    expect(world.spawns).toHaveLength(HEADROOM_START_RETRY_BUDGET);
+    // No readiness poll ever waited on a daemon that had already exited: the only sleeps are the backoffs between attempts.
+    expect(world.sleepDelays).toEqual(Array.from({ length: HEADROOM_START_RETRY_BUDGET }, (_, index) => backoffForAttempt(index + 1)));
+    const lastError = readHeadroomState(world.fs, paths.headroomStateFile)?.lastError ?? "";
+    expect(lastError).toContain("failed to become ready");
+    expect(lastError).toContain(`its log ends: attempt ${String(HEADROOM_START_RETRY_BUDGET)} | Usage: headroom proxy [OPTIONS] |`);
+    expect(lastError).toContain("Error: No such option: --allowed-base-urls-file");
+    expect(lastError).not.toContain("earlier output that predates every attempt");
+  });
 
-    const code = await supervise(world, { ...config, idleShutdownMinutes: IDLE_NEVER_MINUTES }, { tickLimit: TICKS_DRIFT_TEST });
+  it("redacts credential-shaped text from the daemon output it records in lastError", async () => {
+    const world = makeWorld();
+    world.autoReady = false;
+    // Assembled at run time so no credential-shaped literal sits in the source.
+    const token = ["sk", "ant", "e2e0leaked0value0x"].join("-");
+    const ports: SupervisorPorts = {
+      ...world.ports,
+      spawnHeadroom: (socketPath, allowlistFile, settings) => {
+        const pid = world.ports.spawnHeadroom(socketPath, allowlistFile, settings);
+        world.fs.mkdirp(paths.logsDir);
+        world.fs.writeFileUtf8(paths.headroomLogPath, `${world.fs.readFileUtf8(paths.headroomLogPath) ?? ""}Traceback: upstream refused key ${token}\n`);
+        world.kill(pid);
+        return pid;
+      },
+    };
+    world.setConfig(config);
+    expect(await runSupervisor(config, ports)).toBe(1);
+    const lastError = readHeadroomState(world.fs, paths.headroomStateFile)?.lastError ?? "";
+    expect(lastError).toContain("Traceback: upstream refused key <redacted>");
+    expect(lastError).not.toContain(token);
+  });
 
-    expect(code).toBe(HEADROOM_SUPERVISOR_STILL_RUNNING);
-    expect(world.spawns).toHaveLength(2);
-    const second = world.spawns[1];
-    if (second === undefined) {
-      throw new Error("expected a restart spawn");
-    }
-    expect(second.allowlist).toContain("https://api.minimax.io");
-    expect(world.stops).toHaveLength(1);
+  it("caps each line of daemon output it records in lastError", async () => {
+    const world = makeWorld();
+    world.autoReady = false;
+    const longLine = "x".repeat(DAEMON_EXIT_LOG_LINE_CHARS * 2);
+    const ports: SupervisorPorts = {
+      ...world.ports,
+      spawnHeadroom: (socketPath, allowlistFile, settings) => {
+        const pid = world.ports.spawnHeadroom(socketPath, allowlistFile, settings);
+        world.fs.mkdirp(paths.logsDir);
+        world.fs.writeFileUtf8(paths.headroomLogPath, `${world.fs.readFileUtf8(paths.headroomLogPath) ?? ""}${longLine}\n`);
+        world.kill(pid);
+        return pid;
+      },
+    };
+    world.setConfig(config);
+    expect(await runSupervisor(config, ports)).toBe(1);
+    const lastError = readHeadroomState(world.fs, paths.headroomStateFile)?.lastError ?? "";
+    expect(lastError).toContain(`${"x".repeat(DAEMON_EXIT_LOG_LINE_CHARS)}...`);
+    expect(lastError).not.toContain("x".repeat(DAEMON_EXIT_LOG_LINE_CHARS + 1));
   });
 
   it("starts the daemon with the configured settings", async () => {

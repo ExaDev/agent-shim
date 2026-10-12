@@ -11,7 +11,7 @@ describe("isMovingGitSource", () => {
   });
 
   it("treats a full commit SHA as fixed", () => {
-    expect(isMovingGitSource("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@53525f479f2f48e8ef6b08cf729601feab7d2382")).toBe(false);
+    expect(isMovingGitSource("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@ca7589c574bfd52919503a74f09f4d1fe5ecf106")).toBe(false);
   });
 
   it("treats a git spec with no ref as moving, since it follows the remote's default branch", () => {
@@ -25,8 +25,8 @@ describe("isMovingGitSource", () => {
 
 describe("pinnedGitCommit", () => {
   it("returns the commit a spec pins, lowercased", () => {
-    expect(pinnedGitCommit("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@53525F479F2F48E8EF6B08CF729601FEAB7D2382")).toBe(
-      "53525f479f2f48e8ef6b08cf729601feab7d2382",
+    expect(pinnedGitCommit("headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@CA7589C574BFD52919503A74F09F4D1FE5ECF106")).toBe(
+      "ca7589c574bfd52919503a74f09f4d1fe5ecf106",
     );
   });
 
@@ -39,8 +39,8 @@ describe("pinnedGitCommit", () => {
 
 describe("parseInstalledCommit", () => {
   it("reads the resolved commit from a VCS install's direct_url.json", () => {
-    const directUrl = JSON.stringify({ url: "https://github.com/ExaDev/headroom", vcs_info: { vcs: "git", commit_id: "53525F479F2F48E8EF6B08CF729601FEAB7D2382" } });
-    expect(parseInstalledCommit(directUrl)).toBe("53525f479f2f48e8ef6b08cf729601feab7d2382");
+    const directUrl = JSON.stringify({ url: "https://github.com/ExaDev/headroom", vcs_info: { vcs: "git", commit_id: "CA7589C574BFD52919503A74F09F4D1FE5ECF106" } });
+    expect(parseInstalledCommit(directUrl)).toBe("ca7589c574bfd52919503a74f09f4d1fe5ecf106");
   });
 
   it("returns undefined when the file records no VCS commit or is not JSON", () => {

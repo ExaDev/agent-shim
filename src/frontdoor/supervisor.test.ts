@@ -7,7 +7,7 @@ import { DOOR_HEALTH_EVENT_SOURCE, LAUNCH_EVENT_SOURCE, type DoorEvent } from ".
 import { createDoorEventHub } from "./eventHub";
 import { createDoorHealthPublisher } from "./doorHealthEvents";
 import { createLaunchEventPublisher } from "./launchEvents";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorDirectRecords, listFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
 import { FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
@@ -210,6 +210,25 @@ describe("runFrontDoorSupervisor", () => {
     expect(world.directBinds).toEqual([STICKY_DIRECT_PORT]);
     expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)).toMatchObject({ supervisorPid: OWN_PID, port: STICKY_PORT, lastPort: STICKY_PORT, connectPort: STICKY_CONNECT_PORT, lastConnectPort: STICKY_CONNECT_PORT, directPort: STICKY_DIRECT_PORT, lastDirectPort: STICKY_DIRECT_PORT });
     expect(world.logs.some((line) => line.includes(`front door on 127.0.0.1:${String(STICKY_PORT)}`))).toBe(true);
+  });
+
+  it("records its own direct port under its pid while serving, and removes the record on an idle shutdown and on a superseded drain", async () => {
+    const serving = makeWorld();
+    writeFrontDoorState(serving.fs, paths.frontdoorStateFile, { lastDirectPort: STICKY_DIRECT_PORT });
+    await runFrontDoorSupervisor(IDLE_MINUTES, serving.ports, { tickLimit: 1 });
+    expect(listFrontDoorDirectRecords(serving.fs, paths.frontdoorDirectRecordsDir)).toEqual([{ pid: OWN_PID, directPort: STICKY_DIRECT_PORT }]);
+
+    const idle = makeWorld();
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, idle.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(0);
+    expect(listFrontDoorDirectRecords(idle.fs, paths.frontdoorDirectRecordsDir)).toEqual([]);
+
+    const drained = makeWorld();
+    drained.onSleep = () => {
+      drained.alive.add(SUCCESSOR_PID);
+      writeFrontDoorState(drained.fs, paths.frontdoorStateFile, SUCCESSOR_STATE);
+    };
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, drained.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(0);
+    expect(listFrontDoorDirectRecords(drained.fs, paths.frontdoorDirectRecordsDir)).toEqual([]);
   });
 
   it("records the wire protocol it speaks once it is serving, so a launcher can tell an older door from its own", async () => {

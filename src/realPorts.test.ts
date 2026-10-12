@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { realCredentialPort, realFarmFs, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
+import { realCredentialPort, realFarmFs, realFileSize, realReadFileTail, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
 
 /** Owner read and write only: the mode a secret file is written with here. */
 const OWNER_ONLY_PERMISSIONS = 0o600;
@@ -388,6 +388,55 @@ describe("realFarmFs owner-only writes", () => {
       expect(fs.statSync(dir).mode & PERMISSION_BITS).toBe(OWNER_ONLY_DIRECTORY);
       expect(fs.statSync(file).mode & PERMISSION_BITS).toBe(OWNER_ONLY_PERMISSIONS);
       expect(fs.readFileSync(file, "utf8")).toBe("new");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads at most the given number of trailing bytes from an offset, dropping a line the bound cut through", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tail-"));
+    const contents = "before the attempt\nfirst line of the attempt\nsecond\nthird\n";
+    /** A bound as large as the whole file, so nothing is cut. */
+    const unbounded = Buffer.byteLength(contents);
+    try {
+      const file = path.join(root, "headroom.log");
+      fs.writeFileSync(file, contents);
+      const offset = Buffer.byteLength("before the attempt\n");
+      expect(realReadFileTail(file, offset, Buffer.byteLength("second\nthird\n") + 2)).toBe("second\nthird\n");
+      expect(realReadFileTail(file, offset, unbounded)).toBe("first line of the attempt\nsecond\nthird\n");
+      expect(realFileSize(file)).toBe(Buffer.byteLength(fs.readFileSync(file)));
+      expect(realFileSize(path.join(root, "absent.log"))).toBe(0);
+      expect(realReadFileTail(path.join(root, "absent.log"), 0, unbounded)).toBe("");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("starts a cut tail at a character boundary when the bound lands inside a line with no break and inside a multi-byte character", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "tail-"));
+    const twoByteCharacter = "\u00e9";
+    const contents = twoByteCharacter.repeat(Buffer.byteLength(twoByteCharacter) * 2 + 1);
+    try {
+      const file = path.join(root, "headroom.log");
+      fs.writeFileSync(file, contents);
+      // An odd byte count from the end starts the read on the second byte of a character.
+      const cut = realReadFileTail(file, 0, Buffer.byteLength(twoByteCharacter) * 2 + 1);
+      expect(cut).toBe(twoByteCharacter.repeat(2));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes its temporary sibling and rethrows when the rename into place fails", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "private-fs-"));
+    try {
+      // A non-empty directory at the target makes the rename fail after the temporary file has been written.
+      const target = path.join(root, "state.json");
+      fs.mkdirSync(path.join(target, "occupied"), { recursive: true });
+      expect(() => {
+        realFarmFs.writeFilePrivate(target, "{}\n");
+      }).toThrow();
+      expect(fs.readdirSync(root)).toEqual(["state.json"]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
