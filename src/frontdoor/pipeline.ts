@@ -1,8 +1,11 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
+import { Readable } from "node:stream";
+import { buffer } from "node:stream/consumers";
 
 import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomDecision } from "./headroomDecision";
 import { applyHeadroomHop, headroomReady, type HeadroomHopDeps } from "./headroomHop";
+import { lineageOf, type Lineage } from "./lineage";
 import { identifyRequest, type FrontDoorRoute, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 
 /** What one routed response looked like as it started back to the client: the typed event response middleware observes. */
@@ -113,6 +116,9 @@ function errorTypeFor(status: number): string {
 function errorBody(status: number, message: string): string {
   return JSON.stringify({ type: "error", error: { type: errorTypeFor(status), message } });
 }
+
+/** The path suffix of the requests whose history identifies a conversation thread. */
+const MESSAGES_PATH_SUFFIX = "/v1/messages";
 
 /** What the response middleware learns about the request a routed response answers. */
 interface ObservedRequest {
@@ -248,11 +254,19 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
     response.end();
     return;
   }
+  // A messages request is read whole here, before its route or the hop does: the thread it belongs to is told from its own history, which is what lets a response be matched with the previous response of its thread when subagents and forks answer in between under one session id. Only the client-facing pipeline, which is where the decision is made, does this.
+  let lineage: Lineage | undefined;
+  let body: Readable = request.body;
+  if (deps.headroom !== undefined && request.method === "POST" && observed.path.endsWith(MESSAGES_PATH_SUFFIX)) {
+    const whole = await buffer(request.body);
+    lineage = lineageOf(whole);
+    body = Readable.from([whole]);
+  }
   const routed: RoutedRequest = {
     method: request.method,
     url: request.url,
     headers: admission.headers,
-    body: request.body,
+    body,
     signal: request.signal,
     session: identified.session,
   };
@@ -265,7 +279,10 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
     return;
   }
   const { headroom } = deps;
-  const wantsHeadroom = await deps.headroomDecision.decide(identified.session.sessionId, identified.session.headroom, deps.now(), async () => headroom !== undefined && (await headroomReady(headroom, request.signal)));
+  // Only the client-facing pipeline decides: a request coming back on the direct listener has already been through that decision, and asking again from there would let a daemon-less pipeline overwrite the session's choice.
+  const wantsHeadroom =
+    headroom !== undefined &&
+    (await deps.headroomDecision.decide(identified.session.sessionId, identified.session.headroom, deps.now(), async () => await headroomReady(headroom, request.signal), { receivedAtMs: observed.receivedAt, lineage }));
   const viaHeadroom = wantsHeadroom && resolution.route.headroomEligible && deps.headroom !== undefined;
   const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom } });
   try {

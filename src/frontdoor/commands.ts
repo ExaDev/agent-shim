@@ -295,6 +295,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       headroomDecision.observe({
         sessionId: record.sessionId,
         startedAtMs: Date.parse(record.at),
+        viaHeadroom: record.viaHeadroom === true,
         endedAtMs: Date.parse(record.at) + record.durationMs,
         cache: usage === undefined ? undefined : { readTokens: usage.cacheReadInputTokens ?? 0, writtenTokens: usage.cacheCreationInputTokens ?? 0, uncachedTokens: usage.inputTokens ?? 0 },
       });

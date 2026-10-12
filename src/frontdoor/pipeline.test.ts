@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import type { IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 
@@ -51,8 +52,9 @@ class FakeServerResponse extends EventEmitter {
 const RECEIVED_AT = 1_700_000_000_000;
 
 /** A stand-in IncomingMessage: the pipeline only passes it through to the route. */
+/** An empty request body that reads like a real one: the pipeline reads a messages request whole before routing it. */
 function fakeBody(): IncomingMessage {
-  return new EventEmitter() as unknown as IncomingMessage;
+  return Readable.from([]) as IncomingMessage;
 }
 
 function pipelineRequest(headers: Record<string, string | string[]> = {}): { readonly request: PipelineRequest; readonly response: FakeServerResponse } {
@@ -191,7 +193,7 @@ describe("serveRouted", () => {
         await serveRouted(request, { ...base, headroom, headroomDecision: { decide: async (id, wanted, now) => await decision.decide(id, wanted, now, async () => await Promise.resolve(true)), observe: decision.observe } });
       };
       await serve(true);
-      decision.observe({ sessionId: "s1", startedAtMs: 0, endedAtMs: 0, cache: { readTokens: 1000, writtenTokens: 0, uncachedTokens: 0 } });
+      decision.observe({ sessionId: "s1", startedAtMs: 0, endedAtMs: 0, viaHeadroom: true, cache: { readTokens: 1000, writtenTokens: 0, uncachedTokens: 0 } });
       await serve(false);
       expect(seen).toEqual([true, true]);
     });
