@@ -63,6 +63,8 @@ export interface RankPoolInput {
   readonly sticky?: StickyPick;
   /** True when the launch continues or resumes a conversation, which belongs on the account it started on whatever the cache lifetime. */
   readonly resuming: boolean;
+  /** The size in tokens of the context a resumed conversation continues with. A member that is not the warm account of that conversation must pay to write this context again, so one whose five-hour window cannot cover it is not feasible. */
+  readonly resumeContextTokens?: number;
   /** How members are ordered: "score" (the default when absent) by the use-it-or-lose-it ranking, "listed" strictly in `members` order. */
   readonly preference?: "score" | "listed";
 }
@@ -164,6 +166,35 @@ function windowBurn(records: readonly UsageRecord[], which: "fiveHour" | "sevenD
     return undefined;
   }
   return (last.utilization - first.utilization) / (last.atMs - first.atMs);
+}
+
+/** The tokens a response is billed against a window: its input, what it wrote to the prompt cache, and its output. Cache reads are left out, as they barely draw on a window. */
+function billedTokensOf(record: UsageRecord): number {
+  const usage = record.usage;
+  return (usage?.inputTokens ?? 0) + (usage?.cacheCreationInputTokens ?? 0) + (usage?.outputTokens ?? 0);
+}
+
+/**
+ * How much five-hour utilisation one billed token costs this member, measured over its records in the current instance of the window, or undefined without two readings in which utilisation rose over tokens that were billed. It converts a resumed conversation's context size into the share of the window rewriting it would take.
+ */
+function utilisationPerBilledToken(records: readonly UsageRecord[]): number | undefined {
+  const points: { resetsAt: string; utilization: number; billed: number }[] = [];
+  for (const record of records) {
+    const window = record.rateLimitHeaders === undefined ? undefined : parseUnifiedRateLimit(record.rateLimitHeaders)?.fiveHour;
+    if (window?.utilization !== undefined && window.resetsAt !== undefined) {
+      points.push({ resetsAt: window.resetsAt, utilization: window.utilization, billed: billedTokensOf(record) });
+    }
+  }
+  const latest = points.at(-1)?.resetsAt;
+  const current = points.filter((point) => point.resetsAt === latest);
+  const first = current.at(0);
+  const last = current.at(-1);
+  if (first === undefined || last === undefined || last.utilization <= first.utilization) {
+    return undefined;
+  }
+  // The first reading's own request is what the rise is measured from, so its tokens are not part of the rise.
+  const billed = current.slice(1).reduce((sum, point) => sum + point.billed, 0);
+  return billed > 0 ? (last.utilization - first.utilization) / billed : undefined;
 }
 
 /**
@@ -407,6 +438,17 @@ export function rankPool(input: RankPoolInput): PoolRanking {
       if (runsDryInMs < sevenDay.untilResetMs) {
         dryAfterMs.push(runsDryInMs);
         drySpots.push(`7d window would run dry in ${formatAge(runsDryInMs)}, before it resets in ${formatAge(sevenDay.untilResetMs)}`);
+      }
+    }
+    // A resumed conversation's context has to be written again on any account that is not the one whose cache is still warm for it. A member that measurably cannot afford that within its five-hour window would end the session at its first turn.
+    const { sticky } = input;
+    const warmHere = sticky?.identity === candidate.identity && nowMs - Date.parse(sticky.at) <= PROMPT_CACHE_TTL_MS;
+    if (input.resuming && input.resumeContextTokens !== undefined && fiveHour !== undefined && !warmHere) {
+      const perToken = utilisationPerBilledToken(assessment.member.records);
+      const cost = perToken === undefined ? undefined : input.resumeContextTokens * perToken;
+      if (cost !== undefined && cost > fiveHour.remaining) {
+        dryAfterMs.push(0);
+        drySpots.push(`resuming a ${String(input.resumeContextTokens)}-token conversation here would cost about ${percent(cost)} of the 5h window, which has ${percent(fiveHour.remaining)} left`);
       }
     }
     if (drySpots.length === 0) {

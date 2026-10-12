@@ -75,6 +75,8 @@ export interface RankPoolGraphInput {
   readonly nowMs: number;
   readonly sticky?: StickyPick;
   readonly resuming: boolean;
+  /** The size in tokens of the context a resumed conversation continues with, when the launch resumes one whose transcript was read. */
+  readonly resumeContextTokens?: number;
   /** Whether an identity exists on disk, so a member whose identity was removed is skipped exactly as a launch skips it. */
   readonly identityExists: (name: string) => boolean;
 }
@@ -124,6 +126,7 @@ function rankNamedPool(input: Readonly<RankPoolGraphInput>, poolName: string, st
     members,
     nowMs: input.nowMs,
     resuming: input.resuming,
+    ...(input.resumeContextTokens === undefined ? {} : { resumeContextTokens: input.resumeContextTokens }),
     ...(sticky === undefined ? {} : { sticky }),
     ...(pool.preference === undefined ? {} : { preference: pool.preference }),
   });

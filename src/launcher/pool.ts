@@ -29,6 +29,8 @@ export interface ResolvePoolParams {
   readonly sleep: (ms: number) => void;
   /** The arguments claude itself will receive. */
   readonly passthrough: readonly string[];
+  /** The size in tokens of the context a resumed conversation continues with, when the launch resumes one whose transcript was read. */
+  readonly resumeContextTokens?: number;
   /** Sleep until the earliest member returns, instead of refusing, when every member is refused. */
   readonly wait: boolean;
   /** Whether the chosen member is recorded as this directory's last pick. A caller that only reports what a launch would pick passes false, so the report leaves the next launch's keep-warm preference as it was. */
@@ -86,6 +88,7 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
         poolName,
         nowMs,
         resuming,
+        ...(params.resumeContextTokens === undefined ? {} : { resumeContextTokens: params.resumeContextTokens }),
         identityExists: (name) => loadIdentity(params.paths.identitiesDir, name, params.fs) !== undefined,
         ...(stickyRead.sticky === undefined ? {} : { sticky: stickyRead.sticky }),
       });
