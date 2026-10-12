@@ -54,4 +54,10 @@ describe("lineageOf", () => {
     expect(lineage?.parentKey).toBeDefined();
     expect(lineage?.ownKey).not.toBe(lineage?.parentKey);
   });
+
+  it("gives no lineage to a body nested far deeper than a conversation can be, without holding a level of memory per bracket", () => {
+    const DEPTH = 100_000;
+    const nested = Buffer.from(`{"model":"m","messages":[{"role":"user","content":${"[".repeat(DEPTH)}${"]".repeat(DEPTH)}}]}`);
+    expect(lineageOf(nested)).toBeUndefined();
+  });
 });
