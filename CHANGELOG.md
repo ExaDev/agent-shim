@@ -1,3 +1,13 @@
+## [11.1.0](https://github.com/ExaDev/agent-shim/compare/v11.0.0...v11.1.0) (2026-10-12)
+
+### Features
+
+* **frontdoor:** decide headroom once per session and keep it while its cache is warm ([7f1c715](https://github.com/ExaDev/agent-shim/commit/7f1c7157d23fb434f4b6a230cc4c6c40dd78d3c7))
+
+### Code Refactoring
+
+* **frontdoor:** keep the observed response shape private to the decision ([9fade20](https://github.com/ExaDev/agent-shim/commit/9fade20a9bea36e3125f874d8169845914dfff9d))
+
 ## [11.0.0](https://github.com/ExaDev/agent-shim/compare/v10.1.0...v11.0.0) (2026-10-12)
 
 ### ⚠ BREAKING CHANGES
