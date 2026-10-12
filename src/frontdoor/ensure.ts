@@ -104,8 +104,8 @@ export function ensureFrontDoor(params: {
     const supervisorPid = state?.supervisorPid;
     if (supervisorPid !== undefined && !distrusted.has(supervisorPid) && ports.isRunning(supervisorPid)) {
       if (state?.port !== undefined && state.connectPort !== undefined) {
-        if (supervisorPid === params.launcherPid && params.replace !== true) {
-          // This process is the serving door: a launch planned inside it (the usage probe, the window opener, a job) has nothing to authenticate, and probing itself would block the very event loop that has to answer the probe, stalling every session on the door for the whole wait. It registers the launch like any other and returns its own addresses.
+        if (supervisorPid === params.launcherPid && params.replace !== true && ports.isFrontDoorSupervisor(supervisorPid)) {
+          // This process is the serving door, which the process's own command line confirms: an equal pid alone proves nothing, since a pid recorded by a door that exited uncleanly can be reused by an ordinary launcher while another user holds the recorded port. A launch planned inside it (the usage probe, the window opener, a job) has nothing to authenticate, and probing itself would block the very event loop that has to answer the probe, stalling every session on the door for the whole wait. It registers the launch like any other and returns its own addresses.
           const token = randomUUID();
           writeFrontDoorSession(ports.fs, paths.frontdoorSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), token, supervisorPid });
           return { port: state.port, connectPort: state.connectPort, token };

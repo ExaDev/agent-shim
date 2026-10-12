@@ -334,6 +334,14 @@ describe("ensureFrontDoor", () => {
       expect(world.sessionToken(SUPERVISOR_PID)).toBe(ensured.token);
     });
 
+    it("does not take the shortcut when the equal pid is not a front door supervisor, such as a pid reused by an ordinary launcher", () => {
+      const world = makeWorld({ transientProbeFailures: Number.MAX_SAFE_INTEGER });
+      world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+      expect(() => ensureFrontDoor({ paths, launcherPid: SUPERVISOR_PID, ports: world.ports })).toThrow(FrontDoorStartError);
+      expect(world.probed.length).toBeGreaterThan(0);
+      expect(world.sessionToken(SUPERVISOR_PID)).toBeUndefined();
+    });
+
     it("still replaces itself when asked to, since a restart is the one launch that must act on its own door", () => {
       const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT });
       world.ownSupervisors.add(SUPERVISOR_PID);
