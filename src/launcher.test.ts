@@ -7,7 +7,7 @@ import { ClaudeVersionNotInstalledError, type ClaudeBinaryResolver } from "./ver
 import { identityLockPath } from "./launcher/lock";
 import type { FsPort, HeadroomPort } from "./launcher/ports";
 import { prepareLaunch, runLauncher } from "./launcher";
-import { FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, createFakeFarmFs, discovered, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
+import { FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, createFakeFarmFs, discovered, fakeCredentials, fakeFarm, fakeFrontDoorEnv, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
 /** The unix socket the fake headroom daemon pretends to serve on. */
 const HEADROOM_SOCKET = "/home/testuser/.agent-shim/headroom/run/8123.sock";
@@ -23,6 +23,7 @@ describe("prepareLaunch", () => {
       proc: fakeProc({ HOME: "/home/testuser" }, ["--print", "hello"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
+      frontdoor: fakeFrontDoorPort(),
     });
     expect(plan.bin).toBe(discovered.path);
     expect(plan.args).toEqual(["--print", "hello"]);
@@ -37,6 +38,7 @@ describe("prepareLaunch", () => {
       proc: fakeProc({}, ["--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
+      frontdoor: fakeFrontDoorPort(),
     });
     plan.release();
     expect(() => {
@@ -83,7 +85,7 @@ describe("runLauncher", () => {
     expect(code).toBe(0);
     expect(spawn.spawnSync).toHaveBeenCalledWith(discovered.path, ["--print", "hello"], {
       stdio: "inherit",
-      env: {},
+      env: fakeFrontDoorEnv(),
     });
   });
 
@@ -104,7 +106,7 @@ describe("runLauncher", () => {
     expect(spawn.spawnSync).toHaveBeenCalledWith(
       discovered.path,
       ["--print"],
-      { stdio: "inherit", env: { CLAUDE_CONFIG_DIR: "/home/testuser/.agent-shim/identities/work" } },
+      { stdio: "inherit", env: fakeFrontDoorEnv("work", { CLAUDE_CONFIG_DIR: "/home/testuser/.agent-shim/identities/work" }) },
     );
   });
 
@@ -146,7 +148,7 @@ describe("runLauncher", () => {
 
     expect(spawn.spawnSync).toHaveBeenCalledWith(discovered.path, ["--print"], {
       stdio: "inherit",
-      env: { CLAUDE_CONFIG_DIR: "/somewhere/explicit" },
+      env: fakeFrontDoorEnv(undefined, { CLAUDE_CONFIG_DIR: "/somewhere/explicit" }),
     });
   });
 
@@ -263,7 +265,7 @@ describe("runLauncher", () => {
 
     expect(spawn.spawnSync).toHaveBeenCalledWith(discovered.path, ["--print"], {
       stdio: "inherit",
-      env: { CLAUDE_CONFIG_DIR: "/home/testuser/.agent-shim/identities/personal" },
+      env: fakeFrontDoorEnv("personal", { CLAUDE_CONFIG_DIR: "/home/testuser/.agent-shim/identities/personal" }),
     });
   });
 
@@ -503,6 +505,7 @@ describe("runLauncher headroom routing", () => {
       proc: fakeProc({ AGENT_SHIM_HEADROOM: "1" }, ["--print"]),
       log,
       resolveClaudeBinary: () => discovered,
+      frontdoor: undefined,
     });
 
     expect(code).toBe(1);
@@ -608,7 +611,7 @@ describe("runLauncher farm resync", () => {
     expect(fs.lstat(`${FAKE_HOME}/.agent-shim/identities/work/.credentials.json`)).toBeUndefined();
     expect(spawn.spawnSync).toHaveBeenCalledWith(discovered.path, ["--dangerously-skip-permissions"], {
       stdio: "inherit",
-      env: { CLAUDE_CONFIG_DIR: `${FAKE_HOME}/.agent-shim/identities/work` },
+      env: fakeFrontDoorEnv("work", { CLAUDE_CONFIG_DIR: `${FAKE_HOME}/.agent-shim/identities/work` }),
     });
   });
 

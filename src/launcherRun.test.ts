@@ -100,7 +100,8 @@ describe.skipIf(process.platform === "win32")("runClaudeLaunch", () => {
     const paths = buildLayoutPaths(root);
     addIdentity(paths, "work");
     const record = stubClaude(CHILD_EXIT_CODE);
-    const code = await runClaudeLaunch({ argv: ["@work", "--print", "hello"], cwd: root, env: {}, paths });
+    // --no-track-usage keeps the launch off the front door, which a test has no daemon for.
+    const code = await runClaudeLaunch({ argv: ["@work", "--no-track-usage", "--print", "hello"], cwd: root, env: {}, paths });
     expect(code).toBe(CHILD_EXIT_CODE);
     expect(nodeFs.readFileSync(record, "utf8")).toBe(`${path.join(paths.identitiesDir, "work")}\n--print hello\n`);
   });
@@ -157,7 +158,7 @@ describe.skipIf(process.platform === "win32")("runClaudeLaunch", () => {
     const refreshStale = vi.fn<AnthropicUsageRefresher["refreshStale"]>(async () => {
       await Promise.resolve();
     });
-    await runClaudeLaunch({ argv: ["@work"], cwd: root, env: {}, paths, refresher: { refresh: vi.fn(), refreshStale } });
+    await runClaudeLaunch({ argv: ["@work", "--no-track-usage"], cwd: root, env: {}, paths, refresher: { refresh: vi.fn(), refreshStale } });
     expect(refreshStale).not.toHaveBeenCalled();
   });
 });

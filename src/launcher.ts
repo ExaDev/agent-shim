@@ -444,8 +444,6 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
 
   const flags = resolveLaunchFlags({
     env,
-    // A pool pick reads the usage the front door records, so a pool launch records its own unless something says otherwise.
-    ...(poolExplanation === undefined ? {} : { trackUsageDefault: true }),
     ...(cascadeLaunch === undefined ? {} : { cascade: cascadeLaunch }),
     flags: {
       ...(parsedArgv.skipPermissions === undefined ? {} : { skipPermissions: parsedArgv.skipPermissions }),
