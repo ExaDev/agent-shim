@@ -45,7 +45,7 @@ export const FrontDoorStateSchema = z.strictObject({
    */
   lastConnectPort: z.number().int().positive().optional(),
   /**
-   * The loopback port the direct listener serves on: the listener a headroom hop tells the daemon to forward routed traffic back to. Sticky like the others, because headroom's allowlist admits its exact origin and an ephemeral port would invalidate the allowlist on every restart.
+   * The loopback port the direct listener serves on: the listener a headroom hop tells the daemon to forward routed traffic back to. Sticky like the others, because headroom's allowlist admits its exact origin: the headroom supervisor rewrites the daemon's allowlist file when the origin moves, but a provider launch waits at its gate until it has, so an ephemeral port would hold launches up after every restart.
    */
   directPort: z.number().int().positive().optional(),
   /** The sticky port preference for the direct listener, for the reason `directPort` gives. */
@@ -80,12 +80,124 @@ export function writeFrontDoorState(fs: HeadroomFs, stateFile: string, state: Re
   fs.writeFilePrivate(stateFile, `${JSON.stringify(state, null, 2)}\n`);
 }
 
+/** The highest TCP port; a number above it names no listener. */
+export const MAX_TCP_PORT = 65535;
+
+/** The loopback origin of a direct listener on `port`. */
+export function directOrigin(port: number): string {
+  return `http://127.0.0.1:${String(port)}`;
+}
+
 /**
  * The origin the headroom hop forwards routed traffic back to (the direct listener's), or undefined before the front door has ever served: what the headroom allowlist must admit for a provider routed through headroom, since headroom reaches the door's routes at exactly this address.
  */
 export function frontDoorOrigin(state: FrontDoorState | undefined): string | undefined {
   const port = state?.directPort ?? state?.lastDirectPort;
-  return port === undefined ? undefined : `http://127.0.0.1:${String(port)}`;
+  return port === undefined ? undefined : directOrigin(port);
+}
+
+/**
+ * One live front door's own direct port, recorded under its supervisor pid. `state.json` names only the door launches are sent to, while a door it superseded keeps serving its own sessions, whose headroom traffic still comes back to that door's direct origin; these records are how headroom keeps admitting every door that still serves.
+ */
+const FrontDoorDirectRecordSchema = z.strictObject({ directPort: z.number().int().positive().max(MAX_TCP_PORT) });
+
+/** A recorded front door: its supervisor pid and its direct listener's port. */
+export interface FrontDoorDirectRecord {
+  readonly pid: number;
+  readonly directPort: number;
+}
+
+/** Records a door's direct port under its supervisor pid, once its direct listener is bound. */
+export function writeFrontDoorDirectRecord(fs: HeadroomFs, recordsDir: string, record: FrontDoorDirectRecord): void {
+  fs.mkdirp(recordsDir);
+  fs.writeFilePrivate(path.join(recordsDir, `${String(record.pid)}.json`), `${JSON.stringify({ directPort: record.directPort })}\n`);
+}
+
+/** Removes a door's record. Idempotent: the headroom supervisor may already have pruned it. */
+export function removeFrontDoorDirectRecord(fs: HeadroomFs, recordsDir: string, pid: number): void {
+  fs.removeRecursive(path.join(recordsDir, `${String(pid)}.json`));
+}
+
+/** What reading one entry of the records directory found: a record, an entry named like a record whose content is not one, or nothing this listing can judge (a name that is not a record's, or an entry that cannot be read, such as a directory or a file it may not open). */
+type DirectRecordEntry = { readonly record: FrontDoorDirectRecord; readonly malformed?: never } | { readonly malformed: true; readonly record?: never } | undefined;
+
+/** The pid a record file's name carries, or undefined when the name is not `<positive pid>.json` with a pid that is an exact integer: a longer one cannot be a process id, and asked about it would make ps refuse the whole batch. */
+function recordPid(file: string): number | undefined {
+  const pidText = /^([1-9]\d*)\.json$/.exec(file)?.[1];
+  const pid = pidText === undefined ? undefined : Number(pidText);
+  return pid !== undefined && Number.isSafeInteger(pid) ? pid : undefined;
+}
+
+/** Reads one entry of the records directory; never throws, since one bad entry must not stop the supervisor's tick. */
+function readDirectRecordEntry(fs: HeadroomFs, recordsDir: string, file: string): DirectRecordEntry {
+  const pid = recordPid(file);
+  if (pid === undefined) {
+    return undefined;
+  }
+  let raw: string | undefined;
+  try {
+    raw = fs.readFileUtf8(path.join(recordsDir, file));
+  } catch {
+    return undefined;
+  }
+  if (raw === undefined) {
+    return undefined;
+  }
+  try {
+    const parsed = FrontDoorDirectRecordSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? { record: { pid, directPort: parsed.data.directPort } } : { malformed: true };
+  } catch {
+    return { malformed: true };
+  }
+}
+
+/** Every recorded door, sorted by pid. An entry that is not a readable record is skipped, never thrown over: a directory or an unreadable file named like a record, or one whose content is not a record (`pruneMalformedFrontDoorDirectFiles` removes those). */
+export function listFrontDoorDirectRecords(fs: HeadroomFs, recordsDir: string): readonly FrontDoorDirectRecord[] {
+  return fs
+    .readdir(recordsDir)
+    .flatMap((file) => {
+      const entry = readDirectRecordEntry(fs, recordsDir, file);
+      return entry?.record === undefined ? [] : [entry.record];
+    })
+    .sort((a, b) => a.pid - b.pid);
+}
+
+/** A temporary file `writeFilePrivate` leaves beside a record (`<pid>.json.<writer pid>.tmp`) when its writer dies between the write and the rename. */
+const RECORD_TEMPORARY_FILE = /^[1-9]\d*\.json\.([1-9]\d*)\.tmp$/;
+
+/**
+ * Removes what the records directory holds that no door will ever clean up: a file named like a record whose content is not one (a truncated write, a hand edit), and a temporary file whose writer, named in its own name, is no longer running. A temporary file exists only while its writer is between writing and renaming, so a live writer's is left alone. `isRunning` must be zombie-aware.
+ */
+export function pruneMalformedFrontDoorDirectFiles(fs: HeadroomFs, recordsDir: string, isRunning: (pid: number) => boolean): void {
+  for (const file of fs.readdir(recordsDir)) {
+    const writer = RECORD_TEMPORARY_FILE.exec(file)?.[1];
+    const stale = writer !== undefined && !isRunning(Number(writer));
+    if (stale || readDirectRecordEntry(fs, recordsDir, file)?.malformed === true) {
+      fs.removeRecursive(path.join(recordsDir, file));
+    }
+  }
+}
+
+/**
+ * Which recorded doors are still running as front-door supervisors, as reads of the process table answer it: `doors` holds the pids the table shows running (not zombies) with the front-door supervisor's command line; `unknown` holds the pids no read could answer for, each with why (ps failed to run, was killed, timed out or reported an error). Every other pid asked about is known not to be a door: gone, a zombie, or a process that reused a crashed door's pid.
+ */
+export interface FrontDoorLiveness {
+  readonly doors: ReadonlySet<number>;
+  readonly unknown: ReadonlyMap<number, string>;
+}
+
+/** The records that still count as live doors: those `liveness` names as doors, and those it cannot answer for, since withdrawing a live door's origin on an unreadable table would refuse its sessions. */
+export function liveFrontDoorDirectRecords(records: readonly FrontDoorDirectRecord[], liveness: FrontDoorLiveness): readonly FrontDoorDirectRecord[] {
+  return records.filter((record) => liveness.doors.has(record.pid) || liveness.unknown.has(record.pid));
+}
+
+/** Removes the records `liveness` positively shows are no longer front-door supervisors: a door that crashed never removed its own, and its pid may since have been reused. A record whose pid no read could answer for is kept, since a door writes its record only once and a live door's deleted record would never come back. */
+export function pruneDeadFrontDoorDirectRecords(fs: HeadroomFs, recordsDir: string, records: readonly FrontDoorDirectRecord[], liveness: FrontDoorLiveness): void {
+  for (const record of records) {
+    if (!liveness.doors.has(record.pid) && !liveness.unknown.has(record.pid)) {
+      removeFrontDoorDirectRecord(fs, recordsDir, record.pid);
+    }
+  }
 }
 
 /**

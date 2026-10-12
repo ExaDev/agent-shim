@@ -514,9 +514,9 @@ const HeadroomGlobalConfigSchema = HeadroomGlobalConfigObjectSchema.superRefine(
 export type HeadroomGlobalConfig = z.infer<typeof HeadroomGlobalConfigSchema>;
 
 /**
- * The default `headroom.source` install spec: the ExaDev headroom repository, with the `proxy` extra that provides the `headroom proxy` entry point. Pinned to a full commit SHA on the fork's `main` that carries both the per-session savings work and `headroom proxy --uds` (the unix-socket listener the supervisor starts the daemon on), because a branch name can be rebased or deleted and would change or break every fresh install; bump it deliberately when the fork changes either. Kept here rather than in the supervisor because it is the schema's own documented default, referenced by `HeadroomGlobalConfigSchema`'s field docs.
+ * The default `headroom.source` install spec: the ExaDev headroom repository, with the `proxy` extra that provides the `headroom proxy` entry point. Pinned to a full commit SHA on the fork's `main`, because a branch name can be rebased or deleted and would change or break every fresh install. The pinned commit must carry every capability the supervisor starts the daemon with: the per-session savings work, `headroom proxy --uds` (the unix-socket listener) and `headroom proxy --allowed-base-urls-file` (the allowlist file the daemon re-reads on change); bump it deliberately when the fork changes any of them, and never to a commit that lacks one. Kept here rather than in the supervisor because it is the schema's own documented default, referenced by `HeadroomGlobalConfigSchema`'s field docs.
  */
-export const HEADROOM_DEFAULT_SOURCE = "headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@53525f479f2f48e8ef6b08cf729601feab7d2382";
+export const HEADROOM_DEFAULT_SOURCE = "headroom-ai[proxy] @ git+https://github.com/ExaDev/headroom@ca7589c574bfd52919503a74f09f4d1fe5ecf106";
 
 /**
  * The default `headroom.idleShutdownMinutes`: long enough that back-to-back sessions keep the daemon warm through a coffee break, short enough that an abandoned daemon frees its memory the same working day rather than squatting until reboot.

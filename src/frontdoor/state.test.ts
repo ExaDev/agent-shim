@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import type { HeadroomFs } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { listFrontDoorSessions, liveSessionTokens, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { listFrontDoorDirectRecords, listFrontDoorSessions, liveSessionTokens, MAX_TCP_PORT, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -67,5 +68,54 @@ describe("front-door state file", () => {
     writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: LIVE, port: 4100, connectPort: 4200, directPort: 4300 });
     expect(fs.modeOf(paths.frontdoorStateFile)).toBe(OWNER_ONLY_FILE);
     expect(readFrontDoorState(fs, paths.frontdoorStateFile)).toMatchObject({ supervisorPid: LIVE, directPort: 4300 });
+  });
+});
+
+describe("front-door direct records", () => {
+  const recordsDir = paths.frontdoorDirectRecordsDir;
+
+  it("skips a record whose port is above the highest TCP port", () => {
+    const fs = createFakeFarmFs({});
+    fs.mkdirp(recordsDir);
+    fs.writeFileUtf8(`${recordsDir}/4242.json`, JSON.stringify({ directPort: MAX_TCP_PORT + 1 }));
+    fs.writeFileUtf8(`${recordsDir}/4243.json`, JSON.stringify({ directPort: MAX_TCP_PORT }));
+    expect(listFrontDoorDirectRecords(fs, recordsDir)).toEqual([{ pid: 4243, directPort: MAX_TCP_PORT }]);
+  });
+
+  it("reads only files named by a positive pid", () => {
+    const fs = createFakeFarmFs({});
+    fs.mkdirp(recordsDir);
+    for (const name of ["0.json", "0123.json", "-5.json", "12.json.tmp", "99999999999999999999.json", "12.json"]) {
+      fs.writeFileUtf8(`${recordsDir}/${name}`, JSON.stringify({ directPort: 4400 }));
+    }
+    expect(listFrontDoorDirectRecords(fs, recordsDir)).toEqual([{ pid: 12, directPort: 4400 }]);
+  });
+
+  it("skips an entry it cannot read, a directory or a file it may not open, instead of throwing", () => {
+    const fs = createFakeFarmFs({});
+    fs.mkdirp(`${recordsDir}/4242.json`);
+    fs.writeFileUtf8(`${recordsDir}/4243.json`, JSON.stringify({ directPort: 4400 }));
+    fs.writeFileUtf8(`${recordsDir}/4244.json`, JSON.stringify({ directPort: 4401 }));
+    const unreadable: HeadroomFs = {
+      ...fs,
+      readFileUtf8: (file: string) => {
+        if (file.endsWith("4243.json")) {
+          throw new Error("EACCES: permission denied");
+        }
+        return fs.readFileUtf8(file);
+      },
+    };
+    expect(listFrontDoorDirectRecords(unreadable, recordsDir)).toEqual([{ pid: 4244, directPort: 4401 }]);
+  });
+
+  it("removes a record file that reads but holds no record, and a temporary file whose writer has exited, and keeps a live writer's", () => {
+    const fs = createFakeFarmFs({});
+    fs.mkdirp(recordsDir);
+    fs.writeFileUtf8(`${recordsDir}/4242.json`, "{ not json");
+    fs.writeFileUtf8(`${recordsDir}/4243.json`, JSON.stringify({ directPort: 4400 }));
+    fs.writeFileUtf8(`${recordsDir}/4243.json.${String(DEAD)}.tmp`, "{");
+    fs.writeFileUtf8(`${recordsDir}/4243.json.${String(LIVE)}.tmp`, "{");
+    pruneMalformedFrontDoorDirectFiles(fs, recordsDir, (pid) => pid === LIVE);
+    expect(fs.readdir(recordsDir)).toEqual([`4243.json`, `4243.json.${String(LIVE)}.tmp`]);
   });
 });

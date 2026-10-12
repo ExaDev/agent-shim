@@ -296,6 +296,12 @@ describe("ProviderSchema", () => {
     expect(ProviderSchema.safeParse({ baseUrl: "https://api.z.ai", credential }).success).toBe(false);
   });
 
+  it("accepts a baseUrl with a path, a query or a comma, which headroom's allowlist never needs to list", () => {
+    for (const baseUrl of ["https://api.z.ai/api/anthropic", "https://gateway.example/v1?region=eu", "http://127.0.0.1:4000/v1,beta"]) {
+      expect(ProviderSchema.safeParse({ ...base, baseUrl, credential }).success, baseUrl).toBe(true);
+    }
+  });
+
   it("rejects a baseUrl that is not a URL", () => {
     expect(ProviderSchema.safeParse({ ...base, baseUrl: "not-a-url", credential }).success).toBe(false);
   });

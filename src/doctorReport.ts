@@ -2,7 +2,7 @@ import { ClaudeShimStateSchema, commandFilename, findPathShadow, resolveOwnBinar
 import type { LayoutPaths } from "./paths";
 import { readJson } from "./config/store";
 import { isIdentityDirectoryName } from "./identityStore";
-import { findExecutableInDir, realContentSourcePath, realFarmFs, realFsPort, realInstalledClaudeVersions, realIsProcessRunning, realOwnExecutablePath, realResolveClaudeBinary, realRunPort } from "./realPorts";
+import { findExecutableInDir, realContentSourcePath, realFarmFs, realFsPort, realHeadroomSocketTrust, realInstalledClaudeVersions, realFrontDoorLiveness, realIsProcessRunning, realOwnExecutablePath, realProcessCommandLine, realResolveClaudeBinary, realRunPort } from "./realPorts";
 import fs from "node:fs";
 import path from "node:path";
 import type { z } from "zod";
@@ -16,11 +16,13 @@ import { describeCredential, type CredentialCacheEnv } from "./credential";
 import { describeCachedCredential, formatCachedCredentialState } from "./credentialCache";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { isMovingGitSource } from "./headroom/source";
-import type { AllowlistDriftInput } from "./headroom/allowlistDrift";
 import { diagnoseAllowlistDrift } from "./headroom/allowlistDrift";
+import { earlierReleaseDaemon } from "./headroom/earlierRelease";
+import { reportableAllowlistFileProblem } from "./headroom/socket";
+import { pushHeadroomAllowlist, pushRefusedAllowlistFile, type DoctorHeadroomAllowlist } from "./doctorHeadroomAllowlist";
 import { HeadroomStateSchema, resolveServingHeadroomState } from "./headroom/state";
-import { currentHeadroomAllowlistInputs } from "./headroom/supervisor";
-import { FrontDoorStateSchema } from "./frontdoor/state";
+import { currentHeadroomAllowlistInputs, undeterminedFrontDoors } from "./headroom/supervisor";
+import { FrontDoorStateSchema, listFrontDoorSessions, type FrontDoorSessionSummary } from "./frontdoor/state";
 import { pushFrontDoor } from "./doctorFrontDoor";
 import { listFrontDoorSupervisors, type FrontDoorSupervisorListing } from "./frontdoor/supervisorProcesses";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
@@ -164,18 +166,15 @@ export interface RunDoctorParams {
   readonly headroom: {
     readonly state: DoctorFileInput;
     readonly isRunning: (pid: number) => boolean;
-    /** What the daemon's allowlist is measured against. Omit to skip the allowlist check; with it, a daemon whose allowlist may exclude the serving door's direct origin is a failure. */
-    readonly allowlist?: {
-      /** The inputs that could explain the recorded allowlist hash not matching the current allowlist, or undefined when it matches. */
-      readonly driftInputs: readonly AllowlistDriftInput[] | undefined;
-      /** The serving front door's direct origin, or undefined before it has ever served. */
-      readonly frontDoorOrigin: string | undefined;
-    };
+    /** How the running daemon's allowlist file and recorded hash compare with the allowlist computed now. Omit to skip the allowlist check; with it, a file lacking an upstream the computed allowlist holds, or a recorded hash that lags it, fails (requests to that upstream are refused and provider launches wait at their gate), and a file still listing an upstream nothing routes to warns. */
+    readonly allowlist?: DoctorHeadroomAllowlist;
   };
   /** The front door's state.json and the supervisor processes alive for this user. Omit to skip the front-door checks (the platform cannot list processes); with it, more than one supervisor alive at once is a failure naming each superseded one. */
   readonly frontDoor?: {
     readonly state: DoctorFileInput;
     readonly supervisors: FrontDoorSupervisorListing;
+    /** The launches registered with the front door whose launcher is still running, each naming the door it was sent to: what tells a superseded door still serving its launches from one serving nothing. */
+    readonly liveSessions: readonly FrontDoorSessionSummary[];
   };
 }
 
@@ -643,16 +642,11 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
         );
       }
       const allowlist = params.headroom.allowlist;
-      if (supervisorAlive && headroomAlive && state.socketPath !== undefined && allowlist?.driftInputs?.includes("front-door-origin") === true) {
-        const origin = allowlist.frontDoorOrigin ?? "";
-        const certainty = allowlist.driftInputs.includes("provider-files") ? "may exclude" : "excludes";
-        push(
-          "headroom",
-          "fail",
-          `Headroom daemon ${String(state.headroomPid)} was started with an allowlist that ${certainty} the serving front door's direct origin ${origin}, so it refuses every request a provider launch sends back through the door. ` +
-            "Its supervisor restarts it once no launch is registered against it; `agent-shim headroom status` lists the registered launches, and `--no-headroom` launches are unaffected.",
-          String(state.headroomPid),
-        );
+      if (allowlist !== undefined) {
+        pushRefusedAllowlistFile(push, allowlist);
+      }
+      if (allowlist !== undefined && headroomAlive && state.headroomPid !== undefined) {
+        pushHeadroomAllowlist(push, allowlist, { headroomPid: state.headroomPid, liveSupervisorPid: supervisorAlive ? state.supervisorPid : undefined });
       }
       if (state.lastError !== undefined && supervisorAlive) {
         push("headroom", "warn", `Headroom recorded a previous error: ${state.lastError}`);
@@ -669,7 +663,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
 
   if (params.frontDoor !== undefined) {
     const validated = params.frontDoor.state.raw === undefined ? undefined : validateJson(FrontDoorStateSchema, params.frontDoor.state);
-    pushFrontDoor(push, params.frontDoor.supervisors, validated?.ok === true ? validated.data.supervisorPid : undefined);
+    pushFrontDoor(push, params.frontDoor.supervisors, validated?.ok === true ? validated.data.supervisorPid : undefined, params.frontDoor.liveSessions);
   }
 
   if (params.activeIdentity.raw === undefined) {
@@ -845,8 +839,12 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
 
   // Process listing needs a POSIX uid; where there is none the front-door check is skipped rather than guessed.
   const uid = process.getuid?.();
-  const allowlistInputs = currentHeadroomAllowlistInputs(realFarmFs, paths);
+  const allowlistContent = realFarmFs.readFileUtf8(paths.headroomAllowlistFile);
+  const allowlistInputs = currentHeadroomAllowlistInputs(realFarmFs, paths, realFrontDoorLiveness);
   const servingHeadroom = resolveServingHeadroomState(realFarmFs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, realIsProcessRunning);
+  const servingState = servingHeadroom?.state;
+  const servingDaemon = servingState?.headroomPid !== undefined && servingState.socketPath !== undefined && realIsProcessRunning(servingState.headroomPid) ? { pid: servingState.headroomPid, socketPath: servingState.socketPath } : undefined;
+  const servingEarlierRelease = servingDaemon === undefined ? undefined : earlierReleaseDaemon(realFarmFs, paths, { commandLine: realProcessCommandLine(servingDaemon.pid), socketPath: servingDaemon.socketPath, recordedHash: servingState?.allowlistHash });
 
   const report = runDoctor({
     env: params.env,
@@ -888,13 +886,22 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
       })(),
       isRunning: realIsProcessRunning,
       allowlist: {
-        driftInputs: diagnoseAllowlistDrift({ recordedHash: servingHeadroom?.state.allowlistHash, ...allowlistInputs }),
-        frontDoorOrigin: allowlistInputs.frontDoorOrigin,
+        drift: diagnoseAllowlistDrift({
+          allowlist: allowlistInputs.frontDoorOrigins,
+          fileContent: allowlistContent,
+          recordedHash: servingHeadroom?.state.allowlistHash,
+          earlierRelease: servingEarlierRelease,
+        }),
+        file: paths.headroomAllowlistFile,
+        undeterminedFrontDoors: undeterminedFrontDoors(allowlistInputs),
+        // An earlier release's daemon reads no allowlist file, so there is nothing to check while one serves.
+        fileProblem: servingEarlierRelease === undefined ? reportableAllowlistFileProblem(paths.headroomAllowlistFile, realHeadroomSocketTrust, servingHeadroom?.state.allowlistHash !== undefined) : undefined,
+        logPath: paths.headroomLogPath,
       },
     },
     ...(uid === undefined
       ? {}
-      : { frontDoor: { state: { path: paths.frontdoorStateFile, raw: realFsPort.readFileUtf8(paths.frontdoorStateFile) }, supervisors: listFrontDoorSupervisors(realRunPort, uid) } }),
+      : { frontDoor: { state: { path: paths.frontdoorStateFile, raw: realFsPort.readFileUtf8(paths.frontdoorStateFile) }, supervisors: listFrontDoorSupervisors(realRunPort, uid), liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => realIsProcessRunning(session.pid)) } }),
   });
   return report;
 }

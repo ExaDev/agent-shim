@@ -1,22 +1,47 @@
 import { CliError } from "../cliError";
+import { daemonIdentity, EARLIER_RELEASE_ALLOWLIST, earlierReleaseDaemon, type DaemonIdentity } from "./earlierRelease";
 import type { LayoutPaths } from "../paths";
 import {
+  hashAllowlistFile,
   migrateHeadroomState,
+  parseAllowlistFile,
   readStartLock,
   resolveServingHeadroomState,
-  sessionsForSupervisor,
   writeSession,
   type HeadroomFs,
   type HeadroomLock,
 } from "./state";
 
 /**
- * How long one launch waits for the daemon to report ready. Generous on purpose: a first-ever launch can sit behind `uv tool install` building headroom from a git URL, and a warm daemon answers within one poll, so the bound only ever bites when something is genuinely broken.
+ * How long one launch waits for the daemon to report ready, and for its supervisor to record an allowlist the launch needs. Generous on purpose: a first-ever launch can sit behind `uv tool install` building headroom from a git URL, and a warm daemon answers (and a running supervisor records a changed allowlist) within one of its ticks, so the bound only ever bites when something is genuinely broken.
  */
 const HEADROOM_START_TIMEOUT_MS = 120_000;
 
 /** The launcher's poll rate while waiting for the daemon. Fast enough not to add perceptible latency on a warm start, slow enough not to hammer the state file. */
 const HEADROOM_LAUNCHER_POLL_MS = 250;
+
+/** Why a launch that waited out the timeout for the daemon's allowlist is still not admitted, by what the daemon's command line says it is. */
+function awaitingCause(daemonPid: number, identity: DaemonIdentity, allowlistFile: string): string {
+  if (identity === "unreadable") {
+    return `could not read the command line of the headroom daemon (pid ${String(daemonPid)}), so whether it reads an allowlist file is unknown, and its allowlist was not recorded as admitting this launch's upstreams within ${String(HEADROOM_START_TIMEOUT_MS)}ms`;
+  }
+  if (identity === "not-headroom") {
+    return `the headroom daemon pid ${String(daemonPid)} the state records is no longer a headroom proxy on its socket, and no daemon was recorded as admitting this launch's upstreams within ${String(HEADROOM_START_TIMEOUT_MS)}ms`;
+  }
+  return `the headroom supervisor has not written an allowlist admitting this launch's upstreams to ${allowlistFile} within ${String(HEADROOM_START_TIMEOUT_MS)}ms`;
+}
+
+/**
+ * Whether the daemon admits every one of `required`: the allowlist file lists them all, and `recordedHash` (the state's `allowlistHash`) is the hash of exactly the entries the file lists, which the supervisor records only once the file holding them is in place for the daemon to read.
+ */
+function daemonAdmits(fs: HeadroomFs, allowlistFile: string, recordedHash: string | undefined, required: readonly string[]): boolean {
+  const content = fs.readFileUtf8(allowlistFile);
+  if (content === undefined || recordedHash === undefined) {
+    return false;
+  }
+  const served = parseAllowlistFile(content);
+  return recordedHash === hashAllowlistFile(content) && required.every((upstream) => served.includes(upstream));
+}
 
 /** Raised when the daemon cannot be brought up in time, or reports a fatal `lastError`: a launch that asked for headroom must never silently fall back to a direct connection. */
 export class HeadroomStartError extends CliError {
@@ -33,52 +58,70 @@ export interface EnsureHeadroomPorts {
   readonly isRunning: (pid: number) => boolean;
   readonly now: () => number;
   readonly sleep: (ms: number) => void;
+  /** The command line of a running process as `ps` reports it, or undefined when it cannot be read: how a daemon started by an earlier release, which reads no allowlist file, is told apart. */
+  readonly daemonCommandLine: (pid: number) => string | undefined;
   /** Spawns the detached supervisor process that owns the headroom daemon, returning its pid. */
   readonly spawnSupervisor: (paths: LayoutPaths) => number;
 }
 
 /**
- * Brings the headroom daemon up for this launch, or finds it already running, and registers this launcher pid in its session registry (the fact that keeps the daemon alive and defers drift restarts until this launch is done).
+ * Brings the headroom daemon up for this launch, or finds it already running, and registers this launcher pid in its session registry (the fact that keeps the daemon alive and defers a restart for a changed install source or setting until this launch is done). A launch that routes a provider waits, within the same bound, until the supervisor records that the daemon serves an allowlist admitting it.
  *
  * The exclusive-create start lock decides which of several concurrent launches spawns the one supervisor: its holder spawns and keeps waiting like everyone else, everyone else waits on the state file, and a lock whose holder has died is removed and retried. Readiness is "state names a live supervisor, a live headroom pid, and a socket path", which the supervisor only writes after its own `/readyz` probe over that socket has passed, so polling state alone never mistakes a bound-but-not-ready socket for a usable daemon.
  *
- * Throws `HeadroomStartError` (naming the daemon log path and any recorded `lastError`) when the daemon is not up within `HEADROOM_START_TIMEOUT_MS`, or when a live supervisor has recorded a fatal error (a platform without unix sockets and a socket directory that fails the owner-only check are recorded this way, so the launch fails with the reason).
+ * Throws `HeadroomStartError` (naming the daemon log path and any recorded `lastError`, or the allowlist file when that is what the launch waited on) when the daemon is not up, or not serving the allowlist the launch needs, within `HEADROOM_START_TIMEOUT_MS`, or when a live supervisor has recorded a fatal error (a platform without unix sockets and a socket directory that fails the owner-only check are recorded this way, so the launch fails with the reason).
  */
 export function ensureHeadroom(params: {
   readonly paths: LayoutPaths;
   readonly launcherPid: number;
   readonly ports: EnsureHeadroomPorts;
   /**
-   * The hash of the allowlist the daemon must have been started with for this launch to work, read fresh on every poll because the front door's address it contains can change while the launch waits. Given for a launch that routes a provider through headroom, whose requests come back to the front door's direct origin and are refused by a daemon that was started without it; absent for a launch that only needs Claude Code's own API, which every daemon admits.
+   * The upstreams the daemon must admit for this launch to work, read fresh on every poll because the front door's address among them can change while the launch waits. Given for a launch that routes a provider through headroom, whose requests come back to the front door's direct origin and are refused by a daemon whose allowlist lacks it; absent for a launch that only needs Claude Code's own API, which every daemon admits. `launchRequiredUpstreams` computes them for a provider launch: the serving door's direct origin. The daemon may admit more (a superseded door still serving its own sessions keeps its origin admitted), so the check is that these are among what it serves, not that the lists are equal.
    */
-  readonly requiredAllowlistHash?: () => string;
+  readonly requiredUpstreams?: () => readonly string[];
 }): { readonly socketPath: string } {
   const { paths, ports } = params;
   const deadline = ports.now() + HEADROOM_START_TIMEOUT_MS;
   let spawnedSupervisor = false;
-  let awaitingAllowlist = false;
   // The one file-lifecycle step a launch owns: folding the previous release's state file onto the shared name, or removing it once its generation has drained, before any polling starts.
   migrateHeadroomState(ports.fs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, ports.isRunning);
 
+  // A running daemon's arguments never change, so its command line is read once per wait, however many polls the wait takes, and a pid the supervisor replaces is read afresh.
+  const commandLines = new Map<number, string | undefined>();
+  const commandLineOf = (pid: number): string | undefined => {
+    if (!commandLines.has(pid)) {
+      commandLines.set(pid, ports.daemonCommandLine(pid));
+    }
+    return commandLines.get(pid);
+  };
+
   for (;;) {
+    // Decided afresh on every poll: only a daemon that is up right now can be waiting on its allowlist, so one that died after an earlier poll found it stale times out as a daemon that is not up, with whatever error its supervisor recorded.
+    let awaiting: { readonly daemonPid: number; readonly identity: DaemonIdentity } | undefined;
     const state = resolveServingHeadroomState(ports.fs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, ports.isRunning)?.state;
     if (state?.supervisorPid !== undefined && ports.isRunning(state.supervisorPid)) {
       const daemonUp = state.socketPath !== undefined && state.headroomPid !== undefined && ports.isRunning(state.headroomPid);
-      if (daemonUp && state.socketPath !== undefined) {
-        const required = params.requiredAllowlistHash?.();
-        if (required === undefined || state.allowlistHash === required) {
+      if (daemonUp && state.socketPath !== undefined && state.headroomPid !== undefined) {
+        const required = params.requiredUpstreams?.();
+        if (required === undefined || daemonAdmits(ports.fs, paths.headroomAllowlistFile, state.allowlistHash, required)) {
           writeSession(ports.fs, paths.headroomSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), supervisorPid: state.supervisorPid });
           return { socketPath: state.socketPath };
         }
-        // The daemon's allowlist predates something this launch routes through (the front door moved to another port, or a provider changed), so it would answer every request with "Rejected unsafe upstream base URL". The supervisor restarts it as soon as no session is registered against it, so registering here would pin the stale daemon for as long as this launch lives: wait for the restart instead, or refuse when a live session is what holds it up.
-        const holders = sessionsForSupervisor(ports.fs, paths.headroomSessionsDir, state.supervisorPid).filter((session) => ports.isRunning(session.pid));
-        if (holders.length > 0) {
+        const commandLine = commandLineOf(state.headroomPid);
+        const earlierRelease = earlierReleaseDaemon(ports.fs, paths, { commandLine, socketPath: state.socketPath, recordedHash: state.allowlistHash });
+        if (earlierRelease !== undefined) {
+          if (earlierRelease.admitsServingDoor) {
+            writeSession(ports.fs, paths.headroomSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), supervisorPid: state.supervisorPid });
+            return { socketPath: state.socketPath };
+          }
+          // Nothing rewrites an earlier release's allowlist, so waiting would only run out the timeout: say what ends it instead.
           throw new HeadroomStartError(
-            `the running headroom daemon was started before this launch's front door address and would refuse every request this launch sends through it. ` +
-              `It restarts once the launches using it end (pid ${holders.map((session) => String(session.pid)).join(", ")}); end them and launch again, or launch with --no-headroom.`,
+            `the running headroom daemon (pid ${String(state.headroomPid)}) was ${EARLIER_RELEASE_ALLOWLIST}, and its allowlist cannot be shown to admit the serving front door; ` +
+              `launch with --no-headroom until then. Supervisor and daemon log: ${paths.headroomLogPath}`,
           );
         }
-        awaitingAllowlist = true;
+        // The daemon's allowlist file does not yet list the serving door's direct origin (the door moved to another port, or a second door took over), so it would answer every request with "Rejected unsafe upstream base URL". Its supervisor rewrites the file the daemon re-reads and records the hash of that file's entries on its next tick, with no restart, so the launch waits for a recorded file that holds the origin rather than registering against an allowlist that refuses it.
+        awaiting = { daemonPid: state.headroomPid, identity: daemonIdentity(commandLine, state.socketPath) };
       }
       if (state.lastError !== undefined) {
         throw new HeadroomStartError(
@@ -106,13 +149,11 @@ export function ensureHeadroom(params: {
     }
 
     if (ports.now() >= deadline) {
-      const lastError = state?.lastError;
-      throw new HeadroomStartError(
-        `the headroom daemon did not become ready within ${String(HEADROOM_START_TIMEOUT_MS)}ms` +
-          (lastError === undefined ? "" : ` (last error: ${lastError})`) +
-          (awaitingAllowlist ? " (the running daemon's allowlist does not admit this launch's front door, and it did not restart)" : "") +
-            `. Daemon log: ${paths.headroomLogPath}`,
-      );
+      const lastError = state?.lastError === undefined ? "" : ` (last error: ${state.lastError})`;
+      if (awaiting !== undefined) {
+        throw new HeadroomStartError(`${awaitingCause(awaiting.daemonPid, awaiting.identity, paths.headroomAllowlistFile)}${lastError}, so the daemon would refuse every request this launch sends through it; launch with --no-headroom to bypass it. Supervisor and daemon log: ${paths.headroomLogPath}`);
+      }
+      throw new HeadroomStartError(`the headroom daemon did not become ready within ${String(HEADROOM_START_TIMEOUT_MS)}ms${lastError}. Daemon log: ${paths.headroomLogPath}`);
     }
     ports.sleep(HEADROOM_LAUNCHER_POLL_MS);
   }

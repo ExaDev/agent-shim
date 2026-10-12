@@ -106,7 +106,7 @@ export function ensureFrontDoor(params: {
           throw new FrontDoorStartError(`${lastRejection}; refusing to send this session's credentials to it. Daemon log: ${paths.frontdoorLogPath}`);
         }
         if (ports.isFrontDoorSupervisor(supervisorPid)) {
-          // This tool's own door that no longer answers: leaving it running makes the replacement move every sticky port (the headroom allowlist then excludes the serving door) and strands whatever sessions still point at it. It is retired first, so the replacement binds the same ports. A pid that is not a front-door supervisor is only distrusted, never signalled.
+          // This tool's own door that no longer answers: leaving it running makes the replacement move every sticky port (the headroom allowlist then has to be rewritten for the moved direct origin before a provider launch through headroom can proceed) and strands whatever sessions still point at it. It is retired first, so the replacement binds the same ports. A pid that is not a front-door supervisor is only distrusted, never signalled.
           stopAndAwaitExit(supervisorPid, `the front door (pid ${String(supervisorPid)}) stopped answering and did not exit when asked to`);
           continue;
         }

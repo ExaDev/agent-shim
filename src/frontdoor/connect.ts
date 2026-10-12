@@ -9,6 +9,7 @@ import type { ConnectCapture, PassthroughObserver } from "./capture";
 import { pumpTapSession } from "./tap";
 import { CONNECT_PROXY_REALM, capabilityFromProxyAuthorization } from "./capability";
 import { AUTH_HEADER } from "./route";
+import { MAX_TCP_PORT } from "./state";
 import { FRONTDOOR_POLL_MS } from "./supervisor";
 
 /**
@@ -38,8 +39,6 @@ export const ROUTED_PATH_PREFIX = "/v1/";
 /** The port HTTPS is served on, both the default when a CONNECT authority names none and the port non-headroom paths are piped to on the real upstream. */
 export const HTTPS_PORT = 443;
 
-/** The highest TCP port an authority can name; anything above it is malformed, not a port. */
-const MAX_PORT = 65535;
 
 /** What the forwarding effect answers with when the upstream is unreachable. */
 export const HTTP_BAD_GATEWAY = 502;
@@ -130,7 +129,7 @@ export function parseConnectTarget(authority: string): ConnectTarget | undefined
   }
   const host = authority.slice(0, colon).trim().toLowerCase();
   const port = Number.parseInt(authority.slice(colon + 1), 10);
-  if (host === "" || !Number.isInteger(port) || port <= 0 || port > MAX_PORT) {
+  if (host === "" || !Number.isInteger(port) || port <= 0 || port > MAX_TCP_PORT) {
     return undefined;
   }
   return { host, port };

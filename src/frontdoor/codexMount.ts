@@ -48,7 +48,7 @@ async function writeRouteResponse(routed: RouteResponse, response: RoutedRespons
 /**
  * Mounts the codex translation route (the same `createCodexRoute` the old standalone daemon served) as one front-door route. This is an adapter, not a second implementation: it reads the request body whole (the translation validates the full JSON), hands the route its transport-neutral request, and streams the route's response back with backpressure.
  *
- * `upstreamBase` is this front door's own address with the provider's path prefix, which is what a headroom hop in front of this route is told to forward to; the headroom-before-translator ordering lives in the pipeline, never here.
+ * `upstreamBase` is this front door's direct origin, which is what a headroom hop in front of this route is told to forward to (headroom's allowlist holds exactly that origin); the request keeps its provider-prefixed path, and the headroom-before-translator ordering lives in the pipeline, never here.
  */
 export function createCodexRouteMount(ports: CodexRoutePorts, upstreamBase: string, provider: string): FrontDoorRoute {
   const route = createCodexRoute(ports);

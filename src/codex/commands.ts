@@ -144,7 +144,7 @@ export interface CodexStatus {
   readonly logExists: boolean;
 }
 
-/** Names every provider file whose kind is `codex`, best-effort through the same reader the headroom allowlist uses: a file that fails validation is skipped, since the point here is to name what is served, not to fail a status read. */
+/** Names every provider file whose kind is `codex`, best-effort through the shared provider reader: a file that fails validation is skipped, since the point here is to name what is served, not to fail a status read. */
 function codexProviderNames(fsPort: HeadroomFs, providersDir: string): readonly string[] {
   return readAllProviders(fsPort, providersDir)
     .filter((entry) => isCodexProvider(entry.provider))

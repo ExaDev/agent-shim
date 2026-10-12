@@ -357,7 +357,7 @@ export {
 } from "./agents/schema";
 export { evaluateWhen, matchBranch, type ConditionContext, type WhenEvaluation } from "./resolve/conditions";
 export { ensureHeadroom, HeadroomStartError, type EnsureHeadroomPorts } from "./headroom/ensure";
-export { resolveSupervisorConfig, runSupervisor, type HeadroomSupervisorConfig, type RunSupervisorOptions, type SupervisorPorts } from "./headroom/supervisor";
+export { launchRequiredUpstreams, resolveSupervisorConfig, runSupervisor, type HeadroomSupervisorConfig, type RunSupervisorOptions, type SupervisorPorts } from "./headroom/supervisor";
 
 export {
   AMBIENT_CREDENTIAL_VARS,

@@ -1,17 +1,14 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { ProviderSchema } from "../config/schema";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import {
   hashAllowlist,
   migrateHeadroomState,
   resolveServingHeadroomState,
-  headroomAllowlist,
-  headroomUpstreams,
-  HEADROOM_ANTHROPIC_UPSTREAM,
   listSessions,
+  parseAllowlistFile,
   pruneDeadSessions,
   readAllProviders,
   readHeadroomState,
@@ -45,36 +42,53 @@ function seededProviders(fs: HeadroomFs): void {
   );
 }
 
-describe("headroomAllowlist", () => {
-  it("includes every provider's base URL plus Claude Code's own API, deduplicated and sorted", () => {
-    const allowlist = headroomAllowlist([
-      { baseUrl: "https://api.z.ai/api/anthropic" },
-      { baseUrl: "https://openrouter.ai/api/v1" },
-      { baseUrl: "https://api.z.ai/api/anthropic" },
-    ]);
-    expect(allowlist).toEqual(["https://api.anthropic.com", "https://api.z.ai/api/anthropic", "https://openrouter.ai/api/v1"]);
-    expect(allowlist).toContain(HEADROOM_ANTHROPIC_UPSTREAM);
-  });
-
-  it("admits the front door's direct origin in place of a provider's own address, once the door has one, for either kind of provider", () => {
-    const providers = [
-      ProviderSchema.parse({ displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } }),
-      ProviderSchema.parse({ kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "x" }] } }),
-    ];
-    expect(headroomAllowlist(headroomUpstreams(providers, "http://127.0.0.1:4400"))).toEqual(["http://127.0.0.1:4400", HEADROOM_ANTHROPIC_UPSTREAM, "https://api.z.ai/api/anthropic"]);
-    expect(headroomAllowlist(headroomUpstreams(providers, undefined))).toEqual([HEADROOM_ANTHROPIC_UPSTREAM, "https://api.z.ai/api/anthropic"]);
-    // An http provider alone still needs the door's origin admitted: its headroom hop bounces through the direct listener too.
-    expect(headroomAllowlist(headroomUpstreams(providers.slice(0, 1), "http://127.0.0.1:4400"))).toEqual(["http://127.0.0.1:4400", HEADROOM_ANTHROPIC_UPSTREAM, "https://api.z.ai/api/anthropic"]);
-    expect(headroomAllowlist(headroomUpstreams([], "http://127.0.0.1:4400"))).toEqual([HEADROOM_ANTHROPIC_UPSTREAM]);
-  });
-
-  it("is only Claude Code's own API when no providers exist", () => {
-    expect(headroomAllowlist([])).toEqual([HEADROOM_ANTHROPIC_UPSTREAM]);
-  });
-
+describe("hashAllowlist", () => {
   it("hashes deterministically and distinctly", () => {
     expect(hashAllowlist(["a", "b"])).toBe(hashAllowlist(["a", "b"]));
     expect(hashAllowlist(["a", "b"])).not.toBe(hashAllowlist(["b", "a"]));
+  });
+});
+
+describe("parseAllowlistFile", () => {
+  it("splits on commas, newlines, carriage returns and tabs, ignoring blank entries and surrounding space", () => {
+    expect(parseAllowlistFile(" https://a.example\rhttps://b.example\thttps://c.example,https://d.example\r\n\n")).toEqual(["https://a.example", "https://b.example", "https://c.example", "https://d.example"]);
+  });
+
+  it("skips a whole line whose first non-blank character is #", () => {
+    expect(parseAllowlistFile("# written by the supervisor\nhttps://a.example\n   # https://b.example, https://c.example\n")).toEqual(["https://a.example"]);
+  });
+
+  it("ignores a leading byte-order mark rather than joining it to the first entry", () => {
+    expect(parseAllowlistFile("\uFEFFhttps://a.example\n")).toEqual(["https://a.example"]);
+  });
+
+  it("ends an entry's line at a # that follows whitespace, and keeps a # anywhere else as part of the entry", () => {
+    expect(parseAllowlistFile("https://a.example # the prod gateway\nhttps://b.example#frag\n")).toEqual(["https://a.example", "https://b.example#frag"]);
+  });
+
+  it("drops an entry containing whitespace, one with a scheme headroom does not admit, and a URL with no host or an impossible port", () => {
+    expect(parseAllowlistFile("a.example\u00a0b.example\nftp://a.example\nws://a.example\nhttp://\nhttp://a.example:99999\nhttps://ok.example\n")).toEqual(["ws://a.example", "https://ok.example"]);
+  });
+
+  it("keeps a scheme-less entry only when it is a hostname and nothing else", () => {
+    expect(parseAllowlistFile("gw.internal/v1\nuser@gw.internal\n127.0.0.1:\n[::1]:80\n[::1]\ngw.internal?x\ngw.internal\n")).toEqual(["[::1]", "gw.internal"]);
+  });
+
+  it("separates entries at every line boundary headroom splits on, not only newlines and carriage returns", () => {
+    const breaks = ["\u000b", "\u000c", "\u001c", "\u001d", "\u001e", "\u0085", "\u2028", "\u2029"];
+    expect(parseAllowlistFile(breaks.map((separator, index) => `https://h${String(index)}.example${separator}`).join(""))).toEqual(breaks.map((_, index) => `https://h${String(index)}.example`));
+  });
+
+  it("begins a comment at a # after any whitespace headroom counts, including a no-break space and a unit separator, and ends it at the next line boundary", () => {
+    expect(parseAllowlistFile("https://a.example\u00a0# note\u2028https://b.example\u001f#note\nhttps://c.example\n")).toEqual(["https://a.example", "https://b.example", "https://c.example"]);
+  });
+
+  it("drops an entry with whitespace headroom counts but a JavaScript pattern would not, such as a unit separator inside it", () => {
+    expect(parseAllowlistFile("https://a.example\u001fb\nhttps://ok.example\n")).toEqual(["https://ok.example"]);
+  });
+
+  it("drops an entry carrying a port without a scheme, which headroom reads as invalid, and keeps a bare host", () => {
+    expect(parseAllowlistFile("127.0.0.1:50123\n[::1]:50123\napi.example.com\nhttp://127.0.0.1:50123\n")).toEqual(["api.example.com", "http://127.0.0.1:50123"]);
   });
 });
 

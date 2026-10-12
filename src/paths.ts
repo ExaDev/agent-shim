@@ -28,12 +28,14 @@ export interface LayoutPaths {
   readonly categoriesLocalFile: string;
   /** Path to the claude-shim.json marker recording where `agent-shim shim enable` last placed a `claude`-named copy of this executable, and how. */
   readonly claudeShimFile: string;
-  /** Directory holding the headroom daemon's coordination state: the state file, the start lock, the session registry, and the socket directory. */
+  /** Directory holding the headroom daemon's coordination state: the state file, the start lock, the session registry, and the owner-only socket directory, which also holds the allowlist file. */
   readonly headroomDir: string;
-  /** Path to the headroom supervisor's state file: pids, socket path, version, allowlist hash, last error. One unversioned name every release shares, arbitrated by the ownership rules in `headroom/state.ts` rather than by a version in the file name. */
+  /** Path to the headroom supervisor's state file: pids, socket path, version, the hash of the allowlist the daemon serves, last error. One unversioned name every release shares, arbitrated by the ownership rules in `headroom/state.ts` rather than by a version in the file name. */
   readonly headroomStateFile: string;
   /** The previous release's versioned name for the state file, read only while a supervisor from that release is still alive and removed once its generation has drained (see `migrateHeadroomState`). */
   readonly headroomLegacyStateFile: string;
+  /** Path to the file the headroom daemon reads its upstream allowlist from (`--allowed-base-urls-file`): the direct origin of every live front door, one per line. It lives in the owner-only socket directory because headroom refuses an allowlist file whose directory another user could write to, and that directory is the one this tool already creates mode 0700 (narrowing it if it existed wider) and checks before every daemon start. The supervisor replaces the file owner-only and atomically whenever a door's origin changes, and the daemon re-reads it on its next request, so a moved or retired front door never needs a restart. */
+  readonly headroomAllowlistFile: string;
   /** Directory, mode 0700, holding the headroom daemon's unix socket: one `<supervisor-pid>.sock` per supervisor generation. Only its owner can enter it, which is what authenticates the door's hop to the daemon. */
   readonly headroomSocketDir: string;
   /** Path to the exclusive-create marker guarding "who spawns the supervisor" so concurrent launches start at most one. */
@@ -66,6 +68,8 @@ export interface LayoutPaths {
   readonly frontdoorControlTokenFile: string;
   /** Directory holding one `<launcher-pid>.json` session-registry entry per live launch routed through the front door. */
   readonly frontdoorSessionsDir: string;
+  /** Directory holding one `<supervisor-pid>.json` per live front door, recording that door's own direct port: every door still serving sessions forwards its headroom traffic back to its own direct origin, so headroom must admit each of them, not only the one `state.json` names. */
+  readonly frontdoorDirectRecordsDir: string;
   /**
    * Directory holding one `<cse-session-id>.json` Remote Control client credential per observed session, mode 0700 with 0600 files: the OAuth-kind bearer and protocol headers the door replays as the session's attached client, persisted so a door generation that starts after a session's create can still attach. The same secret the identity's own store holds, at the same owner-only protection.
    */
@@ -137,6 +141,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     headroomDir: path.join(root, "headroom"),
     headroomStateFile: path.join(root, "headroom", "state.json"),
     headroomLegacyStateFile: path.join(root, "headroom", "state.v2.json"),
+    headroomAllowlistFile: path.join(root, "headroom", "run", "allowlist.txt"),
     headroomSocketDir: path.join(root, "headroom", "run"),
     headroomLockFile: path.join(root, "headroom", "start.lock"),
     headroomSessionsDir: path.join(root, "headroom", "sessions"),
@@ -152,6 +157,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     frontdoorLockFile: path.join(root, "frontdoor", "start.lock"),
     frontdoorControlTokenFile: path.join(root, "frontdoor", "control-token"),
     frontdoorSessionsDir: path.join(root, "frontdoor", "sessions"),
+    frontdoorDirectRecordsDir: path.join(root, "frontdoor", "direct"),
     frontdoorRcCredentialsDir: path.join(root, "frontdoor", "rc-credentials"),
     frontdoorLogPath: path.join(root, "logs", "frontdoor.log"),
     usageDir: path.join(root, "usage"),

@@ -12,18 +12,20 @@ import { resolveTrustBundle, type TrustBundle, type TrustBundleFs } from "../fro
 import { hashSettings, settingsArgs, settingsEnv, settingsOf, type HeadroomSettings } from "./settings";
 import { parseInstalledCommit } from "./source";
 import type { LayoutPaths } from "../paths";
-import { realFarmFs, realHeadroomSocketTrust, realIsProcessRunning, realSleepSync } from "../realPorts";
-import { diagnoseAllowlistDrift, type AllowlistDriftInput } from "./allowlistDrift";
+import type { FrontDoorLiveness } from "../frontdoor/state";
+import { realFarmFs, realFileSize, realFrontDoorLiveness, realHeadroomSocketTrust, realReadFileTail, realIsProcessRunning, realProcessCommandLine, realSleepSync } from "../realPorts";
+import { describeAllowlistDrift, diagnoseAllowlistDrift, type AllowlistDrift } from "./allowlistDrift";
+import { earlierReleaseDaemon } from "./earlierRelease";
 import {
-  headroomAllowlist,
-  headroomUpstreams,
+  HEADROOM_ALLOWLIST_FILE_FLAG,
   listSessions,
   resolveServingHeadroomState,
   type HeadroomFs,
   type HeadroomSession,
   type HeadroomState,
 } from "./state";
-import { currentHeadroomAllowlistInputs, resolveSupervisorConfig, runSupervisor, stopSupervisedProcess, type SupervisorPorts } from "./supervisor";
+import { reportableAllowlistFileProblem, type AllowlistFileProblem, type HeadroomSocketTrustPorts } from "./socket";
+import { currentHeadroomAllowlistInputs, undeterminedFrontDoors, type UndeterminedFrontDoor, resolveSupervisorConfig, runSupervisor, stopSupervisedProcess, type SupervisorPorts } from "./supervisor";
 
 /** One session-registry entry plus whether its launcher pid is still running. */
 interface HeadroomSessionStatus extends HeadroomSession {
@@ -36,14 +38,16 @@ export interface HeadroomStatus {
   readonly supervisorAlive: boolean;
   readonly headroomAlive: boolean;
   readonly sessions: readonly HeadroomSessionStatus[];
-  /** The allowlist the daemon WOULD be started with now, from the current provider files. */
+  /** The allowlist the daemon should serve now: the direct origin of every live front door (the one `state.json` names and every other live door's); empty before any door has served. */
   readonly allowlist: readonly string[];
-  /** True when that allowlist differs from the one the running daemon was started with, i.e. a drift restart is pending. */
-  readonly allowlistDrifted: boolean;
-  /** The front door's direct origin the allowlist is computed with, or undefined before the door has ever served. */
-  readonly frontDoorOrigin: string | undefined;
-  /** Which inputs could explain the drift (see `diagnoseAllowlistDrift`); undefined when the allowlist has not drifted. */
-  readonly allowlistDriftInputs: readonly AllowlistDriftInput[] | undefined;
+  /** The file the daemon reads its allowlist from, which its supervisor keeps equal to `allowlist`. */
+  readonly allowlistFile: string;
+  /** How the allowlist file fails the rules it is held to (see `verifyAllowlistFile`): a directory on its path headroom refuses it over, which the supervisor cannot repair, or a break of agent-shim's owner-only rule in its own directories or the file, which it repairs on its next tick or stops the daemon over. Undefined when it keeps them, while an earlier release's daemon, which reads no file, serves, and for a break agent-shim repairs before any daemon has recorded an allowlist (see `reportableAllowlistFileProblem`). */
+  readonly allowlistFileProblem: AllowlistFileProblem | undefined;
+  /** The recorded front doors the process table could not answer for, whose origins stay on `allowlist` until it can. */
+  readonly undeterminedFrontDoors: readonly UndeterminedFrontDoor[];
+  /** How the file and the recorded hash lag `allowlist` (see `diagnoseAllowlistDrift`); undefined when both are current or no daemon has recorded one. */
+  readonly allowlistDrift: AllowlistDrift | undefined;
   /** The token-saving settings the daemon WOULD be started with now, from the global config. */
   readonly settings: HeadroomSettings;
   /** True when those settings differ from the ones the running daemon was started with, i.e. a drift restart is pending. */
@@ -52,49 +56,52 @@ export interface HeadroomStatus {
   readonly logExists: boolean;
 }
 
-/** Collects the read-only status of the headroom daemon: state, pid liveness, the session registry, and the allowlist as the current provider files would produce it. */
-export function collectHeadroomStatus(
-  fsPort: HeadroomFs,
-  paths: LayoutPaths,
-  isRunning: (pid: number) => boolean,
-): HeadroomStatus {
+/** The process facts `headroom status` reads, injected so the collector runs against fakes. */
+export interface HeadroomStatusProcesses {
+  /** Zombie-aware liveness. */
+  readonly isRunning: (pid: number) => boolean;
+  /** The command line of a running process as `ps` reports it, or undefined when it cannot be read; used to tell a daemon started by an earlier release. */
+  readonly commandLine: (pid: number) => string | undefined;
+  /** Stats paths without following symlinks, to tell whether headroom would refuse the allowlist file (see `verifyAllowlistFile`). */
+  readonly pathTrust: HeadroomSocketTrustPorts;
+  /** Which recorded doors' pids are running front-door supervisors (see `FrontDoorLiveness`), so a door record whose pid was reused does not count as a live door and one the process table cannot speak for still does. */
+  readonly frontDoorLiveness: (pids: readonly number[]) => FrontDoorLiveness;
+}
+
+/** Collects the read-only status of the headroom daemon: state, pid liveness, the session registry, and the allowlist as the live front doors produce it, against the file the daemon reads. */
+export function collectHeadroomStatus(fsPort: HeadroomFs, paths: LayoutPaths, processes: HeadroomStatusProcesses): HeadroomStatus {
+  const { isRunning, commandLine: daemonCommandLine } = processes;
   // Read-only: the resolver surfaces a live previous-release supervisor's record beside the shared name without migrating anything, so `headroom status` reports the daemon a launch would join.
   const state = resolveServingHeadroomState(fsPort, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, isRunning)?.state ?? {};
-  const inputs = currentHeadroomAllowlistInputs(fsPort, paths);
-  const allowlist = headroomAllowlist(headroomUpstreams(inputs.providers, inputs.frontDoorOrigin));
-  const allowlistDriftInputs = diagnoseAllowlistDrift({ recordedHash: state.allowlistHash, providers: inputs.providers, frontDoorOrigin: inputs.frontDoorOrigin });
+  const inputs = currentHeadroomAllowlistInputs(fsPort, paths, processes.frontDoorLiveness);
+  const allowlist = inputs.frontDoorOrigins;
+  const allowlistContent = fsPort.readFileUtf8(paths.headroomAllowlistFile);
+  const earlierRelease =
+    state.headroomPid === undefined || state.socketPath === undefined || !isRunning(state.headroomPid)
+      ? undefined
+      : earlierReleaseDaemon(fsPort, paths, { commandLine: daemonCommandLine(state.headroomPid), socketPath: state.socketPath, recordedHash: state.allowlistHash });
+  const allowlistDrift = diagnoseAllowlistDrift({ allowlist, fileContent: allowlistContent, recordedHash: state.allowlistHash, earlierRelease });
   const settings = settingsOf(readGlobalConfig(paths)?.headroom ?? {});
+  const supervisorAlive = state.supervisorPid !== undefined && isRunning(state.supervisorPid);
   return {
     state,
-    supervisorAlive: state.supervisorPid !== undefined && isRunning(state.supervisorPid),
+    supervisorAlive,
     headroomAlive: state.headroomPid !== undefined && isRunning(state.headroomPid),
     sessions: listSessions(fsPort, paths.headroomSessionsDir).map((session) => ({
       ...session,
       alive: isRunning(session.pid),
     })),
     allowlist,
-    allowlistDrifted: allowlistDriftInputs !== undefined,
-    frontDoorOrigin: inputs.frontDoorOrigin,
-    allowlistDriftInputs,
+    allowlistFile: paths.headroomAllowlistFile,
+    allowlistDrift,
+    // An earlier release's daemon reads no allowlist file, so there is nothing to check while one serves.
+    allowlistFileProblem: earlierRelease === undefined ? reportableAllowlistFileProblem(paths.headroomAllowlistFile, processes.pathTrust, state.allowlistHash !== undefined) : undefined,
+    undeterminedFrontDoors: undeterminedFrontDoors(inputs),
     settings,
     settingsDrifted: state.settingsHash !== undefined && state.settingsHash !== hashSettings(settings),
     logPath: paths.headroomLogPath,
     logExists: fsPort.readFileUtf8(paths.headroomLogPath) !== undefined,
   };
-}
-
-/** Why the allowlist drifted, naming the input that changed. A door origin that is a candidate cause also says what it means for launches: the daemon refuses every request a provider launch sends back through the door until it restarts. */
-function describeAllowlistDrift(status: HeadroomStatus): string {
-  const inputs = status.allowlistDriftInputs ?? [];
-  if (!inputs.includes("front-door-origin")) {
-    return "DRIFTED: current provider files differ from the running daemon's allowlist; a restart is pending";
-  }
-  const origin = status.frontDoorOrigin ?? "";
-  const consequence = "provider launches through headroom are refused until the daemon restarts, which waits for the launches registered against it to end";
-  if (!inputs.includes("provider-files")) {
-    return `DRIFTED: the daemon was started before the serving front door's direct origin ${origin} existed, so its allowlist excludes it; ${consequence}`;
-  }
-  return `DRIFTED: the provider files or the serving front door's direct origin ${origin} changed since the daemon started, so its allowlist may exclude the door; ${consequence}`;
 }
 
 /** Formats `agent-shim headroom status`'s output, one line per array entry. */
@@ -116,8 +123,26 @@ export function formatHeadroomStatus(status: HeadroomStatus): string[] {
         (status.state.version === undefined ? "" : `, ${status.state.version}`),
     );
   }
-  const drift = status.allowlistDrifted ? ` (${describeAllowlistDrift(status)})` : "";
-  lines.push(`allowlist: ${status.allowlist.join(", ")}${drift}`);
+  const drift =
+    status.allowlistDrift === undefined
+      ? ""
+      : ` (DRIFTED: ${describeAllowlistDrift({
+          drift: status.allowlistDrift,
+          allowlistFile: status.allowlistFile,
+          liveSupervisorPid: status.supervisorAlive ? status.state.supervisorPid : undefined,
+          logPath: status.logPath,
+        })})`;
+  lines.push(`allowlist: ${status.allowlist.length === 0 ? "none (no front door has served yet)" : status.allowlist.join(", ")}${drift}`);
+  if (status.allowlistFileProblem !== undefined) {
+    lines.push(
+      status.allowlistFileProblem.repairable
+        ? `allowlist file: breaks agent-shim's owner-only rule, which its supervisor repairs on its next tick or stops the daemon over: ${status.allowlistFileProblem.message}`
+        : `allowlist file: headroom refuses it, so it admits nothing and every provider request through headroom fails: ${status.allowlistFileProblem.message}`,
+    );
+  }
+  for (const door of status.undeterminedFrontDoors) {
+    lines.push(`front door ${String(door.pid)}: could not tell whether it is still running (${door.reason}), so its direct origin ${door.origin} stays admitted`);
+  }
   const configured = Object.entries(status.settings).map(([name, value]) => `${name} ${String(value)}`);
   const settingsDrift = status.settingsDrifted ? " (DRIFTED: the configured settings differ from the running daemon's; a restart is pending)" : "";
   lines.push(`settings: ${configured.length === 0 ? "headroom defaults" : configured.join(", ")}${settingsDrift}`);
@@ -174,14 +199,16 @@ export function resolveHeadroomTrustBundle(params: { readonly caCertFile: string
  *
  * `trustBundlePath`, when given, is the file `resolveHeadroomTrustBundle` chose, and becomes `HEADROOM_CA_BUNDLE`: a path, never certificate text, and an additive variable, never `SSL_CERT_FILE` or `REQUESTS_CA_BUNDLE`. Those two replace headroom's whole trust store (and switch off its operating-system store, which is where a corporate TLS-inspection root lives), so pointing them at the door's CA alone would make every public upstream untrusted.
  */
-export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readonly string[], settings: Readonly<HeadroomSettings>, trustBundlePath?: string): NodeJS.ProcessEnv {
+export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, settings: Readonly<HeadroomSettings>, trustBundlePath?: string): NodeJS.ProcessEnv {
   // Headroom refuses `--uds` alongside a TCP address from its environment, so an ambient HEADROOM_HOST or HEADROOM_PORT (a shell set up for running headroom by hand) would stop the supervised daemon starting at all. The supervisor alone decides where the daemon listens.
   const inherited = { ...parentEnv };
   delete inherited.HEADROOM_HOST;
   delete inherited.HEADROOM_PORT;
+  // Headroom merges HEADROOM_ALLOWED_BASE_URLS into the allowlist it reads from its file, so an ambient value would admit upstreams the supervisor never listed and that no rewrite of the file could withdraw, and an ambient HEADROOM_ALLOWED_BASE_URLS_FILE would compete with the `--allowed-base-urls-file` the supervisor passes. The supervisor's file alone decides what the daemon admits.
+  delete inherited.HEADROOM_ALLOWED_BASE_URLS;
+  delete inherited.HEADROOM_ALLOWED_BASE_URLS_FILE;
   return {
     ...inherited,
-    HEADROOM_ALLOWED_BASE_URLS: allowlist.join(","),
     HEADROOM_HTTP2: parentEnv.HEADROOM_HTTP2 ?? "0",
     // The bundle already holds any inherited HEADROOM_CA_BUNDLE's certificates, so replacing the variable loses nothing. An inherited SSL_CERT_FILE or REQUESTS_CA_BUNDLE passes through untouched and, by headroom's own precedence, still replaces everything: an explicit choice in the parent environment wins.
     ...(trustBundlePath === undefined ? {} : { [HEADROOM_CA_BUNDLE]: trustBundlePath }),
@@ -190,10 +217,10 @@ export function headroomSpawnEnv(parentEnv: NodeJS.ProcessEnv, allowlist: readon
 }
 
 /**
- * The `headroom proxy` arguments the supervisor starts the daemon with: the unix socket to serve on, `--no-rate-limit`, and the token-saving settings. Never `--host` or `--port`: the daemon binds no TCP listener, and headroom refuses `--uds` alongside either. The daemon's own limiter defaults to 60 requests a minute, which rejects a busy multi-session front door with 429 even though every caller is already the local user; the provider's own limits still apply upstream.
+ * The `headroom proxy` arguments the supervisor starts the daemon with: the unix socket to serve on, the allowlist file to read (and re-read whenever it is replaced, so an allowlist change needs no restart), `--no-rate-limit`, and the token-saving settings. Never `--host` or `--port`: the daemon binds no TCP listener, and headroom refuses `--uds` alongside either. The daemon's own limiter defaults to 60 requests a minute, which rejects a busy multi-session front door with 429 even though every caller is already the local user; the provider's own limits still apply upstream.
  */
-export function headroomProxyArgs(socketPath: string, settings: Readonly<HeadroomSettings>): readonly string[] {
-  return ["proxy", "--uds", socketPath, "--no-rate-limit", ...settingsArgs(settings)];
+export function headroomProxyArgs(socketPath: string, allowlistFile: string, settings: Readonly<HeadroomSettings>): readonly string[] {
+  return ["proxy", "--uds", socketPath, HEADROOM_ALLOWLIST_FILE_FLAG, allowlistFile, "--no-rate-limit", ...settingsArgs(settings)];
 }
 
 /** Asks the daemon's `/readyz` over its unix socket, answering whether it replied 200 (headroom's ready answer) inside the per-attempt timeout. */
@@ -250,9 +277,13 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
       });
     },
     isRunning: headroomPidRunning,
+    frontDoorLiveness: realFrontDoorLiveness,
+    daemonCommandLine: realProcessCommandLine,
+    daemonLogSize: () => realFileSize(paths.headroomLogPath),
+    readDaemonLogTail: (fromByte, maxBytes) => realReadFileTail(paths.headroomLogPath, fromByte, maxBytes),
     socketTrust: realHeadroomSocketTrust,
     readConfig: () => resolveSupervisorConfig(readGlobalConfig(paths)?.headroom ?? {}),
-    spawnHeadroom: (socketPath, allowlist, settings) => {
+    spawnHeadroom: (socketPath, allowlistFile, settings) => {
       const trust = resolveHeadroomTrustBundle({ caCertFile: paths.frontdoorCaCertFile, bundlesDir: paths.frontdoorCaBundlesDir, inherited: process.env[HEADROOM_CA_BUNDLE], fs: realTrustBundleFs });
       fs.mkdirSync(paths.logsDir, { recursive: true });
       if (trust?.warning !== undefined) {
@@ -260,10 +291,10 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
       }
       const logFd = fs.openSync(paths.headroomLogPath, "a");
       try {
-        const child = spawn("headroom", headroomProxyArgs(socketPath, settings), {
+        const child = spawn("headroom", headroomProxyArgs(socketPath, allowlistFile, settings), {
           detached: true,
           stdio: ["ignore", logFd, logFd],
-          env: headroomSpawnEnv(process.env, allowlist, settings, trust?.path),
+          env: headroomSpawnEnv(process.env, settings, trust?.path),
         });
         if (child.pid === undefined) {
           throw new Error("spawning headroom returned no pid");
@@ -336,7 +367,7 @@ export function registerHeadroomCommand(program: Command, deps: CommandDeps): vo
       .description("Report the headroom daemon's supervisor, process, socket, sessions, and last error. Read-only.")
       .option("--json", "Print the status as JSON.")
       .action((options: Readonly<{ json?: boolean }>) => {
-        const status = collectHeadroomStatus(realFarmFs, paths, realIsProcessRunning);
+        const status = collectHeadroomStatus(realFarmFs, paths, { isRunning: realIsProcessRunning, commandLine: realProcessCommandLine, frontDoorLiveness: realFrontDoorLiveness, pathTrust: realHeadroomSocketTrust });
         if (options.json === true) {
           printJson(status);
           return;
