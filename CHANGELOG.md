@@ -1,3 +1,13 @@
+## [9.19.0](https://github.com/ExaDev/agent-shim/compare/v9.18.0...v9.19.0) (2026-10-12)
+
+### Features
+
+* merge live Remote Control task events into the agent tree ([47bdfed](https://github.com/ExaDev/agent-shim/commit/47bdfed929724e716945f5d8f4358a2e12edf5ee))
+
+### Bug Fixes
+
+* run window openings and jobs in a child process, not inside the front door ([574a79d](https://github.com/ExaDev/agent-shim/commit/574a79d455f48766d05a69ab386037f0a864da98))
+
 ## [9.18.0](https://github.com/ExaDev/agent-shim/compare/v9.17.0...v9.18.0) (2026-10-11)
 
 ### Features
