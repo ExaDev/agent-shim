@@ -1,10 +1,9 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
-import { Readable } from "node:stream";
 
 import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomDecision } from "./headroomDecision";
 import { applyHeadroomHop, headroomReady, type HeadroomHopDeps } from "./headroomHop";
-import { lineageOf, type Lineage } from "./lineage";
+import type { Lineage } from "./lineage";
 import { identifyRequest, type FrontDoorRoute, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 
 /** What one routed response looked like as it started back to the client: the typed event response middleware observes. */
@@ -20,7 +19,7 @@ export interface RoutedResponseEvent {
   readonly receivedAt: number;
   /** Whether the request crossed the headroom hop on its way upstream, as decided by the pipeline for this request (a session's headroom flag alone does not say: the route may be ineligible or no daemon wired). */
   readonly viaHeadroom: boolean;
-  /** Where the request sits in its conversation thread, for a messages request read whole by the pipeline. Undefined for any other request. */
+  /** Where the request sits in its conversation thread, known once the hop has read the body. Undefined for a request that did not cross the hop or was not a messages request. */
   readonly lineage: Lineage | undefined;
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
@@ -107,8 +106,6 @@ function errorTypeFor(status: number): string {
       return "permission_error";
     case HTTP_STATUS.notFound:
       return "not_found_error";
-    case HTTP_STATUS.payloadTooLarge:
-      return "request_too_large";
     case HTTP_STATUS.tooManyRequests:
       return "rate_limit_error";
     default:
@@ -120,38 +117,6 @@ function errorBody(status: number, message: string): string {
   return JSON.stringify({ type: "error", error: { type: errorTypeFor(status), message } });
 }
 
-/** Bytes in one mebibyte, the unit the Messages API states its request size limit in. */
-const BYTES_PER_MIB = 1_048_576;
-
-/** The Messages API's request size limit, in mebibytes. */
-const MESSAGES_API_LIMIT_MIB = 32;
-
-/** The most a messages request body is read into memory: the Messages API's own request size limit (32 MB), so a larger body would be refused upstream anyway and reading it whole would only let one connection grow the door's memory without bound. */
-const MAX_MESSAGES_BODY_BYTES = MESSAGES_API_LIMIT_MIB * BYTES_PER_MIB;
-
-/** Reads a request body whole, or returns undefined once it has passed `limit` bytes, destroying the stream so nothing more is retained. */
-async function readBounded(body: Readable, limit: number): Promise<Buffer | undefined> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of body) {
-    const piece = typeof chunk === "string" ? Buffer.from(chunk) : chunk instanceof Uint8Array ? Buffer.from(chunk) : undefined;
-    if (piece === undefined) {
-      body.destroy();
-      return undefined;
-    }
-    size += piece.length;
-    if (size > limit) {
-      body.destroy();
-      return undefined;
-    }
-    chunks.push(piece);
-  }
-  return Buffer.concat(chunks);
-}
-
-/** The path suffix of the requests whose history identifies a conversation thread. */
-const MESSAGES_PATH_SUFFIX = "/v1/messages";
-
 /** What the response middleware learns about the request a routed response answers. */
 interface ObservedRequest {
   readonly method: string;
@@ -159,7 +124,8 @@ interface ObservedRequest {
   readonly path: string;
   readonly receivedAt: number;
   readonly viaHeadroom: boolean;
-  readonly lineage: Lineage | undefined;
+  /** Filled by the hop once it has read the body; read when the response head is written, which is after. */
+  readonly thread: { lineage: Lineage | undefined };
 }
 
 /** The request target's path without its query string: the query is the client's business, and middleware has no use for it. */
@@ -229,7 +195,7 @@ export function createRoutedResponse(
     start: (status, headers) => {
       for (const observe of deps.responseObservers) {
         try {
-          const body = observe({ session, route, method: request.method, path: request.path, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, lineage: request.lineage, status, headers });
+          const body = observe({ session, route, method: request.method, path: request.path, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, lineage: request.thread.lineage, status, headers });
           if (body !== undefined) {
             bodyObservers.push(body);
           }
@@ -277,7 +243,7 @@ export function createRoutedResponse(
  * The ordered pipeline every routed session's request runs through: identify the session (splitting the launcher-injected headers out of what may leave the machine), then route, with the response middleware running at each response head. A route that cannot be resolved is answered as an Anthropic-shaped error, and the observers see that error like any other response, since quota and rate-limit state lives in exactly those.
  */
 export async function serveRouted(request: PipelineRequest, deps: PipelineDeps): Promise<void> {
-  const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false, lineage: undefined };
+  const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false, thread: { lineage: undefined } };
   const identified = identifyRequest(request.headers);
   const admission = deps.admit({ url: request.url, headers: request.headers, forwardable: identified.forwardableHeaders });
   if (!admission.ok) {
@@ -287,26 +253,11 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
     response.end();
     return;
   }
-  // A messages request is read whole here, before its route or the hop does: the thread it belongs to is told from its own history, which is what lets a response be matched with the previous response of its thread when subagents and forks answer in between under one session id. Only the client-facing pipeline, which is where the decision is made, does this.
-  let lineage: Lineage | undefined;
-  let body: Readable = request.body;
-  if (deps.headroom !== undefined && request.method === "POST" && observed.path.endsWith(MESSAGES_PATH_SUFFIX)) {
-    const whole = await readBounded(request.body, MAX_MESSAGES_BODY_BYTES);
-    if (whole === undefined) {
-      const response = createRoutedResponse(request.response, { deps, session: identified.session, route: "(oversized)", request: observed });
-      response.start(HTTP_STATUS.payloadTooLarge, { "Content-Type": "application/json" });
-      await response.write(errorBody(HTTP_STATUS.payloadTooLarge, "agent-shim front door: the request body is larger than the Messages API accepts"));
-      response.end();
-      return;
-    }
-    lineage = lineageOf(whole);
-    body = Readable.from([whole]);
-  }
   const routed: RoutedRequest = {
     method: request.method,
     url: request.url,
     headers: admission.headers,
-    body,
+    body: request.body,
     signal: request.signal,
     session: identified.session,
   };
@@ -324,11 +275,13 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
     headroom !== undefined &&
     (await deps.headroomDecision.decide(identified.session.sessionId, identified.session.headroom, deps.now(), async () => await headroomReady(headroom, request.signal)));
   const viaHeadroom = wantsHeadroom && resolution.route.headroomEligible && deps.headroom !== undefined;
-  const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom, lineage } });
+  const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom } });
   try {
     if (viaHeadroom) {
       // The ordering the whole design turns on: headroom first, on the Anthropic-shaped request, then the route (a translator receives what headroom compressed). A route that opts out, or a listener that serves routes directly, falls through to serving.
-      await applyHeadroomHop(routed, response, resolution.route.headroomUpstream, deps.headroom);
+      await applyHeadroomHop(routed, response, resolution.route.headroomUpstream, deps.headroom, (lineage) => {
+        observed.thread.lineage = lineage;
+      });
     } else {
       await resolution.route.serve(routed, response);
     }

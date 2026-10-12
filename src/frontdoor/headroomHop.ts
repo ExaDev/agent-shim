@@ -1,12 +1,14 @@
 import * as http from "node:http";
-import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
+import type { Readable } from "node:stream";
 import { buffer } from "node:stream/consumers";
+import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
 
 import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomSocketTarget } from "../headroom/socket";
 import { forwardableHeaders } from "./connect";
 import type { CredentialCustody } from "./custody";
 import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, SESSION_ATTRIBUTION_HEADER, parseProviderPath, type RoutedRequest, type RoutedResponse } from "./route";
+import { lineageOf, type Lineage } from "./lineage";
 import { upstreamChunks } from "./server";
 
 /** What one hop answers when it cannot serve: the daemon is between restarts, unreachable, or its socket failed authentication. Answering with 502 (rather than bypassing headroom) is what keeps a session that is already using headroom from sending its history uncompressed and rewriting its prompt cache; a session at a cache boundary is sent direct before it gets here (see `headroomDecision.ts`). */
@@ -46,7 +48,7 @@ function responseHeaders(headers: Readonly<IncomingHttpHeaders>): Record<string,
  *
  * `upstream` is what headroom is told to forward to once it has done its work (its per-request base URL header). When it is set it is always this door's direct listener (every provider route declares exactly that), and the provider credential is then taken into custody for the hop: headroom receives placeholders and a hop id, and the direct listener restores the real headers when headroom forwards the request back. Neither headroom nor anything that binds a port on that plain-HTTP round trip ever holds the credential. Undefined leaves headroom's default upstream (Claude Code's API) in charge, which is exactly what an OAuth session wants, and the OAuth bearer then passes through untouched: headroom forwards it straight to that API, never back here, and uses it for its subscription tracking. The session's project identity, provider name and attribution id are re-set here, and only here: the identity step stripped them from everything that leaves the machine, and headroom is the one consumer that needs them.
  */
-export async function applyHeadroomHop(request: RoutedRequest, response: RoutedResponse, upstream: string | undefined, deps: HeadroomHopDeps): Promise<void> {
+export async function applyHeadroomHop(request: RoutedRequest, response: RoutedResponse, upstream: string | undefined, deps: HeadroomHopDeps, onThread: (lineage: Lineage | undefined) => void): Promise<void> {
   const target = deps.headroomSocket();
   if (target === undefined) {
     await answerBadGateway(response, "agent-shim front door: the headroom daemon is restarting");
@@ -85,7 +87,7 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
   }
   headers[HOP_SECRET_HEADER] = deps.hopSecret;
   try {
-    await forwardThroughHeadroom(request, response, { socketPath, headers, log: deps.log });
+    await forwardThroughHeadroom(request, response, { socketPath, headers, log: deps.log, onThread });
   } finally {
     // The hop is over (answered, failed, or abandoned by the client): its custody id stops redeeming, so a copy of it seen anywhere along the way is worthless from here on.
     if (hopId !== undefined) {
@@ -145,13 +147,56 @@ const HOP_RESET_RETRIES = 1;
 /** The socket errors that say the daemon (or its listener backlog) dropped a connection it had already accepted, as opposed to one that could never be opened. Only these are replayed. */
 const HOP_RESET_CODES: ReadonlySet<string> = new Set(["ECONNRESET", "EPIPE"]);
 
-/** Reads the whole request body so a reset hop can be replayed byte for byte; undefined when the client failed mid-upload, in which case there is nothing to forward. */
-async function collectBody(request: RoutedRequest): Promise<Buffer | undefined> {
-  try {
-    return await buffer(request.body);
-  } catch {
-    return undefined;
-  }
+/** Bytes in one mebibyte, the unit the Messages API states its request size limit in. */
+const BYTES_PER_MIB = 1_048_576;
+
+/** The Messages API's request size limit, in mebibytes. */
+const MESSAGES_API_LIMIT_MIB = 32;
+
+/** The most a request body is read into memory: the Messages API's own request size limit, so a larger body would be refused upstream anyway and reading it whole would only let one connection grow the door's memory without bound. */
+export const MAX_BODY_BYTES = MESSAGES_API_LIMIT_MIB * BYTES_PER_MIB;
+
+/** What reading a request body can come to: the whole body, a client that failed mid-upload (nothing to forward), or a body past the limit. */
+export type CollectedBody = { readonly kind: "body"; readonly body: Buffer } | { readonly kind: "failed" } | { readonly kind: "too-large" };
+
+/**
+ * Reads the whole request body so a reset hop can be replayed byte for byte. Past `MAX_BODY_BYTES` it stops retaining anything and resolves at once, and the rest of the upload is read and thrown away rather than the connection being destroyed, so the 413 can still be delivered to a client that is mid-upload.
+ */
+export async function collectBody(body: Readable): Promise<CollectedBody> {
+  return await new Promise<CollectedBody>((resolve) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let settled = false;
+    const settle = (result: CollectedBody): void => {
+      if (!settled) {
+        settled = true;
+        resolve(result);
+      }
+    };
+    body.on("data", (chunk: unknown) => {
+      if (settled) {
+        return;
+      }
+      const piece = typeof chunk === "string" ? Buffer.from(chunk) : chunk instanceof Uint8Array ? Buffer.from(chunk) : undefined;
+      if (piece === undefined) {
+        settle({ kind: "failed" });
+        return;
+      }
+      size += piece.length;
+      if (size > MAX_BODY_BYTES) {
+        chunks.length = 0;
+        settle({ kind: "too-large" });
+        return;
+      }
+      chunks.push(piece);
+    });
+    body.on("end", () => {
+      settle({ kind: "body", body: Buffer.concat(chunks) });
+    });
+    body.on("error", () => {
+      settle({ kind: "failed" });
+    });
+  });
 }
 
 /**
@@ -160,13 +205,22 @@ async function collectBody(request: RoutedRequest): Promise<Buffer | undefined> 
 async function forwardThroughHeadroom(
   request: RoutedRequest,
   response: RoutedResponse,
-  target: { readonly socketPath: string; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void },
+  target: { readonly socketPath: string; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void; readonly onThread: (lineage: Lineage | undefined) => void },
 ): Promise<void> {
-  const body = await collectBody(request);
-  if (body === undefined) {
+  const collected = await collectBody(request.body);
+  if (collected.kind === "failed") {
     response.destroy();
     return;
   }
+  if (collected.kind === "too-large") {
+    response.start(HTTP_STATUS.payloadTooLarge, { "Content-Type": "application/json" });
+    await response.write(JSON.stringify({ type: "error", error: { type: "request_too_large", message: "agent-shim front door: the request body is larger than the Messages API accepts" } }));
+    response.end();
+    return;
+  }
+  const { body } = collected;
+  // The thread this request belongs to, told from its own history, so a response can later be matched with the previous response of its own thread even while subagents and forks answer under the same session id.
+  target.onThread(lineageOf(body));
   for (let retriesLeft = HOP_RESET_RETRIES; ; retriesLeft -= 1) {
     const outcome = await hopOnce(request, response, target, body, retriesLeft > 0);
     if (outcome === "settled") {

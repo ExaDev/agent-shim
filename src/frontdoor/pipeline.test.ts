@@ -1,5 +1,4 @@
 import { EventEmitter } from "node:events";
-import { Readable } from "node:stream";
 import type { IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 
@@ -52,9 +51,8 @@ class FakeServerResponse extends EventEmitter {
 const RECEIVED_AT = 1_700_000_000_000;
 
 /** A stand-in IncomingMessage: the pipeline only passes it through to the route. */
-/** An empty request body that reads like a real one: the pipeline reads a messages request whole before routing it. */
 function fakeBody(): IncomingMessage {
-  return Readable.from([]) as IncomingMessage;
+  return new EventEmitter() as unknown as IncomingMessage;
 }
 
 function pipelineRequest(headers: Record<string, string | string[]> = {}): { readonly request: PipelineRequest; readonly response: FakeServerResponse } {
@@ -102,7 +100,7 @@ function deps(resolution: RouteResolution, observers: readonly ResponseObserver[
 describe("createRoutedResponse", () => {
   it("applies backpressure: a write that the socket refuses waits for its drain", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, lineage: undefined } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined } } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -118,7 +116,7 @@ describe("createRoutedResponse", () => {
 
   it("settles a backpressured write when the client goes away, so a route is never left waiting on a dead socket", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, lineage: undefined } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined } } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -158,19 +156,6 @@ describe("serveRouted", () => {
     await serveRouted(request, deps({ ok: true, route: recordingRoute() }, observers).deps);
     expect(events).toEqual(["first:test:200:work", "second:text/plain"]);
     expect(response.writtenHead?.status).toBe(HTTP_STATUS.ok);
-  });
-
-  it("answers 413 and routes nothing for a messages body past the Messages API's size limit, without reading it whole", async () => {
-    const route = recordingRoute();
-    const { request, response } = pipelineRequest();
-    const MEBIBYTE = 1_048_576;
-    const MESSAGES_API_LIMIT_MIB = 32;
-    const chunks = Array.from({ length: MESSAGES_API_LIMIT_MIB + 1 }, () => Buffer.alloc(MEBIBYTE));
-    const { deps: base } = deps({ ok: true, route });
-    const headroom = { headroomSocket: () => undefined, hopSecret: "secret", custody: createCredentialCustody(() => "id"), log: () => undefined };
-    await serveRouted({ ...request, body: Readable.from(chunks) as IncomingMessage }, { ...base, headroom });
-    expect(response.writtenHead?.status).toBe(HTTP_STATUS.payloadTooLarge);
-    expect(route.seen).toHaveLength(0);
   });
 
   describe("viaHeadroom on the observed event", () => {
@@ -353,7 +338,7 @@ function routedWith(response: FakeServerResponse, observers: readonly ResponseOb
     deps: d,
     session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined },
     route: "test",
-    request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, lineage: undefined },
+    request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined } },
   });
   return { routed, logs };
 }
