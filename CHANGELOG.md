@@ -1,3 +1,14 @@
+## [11.7.0](https://github.com/ExaDev/agent-shim/compare/v11.6.2...v11.7.0) (2026-10-13)
+
+### Features
+
+* **frontdoor:** end a door whose event loop has stopped running ([cf8c5d5](https://github.com/ExaDev/agent-shim/commit/cf8c5d5c314a9c9923828b80f8fb090c3475f20d)), references [#427](https://github.com/ExaDev/agent-shim/issues/427)
+
+### Bug Fixes
+
+* **frontdoor:** keep the stall action type private to the watchdog ([182bd99](https://github.com/ExaDev/agent-shim/commit/182bd993f1c5c29013d39ef933a38e53e640ff58))
+* **frontdoor:** make the watchdog port optional for in-process hosts ([990779b](https://github.com/ExaDev/agent-shim/commit/990779bfc10d10bead0bed73cf89ee401c93d891)), references [#427](https://github.com/ExaDev/agent-shim/issues/427)
+
 ## [11.6.2](https://github.com/ExaDev/agent-shim/compare/v11.6.1...v11.6.2) (2026-10-13)
 
 ### Bug Fixes
