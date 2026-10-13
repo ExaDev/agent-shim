@@ -1,3 +1,13 @@
+## [11.6.1](https://github.com/ExaDev/agent-shim/compare/v11.6.0...v11.6.1) (2026-10-13)
+
+### Bug Fixes
+
+* **frontdoor:** never ask ps or probe the door's own held event loop ([8cee855](https://github.com/ExaDev/agent-shim/commit/8cee855361c042d675bb97042fd636de8d742969))
+
+### Tests
+
+* **usage:** fail a launch planned inside the door at its first wait ([767f9a5](https://github.com/ExaDev/agent-shim/commit/767f9a5e6316b739a88d04d70880cd5a70b81c93)), references [#429](https://github.com/ExaDev/agent-shim/issues/429)
+
 ## [11.6.0](https://github.com/ExaDev/agent-shim/compare/v11.5.2...v11.6.0) (2026-10-12)
 
 ### Features
