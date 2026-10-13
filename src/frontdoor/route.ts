@@ -2,6 +2,11 @@ import type { Readable } from "node:stream";
 import type { IncomingHttpHeaders } from "node:http";
 
 /**
+ * Headroom's own session header, which the door never sends and strips from every inbound request. Headroom reads it as an opt-in to mid-turn queueing: while one stream is active for a session, another streaming request carrying it is answered `202 {"event":"headroom_queued"}` without reaching the upstream, which a client expecting an event stream reports as "Streaming response ended before any complete data was received". Nothing a client sends may choose it.
+ */
+const HEADROOM_SESSION_HEADER = "x-headroom-session-id";
+
+/**
  * The agent-shim-internal headers the launcher injects through `ANTHROPIC_CUSTOM_HEADERS` so the front door can identify and route a request's session. None of them may ever leave the machine: the identity step strips every one before a route sees the request, so no upstream, and not even the headroom hop, learns what they say.
  */
 export const INTERNAL_HEADER_NAMES = [
@@ -13,7 +18,7 @@ export const INTERNAL_HEADER_NAMES = [
   "x-agent-shim-hop",
   "x-agent-shim-hop-id",
   "x-headroom-project-id",
-  "x-headroom-session-id",
+  HEADROOM_SESSION_HEADER,
   "x-headroom-base-url",
 ] as const;
 
@@ -35,9 +40,9 @@ export const HEADROOM_FLAG_HEADER = "x-agent-shim-headroom";
 export const PROJECT_ID_HEADER = "x-headroom-project-id";
 
 /**
- * Headroom's per-session attribution id, the key its `/stats/sessions/<id>` serves: the daemon attributes a request only when it carries this header (or the client's own `x-claude-code-session-id`, which no routed client sends). Re-set by the headroom hop from the launch's own session id, so the daemon attributes traffic the client itself never identifies; inbound copies are stripped at the identity step like every other internal header.
+ * The session id headroom attributes savings to and keys its per-session state by, and the one it prefers over its own header: Claude Code stamps every request with it. The hop fills it from the launch's own session id only when the client sent none, so traffic from a client that does not identify itself is still attributed, without opting the session into queueing.
  */
-export const SESSION_ATTRIBUTION_HEADER = "x-headroom-session-id";
+export const CLIENT_SESSION_HEADER = "x-claude-code-session-id";
 
 /**
  * Headroom's per-request upstream selector, which the child used to carry and the door now owns: the door strips any inbound copy (a leftover from an older launcher's environment would otherwise redirect the daemon behind the door's back) and its hop sets it fresh when a route names an upstream.
