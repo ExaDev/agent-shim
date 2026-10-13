@@ -7,7 +7,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomSocketTarget } from "../headroom/socket";
 import { forwardableHeaders } from "./connect";
 import type { CredentialCustody } from "./custody";
-import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, SESSION_ATTRIBUTION_HEADER, parseProviderPath, type RoutedRequest, type RoutedResponse } from "./route";
+import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, CLIENT_SESSION_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, parseProviderPath, type RoutedRequest, type RoutedResponse } from "./route";
 import { lineageOf, type Lineage } from "./lineage";
 import { upstreamChunks } from "./server";
 
@@ -82,8 +82,9 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
   if (request.session.projectId !== undefined) {
     headers[PROJECT_ID_HEADER] = request.session.projectId;
   }
-  if (request.session.sessionId !== undefined) {
-    headers[SESSION_ATTRIBUTION_HEADER] = request.session.sessionId;
+  // The client's own session header wins at headroom and is kept as it is. A client that sends none is attributed from the launch's id under that same header, never under headroom's own session header: that one opts the session into mid-turn queueing, which answers a concurrent streaming request with a 202 JSON body the client cannot parse as a stream.
+  if (request.session.sessionId !== undefined && !Object.keys(headers).some((name) => name.toLowerCase() === CLIENT_SESSION_HEADER)) {
+    headers[CLIENT_SESSION_HEADER] = request.session.sessionId;
   }
   headers[HOP_SECRET_HEADER] = deps.hopSecret;
   try {

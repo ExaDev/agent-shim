@@ -352,7 +352,7 @@ describe("the headroom hop", () => {
     }
   });
 
-  it("re-sets the project identity and the session attribution id on the hop, replacing any inbound copy, and forwards no launcher session header beyond it", async () => {
+  it("re-sets the project identity on the hop, replacing any inbound copy, and never forwards headroom's own session header, which opts a session into mid-turn queueing", async () => {
     const headroom = await fakeHeadroom();
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
     try {
@@ -364,7 +364,12 @@ describe("the headroom hop", () => {
       });
       const seen = headroom.seen()[0];
       expect(seen?.headers["x-headroom-project-id"]).toBe("/repo");
-      expect(seen?.headers["x-headroom-session-id"]).toBe("session-1");
+      expect(seen?.headers["x-headroom-session-id"]).toBeUndefined();
+      // The client sent no session header of its own, so the launch's id stands in for it under Claude Code's name.
+      expect(seen?.headers["x-claude-code-session-id"]).toBe("session-1");
+      // A client that identifies itself keeps its own id.
+      await fetch(`${door.url}/providers/codex/v1/messages`, { dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN, "x-claude-code-session-id": "the-clients-own" }, body: MESSAGES_BODY });
+      expect(headroom.seen()[1]?.headers["x-claude-code-session-id"]).toBe("the-clients-own");
       expect(seen?.headers[IDENTITY_HEADER]).toBeUndefined();
       expect(seen?.headers[SESSION_HEADER]).toBeUndefined();
     } finally {
