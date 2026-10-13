@@ -1,3 +1,9 @@
+## [11.6.2](https://github.com/ExaDev/agent-shim/compare/v11.6.1...v11.6.2) (2026-10-13)
+
+### Bug Fixes
+
+* **usage:** never open a window for an account whose quota has not been read ([a2519e5](https://github.com/ExaDev/agent-shim/commit/a2519e527e68dd07134fed9b0242615c81c8060d))
+
 ## [11.6.1](https://github.com/ExaDev/agent-shim/compare/v11.6.0...v11.6.1) (2026-10-13)
 
 ### Bug Fixes
