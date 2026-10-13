@@ -1,3 +1,9 @@
+## [11.8.1](https://github.com/ExaDev/agent-shim/compare/v11.8.0...v11.8.1) (2026-10-13)
+
+### Bug Fixes
+
+* **frontdoor:** stop opting sessions into headroom's mid-turn queueing ([62f3293](https://github.com/ExaDev/agent-shim/commit/62f3293ccb53b13a2770915c7dbaa29661ca0ec5))
+
 ## [11.8.0](https://github.com/ExaDev/agent-shim/compare/v11.7.0...v11.8.0) (2026-10-13)
 
 ### Features
