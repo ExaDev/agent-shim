@@ -5,6 +5,7 @@ import { realFarmFs, realIsFrontDoorSupervisor, realIsProcessRunning, realSleepS
 import { ensureFrontDoor, restartFrontDoor, type EnsureFrontDoorPorts, type RestartFrontDoorResult } from "./ensure";
 import { removeFrontDoorSession } from "./state";
 import { probeFrontDoorSync } from "./probe";
+import { isFrontDoorSupervisorPid } from "./selfIdentity";
 import { resolveTrustBundle, type TrustBundleFs } from "./trust";
 
 
@@ -28,7 +29,7 @@ function realEnsurePorts(paths: LayoutPaths, spawnDaemon: DaemonSpawner): Ensure
     now: () => Date.now(),
     sleep: realSleepSync,
     spawnSupervisor: (layout) => spawnDaemon(layout, "__frontdoor-supervisor", layout.frontdoorLogPath),
-    isFrontDoorSupervisor: realIsFrontDoorSupervisor,
+    isFrontDoorSupervisor: (pid) => isFrontDoorSupervisorPid(pid, realIsFrontDoorSupervisor),
     stopSupervisor: (pid) => {
       process.kill(pid, "SIGTERM");
     },

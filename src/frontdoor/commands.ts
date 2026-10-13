@@ -65,6 +65,7 @@ import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { collectFrontDoorStatus, formatFrontDoorStatus, headroomSocketTarget } from "./status";
 import { liveSessionTokens, writeFrontDoorSession } from "./state";
+import { declareThisProcessTheFrontDoor } from "./selfIdentity";
 import { runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 import { createAccountReader } from "../usage/account";
 import { createUsageMiddleware } from "../usage/middleware";
@@ -597,6 +598,8 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       process.on("SIGINT", () => {
         deps.exit(0);
       });
+      // Declared before anything is served, so a launch the door plans for itself never asks `ps` or probes its own held event loop whether it is alive.
+      declareThisProcessTheFrontDoor();
       deps.exit(await runFrontDoorSupervisor(idleShutdownMinutes, realFrontDoorSupervisorPorts(paths)));
     });
 }
