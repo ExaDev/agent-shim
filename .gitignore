@@ -8,3 +8,5 @@ coverage/
 .turbo
 # pnpm audit transiently writes an npm-format lockfile translation to query npm's advisory API.
 package-lock.json
+
+node_modules
