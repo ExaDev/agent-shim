@@ -50,14 +50,15 @@ export function refusalReason(identity: string, snapshot: UsageSnapshot | undefi
 
 /** Why a window should not be opened for this identity right now, or undefined when one should. A window is already open, the account is refused, or it reports no five-hour window to anchor (an API key, or an account metered by extra usage alone). */
 export function reasonNotToOpen(identity: string, snapshot: UsageSnapshot | undefined, nowMs: number): string | undefined {
-  if (snapshot === undefined) {
-    return undefined;
+  // A request spends tokens and starts a window, so it is only ever sent knowing where the account's windows stand: an identity whose quota has not been read has an unknown reset, and opening one then could restart or move a window someone else opened.
+  const unified = snapshot?.providers[ANTHROPIC_PROVIDER]?.rateLimit?.unified;
+  if (snapshot === undefined || unified === undefined) {
+    return "its quota has not been read, so whether a window is open is unknown";
   }
-  const unified = snapshot.providers[ANTHROPIC_PROVIDER]?.rateLimit?.unified;
-  if (unified !== undefined && unified.fiveHour === undefined && unified.sevenDay === undefined) {
+  if (unified.fiveHour === undefined && unified.sevenDay === undefined) {
     return "it reports no plan windows, so there is no five-hour window to anchor";
   }
-  const five = unified?.fiveHour === undefined ? undefined : effectiveWindow(unified.fiveHour, nowMs);
+  const five = unified.fiveHour === undefined ? undefined : effectiveWindow(unified.fiveHour, nowMs);
   if (five?.resetsAtMs !== undefined) {
     return `a five-hour window is already open, resetting in ${formatAge(five.resetsAtMs - nowMs)}`;
   }

@@ -39,7 +39,8 @@ function harness(options: { readonly anchored?: readonly AnchoredIdentity[]; rea
     nowMs: () => now,
     timeZone: "UTC",
     anchored: () => options.anchored ?? [{ identity: "work", anchors: MONDAY_6 }],
-    snapshot: (identity) => options.snapshots?.[identity],
+    // Unless a test says otherwise the account has been read and reports no open five-hour window, which is the state an anchor exists to act on.
+    snapshot: (identity) => (options.snapshots === undefined ? snapshotWith(identity, { fiveHour: { utilization: 0 }, sevenDay: { utilization: U40 } }, AFTER_ANCHOR) : options.snapshots[identity]),
     open:
       options.open ??
       (async (identity) => {
@@ -74,6 +75,15 @@ describe("runWindowKeeper", () => {
   it("does not replay an anchor that fell before the identity was first seen", async () => {
     const keeper = harness();
     expect((await keeper.run(AFTER_ANCHOR))[0]).toMatchObject({ status: "armed" });
+    expect(keeper.opened).toEqual([]);
+  });
+
+  it("skips an anchor for an identity whose quota has not been read, and says so, rather than opening a window blind", async () => {
+    const keeper = harness({ snapshots: {} });
+    await keeper.run(BEFORE_ANCHOR);
+    const outcome = (await keeper.run(AFTER_ANCHOR))[0];
+    expect(outcome).toMatchObject({ status: "skipped" });
+    expect(outcome?.detail).toContain("not been read");
     expect(keeper.opened).toEqual([]);
   });
 
@@ -139,8 +149,11 @@ describe("runWindowKeeper", () => {
 });
 
 describe("reasonNotToOpen", () => {
-  it("opens for an identity with no snapshot, or whose five-hour window has lapsed or never opened", () => {
-    expect(reasonNotToOpen("a", undefined, AFTER_ANCHOR)).toBeUndefined();
+  it("does not open for an identity whose quota has not been read, since whether a window is open is then unknown", () => {
+    expect(reasonNotToOpen("a", undefined, AFTER_ANCHOR)).toContain("not been read");
+  });
+
+  it("opens for an identity whose five-hour window has lapsed or never opened", () => {
     expect(reasonNotToOpen("a", snapshotWith("a", { fiveHour: { utilization: FULL, resetsAt: at(AFTER_ANCHOR - HOUR_MS) }, sevenDay: { utilization: U40 } }, AFTER_ANCHOR), AFTER_ANCHOR)).toBeUndefined();
     expect(reasonNotToOpen("a", snapshotWith("a", { fiveHour: { utilization: 0 }, sevenDay: { utilization: U40 } }, AFTER_ANCHOR), AFTER_ANCHOR)).toBeUndefined();
   });
