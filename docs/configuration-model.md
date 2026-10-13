@@ -435,7 +435,7 @@ The front door's window keeper acts on the anchors every tick of the usage-refre
 
 An identity seen for the first time is armed at that moment, so anchors from before it was configured are never replayed; if several anchors were missed (the door was down) only the latest counts, and each anchor is handled once, remembered in `usage/anchors.json` so a restart neither replays nor skips one. A failed opening, for a signed-out identity, say, is logged to the door's log and not retried until the next anchor.
 
-Only the five-hour window can be anchored. The weekly window resets at a fixed time of day and week assigned to the account, advancing by exactly seven days whenever first use falls, so `usage --resets` and the pool ranking read it but nothing schedules it.
+An anchor acts only when the account's quota has been read and shows no open five-hour window: an identity whose reset is unknown is skipped with that reason, because a request sent blind could start or move a window someone else opened. The window keeper and a job run are the only places agent-shim itself sends a model request, each only for what the person configured; reading quota sends none. Only the five-hour window can be anchored. The weekly window resets at a fixed time of day and week assigned to the account, advancing by exactly seven days whenever first use falls, so `usage --resets` and the pool ranking read it but nothing schedules it.
 
 ## Jobs: prompts that run unattended around resets
 
