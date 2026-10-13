@@ -1,3 +1,9 @@
+## [11.8.0](https://github.com/ExaDev/agent-shim/compare/v11.7.0...v11.8.0) (2026-10-13)
+
+### Features
+
+* **doctor:** probe both front door listeners instead of trusting the supervisor pid ([eebec5b](https://github.com/ExaDev/agent-shim/commit/eebec5b7401842644a0c384e30ce9439ffef9f89)), references [#428](https://github.com/ExaDev/agent-shim/issues/428)
+
 ## [11.7.0](https://github.com/ExaDev/agent-shim/compare/v11.6.2...v11.7.0) (2026-10-13)
 
 ### Features
