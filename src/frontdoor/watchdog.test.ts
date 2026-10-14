@@ -2,11 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FRONTDOOR_PROBE_ATTEMPTS } from "./ensure";
 import { PROBE_TIMEOUT_MS } from "./probe";
-import { DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog, type DoorWatchdog } from "./watchdog";
+import { DOOR_AWAIT_PID_ENV, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog, type DoorWatchdog, type ThreadWatchdogParams } from "./watchdog";
 
 /** The check cadence the thread tests run at: far shorter than the production one so a stall is seen in a few checks. */
 const TEST_CHECK_MS = 20;
@@ -56,6 +56,7 @@ describe("startThreadWatchdog", () => {
         boundMs: TEST_BOUND_MS,
         checkEveryMs: TEST_CHECK_MS,
         action: "report",
+        respawnAfterServingMs: 0,
         onReport: (message) => {
           if (timer !== undefined) clearInterval(timer);
           resolve(message);
@@ -86,7 +87,7 @@ describe("startThreadWatchdog", () => {
 
   it("acts while the main thread is blocked, which is the case it exists for", async () => {
     const reported = new Promise<string>((resolve) => {
-      watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, action: "report", onReport: (message) => {
+      watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, action: "report", respawnAfterServingMs: 0, onReport: (message) => {
           resolve(message);
         } });
     });
@@ -99,7 +100,7 @@ describe("startThreadWatchdog", () => {
 
   it("does nothing once stopped, so a slow orderly retirement is never taken for a stall", async () => {
     const reported: string[] = [];
-    watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, action: "report", onReport: (message) => {
+    watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, action: "report", respawnAfterServingMs: 0, onReport: (message) => {
         reported.push(message);
       } });
     watchdog.stop();
@@ -108,5 +109,43 @@ describe("startThreadWatchdog", () => {
     });
     expect(reported).toEqual([]);
     expect(JSON.parse(fs.readFileSync(stateFile, "utf8"))).not.toHaveProperty("lastError");
+  });
+
+  describe("on a stall", () => {
+    const MARKER = "respawned";
+
+    /** Waits for the thread's report, then for the log to hold `needle`, which the thread writes before it reports. */
+    async function stallWith(extra: { readonly respawnAfterServingMs: number; readonly respawn?: ThreadWatchdogParams["respawn"] }): Promise<string> {
+      const logFile = path.join(directory, "frontdoor.log");
+      await new Promise<void>((resolve) => {
+        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, action: "report", logFile, ...extra, onReport: () => {
+            resolve();
+          } });
+      });
+      return fs.readFileSync(logFile, "utf8");
+    }
+
+    it("writes the stall to the door's log, the one record that outlives the process", async () => {
+      const log = await stallWith({ respawnAfterServingMs: 0 });
+      expect(log).toMatch(new RegExp(`frontdoor ${String(process.pid)}: the front door's event loop did not run`));
+    });
+
+    it("starts a replacement naming the stalled pid when the door had served long enough", async () => {
+      const markerFile = path.join(directory, MARKER);
+      const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_AWAIT_PID_ENV})`], env: { PATH: process.env.PATH ?? "" } };
+      const log = await stallWith({ respawnAfterServingMs: 0, respawn });
+      expect(log).toMatch(/started replacement door \d+/);
+      await vi.waitFor(() => {
+        expect(fs.readFileSync(markerFile, "utf8")).toBe(String(process.pid));
+      });
+    });
+
+    it("leaves the next launch to start one when the door stalled before it had served long enough", async () => {
+      const markerFile = path.join(directory, MARKER);
+      const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, "x")`], env: { PATH: process.env.PATH ?? "" } };
+      const log = await stallWith({ respawnAfterServingMs: Number.MAX_SAFE_INTEGER, respawn });
+      expect(log).toMatch(/less than the \d+ms it must have served to be replaced/);
+      expect(fs.existsSync(markerFile)).toBe(false);
+    });
   });
 });
