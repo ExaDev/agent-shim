@@ -1,3 +1,9 @@
+## [11.8.2](https://github.com/ExaDev/agent-shim/compare/v11.8.1...v11.8.2) (2026-10-14)
+
+### Bug Fixes
+
+* **frontdoor:** log every exit and replace a door its watchdog ended ([61fd5fd](https://github.com/ExaDev/agent-shim/commit/61fd5fd2eb21424851ae7a3078b1a5a655cf4b97))
+
 ## [11.8.1](https://github.com/ExaDev/agent-shim/compare/v11.8.0...v11.8.1) (2026-10-13)
 
 ### Bug Fixes
