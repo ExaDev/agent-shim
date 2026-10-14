@@ -85,6 +85,19 @@ export interface FrontDoorSupervisorPorts {
   readonly log: (line: string) => void;
 }
 
+/** How often `awaitPidExit` looks: short, because the stalled door is ended immediately after the replacement is started. */
+const AWAIT_PID_POLL_MS = 50;
+
+/**
+ * Waits until `pid` is no longer running, or `boundMs` has passed. A door its watchdog replaced is started before the stalled one is ended, so it must not bind until the stalled one has released the sticky ports: a bind that found them held would take other ports and strand every session still pointing at the old ones. Gives up at the bound rather than blocking forever on a pid that never exits, and then lets the bind fall back as it always does.
+ */
+export async function awaitPidExit(pid: number, boundMs: number, ports: Pick<FrontDoorSupervisorPorts, "isRunning" | "now" | "sleep">): Promise<void> {
+  const deadline = ports.now() + boundMs;
+  while (ports.isRunning(pid) && ports.now() < deadline) {
+    await ports.sleep(AWAIT_PID_POLL_MS);
+  }
+}
+
 /** Options for `runFrontDoorSupervisor`. */
 export interface RunFrontDoorSupervisorOptions {
   /** Bounds the loop's iterations so a test can observe steady state; such a run returns `FRONTDOOR_SUPERVISOR_STILL_RUNNING`. */

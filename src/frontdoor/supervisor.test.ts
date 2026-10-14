@@ -8,7 +8,7 @@ import { createDoorEventHub } from "./eventHub";
 import { createDoorHealthPublisher } from "./doorHealthEvents";
 import { createLaunchEventPublisher } from "./launchEvents";
 import { FRONT_DOOR_PROTOCOL, listFrontDoorDirectRecords, listFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
-import { FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
+import { awaitPidExit, FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -199,6 +199,37 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
 
 /** The existence check that always answers yes: the sibling rule applies wherever the candidate path would be. */
 const SIBLING_EXISTS = (): boolean => true;
+
+describe("awaitPidExit", () => {
+  const PREDECESSOR_PID = 4242;
+  const WAIT_BOUND_MS = 2 * FRONTDOOR_POLL_MS;
+
+  /** A clock the fake sleep advances, so the wait's bound is exercised without real time. */
+  function fakeClock(runningUntil: number) {
+    let now = 0;
+    return {
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+        await Promise.resolve();
+      },
+      isRunning: () => now < runningUntil,
+    };
+  }
+
+  it("returns as soon as the pid is gone, so the replacement binds the freed sticky ports", async () => {
+    const clock = fakeClock(FRONTDOOR_POLL_MS);
+    await awaitPidExit(PREDECESSOR_PID, WAIT_BOUND_MS, clock);
+    expect(clock.now()).toBeGreaterThanOrEqual(FRONTDOOR_POLL_MS);
+    expect(clock.now()).toBeLessThan(WAIT_BOUND_MS);
+  });
+
+  it("gives up at the bound for a pid that never exits, so a wedged predecessor cannot keep the door down", async () => {
+    const clock = fakeClock(Number.POSITIVE_INFINITY);
+    await awaitPidExit(PREDECESSOR_PID, WAIT_BOUND_MS, clock);
+    expect(clock.now()).toBeGreaterThanOrEqual(WAIT_BOUND_MS);
+  });
+});
 
 describe("watchedInstallEntry", () => {
   it("watches the resolved entry itself when it is already named agent-shim", () => {

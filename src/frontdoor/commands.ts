@@ -12,7 +12,7 @@ import type { LayoutPaths } from "../paths";
 import { realSessionFs } from "../agents/realFs";
 import { collectSessionList, showSession } from "../agents/sessions";
 import { listIdentities } from "../identityStore";
-import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, realOwnExecutablePath, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
+import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { checkForUpdate } from "../update/commands";
 import { identityExists, listAnchoredIdentities } from "../identityStore";
 import { readJobs } from "../jobStore";
@@ -63,17 +63,26 @@ import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, g
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
+import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_MIN_SERVING_MS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
 import { liveSessionTokens, writeFrontDoorSession } from "./state";
 import { declareThisProcessTheFrontDoor } from "./selfIdentity";
-import { runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
+import { awaitPidExit, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 import { createAccountReader } from "../usage/account";
 import { createUsageMiddleware } from "../usage/middleware";
 import { withQuotaRefresh } from "../usage/quotaRefresh";
 import { createRealQuotaRefresher } from "../usage/realQuotaRefresher";
 import { createUsageStore } from "../usage/store";
+
+/** How a door's watchdog starts a replacement: this very executable running the supervisor subcommand, pinned to this door's state root exactly as `spawnDetachedSupervisor` pins it. Every environment value is a string, as the watchdog thread's `spawn` requires. */
+function respawnInvocation(paths: LayoutPaths): { readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> } {
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries({ ...process.env, AGENT_SHIM_HOME: paths.root })) {
+    env[name] = value;
+  }
+  return { ...selfInvocation(["__frontdoor-supervisor"]), env };
+}
 
 function appendLog(paths: LayoutPaths, line: string): void {
   fs.mkdirSync(paths.logsDir, { recursive: true });
@@ -531,7 +540,16 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     },
     closeRcStreamHub: rcHub.close,
     startWatchdog: () =>
-      startThreadWatchdog({ stateFile: paths.frontdoorStateFile, ownPid: process.pid, boundMs: DOOR_STALL_BOUND_MS, checkEveryMs: DOOR_WATCHDOG_CHECK_MS, action: "kill-process" }),
+      startThreadWatchdog({
+        stateFile: paths.frontdoorStateFile,
+        ownPid: process.pid,
+        boundMs: DOOR_STALL_BOUND_MS,
+        checkEveryMs: DOOR_WATCHDOG_CHECK_MS,
+        action: "kill-process",
+        logFile: paths.frontdoorLogPath,
+        respawn: respawnInvocation(paths),
+        respawnAfterServingMs: DOOR_RESPAWN_MIN_SERVING_MS,
+      }),
     // The launch lifecycle publisher over the same backbone the typed API serves: the tick's registry facts go in here, and the door's own register, prune and end moments come out as source-tagged events.
     observeLaunchRegistry: createLaunchEventPublisher(doorEvents, () => Date.now()).observe,
     doorHealth,
@@ -597,15 +615,28 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
     .allowUnknownOption()
     .action(async () => {
       const idleShutdownMinutes = readGlobalConfig(paths)?.frontdoor?.idleShutdownMinutes ?? FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES;
+      const supervisorPorts = realFrontDoorSupervisorPorts(paths);
+      const ownPid = process.pid;
+      // Every way this process can end writes its reason to the log first, because the log is the only record that outlives it: a door that exits silently looks, from outside, like one that was never there.
+      process.on("exit", (code) => {
+        supervisorPorts.log(`frontdoor ${String(ownPid)}: exiting with code ${String(code)}`);
+      });
       // The listeners are servers inside this process, so an orderly exit takes them with it: there is no child left behind to stop.
-      process.on("SIGTERM", () => {
-        deps.exit(0);
-      });
-      process.on("SIGINT", () => {
-        deps.exit(0);
-      });
+      for (const signal of ["SIGTERM", "SIGINT"] as const) {
+        process.on(signal, () => {
+          supervisorPorts.log(`frontdoor ${String(ownPid)}: received ${signal}; exiting`);
+          deps.exit(0);
+        });
+      }
+      // A door started by its watchdog's stall handling names the stalled door's pid and waits for it to be gone before binding (see `awaitPidExit`).
+      const awaited = Number(process.env[DOOR_AWAIT_PID_ENV]);
+      // Not inherited by anything this door starts.
+      Reflect.deleteProperty(process.env, DOOR_AWAIT_PID_ENV);
+      if (Number.isInteger(awaited) && awaited > 0) {
+        await awaitPidExit(awaited, DOOR_STALL_BOUND_MS, supervisorPorts);
+      }
       // Declared before anything is served, so a launch the door plans for itself never asks `ps` or probes its own held event loop whether it is alive.
       declareThisProcessTheFrontDoor();
-      deps.exit(await runFrontDoorSupervisor(idleShutdownMinutes, realFrontDoorSupervisorPorts(paths)));
+      deps.exit(await runFrontDoorSupervisor(idleShutdownMinutes, supervisorPorts));
     });
 }
