@@ -2,6 +2,8 @@
  * Antigravity quota and rate-limit translation into Anthropic unified headers.
  */
 
+import { CCPA_DEFAULT_PROJECT_ID, CCPA_ENDPOINT, CCPA_USER_AGENT } from "./cloudUpstream";
+
 const MS_PER_SECOND = 1000;
 const DEFAULT_RETRY_AFTER_SECONDS = 60;
 const PERCENT_MULTIPLIER = 100;
@@ -131,4 +133,120 @@ export function unifiedAntigravityQuotaHeaders(params: AntigravityQuotaParams): 
   }
 
   return headers;
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Reads one retrieveUserQuotaSummary bucket into the quota map's shape: the API names camelCase fields and an absolute reset time, the map carries the proto-JSON names a quota translation consumes. */
+function bucketToEntry(bucket: unknown, nowMs: number): { key: string; entry: AntigravityQuotaBucket } | undefined {
+  if (!isRecord(bucket) || typeof bucket.bucketId !== "string") {
+    return undefined;
+  }
+  const remainingFraction = typeof bucket.remainingFraction === "number" && Number.isFinite(bucket.remainingFraction) ? bucket.remainingFraction : undefined;
+  const resetMs = typeof bucket.resetTime === "string" ? Date.parse(bucket.resetTime) : Number.NaN;
+  const resetInSeconds = Number.isNaN(resetMs) ? undefined : Math.max(0, Math.ceil((resetMs - nowMs) / MS_PER_SECOND));
+  if (remainingFraction === undefined && resetInSeconds === undefined) {
+    return undefined;
+  }
+  return {
+    key: bucket.bucketId,
+    entry: {
+      ...(remainingFraction === undefined ? {} : { remaining_fraction: remainingFraction }),
+      ...(resetInSeconds === undefined ? {} : { reset_in_seconds: resetInSeconds }),
+    },
+  };
+}
+
+export interface AntigravityQuotaFetchParams {
+  readonly token: string;
+  readonly endpoint?: string;
+  readonly projectId?: string;
+  readonly nowMs: number;
+  readonly fetchFn?: typeof fetch;
+}
+
+/**
+ * Reads the account's live quota windows from the Cloud Code endpoint's retrieveUserQuotaSummary, the same RPC the Antigravity CLI's usage display polls. Returns the buckets keyed by their backend id (gemini-5h, gemini-weekly, ...); a failed or unparseable read is undefined so a request's headers degrade to status-only rather than failing the request.
+ */
+export async function fetchAntigravityQuotaSummary(params: AntigravityQuotaFetchParams): Promise<AntigravityQuotaMap | undefined> {
+  const fetchFn = params.fetchFn ?? fetch;
+  let response: Response;
+  try {
+    response = await fetchFn(`${params.endpoint ?? CCPA_ENDPOINT}/v1internal:retrieveUserQuotaSummary`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${params.token}`,
+        "User-Agent": CCPA_USER_AGENT,
+      },
+      body: JSON.stringify({ project: params.projectId ?? CCPA_DEFAULT_PROJECT_ID }),
+    });
+  } catch {
+    return undefined;
+  }
+  if (!response.ok) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = await response.json();
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.groups)) {
+    return undefined;
+  }
+  const map: Record<string, AntigravityQuotaBucket> = {};
+  for (const group of parsed.groups) {
+    if (!isRecord(group) || !Array.isArray(group.buckets)) {
+      continue;
+    }
+    for (const bucket of group.buckets) {
+      const read = bucketToEntry(bucket, params.nowMs);
+      if (read !== undefined) {
+        map[read.key] = read.entry;
+      }
+    }
+  }
+  return Object.keys(map).length > 0 ? map : undefined;
+}
+
+/** How long a quota read stays fresh: the shortest window the summary reports is five hours, so a refresh cadence of one minute observes any movement of it with room to spare while staying far from the endpoint's attention. */
+const ANTIGRAVITY_QUOTA_REFRESH_MS = 60_000;
+
+export interface CachedAntigravityQuotaSourceParams {
+  /** Reads the live summary; injected so tests never touch the network. */
+  readonly fetchSummary: (nowMs: number) => Promise<AntigravityQuotaMap | undefined>;
+  readonly now: () => number;
+  readonly refreshMs?: number;
+}
+
+/**
+ * A quota source for a route: returns the last read and, once it is stale, kicks one detached refresh whose result lands for later requests. A request never waits on the quota endpoint, a refresh already in flight is joined rather than duplicated, and a read that fails leaves the last good map in place until it succeeds again.
+ */
+export function createCachedAntigravityQuotaSource(params: CachedAntigravityQuotaSourceParams): () => AntigravityQuotaMap | undefined {
+  let cachedAt = Number.NEGATIVE_INFINITY;
+  let cached: AntigravityQuotaMap | undefined;
+  let refresh: Promise<void> | undefined;
+  const refreshMs = params.refreshMs ?? ANTIGRAVITY_QUOTA_REFRESH_MS;
+  const run = async (): Promise<void> => {
+    const nowMs = params.now();
+    const read = await params.fetchSummary(nowMs);
+    if (read !== undefined) {
+      cached = read;
+    }
+    cachedAt = params.now();
+  };
+  return () => {
+    const nowMs = params.now();
+    if (nowMs - cachedAt < refreshMs) {
+      return cached;
+    }
+    refresh ??= run().finally(() => {
+      refresh = undefined;
+    });
+    return cached;
+  };
 }

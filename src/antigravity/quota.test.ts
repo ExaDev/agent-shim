@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createCachedAntigravityQuotaSource,
+  fetchAntigravityQuotaSummary,
   parseRetryAfterSeconds,
   unifiedAntigravityQuotaHeaders,
   type AntigravityQuotaMap,
@@ -107,5 +109,90 @@ describe("parseRetryAfterSeconds", () => {
     expect(parseRetryAfterSeconds(null)).toBe(DEFAULT_RETRY_SEC);
     expect(parseRetryAfterSeconds(undefined)).toBe(DEFAULT_RETRY_SEC);
     expect(parseRetryAfterSeconds("   ")).toBe(DEFAULT_RETRY_SEC);
+  });
+});
+
+describe("fetchAntigravityQuotaSummary", () => {
+  const DAYS_IN_WEEK = 7;
+  const SECONDS_IN_WEEK = SECONDS_IN_DAY * DAYS_IN_WEEK;
+  const summaryBody = {
+    groups: [
+      {
+        buckets: [
+          { bucketId: "gemini-5h", remainingFraction: 0.25, resetTime: "2023-11-14T23:13:20Z" },
+          { bucketId: "gemini-weekly", remainingFraction: 0.8, resetTime: "2023-11-21T23:13:20Z" },
+          { bucketId: "malformed" },
+        ],
+      },
+      { buckets: "not an array" },
+    ],
+  };
+
+  it("maps the summary's camelCase buckets onto the quota map keyed by bucket id", async () => {
+    const fetchFn: typeof fetch = async () => await Promise.resolve(new Response(JSON.stringify(summaryBody), { status: 200 }));
+    const map = await fetchAntigravityQuotaSummary({ token: "t", nowMs: NOW_MS, fetchFn });
+    expect(map).toEqual({
+      "gemini-5h": { remaining_fraction: 0.25, reset_in_seconds: SECONDS_IN_HOUR },
+      "gemini-weekly": { remaining_fraction: 0.8, reset_in_seconds: SECONDS_IN_WEEK + SECONDS_IN_HOUR },
+    });
+  });
+
+  it("answers undefined for a failed read, an unparseable body, or a summary with no buckets", async () => {
+    const failing: typeof fetch = async () => await Promise.resolve(new Response("{}", { status: 500 }));
+    expect(await fetchAntigravityQuotaSummary({ token: "t", nowMs: NOW_MS, fetchFn: failing })).toBeUndefined();
+    const garbage: typeof fetch = async () => await Promise.resolve(new Response("not json", { status: 200 }));
+    expect(await fetchAntigravityQuotaSummary({ token: "t", nowMs: NOW_MS, fetchFn: garbage })).toBeUndefined();
+    const empty: typeof fetch = async () => await Promise.resolve(new Response(JSON.stringify({ groups: [] }), { status: 200 }));
+    expect(await fetchAntigravityQuotaSummary({ token: "t", nowMs: NOW_MS, fetchFn: empty })).toBeUndefined();
+  });
+});
+
+describe("createCachedAntigravityQuotaSource", () => {
+  const REFRESH_MS = 60_000;
+  const STILL_FRESH_MS = 30_000;
+  const STALE_MS = 120_000;
+
+  it("returns nothing until the first refresh lands, then the read map until it goes stale", async () => {
+    let nowMs = NOW_MS;
+    let reads = 0;
+    const source = createCachedAntigravityQuotaSource({
+      now: () => nowMs,
+      refreshMs: REFRESH_MS,
+      fetchSummary: async () => {
+        reads += 1;
+        return await Promise.resolve({ "gemini-5h": { remaining_fraction: 0.5 } });
+      },
+    });
+    expect(source()).toBeUndefined();
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    expect(source()).toEqual({ "gemini-5h": { remaining_fraction: 0.5 } });
+    nowMs += STILL_FRESH_MS;
+    expect(source()).toEqual({ "gemini-5h": { remaining_fraction: 0.5 } });
+    expect(reads).toBe(1);
+  });
+
+  it("joins one in-flight refresh rather than duplicating it, and keeps the last good map when a read fails", async () => {
+    let nowMs = NOW_MS;
+    let reads = 0;
+    let succeed = true;
+    const source = createCachedAntigravityQuotaSource({
+      now: () => nowMs,
+      refreshMs: REFRESH_MS,
+      fetchSummary: async () => {
+        reads += 1;
+        const read: AntigravityQuotaMap | undefined = succeed ? { "3p-5h": { remaining_fraction: 0.9 } } : undefined;
+        return await Promise.resolve(read);
+      },
+    });
+    source();
+    source();
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    expect(reads).toBe(1);
+    nowMs += STALE_MS;
+    succeed = false;
+    expect(source()).toEqual({ "3p-5h": { remaining_fraction: 0.9 } });
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    expect(source()).toEqual({ "3p-5h": { remaining_fraction: 0.9 } });
+    expect(reads).toBe(2);
   });
 });
