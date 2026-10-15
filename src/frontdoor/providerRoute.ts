@@ -1,12 +1,14 @@
 import { ConfigValidationError } from "../config/load";
-import { isCodexProvider, type CodexProvider, type Credential, type Provider } from "../config/schema";
+import { isAntigravityProvider, isCodexProvider, isHttpProvider, type AntigravityProvider, type CodexProvider, type HttpProvider, type Credential } from "../config/schema";
 import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { resolveCodexConfig } from "../codex/translate";
+import { resolveAntigravityConfig } from "../antigravity/translate";
 import { resolveCredential, type CredentialPort, type ResolvedCredential } from "../credential";
 import { LegacyProviderFileError, loadProvider } from "../providersStore";
 import type { FsPort } from "../launcher/ports";
 import { createCodexRouteMount } from "./codexMount";
+import { createAntigravityRouteMount } from "./antigravityMount";
 import { CONNECT_INTERCEPT_HOST, HTTPS_PORT } from "./connect";
 import { restoreCredentials } from "./custody";
 import { createPassthroughRoute } from "./passthrough";
@@ -102,7 +104,37 @@ export function createProviderRouteResolver(deps: {
         ),
       };
     }
-    const httpProvider: Provider = definition;
+    if (isAntigravityProvider(definition)) {
+      const antigravityProvider: AntigravityProvider = definition;
+      const config = resolveAntigravityConfig(antigravityProvider.antigravity);
+      return {
+        ok: true,
+        route: createAntigravityRouteMount(
+          {
+            loadProvider: () => {
+              const res = resolveCredential({
+                credential: antigravityProvider.credential,
+                env: deps.env,
+                port: deps.credentials,
+                subject: `provider ${provider}`,
+              });
+              if (!res.ok) {
+                return { ok: false, status: HTTP_STATUS.unauthorized, message: res.message };
+              }
+              return {
+                ok: true,
+                config,
+                token: res.credential.token,
+                credentialTarget: antigravityProvider.credential.target,
+              };
+            },
+          },
+          directOrigin(deps.directPort()),
+          provider,
+        ),
+      };
+    }
+    const httpProvider: HttpProvider = definition;
     return {
       ok: true,
       route: attachingProviderCredential(
@@ -145,7 +177,7 @@ export function createProviderRouteResolver(deps: {
       let routes;
       try {
         const definition = providerName === undefined ? undefined : loadProvider(deps.providersDir, providerName, deps.fs);
-        routes = definition === undefined || isCodexProvider(definition) ? undefined : definition.routes;
+        routes = definition === undefined || !isHttpProvider(definition) ? undefined : definition.routes;
       } catch {
         // An invalid provider file is the sync resolver's own refusal to report, not this layer's.
         routes = undefined;

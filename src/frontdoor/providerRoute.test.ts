@@ -29,6 +29,7 @@ const OWN_PORT = 4100;
 
 const codexProvider = { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } };
 const httpProvider = { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } };
+const antigravityProvider = { kind: "antigravity", displayName: "Antigravity", credential: { sources: [{ env: "Z" }] }, antigravity: { mode: "cloud" } };
 
 /** The codex ports the resolver mounts, faked to the shape the real front-door process wires: a recording fetch and the fixed-token auth store. */
 function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
@@ -57,6 +58,16 @@ describe("createProviderRouteResolver", () => {
     expect(resolution.ok).toBe(true);
     if (resolution.ok) {
       expect(resolution.route.name).toBe("codex:codex");
+      expect(resolution.route.headroomEligible).toBe(true);
+      expect(resolution.route.headroomUpstream).toBe(`http://127.0.0.1:${String(OWN_PORT)}`);
+    }
+  });
+
+  it("mounts the in-process antigravity translator for an antigravity provider, named for it and headroom-eligible with the direct listener's bare origin as the hop's upstream", async () => {
+    const resolution = await resolver({ [`${PROVIDERS_DIR}/ag.json`]: antigravityProvider })(request("/providers/ag/v1/messages"));
+    expect(resolution.ok).toBe(true);
+    if (resolution.ok) {
+      expect(resolution.route.name).toBe("antigravity:ag");
       expect(resolution.route.headroomEligible).toBe(true);
       expect(resolution.route.headroomUpstream).toBe(`http://127.0.0.1:${String(OWN_PORT)}`);
     }
