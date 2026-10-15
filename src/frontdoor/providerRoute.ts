@@ -3,7 +3,8 @@ import { isAntigravityProvider, isCodexProvider, isHttpProvider, type Antigravit
 import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { resolveCodexConfig } from "../codex/translate";
-import { resolveAntigravityConfig } from "../antigravity/translate";
+import { resolveAntigravityConfig, type ResolvedAntigravityConfig } from "../antigravity/translate";
+import { createCachedAntigravityQuotaSource, fetchAntigravityQuotaSummary, type AntigravityQuotaMap } from "../antigravity/quota";
 import { resolveCredential, type CredentialPort, type ResolvedCredential } from "../credential";
 import { LegacyProviderFileError, loadProvider } from "../providersStore";
 import type { FsPort } from "../launcher/ports";
@@ -65,6 +66,38 @@ export function createProviderRouteResolver(deps: {
 }): (request: RoutedRequest) => Promise<RouteResolution> {
   /** The pass-through every bare /v1/ request from the CONNECT surface rides: straight to Claude Code's own API, with no per-request upstream for a headroom hop (the daemon's default upstream is exactly that API, which is what an OAuth session wants). */
   const oauthRoute = createPassthroughRoute("anthropic", { baseUrl: `https://${CONNECT_INTERCEPT_HOST}:${String(HTTPS_PORT)}`, stripPrefix: undefined, headroomUpstream: undefined });
+
+  /**
+   * One cached quota source per antigravity provider, for this resolver's lifetime: each refresh resolves the provider's own credential block and polls the backend's quota summary exactly as its CLI does, so the unified headers a session's responses carry describe the account's real windows.
+   */
+  const antigravityQuotaSources = new Map<string, () => AntigravityQuotaMap | undefined>();
+  const antigravityQuotaOf = (
+    provider: string,
+    definition: AntigravityProvider,
+    config: ResolvedAntigravityConfig,
+  ): (() => AntigravityQuotaMap | undefined) => {
+    const existing = antigravityQuotaSources.get(provider);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const source = createCachedAntigravityQuotaSource({
+      now: () => Date.now(),
+      fetchSummary: async (nowMs) => {
+        const res = resolveCredential({ credential: definition.credential, env: deps.env, port: deps.credentials, subject: `provider ${provider}` });
+        if (!res.ok) {
+          return undefined;
+        }
+        return fetchAntigravityQuotaSummary({
+          token: res.credential.token,
+          endpoint: config.cloud.endpoint ?? undefined,
+          projectId: config.cloud.projectId ?? undefined,
+          nowMs,
+        });
+      },
+    });
+    antigravityQuotaSources.set(provider, source);
+    return source;
+  };
 
   /**
    * Pass-through routes by target, cached: a route owns a keep-alive connection pool, so building one per request would both churn connections (no reuse across a session's requests) and accumulate pools that only an idle timeout retires. A provider file edit that changes the base URL simply lands on a new cache entry.
@@ -139,6 +172,7 @@ export function createProviderRouteResolver(deps: {
                 credentialTarget: antigravityProvider.credential.target,
               };
             },
+            quotaSource: antigravityQuotaOf(provider, antigravityProvider, config),
           },
           directOrigin(deps.directPort()),
           provider,
