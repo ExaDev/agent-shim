@@ -1,3 +1,27 @@
+## [11.9.0](https://github.com/ExaDev/agent-shim/compare/v11.8.2...v11.9.0) (2026-10-15)
+
+### Features
+
+* **antigravity:** implement request translation, stream relay, and upstreams ([2ace4c3](https://github.com/ExaDev/agent-shim/commit/2ace4c3eb1feb8bf7c32a858d0fd5465e3e241ec))
+* **antigravity:** translate quota to anthropic unified rate-limit headers ([76b6ce8](https://github.com/ExaDev/agent-shim/commit/76b6ce874b11a5f6b6582e4bea4044b2431bc7e2))
+* **config:** add antigravity provider schema and configuration types ([4d540ca](https://github.com/ExaDev/agent-shim/commit/4d540caae0887f1a0e723ab5b5243d731d988d5e))
+* **frontdoor:** mount antigravity provider routes ([6b7b27a](https://github.com/ExaDev/agent-shim/commit/6b7b27ae3b6b4e962953647dbe67f49ea3e0bd4a))
+* **providers:** add antigravity provider cli commands and store support ([c49f2dc](https://github.com/ExaDev/agent-shim/commit/c49f2dcbf8e3eef977476ce63df9a86ec204140d))
+
+### Bug Fixes
+
+* **antigravity:** emit full token usage and normalize finish reasons ([63d76d9](https://github.com/ExaDev/agent-shim/commit/63d76d93b62145bfd979d1a3df20d6e5fa29396f))
+
+### Code Refactoring
+
+* **antigravity:** remove unused acpSchema and unexport internal types ([33d95d5](https://github.com/ExaDev/agent-shim/commit/33d95d595d575c92df82cf1aa1d451962356adaf))
+* **codex:** make usage snapshot sidecar write optional ([6e93ed8](https://github.com/ExaDev/agent-shim/commit/6e93ed800b643f9404d7d1a4c0b31051c6824c33))
+
+### Continuous Integration
+
+* **husky:** add schema check and knip to pre-push hook ([06cb555](https://github.com/ExaDev/agent-shim/commit/06cb5555306147b43c7278179ad01d61ced7b6de))
+* **husky:** run typecheck before tests in pre-push hook ([0149dc7](https://github.com/ExaDev/agent-shim/commit/0149dc7dcdc91d02a886b8d5dada30743d1f1659))
+
 ## [11.8.2](https://github.com/ExaDev/agent-shim/compare/v11.8.1...v11.8.2) (2026-10-14)
 
 ### Bug Fixes
