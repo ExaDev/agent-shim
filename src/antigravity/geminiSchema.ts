@@ -4,6 +4,10 @@
 
 interface GeminiTextPart {
   readonly text: string;
+  /** Marks the part as one of the model's thought parts, which a stateless client must echo back unchanged with its signature. */
+  readonly thought?: boolean;
+  /** The backend's thought signature for this part; generateContent attaches it to any part and requires it echoed back on the next turn. */
+  readonly thoughtSignature?: string;
 }
 
 interface GeminiInlineDataPart {
@@ -18,6 +22,8 @@ interface GeminiFunctionCallPart {
     readonly name: string;
     readonly args: Readonly<Record<string, unknown>>;
   };
+  /** The thought signature the backend attaches to a thinking model's function call, which it requires to be echoed back with the call on the next turn. */
+  readonly thoughtSignature?: string;
 }
 
 interface GeminiFunctionResponsePart {
@@ -77,7 +83,7 @@ export interface GeminiGenerateContentRequest {
 export interface GeminiCandidate {
   readonly content?: {
     readonly role?: string;
-    readonly parts?: readonly (GeminiPart | { text?: string; thought?: string; functionCall?: { name: string; args: Record<string, unknown> } })[];
+    readonly parts?: readonly (GeminiPart | { text?: string; thought?: string; functionCall?: { name: string; args: Record<string, unknown> }; thoughtSignature?: string })[];
   };
   readonly finishReason?: "STOP" | "MAX_TOKENS" | "SAFETY" | "RECITATION" | "OTHER";
 }

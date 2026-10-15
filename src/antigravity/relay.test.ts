@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { toolCallSignatureOf } from "./signatures";
+
 import { createAntigravityRelay, renderSseFrame } from "./relay";
 
 const THREE_FRAMES = 3;
@@ -130,6 +132,30 @@ describe("createAntigravityRelay", () => {
         input: {},
       },
     });
+
+    // A signed function call remembers its signature against the minted tool_use id, the one field Claude Code round-trips.
+    const signed = relay.pushChunk({
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                functionCall: { name: "bash_exec", args: { command: "echo hi" } },
+                thoughtSignature: "sig-abc",
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const signedStart = signed.frames.find((f) => f.event === "content_block_start");
+    expect(signedStart?.data).toMatchObject({ content_block: { type: "tool_use" } });
+    const emitted: unknown = signedStart !== undefined && "content_block" in signedStart.data ? signedStart.data.content_block : undefined;
+    const emittedId = typeof emitted === "object" && emitted !== null && "id" in emitted && typeof emitted.id === "string" ? emitted.id : undefined;
+    expect(emittedId).toBeDefined();
+    if (emittedId !== undefined) {
+      expect(toolCallSignatureOf(emittedId)).toBe("sig-abc");
+    }
 
     // Verify stop_reason is tool_use
     const deltaFrame = step.frames.find((f) => f.event === "message_delta");

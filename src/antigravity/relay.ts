@@ -1,4 +1,5 @@
 import type { GeminiGenerateContentResponseChunk } from "./geminiSchema";
+import { rememberToolCallSignature } from "./signatures";
 
 export interface SseFrame {
   readonly event: string;
@@ -102,7 +103,7 @@ export function createAntigravityRelay(params: RelayParams): {
     const candidate = chunk.candidates?.[0];
     if (candidate?.content?.parts !== undefined) {
       for (const part of candidate.content.parts) {
-        if ("text" in part && typeof part.text === "string" && part.text.length > 0) {
+        if ("text" in part && typeof part.text === "string" && (part.thoughtSignature === undefined || part.text.length > 0)) {
           if (activeBlockType !== "text") {
             closeActiveBlock();
             currentBlockIndex += 1;
@@ -132,6 +133,10 @@ export function createAntigravityRelay(params: RelayParams): {
           const callName = part.functionCall.name;
           const originalName = params.toolNames.get(callName) ?? callName;
           const callId = params.fallbackId();
+          if (typeof part.thoughtSignature === "string") {
+            // The backend requires this signature echoed back with the call next turn, and the tool_use id is the one field that survives the round trip through Claude Code.
+            rememberToolCallSignature(callId, part.thoughtSignature);
+          }
 
           frames.push({
             event: "content_block_start",
