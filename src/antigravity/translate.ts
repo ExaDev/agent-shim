@@ -117,7 +117,7 @@ export function systemToInstruction(system: MessagesRequest["system"]): GeminiSy
   return combined.length > 0 ? { parts: [{ text: combined }] } : undefined;
 }
 
-export const ANTIGRAVITY_TOOL_NAME_LIMIT = 64;
+const ANTIGRAVITY_TOOL_NAME_LIMIT = 64;
 const TOOL_NAME_HASH_CHARS = 8;
 
 /**
@@ -141,7 +141,7 @@ export function shortToolName(name: string, names: Map<string, string>): string 
   return result;
 }
 
-export const NON_TEXT_TOOL_RESULT = "[non-text tool result omitted]";
+const NON_TEXT_TOOL_RESULT = "[non-text tool result omitted]";
 
 function flattenToolResult(content: Extract<ContentBlock, { type: "tool_result" }>["content"]): string {
   if (content === undefined) {
@@ -153,7 +153,7 @@ function flattenToolResult(content: Extract<ContentBlock, { type: "tool_result" 
   return content.map((block) => (isTextBlock(block) ? block.text : NON_TEXT_TOOL_RESULT)).join("\n");
 }
 
-export function systemReminder(text: string): string {
+function systemReminder(text: string): string {
   return `<system-reminder>\n${text}\n</system-reminder>`;
 }
 
@@ -173,7 +173,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
  * Translates Anthropic messages into strictly alternating Gemini contents.
  * Coalesces consecutive turns with the same role and formats tool calls/results.
  */
-export function messagesToGeminiContents(
+function messagesToGeminiContents(
   messages: readonly AnthropicMessage[],
   names: Map<string, string>,
   toolIdToName: Map<string, string>,
@@ -243,7 +243,7 @@ export function messagesToGeminiContents(
 
 const EMPTY_SCHEMA: Readonly<Record<string, unknown>> = { type: "object", properties: {} };
 
-export function mapTools(tools: readonly AnthropicTool[] | undefined, names: Map<string, string>): GeminiTool[] | undefined {
+function mapTools(tools: readonly AnthropicTool[] | undefined, names: Map<string, string>): GeminiTool[] | undefined {
   if (tools === undefined || tools.length === 0) {
     return undefined;
   }

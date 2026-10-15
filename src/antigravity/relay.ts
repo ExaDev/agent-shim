@@ -9,7 +9,7 @@ export function renderSseFrame(frame: SseFrame): string {
   return `event: ${frame.event}\ndata: ${JSON.stringify(frame.data)}\n\n`;
 }
 
-export interface AnthropicUsage {
+interface AnthropicUsage {
   readonly input_tokens: number;
   readonly cache_creation_input_tokens: number;
   readonly cache_read_input_tokens: number;
@@ -22,7 +22,7 @@ export interface RelayParams {
   readonly fallbackId: () => string;
 }
 
-export type StopReason = "end_turn" | "tool_use" | "max_tokens";
+type StopReason = "end_turn" | "tool_use" | "max_tokens";
 
 export interface RelayStep {
   readonly frames: readonly SseFrame[];

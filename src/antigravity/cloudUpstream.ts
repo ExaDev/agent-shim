@@ -1,7 +1,7 @@
 import type { ResolvedAntigravityConfig } from "./translate";
 import type { GeminiGenerateContentRequest, GeminiGenerateContentResponseChunk } from "./geminiSchema";
 
-export const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com";
+const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com";
 
 export interface CloudUpstreamParams {
   readonly config: ResolvedAntigravityConfig;

@@ -2,32 +2,32 @@
  * Google Gemini REST API request and response shapes used by the Antigravity provider.
  */
 
-export interface GeminiTextPart {
+interface GeminiTextPart {
   readonly text: string;
 }
 
-export interface GeminiInlineDataPart {
+interface GeminiInlineDataPart {
   readonly inlineData: {
     readonly mimeType: string;
     readonly data: string;
   };
 }
 
-export interface GeminiFunctionCallPart {
+interface GeminiFunctionCallPart {
   readonly functionCall: {
     readonly name: string;
     readonly args: Readonly<Record<string, unknown>>;
   };
 }
 
-export interface GeminiFunctionResponsePart {
+interface GeminiFunctionResponsePart {
   readonly functionResponse: {
     readonly name: string;
     readonly response: Readonly<Record<string, unknown>>;
   };
 }
 
-export interface GeminiThoughtPart {
+interface GeminiThoughtPart {
   readonly thought: string;
 }
 
@@ -57,11 +57,11 @@ export interface GeminiTool {
   readonly functionDeclarations: readonly GeminiFunctionDeclaration[];
 }
 
-export interface GeminiThinkingConfig {
+interface GeminiThinkingConfig {
   readonly thinkingBudget?: number;
 }
 
-export interface GeminiGenerationConfig {
+interface GeminiGenerationConfig {
   readonly thinkingConfig?: GeminiThinkingConfig;
   readonly temperature?: number;
   readonly maxOutputTokens?: number;
@@ -82,7 +82,7 @@ export interface GeminiCandidate {
   readonly finishReason?: "STOP" | "MAX_TOKENS" | "SAFETY" | "RECITATION" | "OTHER";
 }
 
-export interface GeminiUsageMetadata {
+interface GeminiUsageMetadata {
   readonly promptTokenCount?: number;
   readonly candidatesTokenCount?: number;
   readonly totalTokenCount?: number;

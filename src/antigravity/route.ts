@@ -11,20 +11,20 @@ import { parseRetryAfterSeconds, unifiedAntigravityQuotaHeaders, type Antigravit
 import type { GeminiGenerateContentResponseChunk } from "./geminiSchema";
 import type { RouteRequest, RouteResponse } from "../codex/route";
 
-export interface AntigravityProviderLookup {
+interface AntigravityProviderLookup {
   readonly ok: true;
   readonly config: ResolvedAntigravityConfig;
   readonly token: string;
   readonly credentialTarget?: "bearer" | "apiKey";
 }
 
-export interface AntigravityProviderLookupFailure {
+interface AntigravityProviderLookupFailure {
   readonly ok: false;
   readonly status: number;
   readonly message: string;
 }
 
-export type AntigravityProviderResolution = AntigravityProviderLookup | AntigravityProviderLookupFailure;
+type AntigravityProviderResolution = AntigravityProviderLookup | AntigravityProviderLookupFailure;
 
 export interface AntigravityRoutePorts {
   readonly loadProvider: (name: string) => AntigravityProviderResolution;

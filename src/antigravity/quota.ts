@@ -7,7 +7,7 @@ const DEFAULT_RETRY_AFTER_SECONDS = 60;
 const PERCENT_MULTIPLIER = 100;
 const EXHAUSTED_PERCENT = "100";
 
-export interface AntigravityQuotaBucket {
+interface AntigravityQuotaBucket {
   readonly remaining_fraction?: number;
   readonly reset_in_seconds?: number;
 }

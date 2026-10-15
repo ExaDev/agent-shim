@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { ResolvedAntigravityConfig } from "./translate";
 import type { GeminiCandidate, GeminiGenerateContentRequest, GeminiGenerateContentResponseChunk } from "./geminiSchema";
 
-export const DEFAULT_ACP_COMMAND = ["antigravity-acp"];
+const DEFAULT_ACP_COMMAND = ["antigravity-acp"];
 
 export interface LocalUpstreamParams {
   readonly config: ResolvedAntigravityConfig;
