@@ -123,6 +123,42 @@ describe("systemToInstruction", () => {
 });
 
 describe("translateRequest", () => {
+  it("sanitises tool input schemas to the keys the Cloud Code endpoint accepts", () => {
+    const req = request({
+      model: "claude-sonnet-4-5",
+      messages: [{ role: "user", content: "Run bash" }],
+      tools: [
+        {
+          name: "bash_exec",
+          description: "Run a command",
+          input_schema: {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            additionalProperties: false,
+            propertyNames: { pattern: "^[a-z]+$" },
+            properties: {
+              command: { type: "string", description: "The command" },
+              timeout: { type: ["number", "null"], minimum: 0 },
+              env: { type: "object", additionalProperties: { type: "string" }, properties: {} },
+            },
+            required: ["command"],
+          },
+        },
+      ],
+    });
+    const translated = translateRequest(req, defaults);
+    expect(translated.request.tools?.[0]?.functionDeclarations[0]?.parameters).toEqual({
+      type: "object",
+      description: "Keys match ^[a-z]+$.",
+      properties: {
+        command: { type: "string", description: "The command" },
+        timeout: { type: "number", minimum: 0, nullable: true },
+        env: { type: "object", properties: {}, description: "Each value is a string." },
+      },
+      required: ["command"],
+    });
+  });
+
   it("translates a conversation with text, tool_use, and tool_result", () => {
     const req = request({
       model: "claude-sonnet-4-5",
