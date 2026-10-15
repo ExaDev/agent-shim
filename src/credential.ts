@@ -203,12 +203,43 @@ export type CredentialResolution =
   | { readonly ok: true; readonly credential: ResolvedCredential }
   | { readonly ok: false; readonly message: string };
 
+const GO_KEYRING_BASE64_PREFIX = "go-keyring-base64:";
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Unpacks a token if it is wrapped in Go keyring base64 envelope format (`go-keyring-base64:<base64-json>`),
+ * extracting the inner `access_token`. Passes plain tokens through untouched.
+ */
+export function unpackKeyringToken(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith(GO_KEYRING_BASE64_PREFIX)) {
+    return trimmed;
+  }
+  try {
+    const base64Str = trimmed.slice(GO_KEYRING_BASE64_PREFIX.length);
+    const decoded = Buffer.from(base64Str, "base64").toString("utf8");
+    const parsed: unknown = JSON.parse(decoded);
+    if (isRecord(parsed) && isRecord(parsed.token)) {
+      const accessToken = parsed.token.access_token;
+      if (typeof accessToken === "string" && accessToken.trim() !== "") {
+        return accessToken.trim();
+      }
+    }
+  } catch {
+    // Fall through and return raw trimmed token on parse failure
+  }
+  return trimmed;
+}
+
 function trySource(source: CredentialSource, params: ResolveCredentialParams): SourceOutcome {
   const none = (reason: string, warn = false): SourceOutcome => ({ ok: false, reason, warn });
 
   if ("env" in source) {
     const value = params.env[source.env];
-    return value === undefined || value === "" ? none("is unset or empty") : { ok: true, token: value };
+    return value === undefined || value === "" ? none("is unset or empty") : { ok: true, token: unpackKeyringToken(value) };
   }
   if ("literal" in source) {
     return { ok: true, token: source.literal };
@@ -224,7 +255,7 @@ function trySource(source: CredentialSource, params: ResolveCredentialParams): S
         true,
       );
     }
-    const token = read.content.trim();
+    const token = unpackKeyringToken(read.content.trim());
     return token === "" ? none("is empty") : { ok: true, token };
   }
 
@@ -244,7 +275,7 @@ function trySource(source: CredentialSource, params: ResolveCredentialParams): S
     const outcome = result.status === null ? "could not be run or was killed by a signal" : `exited with status ${String(result.status)}`;
     return none(`${outcome}${stderr === "" ? "" : `: ${stderr}`}`);
   }
-  const token = result.stdout.trim();
+  const token = unpackKeyringToken(result.stdout.trim());
   return token === "" ? none("printed no token") : { ok: true, token };
 }
 

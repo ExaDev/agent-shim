@@ -10,6 +10,7 @@ import {
   isInteractiveSource,
   resolveCredential,
   summariseCredential,
+  unpackKeyringToken,
 } from "./credential";
 import type { CachedCredential, CredentialCachePort } from "./credentialCache";
 import { fakeCredentials } from "./test-helpers";
@@ -244,3 +245,23 @@ describe("describeCredential with a cache", () => {
     expect(describeCredential({ sources: [{ env: "X" }] })).toBe("bearer from env X");
   });
 });
+
+describe("unpackKeyringToken", () => {
+  it("unpacks access_token from go-keyring-base64 format", () => {
+    const payload = JSON.stringify({ token: { access_token: "ya29.sample-token-123", token_type: "Bearer" } });
+    const encoded = `go-keyring-base64:${Buffer.from(payload).toString("base64")}`;
+    expect(unpackKeyringToken(encoded)).toBe("ya29.sample-token-123");
+  });
+
+  it("passes plain tokens through untouched", () => {
+    expect(unpackKeyringToken("sk-ant-REDACTED")).toBe("sk-ant-REDACTED");
+    expect(unpackKeyringToken("   plain-token   ")).toBe("plain-token");
+  });
+
+  it("falls back to raw trimmed token if base64 or json is invalid", () => {
+    expect(unpackKeyringToken("go-keyring-base64:invalid-base64!!!")).toBe("go-keyring-base64:invalid-base64!!!");
+    const badJson = `go-keyring-base64:${Buffer.from("not json").toString("base64")}`;
+    expect(unpackKeyringToken(badJson)).toBe(badJson);
+  });
+});
+
