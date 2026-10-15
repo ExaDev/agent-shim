@@ -75,14 +75,18 @@ export function resolveAntigravityConfig(config: AntigravityProviderConfig | und
   };
 }
 
+/** The context-window marker Claude Code parses out of a model name (`glm-5.3[1m]` sizes its window at 1M instead of assuming 200k for a name it does not know). The backend names carry no such marker, so it is stripped before the name is mapped or passed through. */
+const CONTEXT_MARKER_1M = "[1m]";
+
 /**
- * Maps a requested Claude model name onto a Gemini model name. A name that already targets the backend directly (a `gemini-...` or `antigravity-...` model) passes through untouched; every other name is mapped onto its tier's model.
+ * Maps a requested Claude model name onto a Gemini model name. A name that already targets the backend directly (a `gemini-...` or `antigravity-...` model) passes through untouched; every other name is mapped onto its tier's model. A trailing `[1m]` context marker is stripped first: it tells Claude Code the window size and never reaches the backend.
  */
 export function mapModel(requested: string, config: ResolvedAntigravityConfig): string {
-  if (requested.startsWith("gemini-") || requested.startsWith("antigravity-")) {
-    return requested;
+  const stripped = requested.toLowerCase().endsWith(CONTEXT_MARKER_1M) ? requested.slice(0, -CONTEXT_MARKER_1M.length) : requested;
+  if (stripped.startsWith("gemini-") || stripped.startsWith("antigravity-")) {
+    return stripped;
   }
-  const lower = requested.toLowerCase();
+  const lower = stripped.toLowerCase();
   const tier = ANTIGRAVITY_TIERS.find((candidate) => lower.includes(candidate));
   return tier === undefined ? config.defaultModel : config.models[tier];
 }
