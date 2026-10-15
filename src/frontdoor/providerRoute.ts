@@ -21,8 +21,25 @@ import { Readable } from "node:stream";
 import { scanRequestHead } from "./requestScan";
 
 /**
- * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one with the provider's own credential attached in place of whatever the child presented. A bare `/v1/...` target (what the CONNECT surface hands the pipeline from a terminated OAuth session) rides a pass-through to Claude Code's own API, except in two cases: the Remote Control session family when the door serves that surface itself (`rcSelfHostRoute`, the self-hosted mode's route), and a session whose launch named a provider, whose inference is rewritten under that provider's scoped path and resolved as if the child had dialled the provider directly. Anything else is unrouted.
+ * Resolves the route a request's target names: `/providers/<name>/...` reads the provider file fresh on every request (so an edited provider applies to the next request with no restart) and answers with the route its kind selects: the in-process codex translator for a `codex` provider, the pass-through route for an `http` one with the provider's own credential attached in place of whatever the child presented. A bare `/v1/...` target (what the CONNECT surface hands the pipeline from a terminated OAuth session) rides a pass-through to Claude Code's own API, except in two cases: the Remote Control session family when the door serves that surface itself (`rcSelfHostRoute`, the self-hosted mode's route), and a session whose launch named a provider, whose inference is rewritten under that provider's scoped path (`scopeSessionProviderPath`, before anything else, so the route that serves sees the scoped target too, not only the resolution) and resolved as if the child had dialled the provider directly. Anything else is unrouted.
  */
+/** Whether one path belongs to the Remote Control family the self-hosted route serves. */
+const isRcSelfHostPath = (path: string): boolean => path === "/v1/code/sessions" || path.startsWith("/v1/code/sessions/") || path === "/v1/sessions" || path.startsWith("/v1/sessions/");
+
+/**
+ * Rewrites a provider session's bare `/v1/` target under its provider's scoped path: the request a child dialling the provider directly would have sent. Any other request (a provider-scoped path, a session that named no provider, a non-`/v1/` path, or the Remote Control family a provider never serves) is returned unchanged.
+ */
+function scopeSessionProviderPath(request: RoutedRequest): RoutedRequest {
+  if (request.session.provider === undefined) {
+    return request;
+  }
+  const path = new URL(request.url, "http://127.0.0.1").pathname;
+  if (!path.startsWith("/v1/") || isRcSelfHostPath(path)) {
+    return request;
+  }
+  return { ...request, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(request.session.provider)}${request.url}` };
+}
+
 export function createProviderRouteResolver(deps: {
   /** Reads provider files, the same filesystem port the launcher uses. */
   readonly fs: FsPort;
@@ -46,8 +63,6 @@ export function createProviderRouteResolver(deps: {
    */
   readonly rcSelfHostRoute?: FrontDoorRoute;
 }): (request: RoutedRequest) => Promise<RouteResolution> {
-  /** Whether one path belongs to the Remote Control family the self-hosted route serves. */
-  const isRcSelfHostPath = (path: string): boolean => path === "/v1/code/sessions" || path.startsWith("/v1/code/sessions/") || path === "/v1/sessions" || path.startsWith("/v1/sessions/");
   /** The pass-through every bare /v1/ request from the CONNECT surface rides: straight to Claude Code's own API, with no per-request upstream for a headroom hop (the daemon's default upstream is exactly that API, which is what an OAuth session wants). */
   const oauthRoute = createPassthroughRoute("anthropic", { baseUrl: `https://${CONNECT_INTERCEPT_HOST}:${String(HTTPS_PORT)}`, stripPrefix: undefined, headroomUpstream: undefined });
 
@@ -73,10 +88,6 @@ export function createProviderRouteResolver(deps: {
     if (scoped === undefined) {
       if (deps.rcSelfHostRoute !== undefined && isRcSelfHostPath(path)) {
         return { ok: true, route: deps.rcSelfHostRoute };
-      }
-      if (request.session.provider !== undefined && path.startsWith("/v1/") && !isRcSelfHostPath(path)) {
-        // A provider session arrives believing it is talking to Claude Code's own API (that belief is load-bearing: the CLI's Remote Control activation gate admits only that host, with no override), so its inference rides a bare /v1/ path. The door, which terminates that host's TLS, is the one that decides where the traffic actually goes: the session's named provider, resolved exactly as a provider-scoped request would be. The Remote Control family never takes this branch, whichever surface serves it, because a provider serves inference, not the CCR session protocol.
-        return resolve({ ...request, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(request.session.provider)}${request.url}` });
       }
       return path.startsWith("/v1/") ? { ok: true, route: oauthRoute } : { ok: false, status: HTTP_STATUS.notFound, message: `no such endpoint: ${path}` };
     }
@@ -161,7 +172,11 @@ export function createProviderRouteResolver(deps: {
   });
 
   return async (request) => {
-    let current = request;
+    // A provider session arrives believing it is talking to Claude Code's own API (that belief is load-bearing: the CLI's Remote Control activation gate admits only that host, with no override), so its inference rides a bare /v1/ path. The rewrite to the session's provider scoped path happens here, before anything else, because the whole pipeline must see it: the body scan, the resolution and above all the route that serves, since a translating route re-derives its provider from the scoped path and a bare path would leave it unrouted. The Remote Control family never takes this branch, whichever surface serves it, because a provider serves inference, not the CCR session protocol.
+    const scopedRequest = scopeSessionProviderPath(request);
+    const serveScoped = (resolution: { ok: true; route: FrontDoorRoute }): { ok: true; route: FrontDoorRoute } =>
+      scopedRequest === request ? resolution : { ok: true, route: servingRewritten(resolution.route, scopedRequest) };
+    let current = scopedRequest;
     let replay: RoutedRequest | undefined;
     const visited = new Set<string>();
     for (;;) {
@@ -184,7 +199,11 @@ export function createProviderRouteResolver(deps: {
       }
       if (routes === undefined || routes.length === 0) {
         const resolution = resolve(current);
-        return resolution.ok && replay !== undefined ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }) } : resolution;
+        return resolution.ok && replay !== undefined
+          ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }) }
+          : resolution.ok
+            ? serveScoped(resolution)
+            : resolution;
       }
       // How far this request must be read: the head suffices for the model field, but a condition that names the image fact needs the whole conversation (an image anywhere is the fact, and the newest turn sits at the body's end), and so does a route that rewrites the model name. The route author's own predicate chooses the cost.
       const whole = routes.some((entry) => entry.model !== undefined || referencesFact(entry.when, "request.hasImage"));
@@ -199,7 +218,11 @@ export function createProviderRouteResolver(deps: {
       if (scan.replayed === undefined) {
         // Nothing was read (the body was empty): the original request is the honest handover.
         const resolution = resolve(current);
-        return resolution.ok && replay !== undefined ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }) } : resolution;
+        return resolution.ok && replay !== undefined
+          ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }) }
+          : resolution.ok
+            ? serveScoped(resolution)
+            : resolution;
       }
       replay = scan.replayed;
       const requestFacts = {

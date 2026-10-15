@@ -12,7 +12,7 @@ import type { UsageSnapshot } from "../usage/schema";
 import { createProviderRouteResolver } from "./providerRoute";
 import { serveRouted } from "./pipeline";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { AUTH_HEADER, type RoutedRequest } from "./route";
+import { AUTH_HEADER, type RoutedRequest, type RoutedResponse } from "./route";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 
@@ -48,8 +48,8 @@ function resolver(files: Record<string, unknown>, directPort = OWN_PORT): Return
   return createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => directPort, env: { Z: "tok-from-z" }, credentials: fakeCredentials() });
 }
 
-function request(url: string): RoutedRequest {
-  return { method: "POST", url, headers: {}, body: Readable.from(["{}"]), signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined } };
+function request(url: string, body = "{}"): RoutedRequest {
+  return { method: "POST", url, headers: {}, body: Readable.from([Buffer.from(body)]), signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined } };
 }
 
 describe("createProviderRouteResolver", () => {
@@ -91,6 +91,36 @@ describe("createProviderRouteResolver", () => {
       expect(resolution.route.headroomEligible).toBe(true);
       expect(resolution.route.headroomUpstream).toBeUndefined();
     }
+  });
+
+  it("serves a provider session's bare /v1/ target through its provider's route, the request rewritten under the scoped path the route parses", async () => {
+    // An antigravity provider whose credential never resolves: the route must get as far as its credential (a 401 naming the provider), which a bare unrewritten path never reaches because the route cannot parse a provider out of it.
+    const resolve = resolver({ [`${PROVIDERS_DIR}/ag.json`]: { kind: "antigravity", displayName: "AG", credential: { sources: [{ env: "NOT_SET_ANYWHERE" }] }, antigravity: { mode: "cloud" } } });
+    const sessionRequest = (url: string): RoutedRequest => ({ ...request(url, JSON.stringify({ model: "claude-haiku-5-5", messages: [{ role: "user", content: "Reply OK" }] })), session: { identity: undefined, sessionId: undefined, provider: "ag", headroom: false, projectId: undefined } });
+    const resolution = await resolve(sessionRequest("/v1/messages?beta=true"));
+    expect(resolution.ok).toBe(true);
+    if (!resolution.ok) {
+      return;
+    }
+    expect(resolution.route.name).toBe("antigravity:ag");
+    const chunks: string[] = [];
+    let status = 0;
+    const response: RoutedResponse = {
+      headersSent: false,
+      start: (code) => {
+        status = code;
+      },
+      flush: () => undefined,
+      write: async (chunk) => {
+        chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+        await Promise.resolve();
+      },
+      end: () => undefined,
+      destroy: () => undefined,
+    };
+    await resolution.route.serve(sessionRequest("/v1/messages?beta=true"), response);
+    expect(status).toBe(HTTP_STATUS.unauthorized);
+    expect(chunks.join("")).not.toContain("no provider specified in path");
   });
 
   it("refuses an unknown provider and any path that names no provider and is not a bare /v1/ path", async () => {
