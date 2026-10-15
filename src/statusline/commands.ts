@@ -5,12 +5,13 @@ import { withExamples } from "../cli/commandDeps";
 import { realFarmFs } from "../realPorts";
 import { readUsageSnapshot } from "../usage/read";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
-import { renderStatuslineLine } from "./render";
+import { renderStatuslineBlock } from "./render";
 
-/** One field a client's statusline payload may carry that the built-in line shows. */
-function payloadViewOf(payload: unknown): { modelDisplayName: string | undefined; contextUsedPercentage: number | undefined } {
+/** The payload fields the built-in statusline shows, in the Antigravity statusline's own selection: the context window's use, its size, and the prompt cache's share. */
+function payloadViewOf(payload: unknown): { modelDisplayName: string | undefined; contextUsedPercentage: number | undefined; contextTotalTokens: number | undefined; contextWindowTokens: number | undefined; cacheReadTokens: number | undefined; freshInputTokens: number | undefined } {
+  const empty = { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheReadTokens: undefined, freshInputTokens: undefined };
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    return { modelDisplayName: undefined, contextUsedPercentage: undefined };
+    return empty;
   }
   const record: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(payload)) {
@@ -19,8 +20,14 @@ function payloadViewOf(payload: unknown): { modelDisplayName: string | undefined
   const model = record.model;
   const displayName = typeof model === "object" && model !== null && !Array.isArray(model) && "display_name" in model && typeof model.display_name === "string" ? model.display_name : undefined;
   const context = record.context_window;
-  const used = typeof context === "object" && context !== null && !Array.isArray(context) && "used_percentage" in context && typeof context.used_percentage === "number" ? context.used_percentage : undefined;
-  return { modelDisplayName: displayName, contextUsedPercentage: used };
+  const ctx = typeof context === "object" && context !== null && !Array.isArray(context) ? context : undefined;
+  const used = ctx !== undefined && "used_percentage" in ctx && typeof ctx.used_percentage === "number" ? ctx.used_percentage : undefined;
+  const totalIn = ctx !== undefined && "total_input_tokens" in ctx && typeof ctx.total_input_tokens === "number" ? ctx.total_input_tokens : undefined;
+  const size = ctx !== undefined && "context_window_size" in ctx && typeof ctx.context_window_size === "number" ? ctx.context_window_size : undefined;
+  const current = ctx !== undefined && "current_usage" in ctx && typeof ctx.current_usage === "object" && ctx.current_usage !== null && !Array.isArray(ctx.current_usage) ? ctx.current_usage : undefined;
+  const cacheRead = current !== undefined && "cache_read_input_tokens" in current && typeof current.cache_read_input_tokens === "number" ? current.cache_read_input_tokens : undefined;
+  const fresh = current !== undefined && "input_tokens" in current && typeof current.input_tokens === "number" ? current.input_tokens : undefined;
+  return { modelDisplayName: displayName, contextUsedPercentage: used, contextTotalTokens: totalIn, contextWindowTokens: size, cacheReadTokens: cacheRead, freshInputTokens: fresh };
 }
 
 async function readAllStdin(): Promise<string> {
@@ -35,6 +42,9 @@ async function readAllStdin(): Promise<string> {
     process.stdin.resume();
   });
 }
+
+/** The terminal width the client's statusline wrapper exports, or a plain 80-column default when nothing names it. */
+const DEFAULT_COLUMNS = 80;
 
 /** The command a client's statusline setting names: it reads the client's payload on stdin, adds what the door knows under one `agent_shim` key, and either hands the enriched payload to the renderer named in `AGENT_SHIM_STATUSLINE_CMD` or renders the built-in line itself. */
 export function registerStatuslineCommand(program: Command, deps: { readonly paths: { readonly usageSnapshotsDir: string } }): void {
@@ -70,7 +80,8 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
         return;
       }
       const view = payloadViewOf(payload);
-      console.log(renderStatuslineLine(summary, view, Date.now()));
+      const columns = Number.parseInt(process.env.COLUMNS ?? "", 10);
+      console.log(renderStatuslineBlock(summary, view, Number.isNaN(columns) ? DEFAULT_COLUMNS : columns, Date.now()));
       }),
     ["$ agent-shim statusline  # a client's statusline setting names this; it renders or delegates"],
   );
