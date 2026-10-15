@@ -20,6 +20,8 @@ const defaults = resolveAntigravityConfig(undefined);
 const BUDGET_LOW = 1024;
 const BUDGET_MEDIUM = 4096;
 const BUDGET_HIGH = 8192;
+const BUDGET_XHIGH = 16384;
+const BUDGET_MAX = 32768;
 const MAX_TOOL_NAME_LEN = 64;
 const THREE_CONTENTS = 3;
 
@@ -91,7 +93,10 @@ describe("mapEffort", () => {
     expect(mapEffort(request({ messages: [], output_config: { effort: "low" } }), defaults)).toBe(BUDGET_LOW);
     expect(mapEffort(request({ messages: [], output_config: { effort: "medium" } }), defaults)).toBe(BUDGET_MEDIUM);
     expect(mapEffort(request({ messages: [], output_config: { effort: "high" } }), defaults)).toBe(BUDGET_HIGH);
+    expect(mapEffort(request({ messages: [], output_config: { effort: "xhigh" } }), defaults)).toBe(BUDGET_XHIGH);
+    expect(mapEffort(request({ messages: [], output_config: { effort: "max" } }), defaults)).toBe(BUDGET_MAX);
     expect(mapEffort(request({ messages: [], output_config: { effort: "none" } }), defaults)).toBeUndefined();
+    expect(mapEffort(request({ messages: [], output_config: { effort: "not-a-level" } }), defaults)).toBe(BUDGET_LOW);
   });
 });
 
