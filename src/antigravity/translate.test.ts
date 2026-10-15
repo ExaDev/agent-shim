@@ -86,6 +86,23 @@ describe("mapModel", () => {
     expect(mapModel("claude-sonnet-5-5-high", defaults)).toBe("gemini-3.8-flash-medium");
     expect(mapModel("claude-opus-5-5-high", defaults)).toBe("gemini-3.8-flash-high");
   });
+
+  it("completes a bare family member with the request's effort suffix, and leaves every other spelling alone", () => {
+    const translated = (effort: string | undefined, model: string): string =>
+      translateRequest(request({ model, ...(effort === undefined ? {} : { output_config: { effort } }), messages: [{ role: "user", content: "Hi" }] }), defaults).model;
+    expect(translated("medium", "gemini-3.8-flash")).toBe("gemini-3.8-flash-medium");
+    expect(translated("xhigh", "gemini-3.8-flash")).toBe("gemini-3.8-flash-high");
+    expect(translated("none", "gemini-3.8-flash")).toBe("gemini-3.8-flash-low");
+    expect(translated(undefined, "gemini-3.8-flash")).toBe("gemini-3.8-flash-low");
+    expect(translated("medium", "gemini-3.8-flash-high")).toBe("gemini-3.8-flash-high");
+    expect(translated("medium", "gemini-2.5-flash")).toBe("gemini-2.5-flash");
+  });
+
+  it("reads the effort-qualified families from the configuration's own model table", () => {
+    const custom = resolveAntigravityConfig({ models: { fable: "gemini-2.5-pro", opus: "gemini-2.5-pro", sonnet: "gemini-2.5-flash", haiku: "gemini-2.5-flash" }, defaultModel: "gemini-2.5-pro" });
+    const translated = translateRequest(request({ model: "gemini-3.8-flash", output_config: { effort: "high" }, messages: [{ role: "user", content: "Hi" }] }), custom);
+    expect(translated.model).toBe("gemini-3.8-flash");
+  });
 });
 
 describe("mapEffort", () => {

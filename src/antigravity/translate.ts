@@ -335,11 +335,46 @@ export interface TranslatedAntigravityRequest {
   readonly toolNames: ReadonlyMap<string, string>;
 }
 
+/** The effort levels a suffixed backend model ID can name; xhigh and max have no ID of their own and ride the high variant's ID with their larger thinking budget. */
+const EFFORT_SUFFIXES = new Set(["low", "medium", "high"]);
+
+/** The suffix a request's effort level names on a model ID: the level itself when the backend spells one, the high variant for the levels above it, and low for none (the backend has no effort-free variant). */
+function effortSuffixOf(level: AntigravityEffort): "low" | "medium" | "high" {
+  if (level === "medium") {
+    return "medium";
+  }
+  return level === "none" || level === "low" ? "low" : "high";
+}
+
+/** Strips one trailing effort suffix from a model name, returning the base the suffix was stripped from; undefined when the name already carries none. */
+function splitEffortSuffix(model: string): { base: string; suffix: string } | undefined {
+  const index = model.lastIndexOf("-");
+  if (index === -1) {
+    return undefined;
+  }
+  const suffix = model.slice(index + 1);
+  return EFFORT_SUFFIXES.has(suffix) ? { base: model.slice(0, index), suffix } : undefined;
+}
+
+/**
+ * Completes a bare model name with the request's effort suffix when the backend serves that family under effort-qualified IDs only. Which families those are is read from the configuration's own model table (its tiers and default), never hardcoded: a requested name that already names its effort, or whose base the table does not hold, passes through unchanged, so both the suffixed spelling and a family the backend serves bare keep working.
+ */
+function completeEffortSuffix(model: string, request: MessagesRequest, config: ResolvedAntigravityConfig): string {
+  if (splitEffortSuffix(model) !== undefined) {
+    return model;
+  }
+  const configured = [config.defaultModel, ...Object.values(config.models)];
+  const effort = request.output_config?.effort;
+  const level = ANTIGRAVITY_EFFORTS.find((candidate) => candidate === effort) ?? config.effort;
+  const suffixed = `${model}-${effortSuffixOf(level)}`;
+  return configured.some((entry) => entry === suffixed || splitEffortSuffix(entry)?.base === model) ? suffixed : model;
+}
+
 /** Translates an Anthropic MessagesRequest into a Gemini GenerateContentRequest. */
 export function translateRequest(request: MessagesRequest, config: ResolvedAntigravityConfig): TranslatedAntigravityRequest {
   const toolNames = new Map<string, string>();
   const toolIdToName = new Map<string, string>();
-  const model = mapModel(request.model ?? "", config);
+  const model = completeEffortSuffix(mapModel(request.model ?? "", config), request, config);
   const thinkingBudget = mapEffort(request, config);
   const systemInstruction = systemToInstruction(request.system);
   const contents = messagesToGeminiContents(request.messages, toolNames, toolIdToName);
