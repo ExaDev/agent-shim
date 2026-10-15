@@ -314,8 +314,8 @@ describe("createAntigravityRoute", () => {
 
     expect(res.status).toBe(HTTP_STATUS.tooManyRequests);
     expect(res.headers["anthropic-ratelimit-unified-status"]).toBe("rejected");
-    expect(res.headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("100");
-    expect(res.headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("100");
+    expect(res.headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("1.000");
+    expect(res.headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("1.000");
     expect(res.headers["retry-after"]).toBe("45");
     const body: unknown = typeof res.body === "string" ? JSON.parse(res.body) : null;
     const errType = isRecord(body) && isRecord(body.error) && typeof body.error.type === "string" ? body.error.type : "";
@@ -368,7 +368,7 @@ describe("createAntigravityRoute", () => {
 
     expect(res.status).toBe(HTTP_STATUS.ok);
     expect(res.headers["anthropic-ratelimit-unified-status"]).toBe("allowed");
-    expect(res.headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("20");
-    expect(res.headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("5");
+    expect(res.headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("0.200");
+    expect(res.headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("0.050");
   });
 });

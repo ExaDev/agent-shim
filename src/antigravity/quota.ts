@@ -6,8 +6,8 @@ import { CCPA_DEFAULT_PROJECT_ID, CCPA_ENDPOINT, CCPA_USER_AGENT } from "./cloud
 
 const MS_PER_SECOND = 1000;
 const DEFAULT_RETRY_AFTER_SECONDS = 60;
-const PERCENT_MULTIPLIER = 100;
-const EXHAUSTED_PERCENT = "100";
+const FRACTION_DIGITS = 3;
+const EXHAUSTED_FRACTION = "1.000";
 
 interface AntigravityQuotaBucket {
   readonly remaining_fraction?: number;
@@ -39,13 +39,14 @@ function findBucket(quota: AntigravityQuotaMap, keys: readonly string[]): Antigr
   return undefined;
 }
 
+/** Utilization is a used fraction from 0 to 1 (`0.81` is 81% used), the form the real API's headers carry: an integer percent here reads as a vast fraction, which Claude Code clamps to an exhausted window. */
 function calculateUtilization(remainingFraction?: number): string | undefined {
   if (remainingFraction === undefined || !Number.isFinite(remainingFraction)) {
     return undefined;
   }
   const clampedRem = Math.max(0, Math.min(1, remainingFraction));
   const used = Math.max(0, 1 - clampedRem);
-  return String(Math.round(used * PERCENT_MULTIPLIER));
+  return used.toFixed(FRACTION_DIGITS);
 }
 
 function calculateResetTimestamp(nowSec: number, resetInSeconds?: number): string | undefined {
@@ -118,11 +119,11 @@ export function unifiedAntigravityQuotaHeaders(params: AntigravityQuotaParams): 
     const retrySec = params.retryAfterSeconds ?? DEFAULT_RETRY_AFTER_SECONDS;
     const fallbackReset = String(nowSec + retrySec);
     if (headers["anthropic-ratelimit-unified-5h-utilization"] === undefined) {
-      headers["anthropic-ratelimit-unified-5h-utilization"] = EXHAUSTED_PERCENT;
+      headers["anthropic-ratelimit-unified-5h-utilization"] = EXHAUSTED_FRACTION;
       headers["anthropic-ratelimit-unified-5h-reset"] = fallbackReset;
     }
     if (headers["anthropic-ratelimit-unified-7d-utilization"] === undefined) {
-      headers["anthropic-ratelimit-unified-7d-utilization"] = EXHAUSTED_PERCENT;
+      headers["anthropic-ratelimit-unified-7d-utilization"] = EXHAUSTED_FRACTION;
       headers["anthropic-ratelimit-unified-7d-reset"] = fallbackReset;
     }
     earliestResetSec = earliestResetSec === undefined ? nowSec + retrySec : Math.min(earliestResetSec, nowSec + retrySec);
