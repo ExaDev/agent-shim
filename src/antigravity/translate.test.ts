@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { rememberToolCallSignature } from "./signatures";
+
 import {
   ANTIGRAVITY_DEFAULT_EFFORT,
   ANTIGRAVITY_DEFAULT_MODE,
@@ -179,6 +181,36 @@ describe("translateRequest", () => {
       },
       required: ["command"],
     });
+  });
+
+  it("echoes a remembered call signature back onto its function call part, and nothing onto an unremembered one", () => {
+    rememberToolCallSignature("call_signed", "sig-abc");
+    const req = request({
+      model: "claude-sonnet-4-5",
+      messages: [
+        { role: "user", content: "Run bash" },
+        {
+          role: "assistant",
+          content: [
+            { type: "tool_use", id: "call_signed", name: "bash-exec", input: { cmd: "ls" } },
+            { type: "tool_use", id: "call_plain", name: "bash-exec", input: { cmd: "pwd" } },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "call_signed", content: "file1.txt" },
+            { type: "tool_result", tool_use_id: "call_plain", content: "/tmp" },
+          ],
+        },
+      ],
+    });
+    const translated = translateRequest(req, defaults);
+    const modelTurn = translated.request.contents.find((content) => content.role === "model");
+    expect(modelTurn?.parts).toEqual([
+      { functionCall: { name: "bash_exec", args: { cmd: "ls" } }, thoughtSignature: "sig-abc" },
+      { functionCall: { name: "bash_exec", args: { cmd: "pwd" } } },
+    ]);
   });
 
   it("translates a conversation with text, tool_use, and tool_result", () => {

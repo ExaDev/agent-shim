@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { toolCallSignatureOf } from "./signatures";
+
 import {
   ANTIGRAVITY_DEFAULT_EFFORT,
   ANTIGRAVITY_DEFAULT_MODE,
@@ -218,11 +220,14 @@ function messagesToGeminiContents(
       } else if (isToolUseBlock(block)) {
         const sanitizedName = shortToolName(block.name, names);
         toolIdToName.set(block.id, sanitizedName);
+        const signature = toolCallSignatureOf(block.id);
         ensureRole("model").push({
           functionCall: {
             name: sanitizedName,
             args: isRecord(block.input) ? block.input : {},
           },
+          // The relay remembered the signature the backend attached to this exact call; echoing it back is what the backend requires of a repeated function call.
+          ...(signature === undefined ? {} : { thoughtSignature: signature }),
         });
       } else if (isToolResultBlock(block)) {
         const toolName = toolIdToName.get(block.tool_use_id) ?? "unknown_tool";
