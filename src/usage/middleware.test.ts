@@ -157,6 +157,16 @@ describe("createUsageMiddleware", () => {
     });
   });
 
+  it("attributes a provider session's bare /v1/ request to the provider its launch selected", () => {
+    const h = harness();
+    const body = begin(h, event({ session: { identity: "work", sessionId: "session-1", provider: "antigravity", headroom: false, projectId: undefined } }));
+
+    finishBody(h, body);
+    h.flush();
+
+    expect(singleRecord(h).provider).toBe("antigravity");
+  });
+
   it("records that a request crossed headroom, taking it from the event rather than the session's flag", () => {
     const h = harness();
     const body = begin(h, event({ viaHeadroom: true }));

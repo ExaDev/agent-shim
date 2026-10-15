@@ -64,16 +64,19 @@ function decoderFor(encoding: string | undefined): zlib.Gunzip | zlib.Inflate | 
   }
 }
 
-/** Where a request went: the provider its path names, or Claude Code's own API for a bare `/v1/` path, and the API path the upstream saw. */
-function destinationOf(path: string): { readonly provider: string; readonly endpoint: string } {
+/** Where a request went: the provider its path names; for a bare `/v1/` path, the provider the session's launch selected (the resolver rewrites the path only for routing, so the observer still sees the bare form), or Claude Code's own API when neither names one. */
+function destinationOf(path: string, sessionProvider: string | undefined): { readonly provider: string; readonly endpoint: string } {
   const scoped = parseProviderPath(path);
-  return scoped === undefined ? { provider: ANTHROPIC_PROVIDER, endpoint: path } : { provider: scoped.provider, endpoint: scoped.rest };
+  if (scoped !== undefined) {
+    return { provider: scoped.provider, endpoint: scoped.rest };
+  }
+  return { provider: sessionProvider ?? ANTHROPIC_PROVIDER, endpoint: path };
 }
 
 /** Builds one finished request's record from its head, what the body scan found, and how it ended. */
 function buildRecord(event: RoutedResponseEvent, context: { readonly headAt: number; readonly endedAt: number; readonly outcome: "completed" | "aborted"; readonly scan: ScanResult | undefined }): UsageRecord {
   const { scan } = context;
-  const { provider, endpoint } = destinationOf(event.path);
+  const { provider, endpoint } = destinationOf(event.path, event.session.provider);
   const rateLimitHeaders = rateLimitHeadersOf(event.headers);
   const limit = classifyLimit({ status: event.status, headers: rateLimitHeaders ?? {}, error: scan?.error, nowMs: context.endedAt });
   const requestId = headerValue(event.headers, "request-id");
