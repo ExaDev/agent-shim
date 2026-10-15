@@ -236,12 +236,12 @@ export const ANTIGRAVITY_EFFORTS = ["none", "low", "medium", "high", "xhigh", "m
 export type AntigravityEffort = (typeof ANTIGRAVITY_EFFORTS)[number];
 
 export const ANTIGRAVITY_DEFAULT_MODE: AntigravityMode = "cloud";
-export const ANTIGRAVITY_DEFAULT_MODEL = "gemini-2.5-pro";
+export const ANTIGRAVITY_DEFAULT_MODEL = "gemini-3.8-flash-high";
 export const ANTIGRAVITY_DEFAULT_TIER_MODELS: Readonly<Record<AntigravityTier, string>> = Object.freeze({
-  fable: "gemini-2.5-pro",
-  opus: "gemini-2.5-pro",
-  sonnet: "gemini-2.5-flash",
-  haiku: "gemini-2.5-flash",
+  fable: "gemini-3.8-flash-high",
+  opus: "gemini-3.8-flash-high",
+  sonnet: "gemini-3.8-flash-medium",
+  haiku: "gemini-3.8-flash-low",
 });
 export const ANTIGRAVITY_DEFAULT_EFFORT: AntigravityEffort = "low";
 

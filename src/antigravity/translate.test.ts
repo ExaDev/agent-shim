@@ -38,8 +38,8 @@ describe("resolveAntigravityConfig", () => {
       local: { command: undefined, socketPath: undefined },
     });
     expect(ANTIGRAVITY_DEFAULT_MODE).toBe("cloud");
-    expect(ANTIGRAVITY_DEFAULT_MODEL).toBe("gemini-2.5-pro");
-    expect(ANTIGRAVITY_DEFAULT_TIER_MODELS.sonnet).toBe("gemini-2.5-flash");
+    expect(ANTIGRAVITY_DEFAULT_MODEL).toBe("gemini-3.8-flash-high");
+    expect(ANTIGRAVITY_DEFAULT_TIER_MODELS.sonnet).toBe("gemini-3.8-flash-medium");
   });
 
   it("overrides mode, model tiers, and cloud settings", () => {
@@ -66,11 +66,11 @@ describe("resolveAntigravityConfig", () => {
 
 describe("mapModel", () => {
   it.each([
-    ["claude-fable-5", "gemini-2.5-pro"],
-    ["claude-opus-4-7", "gemini-2.5-pro"],
-    ["claude-sonnet-4-5-20250929", "gemini-2.5-flash"],
-    ["claude-haiku-4-5", "gemini-2.5-flash"],
-    ["something-else", "gemini-2.5-pro"],
+    ["claude-fable-5", "gemini-3.8-flash-high"],
+    ["claude-opus-4-7", "gemini-3.8-flash-high"],
+    ["claude-sonnet-4-5-20250929", "gemini-3.8-flash-medium"],
+    ["claude-haiku-4-5", "gemini-3.8-flash-low"],
+    ["something-else", "gemini-3.8-flash-high"],
   ])("maps %s to %s by tier", (requested, expected) => {
     expect(mapModel(requested, defaults)).toBe(expected);
   });
@@ -78,6 +78,11 @@ describe("mapModel", () => {
   it("passes gemini model names through untouched", () => {
     expect(mapModel("gemini-3.8-flash", defaults)).toBe("gemini-3.8-flash");
     expect(mapModel("antigravity-custom", defaults)).toBe("antigravity-custom");
+  });
+
+  it("maps claude names with effort suffixes by tier", () => {
+    expect(mapModel("claude-sonnet-5-5-high", defaults)).toBe("gemini-3.8-flash-medium");
+    expect(mapModel("claude-opus-5-5-high", defaults)).toBe("gemini-3.8-flash-high");
   });
 });
 
@@ -147,7 +152,7 @@ describe("translateRequest", () => {
     });
 
     const translated = translateRequest(req, defaults);
-    expect(translated.model).toBe("gemini-2.5-flash");
+    expect(translated.model).toBe("gemini-3.8-flash-medium");
     expect(translated.request.systemInstruction?.parts[0]?.text).toBe("System prompt");
     expect(translated.request.generationConfig?.thinkingConfig?.thinkingBudget).toBe(BUDGET_MEDIUM);
     expect(translated.toolNames.get("bash_exec")).toBe("bash-exec");
