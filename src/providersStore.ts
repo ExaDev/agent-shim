@@ -2,7 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { ConfigValidationError } from "./config/load";
 import { writeJsonAtomic } from "./config/store";
-import { CREDENTIAL_TARGET_VARS, isCodexProvider, type PROVIDER_CREDENTIAL_TARGETS, type PROVIDER_KINDS, ProviderSchema, type CodexProviderConfig, type CredentialCache, type CredentialSource, type Provider } from "./config/schema";
+import {
+  ANTIGRAVITY_DEFAULT_MODE,
+  CREDENTIAL_TARGET_VARS,
+  isAntigravityProvider,
+  isCodexProvider,
+  type AntigravityProviderConfig,
+  type CodexProviderConfig,
+  type CredentialCache,
+  type CredentialSource,
+  type PROVIDER_CREDENTIAL_TARGETS,
+  type PROVIDER_KINDS,
+  ProviderSchema,
+  type Provider,
+} from "./config/schema";
 import { CliError, UsageError } from "./cliError";
 import { CREDENTIAL_UNAVAILABLE_EXIT, resolveCredential, type CredentialPort } from "./credential";
 import type { ResolvedProvider } from "./launcher/flags";
@@ -203,12 +216,20 @@ export type ProviderCredentialTarget = (typeof PROVIDER_CREDENTIAL_TARGETS)[numb
 /** The kinds of provider. */
 export type ProviderKind = (typeof PROVIDER_KINDS)[number];
 
-/** Where a provider sends its sessions, for display: an `http` provider's base URL, or the front door for a codex provider (whose address exists only at launch). */
+/** Where a provider sends its sessions, for display: an `http` provider's base URL, or the front door for a codex/antigravity provider (whose address exists only at launch). */
 export function describeProviderEndpoint(provider: Provider): string {
-  return isCodexProvider(provider) ? "codex translation daemon" : provider.baseUrl;
+  if (isCodexProvider(provider)) {
+    return "codex translation daemon";
+  }
+  if (isAntigravityProvider(provider)) {
+    return (provider.antigravity?.mode ?? ANTIGRAVITY_DEFAULT_MODE) === "local"
+      ? "antigravity local (ACP daemon)"
+      : "antigravity cloud (Gemini API)";
+  }
+  return provider.baseUrl;
 }
 
-/** Everything `addProvider` writes into a fresh provider file. `baseUrl` is required for an `http` provider and refused for a codex one; `codex` applies only to a codex provider. */
+/** Everything `addProvider` writes into a fresh provider file. `baseUrl` is required for an `http` provider and refused for codex/antigravity ones; `codex` applies only to codex, `antigravity` applies only to antigravity. */
 export interface AddProviderInput {
   readonly kind?: ProviderKind;
   readonly displayName: string;
@@ -217,9 +238,10 @@ export interface AddProviderInput {
   readonly target?: ProviderCredentialTarget;
   readonly env?: Readonly<Record<string, string>>;
   readonly codex?: CodexProviderConfig;
+  readonly antigravity?: AntigravityProviderConfig;
 }
 
-/** Raised when a provider option does not fit the provider's kind: a base URL for a codex provider, a missing one for an http provider, or codex settings for an http provider. */
+/** Raised when a provider option does not fit the provider's kind. */
 export class ProviderKindMismatchError extends UsageError {
   constructor(message: string) {
     super(message);
@@ -230,6 +252,19 @@ export class ProviderKindMismatchError extends UsageError {
 /** True when a codex settings block says nothing at all, so writing it would only add noise to the file. */
 function isEmptyCodexConfig(config: CodexProviderConfig | undefined): boolean {
   return config === undefined || (config.defaultModel === undefined && config.effort === undefined && config.login === undefined && (config.models === undefined || Object.keys(config.models).length === 0));
+}
+
+/** True when an antigravity settings block says nothing at all. */
+function isEmptyAntigravityConfig(config: AntigravityProviderConfig | undefined): boolean {
+  return (
+    config === undefined ||
+    (config.mode === undefined &&
+      config.defaultModel === undefined &&
+      config.effort === undefined &&
+      config.cloud === undefined &&
+      config.local === undefined &&
+      (config.models === undefined || Object.keys(config.models).length === 0))
+  );
 }
 
 /**
@@ -246,11 +281,17 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
   if (kind === "codex" && input.baseUrl !== undefined) {
     throw new ProviderKindMismatchError("A codex provider has no base URL: the launcher points its sessions at the front-door daemon. Drop --base-url.");
   }
+  if (kind === "antigravity" && input.baseUrl !== undefined) {
+    throw new ProviderKindMismatchError("An antigravity provider has no base URL: the launcher points its sessions at the front-door daemon. Drop --base-url.");
+  }
   if (kind === "http" && input.baseUrl === undefined) {
     throw new ProviderKindMismatchError("An http provider needs --base-url.");
   }
-  if (kind === "http" && !isEmptyCodexConfig(input.codex)) {
+  if (kind !== "codex" && !isEmptyCodexConfig(input.codex)) {
     throw new ProviderKindMismatchError("Codex settings apply only to a codex provider (--kind codex).");
+  }
+  if (kind !== "antigravity" && !isEmptyAntigravityConfig(input.antigravity)) {
+    throw new ProviderKindMismatchError("Antigravity settings apply only to an antigravity provider (--kind antigravity).");
   }
   const shared = {
     displayName: input.displayName,
@@ -260,6 +301,8 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
   const parsed = ProviderSchema.safeParse(
     kind === "codex"
       ? { kind, ...shared, ...(isEmptyCodexConfig(input.codex) ? {} : { codex: input.codex }) }
+      : kind === "antigravity"
+      ? { kind, ...shared, ...(isEmptyAntigravityConfig(input.antigravity) ? {} : { antigravity: input.antigravity }) }
       : { ...shared, baseUrl: input.baseUrl },
   );
   if (!parsed.success) {
@@ -283,6 +326,8 @@ export interface UpdateProviderInput {
   readonly unsetEnv?: readonly string[];
   /** Merged over a codex provider's existing settings: a field given here replaces that field, and `models` entries merge per tier. */
   readonly codex?: CodexProviderConfig;
+  /** Merged over an antigravity provider's existing settings: a field given here replaces that field, and `models` entries merge per tier. */
+  readonly antigravity?: AntigravityProviderConfig;
 }
 
 /**
@@ -300,8 +345,14 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
   if (isCodexProvider(existing) && input.baseUrl !== undefined) {
     throw new ProviderKindMismatchError(`Provider "${name}" is a codex provider, which has no base URL.`);
   }
+  if (isAntigravityProvider(existing) && input.baseUrl !== undefined) {
+    throw new ProviderKindMismatchError(`Provider "${name}" is an antigravity provider, which has no base URL.`);
+  }
   if (!isCodexProvider(existing) && !isEmptyCodexConfig(input.codex)) {
-    throw new ProviderKindMismatchError(`Provider "${name}" is an http provider; codex settings apply only to a codex provider.`);
+    throw new ProviderKindMismatchError(`Provider "${name}" is not a codex provider; codex settings apply only to a codex provider.`);
+  }
+  if (!isAntigravityProvider(existing) && !isEmptyAntigravityConfig(input.antigravity)) {
+    throw new ProviderKindMismatchError(`Provider "${name}" is not an antigravity provider; antigravity settings apply only to an antigravity provider.`);
   }
   const shared = {
     ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
@@ -320,6 +371,13 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
       ...(existing.codex?.models === undefined && input.codex?.models === undefined ? {} : { models: { ...existing.codex?.models, ...input.codex?.models } }),
     };
     candidate = { ...existing, ...shared, codex: isEmptyCodexConfig(codex) ? undefined : codex };
+  } else if (isAntigravityProvider(existing)) {
+    const antigravity: AntigravityProviderConfig = {
+      ...existing.antigravity,
+      ...input.antigravity,
+      ...(existing.antigravity?.models === undefined && input.antigravity?.models === undefined ? {} : { models: { ...existing.antigravity?.models, ...input.antigravity?.models } }),
+    };
+    candidate = { ...existing, ...shared, antigravity: isEmptyAntigravityConfig(antigravity) ? undefined : antigravity };
   } else {
     candidate = { ...existing, ...shared, ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }) };
   }

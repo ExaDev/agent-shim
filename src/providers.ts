@@ -3,7 +3,29 @@ import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDe
 import { addCredentialCacheOptions, cacheChange, collectCredentialSource, CREDENTIAL_SOURCE_SYNTAX, type CredentialCacheOptions } from "./cli/credentialOption";
 import { collectRepeated, collectStringPair } from "./cli/parsers";
 import { resolveCodexConfig } from "./codex/translate";
-import { CODEX_EFFORTS, CODEX_LOGINS, CODEX_TIERS, CodexProviderConfigSchema, isCodexProvider, PROVIDER_CREDENTIAL_TARGETS, PROVIDER_KINDS, type CodexEffort, type CodexLogin, type CodexProviderConfig, type CredentialSource, type Provider } from "./config/schema";
+import { resolveAntigravityConfig } from "./antigravity/translate";
+import {
+  ANTIGRAVITY_EFFORTS,
+  ANTIGRAVITY_MODES,
+  ANTIGRAVITY_TIERS,
+  AntigravityProviderConfigSchema,
+  CODEX_EFFORTS,
+  CODEX_LOGINS,
+  CODEX_TIERS,
+  CodexProviderConfigSchema,
+  isAntigravityProvider,
+  isCodexProvider,
+  PROVIDER_CREDENTIAL_TARGETS,
+  PROVIDER_KINDS,
+  type AntigravityEffort,
+  type AntigravityMode,
+  type AntigravityProviderConfig,
+  type CodexEffort,
+  type CodexLogin,
+  type CodexProviderConfig,
+  type CredentialSource,
+  type Provider,
+} from "./config/schema";
 import { UsageError } from "./cliError";
 import { describeCredential, summariseCredential } from "./credential";
 import { ProviderNotFoundError, providerExists, readProvider, listProviders, type ProviderCredentialTarget, type ProviderKind, describeProviderEndpoint, addProvider, updateProvider, removeProvider } from "./providersStore";
@@ -14,14 +36,76 @@ function toProviderView(name: string, provider: Provider): Record<string, unknow
     name,
     kind: provider.kind ?? "http",
     displayName: provider.displayName,
-    ...(isCodexProvider(provider) ? (provider.codex === undefined ? {} : { codex: provider.codex }) : { baseUrl: provider.baseUrl }),
+    ...(isCodexProvider(provider)
+      ? (provider.codex === undefined ? {} : { codex: provider.codex })
+      : isAntigravityProvider(provider)
+      ? (provider.antigravity === undefined ? {} : { antigravity: provider.antigravity })
+      : { baseUrl: provider.baseUrl }),
     credential: summariseCredential(provider.credential),
     ...(provider.env === undefined ? {} : { env: provider.env }),
   };
 }
 
+/** The antigravity settings options `provider add` and `provider set` share. */
+interface AntigravityOptions {
+  readonly antigravityMode?: AntigravityMode;
+  readonly antigravityDefaultModel?: string;
+  readonly antigravityModel?: Record<string, string>;
+  readonly antigravityEffort?: AntigravityEffort;
+  readonly antigravityEndpoint?: string;
+  readonly antigravityProjectId?: string;
+  readonly antigravityLocation?: string;
+  readonly antigravityCommand?: string[];
+  readonly antigravitySocket?: string;
+}
+
+/** The antigravity settings block the antigravity options describe, or undefined when none was given. */
+function antigravityConfigFromOptions(options: AntigravityOptions): AntigravityProviderConfig | undefined {
+  if (
+    options.antigravityMode === undefined &&
+    options.antigravityDefaultModel === undefined &&
+    options.antigravityModel === undefined &&
+    options.antigravityEffort === undefined &&
+    options.antigravityEndpoint === undefined &&
+    options.antigravityProjectId === undefined &&
+    options.antigravityLocation === undefined &&
+    options.antigravityCommand === undefined &&
+    options.antigravitySocket === undefined
+  ) {
+    return undefined;
+  }
+  const cloud =
+    options.antigravityEndpoint !== undefined || options.antigravityProjectId !== undefined || options.antigravityLocation !== undefined
+      ? {
+          ...(options.antigravityEndpoint === undefined ? {} : { endpoint: options.antigravityEndpoint }),
+          ...(options.antigravityProjectId === undefined ? {} : { projectId: options.antigravityProjectId }),
+          ...(options.antigravityLocation === undefined ? {} : { location: options.antigravityLocation }),
+        }
+      : undefined;
+  const local =
+    options.antigravityCommand !== undefined || options.antigravitySocket !== undefined
+      ? {
+          ...(options.antigravityCommand === undefined ? {} : { command: options.antigravityCommand }),
+          ...(options.antigravitySocket === undefined ? {} : { socketPath: options.antigravitySocket }),
+        }
+      : undefined;
+  const candidate = {
+    ...(options.antigravityMode === undefined ? {} : { mode: options.antigravityMode }),
+    ...(options.antigravityDefaultModel === undefined ? {} : { defaultModel: options.antigravityDefaultModel }),
+    ...(options.antigravityModel === undefined ? {} : { models: options.antigravityModel }),
+    ...(options.antigravityEffort === undefined ? {} : { effort: options.antigravityEffort }),
+    ...(cloud === undefined ? {} : { cloud }),
+    ...(local === undefined ? {} : { local }),
+  };
+  const parsed = AntigravityProviderConfigSchema.safeParse(candidate);
+  if (!parsed.success) {
+    throw new UsageError(`Invalid antigravity settings: ${parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
+  }
+  return parsed.data;
+}
+
 /** Options `provider add` accepts. */
-interface ProviderAddOptions extends CodexOptions {
+interface ProviderAddOptions extends CodexOptions, AntigravityOptions {
   readonly json?: boolean;
   readonly kind?: ProviderKind;
   readonly displayName: string;
@@ -58,7 +142,7 @@ function codexConfigFromOptions(options: CodexOptions): CodexProviderConfig | un
 }
 
 /** Options `provider set` accepts. */
-interface ProviderSetOptions extends CodexOptions, CredentialCacheOptions {
+interface ProviderSetOptions extends CodexOptions, AntigravityOptions, CredentialCacheOptions {
   readonly json?: boolean;
   readonly displayName?: string;
   readonly baseUrl?: string;
@@ -98,9 +182,19 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--codex-model <tier=model>", "Codex providers: the codex model one tier (fable, opus, sonnet or haiku) maps to (repeatable).", collectStringPair)
       .addOption(new Option("--codex-effort <effort>", "Codex providers: the reasoning effort when a request asks for none the backend accepts.").choices(CODEX_EFFORTS))
       .addOption(new Option("--codex-login <login>", "Codex providers: which login the upstream call uses, the Codex CLI's own login or a Sign in with ChatGPT grant from `agent-shim codex login`.").choices(CODEX_LOGINS))
+      .addOption(new Option("--antigravity-mode <mode>", "Antigravity providers: cloud (direct Gemini/Vertex) or local (ACP daemon).").choices(ANTIGRAVITY_MODES))
+      .option("--antigravity-default-model <model>", "Antigravity providers: the model a request maps to when no tier matches.")
+      .option("--antigravity-model <tier=model>", "Antigravity providers: the model one tier (fable, opus, sonnet or haiku) maps to (repeatable).", collectStringPair)
+      .addOption(new Option("--antigravity-effort <effort>", "Antigravity providers: reasoning effort.").choices(ANTIGRAVITY_EFFORTS))
+      .option("--antigravity-endpoint <url>", "Antigravity cloud providers: custom API endpoint URL.")
+      .option("--antigravity-project-id <id>", "Antigravity cloud providers: Google Cloud project ID (for Vertex AI).")
+      .option("--antigravity-location <loc>", "Antigravity cloud providers: Google Cloud location (for Vertex AI).")
+      .option("--antigravity-command <cmd...>", "Antigravity local providers: command to spawn ACP server.", collectRepeated)
+      .option("--antigravity-socket <path>", "Antigravity local providers: path to existing Unix domain socket.")
       .option("--json", "Print the result as JSON.")
       .action((name: string, options: ProviderAddOptions) => {
         const codex = codexConfigFromOptions(options);
+        const antigravity = antigravityConfigFromOptions(options);
         const created = addProvider(paths, name, {
           ...(options.kind === undefined ? {} : { kind: options.kind }),
           displayName: options.displayName,
@@ -109,6 +203,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(options.credentialTarget === undefined ? {} : { target: options.credentialTarget }),
           ...(options.env === undefined ? {} : { env: options.env }),
           ...(codex === undefined ? {} : { codex }),
+          ...(antigravity === undefined ? {} : { antigravity }),
         });
         reportMutation(options.json, { action: "created", kind: "provider", name, value: created }, () => {
           console.log(`Created provider "${name}" (${describeProviderEndpoint(created)}, credential ${describeCredential(created.credential)}).`);
@@ -121,6 +216,8 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       "agent-shim provider add local --display-name Local --base-url http://127.0.0.1:4000 --credential literal:dummy",
       "agent-shim provider add codex --kind codex --display-name Codex --credential literal:codex",
       "agent-shim provider add codex --kind codex --display-name Codex --credential literal:codex --codex-model sonnet=gpt-5.6-sol --codex-effort medium",
+      "agent-shim provider add agy-cloud --kind antigravity --display-name Antigravity --credential env:GEMINI_API_KEY",
+      "agent-shim provider add agy-local --kind antigravity --display-name Antigravity --antigravity-mode local --credential literal:placeholder",
     ],
   );
 
@@ -144,7 +241,16 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--codex-default-model <model>", "Codex providers: replace the model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: set the codex model one tier maps to (repeatable; other tiers are kept).", collectStringPair)
       .addOption(new Option("--codex-effort <effort>", "Codex providers: replace the default reasoning effort.").choices(CODEX_EFFORTS))
-      .addOption(new Option("--codex-login <login>", "Codex providers: replace which login the upstream call uses.").choices(CODEX_LOGINS));
+      .addOption(new Option("--codex-login <login>", "Codex providers: replace which login the upstream call uses.").choices(CODEX_LOGINS))
+      .addOption(new Option("--antigravity-mode <mode>", "Antigravity providers: cloud (direct Gemini/Vertex) or local (ACP daemon).").choices(ANTIGRAVITY_MODES))
+      .option("--antigravity-default-model <model>", "Antigravity providers: the model a request maps to when no tier matches.")
+      .option("--antigravity-model <tier=model>", "Antigravity providers: set the model one tier maps to (repeatable; other tiers are kept).", collectStringPair)
+      .addOption(new Option("--antigravity-effort <effort>", "Antigravity providers: reasoning effort.").choices(ANTIGRAVITY_EFFORTS))
+      .option("--antigravity-endpoint <url>", "Antigravity cloud providers: custom API endpoint URL.")
+      .option("--antigravity-project-id <id>", "Antigravity cloud providers: Google Cloud project ID (for Vertex AI).")
+      .option("--antigravity-location <loc>", "Antigravity cloud providers: Google Cloud location (for Vertex AI).")
+      .option("--antigravity-command <cmd...>", "Antigravity local providers: command to spawn ACP server.", collectRepeated)
+      .option("--antigravity-socket <path>", "Antigravity local providers: path to existing Unix domain socket.");
   addCredentialCacheOptions(providerSet);
   withExamples(
     providerSet
@@ -153,13 +259,15 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         const { json, ...options } = allOptions;
         if (Object.entries(allOptions).every(([key, value]) => key === "json" || value === undefined)) {
           throw new UsageError(
-            "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, a --credential-cache option, --env, --unset-env, --codex-default-model, --codex-model, --codex-effort or --codex-login.",
+            "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, a --credential-cache option, --env, --unset-env, or codex/antigravity settings.",
           );
         }
         const codex = codexConfigFromOptions(options);
+        const antigravity = antigravityConfigFromOptions(options);
         const cache = cacheChange(options, readProvider(paths, name)?.credential.cache);
         const updated = updateProvider(paths, name, {
           ...(codex === undefined ? {} : { codex }),
+          ...(antigravity === undefined ? {} : { antigravity }),
           ...(cache === undefined ? {} : { cache }),
           ...(options.displayName === undefined ? {} : { displayName: options.displayName }),
           ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
@@ -178,6 +286,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       "agent-shim provider set z --credential op:op://vault/z/credential --credential-cache-ttl 12h",
       "agent-shim provider set anthropic-api --credential-target apiKey",
       "agent-shim provider set codex --codex-model haiku=gpt-5.6-terra",
+      "agent-shim provider set agy --antigravity-model haiku=gemini-2.5-flash",
     ],
   );
 
@@ -225,6 +334,12 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           console.log(`Codex models: ${CODEX_TIERS.map((tier) => `${tier}=${config.models[tier]}`).join(", ")}, otherwise ${config.defaultModel}`);
           console.log(`Codex effort: ${config.effort}`);
           console.log(`Codex login: ${config.login}`);
+        } else if (isAntigravityProvider(found)) {
+          const config = resolveAntigravityConfig(found.antigravity);
+          console.log(`Antigravity mode: ${config.mode}`);
+          console.log(`Antigravity models: ${ANTIGRAVITY_TIERS.map((tier) => `${tier}=${config.models[tier]}`).join(", ")}, otherwise ${config.defaultModel}`);
+          console.log(`Antigravity effort: ${config.effort}`);
+          console.log(`Endpoint: ${describeProviderEndpoint(found)}`);
         } else {
           console.log(`Base URL: ${found.baseUrl}`);
         }

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigValidationError } from "./config/load";
 import type { FsPort } from "./launcher/ports";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import { addProvider, InvalidProviderNameError, LEGACY_LITERAL_PLACEHOLDER, legacyProviderConversion, LegacyProviderFileError, listProviders, loadProvider, ProviderAlreadyExistsError, providerExists, ProviderKindMismatchError, ProviderNotFoundError, readProvider, removeProvider, resolveProvider } from "./providersStore";
+import { addProvider, InvalidProviderNameError, LEGACY_LITERAL_PLACEHOLDER, legacyProviderConversion, LegacyProviderFileError, listProviders, loadProvider, ProviderAlreadyExistsError, providerExists, ProviderKindMismatchError, ProviderNotFoundError, readProvider, removeProvider, resolveProvider, updateProvider } from "./providersStore";
 import { fakeCredentials } from "./test-helpers";
 
 /** A minimal real-filesystem `FsPort` over the temp root, so `resolveProvider` is exercised against files `addProvider` actually wrote, the same way the real launcher reads them. */
@@ -93,6 +93,62 @@ describe("providers", () => {
       expect(tuned).toMatchObject({ codex: { models: { sonnet: "gpt-x" }, effort: "high" } });
     });
 
+    it("writes an antigravity provider with no base URL, and its antigravity settings", () => {
+      const cloud = addProvider(paths, "ag-cloud", {
+        kind: "antigravity",
+        displayName: "Google Antigravity",
+        sources: [{ env: "GEMINI_API_KEY" }],
+        antigravity: {
+          mode: "cloud",
+          defaultModel: "gemini-2.5-pro",
+          models: { sonnet: "gemini-2.5-flash" },
+          effort: "high",
+          cloud: { endpoint: "https://generativelanguage.googleapis.com" },
+        },
+      });
+      expect(cloud).toEqual({
+        kind: "antigravity",
+        displayName: "Google Antigravity",
+        credential: { sources: [{ env: "GEMINI_API_KEY" }] },
+        antigravity: {
+          mode: "cloud",
+          defaultModel: "gemini-2.5-pro",
+          models: { sonnet: "gemini-2.5-flash" },
+          effort: "high",
+          cloud: { endpoint: "https://generativelanguage.googleapis.com" },
+        },
+      });
+      expect(readProvider(paths, "ag-cloud")).toEqual(cloud);
+
+      const local = addProvider(paths, "ag-local", {
+        kind: "antigravity",
+        displayName: "ACP Daemon",
+        sources: [{ literal: "placeholder" }],
+        antigravity: {
+          mode: "local",
+          local: { command: ["antigravity-acp"] },
+        },
+      });
+      expect(readProvider(paths, "ag-local")).toEqual(local);
+    });
+
+    it("refuses a base URL on an antigravity provider and antigravity settings on an http provider", () => {
+      expect(() =>
+        addProvider(paths, "ag-bad", {
+          kind: "antigravity",
+          displayName: "AG",
+          baseUrl: "https://example.com",
+          sources: [{ literal: "x" }],
+        }),
+      ).toThrow(ProviderKindMismatchError);
+      expect(() =>
+        addProvider(paths, "h", {
+          ...zInput,
+          antigravity: { mode: "cloud" },
+        }),
+      ).toThrow(ProviderKindMismatchError);
+    });
+
     it("refuses a base URL on a codex provider, a missing one on an http provider, and codex settings on an http provider", () => {
       expect(() => addProvider(paths, "c", { kind: "codex", displayName: "Codex", baseUrl: "https://x.example", sources: [{ literal: "x" }] })).toThrow(ProviderKindMismatchError);
       expect(() => addProvider(paths, "h", { displayName: "H", sources: [{ env: "X" }] })).toThrow(ProviderKindMismatchError);
@@ -103,6 +159,35 @@ describe("providers", () => {
     it("throws ConfigValidationError, not a raw ZodError, for a baseUrl that is not a URL or an empty source list", () => {
       expect(() => addProvider(paths, "z", { ...zInput, baseUrl: "not-a-url" })).toThrow(ConfigValidationError);
       expect(() => addProvider(paths, "z", { ...zInput, sources: [] })).toThrow(ConfigValidationError);
+    });
+  });
+
+  describe("updateProvider", () => {
+    it("updates antigravity settings on an existing antigravity provider", () => {
+      addProvider(paths, "ag", {
+        kind: "antigravity",
+        displayName: "AG",
+        sources: [{ env: "KEY" }],
+        antigravity: { mode: "cloud" },
+      });
+
+      const updated = updateProvider(paths, "ag", {
+        antigravity: {
+          mode: "local",
+          defaultModel: "gemini-2.5-flash",
+          local: { socketPath: "/tmp/ag.sock" },
+        },
+      });
+
+      expect(updated).toMatchObject({
+        kind: "antigravity",
+        antigravity: {
+          mode: "local",
+          defaultModel: "gemini-2.5-flash",
+          local: { socketPath: "/tmp/ag.sock" },
+        },
+      });
+      expect(readProvider(paths, "ag")).toEqual(updated);
     });
   });
 

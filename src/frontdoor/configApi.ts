@@ -2,7 +2,7 @@ import { ORPCError } from "@orpc/client";
 import { openapi } from "@orpc/openapi";
 
 import { CliError } from "../cliError";
-import { type Pool, type Provider, isCodexProvider } from "../config/schema";
+import { type Pool, type Provider, isAntigravityProvider, isCodexProvider, isHttpProvider } from "../config/schema";
 import { applyProfileChange, createProfile, ProfileAlreadyExistsError, ProfileNotFoundError, readProfile, removeProfile, requireProfileExists, setGlobalDefaultProfile } from "../configProfilesStore";
 import { summariseCredential } from "../credential";
 import { mergeCredentialCache } from "../credentialCacheChange";
@@ -152,7 +152,11 @@ function providerValue(name: string, provider: Provider) {
     name,
     kind: provider.kind ?? "http",
     displayName: provider.displayName,
-    ...(isCodexProvider(provider) ? (provider.codex === undefined ? {} : { codex: provider.codex }) : { baseUrl: provider.baseUrl }),
+    ...(isCodexProvider(provider)
+      ? (provider.codex === undefined ? {} : { codex: provider.codex })
+      : isAntigravityProvider(provider)
+      ? (provider.antigravity === undefined ? {} : { antigravity: provider.antigravity })
+      : { baseUrl: provider.baseUrl }),
     credential: summariseCredential(provider.credential),
     ...(provider.env === undefined ? {} : { env: provider.env }),
   };
@@ -379,7 +383,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
               }
               const credential = input.credential;
               // The provider's stored credential would be attached to requests for the new endpoint, so a holder of the control token could point it at a host they run and collect the token. Moving the endpoint must restate the credential in the same call, which makes the caller supply the value's source rather than inherit it.
-              if (input.baseUrl !== undefined && !isCodexProvider(existing) && input.baseUrl !== existing.baseUrl && credential?.sources === undefined) {
+              if (input.baseUrl !== undefined && isHttpProvider(existing) && input.baseUrl !== existing.baseUrl && credential?.sources === undefined) {
                 throw new ORPCError("BAD_REQUEST", { message: `Changing the base URL of provider "${input.name}" requires a credential block in the same call: the stored credential is not sent to a different endpoint.` });
               }
               const cache =
