@@ -411,4 +411,16 @@ describe("codex route: login selection", () => {
     expect(headers.Authorization).toBe(`Bearer ${FAKE_ACCESS_TOKEN}`);
     expect(Object.keys(headers).sort()).toEqual(["Accept", "Authorization", "Content-Type"]);
   });
+
+  it("serves successfully when writeUsageSnapshot is omitted", async () => {
+    const cli = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
+    const route = createCodexRoute({
+      upstreams: sameUpstreamForEveryLogin({ fetch: cli.fetch, auth: fakeAuth(), timers: manualTimers(), randomId: () => "random" }),
+      loadProvider: () => ({ ok: true, config: resolveCodexConfig(undefined) }),
+      now: () => NOW,
+      log: () => undefined,
+    });
+    const response = await route(post(MESSAGES_PATH, BODY));
+    expect(response.status).toBe(HTTP_STATUS.ok);
+  });
 });

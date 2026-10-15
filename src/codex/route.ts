@@ -38,8 +38,8 @@ export interface CodexRoutePorts {
   readonly upstreams: Readonly<Record<CodexLogin, CodexUpstreamPorts>>;
   /** Loads the named provider's translation settings, read per request so an edited provider file applies to the next request with no restart. */
   readonly loadProvider: (name: string) => CodexProviderLookup;
-  /** Persists the usage snapshot a statusline reads. Failures are the port's to report; they never fail the request. */
-  readonly writeUsageSnapshot: (snapshot: UsageSnapshot) => void;
+  /** Persists the usage snapshot a statusline reads when configured. Failures are the port's to report; they never fail the request. */
+  readonly writeUsageSnapshot?: (snapshot: UsageSnapshot) => void;
   readonly now: () => number;
   readonly log: (line: string) => void;
 }
@@ -123,9 +123,11 @@ export function createCodexRoute(ports: CodexRoutePorts): (request: RouteRequest
     }
 
     const snapshot = (quotaError: CodexErrorDetail | undefined): void => {
-      const built = buildUsageSnapshot(upstream.headers, quotaError, ports.now());
-      if (built !== undefined) {
-        ports.writeUsageSnapshot(built);
+      if (ports.writeUsageSnapshot !== undefined) {
+        const built = buildUsageSnapshot(upstream.headers, quotaError, ports.now());
+        if (built !== undefined) {
+          ports.writeUsageSnapshot(built);
+        }
       }
     };
 
