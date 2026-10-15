@@ -74,8 +74,7 @@ export function resolveAntigravityConfig(config: AntigravityProviderConfig | und
 }
 
 /**
- * Maps a requested Claude model name onto an Antigravity/Gemini model name.
- * If the requested model already names a gemini model (e.g. `gemini-...`), it passes through untouched.
+ * Maps a requested Claude model name onto a Gemini model name. A name that already targets the backend directly (a `gemini-...` or `antigravity-...` model) passes through untouched; every other name is mapped onto its tier's model.
  */
 export function mapModel(requested: string, config: ResolvedAntigravityConfig): string {
   if (requested.startsWith("gemini-") || requested.startsWith("antigravity-")) {
