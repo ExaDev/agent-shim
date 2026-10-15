@@ -42,9 +42,9 @@ describe("unifiedAntigravityQuotaHeaders", () => {
     });
 
     expect(headers["anthropic-ratelimit-unified-status"]).toBe("allowed");
-    expect(headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("25");
+    expect(headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("0.250");
     expect(headers["anthropic-ratelimit-unified-5h-reset"]).toBe(String(NOW_SEC + FIVE_HOURS_SEC));
-    expect(headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("10");
+    expect(headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("0.100");
     expect(headers["anthropic-ratelimit-unified-7d-reset"]).toBe(String(NOW_SEC + SEVEN_DAYS_SEC));
     expect(headers["anthropic-ratelimit-unified-reset"]).toBe(String(NOW_SEC + FIVE_HOURS_SEC));
   });
@@ -69,9 +69,9 @@ describe("unifiedAntigravityQuotaHeaders", () => {
     });
 
     expect(headers["anthropic-ratelimit-unified-status"]).toBe("allowed");
-    expect(headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("60");
+    expect(headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("0.600");
     expect(headers["anthropic-ratelimit-unified-5h-reset"]).toBe(String(NOW_SEC + HALF_HOUR_SEC));
-    expect(headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("40");
+    expect(headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("0.400");
     expect(headers["anthropic-ratelimit-unified-reset"]).toBe(String(NOW_SEC + HALF_HOUR_SEC));
   });
 
@@ -83,9 +83,9 @@ describe("unifiedAntigravityQuotaHeaders", () => {
     });
 
     expect(headers["anthropic-ratelimit-unified-status"]).toBe("rejected");
-    expect(headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("100");
+    expect(headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("1.000");
     expect(headers["anthropic-ratelimit-unified-5h-reset"]).toBe(String(NOW_SEC + RETRY_AFTER_TEST_SEC));
-    expect(headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("100");
+    expect(headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("1.000");
     expect(headers["anthropic-ratelimit-unified-reset"]).toBe(String(NOW_SEC + RETRY_AFTER_TEST_SEC));
   });
 

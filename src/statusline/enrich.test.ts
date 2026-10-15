@@ -3,14 +3,16 @@ import { describe, expect, it } from "vitest";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import type { UsageSnapshot } from "../usage/schema";
 
+const GEMINI_WEEKLY_USED_PERCENT = 28;
+
 const SNAPSHOT = {
   schemaVersion: 1,
   identity: "antigravity",
   updatedAt: "2026-10-15T20:07:50.836Z",
   providers: {
-    anthropic: { rateLimit: { unified: { fiveHour: { utilization: 3, resetsAt: "2026-10-15T18:52:54.000Z" }, sevenDay: { utilization: 2, resetsAt: "2026-10-22T13:52:54.000Z" } } } },
+    anthropic: { rateLimit: { unified: { fiveHour: { utilization: 0.03, resetsAt: "2026-10-15T18:52:54.000Z" }, sevenDay: { utilization: 0.02, resetsAt: "2026-10-22T13:52:54.000Z" } } } },
     antigravity: {
-      rateLimit: { unified: { fiveHour: { utilization: 9, resetsAt: "2026-10-15T20:45:00.000Z" }, sevenDay: { utilization: 28, resetsAt: "2026-10-22T13:52:54.000Z" } } },
+      rateLimit: { unified: { fiveHour: { utilization: 0.094, resetsAt: "2026-10-15T20:45:00.000Z" }, sevenDay: { utilization: 0.282, resetsAt: "2026-10-22T13:52:54.000Z" } } },
       quota: { account: { email: "ada@example.com", accountId: "123456789012345678901" } },
     },
   },
@@ -45,6 +47,23 @@ describe("enrichStatuslinePayload", () => {
       sevenDayResetAt: "2026-10-22T13:52:54.000Z",
     });
     expect(payload).toEqual({ model: { display_name: "gemini-3.8-flash" }, agent_shim: summary });
+  });
+
+  it("scopes a provider session's windows to that provider, leaving the login account's out of the main line", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: {},
+      env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: antigravity", AGENT_SHIM_PROVIDER: "Antigravity" },
+      snapshot: {
+        ...SNAPSHOT,
+        providers: {
+          ...SNAPSHOT.providers,
+          anthropic: { rateLimit: { unified: { fiveHour: { utilization: 0.81, resetsAt: "2026-10-15T21:00:00.000Z" }, sevenDay: { utilization: 1, resetsAt: "2026-10-16T21:59:59.000Z" } } } },
+        },
+      } as unknown as UsageSnapshot,
+    });
+    // The anthropic login's spent week does not become this session's usage line.
+    expect(summary.sevenDayUsed).toBe(GEMINI_WEEKLY_USED_PERCENT);
+    expect(summary.providerAccountEmail).toBe("ada@example.com");
   });
 
   it("carries identity and provider alone when there is no snapshot, and passes a non-object payload through unchanged", () => {
