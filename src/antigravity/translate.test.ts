@@ -84,6 +84,17 @@ describe("mapModel", () => {
     expect(mapModel("antigravity-custom", defaults)).toBe("antigravity-custom");
   });
 
+  it("strips a trailing 1m context marker before mapping, so the marker sizes Claude Code's window and never reaches the backend", () => {
+    expect(mapModel("gemini-3.8-flash-high[1m]", defaults)).toBe("gemini-3.8-flash-high");
+    expect(mapModel("claude-sonnet-5-5[1m]", defaults)).toBe("gemini-3.8-flash-medium");
+    expect(mapModel("claude-fable-5[1m]", defaults)).toBe("gemini-3.8-flash-high");
+  });
+
+  it("completes a marked bare family member as if unmarked", () => {
+    const translated = translateRequest(request({ model: "gemini-3.8-flash[1m]", output_config: { effort: "high" }, messages: [{ role: "user", content: "Hi" }] }), defaults);
+    expect(translated.model).toBe("gemini-3.8-flash-high");
+  });
+
   it("maps claude names with effort suffixes by tier", () => {
     expect(mapModel("claude-sonnet-5-5-high", defaults)).toBe("gemini-3.8-flash-medium");
     expect(mapModel("claude-opus-5-5-high", defaults)).toBe("gemini-3.8-flash-high");
