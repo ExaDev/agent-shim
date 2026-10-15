@@ -1,4 +1,4 @@
-import { isCodexProvider, type Provider } from "../config/schema";
+import { isHttpProvider, type Provider } from "../config/schema";
 import { frontDoorOrigin, readFrontDoorState } from "../frontdoor/state";
 import type { LayoutPaths } from "../paths";
 import { HEADROOM_ALLOWLIST_FILE_FLAG, hashAllowlist, readAllProviders, type HeadroomFs } from "./state";
@@ -57,7 +57,7 @@ const EARLIER_RELEASE_ANTHROPIC_UPSTREAM = "https://api.anthropic.com";
 export function earlierReleaseAllowlistHash(providers: readonly Provider[], doorOrigin: string | undefined): string {
   const entries = new Set<string>([EARLIER_RELEASE_ANTHROPIC_UPSTREAM]);
   for (const provider of providers) {
-    if (!isCodexProvider(provider)) {
+    if (isHttpProvider(provider)) {
       entries.add(provider.baseUrl);
     }
   }

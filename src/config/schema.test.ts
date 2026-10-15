@@ -20,6 +20,7 @@ import {
   OVERRIDABLE_CATEGORIES,
   PortableConfigSchema,
   isCodexProvider,
+  isAntigravityProvider,
   ProviderSchema,
   SHIPPED_CATEGORY_DEFAULTS,
   WhenConditionObjectSchema,
@@ -326,6 +327,40 @@ describe("ProviderSchema", () => {
     expect(ProviderSchema.safeParse({ kind: "codex", displayName: "Codex", credential, codex: { effort: "max" } }).success).toBe(false);
     expect(ProviderSchema.safeParse({ ...base, credential, codex: {} }).success).toBe(false);
     expect(ProviderSchema.safeParse({ kind: "other", ...base, credential }).success).toBe(false);
+  });
+
+  it("accepts an antigravity provider with cloud or local settings", () => {
+    const cloudAg = ProviderSchema.parse({
+      kind: "antigravity",
+      displayName: "Antigravity Cloud",
+      credential: { sources: [{ env: "GEMINI_API_KEY" }], target: "apiKey" },
+      antigravity: {
+        mode: "cloud",
+        defaultModel: "gemini-2.5-pro",
+        models: { sonnet: "gemini-2.5-flash" },
+        effort: "high",
+        cloud: { endpoint: "https://generativelanguage.googleapis.com" },
+      },
+    });
+    expect(isAntigravityProvider(cloudAg)).toBe(true);
+
+    const localAg = ProviderSchema.parse({
+      kind: "antigravity",
+      displayName: "Antigravity Local",
+      credential: { sources: [{ literal: "placeholder" }] },
+      antigravity: {
+        mode: "local",
+        local: { command: ["antigravity-acp"] },
+      },
+    });
+    expect(isAntigravityProvider(localAg)).toBe(true);
+    expect(ProviderSchema.safeParse({ kind: "antigravity", displayName: "Antigravity", credential }).success).toBe(true);
+  });
+
+  it("rejects an antigravity provider with a base URL, an unknown mode or effort, and invalid settings", () => {
+    expect(ProviderSchema.safeParse({ kind: "antigravity", ...base, credential }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ kind: "antigravity", displayName: "Antigravity", credential, antigravity: { mode: "unknown" } }).success).toBe(false);
+    expect(ProviderSchema.safeParse({ kind: "antigravity", displayName: "Antigravity", credential, antigravity: { effort: "ultra" } }).success).toBe(false);
   });
 
   it("reports which field an invalid http provider is missing", () => {

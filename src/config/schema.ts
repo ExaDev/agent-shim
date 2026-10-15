@@ -221,7 +221,71 @@ const ProviderEnvSchema = z
   });
 
 /** The kinds of provider: `http` is an Anthropic Messages endpoint at a fixed `baseUrl` (the default when `kind` is absent), and `codex` is ChatGPT's Codex backend reached through agent-shim's own supervised translation daemon. */
-export const PROVIDER_KINDS = ["http", "codex"] as const;
+export const PROVIDER_KINDS = ["http", "codex", "antigravity"] as const;
+
+/**
+ * The operational modes for an Antigravity provider: `cloud` makes direct HTTPS calls to Google Gemini API or Vertex AI; `local` communicates with an Agent Client Protocol (ACP) server or local daemon.
+ */
+export const ANTIGRAVITY_MODES = ["cloud", "local"] as const;
+export type AntigravityMode = (typeof ANTIGRAVITY_MODES)[number];
+
+export const ANTIGRAVITY_TIERS = ["fable", "opus", "sonnet", "haiku"] as const;
+export type AntigravityTier = (typeof ANTIGRAVITY_TIERS)[number];
+
+export const ANTIGRAVITY_EFFORTS = ["none", "low", "medium", "high", "xhigh", "max"] as const;
+export type AntigravityEffort = (typeof ANTIGRAVITY_EFFORTS)[number];
+
+export const ANTIGRAVITY_DEFAULT_MODE: AntigravityMode = "cloud";
+export const ANTIGRAVITY_DEFAULT_MODEL = "gemini-2.5-pro";
+export const ANTIGRAVITY_DEFAULT_TIER_MODELS: Readonly<Record<AntigravityTier, string>> = Object.freeze({
+  fable: "gemini-2.5-pro",
+  opus: "gemini-2.5-pro",
+  sonnet: "gemini-2.5-flash",
+  haiku: "gemini-2.5-flash",
+});
+export const ANTIGRAVITY_DEFAULT_EFFORT: AntigravityEffort = "low";
+
+/**
+ * How an Antigravity provider translates Claude Code's requests and connects to its backend.
+ */
+export const AntigravityProviderConfigSchema = z.strictObject({
+  /** Operational mode: direct cloud endpoint or local ACP daemon. Defaults to `cloud`. */
+  mode: z.enum(ANTIGRAVITY_MODES).optional(),
+  /** The model a request maps to when no tier matches its model name. */
+  defaultModel: z.string().min(1).optional(),
+  /** Per-tier overrides of the shipped mapping, matched by substring of the requested model name in `ANTIGRAVITY_TIERS` order. */
+  models: z
+    .strictObject({
+      fable: z.string().min(1).optional(),
+      opus: z.string().min(1).optional(),
+      sonnet: z.string().min(1).optional(),
+      haiku: z.string().min(1).optional(),
+    } satisfies Record<AntigravityTier, z.ZodType>)
+    .optional(),
+  /** The reasoning effort used when the request's own effort is not one the backend accepts. */
+  effort: z.enum(ANTIGRAVITY_EFFORTS).optional(),
+  /** Cloud-specific settings (for `mode: "cloud"`). */
+  cloud: z
+    .strictObject({
+      /** Google Gemini API or custom gateway endpoint. Defaults to `https://generativelanguage.googleapis.com`. */
+      endpoint: z.url().optional(),
+      /** Google Cloud Project ID (when using Vertex AI). */
+      projectId: z.string().min(1).optional(),
+      /** Google Cloud location/region (when using Vertex AI). */
+      location: z.string().min(1).optional(),
+    })
+    .optional(),
+  /** Local-specific settings (for `mode: "local"`). */
+  local: z
+    .strictObject({
+      /** Command and arguments to spawn the ACP server process. */
+      command: z.array(z.string().min(1)).min(1).optional(),
+      /** Path to an existing Unix domain socket to connect to instead of spawning a process. */
+      socketPath: z.string().min(1).optional(),
+    })
+    .optional(),
+});
+export type AntigravityProviderConfig = z.infer<typeof AntigravityProviderConfigSchema>;
 
 /**
  * The Claude model tiers the codex translator maps, in the order they are matched: the first tier whose name is a substring of the requested model (case-insensitive) decides the codex model. `fable` comes before `opus` because a fable model name is the most specific.
@@ -305,6 +369,7 @@ const HttpProviderSchema = z.strictObject({
   /** Per-request routing: when present, each request this provider would serve is matched against the list in order, and the first definite match is sent to that entry's provider instead (itself resolved exactly as a directly dialled request would be). Unmatched requests stay on this provider. */
   routes: z.array(ProviderRouteSchema).optional(),
 });
+export type HttpProvider = z.infer<typeof HttpProviderSchema>;
 
 /** A `codex` provider: see `ProviderSchema`. */
 const CodexProviderSchema = z.strictObject({
@@ -317,13 +382,34 @@ const CodexProviderSchema = z.strictObject({
 });
 export type CodexProvider = z.infer<typeof CodexProviderSchema>;
 
-/** Either kind of provider; see `HttpProviderSchema` for the shared fields. */
-export const ProviderSchema = z.discriminatedUnion("kind", [HttpProviderSchema, CodexProviderSchema]);
+/** An `antigravity` provider: see `ProviderSchema`. */
+const AntigravityProviderSchema = z.strictObject({
+  $schema: z.string().optional(),
+  kind: z.literal("antigravity"),
+  displayName: z.string().min(1),
+  credential: ProviderCredentialSchema,
+  env: ProviderEnvSchema.optional(),
+  antigravity: AntigravityProviderConfigSchema.optional(),
+});
+export type AntigravityProvider = z.infer<typeof AntigravityProviderSchema>;
+
+/** All kinds of provider; see `HttpProviderSchema` for the shared fields. */
+export const ProviderSchema = z.discriminatedUnion("kind", [HttpProviderSchema, CodexProviderSchema, AntigravityProviderSchema]);
 export type Provider = z.infer<typeof ProviderSchema>;
+
+/** True when `provider` is an http provider. */
+export function isHttpProvider(provider: Provider): provider is HttpProvider {
+  return provider.kind === undefined || provider.kind === "http";
+}
 
 /** True when `provider` is a codex provider. `kind` is the tag, since a codex provider's own distinguishing block is optional. */
 export function isCodexProvider(provider: Provider): provider is CodexProvider {
   return provider.kind === "codex";
+}
+
+/** True when `provider` is an antigravity provider. */
+export function isAntigravityProvider(provider: Provider): provider is AntigravityProvider {
+  return provider.kind === "antigravity";
 }
 
 /**

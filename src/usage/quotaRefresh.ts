@@ -1,4 +1,4 @@
-import { isCodexProvider } from "../config/schema";
+import { isHttpProvider } from "../config/schema";
 import { resolveCredential, type CredentialPort } from "../credential";
 import type { FsPort } from "../launcher/ports";
 import { loadProvider } from "../providersStore";
@@ -133,7 +133,7 @@ export interface ProviderLookupPorts {
 export function createProviderLookup(ports: ProviderLookupPorts): (name: string) => QuotaProviderLookup | undefined {
   return (name) => {
     const definition = loadProvider(ports.providersDir, name, ports.fs);
-    if (definition === undefined || isCodexProvider(definition)) {
+    if (definition === undefined || !isHttpProvider(definition)) {
       return undefined;
     }
     return {
