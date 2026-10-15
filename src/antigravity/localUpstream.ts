@@ -4,7 +4,7 @@ import readline from "node:readline";
 import { z } from "zod";
 
 import type { ResolvedAntigravityConfig } from "./translate";
-import type { GeminiGenerateContentRequest, GeminiGenerateContentResponseChunk } from "./geminiSchema";
+import type { GeminiCandidate, GeminiGenerateContentRequest, GeminiGenerateContentResponseChunk } from "./geminiSchema";
 
 export const DEFAULT_ACP_COMMAND = ["antigravity-acp"];
 
@@ -103,6 +103,23 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function normalizeFinishReason(reason?: string): GeminiCandidate["finishReason"] {
+  if (reason === undefined) {
+    return undefined;
+  }
+  if (reason === "STOP" || reason === "MAX_TOKENS" || reason === "SAFETY" || reason === "RECITATION" || reason === "OTHER") {
+    return reason;
+  }
+  const lower = reason.toLowerCase();
+  if (lower === "stop" || lower === "end_turn") {
+    return "STOP";
+  }
+  if (lower === "max_tokens" || lower === "length") {
+    return "MAX_TOKENS";
+  }
+  return "OTHER";
+}
+
 function parseJsonRecord(raw: string | undefined): Readonly<Record<string, unknown>> {
   if (raw === undefined) {
     return {};
@@ -197,7 +214,7 @@ export async function* callLocalAntigravity(
             candidates: [
               {
                 content: { parts },
-                finishReason: msg.params.finishReason,
+                finishReason: normalizeFinishReason(msg.params.finishReason),
               },
             ],
           };

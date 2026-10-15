@@ -75,7 +75,12 @@ describe("createAntigravityRelay", () => {
       data: {
         type: "message_delta",
         delta: { stop_reason: "end_turn", stop_sequence: null },
-        usage: { output_tokens: 8 },
+        usage: {
+          input_tokens: 15,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+          output_tokens: 8,
+        },
       },
     });
     expect(step2.frames[3]).toEqual({

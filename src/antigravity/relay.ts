@@ -165,7 +165,7 @@ export function createAntigravityRelay(params: RelayParams): {
       }
     }
 
-    if (candidate?.finishReason !== undefined && candidate.finishReason !== "") {
+    if (candidate?.finishReason !== undefined) {
       const stopReason: StopReason = sawToolUse
         ? "tool_use"
         : candidate.finishReason === "MAX_TOKENS"
@@ -178,7 +178,7 @@ export function createAntigravityRelay(params: RelayParams): {
         data: {
           type: "message_delta",
           delta: { stop_reason: stopReason, stop_sequence: null },
-          usage: { output_tokens: usage.output_tokens },
+          usage,
         },
       });
       frames.push({
@@ -202,7 +202,7 @@ export function createAntigravityRelay(params: RelayParams): {
         data: {
           type: "message_delta",
           delta: { stop_reason: stopReason, stop_sequence: null },
-          usage: { output_tokens: usage.output_tokens },
+          usage,
         },
       });
       frames.push({
