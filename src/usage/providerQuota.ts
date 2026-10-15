@@ -2,8 +2,8 @@ import { z } from "zod";
 
 import { ProviderQuotaSchema, type ProviderQuota, type ProviderQuotaWindow } from "./schema";
 
-/** One GET against a provider's usage endpoint: the status and body text, or a rejection for a transport failure. */
-export type QuotaHttpGet = (url: string, headers: Readonly<Record<string, string>>, signal: AbortSignal) => Promise<{ readonly status: number; readonly text: string }>;
+/** One request against a provider's usage endpoint: the status and body text, or a rejection for a transport failure. A GET unless `options` says otherwise; adapters that POST carry their body there. */
+export type QuotaHttpGet = (url: string, headers: Readonly<Record<string, string>>, signal: AbortSignal, options?: { readonly method?: "GET" | "POST"; readonly body?: string }) => Promise<{ readonly status: number; readonly text: string }>;
 
 /** A provider whose quota can only be read from its own usage endpoint, because its responses carry no quota headers. */
 export interface ProviderQuotaAdapter {
@@ -189,7 +189,82 @@ export const openRouterQuotaAdapter: ProviderQuotaAdapter = {
 };
 
 /** Every adapter the project has, in match order. */
-const PROVIDER_QUOTA_ADAPTERS: readonly ProviderQuotaAdapter[] = [zaiQuotaAdapter, openRouterQuotaAdapter];
+const ANTIGRAVITY_SOURCE = "Cloud Code";
+const ANTIGRAVITY_HOST = "daily-cloudcode-pa.googleapis.com";
+const ANTIGRAVITY_QUOTA_URL = `https://${ANTIGRAVITY_HOST}/v1internal:retrieveUserQuotaSummary`;
+const GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo";
+const FIVE_HOURS = 5;
+const DAYS_PER_WEEK = 7;
+const FIVE_HOURS_MS = FIVE_HOURS * SECONDS_PER_HOUR * MS_PER_SECOND;
+const WEEK_MS = DAYS_PER_WEEK * HOURS_PER_DAY * SECONDS_PER_HOUR * MS_PER_SECOND;
+
+const AntigravityBucketSchema = z.object({
+  bucketId: z.string(),
+  remainingFraction: z.number().optional(),
+  resetTime: z.string().optional(),
+});
+
+const AntigravitySummarySchema = z.object({ groups: z.array(z.object({ buckets: z.array(AntigravityBucketSchema) })) });
+
+const GoogleTokenInfoSchema = z.object({
+  email: z.string().optional(),
+  sub: z.string().optional(),
+});
+
+/** How long each of the summary's named windows lasts, when the name is one this project knows. */
+const ANTIGRAVITY_WINDOW_MS: Readonly<Record<string, number>> = { "gemini-5h": FIVE_HOURS_MS, "3p-5h": FIVE_HOURS_MS, "gemini-weekly": WEEK_MS, "3p-weekly": WEEK_MS };
+
+/**
+ * The Cloud Code endpoint behind an antigravity provider: its quota summary (the same RPC the backend's own CLI polls, windows named by their bucket id) and Google's tokeninfo for the account the provider's OAuth token belongs to. The token is sent as a Bearer, the form the endpoint's generate route already accepts.
+ */
+export const antigravityQuotaAdapter: ProviderQuotaAdapter = {
+  source: ANTIGRAVITY_SOURCE,
+  matches: (baseUrl) => URL.canParse(baseUrl) && new URL(baseUrl).hostname === ANTIGRAVITY_HOST,
+  fetch: async (apiKey, http, signal, nowMs) => {
+    const headers = { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
+    const summaryResponse = await http(ANTIGRAVITY_QUOTA_URL, headers, signal, { method: "POST", body: JSON.stringify({ project: "aicode-consumers" }) });
+    if (summaryResponse.status !== HTTP_OK) {
+      throw new ProviderQuotaError(ANTIGRAVITY_SOURCE, `answered HTTP ${String(summaryResponse.status)}`);
+    }
+    let summaryBody: unknown;
+    try {
+      summaryBody = JSON.parse(summaryResponse.text);
+    } catch {
+      throw new ProviderQuotaError(ANTIGRAVITY_SOURCE, "answered something that is not JSON");
+    }
+    const parsed = AntigravitySummarySchema.safeParse(summaryBody);
+    if (!parsed.success) {
+      throw new ProviderQuotaError(ANTIGRAVITY_SOURCE, `answered an unexpected shape: ${parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
+    }
+    const tokenResponse = await http(`${GOOGLE_TOKENINFO_URL}?access_token=${encodeURIComponent(apiKey)}`, { accept: "application/json" }, signal);
+    let account: { email?: string; accountId?: string } | undefined;
+    if (tokenResponse.status === HTTP_OK) {
+      try {
+        const tokenInfo = GoogleTokenInfoSchema.parse(JSON.parse(tokenResponse.text));
+        if (tokenInfo.email !== undefined || tokenInfo.sub !== undefined) {
+          account = { ...(tokenInfo.email === undefined ? {} : { email: tokenInfo.email }), ...(tokenInfo.sub === undefined ? {} : { accountId: tokenInfo.sub }) };
+        }
+      } catch {
+        // The account is optional enrichment; a tokeninfo that does not parse costs only the label, not the quota.
+      }
+    }
+    return ProviderQuotaSchema.parse({
+      observedAt: new Date(nowMs).toISOString(),
+      source: ANTIGRAVITY_SOURCE,
+      ...(account === undefined ? {} : { account }),
+      windows: parsed.data.groups.flatMap((group) =>
+        group.buckets.map((bucket) => ({
+          measures: bucket.bucketId,
+          ...(ANTIGRAVITY_WINDOW_MS[bucket.bucketId] === undefined ? {} : { periodMs: ANTIGRAVITY_WINDOW_MS[bucket.bucketId] }),
+          utilization: bucket.remainingFraction === undefined ? 0 : 1 - bucket.remainingFraction,
+          ...(bucket.resetTime === undefined ? {} : { resetsAt: bucket.resetTime }),
+        })),
+      ),
+    } satisfies ProviderQuota);
+  },
+};
+
+const PROVIDER_QUOTA_ADAPTERS: readonly ProviderQuotaAdapter[] = [zaiQuotaAdapter, openRouterQuotaAdapter, antigravityQuotaAdapter];
 
 /** The adapter serving a provider with this base URL, or undefined when its quota is not readable from an endpoint. */
 export function adapterFor(baseUrl: string): ProviderQuotaAdapter | undefined {
