@@ -17,6 +17,12 @@ const DEFAULT_LOCAL_CONFIG: ResolvedAntigravityConfig = resolveAntigravityConfig
   },
 });
 
+const TEST_NOW_MS = 1_700_000_000_000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 async function collectStream(stream: Readonly<AsyncIterable<string>>): Promise<string> {
   const parts: string[] = [];
   for await (const chunk of stream) {
@@ -244,7 +250,7 @@ describe("createAntigravityRoute", () => {
     expect(fullStream).toContain("event: message_stop");
   });
 
-  it("emits error frame when upstream rejects", async () => {
+  it("returns error response with status code when upstream rejects", async () => {
     const mockFetch: typeof fetch = async () => {
       return await Promise.resolve(new Response("Unauthorized", { status: 401 }));
     };
@@ -269,9 +275,100 @@ describe("createAntigravityRoute", () => {
       signal: new AbortController().signal,
     });
 
+    expect(res.status).toBe(HTTP_STATUS.unauthorized);
+    expect(res.headers["Content-Type"]).toBe("application/json");
+    const body: unknown = typeof res.body === "string" ? JSON.parse(res.body) : null;
+    const errMsg = isRecord(body) && isRecord(body.error) && typeof body.error.message === "string" ? body.error.message : "";
+    expect(errMsg).toContain("Google Antigravity API error (401)");
+  });
+
+  it("returns 429 with unified rate-limit headers on quota exhaustion", async () => {
+    const mockFetch: typeof fetch = async () => {
+      return await Promise.resolve(
+        new Response("Resource has been exhausted (e.g. check quota)", {
+          status: HTTP_STATUS.tooManyRequests,
+          headers: { "retry-after": "45" },
+        }),
+      );
+    };
+
+    const route = createAntigravityRoute({
+      loadProvider: () => ({
+        ok: true,
+        config: DEFAULT_CLOUD_CONFIG,
+        token: "key",
+      }),
+      fetchFn: mockFetch,
+    });
+
+    const res = await route({
+      method: "POST",
+      path: "/providers/ag/v1/messages",
+      body: JSON.stringify({
+        model: "claude-3-7-sonnet-20250219",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "Hi" }],
+      }),
+      signal: new AbortController().signal,
+    });
+
+    expect(res.status).toBe(HTTP_STATUS.tooManyRequests);
+    expect(res.headers["anthropic-ratelimit-unified-status"]).toBe("rejected");
+    expect(res.headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("100");
+    expect(res.headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("100");
+    expect(res.headers["retry-after"]).toBe("45");
+    const body: unknown = typeof res.body === "string" ? JSON.parse(res.body) : null;
+    const errType = isRecord(body) && isRecord(body.error) && typeof body.error.type === "string" ? body.error.type : "";
+    expect(errType).toBe("rate_limit_error");
+  });
+
+  it("attaches local ACP quota headers when quotaSource is provided", async () => {
+    const fakeConnector = () => {
+      return {
+        send: () => undefined,
+        lines: (async function* () {
+          await Promise.resolve();
+          yield JSON.stringify({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              delta: { text: "Hello with quota!" },
+              finishReason: "STOP",
+            },
+          });
+        })(),
+        close: () => undefined,
+      };
+    };
+
+    const route = createAntigravityRoute({
+      loadProvider: () => ({
+        ok: true,
+        config: DEFAULT_LOCAL_CONFIG,
+        token: "",
+      }),
+      localConnector: fakeConnector,
+      quotaSource: () => ({
+        "3p-5h": { remaining_fraction: 0.8, reset_in_seconds: 3600 },
+        "3p-weekly": { remaining_fraction: 0.95, reset_in_seconds: 86400 },
+      }),
+      now: () => TEST_NOW_MS,
+    });
+
+    const res = await route({
+      method: "POST",
+      path: "/providers/ag-local/v1/messages",
+      body: JSON.stringify({
+        model: "claude-3-7-sonnet-20250219",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "Hi" }],
+      }),
+      signal: new AbortController().signal,
+    });
+
     expect(res.status).toBe(HTTP_STATUS.ok);
-    const fullStream = await collectStream(res.body as AsyncIterable<string>);
-    expect(fullStream).toContain("event: error");
-    expect(fullStream).toContain("Google Antigravity API error (401)");
+    expect(res.headers["anthropic-ratelimit-unified-status"]).toBe("allowed");
+    expect(res.headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("20");
+    expect(res.headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("5");
   });
 });

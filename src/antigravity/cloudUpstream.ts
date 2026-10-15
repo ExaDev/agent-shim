@@ -37,6 +37,18 @@ export function buildCloudHeaders(token: string, credentialTarget?: "bearer" | "
   return headers;
 }
 
+export class AntigravityUpstreamError extends Error {
+  readonly status: number;
+  readonly retryAfter?: string | null;
+
+  constructor(status: number, message: string, retryAfter?: string | null) {
+    super(`Google Antigravity API error (${String(status)}): ${message}`);
+    this.name = "AntigravityUpstreamError";
+    this.status = status;
+    this.retryAfter = retryAfter;
+  }
+}
+
 /**
  * Performs a streaming call to Google Gemini / Vertex AI and yields parsed response chunks.
  */
@@ -56,7 +68,8 @@ export async function* callCloudAntigravity(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Google Antigravity API error (${String(response.status)}): ${errorText}`);
+    const retryAfter = response.headers.get("retry-after");
+    throw new AntigravityUpstreamError(response.status, errorText, retryAfter);
   }
 
   if (response.body === null) {

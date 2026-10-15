@@ -4,9 +4,11 @@ import { HTTP_STATUS } from "../codex/http";
 import { MessagesRequestSchema } from "../codex/anthropic";
 import { createAntigravityRelay, renderSseFrame } from "./relay";
 import { translateRequest, type ResolvedAntigravityConfig } from "./translate";
-import { callCloudAntigravity } from "./cloudUpstream";
+import { callCloudAntigravity, AntigravityUpstreamError } from "./cloudUpstream";
 import { callLocalAntigravity } from "./localUpstream";
 import type { AcpConnection } from "./localUpstream";
+import { parseRetryAfterSeconds, unifiedAntigravityQuotaHeaders, type AntigravityQuotaMap } from "./quota";
+import type { GeminiGenerateContentResponseChunk } from "./geminiSchema";
 import type { RouteRequest, RouteResponse } from "../codex/route";
 
 export interface AntigravityProviderLookup {
@@ -29,6 +31,8 @@ export interface AntigravityRoutePorts {
   readonly fallbackId?: () => string;
   readonly fetchFn?: typeof fetch;
   readonly localConnector?: (config: ResolvedAntigravityConfig, signal: AbortSignal) => AcpConnection;
+  readonly now?: () => number;
+  readonly quotaSource?: () => AntigravityQuotaMap | undefined;
 }
 
 export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: RouteRequest) => Promise<RouteResponse> {
@@ -89,46 +93,101 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
     }
 
     const { config, token, credentialTarget } = lookup;
+    const requestedModel = parsed.data.model ?? config.defaultModel;
     const translated = translateRequest(parsed.data, config);
     const relay = createAntigravityRelay({
-      requestedModel: parsed.data.model ?? config.defaultModel,
+      requestedModel,
       toolNames: translated.toolNames,
       fallbackId,
     });
 
+    const nowMs = ports.now?.() ?? Date.now();
+    const upstreamChunks =
+      config.mode === "local"
+        ? callLocalAntigravity({
+            config,
+            model: translated.model,
+            request: translated.request,
+            signal: request.signal,
+            connector: ports.localConnector,
+          })
+        : callCloudAntigravity(
+            {
+              config,
+              model: translated.model,
+              request: translated.request,
+              token,
+              credentialTarget,
+              signal: request.signal,
+            },
+            ports.fetchFn,
+          );
+
+    const iterator = upstreamChunks[Symbol.asyncIterator]();
+    let firstResult: IteratorResult<GeminiGenerateContentResponseChunk>;
+    try {
+      firstResult = await iterator.next();
+    } catch (error) {
+      if (error instanceof AntigravityUpstreamError) {
+        const is429 = error.status === HTTP_STATUS.tooManyRequests;
+        const retryAfter = is429 ? parseRetryAfterSeconds(error.retryAfter) : undefined;
+        const quotaHeaders = unifiedAntigravityQuotaHeaders({
+          quota: ports.quotaSource?.(),
+          rejected: is429,
+          nowMs,
+          retryAfterSeconds: retryAfter,
+          model: requestedModel,
+        });
+        const errorType = is429 ? "rate_limit_error" : "api_error";
+        return {
+          status: error.status,
+          headers: {
+            "Content-Type": "application/json",
+            ...quotaHeaders,
+            ...(retryAfter !== undefined ? { "retry-after": String(retryAfter) } : {}),
+          },
+          body: JSON.stringify({ type: "error", error: { type: errorType, message: error.message } }),
+        };
+      }
+      const errMsg = error instanceof Error ? error.message : String(error);
+      return {
+        status: HTTP_STATUS.badGateway,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "error", error: { type: "api_error", message: errMsg } }),
+      };
+    }
+
+    const quotaHeaders = unifiedAntigravityQuotaHeaders({
+      quota: ports.quotaSource?.(),
+      rejected: false,
+      nowMs,
+      model: requestedModel,
+    });
+
     const stream = async function* () {
       try {
-        const upstreamChunks =
-          config.mode === "local"
-            ? callLocalAntigravity({
-                config,
-                model: translated.model,
-                request: translated.request,
-                signal: request.signal,
-                connector: ports.localConnector,
-              })
-            : callCloudAntigravity(
-                {
-                  config,
-                  model: translated.model,
-                  request: translated.request,
-                  token,
-                  credentialTarget,
-                  signal: request.signal,
-                },
-                ports.fetchFn,
-              );
-
-        for await (const chunk of upstreamChunks) {
-          if (request.signal.aborted) {
-            break;
-          }
-          const step = relay.pushChunk(chunk);
+        if (firstResult.done !== true) {
+          const step = relay.pushChunk(firstResult.value);
           for (const frame of step.frames) {
             yield renderSseFrame(frame);
           }
-          if (step.done) {
-            break;
+          if (!step.done) {
+            for (;;) {
+              if (request.signal.aborted) {
+                break;
+              }
+              const nextResult = await iterator.next();
+              if (nextResult.done === true) {
+                break;
+              }
+              const nextStep = relay.pushChunk(nextResult.value);
+              for (const frame of nextStep.frames) {
+                yield renderSseFrame(frame);
+              }
+              if (nextStep.done) {
+                break;
+              }
+            }
           }
         }
 
@@ -153,6 +212,7 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
+        ...quotaHeaders,
       },
       body: stream(),
     };
