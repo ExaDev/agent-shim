@@ -4,6 +4,7 @@ import packageJson from "../package.json";
 import { registerCheckCommand } from "./check";
 import { registerCodexCommand } from "./codex/commands";
 import { registerFrontDoorCommand } from "./frontdoor/commands";
+import { registerStatuslineCommand } from "./statusline/commands";
 import { registerMcpCommand } from "./mcp/command";
 import type { CommandDeps } from "./cli/commandDeps";
 import { registerCompletionCommand } from "./completion";
@@ -102,6 +103,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   registerConfigureCommand(program, deps);
   registerDoctorCommand(program, deps);
   registerShimCommand(program, deps);
+  registerStatuslineCommand(program, deps);
   registerHeadroomCommand(program, deps);
   registerCodexCommand(program, deps);
   registerFrontDoorCommand(program, deps);

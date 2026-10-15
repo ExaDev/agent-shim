@@ -159,6 +159,7 @@ agent-shim frontdoor rc mcp-authenticate --session <cse_id> --server <name> --re
 agent-shim frontdoor rc mcp-oauth-callback-url --session <cse_id> --server <name> --callback-url <url> [--json]
 agent-shim frontdoor rc watch [<cse_id>] [--json]
 agent-shim frontdoor rc selfhost mint <identity> [--force] [--json]
+agent-shim statusline                          # serve as a statusline entrypoint: enrich the client's stdin payload with the identity's live provider, account and usage windows, then delegate to $AGENT_SHIM_STATUSLINE_CMD or render the built-in line
 agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--json]
 agent-shim session list [--identity <name>] [--all] [--json]   # sessions that spawned agents or ran workflows, from the transcripts on disk
 agent-shim session show <session> [--identity <name>] [--json]   # one session's subagents, forks, workflow agents, tasks and workflow runs
