@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { CCPA_USER_AGENT } from "../antigravity/cloudUpstream";
 import { ProviderQuotaSchema, type ProviderQuota, type ProviderQuotaWindow } from "./schema";
 
 /** One request against a provider's usage endpoint: the status and body text, or a rejection for a transport failure. A GET unless `options` says otherwise; adapters that POST carry their body there. */
@@ -221,7 +222,7 @@ export const antigravityQuotaAdapter: ProviderQuotaAdapter = {
   source: ANTIGRAVITY_SOURCE,
   matches: (baseUrl) => URL.canParse(baseUrl) && new URL(baseUrl).hostname === ANTIGRAVITY_HOST,
   fetch: async (apiKey, http, signal, nowMs) => {
-    const headers = { authorization: `Bearer ${apiKey}`, "content-type": "application/json" };
+    const headers = { authorization: `Bearer ${apiKey}`, "content-type": "application/json", "user-agent": CCPA_USER_AGENT };
     const summaryResponse = await http(ANTIGRAVITY_QUOTA_URL, headers, signal, { method: "POST", body: JSON.stringify({ project: "aicode-consumers" }) });
     if (summaryResponse.status !== HTTP_OK) {
       throw new ProviderQuotaError(ANTIGRAVITY_SOURCE, `answered HTTP ${String(summaryResponse.status)}`);
