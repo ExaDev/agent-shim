@@ -1,4 +1,4 @@
-import { isHttpProvider } from "../config/schema";
+import { isAntigravityProvider, isHttpProvider } from "../config/schema";
 import { resolveCredential, type CredentialPort } from "../credential";
 import type { FsPort } from "../launcher/ports";
 import { loadProvider } from "../providersStore";
@@ -133,11 +133,16 @@ export interface ProviderLookupPorts {
 export function createProviderLookup(ports: ProviderLookupPorts): (name: string) => QuotaProviderLookup | undefined {
   return (name) => {
     const definition = loadProvider(ports.providersDir, name, ports.fs);
-    if (definition === undefined || !isHttpProvider(definition)) {
+    if (definition === undefined) {
+      return undefined;
+    }
+    // An antigravity provider has no base URL of its own; its quota adapter serves the Cloud Code endpoint its traffic rides, named by that host.
+    const baseUrl = isAntigravityProvider(definition) ? "https://daily-cloudcode-pa.googleapis.com" : isHttpProvider(definition) ? definition.baseUrl : undefined;
+    if (baseUrl === undefined) {
       return undefined;
     }
     return {
-      baseUrl: definition.baseUrl,
+      baseUrl,
       apiKey: () => {
         const resolution = resolveCredential({ credential: definition.credential, env: ports.env, port: ports.credentials, subject: `provider ${name}` });
         if (!resolution.ok) {

@@ -302,6 +302,18 @@
               "level": {
                 "type": "string"
               },
+              "account": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  },
+                  "accountId": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
               "windows": {
                 "type": "array",
                 "items": {

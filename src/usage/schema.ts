@@ -169,12 +169,20 @@ const ProviderQuotaWindowSchema = z.strictObject({
 export type ProviderQuotaWindow = z.infer<typeof ProviderQuotaWindowSchema>;
 
 /** A provider's quota as its usage endpoint last reported it. Pulled, not observed on a request, so it carries its own observation time. */
+/** The account a provider's own credential belongs to, as its usage or token endpoint reports it. Optional throughout because not every provider exposes one. */
+const ProviderAccountSchema = z.strictObject({
+  email: z.string().optional(),
+  accountId: z.string().optional(),
+});
+
 export const ProviderQuotaSchema = z.strictObject({
   observedAt: InstantSchema,
   /** Which usage endpoint produced it (`z.ai`). */
   source: z.string(),
   /** The subscription level the endpoint reports, when it does. */
   level: z.string().optional(),
+  /** The account the provider's credential belongs to, when its endpoint reports it. */
+  account: ProviderAccountSchema.optional(),
   windows: z.array(ProviderQuotaWindowSchema),
 });
 export type ProviderQuota = z.infer<typeof ProviderQuotaSchema>;

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { adapterFor, openRouterQuotaAdapter, ProviderQuotaError, quotaFreshnessMs, zaiQuotaAdapter, type QuotaHttpGet } from "./providerQuota";
+import { adapterFor, antigravityQuotaAdapter, openRouterQuotaAdapter, ProviderQuotaError, quotaFreshnessMs, zaiQuotaAdapter, type QuotaHttpGet } from "./providerQuota";
 import type { ProviderQuota, ProviderQuotaWindow } from "./schema";
 
 const API_KEY = "REDACTED";
@@ -313,5 +313,61 @@ describe("openRouterQuotaAdapter", () => {
     const failure = await fetchOpenRouterQuota(wrongShape).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(ProviderQuotaError);
     expect(String(failure)).not.toContain(API_KEY);
+  });
+});
+
+describe("antigravityQuotaAdapter", () => {
+  const SUMMARY_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+  const WEEKLY_USED = 0.1;
+  const HALF_USED = 0.5;
+  const FLOAT_PRECISION_DIGITS = 10;
+  const DAYS_PER_WEEK = 7;
+  const WEEK_WINDOW_MS = DAYS_PER_WEEK * HOURS_PER_DAY * MS_PER_HOUR;
+
+  const http = vi.fn<QuotaHttpGet>(async (url) => {
+    await Promise.resolve();
+    if (url === SUMMARY_URL) {
+      return {
+        status: 200,
+        text: JSON.stringify({ groups: [{ buckets: [{ bucketId: "gemini-5h", remainingFraction: 0.75, resetTime: "2026-10-02T15:00:00.000Z" }, { bucketId: "3p-weekly", remainingFraction: 0.9 }] }] }),
+      };
+    }
+    if (url.startsWith("https://oauth2.googleapis.com/tokeninfo")) {
+      return { status: 200, text: JSON.stringify({ email: "joe@example.com", sub: "12345" }) };
+    }
+    return { status: HTTP_SERVER_ERROR, text: "" };
+  });
+
+  it("maps the summary's buckets into windows with their known lengths, and the token into the account", async () => {
+    const quota = await antigravityQuotaAdapter.fetch("REDACTED", http, new AbortController().signal, NOW_MS);
+    expect(quota.source).toBe("Cloud Code");
+    expect(quota.account).toEqual({ email: "joe@example.com", accountId: "12345" });
+    expect(quota.windows).toHaveLength(2);
+    expect(quota.windows[0]).toEqual({ measures: "gemini-5h", periodMs: FIVE_HOURS_MS, utilization: 0.25, resetsAt: "2026-10-02T15:00:00.000Z" });
+    expect(quota.windows[1]?.measures).toBe("3p-weekly");
+    expect(quota.windows[1]?.periodMs).toBe(WEEK_WINDOW_MS);
+    expect(quota.windows[1]?.utilization).toBeCloseTo(WEEKLY_USED, FLOAT_PRECISION_DIGITS);
+    expect(http.mock.calls[0]).toEqual([SUMMARY_URL, expect.anything(), expect.anything(), { method: "POST", body: JSON.stringify({ project: "aicode-consumers" }) }]);
+  });
+
+  it("still reports the quota when tokeninfo answers nothing usable, and refuses a summary that is not JSON", async () => {
+    const noAccount = vi.fn<QuotaHttpGet>(async (url) => {
+      await Promise.resolve();
+      if (url === SUMMARY_URL) {
+        return { status: 200, text: JSON.stringify({ groups: [{ buckets: [{ bucketId: "gemini-5h", remainingFraction: HALF_USED }] }] }) };
+      }
+      return { status: HTTP_UNAUTHORIZED, text: "" };
+    });
+    const quota = await antigravityQuotaAdapter.fetch("REDACTED", noAccount, new AbortController().signal, NOW_MS);
+    expect(quota.account).toBeUndefined();
+    expect(quota.windows[0]?.utilization).toBeCloseTo(HALF_USED, FLOAT_PRECISION_DIGITS);
+
+    const broken = vi.fn<QuotaHttpGet>(async () => await Promise.resolve({ status: 200, text: "not json" }));
+    await expect(antigravityQuotaAdapter.fetch("REDACTED", broken, new AbortController().signal, NOW_MS)).rejects.toThrow(ProviderQuotaError);
+  });
+
+  it("serves an antigravity provider's endpoint host", () => {
+    expect(adapterFor("https://daily-cloudcode-pa.googleapis.com")?.source).toBe("Cloud Code");
+    expect(adapterFor("https://api.z.ai/api/anthropic")?.source).toBe("z.ai");
   });
 });
