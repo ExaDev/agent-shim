@@ -35,5 +35,5 @@ EOF
   fi
 done
 
-# Run typecheck and full test suite before push to catch breakage early.
-pnpm typecheck && pnpm test
+# Run typecheck, schema validation, knip, and full test suite before push.
+pnpm typecheck && pnpm schema && git diff --exit-code schema/ && pnpm knip && pnpm test
