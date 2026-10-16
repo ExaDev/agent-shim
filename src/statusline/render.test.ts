@@ -8,6 +8,13 @@ const WIDE_TERMINAL = 170;
 const WIDE_TERMINAL_MAX = 166;
 const NARROW_TERMINAL = 40;
 const NARROW_MAX_LINE = 36;
+/** The ANSI colour codes the renderer's bands use, and a cache hit ratio inside each band. */
+const GREEN_CODE = "32";
+const YELLOW_CODE = "33";
+const RED_CODE = "31";
+const HIGH_HIT_RATIO = 0.93;
+const LOW_HIT_RATIO = 0.2;
+const NEAR_ZERO_HIT_RATIO = 0.05;
 /** Too narrow for the model and the account to share a line: each header segment renders on its own line. */
 const ONE_PER_LINE_TERMINAL = 46;
 /** Wide enough for the model and the account to share a line, with the identity wrapping alone: the greedy packing case. */
@@ -178,6 +185,27 @@ describe("renderStatuslineBlock", () => {
     expect(bars).toContain("tool-calls [");
     expect(bars).toContain("4.0%");
     expect(bars).not.toContain("5h [");
+  });
+
+  it("colours the cache hit percentage by its band: green when most is served from cache, yellow when little is, red when nearly none is", () => {
+    const previous = process.env.NO_COLOR;
+    delete process.env.NO_COLOR;
+    try {
+      const esc = String.fromCharCode(ESCAPE_CHAR_CODE);
+      const colourOfCache = (hitRatio: number): string | undefined => {
+        const raw = renderStatuslineBlock(SUMMARY, { ...VIEW, cacheHitRatio: hitRatio }, WIDE_TERMINAL, NOW_MS);
+        return new RegExp(`Cache: ${esc}\\[(\\d+)m`).exec(raw)?.[1];
+      };
+      expect(colourOfCache(HIGH_HIT_RATIO)).toBe(GREEN_CODE);
+      expect(colourOfCache(LOW_HIT_RATIO)).toBe(YELLOW_CODE);
+      expect(colourOfCache(NEAR_ZERO_HIT_RATIO)).toBe(RED_CODE);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NO_COLOR;
+      } else {
+        process.env.NO_COLOR = previous;
+      }
+    }
   });
 
   it("renders nothing when no segment has data", () => {

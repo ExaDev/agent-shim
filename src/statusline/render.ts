@@ -92,15 +92,21 @@ function formatDuration(seconds: number | undefined): string {
   return `${String(minutes)}m`;
 }
 
+/** The cache hit fraction drawn as a percentage in the colour of its band: a hit ratio is better the higher it is, so the bands are the remaining-style ones, red when nearly nothing is served from cache and green when most is. */
+function cacheHitText(hitFraction: number): string {
+  const clamped = Math.max(0, Math.min(1, hitFraction));
+  return ` (Cache: ${statusColor(clamped, false)}${(clamped * FULL_PERCENT).toFixed(0)}%${RESET})`;
+}
+
 /** The prompt cache's hit percentage, preferring the client's own request-level hit ratio, which survives a cold turn, over the last request's share of prompt tokens read from cache, which a single cold turn zeroes. */
 function cacheShareText(view: StatuslinePayloadView): string {
   const hitRatio = view.cacheHitRatio;
   if (hitRatio !== undefined && Number.isFinite(hitRatio)) {
-    return ` (Cache: ${(Math.max(0, Math.min(1, hitRatio)) * FULL_PERCENT).toFixed(0)}%)`;
+    return cacheHitText(hitRatio);
   }
   const promptTotal = (view.cacheReadTokens ?? 0) + (view.freshInputTokens ?? 0);
   if (promptTotal > 0 && (view.cacheReadTokens ?? 0) > 0) {
-    return ` (Cache: ${((view.cacheReadTokens ?? 0) / promptTotal * FULL_PERCENT).toFixed(0)}%)`;
+    return cacheHitText((view.cacheReadTokens ?? 0) / promptTotal);
   }
   return "";
 }
