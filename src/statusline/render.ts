@@ -24,6 +24,7 @@ const TEN = 10;
 const TWENTY = 20;
 /** Claude Code indents the status line one column from the terminal edge and truncates at its own usable width, replacing the final column with an ellipsis. COLUMNS is correct in the child environment, but the usable width is four columns short of it, so a line as wide as COLUMNS minus two still loses its tail. */
 const RESERVED_COLUMNS = 4;
+const SEPARATOR = " | ";
 const FULL_PERCENT = 100;
 /** The Antigravity statusline's colour bands on a used fraction: red from 90%, yellow from 70%, green under it. */
 const USED_RED_AT = 0.9;
@@ -189,37 +190,47 @@ function layoutGrouped(group1: readonly Segment[], group2: readonly Segment[], m
 }
 
 /**
- * The built-in statusline, laid out and coloured the way the Antigravity CLI's own statusline is: the context window's use (tokens against the window, the prompt cache's share) beside the quota windows the door reports, each a bar that fills with use and turns yellow then red, one line when it fits and two when it does not.
+ * The built-in statusline, laid out and coloured the way the Antigravity CLI's own statusline is: the model on the first line (with room for what joins it there), then the context window's use (tokens against the window, the prompt cache's hit percentage) and the quota windows the door reports, each a bar that fills with use and turns yellow then red, one line when they fit and two when they do not.
  */
 export function renderStatuslineBlock(summary: StatuslineSummary, view: StatuslinePayloadView, terminalWidth: number, nowMs: number): string {
-  const group1: Segment[] = [];
+  const header: Segment[] = [];
   if (view.modelDisplayName !== undefined && view.modelDisplayName !== "") {
-    group1.push(new Segment("static", view.modelDisplayName));
+    header.push(new Segment("static", view.modelDisplayName));
   }
+
+  const contextGroup: Segment[] = [];
   if (view.contextUsedPercentage !== undefined) {
     const fraction = Math.max(0, Math.min(1, view.contextUsedPercentage / FULL_PERCENT));
     const color = statusColor(fraction, true);
     const percent = `${color}${view.contextUsedPercentage.toFixed(1)}%${RESET}`;
     const tokens = view.contextTotalTokens !== undefined && view.contextWindowTokens !== undefined ? `${formatTokens(view.contextTotalTokens)}/${formatTokens(view.contextWindowTokens)} ` : "";
     const cache = cacheShareText(view);
-    group1.push(new Segment("bar", "", `Ctx ${tokens}`, ` ${percent}${cache}`, fraction, true));
+    contextGroup.push(new Segment("bar", "", `Ctx ${tokens}`, ` ${percent}${cache}`, fraction, true));
   }
 
-  const group2: Segment[] = [];
+  const quotaGroup: Segment[] = [];
   if (summary.fiveHourUsed !== undefined) {
     const fraction = Math.max(0, Math.min(1, summary.fiveHourUsed / FULL_PERCENT));
     const color = statusColor(fraction, true);
-    group2.push(new Segment("bar", "", "5h ", ` ${color}${summary.fiveHourUsed.toFixed(1)}%${RESET} (${formatDuration(secondsUntil(summary.fiveHourResetAt, nowMs))})`, fraction, true));
+    quotaGroup.push(new Segment("bar", "", "5h ", ` ${color}${summary.fiveHourUsed.toFixed(1)}%${RESET} (${formatDuration(secondsUntil(summary.fiveHourResetAt, nowMs))})`, fraction, true));
   }
   if (summary.sevenDayUsed !== undefined) {
     const fraction = Math.max(0, Math.min(1, summary.sevenDayUsed / FULL_PERCENT));
     const color = statusColor(fraction, true);
-    group2.push(new Segment("bar", "", "Wk ", ` ${color}${summary.sevenDayUsed.toFixed(1)}%${RESET} (${formatDuration(secondsUntil(summary.sevenDayResetAt, nowMs))})`, fraction, true));
+    quotaGroup.push(new Segment("bar", "", "Wk ", ` ${color}${summary.sevenDayUsed.toFixed(1)}%${RESET} (${formatDuration(secondsUntil(summary.sevenDayResetAt, nowMs))})`, fraction, true));
   }
   if (summary.provider !== undefined) {
-    group2.push(new Segment("static", summary.providerAccountEmail === undefined ? summary.provider : `${summary.provider} · ${summary.providerAccountEmail}`));
+    quotaGroup.push(new Segment("static", summary.providerAccountEmail === undefined ? summary.provider : `${summary.provider} · ${summary.providerAccountEmail}`));
   }
 
   const width = Math.max(TWENTY, terminalWidth - RESERVED_COLUMNS);
-  return layoutGrouped(group1, group2, width, "always", " | ", BAR_WIDTH);
+  const lines: string[] = [];
+  if (header.length > 0) {
+    lines.push(header.map((segment) => segment.render(BAR_WIDTH)).join(SEPARATOR));
+  }
+  const body = layoutGrouped(contextGroup, quotaGroup, width, "always", SEPARATOR, BAR_WIDTH);
+  if (body !== "") {
+    lines.push(body);
+  }
+  return lines.join("\n");
 }
