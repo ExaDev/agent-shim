@@ -1,5 +1,6 @@
 import { selectAntigravityBuckets, type AntigravityQuotaBucket, type AntigravityQuotaMap } from "../antigravity/quota";
 import type { AccountMetadata, UsageSnapshot } from "../usage/schema";
+import type { HeadroomStats } from "./headroom";
 
 /** What the door knows about the session whose statusline this is: the one source a renderer can trust for whose quota the windows describe. The `Used` fields are whole percentages (0 to 100); the door's own records carry fractions, the form the real API's headers use. */
 const FULL_PERCENT = 100;
@@ -24,6 +25,8 @@ export interface StatuslineSummary {
   readonly sevenDayResetAt: string | undefined;
   /** The scoped provider's own quota windows, as its usage endpoint reports them: a provider outside Anthropic's unified rate-limit family (z.ai's five-hour token window, its monthly tool-call window) carries its usage only here. */
   readonly providerQuotaWindows: readonly ProviderQuotaWindowView[];
+  /** What headroom's proxy reports having saved this session, when the session is routed through one that answered. */
+  readonly headroom: HeadroomStats | undefined;
 }
 
 /** One of a provider's quota windows, in the form the statusline draws. */
@@ -153,6 +156,8 @@ export interface EnrichParams {
   readonly providerName: string | undefined;
   /** The current time in epoch milliseconds, which turns a window's seconds-to-reset into the instant it resets. */
   readonly nowMs: number;
+  /** The session's headroom savings as the proxy reported them, or undefined when there are none to show. */
+  readonly headroom: HeadroomStats | undefined;
 }
 
 /**
@@ -181,6 +186,7 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     sevenDayUsed: undefined,
     sevenDayResetAt: undefined,
     providerQuotaWindows: [],
+    headroom: params.headroom,
   };
   if (params.snapshot !== undefined) {
     const scopedName = providerScopedState(params.snapshot, params.providerName, params.env.AGENT_SHIM_PROVIDER);

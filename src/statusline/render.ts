@@ -92,6 +92,19 @@ function formatDuration(seconds: number | undefined): string {
   return `${String(minutes)}m`;
 }
 
+/** What headroom's compression saved this session, as tokens, percentage and dollars; each figure is left out when the proxy did not report it, and undefined when none was reported. */
+function headroomText(stats: StatuslineSummary["headroom"]): string | undefined {
+  if (stats === undefined) {
+    return undefined;
+  }
+  const parts = [
+    stats.tokensSaved === undefined ? undefined : `${formatTokens(stats.tokensSaved)} saved`,
+    stats.savingsPercent === undefined ? undefined : `${stats.savingsPercent.toFixed(1)}%`,
+    stats.savingsUsd === undefined ? undefined : `$${stats.savingsUsd.toFixed(2)}`,
+  ].filter((part) => part !== undefined);
+  return parts.length === 0 ? undefined : `headroom ${parts.join(" · ")}`;
+}
+
 /** The cache hit fraction drawn as a percentage in the colour of its band: a hit ratio is better the higher it is, so the bands are the remaining-style ones, red when nearly nothing is served from cache and green when most is. */
 function cacheHitText(hitFraction: number): string {
   const clamped = Math.max(0, Math.min(1, hitFraction));
@@ -330,6 +343,10 @@ export function renderStatuslineBlock(summary: StatuslineSummary, view: Statusli
   // The identity names which login launched the session, worth its own segment only beside a provider, where it is not the account already named; a plain anthropic session is its login account, so the identity name would repeat it.
   if (summary.identity !== undefined && summary.provider !== undefined && summary.identity !== summary.providerAccountEmail && summary.identity !== summary.loginAccountEmail) {
     header.push(new Segment("static", summary.identity));
+  }
+  const savings = headroomText(summary.headroom);
+  if (savings !== undefined) {
+    header.push(new Segment("static", savings));
   }
 
   const contextGroup: Segment[] = [];

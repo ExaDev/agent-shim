@@ -47,6 +47,7 @@ describe("enrichStatuslinePayload", () => {
       account: undefined,
       providerName: undefined,
       nowMs: NOW_MS,
+      headroom: undefined,
     });
     expect(summary).toEqual({
       identity: "antigravity",
@@ -85,6 +86,7 @@ describe("enrichStatuslinePayload", () => {
       account: undefined,
       providerName: "z",
       nowMs: NOW_MS,
+      headroom: undefined,
     });
     expect(summary.providerPlan).toBe("max");
     expect(summary.providerQuotaWindows).toEqual([
@@ -106,6 +108,7 @@ describe("enrichStatuslinePayload", () => {
       account: undefined,
       providerName: "z",
       nowMs: NOW_MS,
+      headroom: undefined,
     });
     expect(summary.sevenDayUsed).toBeUndefined();
     expect(summary.providerQuotaWindows).toEqual([]);
@@ -125,6 +128,7 @@ describe("enrichStatuslinePayload", () => {
       account: undefined,
       providerName: undefined,
       nowMs: NOW_MS,
+      headroom: undefined,
     });
     // The anthropic login's spent week does not become this session's usage line.
     expect(summary.sevenDayUsed).toBe(GEMINI_WEEKLY_USED_PERCENT);
@@ -139,6 +143,7 @@ describe("enrichStatuslinePayload", () => {
       account: undefined,
       providerName: undefined,
       nowMs: NOW_MS,
+      headroom: undefined,
     });
     expect(summary.fiveHourUsed).toBe(PAYLOAD_FIVE_HOUR_USED_PERCENT);
     expect(summary.fiveHourResetAt).toBe("2025-02-01T16:00:00.000Z");
@@ -154,6 +159,7 @@ describe("enrichStatuslinePayload", () => {
       account: undefined,
       providerName: undefined,
       nowMs: NOW_MS,
+      headroom: undefined,
     });
     expect(summary.fiveHourUsed).toBe(PAYLOAD_PARTIAL_FIVE_HOUR_USED_PERCENT);
     // The snapshot's binding weekly window stands, the payload having none.
@@ -168,6 +174,7 @@ describe("enrichStatuslinePayload", () => {
       account: undefined,
       providerName: undefined,
       nowMs: NOW_MS,
+      headroom: undefined,
     });
     expect(summary.fiveHourUsed).toBe(GEMINI_FIVE_HOUR_USED_PERCENT);
   });
@@ -187,6 +194,7 @@ describe("enrichStatuslinePayload", () => {
       account: undefined,
       providerName: undefined,
       nowMs: NOW_MS,
+      headroom: undefined,
     });
     expect(summary.fiveHourUsed).toBeCloseTo(ANTIGRAVITY_FIVE_HOUR_USED_PERCENT, FLOAT_PRECISION_DIGITS);
     expect(summary.fiveHourResetAt).toBe("2026-10-16T02:30:00.000Z");
@@ -202,6 +210,7 @@ describe("enrichStatuslinePayload", () => {
       account: { emailAddress: "claude-login@example.com", organizationType: "claude_max", userRateLimitTier: "default_claude_max_20x" },
       providerName: undefined,
       nowMs: NOW_MS,
+      headroom: undefined,
     });
     expect(summary.loginAccountEmail).toBe("ada@example.com");
     expect(summary.loginPlan).toBe("Google AI Pro");
@@ -217,6 +226,7 @@ describe("enrichStatuslinePayload", () => {
       account: undefined,
       providerName: undefined,
       nowMs: NOW_MS,
+      headroom: undefined,
     });
     expect(payload).toBeNull();
     expect(summary.identity).toBeUndefined();
@@ -232,6 +242,7 @@ describe("enrichStatuslinePayload", () => {
       account: { emailAddress: "work@example.com", organizationName: "ExampleOrg", organizationType: "claude_team", seatTier: "team_tier_1", organizationRateLimitTier: "default_claude_max_5x", userRateLimitTier: "claude_pro" },
       providerName: undefined,
       nowMs: NOW_MS,
+      headroom: undefined,
     });
     expect(summary.loginAccountEmail).toBe("work@example.com");
     expect(summary.loginRateLimitTier).toBe("claude_pro");
