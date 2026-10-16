@@ -1,3 +1,24 @@
+## [11.13.0](https://github.com/ExaDev/agent-shim/compare/v11.12.0...v11.13.0) (2026-10-16)
+
+### Features
+
+* **statusline:** justify the header's segments across the line ([3d72cbc](https://github.com/ExaDev/agent-shim/commit/3d72cbc432d4a40a97f3820ee51531a1e86f60ef))
+* **statusline:** name the login account's plan from its organisation and seat ([a3cabed](https://github.com/ExaDev/agent-shim/commit/a3cabed194021303bba54bf4488cc05fb57d1bdb))
+* **statusline:** show the OAuth login account and plan beside the provider's ([f647945](https://github.com/ExaDev/agent-shim/commit/f6479455487778881294e2d3058e38d5dad071b2))
+* **statusline:** show the provider account, plan and identity on the first line ([f7b4a49](https://github.com/ExaDev/agent-shim/commit/f7b4a4961ad2eef699094a4d255e0485b85dea4d))
+* **usage:** read the antigravity account's subscription tier ([7880ebe](https://github.com/ExaDev/agent-shim/commit/7880ebeca4ad7ddd541e4be1a7d7f7c02f55ec62))
+
+### Bug Fixes
+
+* **statusline:** wrap the first line instead of losing its tail ([63cc76f](https://github.com/ExaDev/agent-shim/commit/63cc76f918ef41cbfa1c355702190b2a20463114))
+* **usage:** take the antigravity plan from the paid tier, not the code-assist default ([0560fcd](https://github.com/ExaDev/agent-shim/commit/0560fcd94754a97a755981941467c9b06e13a758))
+
+### Code Refactoring
+
+* **statusline:** drop the identity segment from a providerless line ([e9f5d72](https://github.com/ExaDev/agent-shim/commit/e9f5d721b653b862742f6a642018e0abc2b72c80))
+* **statusline:** name a provider session's login by its organisation, not its plan ([46f3db1](https://github.com/ExaDev/agent-shim/commit/46f3db1ce367c4eb4ca706fb075bc52ccd506360))
+* **statusline:** pack wrapped segments greedily ([0468975](https://github.com/ExaDev/agent-shim/commit/0468975913cc56a46b11341fa8d90b06a71546e0))
+
 ## [11.12.0](https://github.com/ExaDev/agent-shim/compare/v11.11.0...v11.12.0) (2026-10-16)
 
 ### Features
