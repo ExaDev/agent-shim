@@ -211,6 +211,6 @@ The Antigravity CLI (`agy`) takes the same command in `~/.gemini/antigravity-cli
 { "statusLine": { "type": "command", "command": "agent-shim statusline" } }
 ```
 
-Its payload differs, and the statusline reads each difference: the 5h and weekly bars come from the payload's `quota` map (the model's own gemini or third-party buckets, the same selection the front door makes), the account and plan from its `email` and `plan_tier` (the Claude profile file is not consulted beside them), and the width from its live `terminal_width`.
+Its payload differs, and the statusline reads each difference: the 5h and weekly bars come from the payload's `quota` map (the model's own gemini or third-party buckets, the same selection the front door makes), the account and plan from its `email` and `plan_tier` (the Claude profile file is not consulted beside them), and the width from its live `terminal_width`. When the CLI's `statusLine.stack_with_default` is `true` its own line, which already names the model, is drawn above this one, so the model is left out here; the payload does not carry that setting, so it is read from `~/.gemini/antigravity-cli/settings.json`.
 
 The line is laid out for the terminal's width, taken from the payload's `terminal_width` when the client states one and from `COLUMNS` otherwise (Claude Code sets it), and wraps rather than truncating. `AGENT_SHIM_STATUSLINE_CMD` names a renderer of your own: it receives the same payload with an `agent_shim` key added, and its output replaces the built-in line.
