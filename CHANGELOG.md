@@ -1,3 +1,27 @@
+## [11.12.0](https://github.com/ExaDev/agent-shim/compare/v11.11.0...v11.12.0) (2026-10-16)
+
+### Features
+
+* **antigravity:** honour a model name's 1m context marker ([bff2aa1](https://github.com/ExaDev/agent-shim/commit/bff2aa19a9f37db97db3d5020db1ac20e67a2f50))
+* **cli:** add a statusline entrypoint that enriches and delegates ([dd4acb3](https://github.com/ExaDev/agent-shim/commit/dd4acb305148a581753995bc6f5e5a435bfbd8f2))
+* **statusline:** render the built-in line in the Antigravity statusline's own idiom ([9e4f8ad](https://github.com/ExaDev/agent-shim/commit/9e4f8ad19a5049b97cdb115e35187afd5815b895))
+* **statusline:** show the model and the prompt cache's hit percentage ([37078e9](https://github.com/ExaDev/agent-shim/commit/37078e9c4074ac8af5345f891b39aa39c6e0317b))
+
+### Bug Fixes
+
+* **antigravity:** report Gemini's implicit cache reads in the usage block ([12fecb5](https://github.com/ExaDev/agent-shim/commit/12fecb51aa78cea5b3197f8cf03c7bbcea443c56))
+* **antigravity:** report utilization as the fraction the real API uses ([6b25c42](https://github.com/ExaDev/agent-shim/commit/6b25c42b945d0e1d113cf885bdb5c3697c3d7b24))
+* **antigravity:** stop a quota-cache-cold response erasing the known windows ([a3b2934](https://github.com/ExaDev/agent-shim/commit/a3b29343d2f20de6e43ea82c33f1a97beda4928c))
+* **statusline:** fit the built-in line inside Claude Code's status line width ([94c37d5](https://github.com/ExaDev/agent-shim/commit/94c37d5add2c1e3225ab285dcef6288b9e147855))
+
+### Code Refactoring
+
+* **statusline:** give the model the first line to itself ([dca286a](https://github.com/ExaDev/agent-shim/commit/dca286a0ce28cce0e34c53ceeb5aa63f85aa0a72))
+
+### Continuous Integration
+
+* retry an artifact upload once after a transient failure ([cd54ce0](https://github.com/ExaDev/agent-shim/commit/cd54ce0d7f935a113bef0fb9d4956477761d83a3))
+
 ## [11.11.0](https://github.com/ExaDev/agent-shim/compare/v11.10.0...v11.11.0) (2026-10-16)
 
 ### Features
