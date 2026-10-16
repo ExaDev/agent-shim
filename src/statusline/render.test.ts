@@ -24,6 +24,7 @@ const SUMMARY: StatuslineSummary = {
   loginOrganizationName: undefined,
   loginOrganizationType: undefined,
   loginSeatTier: undefined,
+  providerQuotaWindows: [],
   fiveHourUsed: 3.6,
   fiveHourResetAt: "2026-10-16T00:38:00.000Z",
   sevenDayUsed: 28.2,
@@ -151,10 +152,37 @@ describe("renderStatuslineBlock", () => {
     expect(header).not.toContain("Max 20x");
   });
 
+  it("draws a provider's own quota windows as bars when it reports no unified window", () => {
+    const lines = stripAnsi(
+      renderStatuslineBlock(
+        {
+          ...SUMMARY,
+          fiveHourUsed: undefined,
+          fiveHourResetAt: undefined,
+          sevenDayUsed: undefined,
+          sevenDayResetAt: undefined,
+          providerQuotaWindows: [
+            { measures: "tokens", utilization: 0.5, resetsAt: "2026-10-16T00:38:00.000Z" },
+            { measures: "tool-calls", utilization: 0.04, resetsAt: "2026-10-21T00:00:00.000Z" },
+          ],
+        },
+        VIEW,
+        WIDE_TERMINAL,
+        NOW_MS,
+      ),
+    ).split("\n");
+    const bars = lines.join("\n");
+    expect(bars).toContain("tokens [");
+    expect(bars).toContain("50.0% (38m)");
+    expect(bars).toContain("tool-calls [");
+    expect(bars).toContain("4.0%");
+    expect(bars).not.toContain("5h [");
+  });
+
   it("renders nothing when no segment has data", () => {
     expect(
       renderStatuslineBlock(
-        { identity: undefined, provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, loginAccountEmail: undefined, loginRateLimitTier: undefined, loginOrganizationName: undefined, loginOrganizationType: undefined, loginSeatTier: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined },
+        { identity: undefined, provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, loginAccountEmail: undefined, loginRateLimitTier: undefined, loginOrganizationName: undefined, loginOrganizationType: undefined, loginSeatTier: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined, providerQuotaWindows: [] },
         { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
         NARROW_TERMINAL,
         NOW_MS,

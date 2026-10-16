@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import type { Command } from "commander";
 
 import { withExamples } from "../cli/commandDeps";
+import type { LayoutPaths } from "../paths";
+import { listProviders } from "../providersStore";
 import { realFarmFs } from "../realPorts";
 import { readAccountMetadata } from "../usage/account";
 import { readUsageSnapshot } from "../usage/read";
@@ -51,7 +53,7 @@ async function readAllStdin(): Promise<string> {
 const DEFAULT_COLUMNS = 80;
 
 /** The command a client's statusline setting names: it reads the client's payload on stdin, adds what the door knows under one `agent_shim` key, and either hands the enriched payload to the renderer named in `AGENT_SHIM_STATUSLINE_CMD` or renders the built-in line itself. */
-export function registerStatuslineCommand(program: Command, deps: { readonly paths: { readonly usageSnapshotsDir: string; readonly identitiesDir: string } }): void {
+export function registerStatuslineCommand(program: Command, deps: { readonly paths: LayoutPaths }): void {
   withExamples(
     program
       .command("statusline")
@@ -79,7 +81,17 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
           account = undefined;
         }
       }
-      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot, account });
+      // The launch environment names the provider by display name, while the usage snapshot keys it by registered name.
+      const displayName = process.env.AGENT_SHIM_PROVIDER;
+      let providerName;
+      if (displayName !== undefined && displayName !== "") {
+        try {
+          providerName = listProviders(deps.paths).find((entry) => entry.provider.displayName === displayName)?.name;
+        } catch {
+          providerName = undefined;
+        }
+      }
+      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot, account, providerName });
       const renderer = process.env.AGENT_SHIM_STATUSLINE_CMD;
       if (renderer !== undefined && renderer !== "") {
         const child = spawn("/bin/sh", ["-c", renderer], { stdio: ["pipe", "inherit", "inherit"] });

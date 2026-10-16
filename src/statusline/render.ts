@@ -348,6 +348,16 @@ export function renderStatuslineBlock(summary: StatuslineSummary, view: Statusli
     quotaGroup.push(new Segment("bar", "", "Wk ", ` ${color}${summary.sevenDayUsed.toFixed(1)}%${RESET} (${formatDuration(secondsUntil(summary.sevenDayResetAt, nowMs))})`, fraction, true));
   }
 
+  // A provider outside Anthropic's unified rate-limit family (z.ai) reports its usage only through its own quota windows, which are drawn when no unified window is.
+  if (summary.fiveHourUsed === undefined && summary.sevenDayUsed === undefined) {
+    for (const window of summary.providerQuotaWindows) {
+      const used = window.utilization * FULL_PERCENT;
+      const fraction = Math.max(0, Math.min(1, window.utilization));
+      const color = statusColor(fraction, true);
+      quotaGroup.push(new Segment("bar", "", `${window.measures} `, ` ${color}${used.toFixed(1)}%${RESET} (${formatDuration(secondsUntil(window.resetsAt, nowMs))})`, fraction, true));
+    }
+  }
+
   const width = Math.max(TWENTY, terminalWidth - RESERVED_COLUMNS);
   const lines: string[] = [];
   if (header.length > 0) {

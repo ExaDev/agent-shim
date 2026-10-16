@@ -18,6 +18,15 @@ export interface StatuslineSummary {
   readonly fiveHourResetAt: string | undefined;
   readonly sevenDayUsed: number | undefined;
   readonly sevenDayResetAt: string | undefined;
+  /** The scoped provider's own quota windows, as its usage endpoint reports them: a provider outside Anthropic's unified rate-limit family (z.ai's five-hour token window, its monthly tool-call window) carries its usage only here. */
+  readonly providerQuotaWindows: readonly ProviderQuotaWindowView[];
+}
+
+/** One of a provider's quota windows, in the form the statusline draws. */
+export interface ProviderQuotaWindowView {
+  readonly measures: string;
+  readonly utilization: number;
+  readonly resetsAt: string | undefined;
 }
 
 /** The identity name this tool's own launcher hands the session, inside its custom-header environment entry (`x-agent-shim-identity: <name>`), or derived from the config directory the launch pinned (`<root>/identities/<name>`). */
@@ -79,6 +88,8 @@ export interface EnrichParams {
   readonly snapshot: UsageSnapshot | undefined;
   /** The identity's own OAuth account metadata, or undefined when the identity never logged in. */
   readonly account: AccountMetadata | undefined;
+  /** The launch-selected provider's registered name, when the environment's display name resolves to one; the snapshot keys providers by this name, which can differ from the display name a session's environment carries. */
+  readonly providerName: string | undefined;
 }
 
 /**
@@ -101,11 +112,13 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     fiveHourResetAt: undefined,
     sevenDayUsed: undefined,
     sevenDayResetAt: undefined,
+    providerQuotaWindows: [],
   };
   if (params.snapshot !== undefined) {
-    const scopedName = providerScopedState(params.snapshot, params.env.AGENT_SHIM_PROVIDER);
+    const scopedName = providerScopedState(params.snapshot, params.providerName, params.env.AGENT_SHIM_PROVIDER);
     const scopedState = scopedName === undefined ? undefined : params.snapshot.providers[scopedName];
-    const states = scopedState === undefined ? Object.values(params.snapshot.providers) : [scopedState];
+    // A session that selected a provider spends that provider's quota alone: when its state is not in the snapshot yet there are no windows to show, never another provider's (an exhausted login week was drawn as a z.ai session's usage). Only a session with no provider shows the binding windows across every provider the identity has used.
+    const states = summary.provider === undefined ? Object.values(params.snapshot.providers) : scopedState === undefined ? [] : [scopedState];
     let email: string | undefined;
     let sub: string | undefined;
     let plan: string | undefined;
@@ -124,7 +137,11 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
         plan = candidatePlan;
       }
     }
-    summary = { ...summary, ...windowsOf(states), providerAccountEmail: email, providerAccountSub: sub, providerPlan: plan };
+    // Shortest window first, as the five-hour window leads the weekly one; a window of unknown length sorts last.
+    const providerQuotaWindows = [...(scopedState?.quota?.windows ?? [])]
+      .sort((a, b) => (a.periodMs ?? Number.POSITIVE_INFINITY) - (b.periodMs ?? Number.POSITIVE_INFINITY))
+      .map((window) => ({ measures: window.measures, utilization: window.utilization, resetsAt: window.resetsAt }));
+    summary = { ...summary, ...windowsOf(states), providerAccountEmail: email, providerAccountSub: sub, providerPlan: plan, providerQuotaWindows };
   }
   if (typeof params.payload !== "object" || params.payload === null || Array.isArray(params.payload)) {
     return { payload: params.payload, summary };
@@ -136,8 +153,11 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
   return { payload: enriched, summary };
 }
 
-/** The snapshot's provider entry for the session's launch-selected provider, when the environment names one whose state the snapshot holds. */
-function providerScopedState(snapshot: UsageSnapshot, providerDisplayName: string | undefined): string | undefined {
+/** The snapshot's provider entry for the session's launch-selected provider. The snapshot keys providers by their registered name; the launch environment carries only the display name, which can differ (`z` against `z.ai`), so the registered name resolved from the provider store wins and the display name is matched case-insensitively only as a fallback. */
+function providerScopedState(snapshot: UsageSnapshot, providerName: string | undefined, providerDisplayName: string | undefined): string | undefined {
+  if (providerName !== undefined && providerName in snapshot.providers) {
+    return providerName;
+  }
   if (providerDisplayName === undefined || providerDisplayName === "") {
     return undefined;
   }
