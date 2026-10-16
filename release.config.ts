@@ -25,6 +25,8 @@ const config: Options = {
       {
         preset: "conventionalcommits",
         releaseRules: [
+          // First match wins and overrides the preset's own breaking rule, so this guards the major: a breaking commit of any type releases a major even where a later rule would give its type a patch.
+          { breaking: true, release: "major" },
           { type: "refactor", release: "patch" },
           { type: "docs", release: "patch" },
           { type: "build", release: "patch" },
