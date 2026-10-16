@@ -1,3 +1,19 @@
+## [11.19.1](https://github.com/ExaDev/agent-shim/compare/v11.19.0...v11.19.1) (2026-10-16)
+
+### ⚠ BREAKING CHANGES
+
+* **pool:** the library's `setPool` is replaced by `changePool(paths, name, change)`,
+  and `addPool` takes a policy object, `{ preference }`, as its fourth argument instead of
+  a preference string.
+
+### Code Refactoring
+
+* **pool:** change a pool through one store function taking a policy object ([8822805](https://github.com/ExaDev/agent-shim/commit/8822805b30aaf3100b5dda51be8517bd37cc8433))
+
+### Continuous Integration
+
+* let a release whose npm publish already landed carry on to its later jobs ([1c11ba1](https://github.com/ExaDev/agent-shim/commit/1c11ba16a14fa6d0932d2fd47c5bf4b1b16cf627))
+
 ## [11.19.0](https://github.com/ExaDev/agent-shim/compare/v11.18.0...v11.19.0) (2026-10-16)
 
 ### Features
