@@ -1,3 +1,9 @@
+## [11.22.0](https://github.com/ExaDev/agent-shim/compare/v11.21.1...v11.22.0) (2026-10-16)
+
+### Features
+
+* **frontdoor:** log the machine load and the main thread's frames when the watchdog fires ([b54e396](https://github.com/ExaDev/agent-shim/commit/b54e3961e330a11ff9d9aacec8a2f6d2c5e1fb66)), references [#470](https://github.com/ExaDev/agent-shim/issues/470)
+
 ## [11.21.1](https://github.com/ExaDev/agent-shim/compare/v11.21.0...v11.21.1) (2026-10-16)
 
 ### Bug Fixes
