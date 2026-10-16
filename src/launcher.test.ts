@@ -449,7 +449,7 @@ describe("runLauncher headroom routing", () => {
 
     const env = spawnedEnv(spawn);
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
     // The provider session rides the door's CONNECT surface exactly like an OAuth one; the provider header is what tells the door where its inference goes.
     expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
     expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-provider: z", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
@@ -489,7 +489,7 @@ describe("runLauncher headroom routing", () => {
     const env = spawnedEnv(spawn);
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
     expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
     expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-provider: anthropic-api", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
   });

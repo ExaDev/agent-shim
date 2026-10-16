@@ -160,7 +160,7 @@ describe("buildEnv", () => {
   const baseEnv = { PATH: "/usr/bin", HOME: "/home/testuser" };
 
   it("leaves the environment unchanged when the CLAUDE_CONFIG_DIR escape hatch applied", () => {
-    const env = buildEnv({ sessionId: "session-test",
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv: { ...baseEnv, CLAUDE_CONFIG_DIR: "/somewhere/else" },
       configDirEscapeHatch: true,
       resolvedIdentityName: "work",
@@ -170,7 +170,7 @@ describe("buildEnv", () => {
   });
 
   it("leaves the environment unchanged when no identity was resolved at all", () => {
-    const env = buildEnv({ sessionId: "session-test",
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv,
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.agent-shim/identities",
@@ -180,7 +180,7 @@ describe("buildEnv", () => {
   });
 
   it("sets CLAUDE_CONFIG_DIR to the resolved identity's own directory otherwise", () => {
-    const env = buildEnv({ sessionId: "session-test",
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -191,7 +191,7 @@ describe("buildEnv", () => {
   });
 
   it("never strips CLAUDE_EXTRA_FLAGS from the child environment", () => {
-    const env = buildEnv({ sessionId: "session-test",
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv: { ...baseEnv, CLAUDE_EXTRA_FLAGS: "--continue continue" },
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -221,46 +221,58 @@ describe("buildEnv", () => {
   }
 
   it("applies a resolved provider on top of the identity's CLAUDE_CONFIG_DIR", () => {
-    const env = buildEnv({ sessionId: "session-test", baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider() });
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider() });
     expect(env.CLAUDE_CONFIG_DIR).toBe("/home/testuser/.agent-shim/identities/work");
-    // The child keeps the OAuth shape: no base URL (it believes it talks to api.anthropic.com through the door's CONNECT surface), and no credential variable at all (the door attaches the provider's own at its route).
+    // The child keeps the OAuth shape: no base URL (it believes it talks to api.anthropic.com through the door's CONNECT surface), and what it presents is a placeholder, never the provider's own token (the door attaches that at its route).
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
     expect(env.AGENT_SHIM_PROVIDER).toBe("GLM");
   });
 
-  it("applies a resolved provider even when no identity was resolved, since it selects an endpoint, not a login", () => {
-    const env = buildEnv({ sessionId: "session-test", baseEnv, configDirEscapeHatch: false, identitiesDir, provider: resolvedProvider() });
-    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
-  });
-
-  it("removes every ambient credential variable for a provider session, so the child presents nothing and stays in the auth mode Remote Control needs", () => {
-    const env = buildEnv({ sessionId: "session-test",
-      baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "tok-ambient", ANTHROPIC_API_KEY: "sk-ambient", CLAUDE_CODE_OAUTH_TOKEN: "oauth-ambient" },
-      configDirEscapeHatch: false,
-      identitiesDir,
-      provider: resolvedProvider(),
-    });
+  it("carries no credential variable for a provider session with Remote Control on, which needs Claude Code's OAuth mode", () => {
+    const env = buildEnv({ sessionId: "session-test", baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "tok-ambient" }, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider(), remoteControl: true });
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
-  it("keeps an apiKey-target provider's session credential-free too: the door attaches the key whatever the target", () => {
-    const env = buildEnv({ sessionId: "session-test",
+  it("never hands a provider session the provider's own token as what it presents", () => {
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider({ token: "tok-the-provider-secret" }) });
+    expect(JSON.stringify(env)).not.toContain("tok-the-provider-secret");
+  });
+
+  it("applies a resolved provider even when no identity was resolved, since it selects an endpoint, not a login", () => {
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, baseEnv, configDirEscapeHatch: false, identitiesDir, provider: resolvedProvider() });
+    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
+  });
+
+  it("replaces every ambient credential variable for a provider session, so the child presents the placeholder and no other credential", () => {
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
+      baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "tok-ambient", ANTHROPIC_API_KEY: "sk-ambient", CLAUDE_CODE_OAUTH_TOKEN: "oauth-ambient" },
+      configDirEscapeHatch: false,
+      identitiesDir,
+      provider: resolvedProvider(),
+    });
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+  });
+
+  it("gives an apiKey-target provider's session the same placeholder, in the bearer variable: the door attaches the key whatever the target", () => {
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "sk-ambient-bearer", ANTHROPIC_API_KEY: "sk-ambient-key" },
       configDirEscapeHatch: false,
       identitiesDir,
       provider: resolvedProvider({ baseUrl: "https://api.anthropic.com", target: "apiKey", token: "sk-ant-REDACTED" }),
     });
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
   });
 
   it("exports an identity's own credential as its target when no provider was selected", () => {
-    const env = buildEnv({ sessionId: "session-test",
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv: { ...baseEnv, ANTHROPIC_API_KEY: "sk-ambient" },
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -273,7 +285,7 @@ describe("buildEnv", () => {
   });
 
   it("never applies an identity's credential alongside a provider's, whose credential authenticates against its endpoint", () => {
-    const env = buildEnv({ sessionId: "session-test",
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -281,12 +293,12 @@ describe("buildEnv", () => {
       provider: resolvedProvider(),
       identityCredential: { target: "oauthToken", token: "oauth-work", source: { op: "op://v/work/token" }, warnings: [] },
     });
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
   it("lands every entry of the provider's own env verbatim in the child environment", () => {
-    const env = buildEnv({ sessionId: "session-test",
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
       baseEnv,
       configDirEscapeHatch: false,
       identitiesDir,
@@ -299,6 +311,7 @@ describe("buildEnv", () => {
   it("routes a provider session through the door's CONNECT surface exactly like an OAuth one: no base URL, the proxy carrying the capability, the CA bundle trusted, and the provider named in the session headers", () => {
     const env = buildEnv({
       sessionId: "session-test",
+      remoteControl: false,
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -312,13 +325,14 @@ describe("buildEnv", () => {
     expect(env.NO_PROXY).toBe("127.0.0.1,localhost,::1");
     expect(env.no_proxy).toBe("127.0.0.1,localhost,::1");
     expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.agent-shim/frontdoor/ca/bundles/0123abcd.pem");
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-agent-shim-identity: work\nx-agent-shim-session: session-test\nx-agent-shim-auth: launch-token-for-tests\nx-agent-shim-provider: z\nx-agent-shim-headroom: 1\nx-headroom-project-id: /home/testuser/work/repo");
   });
 
   it("replaces a proxy inherited from the parent with the door's own for a provider session, since the child no longer dials any address directly, while the door's loopback entries are appended to the parent's own exclusions in both spellings rather than replacing them", () => {
     const env = buildEnv({
       sessionId: "session-test",
+      remoteControl: false,
       baseEnv: { ...baseEnv, HTTPS_PROXY: "http://agent-shim:parent-token@127.0.0.1:4200", NO_PROXY: "corp.example", no_proxy: "corp.example" },
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -334,6 +348,7 @@ describe("buildEnv", () => {
   it("folds a loopback name the parent's exclusions already carry rather than repeating it", () => {
     const env = buildEnv({
       sessionId: "session-test",
+      remoteControl: false,
       baseEnv: { ...baseEnv, NO_PROXY: "localhost" },
       configDirEscapeHatch: false,
       identitiesDir,
@@ -345,6 +360,7 @@ describe("buildEnv", () => {
   it("injects the identity, session and provider headers when the door is engaged without headroom, and nothing else of the door's own", () => {
     const env = buildEnv({
       sessionId: "session-test",
+      remoteControl: false,
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -358,6 +374,7 @@ describe("buildEnv", () => {
   it("routes an OAuth launch (no provider) through the door's CONNECT surface: HTTPS_PROXY (carrying the launch's capability as its proxy credential) and the CA are set, ANTHROPIC_BASE_URL stays unset so Remote Control keeps working", () => {
     const env = buildEnv({
       sessionId: "session-test",
+      remoteControl: false,
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -375,6 +392,7 @@ describe("buildEnv", () => {
   it("leaves a parent-set ANTHROPIC_BASE_URL untouched in the OAuth shape rather than clearing it", () => {
     const env = buildEnv({
       sessionId: "session-test",
+      remoteControl: false,
       baseEnv: { ...baseEnv, ANTHROPIC_BASE_URL: "https://custom-gateway.example" },
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.agent-shim/identities",
@@ -387,6 +405,7 @@ describe("buildEnv", () => {
   it("merges a parent's and a provider's own ANTHROPIC_CUSTOM_HEADERS with the session headers", () => {
     const env = buildEnv({
       sessionId: "session-test",
+      remoteControl: false,
       baseEnv: { ...baseEnv, ANTHROPIC_CUSTOM_HEADERS: "x-from-parent: yes" },
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.agent-shim/identities",
@@ -399,6 +418,7 @@ describe("buildEnv", () => {
   it("sets no session headers and no proxy when no front door is engaged", () => {
     const env = buildEnv({
       sessionId: "session-test",
+      remoteControl: false,
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
