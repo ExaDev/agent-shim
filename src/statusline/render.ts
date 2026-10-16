@@ -1,11 +1,12 @@
 import type { StatuslineSummary } from "./enrich";
 
-/** The payload fields the built-in statusline shows: the model, the context window's use, and the terminal's width when the client names it. */
+/** The payload fields the built-in statusline shows: the model, the context window's use, and the prompt cache's effectiveness. */
 export interface StatuslinePayloadView {
   readonly modelDisplayName: string | undefined;
   readonly contextUsedPercentage: number | undefined;
   readonly contextTotalTokens: number | undefined;
   readonly contextWindowTokens: number | undefined;
+  readonly cacheHitRatio: number | undefined;
   readonly cacheReadTokens: number | undefined;
   readonly freshInputTokens: number | undefined;
 }
@@ -88,6 +89,19 @@ function formatDuration(seconds: number | undefined): string {
     return `${String(hours)}h ${String(minutes).padStart(2, "0")}m`;
   }
   return `${String(minutes)}m`;
+}
+
+/** The prompt cache's hit percentage, preferring the client's own request-level hit ratio, which survives a cold turn, over the last request's share of prompt tokens read from cache, which a single cold turn zeroes. */
+function cacheShareText(view: StatuslinePayloadView): string {
+  const hitRatio = view.cacheHitRatio;
+  if (hitRatio !== undefined && Number.isFinite(hitRatio)) {
+    return ` (Cache: ${(Math.max(0, Math.min(1, hitRatio)) * FULL_PERCENT).toFixed(0)}%)`;
+  }
+  const promptTotal = (view.cacheReadTokens ?? 0) + (view.freshInputTokens ?? 0);
+  if (promptTotal > 0 && (view.cacheReadTokens ?? 0) > 0) {
+    return ` (Cache: ${((view.cacheReadTokens ?? 0) / promptTotal * FULL_PERCENT).toFixed(0)}%)`;
+  }
+  return "";
 }
 
 function secondsUntil(resetAt: string | undefined, nowMs: number): number | undefined {
@@ -179,13 +193,15 @@ function layoutGrouped(group1: readonly Segment[], group2: readonly Segment[], m
  */
 export function renderStatuslineBlock(summary: StatuslineSummary, view: StatuslinePayloadView, terminalWidth: number, nowMs: number): string {
   const group1: Segment[] = [];
+  if (view.modelDisplayName !== undefined && view.modelDisplayName !== "") {
+    group1.push(new Segment("static", view.modelDisplayName));
+  }
   if (view.contextUsedPercentage !== undefined) {
     const fraction = Math.max(0, Math.min(1, view.contextUsedPercentage / FULL_PERCENT));
     const color = statusColor(fraction, true);
     const percent = `${color}${view.contextUsedPercentage.toFixed(1)}%${RESET}`;
     const tokens = view.contextTotalTokens !== undefined && view.contextWindowTokens !== undefined ? `${formatTokens(view.contextTotalTokens)}/${formatTokens(view.contextWindowTokens)} ` : "";
-    const promptTotal = (view.cacheReadTokens ?? 0) + (view.freshInputTokens ?? 0);
-    const cache = promptTotal > 0 && (view.cacheReadTokens ?? 0) > 0 ? ` (Cache: ${((view.cacheReadTokens ?? 0) / promptTotal * FULL_PERCENT).toFixed(0)}%)` : "";
+    const cache = cacheShareText(view);
     group1.push(new Segment("bar", "", `Ctx ${tokens}`, ` ${percent}${cache}`, fraction, true));
   }
 

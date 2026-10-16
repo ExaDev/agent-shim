@@ -7,9 +7,9 @@ import { readUsageSnapshot } from "../usage/read";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import { renderStatuslineBlock } from "./render";
 
-/** The payload fields the built-in statusline shows, in the Antigravity statusline's own selection: the context window's use, its size, and the prompt cache's share. */
-function payloadViewOf(payload: unknown): { modelDisplayName: string | undefined; contextUsedPercentage: number | undefined; contextTotalTokens: number | undefined; contextWindowTokens: number | undefined; cacheReadTokens: number | undefined; freshInputTokens: number | undefined } {
-  const empty = { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheReadTokens: undefined, freshInputTokens: undefined };
+/** The payload fields the built-in statusline shows, in the Antigravity statusline's own selection: the model, the context window's use, its size, and the prompt cache's effectiveness. */
+function payloadViewOf(payload: unknown): { modelDisplayName: string | undefined; contextUsedPercentage: number | undefined; contextTotalTokens: number | undefined; contextWindowTokens: number | undefined; cacheHitRatio: number | undefined; cacheReadTokens: number | undefined; freshInputTokens: number | undefined } {
+  const empty = { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined };
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
     return empty;
   }
@@ -27,7 +27,10 @@ function payloadViewOf(payload: unknown): { modelDisplayName: string | undefined
   const current = ctx !== undefined && "current_usage" in ctx && typeof ctx.current_usage === "object" && ctx.current_usage !== null && !Array.isArray(ctx.current_usage) ? ctx.current_usage : undefined;
   const cacheRead = current !== undefined && "cache_read_input_tokens" in current && typeof current.cache_read_input_tokens === "number" ? current.cache_read_input_tokens : undefined;
   const fresh = current !== undefined && "input_tokens" in current && typeof current.input_tokens === "number" ? current.input_tokens : undefined;
-  return { modelDisplayName: displayName, contextUsedPercentage: used, contextTotalTokens: totalIn, contextWindowTokens: size, cacheReadTokens: cacheRead, freshInputTokens: fresh };
+  const promptCache = record.prompt_cache;
+  const cache = typeof promptCache === "object" && promptCache !== null && !Array.isArray(promptCache) ? promptCache : undefined;
+  const hitRatio = cache !== undefined && "hit_ratio" in cache && typeof cache.hit_ratio === "number" ? cache.hit_ratio : undefined;
+  return { modelDisplayName: displayName, contextUsedPercentage: used, contextTotalTokens: totalIn, contextWindowTokens: size, cacheHitRatio: hitRatio, cacheReadTokens: cacheRead, freshInputTokens: fresh };
 }
 
 async function readAllStdin(): Promise<string> {
