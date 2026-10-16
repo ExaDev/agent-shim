@@ -9,7 +9,7 @@ const DEFAULT_RETRY_AFTER_SECONDS = 60;
 const FRACTION_DIGITS = 3;
 const EXHAUSTED_FRACTION = "1.000";
 
-interface AntigravityQuotaBucket {
+export interface AntigravityQuotaBucket {
   readonly remaining_fraction?: number;
   readonly reset_in_seconds?: number;
 }
@@ -37,6 +37,17 @@ function findBucket(quota: AntigravityQuotaMap, keys: readonly string[]): Antigr
     }
   }
   return undefined;
+}
+
+/**
+ * The five-hour and weekly buckets a model draws from: a gemini model its gemini buckets, any other model the third-party ones. The map is the one the quota endpoint's translation and the Antigravity CLI's own statusline payload share, keyed by bucket id.
+ */
+export function selectAntigravityBuckets(quota: AntigravityQuotaMap, model: string | undefined): { readonly fiveHour: AntigravityQuotaBucket | undefined; readonly weekly: AntigravityQuotaBucket | undefined } {
+  const isGemini = (model ?? "").toLowerCase().includes("gemini");
+  return {
+    fiveHour: findBucket(quota, isGemini ? GEMINI_5H_KEYS : THIRD_PARTY_5H_KEYS),
+    weekly: findBucket(quota, isGemini ? GEMINI_WEEKLY_KEYS : THIRD_PARTY_WEEKLY_KEYS),
+  };
 }
 
 /** Utilization is a used fraction from 0 to 1 (`0.81` is 81% used), the form the real API's headers carry: an integer percent here reads as a vast fraction, which Claude Code clamps to an exhausted window. */
@@ -82,14 +93,7 @@ export function unifiedAntigravityQuotaHeaders(params: AntigravityQuotaParams): 
   const rejected = params.rejected === true;
   const nowSec = Math.floor(params.nowMs / MS_PER_SECOND);
 
-  const modelLower = (params.model ?? "").toLowerCase();
-  const isGemini = modelLower.includes("gemini");
-  const fiveHourKeys = isGemini ? GEMINI_5H_KEYS : THIRD_PARTY_5H_KEYS;
-  const weeklyKeys = isGemini ? GEMINI_WEEKLY_KEYS : THIRD_PARTY_WEEKLY_KEYS;
-
-  const quota = params.quota ?? {};
-  const b5h = findBucket(quota, fiveHourKeys);
-  const bWk = findBucket(quota, weeklyKeys);
+  const { fiveHour: b5h, weekly: bWk } = selectAntigravityBuckets(params.quota ?? {}, params.model);
 
   const used5h = calculateUtilization(b5h?.remaining_fraction);
   const reset5h = calculateResetTimestamp(nowSec, b5h?.reset_in_seconds);
