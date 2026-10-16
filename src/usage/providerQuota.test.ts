@@ -333,7 +333,7 @@ describe("antigravityQuotaAdapter", () => {
       };
     }
     if (url === "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist") {
-      return { status: 200, text: JSON.stringify({ currentTier: { id: "free-tier", name: "Antigravity" } }) };
+      return { status: 200, text: JSON.stringify({ currentTier: { id: "free-tier", name: "Antigravity" }, paidTier: { id: "g1-pro-tier", name: "Google AI Pro" } }) };
     }
     if (url.startsWith("https://oauth2.googleapis.com/tokeninfo")) {
       return { status: 200, text: JSON.stringify({ email: "joe@example.com", sub: "12345" }) };
@@ -345,7 +345,21 @@ describe("antigravityQuotaAdapter", () => {
     const quota = await antigravityQuotaAdapter.fetch("REDACTED", http, new AbortController().signal, NOW_MS);
     expect(quota.source).toBe("Cloud Code");
     expect(quota.account).toEqual({ email: "joe@example.com", accountId: "12345" });
-    expect(quota.level).toBe("Antigravity");
+    expect(quota.level).toBe("Google AI Pro");
+
+    const freeAccount = vi.fn<QuotaHttpGet>(async (url) => {
+      await Promise.resolve();
+      if (url === SUMMARY_URL) {
+        return { status: 200, text: JSON.stringify({ groups: [{ buckets: [{ bucketId: "gemini-5h", remainingFraction: 0.75 }] }] }) };
+      }
+      if (url === "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist") {
+        return { status: 200, text: JSON.stringify({ currentTier: { id: "free-tier", name: "Antigravity" } }) };
+      }
+      return { status: HTTP_SERVER_ERROR, text: "" };
+    });
+    const freeQuota = await antigravityQuotaAdapter.fetch("REDACTED", freeAccount, new AbortController().signal, NOW_MS);
+    // With no paid subscription, the plan falls back to the free code-assist tier's own name.
+    expect(freeQuota.level).toBe("Antigravity");
     expect(quota.windows).toHaveLength(2);
     expect(quota.windows[0]).toEqual({ measures: "gemini-5h", periodMs: FIVE_HOURS_MS, utilization: 0.25, resetsAt: "2026-10-02T15:00:00.000Z" });
     expect(quota.windows[1]?.measures).toBe("3p-weekly");

@@ -214,7 +214,10 @@ const GoogleTokenInfoSchema = z.object({
 });
 
 const AntigravityUserSchema = z.object({
+  /** The code-assist tier context, which defaults to the free tier for every account. */
   currentTier: z.object({ name: z.string().optional(), id: z.string().optional() }).optional(),
+  /** The account's paid subscription; absent when the account has none. */
+  paidTier: z.object({ name: z.string().optional(), id: z.string().optional() }).optional(),
 });
 
 /** How long each of the summary's named windows lasts, when the name is one this project knows. */
@@ -258,7 +261,8 @@ export const antigravityQuotaAdapter: ProviderQuotaAdapter = {
     const userResponse = await http(ANTIGRAVITY_USER_URL, headers, signal, { method: "POST", body: "{}" });
     if (userResponse.status === HTTP_OK) {
       try {
-        const tier = AntigravityUserSchema.parse(JSON.parse(userResponse.text)).currentTier;
+        const tiers = AntigravityUserSchema.parse(JSON.parse(userResponse.text));
+        const tier = tiers.paidTier ?? tiers.currentTier;
         level = tier?.name ?? tier?.id;
       } catch {
         // The plan is optional enrichment, same as the account.
