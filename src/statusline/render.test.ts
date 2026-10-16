@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { renderStatuslineBlock } from "./render";
+import { renderStatuslineBlock, RESERVED_COLUMNS } from "./render";
 import type { StatuslineSummary } from "./enrich";
 
 const NOW_MS = Date.parse("2026-10-16T00:00:00.000Z");
@@ -45,10 +45,14 @@ function stripAnsi(text: string): string {
 }
 
 describe("renderStatuslineBlock", () => {
-  it("lays the model, provider account and identity on the first line, the context and quota bars below with fills that expand to the terminal's width", () => {
+  it("lays the model, provider account and identity on the first line justified across the terminal's width, the context and quota bars below with fills that expand", () => {
     const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, WIDE_TERMINAL, NOW_MS)).split("\n");
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toBe("Sonnet 5.5 | Antigravity · ada@example.com · Pro | antigravity");
+    const header = lines[0] ?? "";
+    expect(header.startsWith("Sonnet 5.5")).toBe(true);
+    expect(header.endsWith("antigravity")).toBe(true);
+    expect(header).toContain("Antigravity · ada@example.com · Pro");
+    expect(header.length).toBe(WIDE_TERMINAL_MAX);
     expect(lines[1]).toContain("Ctx 634k/1M");
     expect(lines[1]).toContain("63.4%");
     expect(lines[1]).toContain("Cache: 99%");
@@ -87,9 +91,12 @@ describe("renderStatuslineBlock", () => {
     expect(lines[3]).toContain("Ctx");
   });
 
-  it("packs the header greedily, sharing a line where segments fit together", () => {
+  it("packs the header greedily, sharing a line where segments fit together, justified across it", () => {
     const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, PACKING_TERMINAL, NOW_MS)).split("\n");
-    expect(lines[0]).toBe("Sonnet 5.5 | Antigravity · ada@example.com · Pro");
+    const header = lines[0] ?? "";
+    expect(header.startsWith("Sonnet 5.5")).toBe(true);
+    expect(header.endsWith("Pro")).toBe(true);
+    expect(header.length).toBe(PACKING_TERMINAL - RESERVED_COLUMNS);
     expect(lines[1]).toBe("antigravity");
     expect(lines[2]).toContain("Ctx");
   });
@@ -103,7 +110,11 @@ describe("renderStatuslineBlock", () => {
         NOW_MS,
       ),
     ).split("\n");
-    expect(lines[0]).toBe("Sonnet 5.5 | ada@example.com · Max 20x | zai");
+    const header = lines[0] ?? "";
+    expect(header.startsWith("Sonnet 5.5")).toBe(true);
+    expect(header.endsWith("zai")).toBe(true);
+    expect(header).toContain("ada@example.com · Max 20x");
+    expect(header.length).toBe(WIDE_TERMINAL_MAX);
   });
 
   it("renders nothing when no segment has data", () => {

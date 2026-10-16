@@ -23,7 +23,7 @@ const MILLION = 1_000_000;
 const TEN = 10;
 const TWENTY = 20;
 /** Claude Code indents the status line one column from the terminal edge and truncates at its own usable width, replacing the final column with an ellipsis. COLUMNS is correct in the child environment, but the usable width is four columns short of it, so a line as wide as COLUMNS minus two still loses its tail. */
-const RESERVED_COLUMNS = 4;
+export const RESERVED_COLUMNS = 4;
 const SEPARATOR = " | ";
 const FULL_PERCENT = 100;
 /** The Antigravity statusline's colour bands on a used fraction: red from 90%, yellow from 70%, green under it. */
@@ -180,6 +180,36 @@ function renderLineWithExtra(segments: readonly Segment[], maxWidth: number, sep
   return segments.map((segment) => segment.render(baseBarWidth + (extraById.get(segment) ?? 0))).join(separator);
 }
 
+/** Justifies segments across the line's width: the first flush left, the last flush right, and each separator sharing the spare space evenly around its pipe. A line with no spare width, or a single segment, joins plainly. */
+function justifySegments(segments: readonly Segment[], maxWidth: number, separator: string, baseBarWidth: number): string {
+  const rendered = segments.map((segment) => segment.render(baseBarWidth));
+  if (segments.length < 2) {
+    return rendered.join(separator);
+  }
+  const separatorLength = visibleLength(separator);
+  const total = segments.reduce((sum, segment) => sum + segment.baseLength(baseBarWidth), 0) + separatorLength * (segments.length - 1);
+  const spare = maxWidth - total;
+  if (spare <= 0) {
+    return rendered.join(separator);
+  }
+  const gaps = segments.length - 1;
+  const extraPerGap = Math.floor(spare / gaps);
+  let remainder = spare % gaps;
+  const parts: string[] = [];
+  segments.forEach((_, index) => {
+    if (index > 0) {
+      const extra = extraPerGap + (remainder > 0 ? 1 : 0);
+      if (remainder > 0) {
+        remainder -= 1;
+      }
+      const left = Math.floor(extra / 2);
+      parts.push(`${" ".repeat(left + 1)}|${" ".repeat(extra - left + 1)}`);
+    }
+    parts.push(rendered[index] ?? "");
+  });
+  return parts.join("");
+}
+
 /** Packs segments onto as few lines as fit, in order: a segment joins the current line when it fits beside what is there, and a segment already alone on a line that is still too wide renders whole, exactly as the Antigravity statusline's own fallback does. */
 function packSegments(segments: readonly Segment[], maxWidth: number, separator: string, baseBarWidth: number, fillWrapped: boolean): string[] {
   const separatorLength = visibleLength(separator);
@@ -201,7 +231,7 @@ function packSegments(segments: readonly Segment[], maxWidth: number, separator:
   if (current.length > 0) {
     lines.push(current);
   }
-  return lines.map((line) => (fillWrapped ? renderLineWithExtra(line, maxWidth, separator, baseBarWidth) : line.map((segment) => segment.render(baseBarWidth)).join(separator)));
+  return lines.map((line) => (fillWrapped ? renderLineWithExtra(line, maxWidth, separator, baseBarWidth) : justifySegments(line, maxWidth, separator, baseBarWidth)));
 }
 
 /**
@@ -220,7 +250,7 @@ function layoutGrouped(group1: readonly Segment[], group2: readonly Segment[], m
     if (fillUnwrapped) {
       return renderLineWithExtra(allSegments, maxWidth, separator, baseBarWidth);
     }
-    return allSegments.map((segment) => segment.render(baseBarWidth)).join(separator);
+    return justifySegments(allSegments, maxWidth, separator, baseBarWidth);
   }
   const lines = [group1, group2].map((group) => {
     if (group.length === 0) {
