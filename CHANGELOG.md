@@ -1,3 +1,27 @@
+## [11.10.0](https://github.com/ExaDev/agent-shim/compare/v11.9.0...v11.10.0) (2026-10-16)
+
+### Features
+
+* **antigravity:** complete a bare family member with the request's effort suffix ([745c04c](https://github.com/ExaDev/agent-shim/commit/745c04c81e2024c2f09514aa176a0788fff4a8a5))
+* **antigravity:** map every tier onto a Gemini 3.8 flash model ([c2924a7](https://github.com/ExaDev/agent-shim/commit/c2924a773365f8e146e87b374bc435acb36cf677))
+* **antigravity:** poll the backend quota summary onto response headers ([cada64a](https://github.com/ExaDev/agent-shim/commit/cada64aa687dc8038885d9f67f76eea80f5e781e))
+* **antigravity:** route cloud mode through the Cloud Code proxy endpoint ([ca3760e](https://github.com/ExaDev/agent-shim/commit/ca3760ecf1a683b228de4974dff9a6dbf704ac7f))
+
+### Bug Fixes
+
+* **antigravity:** echo the backend's thought signatures through tool turns ([7b83b4f](https://github.com/ExaDev/agent-shim/commit/7b83b4fe6153957b2786551a209525590a1424a2))
+* **antigravity:** translate tool input schemas onto the Cloud Code subset ([f43b209](https://github.com/ExaDev/agent-shim/commit/f43b2098b72fdb6b7ab6775d7416fbb22515bd2f))
+* **credential:** unwrap go-keyring-base64 token envelopes ([a3681d5](https://github.com/ExaDev/agent-shim/commit/a3681d575f6b791573a3b6e7c7496fc5e0f5de5c))
+* **frontdoor:** scope a provider session's bare /v1/ target before the route serves ([9076630](https://github.com/ExaDev/agent-shim/commit/90766303f562f5ff34909dc78b1a8a247c984bdd))
+
+### Continuous Integration
+
+* **husky:** automate schema regeneration on commit and add typecheck to pre-commit ([b097001](https://github.com/ExaDev/agent-shim/commit/b097001f584d2080f28fe202c9302750903b0ca3))
+
+### Tests
+
+* **antigravity:** cover the xhigh and max effort budgets and the fallback ([644e390](https://github.com/ExaDev/agent-shim/commit/644e3903604bbb5adcd73413433cf6100e80bd7e))
+
 ## [11.9.0](https://github.com/ExaDev/agent-shim/compare/v11.8.2...v11.9.0) (2026-10-15)
 
 ### Features
