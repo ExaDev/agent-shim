@@ -189,6 +189,16 @@ describe("config API: pools", () => {
     expect(await api.pool.remove({ name: "subs", confirm: true })).toEqual({ action: "removed", kind: "pool", name: "subs" });
     expect(readPools(paths).subs).toBeUndefined();
   });
+
+  it("switches resuming on a spent quota on at add, keeps it across other changes, and switches it off", async () => {
+    const api = clientWith(TOKEN).config;
+    await api.identity.add({ name: "work" });
+    const created = await api.pool.add({ name: "subs", identities: ["work"], resumeOnLimit: true });
+    expect(created.value).toEqual({ identities: ["work"], resumeOnLimit: true });
+    expect((await api.pool.set({ name: "subs", preference: "listed" })).value).toEqual({ identities: ["work"], preference: "listed", resumeOnLimit: true });
+    expect((await api.pool.set({ name: "subs", resumeOnLimit: false })).value).toEqual({ identities: ["work"], preference: "listed" });
+    expect(readPools(paths).subs).toEqual({ identities: ["work"], preference: "listed" });
+  });
 });
 
 describe("config API: providers", () => {

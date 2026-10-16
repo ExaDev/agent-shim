@@ -138,14 +138,16 @@ export const ConfigPoolAddInputSchema = z.strictObject({
   name: z.string().min(1),
   identities: PoolMembersInputSchema,
   preference: z.enum(POOL_PREFERENCES).optional(),
+  resumeOnLimit: z.boolean().optional(),
 });
 export const ConfigPoolAddOutputSchema = storedMutationOutput("pool", "created", PoolSchema);
 
-/** `identities` replaces the full member list; `preference: false` clears it back to the default, score. At least one field must be present. */
+/** `identities` replaces the full member list; `preference: false` clears it back to the default, score; `resumeOnLimit` switches resuming on a spent quota on or off. At least one field must be present. */
 export const ConfigPoolSetInputSchema = z.strictObject({
   name: z.string().min(1),
   identities: PoolMembersInputSchema.optional(),
   preference: z.union([z.enum(POOL_PREFERENCES), z.literal(false)]).optional(),
+  resumeOnLimit: z.boolean().optional(),
 });
 export const ConfigPoolSetOutputSchema = storedMutationOutput("pool", "updated", PoolSchema);
 

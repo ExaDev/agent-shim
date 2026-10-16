@@ -148,6 +148,23 @@ describe("agent-shim pool", () => {
     expect(cleared.pools).toEqual({ subs: { identities: ["work"] } });
   });
 
+  it("switches resuming on a spent quota on and off, and shows it", async () => {
+    expect((await cli(["pool", "add", "subs", "--identity", "work", "--identity", "personal", "--resume-on-limit"])).code).toBe(0);
+    expect((await cli(["pool", "list"])).stdout).toContain("subs: work, personal (resumes on limit)");
+    expect((await cli(["pool", "show", "subs"])).stdout).toContain("Resume on limit: yes");
+    expect(JSON.parse((await cli(["pool", "show", "subs", "--json"])).stdout)).toEqual({ name: "subs", identities: ["work", "personal"], resumeOnLimit: true });
+    expect((await cli(["pool", "set", "subs", "--preference", "listed"])).code).toBe(0);
+    expect((await cli(["pool", "list"])).stdout).toContain("subs: work, personal (preference: listed, resumes on limit)");
+    const stored = JSON.parse(fs.readFileSync(paths.globalConfigFile, "utf8")) as { pools: Record<string, unknown> };
+    expect(stored.pools).toEqual({ subs: { identities: ["work", "personal"], preference: "listed", resumeOnLimit: true } });
+    expect((await cli(["pool", "set", "subs", "--no-resume-on-limit"])).code).toBe(0);
+    expect((await cli(["pool", "show", "subs"])).stdout).not.toContain("Resume on limit");
+    const cleared = JSON.parse(fs.readFileSync(paths.globalConfigFile, "utf8")) as { pools: Record<string, unknown> };
+    expect(cleared.pools).toEqual({ subs: { identities: ["work", "personal"], preference: "listed" } });
+    expect((await cli(["pool", "set", "subs", "--resume-on-limit"])).code).toBe(0);
+    expect((await cli(["pool", "show", "subs"])).stdout).toContain("Resume on limit: yes");
+  });
+
   it("refuses a pool set with nothing to change, and an unknown preference mode", async () => {
     await cli(["pool", "add", "subs", "--identity", "work"]);
     const nothing = await cli(["pool", "set", "subs"]);

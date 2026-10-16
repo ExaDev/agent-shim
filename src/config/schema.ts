@@ -463,6 +463,8 @@ export type PoolPreference = z.infer<typeof PoolPreferenceSchema>;
  *
  * A member entry may name another pool (`pool:<name>`), which is ranked with its own preference and contributes its pick at the entry's position; see `PoolMemberSchema`. The graph must stay acyclic, which `pool add`/`pool set` enforce and `doctor` re-checks.
  *
+ * `resumeOnLimit` makes an interactive launch from the pool supervised: when its identity runs out of quota, the launcher stops the session and resumes the same conversation under the next ranked member, on the same terminal. Absent means false.
+ *
  * `preference` decides how the member is chosen, and an absent field means "score". "score" ranks members by plan-size-weighted remaining quota per hour until reset, so the quota closest to expiring is spent first (use-it-or-lose-it). "listed" ranks members strictly in the order the pool lists them, skipping only a member that is currently refused, so a pool can pin one identity first and fall back to the others only while that one is refused.
  */
 export const PoolSchema = z.strictObject({
@@ -470,6 +472,8 @@ export const PoolSchema = z.strictObject({
     .min(1)
     .refine((members) => new Set(members.map(poolMemberIdentity)).size === members.length, { message: "pool members must be unique" }),
   preference: PoolPreferenceSchema.optional(),
+  /** Whether an interactive launch from this pool keeps going when its identity runs out of quota: the launcher moves the session to the next member and resumes the conversation there. Absent means false. */
+  resumeOnLimit: z.boolean().optional(),
 });
 export type Pool = z.infer<typeof PoolSchema>;
 

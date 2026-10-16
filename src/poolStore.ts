@@ -100,20 +100,25 @@ function validateMembers(pools: Readonly<Record<string, Pool>>, name: string, me
 /** The settings of a pool beside its members: every `Pool` field but `identities`, each one optional. A field left undefined is the pool's default for it. */
 export type PoolPolicy = { readonly [Field in keyof Omit<Pool, "identities">]?: Omit<Pool, "identities">[Field] | undefined };
 
-/** The policy fields `policy` actually sets, as the object a pool stores: a pool carries only what it changes, so an undefined field is left out. Accepts a whole `Pool` and returns just its policy. */
+/** The policy fields `policy` actually sets, as the object a pool stores: a pool carries only what it changes, so an undefined field is left out, and a switch that is off is the same as an absent one. Accepts a whole `Pool` and returns just its policy. */
 export function poolPolicyOf(policy: PoolPolicy): PoolPolicy {
-  return { ...(policy.preference === undefined ? {} : { preference: policy.preference }) };
+  return {
+    ...(policy.preference === undefined ? {} : { preference: policy.preference }),
+    ...(policy.resumeOnLimit === true ? { resumeOnLimit: true } : {}),
+  };
 }
 
 /** What a change to an existing pool may name: the full new member list, and the policy fields to set, where `false` clears a field back to its default. A field left undefined is kept as it is. */
 export interface PoolChange {
   readonly identities?: readonly PoolMemberEntry[] | undefined;
   readonly preference?: PoolPreference | false | undefined;
+  /** True switches resuming on a spent quota on, false switches it off. */
+  readonly resumeOnLimit?: boolean | undefined;
 }
 
 /** Whether `change` names anything to change. */
 export function isPoolChange(change: PoolChange): boolean {
-  return change.identities !== undefined || change.preference !== undefined;
+  return change.identities !== undefined || change.preference !== undefined || change.resumeOnLimit !== undefined;
 }
 
 /** Defines a new pool. Throws `InvalidPoolNameError` for a name `PoolNameSchema` rejects, `PoolAlreadyExistsError` for one already defined, and `UsageError` for a nested member that names an undefined pool or a cycle. */
@@ -137,7 +142,8 @@ export function changePool(paths: LayoutPaths, name: string, change: PoolChange)
   const identities = change.identities ?? existing.identities;
   validateMembers(readPools(paths), name, identities);
   const preference = change.preference === undefined ? existing.preference : change.preference === false ? undefined : change.preference;
-  const pool: Pool = { identities: [...identities], ...poolPolicyOf({ preference }) };
+  const resumeOnLimit = change.resumeOnLimit ?? existing.resumeOnLimit;
+  const pool: Pool = { identities: [...identities], ...poolPolicyOf({ preference, resumeOnLimit }) };
   writePools(paths, { ...readPools(paths), [name]: pool });
   return pool;
 }

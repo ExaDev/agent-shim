@@ -27,6 +27,11 @@ describe("poolPolicyOf", () => {
     expect(Object.keys(poolPolicyOf({ preference: undefined }))).toEqual([]);
   });
 
+  it("keeps resumeOnLimit only when it is on, since a switch that is off is the same as an absent one", () => {
+    expect(poolPolicyOf({ resumeOnLimit: true })).toEqual({ resumeOnLimit: true });
+    expect(poolPolicyOf({ resumeOnLimit: false })).toEqual({});
+  });
+
   it("returns only the policy of a whole pool, without its members", () => {
     expect(poolPolicyOf({ identities: ["a"], preference: "score" } as Parameters<typeof poolPolicyOf>[0])).toEqual({ preference: "score" });
   });
@@ -39,6 +44,7 @@ describe("isPoolChange", () => {
     expect(isPoolChange({ identities: ["a"] })).toBe(true);
     expect(isPoolChange({ preference: "listed" })).toBe(true);
     expect(isPoolChange({ preference: false })).toBe(true);
+    expect(isPoolChange({ resumeOnLimit: false })).toBe(true);
   });
 });
 
@@ -60,6 +66,14 @@ describe("addPool and changePool", () => {
     expect(changePool(paths, "subs", { preference: undefined })).toEqual({ identities: ["work"], preference: "listed" });
     expect(changePool(paths, "subs", { preference: false })).toEqual({ identities: ["work"] });
     expect(readPools(paths).subs).toEqual({ identities: ["work"] });
+  });
+
+  it("switches resuming on a spent quota on and off, and keeps it when it is not mentioned", () => {
+    addPool(paths, "subs", ["work"], { resumeOnLimit: true });
+    expect(readPools(paths).subs).toEqual({ identities: ["work"], resumeOnLimit: true });
+    expect(changePool(paths, "subs", { preference: "listed" })).toEqual({ identities: ["work"], preference: "listed", resumeOnLimit: true });
+    expect(changePool(paths, "subs", { resumeOnLimit: false })).toEqual({ identities: ["work"], preference: "listed" });
+    expect(changePool(paths, "subs", { resumeOnLimit: true })).toEqual({ identities: ["work"], preference: "listed", resumeOnLimit: true });
   });
 
   it("keeps a member's condition when the members are not restated", () => {
