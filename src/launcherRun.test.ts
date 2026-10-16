@@ -27,6 +27,7 @@ function recordedPlan(record: (entry: string) => void): LaunchPlan {
     bin: "/real/claude",
     args: ["--print"],
     env: { A: "1" },
+    sessionId: "session-under-test",
     release: () => {
       record("release");
     },

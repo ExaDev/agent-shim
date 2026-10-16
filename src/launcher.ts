@@ -11,6 +11,7 @@ import { evaluateAmbientCredentialGuard } from "./launcher/guard";
 import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDecisionSource, type IdentityDecision, type IdentityDecisionSource } from "./launcher/identity";
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
+import { withConversation, type SupervisedLaunch } from "./launcher/claudeSession";
 import { resolvePoolLaunch } from "./launcher/pool";
 import { resumedContextTokens } from "./usage/resumeContext";
 import { IdentityLockBusyError } from "./launcher/lock";
@@ -89,6 +90,8 @@ export interface PrepareLaunchParams {
   readonly allowMissingConfigProfile?: boolean;
   /** The user-global `update.mode`, resolved from the same global config the launcher already loads. Absent means `off`, and `off` runs no launch-time update check at all. */
   readonly updateMode?: UpdateMode;
+  /** Set by a supervising launcher (see `src/supervise/supervise.ts`): the session id this launch carries, how claude is told it, and, for a relaunch, the pool member to run as. Absent for an ordinary launch, which draws a fresh session id and leaves claude's arguments as the person typed them. */
+  readonly supervised?: SupervisedLaunch;
   /** Wires the launch-time update check behind `update.mode`. Omitted by a caller that cannot resolve releases, re-invoke this binary, or write to the terminal; a mode of `notify` or `auto` with no port wired simply checks nothing. */
   readonly update?: UpdateLaunchPort;
 }
@@ -137,6 +140,8 @@ export interface LaunchPlan {
   readonly bin: string;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string | undefined>>;
+  /** The id this launch's session carries: the front door's session header, and, for a supervised launch, claude's own conversation id. */
+  readonly sessionId: string;
   /** Releases the daemon session registrations this launch holds. Call it when the child has exited; it is safe to call more than once. */
   readonly release: () => void;
   /** What the launch resolved to, as data: the facts the launcher's decision line reports. */
@@ -174,6 +179,11 @@ function pickFromPool(
   const { paths, fs, proc, log } = params;
   if (decided.pool === undefined) {
     return { identityDecision: decided };
+  }
+  // A supervising launcher has already chosen the member this relaunch runs as, under its own lock and with the other moving sessions counted, so no pick is made here.
+  if (params.supervised?.member !== undefined) {
+    const reasons = ["resumed here by the supervising launcher after the previous member ran out of quota"];
+    return { identityDecision: { ...decided, name: params.supervised.member }, poolExplanation: `pool ${decided.pool}: ${reasons.join("; ")}`, poolPick: { name: decided.pool, reasons } };
   }
   const farmRuntime = params.farm;
   if (farmRuntime === undefined) {
@@ -459,7 +469,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   const args = buildArgv({
     toolFlags: buildFlagArgs(flags),
     extraFlags: splitExtraFlags(env.CLAUDE_EXTRA_FLAGS),
-    passthrough: parsedArgv.rest,
+    passthrough: params.supervised === undefined || params.supervised.conversation === "as-given" ? parsedArgv.rest : withConversation(parsedArgv.rest, params.supervised.conversation, params.supervised.sessionId),
   });
 
   // The configuration directory the child runs with, as `buildEnv` will set it: the identity's own directory unless the caller named one.
@@ -604,6 +614,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   }
   const frontDoorRelease = frontDoor === undefined ? undefined : frontDoorPort?.release;
 
+  const sessionId = params.supervised?.sessionId ?? randomUUID();
   const finalEnv = buildEnv({
     baseEnv: env,
     configDirEscapeHatch: configDirEscapeHatchApplies,
@@ -613,7 +624,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     ...(identityCredential === undefined ? {} : { identityCredential }),
     ...(frontDoor === undefined ? {} : { frontdoor: frontDoor }),
     ...(headroom === undefined ? {} : { headroom }),
-    sessionId: randomUUID(),
+    sessionId,
   });
 
   // Every daemon session registration this launch holds, released when the child exits.
@@ -623,7 +634,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
       registered();
     }
   };
-  return { bin: decided.bin, args: finalArgv, env: finalEnv, release, markChildStarted: updateCheck.markChildStarted, decision };
+  return { bin: decided.bin, args: finalArgv, env: finalEnv, sessionId, release, markChildStarted: updateCheck.markChildStarted, decision };
 }
 
 /**
