@@ -60,7 +60,7 @@ describe("createAntigravityRelay", () => {
           finishReason: "STOP",
         },
       ],
-      usageMetadata: { promptTokenCount: 15, candidatesTokenCount: 8 },
+      usageMetadata: { promptTokenCount: 15, cachedContentTokenCount: 9, candidatesTokenCount: 8 },
     });
 
     expect(step2.done).toBe(true);
@@ -78,9 +78,9 @@ describe("createAntigravityRelay", () => {
         type: "message_delta",
         delta: { stop_reason: "end_turn", stop_sequence: null },
         usage: {
-          input_tokens: 15,
+          input_tokens: 6,
           cache_creation_input_tokens: 0,
-          cache_read_input_tokens: 0,
+          cache_read_input_tokens: 9,
           output_tokens: 8,
         },
       },
