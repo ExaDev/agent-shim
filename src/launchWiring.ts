@@ -1,4 +1,5 @@
 import os from "node:os";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { CliError } from "./cliError";
@@ -14,6 +15,7 @@ import { resolveUpdateMode } from "./update/launchHook";
 import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
 import type { LogPort, ProcPort } from "./launcher/ports";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
+import { identitySignIn } from "./usage/signIn";
 import type { ClaudeBinaryResolver } from "./versionDiscovery";
 import {
   realContentSourcePath,
@@ -109,6 +111,7 @@ export function realPrepareLaunchParams(paths: LayoutPaths, options: RealLaunchO
     headroom: realHeadroomPort(paths, { spawnDaemon: options.spawnDaemon, cwd: farm.runtime.cwd }),
     frontdoor: realFrontDoorPort(paths, options.spawnDaemon),
     credentials: { ...realCredentialPort, cache: realCredentialCacheEnv(paths) },
+    hasStoredLogin: (identity) => identitySignIn(realFarmFs, { platform: process.platform, run: realRunPort }, { farmRoot: path.join(paths.identitiesDir, identity), hasCredentialBlock: false }).state !== "signed-out",
     ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
     ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
     ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),

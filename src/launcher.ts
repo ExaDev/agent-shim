@@ -94,6 +94,8 @@ export interface PrepareLaunchParams {
   readonly supervised?: SupervisedLaunch;
   /** Wires the launch-time update check behind `update.mode`. Omitted by a caller that cannot resolve releases, re-invoke this binary, or write to the terminal; a mode of `notify` or `auto` with no port wired simply checks nothing. */
   readonly update?: UpdateLaunchPort;
+  /** Whether an identity has a stored login Claude Code can use (a Keychain item or a credentials file). Absent when the caller cannot ask, in which case a launch assumes it does. */
+  readonly hasStoredLogin?: (identity: string) => boolean;
 }
 
 /** Inputs to `runLauncher`: a launch's inputs plus the port that spawns the child. */
@@ -455,7 +457,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   const pinnedVersion = resolveClaudeVersion({ env, ...(parsedArgv.claudeVersion === undefined ? {} : { flag: parsedArgv.claudeVersion }), ...(cascadeLaunch?.claudeVersion === undefined ? {} : { cascade: cascadeLaunch.claudeVersion }) });
   const discovered = params.resolveClaudeBinary(pinnedVersion === undefined ? undefined : { version: pinnedVersion.version });
 
-  const flags = resolveLaunchFlags({
+  const requestedFlags = resolveLaunchFlags({
     env,
     ...(cascadeLaunch === undefined ? {} : { cascade: cascadeLaunch }),
     flags: {
@@ -465,6 +467,13 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
       ...(parsedArgv.trackUsage === undefined ? {} : { trackUsage: parsedArgv.trackUsage }),
     },
   });
+  // Remote Control is a claude.ai feature and needs the identity's own login. A provider session does not: the door attaches the provider's credential. So a provider launch on an identity with no stored login runs without Remote Control instead of failing at its first turn with "Not logged in".
+  const loginlessProvider =
+    requestedFlags.remoteControl && selectedProvider !== undefined && farmIdentity !== undefined && params.hasStoredLogin?.(farmIdentity) === false ? { identity: farmIdentity, provider: selectedProvider.name } : undefined;
+  if (loginlessProvider !== undefined && !readOnly) {
+    log.info(`agent-shim: identity ${loginlessProvider.identity} has no stored login, so Remote Control, which needs one, is off for this launch; provider ${loginlessProvider.provider} runs without it`);
+  }
+  const flags = loginlessProvider === undefined ? requestedFlags : { ...requestedFlags, remoteControl: false };
 
   const args = buildArgv({
     toolFlags: buildFlagArgs(flags),
@@ -625,6 +634,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     ...(frontDoor === undefined ? {} : { frontdoor: frontDoor }),
     ...(headroom === undefined ? {} : { headroom }),
     sessionId,
+    remoteControl: resolvedFlags.remoteControl,
   });
 
   // Every daemon session registration this launch holds, released when the child exits.
@@ -678,6 +688,7 @@ export function resolveLaunch(params: PrepareLaunchParams): LaunchResolution {
     ...(frontDoor ? { frontdoor: { port: 0, connectPort: 0, trustBundlePath: "", sessionToken: "" } } : {}),
     ...(decided.flags.headroom ? { headroom: { socketPath: "", projectId: "" } } : {}),
     sessionId: "",
+    remoteControl: decided.flags.remoteControl,
   });
   const credentialNames = decided.identityCredentialBlock === undefined ? [] : Object.keys(credentialVariables(decided.identityCredentialBlock.target ?? "bearer", ""));
   const environment = [...new Set([...Object.keys(built).filter((name) => built[name] !== env[name]), ...credentialNames])].sort();

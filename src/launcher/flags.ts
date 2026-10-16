@@ -112,6 +112,9 @@ function withLoopbackHosts(existing: string | undefined): string {
 }
 
 /** Inputs to `buildEnv`. */
+/** What a provider child presents as its credential when the launch does not need Claude Code's OAuth mode: a value that authenticates nothing anywhere, since the front door attaches the provider's own credential at its route and ignores whatever the child sent. */
+const PROVIDER_SESSION_PLACEHOLDER = "agent-shim-provider-session";
+
 export interface BuildEnvParams {
   readonly baseEnv: Readonly<Record<string, string | undefined>>;
   /** True when `CLAUDE_CONFIG_DIR` was already set and the escape hatch applied — `buildEnv` must leave it untouched in that case. */
@@ -129,6 +132,8 @@ export interface BuildEnvParams {
   readonly headroom?: HeadroomUp;
   /** The per-launch session id, stamped into the session header the door identifies this launch's requests by. */
   readonly sessionId: string;
+  /** Whether Remote Control is on for this launch. It needs Claude Code in OAuth mode, so a provider launch with it on carries no credential variable; one with it off carries a placeholder, which lets the session run on an identity with no usable login. */
+  readonly remoteControl: boolean;
 }
 
 /**
@@ -164,8 +169,8 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
   }
 
   if (params.provider !== undefined) {
-    // A provider session always rides the front door, and the door attaches the provider's own credential at its route, so the child is given no credential to present at all. This is not merely tidiness: a credential variable here puts Claude Code in env-token auth mode, which is exactly the state its Remote Control activation gate refuses, so exporting one is what kept provider inference and Remote Control from coexisting in one session. Every credential variable is removed, so an ambient one inherited from the parent can neither take the presented slot the door would ignore nor change the auth mode back; the launcher still resolves the credential before this point, so a provider none of whose sources yields a token still fails the launch outright.
-    env.ANTHROPIC_AUTH_TOKEN = undefined;
+    // A provider session always rides the front door, and the door attaches the provider's own credential at its route, so what the child presents is never used. Claude Code still needs some credential to start a turn: left to its own OAuth login, a session on an identity that has none, or whose login has expired, stops with "Not logged in" before it sends a request. A placeholder in the auth token variable puts it in env-token mode, which needs no login, and is all a provider session needs. Remote Control is the exception: its activation gate refuses env-token mode, so a launch with Remote Control on carries no credential variable and relies on the identity's OAuth login, as it always has. Every other credential variable is removed, so an ambient one inherited from the parent can neither take the presented slot the door would ignore nor change the auth mode; the launcher still resolves the provider's credential before this point, so a provider none of whose sources yields a token still fails the launch outright.
+    env.ANTHROPIC_AUTH_TOKEN = params.remoteControl ? undefined : PROVIDER_SESSION_PLACEHOLDER;
     env.ANTHROPIC_API_KEY = undefined;
     env.CLAUDE_CODE_OAUTH_TOKEN = undefined;
   } else if (params.identityCredential !== undefined) {

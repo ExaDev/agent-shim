@@ -127,7 +127,7 @@ describe("runLauncher provider selection", () => {
 
     const env = spawnedEnv(spawn);
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
     expect(env.AGENT_SHIM_PROVIDER).toBe("Codex");
   });
 
@@ -148,7 +148,7 @@ describe("runLauncher provider selection", () => {
     const env = spawnedEnv(spawn);
     expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.agent-shim/identities/work`);
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
     expect(env.AGENT_SHIM_PROVIDER).toBe("OpenRouter");
   });
 
@@ -168,7 +168,7 @@ describe("runLauncher provider selection", () => {
     const env = spawnedEnv(spawn);
     expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.agent-shim/identities/work`);
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
   });
 
   it("lets --no-provider opt one launch out of the cascade's provider selection", () => {
@@ -209,7 +209,7 @@ describe("runLauncher provider selection", () => {
 
     const env = spawnedEnv(spawn);
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
   });
 
   it("does not trip the ambient-credential guard when a provider is selected, and leaves none of the ambient credential in the child", () => {
@@ -226,7 +226,7 @@ describe("runLauncher provider selection", () => {
 
     expect(code).toBe(0);
     const env = spawnedEnv(spawn);
-    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 
@@ -259,7 +259,7 @@ describe("runLauncher provider selection", () => {
       const env = spawnedEnv(spawn);
       expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
       expect(env.ANTHROPIC_API_KEY).toBeUndefined();
-      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
       expect([...log.infos, ...log.warns, ...log.errors].join("\n")).not.toContain("sk-ant-REDACTED");
       expect(log.infos.join("\n")).toContain("provider anthropic-api (credential apiKey from op op://vault/item/field)");
     });
@@ -284,7 +284,7 @@ describe("runLauncher provider selection", () => {
       });
 
       const env = spawnedEnv(spawn);
-      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
       expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     });
 
@@ -377,5 +377,75 @@ describe("runLauncher provider selection", () => {
     expect(code).toBe(1);
     expect(spawn.spawnSync).not.toHaveBeenCalled();
     expect(log.errors[0]).toContain("ANTHROPIC_AUTH_TOKEN");
+  });
+
+  describe("Remote Control on a provider launch", () => {
+    /** A provider launch under a `--remote-control` request, as the plan the launcher builds, with `hasStoredLogin` wired to `login` (or left unwired). */
+    function plan(login: boolean | undefined, extra: readonly string[] = []) {
+      const log = fakeLog();
+      const built = prepareLaunch({
+        paths,
+        fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ }),
+        proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["@work", "--provider", "z", "--remote-control", ...extra, "--print"]),
+        log,
+        resolveClaudeBinary: () => discovered,
+        credentials: fakeCredentials(),
+        frontdoor: fakeFrontDoorPort(),
+        farm: fakeFarm(createFakeFarmFs({})),
+        ...(login === undefined ? {} : { hasStoredLogin: () => login }),
+      });
+      return { built, log };
+    }
+
+    it("keeps Remote Control, and presents no credential, when the identity has a stored login", () => {
+      const { built, log } = plan(true);
+      expect(built.args).toContain("--remote-control=");
+      expect(built.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(log.infos.join("\n")).not.toContain("no stored login");
+    });
+
+    it("turns Remote Control off and presents the placeholder, saying so, when the identity has no stored login", () => {
+      const { built, log } = plan(false);
+      expect(built.args).not.toContain("--remote-control=");
+      expect(built.env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
+      expect(log.infos.join("\n")).toContain("agent-shim: identity work has no stored login, so Remote Control, which needs one, is off for this launch; provider z runs without it");
+    });
+
+    it("assumes a login when the caller cannot ask, so a launch is never changed on a guess", () => {
+      const { built } = plan(undefined);
+      expect(built.args).toContain("--remote-control=");
+      expect(built.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    });
+
+    it("says nothing when Remote Control was not asked for, however the login stands", () => {
+      const log = fakeLog();
+      const built = prepareLaunch({
+        paths,
+        fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/z.json`]: providerZ }),
+        proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["@work", "--provider", "z", "--print"]),
+        log,
+        resolveClaudeBinary: () => discovered,
+        credentials: fakeCredentials(),
+        frontdoor: fakeFrontDoorPort(),
+        farm: fakeFarm(createFakeFarmFs({})),
+        hasStoredLogin: () => false,
+      });
+      expect(built.env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
+      expect(log.infos.join("\n")).not.toContain("no stored login");
+    });
+
+    it("leaves a launch with no provider alone: Remote Control stays on without a stored login", () => {
+      const built = prepareLaunch({
+        paths,
+        fs: fakeFs({}),
+        proc: fakeProc({}, ["@work", "--remote-control", "--print"]),
+        log: fakeLog(),
+        resolveClaudeBinary: () => discovered,
+        frontdoor: fakeFrontDoorPort(),
+        farm: fakeFarm(createFakeFarmFs({})),
+        hasStoredLogin: () => false,
+      });
+      expect(built.args).toContain("--remote-control=");
+    });
   });
 });
