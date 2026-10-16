@@ -144,20 +144,41 @@ describe("mapModel", () => {
       expect(routeFrom("claude-opus-5-5-high", { "3p-5h": spent(SOON) })).toContain("gemini-3.8-pro");
     });
 
-    it("spends a fallback whose windows are already running before one that would start a new clock", () => {
+    describe("when the preferred candidate is spent", () => {
+      const FIVE_HOURS = 18_000;
+      const WEEK = 604_800;
+      const DAY = 86_400;
+      const HOUR = 3600;
+      const WEEK_USED_SPARE = 0.2;
+      const WEEK_REMAINING_PLENTY = 0.74;
+      const FIVE_HOUR_REMAINING = 0.9;
       const spill = resolveAntigravityConfig({ models: { spill: ["gemini-3.8-flash-low", "claude-opus-5-5-high", "gemini-4-argon-medium"] } });
       const via = (quota: AntigravityQuotaMap): string => translateRequest(request({ model: "spill", messages: [{ role: "user", content: "Hi" }] }), spill, { quota, nowMs: NOW }).model;
-      const fresh = { remaining_fraction: 1, reset_in_seconds: LATER };
-      const running = { remaining_fraction: 0.74, reset_in_seconds: LATER };
-      expect(via({ "gemini-5h": spent(SOON), "3p-5h": fresh, "3p-weekly": fresh, "gemini-argon-wtu-weekly": running })).toBe("gemini-4-argon-medium");
-      expect(via({ "gemini-5h": spent(SOON), "3p-5h": fresh, "3p-weekly": fresh, "gemini-argon-wtu-weekly": fresh })).toBe("claude-opus-5-5-high");
-    });
+      const unused = (period: number) => ({ remaining_fraction: 1, reset_in_seconds: period });
+      const spentGemini = { "gemini-5h": spent(SOON) };
+      const unusedThirdParty = { "3p-5h": unused(FIVE_HOURS), "3p-weekly": unused(WEEK) };
 
-    it("keeps the preferred candidate while it is unspent, even when it would start a new clock", () => {
-      const spill = resolveAntigravityConfig({ models: { spill: ["claude-opus-5-5-high", "gemini-4-argon-medium"] } });
-      const fresh = { remaining_fraction: 1, reset_in_seconds: LATER };
-      const quota = { "3p-5h": fresh, "3p-weekly": fresh, "gemini-argon-wtu-weekly": { remaining_fraction: 0.74, reset_in_seconds: LATER } };
-      expect(translateRequest(request({ model: "spill", messages: [{ role: "user", content: "Hi" }] }), spill, { quota, nowMs: NOW }).model).toBe("claude-opus-5-5-high");
+      it("spends the window holding allowance that would lapse before one that has not started", () => {
+        expect(via({ ...spentGemini, ...unusedThirdParty, "gemini-argon-wtu-weekly": { remaining_fraction: WEEK_REMAINING_PLENTY, reset_in_seconds: DAY } })).toBe("gemini-4-argon-medium");
+      });
+
+      it("spares a window that is being drawn faster than its period refills", () => {
+        expect(via({ ...spentGemini, ...unusedThirdParty, "gemini-argon-wtu-weekly": { remaining_fraction: WEEK_USED_SPARE, reset_in_seconds: WEEK - DAY } })).toBe("claude-opus-5-5-high");
+      });
+
+      it("treats unused windows as neutral and keeps preference order between them", () => {
+        expect(via({ ...spentGemini, ...unusedThirdParty, "gemini-argon-wtu-weekly": unused(WEEK) })).toBe("claude-opus-5-5-high");
+      });
+
+      it("lets the tighter of the five-hour and weekly windows limit a candidate", () => {
+        expect(via({ ...spentGemini, "3p-5h": { remaining_fraction: FIVE_HOUR_REMAINING, reset_in_seconds: HOUR }, "3p-weekly": { remaining_fraction: WEEK_USED_SPARE, reset_in_seconds: WEEK - DAY }, "gemini-argon-wtu-weekly": unused(WEEK) })).toBe("gemini-4-argon-medium");
+      });
+
+      it("keeps the preferred candidate while it is unspent, however the fallbacks compare", () => {
+        const preferred = resolveAntigravityConfig({ models: { spill: ["claude-opus-5-5-high", "gemini-4-argon-medium"] } });
+        const quota = { ...unusedThirdParty, "gemini-argon-wtu-weekly": { remaining_fraction: WEEK_REMAINING_PLENTY, reset_in_seconds: HOUR } };
+        expect(translateRequest(request({ model: "spill", messages: [{ role: "user", content: "Hi" }] }), preferred, { quota, nowMs: NOW }).model).toBe("claude-opus-5-5-high");
+      });
     });
 
     it("routes an alias's candidates the same way", () => {

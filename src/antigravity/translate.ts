@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { antigravityQuotaExhaustion, selectAntigravityBuckets, type AntigravityQuotaMap } from "./quota";
+import { antigravityQuotaExhaustion, antigravityQuotaPressure, type AntigravityQuotaMap } from "./quota";
 import { toolCallSignatureOf, UNVERIFIED_THOUGHT_SIGNATURE } from "./signatures";
 
 import {
@@ -133,13 +133,6 @@ export interface AntigravityRouting {
   readonly previous?: string;
 }
 
-/** True when every window the model draws on has been used since its last reset (remaining below the full allowance), so choosing it starts no new clock. A model with no known window starts none either, but counts as not running: nothing says its quota is already ticking. */
-function windowsRunning(quota: AntigravityQuotaMap | undefined, model: string): boolean {
-  const { fiveHour, weekly } = selectAntigravityBuckets(quota ?? {}, model);
-  const buckets = [fiveHour, weekly].filter((bucket) => bucket !== undefined);
-  return buckets.length > 0 && buckets.every((bucket) => bucket.remaining_fraction !== undefined && bucket.remaining_fraction < 1);
-}
-
 /**
  * Chooses among a name's candidates by available quota: the model the session is already on while it is unspent, otherwise the first whose windows are not spent, in preference order; when every one is spent, the one whose binding window lifts soonest, since that is the first that can serve. A candidate whose quota is unknown counts as available, so an absent quota map routes to the first candidate.
  */
@@ -158,13 +151,17 @@ export function chooseCandidate(candidates: readonly string[], routing: Antigrav
   if (unspent[0] === first) {
     return first;
   }
-  // The preferred candidate is spent. A window starts its clock on its first use after a reset, and what is left of it is lost when that clock runs out, so a fallback whose windows are all running already is spent before one that would start a new clock: the quota already ticking is used first, and the clocks of the other families stay unstarted, so their windows lift staggered from the ones in use rather than together.
-  const running = unspent.find((model) => windowsRunning(routing.quota, model));
-  if (running !== undefined) {
-    return running;
+  // The preferred candidate is spent, so the fallbacks compete on what their allowance is worth: the one whose windows hold the most allowance beyond what their remaining time would let a steady burn use is spent first, since that surplus lapses at the reset. A window starts its clock on its first use after a reset, so an unused one holds all of its allowance and all of its period and sits at neutral pressure: it neither jumps the queue nor is spared, and one already running with surplus goes ahead of it. Preference order breaks ties.
+  const neutral = 1;
+  let best: { model: string; pressure: number } | undefined;
+  for (const model of unspent) {
+    const pressure = antigravityQuotaPressure(routing.quota, model) ?? neutral;
+    if (best === undefined || pressure > best.pressure) {
+      best = { model, pressure };
+    }
   }
-  if (unspent[0] !== undefined) {
-    return unspent[0];
+  if (best !== undefined) {
+    return best.model;
   }
   let soonest: { model: string; resetSec: number } | undefined;
   for (const model of candidates) {
