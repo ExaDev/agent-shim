@@ -1,3 +1,9 @@
+## [11.19.0](https://github.com/ExaDev/agent-shim/compare/v11.18.0...v11.19.0) (2026-10-16)
+
+### Features
+
+* **config:** warn and ignore a setting this release does not know instead of failing the file ([653a7b6](https://github.com/ExaDev/agent-shim/commit/653a7b685a077ce85d928ab83c13c193204bee11))
+
 ## [11.18.0](https://github.com/ExaDev/agent-shim/compare/v11.17.1...v11.18.0) (2026-10-16)
 
 ### Features
