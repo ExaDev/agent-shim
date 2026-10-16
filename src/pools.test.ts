@@ -165,6 +165,26 @@ describe("agent-shim pool", () => {
     expect((await cli(["pool", "show", "subs"])).stdout).toContain("Resume on limit: yes");
   });
 
+  it("sets the compaction settings, shows them, and refuses ones that contradict or are out of range", async () => {
+    expect((await cli(["pool", "add", "subs", "--identity", "work", "--resume-on-limit", "--compact-before-limit", "--compact-at-utilisation", "85"])).code).toBe(0);
+    expect((await cli(["pool", "list"])).stdout).toContain("subs: work (resumes on limit, compacts at 85%)");
+    expect((await cli(["pool", "show", "subs"])).stdout).toContain("Compact before limit: at 85% of a window");
+    expect(JSON.parse((await cli(["pool", "show", "subs", "--json"])).stdout)).toEqual({ name: "subs", identities: ["work"], resumeOnLimit: true, compactBeforeLimit: true, compactAtUtilisation: 85 });
+    expect((await cli(["pool", "set", "subs", "--no-compact-at-utilisation"])).code).toBe(0);
+    expect((await cli(["pool", "list"])).stdout).toContain("subs: work (resumes on limit, compacts before the limit)");
+    expect((await cli(["pool", "show", "subs"])).stdout).toContain("Compact before limit: when compacting would cost more than the five-hour window has left");
+    expect((await cli(["pool", "set", "subs", "--no-compact-before-limit"])).code).toBe(0);
+    expect((await cli(["pool", "show", "subs"])).stdout).not.toContain("Compact before limit");
+    // A setting that needs another one switched on is refused, naming what is missing.
+    const contradiction = await cli(["pool", "set", "subs", "--no-resume-on-limit", "--compact-before-limit"]);
+    expect(contradiction.code).toBe(EXIT_USAGE);
+    expect(contradiction.stderr).toContain("compactBeforeLimit needs resumeOnLimit");
+    expect((await cli(["pool", "add", "other", "--identity", "personal", "--compact-before-limit"])).stderr).toContain("compactBeforeLimit needs resumeOnLimit");
+    for (const bad of ["0", "101", "abc", "7.5"]) {
+      expect((await cli(["pool", "add", "other", "--identity", "personal", "--resume-on-limit", "--compact-before-limit", "--compact-at-utilisation", bad])).code).toBe(EXIT_USAGE);
+    }
+  });
+
   it("refuses a pool set with nothing to change, and an unknown preference mode", async () => {
     await cli(["pool", "add", "subs", "--identity", "work"]);
     const nothing = await cli(["pool", "set", "subs"]);

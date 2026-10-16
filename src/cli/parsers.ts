@@ -1,5 +1,5 @@
 import { InvalidArgumentError } from "commander";
-import type { Anchor } from "../config/schema";
+import { CompactAtUtilisationSchema, type Anchor } from "../config/schema";
 import { parseAnchor } from "../usage/anchor";
 import { parseDuration } from "../resolve/conditions";
 import { parsePair, parseBool } from "./pairs";
@@ -48,6 +48,17 @@ export function collectRepeated(value: string, previous: readonly string[] = [])
 /** Commander repeatable-option collector for `--anchor <days>@<HH:MM>[/<zone>]`: each occurrence appends one anchor, and a malformed one is a usage error naming what is wrong. */
 export function collectAnchor(value: string, previous: readonly Anchor[] = []): Anchor[] {
   return [...previous, asInvalidArgument(() => parseAnchor(value))];
+}
+
+/** Commander option parser for a share of a quota window in whole percent, 1 to 100. A malformed or out-of-range value is a usage error naming the option. */
+export function parseUtilisationPercent(value: string): number {
+  return asInvalidArgument(() => {
+    const percent = CompactAtUtilisationSchema.safeParse(Number(value));
+    if (!percent.success) {
+      throw new Error(`"${value}" is not a whole percent from 1 to 100`);
+    }
+    return percent.data;
+  });
 }
 
 /** Commander option parser for a duration kept as its literal (`30m`, `2h`), for a setting stored in configuration as written. A malformed value is a usage error naming the option. */

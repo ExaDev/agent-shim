@@ -107,8 +107,8 @@ agent-shim profile use <name>               # the global default configuration p
 agent-shim job add <name> (--identity <name> | --pool <name>) (--at <spec>... | --before-reset <fiveHour|sevenDay> --lead <duration>) --prompt <text> --timeout <duration> [--cwd <dir>] [--model <model>] [--allowed-tool <tool>]... [--json]
 agent-shim job list|show|remove|run [name]
 
-agent-shim pool add <name> --identity <member>... [--preference <score|listed>] [--resume-on-limit] [--json]
-agent-shim pool set <name> [--identity <member>...] [--preference <score|listed> | --no-preference] [--resume-on-limit | --no-resume-on-limit] [--json]
+agent-shim pool add <name> --identity <member>... [--preference <score|listed>] [--resume-on-limit] [--compact-before-limit] [--compact-at-utilisation <percent>] [--json]
+agent-shim pool set <name> [--identity <member>...] [--preference <score|listed> | --no-preference] [--resume-on-limit | --no-resume-on-limit] [--compact-before-limit | --no-compact-before-limit] [--compact-at-utilisation <percent> | --no-compact-at-utilisation] [--json]
 agent-shim pool list [--json]
 agent-shim pool show <name> [--json]
 agent-shim pool remove <name> [--yes] [--json]

@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { Option } from "commander";
 import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { UsageError } from "./cliError";
-import { collectRepeated } from "./cli/parsers";
+import { collectRepeated, parseUtilisationPercent } from "./cli/parsers";
 import { POOL_PREFERENCES, POOL_SELECTOR_PREFIX, type Pool, type PoolPreference } from "./config/schema";
 import { readActiveIdentity, requireIdentityNames, useIdentity } from "./identityStore";
 import { addPool, changePool, isPoolChange, poolPolicyOf, readPools, removePool, requirePool } from "./poolStore";
@@ -27,7 +27,11 @@ function formatPoolPick(report: PoolPickReport, nowMs: number): string[] {
 
 /** The settings a pool carries, as the parenthesised note after its members in `pool list`, or an empty string when it carries none. */
 function policyNotes(entry: Pool | undefined): string {
-  const notes = [...(entry?.preference === undefined ? [] : [`preference: ${entry.preference}`]), ...(entry?.resumeOnLimit === true ? ["resumes on limit"] : [])];
+  const notes = [
+    ...(entry?.preference === undefined ? [] : [`preference: ${entry.preference}`]),
+    ...(entry?.resumeOnLimit === true ? ["resumes on limit"] : []),
+    ...(entry?.compactBeforeLimit === true ? [entry.compactAtUtilisation === undefined ? "compacts before the limit" : `compacts at ${String(entry.compactAtUtilisation)}%`] : []),
+  ];
   return notes.length === 0 ? "" : ` (${notes.join(", ")})`;
 }
 
@@ -35,6 +39,8 @@ interface PoolMembersOptions {
   readonly identity?: readonly string[];
   readonly preference?: PoolPreference;
   readonly resumeOnLimit?: boolean;
+  readonly compactBeforeLimit?: boolean;
+  readonly compactAtUtilisation?: number;
   readonly json?: boolean;
 }
 
@@ -43,6 +49,8 @@ interface PoolSetOptions {
   readonly identity?: readonly string[];
   readonly preference?: PoolPreference | false;
   readonly resumeOnLimit?: boolean;
+  readonly compactBeforeLimit?: boolean;
+  readonly compactAtUtilisation?: number | false;
   readonly json?: boolean;
 }
 
@@ -54,6 +62,9 @@ function membersOf(options: Readonly<Pick<PoolMembersOptions, "identity">>): rea
 }
 
 const RESUME_ON_LIMIT_DESCRIPTION = "Keep an interactive session of this pool going when its identity runs out of quota: the launcher stops it and resumes the same conversation under the next ranked member, on the same terminal.";
+
+const COMPACT_BEFORE_LIMIT_DESCRIPTION = "Compact each supervised session's context while its member can still afford it, so the resume on the next member writes a small context instead of a large one. Needs --resume-on-limit.";
+const COMPACT_AT_UTILISATION_DESCRIPTION = "Compact when either quota window of the member passes this share, in whole percent. Without it, a session is compacted when compacting every session on its member would cost more than the five-hour window has left. Needs --compact-before-limit.";
 
 const PREFERENCE_DESCRIPTION = "How a launch picks a member: score (the default) picks the member whose remaining quota expires soonest; listed tries the members in the order the pool lists them, skipping any that is refused right now.";
 
@@ -72,11 +83,13 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .option("--identity <name>", "A member: an identity name, or pool:<name> to nest another pool with its own policy (repeatable).", collectRepeated)
       .addOption(new Option("--preference <mode>", PREFERENCE_DESCRIPTION).choices(POOL_PREFERENCES))
       .option("--resume-on-limit", RESUME_ON_LIMIT_DESCRIPTION)
+      .option("--compact-before-limit", COMPACT_BEFORE_LIMIT_DESCRIPTION)
+      .option("--compact-at-utilisation <percent>", COMPACT_AT_UTILISATION_DESCRIPTION, parseUtilisationPercent)
       .option("--json", "Print the result as JSON.")
       .action((name: string, options: Readonly<PoolMembersOptions>) => {
         const members = membersOf(options);
         requireIdentityNames(paths, members);
-        const created = addPool(paths, name, members, { preference: options.preference, resumeOnLimit: options.resumeOnLimit });
+        const created = addPool(paths, name, members, { preference: options.preference, resumeOnLimit: options.resumeOnLimit, compactBeforeLimit: options.compactBeforeLimit, compactAtUtilisation: options.compactAtUtilisation });
         reportMutation(options.json, { action: "created", kind: "pool", name, value: created }, () => {
           console.log(`Created pool "${name}" with ${members.join(", ")}.`);
         });
@@ -93,12 +106,16 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .option("--no-preference", "Clear the preference back to the default, score.")
       .option("--resume-on-limit", RESUME_ON_LIMIT_DESCRIPTION)
       .option("--no-resume-on-limit", "Stop resuming sessions of this pool under another member when their identity runs out of quota.")
+      .option("--compact-before-limit", COMPACT_BEFORE_LIMIT_DESCRIPTION)
+      .option("--no-compact-before-limit", "Stop compacting sessions of this pool before their member's quota is spent.")
+      .option("--compact-at-utilisation <percent>", COMPACT_AT_UTILISATION_DESCRIPTION, parseUtilisationPercent)
+      .option("--no-compact-at-utilisation", "Clear the compaction threshold, so the launcher decides from what compacting would cost.")
       .option("--json", "Print the result as JSON.")
       .action((name: string, options: Readonly<PoolSetOptions>) => {
         requirePool(paths, name);
-        const change = { identities: options.identity, preference: options.preference, resumeOnLimit: options.resumeOnLimit };
+        const change = { identities: options.identity, preference: options.preference, resumeOnLimit: options.resumeOnLimit, compactBeforeLimit: options.compactBeforeLimit, compactAtUtilisation: options.compactAtUtilisation };
         if (!isPoolChange(change)) {
-          throw new UsageError("Nothing to change: pass --identity, --preference, --no-preference, --resume-on-limit or --no-resume-on-limit.");
+          throw new UsageError("Nothing to change: pass a member with --identity, or a setting such as --preference, --resume-on-limit, --compact-before-limit or --compact-at-utilisation (each with a --no- form).");
         }
         if (options.identity !== undefined) {
           // Only the freshly listed names are validated: a member the command does not restate keeps its object entry and the condition it carries.
@@ -109,7 +126,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
           console.log(`Pool "${name}" now has ${updated.identities.map(poolMemberIdentity).join(", ")}.`);
         });
       }),
-    ["agent-shim pool set subs --identity work --identity personal --identity spare", "agent-shim pool set subs --preference listed", "agent-shim pool set subs --resume-on-limit"],
+    ["agent-shim pool set subs --identity work --identity personal --identity spare", "agent-shim pool set subs --preference listed", "agent-shim pool set subs --resume-on-limit --compact-before-limit --compact-at-utilisation 85"],
   );
 
   withExamples(
@@ -155,6 +172,9 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         }
         if (entry.resumeOnLimit === true) {
           console.log("Resume on limit: yes");
+        }
+        if (entry.compactBeforeLimit === true) {
+          console.log(`Compact before limit: ${entry.compactAtUtilisation === undefined ? "when compacting would cost more than the five-hour window has left" : `at ${String(entry.compactAtUtilisation)}% of a window`}`);
         }
       }),
     ["agent-shim pool show subs"],

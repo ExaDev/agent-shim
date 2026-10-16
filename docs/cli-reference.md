@@ -73,8 +73,8 @@ agent-shim profile show <name> [--json]
 agent-shim profile remove <name> [--yes]
 agent-shim profile use <name>               # the global default configuration profile
 
-agent-shim pool add <name> --identity <member>... [--preference <score|listed>] [--resume-on-limit]
-agent-shim pool set <name> [--identity <member>...] [--preference <score|listed> | --no-preference] [--resume-on-limit | --no-resume-on-limit]
+agent-shim pool add <name> --identity <member>... [--preference <score|listed>] [--resume-on-limit] [--compact-before-limit] [--compact-at-utilisation <percent>]
+agent-shim pool set <name> [--identity <member>...] [--preference <score|listed> | --no-preference] [--resume-on-limit | --no-resume-on-limit] [--compact-before-limit | --no-compact-before-limit] [--compact-at-utilisation <percent> | --no-compact-at-utilisation]
 agent-shim pool list [--json]
 agent-shim pool show <name> [--json]
 agent-shim pool remove <name> [--yes]

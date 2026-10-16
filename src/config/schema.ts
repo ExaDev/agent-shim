@@ -458,10 +458,17 @@ export const POOL_PREFERENCES = ["score", "listed"] as const;
 const PoolPreferenceSchema = z.enum(POOL_PREFERENCES);
 export type PoolPreference = z.infer<typeof PoolPreferenceSchema>;
 
+const WHOLE_PERCENT_MAX = 100;
+
+/** The share of a quota window, in whole percent, at which a pool compacts its sessions' context: 1 to 100. */
+export const CompactAtUtilisationSchema = z.number().int().min(1).max(WHOLE_PERCENT_MAX);
+
 /**
  * A named, explicit set of identities to choose among at launch. Never implicit: a pool lists its members, so an identity that bills a client is only ever picked when someone put it there.
  *
  * A member entry may name another pool (`pool:<name>`), which is ranked with its own preference and contributes its pick at the entry's position; see `PoolMemberSchema`. The graph must stay acyclic, which `pool add`/`pool set` enforce and `doctor` re-checks.
+ *
+ * `compactBeforeLimit` makes the supervised sessions compact their context while their member can still afford it, at `compactAtUtilisation` percent of a window or, when that is absent, when compacting every session on the member would cost more than its five-hour window has left.
  *
  * `resumeOnLimit` makes an interactive launch from the pool supervised: when its identity runs out of quota, the launcher stops the session and resumes the same conversation under the next ranked member, on the same terminal. Absent means false.
  *
@@ -474,7 +481,13 @@ export const PoolSchema = z.strictObject({
   preference: PoolPreferenceSchema.optional(),
   /** Whether an interactive launch from this pool keeps going when its identity runs out of quota: the launcher moves the session to the next member and resumes the conversation there. Absent means false. */
   resumeOnLimit: z.boolean().optional(),
-});
+  /** Whether a supervised session's context is compacted before its identity's quota is spent, so the resume on the next member writes a small context instead of a large one. Needs `resumeOnLimit`. Absent means false. */
+  compactBeforeLimit: z.boolean().optional(),
+  /** The share of a quota window, in whole percent, at which sessions are compacted. Absent means the launcher decides from what compacting every session on the member would cost against what its five-hour window has left. Needs `compactBeforeLimit`. */
+  compactAtUtilisation: CompactAtUtilisationSchema.optional(),
+})
+  .refine((pool) => pool.compactBeforeLimit !== true || pool.resumeOnLimit === true, { message: "compactBeforeLimit needs resumeOnLimit, since a session that is not moved has no cold cache to avoid", path: ["compactBeforeLimit"] })
+  .refine((pool) => pool.compactAtUtilisation === undefined || pool.compactBeforeLimit === true, { message: "compactAtUtilisation needs compactBeforeLimit", path: ["compactAtUtilisation"] });
 export type Pool = z.infer<typeof PoolSchema>;
 
 /** The weekdays an anchor can name, Monday first, as the lowercase three-letter names `--anchor` takes. */
