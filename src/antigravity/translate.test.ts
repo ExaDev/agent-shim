@@ -72,7 +72,7 @@ describe("resolveAntigravityConfig", () => {
 
 describe("mapModel", () => {
   it.each([
-    ["claude-fable-5", "claude-opus-5-5-high"],
+    ["claude-fable-5", "gemini-4-argon-high"],
     ["claude-opus-4-7", "claude-opus-5-5-high"],
     ["claude-sonnet-4-5-20250929", "claude-sonnet-5-5-medium"],
     ["claude-haiku-4-5", "gemini-3.8-flash-low"],

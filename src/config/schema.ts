@@ -238,13 +238,13 @@ export type AntigravityEffort = (typeof ANTIGRAVITY_EFFORTS)[number];
 export const ANTIGRAVITY_DEFAULT_MODE: AntigravityMode = "cloud";
 export const ANTIGRAVITY_DEFAULT_MODEL = "gemini-3.8-flash-high";
 /**
- * Each tier's shipped candidates in preference order: the third-party Claude model that matches the tier first (Opus and Sonnet; Haiku has no Claude counterpart on the backend, so its fast Gemini Flash model leads), then the Gemini 4 Argon model of the same effort, then the Gemini Flash model. The three families draw on separate quota windows, so a request whose first choice is spent is served from a family that still has quota, and every name here is one the backend's quota summary lists under its window.
+ * Each tier's shipped candidates in preference order, over the families the backend serves (the third-party Claude models, Gemini 4 Argon and Gemini Flash), whose quota windows are separate, so a request whose first choice is spent is served from a family that still has quota. Fable leads with Gemini 4 Argon, the backend's own default agent model and first in its recommended order; opus and sonnet lead with the Claude model of their name; haiku leads with Gemini Flash, which has no Claude counterpart. Every candidate holds a context window of a million tokens: the backend's open GPT-OSS model holds a ninth of that, too little for a Claude Code conversation to fall back to. Every name is one the backend lists as served.
  */
 export const ANTIGRAVITY_DEFAULT_TIER_MODELS: Readonly<Record<AntigravityTier, readonly string[]>> = Object.freeze({
-  fable: ["claude-opus-5-5-high", "gemini-4-argon-high", "gemini-3.8-flash-high"],
+  fable: ["gemini-4-argon-high", "claude-opus-5-5-high", "gemini-3.8-flash-high"],
   opus: ["claude-opus-5-5-high", "gemini-4-argon-high", "gemini-3.8-flash-high"],
   sonnet: ["claude-sonnet-5-5-medium", "gemini-4-argon-medium", "gemini-3.8-flash-medium"],
-  haiku: ["gemini-3.8-flash-low", "gemini-4-argon-low", "gpt-oss-120b-medium"],
+  haiku: ["gemini-3.8-flash-low", "gemini-4-argon-low", "claude-sonnet-5-5-low"],
 });
 export const ANTIGRAVITY_DEFAULT_EFFORT: AntigravityEffort = "low";
 
