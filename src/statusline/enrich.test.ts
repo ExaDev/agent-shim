@@ -37,6 +37,7 @@ describe("enrichStatuslinePayload", () => {
       env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: antigravity", AGENT_SHIM_PROVIDER: "Antigravity" },
       snapshot: SNAPSHOT,
       account: undefined,
+      providerName: undefined,
     });
     expect(summary).toEqual({
       identity: "antigravity",
@@ -48,8 +49,55 @@ describe("enrichStatuslinePayload", () => {
       fiveHourResetAt: "2026-10-15T20:45:00.000Z",
       sevenDayUsed: 28,
       sevenDayResetAt: "2026-10-22T13:52:54.000Z",
+      providerQuotaWindows: [],
     });
     expect(payload).toEqual({ model: { display_name: "gemini-3.8-flash" }, agent_shim: summary });
+  });
+
+  it("resolves a provider session by its registered name when the display name differs, and draws that provider's own quota windows", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: {},
+      env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: zai", AGENT_SHIM_PROVIDER: "z.ai" },
+      snapshot: {
+        ...SNAPSHOT,
+        providers: {
+          anthropic: { rateLimit: { unified: { fiveHour: { utilization: 0, resetsAt: "2026-10-16T11:00:00.000Z" }, sevenDay: { utilization: 1, resetsAt: "2026-10-16T21:59:59.000Z" } } } },
+          z: {
+            quota: {
+              level: "max",
+              windows: [
+                { measures: "tool-calls", periodMs: 2_592_000_000, utilization: 0.04, resetsAt: "2026-10-21T16:29:09.983Z" },
+                { measures: "tokens", periodMs: 18_000_000, utilization: 0.5, resetsAt: "2026-10-16T11:25:48.119Z" },
+              ],
+            },
+          },
+        },
+      } as unknown as UsageSnapshot,
+      account: undefined,
+      providerName: "z",
+    });
+    expect(summary.providerPlan).toBe("max");
+    expect(summary.providerQuotaWindows).toEqual([
+      { measures: "tokens", utilization: 0.5, resetsAt: "2026-10-16T11:25:48.119Z" },
+      { measures: "tool-calls", utilization: 0.04, resetsAt: "2026-10-21T16:29:09.983Z" },
+    ]);
+    // The anthropic login's exhausted week is not this session's usage.
+    expect(summary.sevenDayUsed).toBeUndefined();
+  });
+
+  it("shows no windows for a provider session whose provider has no state yet, never another provider's", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: {},
+      env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: zai", AGENT_SHIM_PROVIDER: "z.ai" },
+      snapshot: {
+        ...SNAPSHOT,
+        providers: { anthropic: { rateLimit: { unified: { sevenDay: { utilization: 1, resetsAt: "2026-10-16T21:59:59.000Z" } } } } },
+      } as unknown as UsageSnapshot,
+      account: undefined,
+      providerName: "z",
+    });
+    expect(summary.sevenDayUsed).toBeUndefined();
+    expect(summary.providerQuotaWindows).toEqual([]);
   });
 
   it("scopes a provider session's windows to that provider, leaving the login account's out of the main line", () => {
@@ -64,6 +112,7 @@ describe("enrichStatuslinePayload", () => {
         },
       } as unknown as UsageSnapshot,
       account: undefined,
+      providerName: undefined,
     });
     // The anthropic login's spent week does not become this session's usage line.
     expect(summary.sevenDayUsed).toBe(GEMINI_WEEKLY_USED_PERCENT);
@@ -76,6 +125,7 @@ describe("enrichStatuslinePayload", () => {
       env: { AGENT_SHIM_PROVIDER: "z.ai" },
       snapshot: undefined,
       account: undefined,
+      providerName: undefined,
     });
     expect(payload).toBeNull();
     expect(summary.identity).toBeUndefined();
@@ -89,6 +139,7 @@ describe("enrichStatuslinePayload", () => {
       env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: work", AGENT_SHIM_PROVIDER: "Antigravity" },
       snapshot: SNAPSHOT,
       account: { emailAddress: "work@example.com", organizationName: "ExampleOrg", organizationType: "claude_team", seatTier: "team_tier_1", organizationRateLimitTier: "default_claude_max_5x", userRateLimitTier: "claude_pro" },
+      providerName: undefined,
     });
     expect(summary.loginAccountEmail).toBe("work@example.com");
     expect(summary.loginRateLimitTier).toBe("claude_pro");
