@@ -5,9 +5,9 @@ import type { StatuslineSummary } from "./enrich";
 
 const NOW_MS = Date.parse("2026-10-16T00:00:00.000Z");
 const WIDE_TERMINAL = 150;
-const WIDE_TERMINAL_MAX = 148;
+const WIDE_TERMINAL_MAX = 146;
 const NARROW_TERMINAL = 40;
-const NARROW_MAX_LINE = 38;
+const NARROW_MAX_LINE = 36;
 
 const SUMMARY: StatuslineSummary = {
   identity: "antigravity",

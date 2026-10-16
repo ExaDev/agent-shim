@@ -21,6 +21,8 @@ const THOUSAND = 1_000;
 const MILLION = 1_000_000;
 const TEN = 10;
 const TWENTY = 20;
+/** Claude Code indents the status line one column from the terminal edge and truncates at its own usable width, replacing the final column with an ellipsis. COLUMNS is correct in the child environment, but the usable width is four columns short of it, so a line as wide as COLUMNS minus two still loses its tail. */
+const RESERVED_COLUMNS = 4;
 const FULL_PERCENT = 100;
 /** The Antigravity statusline's colour bands on a used fraction: red from 90%, yellow from 70%, green under it. */
 const USED_RED_AT = 0.9;
@@ -202,6 +204,6 @@ export function renderStatuslineBlock(summary: StatuslineSummary, view: Statusli
     group2.push(new Segment("static", summary.providerAccountEmail === undefined ? summary.provider : `${summary.provider} · ${summary.providerAccountEmail}`));
   }
 
-  const width = Math.max(TWENTY, terminalWidth - 2);
+  const width = Math.max(TWENTY, terminalWidth - RESERVED_COLUMNS);
   return layoutGrouped(group1, group2, width, "always", " | ", BAR_WIDTH);
 }
