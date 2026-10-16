@@ -6,10 +6,12 @@ import type { Command } from "commander";
 import { withExamples } from "../cli/commandDeps";
 import type { LayoutPaths } from "../paths";
 import { listProviders } from "../providersStore";
-import { realFarmFs } from "../realPorts";
+import { realFarmFs, realHeadroomSocketTrust } from "../realPorts";
 import { readAccountMetadata, readAccountMetadataFile } from "../usage/account";
 import { readUsageSnapshot } from "../usage/read";
+import { headroomSocketTarget } from "../frontdoor/status";
 import { antigravityStacksWithDefault, isAntigravityPayload } from "./client";
+import { fetchHeadroomSessionStats, headroomSessionIdOf, headroomTargetOf, realHeadroomGet } from "./headroom";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import { renderStatuslineBlock } from "./render";
 import { terminalWidthOf } from "./width";
@@ -101,7 +103,12 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
         }
       }
       const nowMs = Date.now();
-      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot, account, providerName, nowMs });
+      // The supervised daemon's socket is authenticated before it is dialled, exactly as the door's own hop does; a refused or absent one leaves no target.
+      const socketTarget = headroomSocketTarget(realFarmFs, realHeadroomSocketTrust, deps.paths);
+      const target = headroomTargetOf(process.env, socketTarget === undefined || socketTarget.refused !== undefined ? undefined : socketTarget.socketPath);
+      const sessionId = headroomSessionIdOf(payload, process.env);
+      const headroom = target === undefined || sessionId === undefined ? undefined : await fetchHeadroomSessionStats(realHeadroomGet, target, sessionId);
+      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot, account, providerName, nowMs, headroom });
       const renderer = process.env.AGENT_SHIM_STATUSLINE_CMD;
       if (renderer !== undefined && renderer !== "") {
         const child = spawn("/bin/sh", ["-c", renderer], { stdio: ["pipe", "inherit", "inherit"] });

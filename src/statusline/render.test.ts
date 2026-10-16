@@ -9,6 +9,9 @@ const WIDE_TERMINAL_MAX = 166;
 const NARROW_TERMINAL = 40;
 const NARROW_MAX_LINE = 36;
 /** The ANSI colour codes the renderer's bands use, and a cache hit ratio inside each band. */
+const HEADROOM_TOKENS_SAVED = 41_816;
+const HEADROOM_SAVINGS_PERCENT = 3.5;
+const HEADROOM_SAVINGS_USD = 0.13;
 const GREEN_CODE = "32";
 const YELLOW_CODE = "33";
 const RED_CODE = "31";
@@ -33,6 +36,7 @@ const SUMMARY: StatuslineSummary = {
   loginSeatTier: undefined,
   loginPlan: undefined,
   providerQuotaWindows: [],
+  headroom: undefined,
   fiveHourUsed: 3.6,
   fiveHourResetAt: "2026-10-16T00:38:00.000Z",
   sevenDayUsed: 28.2,
@@ -187,6 +191,16 @@ describe("renderStatuslineBlock", () => {
     expect(bars).not.toContain("5h [");
   });
 
+  it("shows what headroom saved the session at the end of the first line, and nothing when there are no figures", () => {
+    const withSavings = stripAnsi(renderStatuslineBlock({ ...SUMMARY, headroom: { tokensSaved: HEADROOM_TOKENS_SAVED, savingsPercent: HEADROOM_SAVINGS_PERCENT, savingsUsd: HEADROOM_SAVINGS_USD } }, VIEW, WIDE_TERMINAL, NOW_MS)).split("\n");
+    expect(withSavings[0]?.endsWith("headroom 42k saved · 3.5% · $0.13")).toBe(true);
+    const partial = stripAnsi(renderStatuslineBlock({ ...SUMMARY, headroom: { tokensSaved: HEADROOM_TOKENS_SAVED, savingsPercent: undefined, savingsUsd: undefined } }, VIEW, WIDE_TERMINAL, NOW_MS));
+    expect(partial).toContain("headroom 42k saved");
+    expect(partial).not.toContain("$");
+    const empty = stripAnsi(renderStatuslineBlock({ ...SUMMARY, headroom: { tokensSaved: undefined, savingsPercent: undefined, savingsUsd: undefined } }, VIEW, WIDE_TERMINAL, NOW_MS));
+    expect(empty).not.toContain("headroom");
+  });
+
   it("colours the cache hit percentage by its band: green when most is served from cache, yellow when little is, red when nearly none is", () => {
     const previous = process.env.NO_COLOR;
     delete process.env.NO_COLOR;
@@ -211,7 +225,7 @@ describe("renderStatuslineBlock", () => {
   it("renders nothing when no segment has data", () => {
     expect(
       renderStatuslineBlock(
-        { identity: undefined, provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, loginAccountEmail: undefined, loginRateLimitTier: undefined, loginOrganizationName: undefined, loginOrganizationType: undefined, loginSeatTier: undefined, loginPlan: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined, providerQuotaWindows: [] },
+        { identity: undefined, provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, loginAccountEmail: undefined, loginRateLimitTier: undefined, loginOrganizationName: undefined, loginOrganizationType: undefined, loginSeatTier: undefined, loginPlan: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined, providerQuotaWindows: [], headroom: undefined },
         { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
         NARROW_TERMINAL,
         NOW_MS,
