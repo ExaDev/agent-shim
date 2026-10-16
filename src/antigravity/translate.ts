@@ -136,7 +136,7 @@ function resolveName(requested: string, config: ResolvedAntigravityConfig): { re
 /**
  * The candidate lists a request is served from, best first: the name's own, and, when the configuration degrades down tiers and the name selected a tier, each lower tier's after it (`ANTIGRAVITY_TIERS` runs from the highest tier to the lowest). A later list is used only when every candidate of the lists before it has no quota left.
  */
-export function candidateStages(requested: string, config: ResolvedAntigravityConfig): readonly (readonly string[])[] {
+function candidateStages(requested: string, config: ResolvedAntigravityConfig): readonly (readonly string[])[] {
   const { candidates, tier } = resolveName(requested, config);
   if (!config.degradeDownTiers || tier === undefined) {
     return [candidates];
