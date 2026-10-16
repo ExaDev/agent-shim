@@ -1,3 +1,14 @@
+## [11.18.0](https://github.com/ExaDev/agent-shim/compare/v11.17.1...v11.18.0) (2026-10-16)
+
+### Features
+
+* **antigravity:** add a setting that degrades a spent tier down the lower tiers ([81d3146](https://github.com/ExaDev/agent-shim/commit/81d3146f75010ea8162299f8083841accb3b82d4))
+* **antigravity:** give the fable tier Gemini 4 Argon first and drop GPT-OSS as a fallback ([1edfa49](https://github.com/ExaDev/agent-shim/commit/1edfa49b4cacf26bc73675f9b098d6e1dac719dd))
+
+### Code Refactoring
+
+* **antigravity:** stop exporting a stage builder only its own module uses ([7607e94](https://github.com/ExaDev/agent-shim/commit/7607e94a10017273cfb7b31b41b773f81409614b))
+
 ## [11.17.1](https://github.com/ExaDev/agent-shim/compare/v11.17.0...v11.17.1) (2026-10-16)
 
 ### Bug Fixes
