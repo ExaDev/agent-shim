@@ -2,6 +2,7 @@ import type { AccountMetadata, UsageSnapshot } from "../usage/schema";
 
 /** What the door knows about the session whose statusline this is: the one source a renderer can trust for whose quota the windows describe. The `Used` fields are whole percentages (0 to 100); the door's own records carry fractions, the form the real API's headers use. */
 const FULL_PERCENT = 100;
+const MS_PER_SECOND = 1000;
 
 export interface StatuslineSummary {
   readonly identity: string | undefined;
@@ -80,6 +81,34 @@ function windowsOf(states: readonly ProviderState[]): Pick<StatuslineSummary, "f
   return { fiveHourUsed, fiveHourResetAt, sevenDayUsed, sevenDayResetAt };
 }
 
+/** A plain JSON object, narrowed so its fields can be read with `in`. */
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** One subscription window from the client's own payload: `used_percentage` is already a whole 0 to 100 percentage and `resets_at` epoch seconds. */
+function payloadWindow(rateLimits: Record<string, unknown>, key: "five_hour" | "seven_day"): { used: number; resetAt: string | undefined } | undefined {
+  const window = rateLimits[key];
+  if (!isObject(window) || typeof window.used_percentage !== "number" || !Number.isFinite(window.used_percentage)) {
+    return undefined;
+  }
+  const resetsAt = window.resets_at;
+  return {
+    used: Math.min(FULL_PERCENT, Math.max(0, window.used_percentage)),
+    resetAt: typeof resetsAt === "number" && Number.isFinite(resetsAt) ? new Date(resetsAt * MS_PER_SECOND).toISOString() : undefined,
+  };
+}
+
+/**
+ * The subscription windows Claude Code itself puts in the statusline payload (`rate_limits.five_hour` and `rate_limits.seven_day`, present for claude.ai Pro and Max accounts after the session's first API response, each window independently absent). They describe the account the session is signed in as, which is the quota a session with no provider spends, and they arrive with no agent-shim door or usage snapshot behind them.
+ */
+function payloadWindowsOf(payload: unknown): Pick<StatuslineSummary, "fiveHourUsed" | "fiveHourResetAt" | "sevenDayUsed" | "sevenDayResetAt"> {
+  const rateLimits = isObject(payload) ? payload.rate_limits : undefined;
+  const five = isObject(rateLimits) ? payloadWindow(rateLimits, "five_hour") : undefined;
+  const seven = isObject(rateLimits) ? payloadWindow(rateLimits, "seven_day") : undefined;
+  return { fiveHourUsed: five?.used, fiveHourResetAt: five?.resetAt, sevenDayUsed: seven?.used, sevenDayResetAt: seven?.resetAt };
+}
+
 export interface EnrichParams {
   /** The client's statusline payload, already parsed. */
   readonly payload: unknown;
@@ -142,6 +171,15 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
       .sort((a, b) => (a.periodMs ?? Number.POSITIVE_INFINITY) - (b.periodMs ?? Number.POSITIVE_INFINITY))
       .map((window) => ({ measures: window.measures, utilization: window.utilization, resetsAt: window.resetsAt }));
     summary = { ...summary, ...windowsOf(states), providerAccountEmail: email, providerAccountSub: sub, providerPlan: plan, providerQuotaWindows };
+  }
+  if (summary.provider === undefined) {
+    // The client's own subscription windows describe exactly the account a providerless session spends, so each present one replaces the snapshot's binding window; a window the payload lacks keeps the snapshot's.
+    const own = payloadWindowsOf(params.payload);
+    summary = {
+      ...summary,
+      ...(own.fiveHourUsed === undefined ? {} : { fiveHourUsed: own.fiveHourUsed, fiveHourResetAt: own.fiveHourResetAt }),
+      ...(own.sevenDayUsed === undefined ? {} : { sevenDayUsed: own.sevenDayUsed, sevenDayResetAt: own.sevenDayResetAt }),
+    };
   }
   if (typeof params.payload !== "object" || params.payload === null || Array.isArray(params.payload)) {
     return { payload: params.payload, summary };

@@ -4,6 +4,10 @@ import { enrichStatuslinePayload, identityOf } from "./enrich";
 import type { UsageSnapshot } from "../usage/schema";
 
 const GEMINI_WEEKLY_USED_PERCENT = 28;
+const GEMINI_FIVE_HOUR_USED_PERCENT = 9;
+const PAYLOAD_FIVE_HOUR_USED_PERCENT = 23.5;
+const PAYLOAD_SEVEN_DAY_USED_PERCENT = 41.2;
+const PAYLOAD_PARTIAL_FIVE_HOUR_USED_PERCENT = 7;
 
 const SNAPSHOT = {
   schemaVersion: 1,
@@ -117,6 +121,44 @@ describe("enrichStatuslinePayload", () => {
     // The anthropic login's spent week does not become this session's usage line.
     expect(summary.sevenDayUsed).toBe(GEMINI_WEEKLY_USED_PERCENT);
     expect(summary.providerAccountEmail).toBe("ada@example.com");
+  });
+
+  it("takes a providerless session's windows from the client's own rate_limits payload, with no snapshot or door behind it", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: { rate_limits: { five_hour: { used_percentage: 23.5, resets_at: 1_738_425_600 }, seven_day: { used_percentage: 41.2, resets_at: 1_738_857_600 } } },
+      env: {},
+      snapshot: undefined,
+      account: undefined,
+      providerName: undefined,
+    });
+    expect(summary.fiveHourUsed).toBe(PAYLOAD_FIVE_HOUR_USED_PERCENT);
+    expect(summary.fiveHourResetAt).toBe("2025-02-01T16:00:00.000Z");
+    expect(summary.sevenDayUsed).toBe(PAYLOAD_SEVEN_DAY_USED_PERCENT);
+    expect(summary.sevenDayResetAt).toBe("2025-02-06T16:00:00.000Z");
+  });
+
+  it("lets the payload's present window replace the snapshot's and keeps the snapshot's for a window the payload lacks", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: { rate_limits: { five_hour: { used_percentage: 7, resets_at: 1_738_425_600 } } },
+      env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: antigravity" },
+      snapshot: SNAPSHOT,
+      account: undefined,
+      providerName: undefined,
+    });
+    expect(summary.fiveHourUsed).toBe(PAYLOAD_PARTIAL_FIVE_HOUR_USED_PERCENT);
+    // The snapshot's binding weekly window stands, the payload having none.
+    expect(summary.sevenDayUsed).toBe(GEMINI_WEEKLY_USED_PERCENT);
+  });
+
+  it("ignores the payload's windows for a provider session, which spends the provider's quota rather than the login's", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: { rate_limits: { five_hour: { used_percentage: 99, resets_at: 1_738_425_600 } } },
+      env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: antigravity", AGENT_SHIM_PROVIDER: "Antigravity" },
+      snapshot: SNAPSHOT,
+      account: undefined,
+      providerName: undefined,
+    });
+    expect(summary.fiveHourUsed).toBe(GEMINI_FIVE_HOUR_USED_PERCENT);
   });
 
   it("carries identity and provider alone when there is no snapshot, and passes a non-object payload through unchanged", () => {
