@@ -331,92 +331,19 @@ function messagesToGeminiContents(
   return contents;
 }
 
+/** The schema of a tool that declares none: an object that takes no properties. */
 const EMPTY_SCHEMA: Readonly<Record<string, unknown>> = { type: "object", properties: {} };
-
-/**
- * The JSON Schema keys the Cloud Code endpoint's function declarations accept. Every other key is rejected field by field, so each has a named translation below rather than being silently dropped: `$schema` is metadata with no Gemini meaning, `additionalProperties: false` is Gemini's default shape (a schema's properties are all there are), and the two keys with no native Gemini form (`additionalProperties` as a value schema, `propertyNames`) carry their information in the node's description instead, the one channel Gemini leaves open.
- */
-const GEMINI_SCHEMA_KEYS = new Set(["type", "format", "description", "nullable", "enum", "anyOf", "items", "properties", "required", "minimum", "maximum", "minItems", "maxItems"]);
-
-/** Names a JSON Schema value schema in one clause, for the keys with no Gemini form that must be described in prose instead: `string`, `a list of string`, `an object`. */
-function describeSchemaValue(node: unknown): string {
-  if (!isRecord(node)) {
-    return "any value";
-  }
-  const type = node.type;
-  const name = typeof type === "string" ? type : Array.isArray(type) && typeof type[0] === "string" ? type[0] : "value";
-  if (name === "array") {
-    return `a list of ${describeSchemaValue(node.items)}`;
-  }
-  return name === "object" ? "an object" : `a ${name}`;
-}
-
-/**
- * Converts one JSON Schema node to the subset the Cloud Code endpoint accepts, recursively. A type array names its non-null member with the node marked nullable (a bare `type: "null"` node keeps no type at all); `properties`, `items` and `anyOf` are converted in place; the keys with no Gemini form are folded into the description verbatim.
- */
-function toGeminiSchema(node: unknown): unknown {
-  if (!isRecord(node)) {
-    return node;
-  }
-  const out: Record<string, unknown> = {};
-  const notes: string[] = [];
-  let nullable = false;
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "type" && Array.isArray(value)) {
-      const named = value.filter((entry) => entry !== "null");
-      if (named.length > 0 && typeof named[0] === "string") {
-        out.type = named[0];
-      }
-      nullable = value.includes("null");
-      continue;
-    }
-    if (!GEMINI_SCHEMA_KEYS.has(key)) {
-      if (key === "additionalProperties" && value !== false) {
-        notes.push(`Each value is ${describeSchemaValue(value)}.`);
-      } else if (key === "propertyNames" && isRecord(value) && typeof value.pattern === "string") {
-        notes.push(`Keys match ${value.pattern}.`);
-      }
-      continue;
-    }
-    out[key] = value;
-  }
-  if (out.type === "null") {
-    delete out.type;
-  }
-  if (nullable && out.type !== undefined) {
-    out.nullable = true;
-  }
-  if (notes.length > 0) {
-    const description = typeof out.description === "string" ? out.description : "";
-    out.description = `${description}${description === "" ? "" : " "}${notes.join(" ")}`;
-  }
-  if ("properties" in out && isRecord(out.properties)) {
-    out.properties = Object.fromEntries(Object.entries(out.properties).map(([name, child]) => [name, toGeminiSchema(child)]));
-  }
-  if ("items" in out) {
-    out.items = toGeminiSchema(out.items);
-  } else if (out.type === "array") {
-    // JSON Schema allows an array with no items (any element); Gemini requires the field, and an empty schema is its permissive form.
-    out.items = {};
-  }
-  if (Array.isArray(out.anyOf)) {
-    out.anyOf = out.anyOf.map(toGeminiSchema);
-  }
-  return out;
-}
 
 function mapTools(tools: readonly AnthropicTool[] | undefined, names: Map<string, string>): GeminiTool[] | undefined {
   if (tools === undefined || tools.length === 0) {
     return undefined;
   }
-  const declarations: GeminiFunctionDeclaration[] = tools.map((tool) => {
-    const converted = tool.input_schema === undefined ? undefined : toGeminiSchema(tool.input_schema);
-    return {
-      name: shortToolName(tool.name, names),
-      description: tool.description,
-      parameters: isRecord(converted) ? converted : EMPTY_SCHEMA,
-    };
-  });
+  // The tool's own JSON Schema goes through as `parametersJsonSchema`, untouched. The Gemini `parameters` form is an OpenAPI subset that every backend model family does not read the same way: the Claude models reject a schema it has been narrowed to (any `anyOf` property fails their draft 2020-12 validation), while every family accepts the full JSON Schema in this field.
+  const declarations: GeminiFunctionDeclaration[] = tools.map((tool) => ({
+    name: shortToolName(tool.name, names),
+    description: tool.description,
+    parametersJsonSchema: tool.input_schema ?? EMPTY_SCHEMA,
+  }));
   return [{ functionDeclarations: declarations }];
 }
 
