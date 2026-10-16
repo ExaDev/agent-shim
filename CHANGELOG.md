@@ -1,3 +1,9 @@
+## [11.21.0](https://github.com/ExaDev/agent-shim/compare/v11.20.1...v11.21.0) (2026-10-16)
+
+### Features
+
+* **statusline:** align the bars of every row on one grid ([8b4b834](https://github.com/ExaDev/agent-shim/commit/8b4b8342f6a1abd651359c3421335e3e9ebd3453))
+
 ## [11.20.1](https://github.com/ExaDev/agent-shim/compare/v11.20.0...v11.20.1) (2026-10-16)
 
 ### Bug Fixes
