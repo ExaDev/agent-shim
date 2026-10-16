@@ -52,6 +52,7 @@ interface AntigravityOptions {
   readonly antigravityDefaultModel?: string;
   readonly antigravityModel?: Record<string, string>;
   readonly antigravityEffort?: AntigravityEffort;
+  readonly antigravityDegradeDownTiers?: boolean;
   readonly antigravityEndpoint?: string;
   readonly antigravityProjectId?: string;
   readonly antigravityLocation?: string;
@@ -66,6 +67,7 @@ function antigravityConfigFromOptions(options: AntigravityOptions): AntigravityP
     options.antigravityDefaultModel === undefined &&
     options.antigravityModel === undefined &&
     options.antigravityEffort === undefined &&
+    options.antigravityDegradeDownTiers === undefined &&
     options.antigravityEndpoint === undefined &&
     options.antigravityProjectId === undefined &&
     options.antigravityLocation === undefined &&
@@ -94,6 +96,7 @@ function antigravityConfigFromOptions(options: AntigravityOptions): AntigravityP
     ...(options.antigravityDefaultModel === undefined ? {} : { defaultModel: options.antigravityDefaultModel }),
     ...(options.antigravityModel === undefined ? {} : { models: Object.fromEntries(Object.entries(options.antigravityModel).map(([name, target]) => [name, target.includes(",") ? target.split(",") : target])) }),
     ...(options.antigravityEffort === undefined ? {} : { effort: options.antigravityEffort }),
+    ...(options.antigravityDegradeDownTiers === undefined ? {} : { degradeDownTiers: options.antigravityDegradeDownTiers }),
     ...(cloud === undefined ? {} : { cloud }),
     ...(local === undefined ? {} : { local }),
   };
@@ -186,6 +189,8 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--antigravity-default-model <model>", "Antigravity providers: the model a request maps to when no tier matches.")
       .option("--antigravity-model <tier=model>", "Antigravity providers: the model a tier (fable, opus, sonnet or haiku, matched by substring) or an alias (any other name, matched whole, selectable with /model) maps to; a comma-separated list routes by available quota, first unspent first (repeatable).", collectStringPair)
       .addOption(new Option("--antigravity-effort <effort>", "Antigravity providers: reasoning effort.").choices(ANTIGRAVITY_EFFORTS))
+      .option("--antigravity-degrade-down-tiers", "Antigravity providers: when every candidate of a tier has no quota left, serve the request from the tiers below it instead of failing.")
+      .option("--no-antigravity-degrade-down-tiers", "Antigravity providers: fail with the quota limit when a tier has no quota left (the default).")
       .option("--antigravity-endpoint <url>", "Antigravity cloud providers: custom API endpoint URL.")
       .option("--antigravity-project-id <id>", "Antigravity cloud providers: Google Cloud project ID (for Vertex AI).")
       .option("--antigravity-location <loc>", "Antigravity cloud providers: Google Cloud location (for Vertex AI).")
@@ -246,6 +251,8 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--antigravity-default-model <model>", "Antigravity providers: the model a request maps to when no tier matches.")
       .option("--antigravity-model <tier=model>", "Antigravity providers: set the model one tier maps to (repeatable; other tiers are kept).", collectStringPair)
       .addOption(new Option("--antigravity-effort <effort>", "Antigravity providers: reasoning effort.").choices(ANTIGRAVITY_EFFORTS))
+      .option("--antigravity-degrade-down-tiers", "Antigravity providers: when every candidate of a tier has no quota left, serve the request from the tiers below it instead of failing.")
+      .option("--no-antigravity-degrade-down-tiers", "Antigravity providers: fail with the quota limit when a tier has no quota left (the default).")
       .option("--antigravity-endpoint <url>", "Antigravity cloud providers: custom API endpoint URL.")
       .option("--antigravity-project-id <id>", "Antigravity cloud providers: Google Cloud project ID (for Vertex AI).")
       .option("--antigravity-location <loc>", "Antigravity cloud providers: Google Cloud location (for Vertex AI).")
@@ -342,6 +349,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
             console.log(`Antigravity aliases: ${[...config.aliases].map(([alias, model]) => `${alias}=${model.join(" > ")}`).join(", ")}`);
           }
           console.log(`Antigravity effort: ${config.effort}`);
+          console.log(`Antigravity degrade down tiers: ${config.degradeDownTiers ? "on" : "off"}`);
           console.log(`Endpoint: ${describeProviderEndpoint(found)}`);
         } else {
           console.log(`Base URL: ${found.baseUrl}`);
