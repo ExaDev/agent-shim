@@ -74,7 +74,7 @@ export function resolveAntigravityConfig(config: AntigravityProviderConfig | und
   }
   const tierModel = (tier: AntigravityTier): readonly string[] => {
     const target = overrides[tier];
-    return target === undefined ? [ANTIGRAVITY_DEFAULT_TIER_MODELS[tier]] : candidatesOf(target);
+    return target === undefined ? ANTIGRAVITY_DEFAULT_TIER_MODELS[tier] : candidatesOf(target);
   };
   return {
     mode: config?.mode ?? ANTIGRAVITY_DEFAULT_MODE,
