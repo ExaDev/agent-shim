@@ -286,6 +286,9 @@
               "score",
               "listed"
             ]
+          },
+          "resumeOnLimit": {
+            "type": "boolean"
           }
         },
         "required": [

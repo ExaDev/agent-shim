@@ -309,17 +309,17 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
           .handler(({ input }) =>
             guarded(() => {
               requireIdentityNames(paths, input.identities);
-              const created = addPool(paths, input.name, input.identities, { preference: input.preference });
+              const created = addPool(paths, input.name, input.identities, { preference: input.preference, resumeOnLimit: input.resumeOnLimit });
               return { action: "created" as const, kind: "pool" as const, name: input.name, value: created };
             }),
           ),
-        set: route("/rest/config/pool/set", "Replace a pool's members, its preference or both")
+        set: route("/rest/config/pool/set", "Replace a pool's members, change its preference or whether it resumes on a spent quota")
           .input(ConfigPoolSetInputSchema)
           .output(ConfigPoolSetOutputSchema)
           .handler(({ input }) =>
             guarded(() => {
-              const change = { identities: input.identities, preference: input.preference };
-              requireChange(isPoolChange(change), "identities or preference");
+              const change = { identities: input.identities, preference: input.preference, resumeOnLimit: input.resumeOnLimit };
+              requireChange(isPoolChange(change), "identities, preference or resumeOnLimit");
               requirePool(paths, input.name);
               if (input.identities !== undefined) {
                 // Only the freshly listed names are validated: the pass-through keeps object entries whose condition the request does not restate.

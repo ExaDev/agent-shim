@@ -94,6 +94,8 @@ export interface LayoutPaths {
   readonly usageJobsFile: string;
   /** Directory of one append-only `<job>.log` per job: the result of each unattended run. */
   readonly jobLogsDir: string;
+  /** Directory of the supervised sessions' shared state, one subdirectory per pool: the live sessions each launcher registers, so sessions on one account see each other, and the lock that serialises their moves. Runtime state, never configuration. */
+  readonly superviseDir: string;
 }
 
 /**
@@ -170,6 +172,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     usageAnchorsFile: path.join(root, "usage", "anchors.json"),
     usageJobsFile: path.join(root, "usage", "jobs.json"),
     jobLogsDir: path.join(root, "logs", "jobs"),
+    superviseDir: path.join(root, "supervise"),
     mcpPermissionsFile: path.join(root, "mcp", "permissions.json"),
   };
 }

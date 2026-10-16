@@ -77,6 +77,19 @@ export interface SpawnPort {
   ) => SpawnResult;
 }
 
+/** A child process a launcher runs without blocking on it, so it can act while the child owns the terminal. */
+export interface ChildProcess {
+  /** Settles when the child has exited, or could not be spawned (`error` is then set). It never rejects. */
+  readonly exit: Promise<SpawnResult>;
+  /** Sends the child a signal. A signal to a child that has already exited does nothing. */
+  readonly signal: (signal: NodeJS.Signals) => void;
+}
+
+/** Starts the real `claude` binary and returns at once, with `stdio: "inherit"` as the synchronous `SpawnPort` runs it: the child keeps the terminal. Injected so no test spawns a real process. */
+export interface SupervisedSpawnPort {
+  readonly spawn: (command: string, args: readonly string[], options: { readonly stdio: "inherit"; readonly env: Readonly<Record<string, string | undefined>> }) => ChildProcess;
+}
+
 /** The outcome of one synchronous external-command run (distinct from `SpawnPort`, which is specifically for replacing this process with the real `claude` binary — `RunPort` is for auxiliary commands like `git rev-parse` for branch detection, or `security find-generic-password` for the macOS Keychain diagnostic in `check.ts`, whose output this process needs to keep running and read). */
 interface RunResult {
   readonly status: number | null;

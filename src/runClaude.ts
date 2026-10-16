@@ -5,7 +5,8 @@ import { runIdentityWizard } from "./identityManager";
 import { buildFarmRuntime, realClaudeBinaryResolver, realPrepareLaunchParams } from "./launchWiring";
 import { resolveLayoutPaths } from "./paths";
 import { refreshPools } from "./poolUsageRefresh";
-import { runLauncher } from "./launcher";
+import { runSupervised } from "./supervise/launch";
+import { prepareLaunch, runLauncher } from "./launcher";
 import { parseLauncherArgv } from "./launcher/argv";
 import { runNativeLaunch } from "./launcher/native";
 import { decideConfigProfile, decideIdentity, loadIdentity, readActiveIdentity } from "./launcher/identity";
@@ -84,7 +85,7 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
     log: realLogPort.warn,
   });
 
-  runLauncher({
+  const prepareParams = {
     ...realPrepareLaunchParams(paths, {
       proc: argvOverride === undefined ? realProcPort : { ...realProcPort, argv: argvOverride },
       log: realLogPort,
@@ -94,6 +95,26 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
     }),
     // Wired here rather than in realPrepareLaunchParams because the port re-invokes this very binary: correct for the agent-shim command line, wrong for a library host whose own executable is not agent-shim.
     update: realLaunchUpdatePort(paths),
-    spawn: realSpawnPort,
-  });
+  };
+
+  // A pool that resumes on a spent quota runs its interactive launches under the supervisor, which moves the session to another member when its identity runs out. A launch it cannot supervise falls through to the ordinary one below.
+  const poolName = identityDecision.pool;
+  if (poolName !== undefined && farm.pools?.[poolName]?.resumeOnLimit === true) {
+    const code = await runSupervised({
+      paths,
+      pool: poolName,
+      pools: farm.pools,
+      farm: farm.runtime,
+      passthrough: nativeArgv.rest,
+      // The launch-time update check runs for the first launch only: its notice must not land on the terminal between a stopped child and its relaunch.
+      prepare: (launch) => prepareLaunch(launch.member === undefined ? { ...prepareParams, supervised: launch } : { ...prepareParams, update: undefined, supervised: launch }),
+      spawnDaemon: spawnDetachedSupervisor,
+      log: realLogPort,
+    });
+    if (code !== undefined) {
+      process.exit(code);
+    }
+  }
+
+  runLauncher({ ...prepareParams, spawn: realSpawnPort });
 }

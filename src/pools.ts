@@ -3,7 +3,7 @@ import { Option } from "commander";
 import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { UsageError } from "./cliError";
 import { collectRepeated } from "./cli/parsers";
-import { POOL_PREFERENCES, POOL_SELECTOR_PREFIX, type PoolPreference } from "./config/schema";
+import { POOL_PREFERENCES, POOL_SELECTOR_PREFIX, type Pool, type PoolPreference } from "./config/schema";
 import { readActiveIdentity, requireIdentityNames, useIdentity } from "./identityStore";
 import { addPool, changePool, isPoolChange, poolPolicyOf, readPools, removePool, requirePool } from "./poolStore";
 import { poolMemberIdentity } from "./config/schema";
@@ -25,9 +25,16 @@ function formatPoolPick(report: PoolPickReport, nowMs: number): string[] {
   return [head, ...rows, ...report.missing.map((name) => `  (skipped: ${name} is not an identity)`), ...(report.stickyProblem === undefined ? [] : [`Note: ${report.stickyProblem}; the last-pick record was ignored.`])];
 }
 
+/** The settings a pool carries, as the parenthesised note after its members in `pool list`, or an empty string when it carries none. */
+function policyNotes(entry: Pool | undefined): string {
+  const notes = [...(entry?.preference === undefined ? [] : [`preference: ${entry.preference}`]), ...(entry?.resumeOnLimit === true ? ["resumes on limit"] : [])];
+  return notes.length === 0 ? "" : ` (${notes.join(", ")})`;
+}
+
 interface PoolMembersOptions {
   readonly identity?: readonly string[];
   readonly preference?: PoolPreference;
+  readonly resumeOnLimit?: boolean;
   readonly json?: boolean;
 }
 
@@ -35,6 +42,7 @@ interface PoolMembersOptions {
 interface PoolSetOptions {
   readonly identity?: readonly string[];
   readonly preference?: PoolPreference | false;
+  readonly resumeOnLimit?: boolean;
   readonly json?: boolean;
 }
 
@@ -44,6 +52,8 @@ function membersOf(options: Readonly<Pick<PoolMembersOptions, "identity">>): rea
   }
   return options.identity;
 }
+
+const RESUME_ON_LIMIT_DESCRIPTION = "Keep an interactive session of this pool going when its identity runs out of quota: the launcher stops it and resumes the same conversation under the next ranked member, on the same terminal.";
 
 const PREFERENCE_DESCRIPTION = "How a launch picks a member: score (the default) picks the member whose remaining quota expires soonest; listed tries the members in the order the pool lists them, skipping any that is refused right now.";
 
@@ -61,11 +71,12 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .description("Define a pool. Fails if one with this name already exists.")
       .option("--identity <name>", "A member: an identity name, or pool:<name> to nest another pool with its own policy (repeatable).", collectRepeated)
       .addOption(new Option("--preference <mode>", PREFERENCE_DESCRIPTION).choices(POOL_PREFERENCES))
+      .option("--resume-on-limit", RESUME_ON_LIMIT_DESCRIPTION)
       .option("--json", "Print the result as JSON.")
       .action((name: string, options: Readonly<PoolMembersOptions>) => {
         const members = membersOf(options);
         requireIdentityNames(paths, members);
-        const created = addPool(paths, name, members, { preference: options.preference });
+        const created = addPool(paths, name, members, { preference: options.preference, resumeOnLimit: options.resumeOnLimit });
         reportMutation(options.json, { action: "created", kind: "pool", name, value: created }, () => {
           console.log(`Created pool "${name}" with ${members.join(", ")}.`);
         });
@@ -76,16 +87,18 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
   withExamples(
     pool
       .command("set <name>")
-      .description("Replace a pool's members, its preference, or both.")
+      .description("Replace a pool's members, change its preference or whether it resumes on a spent quota, or several.")
       .option("--identity <name>", "A member: an identity name, or pool:<name> to nest another pool with its own policy (repeatable); the full new list. Kept as-is when this option is absent.", collectRepeated)
       .addOption(new Option("--preference <mode>", PREFERENCE_DESCRIPTION).choices(POOL_PREFERENCES))
       .option("--no-preference", "Clear the preference back to the default, score.")
+      .option("--resume-on-limit", RESUME_ON_LIMIT_DESCRIPTION)
+      .option("--no-resume-on-limit", "Stop resuming sessions of this pool under another member when their identity runs out of quota.")
       .option("--json", "Print the result as JSON.")
       .action((name: string, options: Readonly<PoolSetOptions>) => {
         requirePool(paths, name);
-        const change = { identities: options.identity, preference: options.preference };
+        const change = { identities: options.identity, preference: options.preference, resumeOnLimit: options.resumeOnLimit };
         if (!isPoolChange(change)) {
-          throw new UsageError("Nothing to change: pass --identity, --preference or --no-preference.");
+          throw new UsageError("Nothing to change: pass --identity, --preference, --no-preference, --resume-on-limit or --no-resume-on-limit.");
         }
         if (options.identity !== undefined) {
           // Only the freshly listed names are validated: a member the command does not restate keeps its object entry and the condition it carries.
@@ -96,7 +109,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
           console.log(`Pool "${name}" now has ${updated.identities.map(poolMemberIdentity).join(", ")}.`);
         });
       }),
-    ["agent-shim pool set subs --identity work --identity personal --identity spare", "agent-shim pool set subs --preference listed"],
+    ["agent-shim pool set subs --identity work --identity personal --identity spare", "agent-shim pool set subs --preference listed", "agent-shim pool set subs --resume-on-limit"],
   );
 
   withExamples(
@@ -118,7 +131,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         }
         for (const name of names) {
           const entry = pools[name];
-          console.log(`${active === `${POOL_SELECTOR_PREFIX}${name}` ? "*" : " "} ${name}: ${(entry?.identities ?? []).map(poolMemberIdentity).join(", ")}${entry?.preference === undefined ? "" : ` (preference: ${entry.preference})`}`);
+          console.log(`${active === `${POOL_SELECTOR_PREFIX}${name}` ? "*" : " "} ${name}: ${(entry?.identities ?? []).map(poolMemberIdentity).join(", ")}${policyNotes(entry)}`);
         }
       }),
     ["agent-shim pool list", "agent-shim pool list --json"],
@@ -139,6 +152,9 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         console.log(`Members: ${entry.identities.map(poolMemberIdentity).join(", ")}`);
         if (entry.preference !== undefined) {
           console.log(`Preference: ${entry.preference}`);
+        }
+        if (entry.resumeOnLimit === true) {
+          console.log("Resume on limit: yes");
         }
       }),
     ["agent-shim pool show subs"],
