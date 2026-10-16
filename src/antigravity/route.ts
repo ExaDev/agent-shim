@@ -7,7 +7,7 @@ import { translateRequest, type ResolvedAntigravityConfig } from "./translate";
 import { callCloudAntigravity, AntigravityUpstreamError } from "./cloudUpstream";
 import { callLocalAntigravity } from "./localUpstream";
 import type { AcpConnection } from "./localUpstream";
-import { parseRetryAfterSeconds, unifiedAntigravityQuotaHeaders, type AntigravityQuotaMap } from "./quota";
+import { antigravityQuotaExhaustion, parseRetryAfterSeconds, unifiedAntigravityQuotaHeaders, type AntigravityExhaustion, type AntigravityQuotaMap } from "./quota";
 import type { GeminiGenerateContentResponseChunk } from "./geminiSchema";
 import type { RouteRequest, RouteResponse } from "../codex/route";
 
@@ -33,6 +33,14 @@ export interface AntigravityRoutePorts {
   readonly localConnector?: (config: ResolvedAntigravityConfig, signal: AbortSignal) => AcpConnection;
   readonly now?: () => number;
   readonly quotaSource?: () => AntigravityQuotaMap | undefined;
+}
+
+const MS_PER_SECOND = 1000;
+
+/** What a spent window says to the person: which limit was reached and when it lifts, in place of the backend's own error text, which names neither. */
+function exhaustedMessage(exhaustion: AntigravityExhaustion): string {
+  const window = exhaustion.window === "five_hour" ? "5-hour" : "weekly";
+  return `Antigravity ${window} limit reached; it resets at ${new Date(exhaustion.resetSec * MS_PER_SECOND).toISOString()}.`;
 }
 
 export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: RouteRequest) => Promise<RouteResponse> {
@@ -130,14 +138,11 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
     } catch (error) {
       if (error instanceof AntigravityUpstreamError) {
         const is429 = error.status === HTTP_STATUS.tooManyRequests;
-        const retryAfter = is429 ? parseRetryAfterSeconds(error.retryAfter) : undefined;
-        const quotaHeaders = unifiedAntigravityQuotaHeaders({
-          quota: ports.quotaSource?.(),
-          rejected: is429,
-          nowMs,
-          retryAfterSeconds: retryAfter,
-          model: requestedModel,
-        });
+        const quota = ports.quotaSource?.();
+        const quotaHeaders = unifiedAntigravityQuotaHeaders({ quota, rejected: is429, nowMs, model: translated.model });
+        // A spent window supplies its own retry-after (the time until it resets); otherwise the backend's hint stands.
+        const retryAfter = is429 && quotaHeaders["retry-after"] === undefined ? parseRetryAfterSeconds(error.retryAfter) : undefined;
+        const exhaustion = is429 ? antigravityQuotaExhaustion(quota, translated.model, nowMs) : undefined;
         const errorType = is429 ? "rate_limit_error" : "api_error";
         return {
           status: error.status,
@@ -146,7 +151,7 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
             ...quotaHeaders,
             ...(retryAfter !== undefined ? { "retry-after": String(retryAfter) } : {}),
           },
-          body: JSON.stringify({ type: "error", error: { type: errorType, message: error.message } }),
+          body: JSON.stringify({ type: "error", error: { type: errorType, message: exhaustion === undefined ? error.message : exhaustedMessage(exhaustion) } }),
         };
       }
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -161,7 +166,7 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
       quota: ports.quotaSource?.(),
       rejected: false,
       nowMs,
-      model: requestedModel,
+      model: translated.model,
     });
 
     const stream = async function* () {

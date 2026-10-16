@@ -7,7 +7,6 @@ import { CCPA_DEFAULT_PROJECT_ID, CCPA_ENDPOINT, CCPA_USER_AGENT } from "./cloud
 const MS_PER_SECOND = 1000;
 const DEFAULT_RETRY_AFTER_SECONDS = 60;
 const FRACTION_DIGITS = 3;
-const EXHAUSTED_FRACTION = "1.000";
 
 export interface AntigravityQuotaBucket {
   readonly remaining_fraction?: number;
@@ -20,7 +19,6 @@ export interface AntigravityQuotaParams {
   readonly quota?: AntigravityQuotaMap;
   readonly rejected?: boolean;
   readonly nowMs: number;
-  readonly retryAfterSeconds?: number;
   readonly model?: string;
 }
 
@@ -101,6 +99,11 @@ export function unifiedAntigravityQuotaHeaders(params: AntigravityQuotaParams): 
   const used7d = calculateUtilization(bWk?.remaining_fraction);
   const reset7d = calculateResetTimestamp(nowSec, bWk?.reset_in_seconds);
 
+  const exhaustion = rejected ? antigravityQuotaExhaustion(params.quota, params.model, params.nowMs) : undefined;
+  // A rejection with no window known to be exhausted is an ordinary throttle (a per-minute limit, a cold quota cache), not the subscription limit: claiming a window would make the client report a limit the account has not reached, so it gets no unified headers and the route's retry-after alone.
+  if (rejected && exhaustion === undefined) {
+    return {};
+  }
   if (!rejected && used5h === undefined && reset5h === undefined && used7d === undefined && reset7d === undefined) {
     return {};
   }
@@ -115,6 +118,9 @@ export function unifiedAntigravityQuotaHeaders(params: AntigravityQuotaParams): 
     headers["anthropic-ratelimit-unified-5h-utilization"] = used5h;
     headers["anthropic-ratelimit-unified-5h-reset"] = reset5h;
     earliestResetSec = Number(reset5h);
+    if (rejected) {
+      headers["anthropic-ratelimit-unified-5h-status"] = exhaustion?.exhaustedWindows.includes("five_hour") === true ? "rejected" : "allowed";
+    }
   }
 
   if (used7d !== undefined && reset7d !== undefined) {
@@ -122,20 +128,18 @@ export function unifiedAntigravityQuotaHeaders(params: AntigravityQuotaParams): 
     headers["anthropic-ratelimit-unified-7d-reset"] = reset7d;
     const reset7dSec = Number(reset7d);
     earliestResetSec = earliestResetSec === undefined ? reset7dSec : Math.min(earliestResetSec, reset7dSec);
+    if (rejected) {
+      headers["anthropic-ratelimit-unified-7d-status"] = exhaustion?.exhaustedWindows.includes("seven_day") === true ? "rejected" : "allowed";
+    }
   }
 
-  if (rejected) {
-    const retrySec = params.retryAfterSeconds ?? DEFAULT_RETRY_AFTER_SECONDS;
-    const fallbackReset = String(nowSec + retrySec);
-    if (headers["anthropic-ratelimit-unified-5h-utilization"] === undefined) {
-      headers["anthropic-ratelimit-unified-5h-utilization"] = EXHAUSTED_FRACTION;
-      headers["anthropic-ratelimit-unified-5h-reset"] = fallbackReset;
-    }
-    if (headers["anthropic-ratelimit-unified-7d-utilization"] === undefined) {
-      headers["anthropic-ratelimit-unified-7d-utilization"] = EXHAUSTED_FRACTION;
-      headers["anthropic-ratelimit-unified-7d-reset"] = fallbackReset;
-    }
-    earliestResetSec = earliestResetSec === undefined ? nowSec + retrySec : Math.min(earliestResetSec, nowSec + retrySec);
+  if (exhaustion !== undefined) {
+    // The window that binds names itself and the instant it lifts, as the real API does, so the client can say which limit was hit and when it ends, and retrying before then cannot succeed: the overall reset is that instant, not the earliest of several windows (of which an unexhausted one resets sooner).
+    headers["anthropic-ratelimit-unified-representative-claim"] = exhaustion.window;
+    headers["anthropic-ratelimit-unified-reset"] = String(exhaustion.resetSec);
+    headers["retry-after"] = String(Math.max(1, exhaustion.resetSec - nowSec));
+    headers["x-should-retry"] = "false";
+    return headers;
   }
 
   if (earliestResetSec !== undefined) {
@@ -143,6 +147,36 @@ export function unifiedAntigravityQuotaHeaders(params: AntigravityQuotaParams): 
   }
 
   return headers;
+}
+
+/** The subscription windows the Antigravity CLI's quota map names, as the unified rate-limit family spells them. */
+export type AntigravityWindow = "five_hour" | "seven_day";
+
+/** Which windows are spent and when the last of them lifts: the next request can succeed only after every spent window has reset, so the binding one is the latest. */
+export interface AntigravityExhaustion {
+  readonly window: AntigravityWindow;
+  /** The instant the binding window resets, in epoch seconds. */
+  readonly resetSec: number;
+  /** Every spent window, binding or not. */
+  readonly exhaustedWindows: readonly AntigravityWindow[];
+}
+
+/**
+ * The windows of the model's own buckets that have nothing remaining, with the binding one named. Undefined when the quota map is absent or no bucket with a known reset is spent, which a caller must read as "not known to be a quota limit", never as "not limited".
+ */
+export function antigravityQuotaExhaustion(quota: AntigravityQuotaMap | undefined, model: string | undefined, nowMs: number): AntigravityExhaustion | undefined {
+  const { fiveHour, weekly } = selectAntigravityBuckets(quota ?? {}, model);
+  const nowSec = Math.floor(nowMs / MS_PER_SECOND);
+  const spent: { window: AntigravityWindow; resetSec: number }[] = [];
+  for (const [window, bucket] of [["five_hour", fiveHour], ["seven_day", weekly]] as const) {
+    const remaining = bucket?.remaining_fraction;
+    const resetIn = bucket?.reset_in_seconds;
+    if (remaining !== undefined && Number.isFinite(remaining) && remaining <= 0 && resetIn !== undefined && Number.isFinite(resetIn) && resetIn >= 0) {
+      spent.push({ window, resetSec: nowSec + Math.ceil(resetIn) });
+    }
+  }
+  const binding = spent.reduce<{ window: AntigravityWindow; resetSec: number } | undefined>((latest, next) => (latest === undefined || next.resetSec > latest.resetSec ? next : latest), undefined);
+  return binding === undefined ? undefined : { window: binding.window, resetSec: binding.resetSec, exhaustedWindows: spent.map((entry) => entry.window) };
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -239,6 +273,8 @@ export interface CachedAntigravityQuotaSourceParams {
 export function createCachedAntigravityQuotaSource(params: CachedAntigravityQuotaSourceParams): () => AntigravityQuotaMap | undefined {
   let cachedAt = Number.NEGATIVE_INFINITY;
   let cached: AntigravityQuotaMap | undefined;
+  // The instant `cached` was read from the endpoint: its reset_in_seconds count from then, not from when a response is built from it.
+  let readAtMs = Number.NEGATIVE_INFINITY;
   let refresh: Promise<void> | undefined;
   const refreshMs = params.refreshMs ?? ANTIGRAVITY_QUOTA_REFRESH_MS;
   const run = async (): Promise<void> => {
@@ -246,17 +282,25 @@ export function createCachedAntigravityQuotaSource(params: CachedAntigravityQuot
     const read = await params.fetchSummary(nowMs);
     if (read !== undefined) {
       cached = read;
+      readAtMs = nowMs;
     }
     cachedAt = params.now();
   };
   return () => {
     const nowMs = params.now();
-    if (nowMs - cachedAt < refreshMs) {
-      return cached;
+    if (nowMs - cachedAt >= refreshMs) {
+      refresh ??= run().finally(() => {
+        refresh = undefined;
+      });
     }
-    refresh ??= run().finally(() => {
-      refresh = undefined;
-    });
-    return cached;
+    return cached === undefined ? undefined : ageQuotaMap(cached, nowMs - readAtMs);
   };
+}
+
+/** A quota map brought forward by the time since it was read, so each bucket's seconds-to-reset describe now rather than the read: served unaged, a response built a minute after the read would put every reset a minute too late. */
+function ageQuotaMap(quota: AntigravityQuotaMap, elapsedMs: number): AntigravityQuotaMap {
+  const elapsedSec = elapsedMs / MS_PER_SECOND;
+  return Object.fromEntries(
+    Object.entries(quota).map(([key, bucket]) => [key, bucket?.reset_in_seconds === undefined ? bucket : { ...bucket, reset_in_seconds: Math.max(0, bucket.reset_in_seconds - elapsedSec) }]),
+  );
 }

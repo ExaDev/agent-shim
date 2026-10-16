@@ -18,6 +18,10 @@ const DEFAULT_LOCAL_CONFIG: ResolvedAntigravityConfig = resolveAntigravityConfig
 });
 
 const TEST_NOW_MS = 1_700_000_000_000;
+const FIVE_HOURS_SEC = 18_000;
+const SEVEN_DAYS_SEC = 604_800;
+/** How many seconds a request may take between the quota being read and the response being built. */
+const SLACK_SEC = 30;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -282,47 +286,57 @@ describe("createAntigravityRoute", () => {
     expect(errMsg).toContain("Google Antigravity API error (401)");
   });
 
-  it("returns 429 with unified rate-limit headers on quota exhaustion", async () => {
-    const mockFetch: typeof fetch = async () => {
-      return await Promise.resolve(
-        new Response("Resource has been exhausted (e.g. check quota)", {
-          status: HTTP_STATUS.tooManyRequests,
-          headers: { "retry-after": "45" },
-        }),
-      );
-    };
+  const rejectedByBackend: typeof fetch = async () =>
+    await Promise.resolve(new Response("Resource has been exhausted (e.g. check quota)", { status: HTTP_STATUS.tooManyRequests, headers: { "retry-after": "45" } }));
 
-    const route = createAntigravityRoute({
-      loadProvider: () => ({
-        ok: true,
-        config: DEFAULT_CLOUD_CONFIG,
-        token: "key",
-      }),
-      fetchFn: mockFetch,
-    });
-
-    const res = await route({
+  const askFromClaudeCode = async (quotaSource?: () => Record<string, { remaining_fraction: number; reset_in_seconds: number }>) =>
+    await createAntigravityRoute({
+      loadProvider: () => ({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "key" }),
+      fetchFn: rejectedByBackend,
+      ...(quotaSource === undefined ? {} : { quotaSource }),
+    })({
       method: "POST",
       path: "/providers/ag/v1/messages",
-      body: JSON.stringify({
-        model: "claude-3-7-sonnet-20250219",
-        max_tokens: 1024,
-        messages: [{ role: "user", content: "Hi" }],
-      }),
+      // A Claude model name the door translates to a Gemini model: the quota must be that of the model the request spends.
+      body: JSON.stringify({ model: "claude-haiku-5-5", max_tokens: 1024, messages: [{ role: "user", content: "Hi" }] }),
       signal: new AbortController().signal,
     });
 
+  const errorOf = (res: { body?: unknown }): Record<string, unknown> => {
+    const body: unknown = typeof res.body === "string" ? JSON.parse(res.body) : null;
+    return isRecord(body) && isRecord(body.error) ? body.error : {};
+  };
+
+  it("answers a 429 on a spent window with that window's claim, reset and a non-retryable rejection, drawn from the translated model's buckets", async () => {
+    const res = await askFromClaudeCode(() => ({
+      // The Gemini buckets the translated request spends: the 5-hour one is spent.
+      "gemini-5h": { remaining_fraction: 0, reset_in_seconds: FIVE_HOURS_SEC },
+      "gemini-weekly": { remaining_fraction: 0.7, reset_in_seconds: SEVEN_DAYS_SEC },
+      // The third-party buckets the Claude model name alone would have selected: unspent, and must not decide the answer.
+      "3p-5h": { remaining_fraction: 0.9, reset_in_seconds: 60 },
+    }));
+
     expect(res.status).toBe(HTTP_STATUS.tooManyRequests);
     expect(res.headers["anthropic-ratelimit-unified-status"]).toBe("rejected");
-    expect(res.headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("1.000");
-    expect(res.headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("1.000");
-    expect(res.headers["retry-after"]).toBe("45");
-    const body: unknown = typeof res.body === "string" ? JSON.parse(res.body) : null;
-    const errType = isRecord(body) && isRecord(body.error) && typeof body.error.type === "string" ? body.error.type : "";
-    expect(errType).toBe("rate_limit_error");
+    expect(res.headers["anthropic-ratelimit-unified-representative-claim"]).toBe("five_hour");
+    expect(res.headers["x-should-retry"]).toBe("false");
+    // The time until the 5-hour window resets (give or take the seconds the request took), not the backend's 45-second hint.
+    expect(Number(res.headers["retry-after"])).toBeGreaterThan(FIVE_HOURS_SEC - SLACK_SEC);
+    expect(errorOf(res).type).toBe("rate_limit_error");
+    expect(errorOf(res).message).toMatch(/^Antigravity 5-hour limit reached; it resets at /);
   });
 
-  it("attaches local ACP quota headers when quotaSource is provided", async () => {
+  it("answers a 429 no bucket explains as a plain throttle: the backend's retry hint and no claim on a window", async () => {
+    const res = await askFromClaudeCode();
+
+    expect(res.status).toBe(HTTP_STATUS.tooManyRequests);
+    expect(res.headers["retry-after"]).toBe("45");
+    expect(res.headers["anthropic-ratelimit-unified-status"]).toBeUndefined();
+    expect(res.headers["x-should-retry"]).toBeUndefined();
+    expect(errorOf(res).type).toBe("rate_limit_error");
+  });
+
+  it("attaches local ACP quota headers from the translated model's buckets when quotaSource is provided", async () => {
     const fakeConnector = () => {
       return {
         send: () => undefined,
@@ -349,8 +363,8 @@ describe("createAntigravityRoute", () => {
       }),
       localConnector: fakeConnector,
       quotaSource: () => ({
-        "3p-5h": { remaining_fraction: 0.8, reset_in_seconds: 3600 },
-        "3p-weekly": { remaining_fraction: 0.95, reset_in_seconds: 86400 },
+        "gemini-5h": { remaining_fraction: 0.8, reset_in_seconds: 3600 },
+        "gemini-weekly": { remaining_fraction: 0.95, reset_in_seconds: 86400 },
       }),
       now: () => TEST_NOW_MS,
     });

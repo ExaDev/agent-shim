@@ -4,6 +4,7 @@ import {
   createCachedAntigravityQuotaSource,
   fetchAntigravityQuotaSummary,
   parseRetryAfterSeconds,
+  antigravityQuotaExhaustion,
   unifiedAntigravityQuotaHeaders,
   type AntigravityQuotaMap,
 } from "./quota";
@@ -19,7 +20,6 @@ const SEVEN_DAYS_SEC = SEVEN * SECONDS_IN_DAY;
 const HALF_HOUR_SEC = 1800;
 const TEST_RETRY_SEC = 45;
 const DEFAULT_RETRY_SEC = 60;
-const RETRY_AFTER_TEST_SEC = 120;
 
 describe("unifiedAntigravityQuotaHeaders", () => {
   it("translates local gemini quota buckets into Anthropic unified headers", () => {
@@ -75,18 +75,41 @@ describe("unifiedAntigravityQuotaHeaders", () => {
     expect(headers["anthropic-ratelimit-unified-reset"]).toBe(String(NOW_SEC + HALF_HOUR_SEC));
   });
 
-  it("synthesizes rejected headers on quota rejection", () => {
-    const headers = unifiedAntigravityQuotaHeaders({
-      rejected: true,
-      nowMs: NOW_MS,
-      retryAfterSeconds: RETRY_AFTER_TEST_SEC,
-    });
+  it("names the spent window, its real reset and a non-retryable rejection when a 429 hits an exhausted bucket", () => {
+    const quota: AntigravityQuotaMap = {
+      "gemini-5h": { remaining_fraction: 0, reset_in_seconds: FIVE_HOURS_SEC },
+      "gemini-weekly": { remaining_fraction: 0.7, reset_in_seconds: SEVEN_DAYS_SEC },
+    };
+    const headers = unifiedAntigravityQuotaHeaders({ quota, rejected: true, nowMs: NOW_MS, model: "gemini-3.8-flash" });
 
     expect(headers["anthropic-ratelimit-unified-status"]).toBe("rejected");
+    expect(headers["anthropic-ratelimit-unified-representative-claim"]).toBe("five_hour");
+    expect(headers["anthropic-ratelimit-unified-5h-status"]).toBe("rejected");
+    expect(headers["anthropic-ratelimit-unified-7d-status"]).toBe("allowed");
     expect(headers["anthropic-ratelimit-unified-5h-utilization"]).toBe("1.000");
-    expect(headers["anthropic-ratelimit-unified-5h-reset"]).toBe(String(NOW_SEC + RETRY_AFTER_TEST_SEC));
-    expect(headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("1.000");
-    expect(headers["anthropic-ratelimit-unified-reset"]).toBe(String(NOW_SEC + RETRY_AFTER_TEST_SEC));
+    expect(headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("0.300");
+    // The overall reset and the retry-after are when the spent window lifts, not a minute-long fallback.
+    expect(headers["anthropic-ratelimit-unified-reset"]).toBe(String(NOW_SEC + FIVE_HOURS_SEC));
+    expect(headers["retry-after"]).toBe(String(FIVE_HOURS_SEC));
+    expect(headers["x-should-retry"]).toBe("false");
+  });
+
+  it("makes the latest-resetting spent window the binding one when both are spent", () => {
+    const quota: AntigravityQuotaMap = {
+      "gemini-5h": { remaining_fraction: 0, reset_in_seconds: FIVE_HOURS_SEC },
+      "gemini-weekly": { remaining_fraction: 0, reset_in_seconds: SEVEN_DAYS_SEC },
+    };
+    const exhaustion = antigravityQuotaExhaustion(quota, "gemini-3.8-flash", NOW_MS);
+
+    expect(exhaustion).toEqual({ window: "seven_day", resetSec: NOW_SEC + SEVEN_DAYS_SEC, exhaustedWindows: ["five_hour", "seven_day"] });
+    expect(unifiedAntigravityQuotaHeaders({ quota, rejected: true, nowMs: NOW_MS, model: "gemini-3.8-flash" })["anthropic-ratelimit-unified-representative-claim"]).toBe("seven_day");
+  });
+
+  it("claims no window on a 429 that no bucket explains, rather than reporting limits the account has not reached", () => {
+    expect(unifiedAntigravityQuotaHeaders({ rejected: true, nowMs: NOW_MS })).toEqual({});
+    const unspent: AntigravityQuotaMap = { "gemini-5h": { remaining_fraction: 0.4, reset_in_seconds: FIVE_HOURS_SEC } };
+    expect(unifiedAntigravityQuotaHeaders({ quota: unspent, rejected: true, nowMs: NOW_MS, model: "gemini-3.8-flash" })).toEqual({});
+    expect(antigravityQuotaExhaustion(unspent, "gemini-3.8-flash", NOW_MS)).toBeUndefined();
   });
 
   it("emits nothing when the quota map names no bucket and the response was allowed", () => {
@@ -149,7 +172,22 @@ describe("fetchAntigravityQuotaSummary", () => {
 describe("createCachedAntigravityQuotaSource", () => {
   const REFRESH_MS = 60_000;
   const STILL_FRESH_MS = 30_000;
+  const MS_PER_SECOND = 1000;
   const STALE_MS = 120_000;
+
+  it("brings a cached map's seconds-to-reset forward by the time since it was read", async () => {
+    let nowMs = NOW_MS;
+    const source = createCachedAntigravityQuotaSource({
+      now: () => nowMs,
+      refreshMs: REFRESH_MS,
+      fetchSummary: async () => await Promise.resolve({ "gemini-5h": { remaining_fraction: 0.5, reset_in_seconds: FIVE_HOURS_SEC } }),
+    });
+    source();
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    nowMs += STILL_FRESH_MS;
+    // A response built STILL_FRESH_MS after the read must not advertise the reset as far away as the read did.
+    expect(source()?.["gemini-5h"]?.reset_in_seconds).toBe(FIVE_HOURS_SEC - STILL_FRESH_MS / MS_PER_SECOND);
+  });
 
   it("returns nothing until the first refresh lands, then the read map until it goes stale", async () => {
     let nowMs = NOW_MS;
