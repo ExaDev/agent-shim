@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { AntigravityQuotaMap } from "./quota";
 import { rememberToolCallSignature, UNVERIFIED_THOUGHT_SIGNATURE } from "./signatures";
 
 import {
@@ -36,7 +37,7 @@ describe("resolveAntigravityConfig", () => {
     expect(defaults).toEqual({
       mode: ANTIGRAVITY_DEFAULT_MODE,
       defaultModel: ANTIGRAVITY_DEFAULT_MODEL,
-      models: ANTIGRAVITY_DEFAULT_TIER_MODELS,
+      models: Object.fromEntries(Object.entries(ANTIGRAVITY_DEFAULT_TIER_MODELS).map(([tier, model]) => [tier, [model]])),
       aliases: new Map(),
       effort: ANTIGRAVITY_DEFAULT_EFFORT,
       cloud: { endpoint: undefined, projectId: undefined, location: undefined },
@@ -53,7 +54,7 @@ describe("resolveAntigravityConfig", () => {
       models: { sonnet: "gemini-custom" },
       cloud: { endpoint: "https://custom.endpoint.com", projectId: "p-123", location: "us-central1" },
     });
-    expect(config.models.sonnet).toBe("gemini-custom");
+    expect(config.models.sonnet).toEqual(["gemini-custom"]);
     expect(config.cloud.projectId).toBe("p-123");
     expect(config.cloud.endpoint).toBe("https://custom.endpoint.com");
   });
@@ -77,18 +78,18 @@ describe("mapModel", () => {
     ["claude-haiku-4-5", "gemini-3.8-flash-low"],
     ["something-else", "gemini-3.8-flash-high"],
   ])("maps %s to %s by tier", (requested, expected) => {
-    expect(mapModel(requested, defaults)).toBe(expected);
+    expect(mapModel(requested, defaults)).toEqual([expected]);
   });
 
   it("passes gemini model names through untouched", () => {
-    expect(mapModel("gemini-3.8-flash", defaults)).toBe("gemini-3.8-flash");
-    expect(mapModel("antigravity-custom", defaults)).toBe("antigravity-custom");
+    expect(mapModel("gemini-3.8-flash", defaults)).toEqual(["gemini-3.8-flash"]);
+    expect(mapModel("antigravity-custom", defaults)).toEqual(["antigravity-custom"]);
   });
 
   it("strips a trailing 1m context marker before mapping, so the marker sizes Claude Code's window and never reaches the backend", () => {
-    expect(mapModel("gemini-3.8-flash-high[1m]", defaults)).toBe("gemini-3.8-flash-high");
-    expect(mapModel("claude-sonnet-5-5[1m]", defaults)).toBe("gemini-3.8-flash-medium");
-    expect(mapModel("claude-fable-5[1m]", defaults)).toBe("gemini-3.8-flash-high");
+    expect(mapModel("gemini-3.8-flash-high[1m]", defaults)).toEqual(["gemini-3.8-flash-high"]);
+    expect(mapModel("claude-sonnet-5-5[1m]", defaults)).toEqual(["gemini-3.8-flash-medium"]);
+    expect(mapModel("claude-fable-5[1m]", defaults)).toEqual(["gemini-3.8-flash-high"]);
   });
 
   it("completes a marked bare family member as if unmarked", () => {
@@ -97,36 +98,69 @@ describe("mapModel", () => {
   });
 
   it("maps the claude names Claude Code sends by tier", () => {
-    expect(mapModel("claude-sonnet-5-5", defaults)).toBe("gemini-3.8-flash-medium");
-    expect(mapModel("claude-opus-5-5[1m]", defaults)).toBe("gemini-3.8-flash-high");
+    expect(mapModel("claude-sonnet-5-5", defaults)).toEqual(["gemini-3.8-flash-medium"]);
+    expect(mapModel("claude-opus-5-5[1m]", defaults)).toEqual(["gemini-3.8-flash-high"]);
   });
 
   it("passes a backend Claude, thinking or GPT-OSS model name through, so /model can select it", () => {
-    expect(mapModel("claude-sonnet-5-5-high", defaults)).toBe("claude-sonnet-5-5-high");
-    expect(mapModel("claude-opus-4-6-thinking[1m]", defaults)).toBe("claude-opus-4-6-thinking");
-    expect(mapModel("gpt-oss-120b-medium", defaults)).toBe("gpt-oss-120b-medium");
-    expect(mapModel("gemini-4-argon-medium", defaults)).toBe("gemini-4-argon-medium");
+    expect(mapModel("claude-sonnet-5-5-high", defaults)).toEqual(["claude-sonnet-5-5-high"]);
+    expect(mapModel("claude-opus-4-6-thinking[1m]", defaults)).toEqual(["claude-opus-4-6-thinking"]);
+    expect(mapModel("gpt-oss-120b-medium", defaults)).toEqual(["gpt-oss-120b-medium"]);
+    expect(mapModel("gemini-4-argon-medium", defaults)).toEqual(["gemini-4-argon-medium"]);
+  });
+
+  describe("routing by available quota", () => {
+    const NOW = 1_000_000;
+    const SOON = 300;
+    const LATER = 900;
+    const SHORT = 60;
+    const routed = resolveAntigravityConfig({ models: { opus: ["gemini-3.8-pro-high", "claude-opus-5-5-high", "gemini-3.8-flash-high"], any: ["gemini-3.8-flash-low", "gpt-oss-120b-medium"] } });
+    const spent = (resetInSeconds: number) => ({ remaining_fraction: 0, reset_in_seconds: resetInSeconds });
+    const route = (model: string, quota: AntigravityQuotaMap): string =>
+      translateRequest(request({ model, messages: [{ role: "user", content: "Hi" }] }), routed, { quota, nowMs: NOW }).model;
+
+    it("takes the first candidate whose windows are not spent", () => {
+      expect(route("claude-opus-5-5", { "gemini-5h": { remaining_fraction: 0.5, reset_in_seconds: 60 } })).toContain("gemini-3.8-pro");
+      expect(route("claude-opus-5-5", { "gemini-5h": spent(LATER), "3p-5h": { remaining_fraction: 0.9, reset_in_seconds: 60 } })).toBe("claude-opus-5-5-high");
+    });
+
+    it("skips a candidate whose weekly window is spent even when its five-hour window is free", () => {
+      expect(route("claude-opus-5-5", { "gemini-5h": { remaining_fraction: 1, reset_in_seconds: 60 }, "gemini-weekly": spent(LATER) })).toBe("claude-opus-5-5-high");
+    });
+
+    it("routes to the candidate whose binding window lifts soonest when every one is spent", () => {
+      expect(route("claude-opus-5-5", { "gemini-5h": spent(LATER), "3p-5h": spent(SOON) })).toBe("claude-opus-5-5-high");
+    });
+
+    it("treats an absent quota map as no known limit and takes the first candidate", () => {
+      expect(route("claude-opus-5-5", {})).toContain("gemini-3.8-pro");
+      expect(translateRequest(request({ model: "claude-opus-5-5", messages: [{ role: "user", content: "Hi" }] }), routed).model).toContain("gemini-3.8-pro");
+    });
+
+    it("routes an alias's candidates the same way", () => {
+      expect(route("any", { "gemini-5h": spent(SHORT) })).toBe("gpt-oss-120b-medium");
+    });
   });
 
   describe("aliases", () => {
     const aliased = resolveAntigravityConfig({ models: { sonnet: "claude-sonnet-5-5-medium", Fast: "gemini-3.8-flash-low", oss: "gpt-oss-120b-medium" } });
 
     it("matches a configured alias against the whole name, ignoring case and a context marker", () => {
-      expect(mapModel("fast", aliased)).toBe("gemini-3.8-flash-low");
-      expect(mapModel("OSS[1m]", aliased)).toBe("gpt-oss-120b-medium");
+      expect(mapModel("fast", aliased)).toEqual(["gemini-3.8-flash-low"]);
+      expect(mapModel("OSS[1m]", aliased)).toEqual(["gpt-oss-120b-medium"]);
     });
 
     it("does not match an alias inside a longer name", () => {
-      expect(mapModel("fastest-thing", aliased)).toBe(aliased.defaultModel);
+      expect(mapModel("fastest-thing", aliased)).toEqual([aliased.defaultModel]);
     });
 
     it("outranks the pass-through of backend names", () => {
       const redirected = resolveAntigravityConfig({ models: { "gemini-3.8-flash-high": "claude-opus-5-5-high" } });
-      expect(mapModel("gemini-3.8-flash-high", redirected)).toBe("claude-opus-5-5-high");
+      expect(mapModel("gemini-3.8-flash-high", redirected)).toEqual(["claude-opus-5-5-high"]);
     });
 
     it("keeps a tier key a tier override, matched by substring", () => {
-      expect(mapModel("claude-sonnet-5-5", aliased)).toBe("claude-sonnet-5-5-medium");
+      expect(mapModel("claude-sonnet-5-5", aliased)).toEqual(["claude-sonnet-5-5-medium"]);
     });
 
     it("completes an alias's bare family with the request's effort, as a tier model does", () => {

@@ -102,14 +102,14 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
 
     const { config, token, credentialTarget } = lookup;
     const requestedModel = parsed.data.model ?? config.defaultModel;
-    const translated = translateRequest(parsed.data, config);
+    const nowMs = ports.now?.() ?? Date.now();
+    const translated = translateRequest(parsed.data, config, { quota: ports.quotaSource?.(), nowMs });
     const relay = createAntigravityRelay({
       requestedModel,
       toolNames: translated.toolNames,
       fallbackId,
     });
 
-    const nowMs = ports.now?.() ?? Date.now();
     const upstreamChunks =
       config.mode === "local"
         ? callLocalAntigravity({

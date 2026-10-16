@@ -245,6 +245,9 @@ export const ANTIGRAVITY_DEFAULT_TIER_MODELS: Readonly<Record<AntigravityTier, s
 });
 export const ANTIGRAVITY_DEFAULT_EFFORT: AntigravityEffort = "low";
 
+/** One backend model, or an ordered list of candidates a request is routed across by available quota. */
+export const AntigravityModelTargetSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
+
 /**
  * How an Antigravity provider translates Claude Code's requests and connects to its backend.
  */
@@ -253,8 +256,8 @@ export const AntigravityProviderConfigSchema = z.strictObject({
   mode: z.enum(ANTIGRAVITY_MODES).optional(),
   /** The model a request maps to when no tier matches its model name. */
   defaultModel: z.string().min(1).optional(),
-  /** Model name mapping. A key naming a tier (`fable`, `opus`, `sonnet`, `haiku`) overrides that tier's shipped model and is matched by substring of the requested name in `ANTIGRAVITY_TIERS` order; any other key is an alias, matched against the whole requested name case-insensitively, so `/model <alias>` selects its backend model. An alias outranks every other rule, including the pass-through of backend names. */
-  models: z.record(z.string().min(1), z.string().min(1)).optional(),
+  /** Model name mapping. A key naming a tier (`fable`, `opus`, `sonnet`, `haiku`) overrides that tier's shipped model and is matched by substring of the requested name in `ANTIGRAVITY_TIERS` order; any other key is an alias, matched against the whole requested name case-insensitively, so `/model <alias>` selects its backend model. An alias outranks every other rule, including the pass-through of backend names. A value is one model or an ordered list of candidates: the request goes to the first whose quota windows are not spent, and when every candidate is spent, to the one whose binding window lifts soonest. */
+  models: z.record(z.string().min(1), AntigravityModelTargetSchema).optional(),
   /** The reasoning effort used when the request's own effort is not one the backend accepts. */
   effort: z.enum(ANTIGRAVITY_EFFORTS).optional(),
   /** Cloud-specific settings (for `mode: "cloud"`). */

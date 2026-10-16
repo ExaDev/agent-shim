@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { antigravityQuotaExhaustion, type AntigravityQuotaMap } from "./quota";
 import { toolCallSignatureOf, UNVERIFIED_THOUGHT_SIGNATURE } from "./signatures";
 
 import {
@@ -37,9 +38,10 @@ import type {
 export interface ResolvedAntigravityConfig {
   readonly mode: AntigravityMode;
   readonly defaultModel: string;
-  readonly models: Readonly<Record<AntigravityTier, string>>;
-  /** Configured aliases: the lower-cased requested name each key matches in full, and the backend model it selects. */
-  readonly aliases: ReadonlyMap<string, string>;
+  /** Each tier's candidate models in preference order; a request is routed to the first whose quota is not spent. */
+  readonly models: Readonly<Record<AntigravityTier, readonly string[]>>;
+  /** Configured aliases: the lower-cased requested name each key matches in full, and its candidate models in preference order. */
+  readonly aliases: ReadonlyMap<string, readonly string[]>;
   readonly effort: AntigravityEffort;
   readonly cloud: {
     readonly endpoint?: string;
@@ -52,6 +54,11 @@ export interface ResolvedAntigravityConfig {
   };
 }
 
+/** A configured target as its ordered candidate list. */
+function candidatesOf(target: string | readonly string[]): readonly string[] {
+  return typeof target === "string" ? [target] : target;
+}
+
 function isAntigravityTier(key: string): key is AntigravityTier {
   return ANTIGRAVITY_TIERS.some((tier) => tier === key);
 }
@@ -59,21 +66,20 @@ function isAntigravityTier(key: string): key is AntigravityTier {
 /** Applies shipped defaults to a provider's `antigravity` configuration block. */
 export function resolveAntigravityConfig(config: AntigravityProviderConfig | undefined): ResolvedAntigravityConfig {
   const overrides = config?.models ?? {};
-  const aliases = new Map<string, string>();
-  for (const [key, model] of Object.entries(overrides)) {
+  const aliases = new Map<string, readonly string[]>();
+  for (const [key, target] of Object.entries(overrides)) {
     if (!isAntigravityTier(key)) {
-      aliases.set(key.toLowerCase(), model);
+      aliases.set(key.toLowerCase(), candidatesOf(target));
     }
   }
+  const tierModel = (tier: AntigravityTier): readonly string[] => {
+    const target = overrides[tier];
+    return target === undefined ? [ANTIGRAVITY_DEFAULT_TIER_MODELS[tier]] : candidatesOf(target);
+  };
   return {
     mode: config?.mode ?? ANTIGRAVITY_DEFAULT_MODE,
     defaultModel: config?.defaultModel ?? ANTIGRAVITY_DEFAULT_MODEL,
-    models: {
-      fable: overrides.fable ?? ANTIGRAVITY_DEFAULT_TIER_MODELS.fable,
-      opus: overrides.opus ?? ANTIGRAVITY_DEFAULT_TIER_MODELS.opus,
-      sonnet: overrides.sonnet ?? ANTIGRAVITY_DEFAULT_TIER_MODELS.sonnet,
-      haiku: overrides.haiku ?? ANTIGRAVITY_DEFAULT_TIER_MODELS.haiku,
-    },
+    models: { fable: tierModel("fable"), opus: tierModel("opus"), sonnet: tierModel("sonnet"), haiku: tierModel("haiku") },
     aliases,
     effort: config?.effort ?? ANTIGRAVITY_DEFAULT_EFFORT,
     cloud: {
@@ -103,9 +109,9 @@ function isBackendModelName(name: string): boolean {
 }
 
 /**
- * Maps a requested model name onto a backend model name, in order: a configured alias that matches the whole name; a name that already is a backend model (Gemini, Antigravity or GPT-OSS family, or a Claude name with an effort or thinking suffix) passes through untouched, which is what lets `/model` select first and third party backend models directly; otherwise the name's tier (fable, opus, sonnet or haiku, by substring) selects that tier's model, and a name matching no tier maps to the default. A trailing `[1m]` context marker is stripped first: it tells Claude Code the window size and never reaches the backend.
+ * Maps a requested model name onto its backend candidates, in order: a configured alias that matches the whole name; a name that already is a backend model (Gemini, Antigravity or GPT-OSS family, or a Claude name with an effort or thinking suffix) passes through untouched, which is what lets `/model` select first and third party backend models directly; otherwise the name's tier (fable, opus, sonnet or haiku, by substring) selects that tier's candidates, and a name matching no tier maps to the default. A trailing `[1m]` context marker is stripped first: it tells Claude Code the window size and never reaches the backend.
  */
-export function mapModel(requested: string, config: ResolvedAntigravityConfig): string {
+export function mapModel(requested: string, config: ResolvedAntigravityConfig): readonly string[] {
   const stripped = requested.toLowerCase().endsWith(CONTEXT_MARKER_1M) ? requested.slice(0, -CONTEXT_MARKER_1M.length) : requested;
   const lower = stripped.toLowerCase();
   const alias = config.aliases.get(lower);
@@ -113,10 +119,40 @@ export function mapModel(requested: string, config: ResolvedAntigravityConfig): 
     return alias;
   }
   if (isBackendModelName(stripped)) {
-    return stripped;
+    return [stripped];
   }
   const tier = ANTIGRAVITY_TIERS.find((candidate) => lower.includes(candidate));
-  return tier === undefined ? config.defaultModel : config.models[tier];
+  return tier === undefined ? [config.defaultModel] : config.models[tier];
+}
+
+/** The live quota a request is routed by: the account's bucket map and the instant it is read at. */
+export interface AntigravityRouting {
+  readonly quota: AntigravityQuotaMap | undefined;
+  readonly nowMs: number;
+}
+
+/**
+ * Chooses among a name's candidates by available quota: the first whose windows are not spent, in preference order; when every one is spent, the one whose binding window lifts soonest, since that is the first that can serve. A candidate whose quota is unknown counts as available, so an absent quota map routes to the first candidate.
+ */
+export function chooseCandidate(candidates: readonly string[], routing: AntigravityRouting | undefined): string {
+  const first = candidates[0];
+  if (first === undefined) {
+    throw new Error("A model target holds at least one candidate");
+  }
+  if (routing === undefined || candidates.length === 1) {
+    return first;
+  }
+  let soonest: { model: string; resetSec: number } | undefined;
+  for (const model of candidates) {
+    const exhaustion = antigravityQuotaExhaustion(routing.quota, model, routing.nowMs);
+    if (exhaustion === undefined) {
+      return model;
+    }
+    if (soonest === undefined || exhaustion.resetSec < soonest.resetSec) {
+      soonest = { model, resetSec: exhaustion.resetSec };
+    }
+  }
+  return soonest?.model ?? first;
 }
 
 /** Token budgets for each effort level in Gemini's thinking configuration. */
@@ -400,7 +436,7 @@ function completeEffortSuffix(model: string, request: MessagesRequest, config: R
   if (splitEffortSuffix(model) !== undefined) {
     return model;
   }
-  const configured = [config.defaultModel, ...Object.values(config.models), ...config.aliases.values()];
+  const configured = [config.defaultModel, ...Object.values(config.models).flat(), ...[...config.aliases.values()].flat()];
   const effort = request.output_config?.effort;
   const level = ANTIGRAVITY_EFFORTS.find((candidate) => candidate === effort) ?? config.effort;
   const suffixed = `${model}-${effortSuffixOf(level)}`;
@@ -408,10 +444,10 @@ function completeEffortSuffix(model: string, request: MessagesRequest, config: R
 }
 
 /** Translates an Anthropic MessagesRequest into a Gemini GenerateContentRequest. */
-export function translateRequest(request: MessagesRequest, config: ResolvedAntigravityConfig): TranslatedAntigravityRequest {
+export function translateRequest(request: MessagesRequest, config: ResolvedAntigravityConfig, routing?: AntigravityRouting): TranslatedAntigravityRequest {
   const toolNames = new Map<string, string>();
   const toolIdToName = new Map<string, string>();
-  const model = completeEffortSuffix(mapModel(request.model ?? "", config), request, config);
+  const model = chooseCandidate(mapModel(request.model ?? "", config).map((candidate) => completeEffortSuffix(candidate, request, config)), routing);
   const thinkingBudget = mapEffort(request, config);
   const systemInstruction = systemToInstruction(request.system);
   const contents = messagesToGeminiContents(request.messages, toolNames, toolIdToName);
