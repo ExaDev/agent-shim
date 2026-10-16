@@ -137,6 +137,29 @@ describe("mapModel", () => {
       expect(translateRequest(request({ model: "claude-opus-5-5", messages: [{ role: "user", content: "Hi" }] }), routed).model).toContain("gemini-3.8-pro");
     });
 
+    it("keeps a session on the model it is on while that model is unspent, instead of returning to the preferred one", () => {
+      const routeFrom = (previous: string, quota: AntigravityQuotaMap): string =>
+        translateRequest(request({ model: "claude-opus-5-5", messages: [{ role: "user", content: "Hi" }] }), routed, { quota, nowMs: NOW, previous }).model;
+      expect(routeFrom("claude-opus-5-5-high", {})).toBe("claude-opus-5-5-high");
+      expect(routeFrom("claude-opus-5-5-high", { "3p-5h": spent(SOON) })).toContain("gemini-3.8-pro");
+    });
+
+    it("spends a fallback whose windows are already running before one that would start a new clock", () => {
+      const spill = resolveAntigravityConfig({ models: { spill: ["gemini-3.8-flash-low", "claude-opus-5-5-high", "gemini-4-argon-medium"] } });
+      const via = (quota: AntigravityQuotaMap): string => translateRequest(request({ model: "spill", messages: [{ role: "user", content: "Hi" }] }), spill, { quota, nowMs: NOW }).model;
+      const fresh = { remaining_fraction: 1, reset_in_seconds: LATER };
+      const running = { remaining_fraction: 0.74, reset_in_seconds: LATER };
+      expect(via({ "gemini-5h": spent(SOON), "3p-5h": fresh, "3p-weekly": fresh, "gemini-argon-wtu-weekly": running })).toBe("gemini-4-argon-medium");
+      expect(via({ "gemini-5h": spent(SOON), "3p-5h": fresh, "3p-weekly": fresh, "gemini-argon-wtu-weekly": fresh })).toBe("claude-opus-5-5-high");
+    });
+
+    it("keeps the preferred candidate while it is unspent, even when it would start a new clock", () => {
+      const spill = resolveAntigravityConfig({ models: { spill: ["claude-opus-5-5-high", "gemini-4-argon-medium"] } });
+      const fresh = { remaining_fraction: 1, reset_in_seconds: LATER };
+      const quota = { "3p-5h": fresh, "3p-weekly": fresh, "gemini-argon-wtu-weekly": { remaining_fraction: 0.74, reset_in_seconds: LATER } };
+      expect(translateRequest(request({ model: "spill", messages: [{ role: "user", content: "Hi" }] }), spill, { quota, nowMs: NOW }).model).toBe("claude-opus-5-5-high");
+    });
+
     it("routes an alias's candidates the same way", () => {
       expect(route("any", { "gemini-5h": spent(SHORT) })).toBe("gpt-oss-120b-medium");
     });

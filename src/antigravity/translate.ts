@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { antigravityQuotaExhaustion, type AntigravityQuotaMap } from "./quota";
+import { antigravityQuotaExhaustion, selectAntigravityBuckets, type AntigravityQuotaMap } from "./quota";
 import { toolCallSignatureOf, UNVERIFIED_THOUGHT_SIGNATURE } from "./signatures";
 
 import {
@@ -129,10 +129,19 @@ export function mapModel(requested: string, config: ResolvedAntigravityConfig): 
 export interface AntigravityRouting {
   readonly quota: AntigravityQuotaMap | undefined;
   readonly nowMs: number;
+  /** The candidate this session was last routed to for this name, when it was routed before. A session keeps it while it is unspent: a switch re-sends the whole conversation uncached, so moving back to a preferred model the moment its window lifts costs more than it saves. */
+  readonly previous?: string;
+}
+
+/** True when every window the model draws on has been used since its last reset (remaining below the full allowance), so choosing it starts no new clock. A model with no known window starts none either, but counts as not running: nothing says its quota is already ticking. */
+function windowsRunning(quota: AntigravityQuotaMap | undefined, model: string): boolean {
+  const { fiveHour, weekly } = selectAntigravityBuckets(quota ?? {}, model);
+  const buckets = [fiveHour, weekly].filter((bucket) => bucket !== undefined);
+  return buckets.length > 0 && buckets.every((bucket) => bucket.remaining_fraction !== undefined && bucket.remaining_fraction < 1);
 }
 
 /**
- * Chooses among a name's candidates by available quota: the first whose windows are not spent, in preference order; when every one is spent, the one whose binding window lifts soonest, since that is the first that can serve. A candidate whose quota is unknown counts as available, so an absent quota map routes to the first candidate.
+ * Chooses among a name's candidates by available quota: the model the session is already on while it is unspent, otherwise the first whose windows are not spent, in preference order; when every one is spent, the one whose binding window lifts soonest, since that is the first that can serve. A candidate whose quota is unknown counts as available, so an absent quota map routes to the first candidate.
  */
 export function chooseCandidate(candidates: readonly string[], routing: AntigravityRouting | undefined): string {
   const first = candidates[0];
@@ -142,13 +151,25 @@ export function chooseCandidate(candidates: readonly string[], routing: Antigrav
   if (routing === undefined || candidates.length === 1) {
     return first;
   }
+  if (routing.previous !== undefined && candidates.includes(routing.previous) && antigravityQuotaExhaustion(routing.quota, routing.previous, routing.nowMs) === undefined) {
+    return routing.previous;
+  }
+  const unspent = candidates.filter((model) => antigravityQuotaExhaustion(routing.quota, model, routing.nowMs) === undefined);
+  if (unspent[0] === first) {
+    return first;
+  }
+  // The preferred candidate is spent. A window starts its clock on its first use after a reset, and what is left of it is lost when that clock runs out, so a fallback whose windows are all running already is spent before one that would start a new clock: the quota already ticking is used first, and the clocks of the other families stay unstarted, so their windows lift staggered from the ones in use rather than together.
+  const running = unspent.find((model) => windowsRunning(routing.quota, model));
+  if (running !== undefined) {
+    return running;
+  }
+  if (unspent[0] !== undefined) {
+    return unspent[0];
+  }
   let soonest: { model: string; resetSec: number } | undefined;
   for (const model of candidates) {
     const exhaustion = antigravityQuotaExhaustion(routing.quota, model, routing.nowMs);
-    if (exhaustion === undefined) {
-      return model;
-    }
-    if (soonest === undefined || exhaustion.resetSec < soonest.resetSec) {
+    if (exhaustion !== undefined && (soonest === undefined || exhaustion.resetSec < soonest.resetSec)) {
       soonest = { model, resetSec: exhaustion.resetSec };
     }
   }
