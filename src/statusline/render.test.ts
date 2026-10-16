@@ -23,6 +23,8 @@ const NEAR_ZERO_HIT_RATIO = 0.05;
 const ONE_PER_LINE_TERMINAL = 46;
 /** Wide enough for the model and the account to share a line, with the identity wrapping alone: the greedy packing case. */
 const PACKING_TERMINAL = 60;
+/** Wide enough for the context bar to span two columns of family windows, and too narrow for every bar to share one row. */
+const ALIGNED_TERMINAL = 104;
 
 const SUMMARY: StatuslineSummary = {
   identity: "antigravity",
@@ -216,6 +218,31 @@ describe("renderStatuslineBlock", () => {
     expect(bars).toContain("3P Wk [");
     expect(bars).toContain("1.5%");
     expect(bars).not.toContain("28.0%");
+  });
+
+  it("lines the bars of the context row and the family windows up, starts and ends, whatever each row's label and figures", () => {
+    const rows = stripAnsi(
+      renderStatuslineBlock(
+        {
+          ...SUMMARY,
+          quotaFamilies: [
+            { measures: "Gem 5h", utilization: 0.169, resetsAt: "2026-10-16T04:15:00.000Z" },
+            { measures: "Gem Wk", utilization: 0.336, resetsAt: "2026-10-22T18:00:00.000Z" },
+            { measures: "3P 5h", utilization: 0.387, resetsAt: "2026-10-16T03:07:00.000Z" },
+            { measures: "3P Wk", utilization: 0.208, resetsAt: "2026-10-22T02:00:00.000Z" },
+            { measures: "Argon Wk", utilization: 0.775, resetsAt: "2026-10-22T22:00:00.000Z" },
+          ],
+        },
+        VIEW,
+        ALIGNED_TERMINAL,
+        NOW_MS,
+      ),
+    )
+      .split("\n")
+      .slice(1);
+    expect(rows.length).toBeGreaterThan(1);
+    expect(new Set(rows.map((row) => row.indexOf("["))).size).toBe(1);
+    expect(new Set(rows.map((row) => row.lastIndexOf("]"))).size).toBe(1);
   });
 
   it("shows what headroom saved the session at the end of the first line, and nothing when there are no figures", () => {
