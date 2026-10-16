@@ -3,8 +3,12 @@ import { describe, expect, it } from "vitest";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import type { UsageSnapshot } from "../usage/schema";
 
+const NOW_MS = Date.parse("2026-10-16T00:00:00.000Z");
 const GEMINI_WEEKLY_USED_PERCENT = 28;
 const GEMINI_FIVE_HOUR_USED_PERCENT = 9;
+const ANTIGRAVITY_FIVE_HOUR_USED_PERCENT = 20;
+const ANTIGRAVITY_WEEKLY_USED_PERCENT = 5;
+const FLOAT_PRECISION_DIGITS = 10;
 const PAYLOAD_FIVE_HOUR_USED_PERCENT = 23.5;
 const PAYLOAD_SEVEN_DAY_USED_PERCENT = 41.2;
 const PAYLOAD_PARTIAL_FIVE_HOUR_USED_PERCENT = 7;
@@ -42,6 +46,7 @@ describe("enrichStatuslinePayload", () => {
       snapshot: SNAPSHOT,
       account: undefined,
       providerName: undefined,
+      nowMs: NOW_MS,
     });
     expect(summary).toEqual({
       identity: "antigravity",
@@ -79,6 +84,7 @@ describe("enrichStatuslinePayload", () => {
       } as unknown as UsageSnapshot,
       account: undefined,
       providerName: "z",
+      nowMs: NOW_MS,
     });
     expect(summary.providerPlan).toBe("max");
     expect(summary.providerQuotaWindows).toEqual([
@@ -99,6 +105,7 @@ describe("enrichStatuslinePayload", () => {
       } as unknown as UsageSnapshot,
       account: undefined,
       providerName: "z",
+      nowMs: NOW_MS,
     });
     expect(summary.sevenDayUsed).toBeUndefined();
     expect(summary.providerQuotaWindows).toEqual([]);
@@ -117,6 +124,7 @@ describe("enrichStatuslinePayload", () => {
       } as unknown as UsageSnapshot,
       account: undefined,
       providerName: undefined,
+      nowMs: NOW_MS,
     });
     // The anthropic login's spent week does not become this session's usage line.
     expect(summary.sevenDayUsed).toBe(GEMINI_WEEKLY_USED_PERCENT);
@@ -130,6 +138,7 @@ describe("enrichStatuslinePayload", () => {
       snapshot: undefined,
       account: undefined,
       providerName: undefined,
+      nowMs: NOW_MS,
     });
     expect(summary.fiveHourUsed).toBe(PAYLOAD_FIVE_HOUR_USED_PERCENT);
     expect(summary.fiveHourResetAt).toBe("2025-02-01T16:00:00.000Z");
@@ -144,6 +153,7 @@ describe("enrichStatuslinePayload", () => {
       snapshot: SNAPSHOT,
       account: undefined,
       providerName: undefined,
+      nowMs: NOW_MS,
     });
     expect(summary.fiveHourUsed).toBe(PAYLOAD_PARTIAL_FIVE_HOUR_USED_PERCENT);
     // The snapshot's binding weekly window stands, the payload having none.
@@ -157,8 +167,46 @@ describe("enrichStatuslinePayload", () => {
       snapshot: SNAPSHOT,
       account: undefined,
       providerName: undefined,
+      nowMs: NOW_MS,
     });
     expect(summary.fiveHourUsed).toBe(GEMINI_FIVE_HOUR_USED_PERCENT);
+  });
+
+  it("takes the Antigravity CLI's windows from its quota map, the model's own buckets, as the fraction used", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: {
+        model: { id: "gemini-3.8-flash-high", display_name: "Gemini 3.8 Flash" },
+        quota: {
+          "gemini-5h": { remaining_fraction: 0.8, reset_in_seconds: 9000 },
+          "gemini-weekly": { remaining_fraction: 0.95, reset_in_seconds: 500_000 },
+          "3p-5h": { remaining_fraction: 0.1, reset_in_seconds: 100 },
+        },
+      },
+      env: {},
+      snapshot: undefined,
+      account: undefined,
+      providerName: undefined,
+      nowMs: NOW_MS,
+    });
+    expect(summary.fiveHourUsed).toBeCloseTo(ANTIGRAVITY_FIVE_HOUR_USED_PERCENT, FLOAT_PRECISION_DIGITS);
+    expect(summary.fiveHourResetAt).toBe("2026-10-16T02:30:00.000Z");
+    expect(summary.sevenDayUsed).toBeCloseTo(ANTIGRAVITY_WEEKLY_USED_PERCENT, FLOAT_PRECISION_DIGITS);
+    expect(summary.sevenDayResetAt).toBe("2026-10-21T18:53:20.000Z");
+  });
+
+  it("shows the account a client states for itself, never the Claude profile file read for a session outside agent-shim", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: { email: "ada@example.com", plan_tier: "Google AI Pro" },
+      env: {},
+      snapshot: undefined,
+      account: { emailAddress: "claude-login@example.com", organizationType: "claude_max", userRateLimitTier: "default_claude_max_20x" },
+      providerName: undefined,
+      nowMs: NOW_MS,
+    });
+    expect(summary.loginAccountEmail).toBe("ada@example.com");
+    expect(summary.loginPlan).toBe("Google AI Pro");
+    expect(summary.loginRateLimitTier).toBeUndefined();
+    expect(summary.loginOrganizationType).toBeUndefined();
   });
 
   it("carries identity and provider alone when there is no snapshot, and passes a non-object payload through unchanged", () => {
@@ -168,6 +216,7 @@ describe("enrichStatuslinePayload", () => {
       snapshot: undefined,
       account: undefined,
       providerName: undefined,
+      nowMs: NOW_MS,
     });
     expect(payload).toBeNull();
     expect(summary.identity).toBeUndefined();
@@ -182,6 +231,7 @@ describe("enrichStatuslinePayload", () => {
       snapshot: SNAPSHOT,
       account: { emailAddress: "work@example.com", organizationName: "ExampleOrg", organizationType: "claude_team", seatTier: "team_tier_1", organizationRateLimitTier: "default_claude_max_5x", userRateLimitTier: "claude_pro" },
       providerName: undefined,
+      nowMs: NOW_MS,
     });
     expect(summary.loginAccountEmail).toBe("work@example.com");
     expect(summary.loginRateLimitTier).toBe("claude_pro");

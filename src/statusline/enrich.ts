@@ -1,3 +1,4 @@
+import { selectAntigravityBuckets, type AntigravityQuotaBucket, type AntigravityQuotaMap } from "../antigravity/quota";
 import type { AccountMetadata, UsageSnapshot } from "../usage/schema";
 
 /** What the door knows about the session whose statusline this is: the one source a renderer can trust for whose quota the windows describe. The `Used` fields are whole percentages (0 to 100); the door's own records carry fractions, the form the real API's headers use. */
@@ -15,6 +16,8 @@ export interface StatuslineSummary {
   readonly loginOrganizationName: string | undefined;
   readonly loginOrganizationType: string | undefined;
   readonly loginSeatTier: string | undefined;
+  /** The plan a client states for its own signed-in account (the Antigravity CLI's `plan_tier`), shown as given rather than derived from Anthropic's tiers. */
+  readonly loginPlan: string | undefined;
   readonly fiveHourUsed: number | undefined;
   readonly fiveHourResetAt: string | undefined;
   readonly sevenDayUsed: number | undefined;
@@ -109,6 +112,35 @@ function payloadWindowsOf(payload: unknown): Pick<StatuslineSummary, "fiveHourUs
   return { fiveHourUsed: five?.used, fiveHourResetAt: five?.resetAt, sevenDayUsed: seven?.used, sevenDayResetAt: seven?.resetAt };
 }
 
+/**
+ * The windows the Antigravity CLI puts in its statusline payload: a `quota` map keyed by bucket id, each with a remaining fraction and the seconds to its reset, from which the model's five-hour and weekly buckets are picked exactly as the door picks them. A window is drawn as the fraction used.
+ */
+function antigravityWindowsOf(payload: unknown, nowMs: number): Pick<StatuslineSummary, "fiveHourUsed" | "fiveHourResetAt" | "sevenDayUsed" | "sevenDayResetAt"> {
+  const quota = isObject(payload) ? payload.quota : undefined;
+  if (!isObject(quota)) {
+    return { fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined };
+  }
+  const model = isObject(payload) && isObject(payload.model) && typeof payload.model.id === "string" ? payload.model.id : undefined;
+  const buckets: AntigravityQuotaMap = Object.fromEntries(
+    Object.entries(quota).flatMap(([key, bucket]) => {
+      if (!isObject(bucket)) {
+        return [];
+      }
+      const remaining = bucket.remaining_fraction;
+      const resetIn = bucket.reset_in_seconds;
+      return [[key, { ...(typeof remaining === "number" ? { remaining_fraction: remaining } : {}), ...(typeof resetIn === "number" ? { reset_in_seconds: resetIn } : {}) }]];
+    }),
+  );
+  const { fiveHour, weekly } = selectAntigravityBuckets(buckets, model);
+  const windowOf = (bucket: AntigravityQuotaBucket | undefined): { used: number | undefined; resetAt: string | undefined } => ({
+    used: bucket?.remaining_fraction === undefined || !Number.isFinite(bucket.remaining_fraction) ? undefined : (1 - Math.min(1, Math.max(0, bucket.remaining_fraction))) * FULL_PERCENT,
+    resetAt: bucket?.reset_in_seconds === undefined || !Number.isFinite(bucket.reset_in_seconds) ? undefined : new Date(nowMs + bucket.reset_in_seconds * MS_PER_SECOND).toISOString(),
+  });
+  const five = windowOf(fiveHour);
+  const seven = windowOf(weekly);
+  return { fiveHourUsed: five.used, fiveHourResetAt: five.resetAt, sevenDayUsed: seven.used, sevenDayResetAt: seven.resetAt };
+}
+
 export interface EnrichParams {
   /** The client's statusline payload, already parsed. */
   readonly payload: unknown;
@@ -119,6 +151,8 @@ export interface EnrichParams {
   readonly account: AccountMetadata | undefined;
   /** The launch-selected provider's registered name, when the environment's display name resolves to one; the snapshot keys providers by this name, which can differ from the display name a session's environment carries. */
   readonly providerName: string | undefined;
+  /** The current time in epoch milliseconds, which turns a window's seconds-to-reset into the instant it resets. */
+  readonly nowMs: number;
 }
 
 /**
@@ -126,17 +160,22 @@ export interface EnrichParams {
  */
 export function enrichStatuslinePayload(params: EnrichParams): { readonly payload: unknown; readonly summary: StatuslineSummary } {
   const identity = identityOf(params.env);
+  // A client that states its own signed-in account (the Antigravity CLI's `email` and `plan_tier`) is the authority on it; the Claude profile file read for a session outside agent-shim describes a different client's login and is not shown beside it.
+  const clientEmail = isObject(params.payload) && typeof params.payload.email === "string" && params.payload.email !== "" ? params.payload.email : undefined;
+  const clientPlan = clientEmail !== undefined && isObject(params.payload) && typeof params.payload.plan_tier === "string" && params.payload.plan_tier !== "" ? params.payload.plan_tier : undefined;
+  const account = clientEmail === undefined ? params.account : undefined;
   let summary: StatuslineSummary = {
     identity,
     provider: params.env.AGENT_SHIM_PROVIDER === undefined || params.env.AGENT_SHIM_PROVIDER === "" ? undefined : params.env.AGENT_SHIM_PROVIDER,
     providerAccountEmail: undefined,
     providerAccountSub: undefined,
     providerPlan: undefined,
-    loginAccountEmail: params.account?.emailAddress,
-    loginRateLimitTier: params.account?.userRateLimitTier ?? params.account?.organizationRateLimitTier,
-    loginOrganizationName: params.account?.organizationName,
-    loginOrganizationType: params.account?.organizationType,
-    loginSeatTier: params.account?.seatTier === "none" ? undefined : params.account?.seatTier,
+    loginAccountEmail: clientEmail ?? account?.emailAddress,
+    loginPlan: clientPlan,
+    loginRateLimitTier: account?.userRateLimitTier ?? account?.organizationRateLimitTier,
+    loginOrganizationName: account?.organizationName,
+    loginOrganizationType: account?.organizationType,
+    loginSeatTier: account?.seatTier === "none" ? undefined : account?.seatTier,
     fiveHourUsed: undefined,
     fiveHourResetAt: undefined,
     sevenDayUsed: undefined,
@@ -152,12 +191,12 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     let sub: string | undefined;
     let plan: string | undefined;
     for (const state of states) {
-      const account = state.quota?.account;
-      const candidateEmail = account?.email;
+      const providerAccount = state.quota?.account;
+      const candidateEmail = providerAccount?.email;
       if (email === undefined && typeof candidateEmail === "string" && candidateEmail !== "") {
         email = candidateEmail;
       }
-      const candidateSub = account?.accountId;
+      const candidateSub = providerAccount?.accountId;
       if (sub === undefined && typeof candidateSub === "string" && candidateSub !== "") {
         sub = candidateSub;
       }
@@ -173,13 +212,14 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     summary = { ...summary, ...windowsOf(states), providerAccountEmail: email, providerAccountSub: sub, providerPlan: plan, providerQuotaWindows };
   }
   if (summary.provider === undefined) {
-    // The client's own subscription windows describe exactly the account a providerless session spends, so each present one replaces the snapshot's binding window; a window the payload lacks keeps the snapshot's.
-    const own = payloadWindowsOf(params.payload);
-    summary = {
-      ...summary,
-      ...(own.fiveHourUsed === undefined ? {} : { fiveHourUsed: own.fiveHourUsed, fiveHourResetAt: own.fiveHourResetAt }),
-      ...(own.sevenDayUsed === undefined ? {} : { sevenDayUsed: own.sevenDayUsed, sevenDayResetAt: own.sevenDayResetAt }),
-    };
+    // The client's own windows (Claude Code's rate_limits, the Antigravity CLI's quota map) describe exactly the account a providerless session spends, so each present one replaces the snapshot's binding window; a window the payload lacks keeps the snapshot's.
+    for (const own of [antigravityWindowsOf(params.payload, params.nowMs), payloadWindowsOf(params.payload)]) {
+      summary = {
+        ...summary,
+        ...(own.fiveHourUsed === undefined ? {} : { fiveHourUsed: own.fiveHourUsed, fiveHourResetAt: own.fiveHourResetAt }),
+        ...(own.sevenDayUsed === undefined ? {} : { sevenDayUsed: own.sevenDayUsed, sevenDayResetAt: own.sevenDayResetAt }),
+      };
+    }
   }
   if (typeof params.payload !== "object" || params.payload === null || Array.isArray(params.payload)) {
     return { payload: params.payload, summary };
