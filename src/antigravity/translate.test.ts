@@ -37,7 +37,7 @@ describe("resolveAntigravityConfig", () => {
     expect(defaults).toEqual({
       mode: ANTIGRAVITY_DEFAULT_MODE,
       defaultModel: ANTIGRAVITY_DEFAULT_MODEL,
-      models: Object.fromEntries(Object.entries(ANTIGRAVITY_DEFAULT_TIER_MODELS).map(([tier, model]) => [tier, [model]])),
+      models: ANTIGRAVITY_DEFAULT_TIER_MODELS,
       aliases: new Map(),
       effort: ANTIGRAVITY_DEFAULT_EFFORT,
       cloud: { endpoint: undefined, projectId: undefined, location: undefined },
@@ -45,7 +45,7 @@ describe("resolveAntigravityConfig", () => {
     });
     expect(ANTIGRAVITY_DEFAULT_MODE).toBe("cloud");
     expect(ANTIGRAVITY_DEFAULT_MODEL).toBe("gemini-3.8-flash-high");
-    expect(ANTIGRAVITY_DEFAULT_TIER_MODELS.sonnet).toBe("gemini-3.8-flash-medium");
+    expect(ANTIGRAVITY_DEFAULT_TIER_MODELS.sonnet[0]).toBe("gemini-3.8-flash-medium");
   });
 
   it("overrides mode, model tiers, and cloud settings", () => {
@@ -77,8 +77,8 @@ describe("mapModel", () => {
     ["claude-sonnet-4-5-20250929", "gemini-3.8-flash-medium"],
     ["claude-haiku-4-5", "gemini-3.8-flash-low"],
     ["something-else", "gemini-3.8-flash-high"],
-  ])("maps %s to %s by tier", (requested, expected) => {
-    expect(mapModel(requested, defaults)).toEqual([expected]);
+  ])("maps %s to the candidates led by %s by tier", (requested, expected) => {
+    expect(mapModel(requested, defaults)[0]).toBe(expected);
   });
 
   it("passes gemini model names through untouched", () => {
@@ -88,8 +88,8 @@ describe("mapModel", () => {
 
   it("strips a trailing 1m context marker before mapping, so the marker sizes Claude Code's window and never reaches the backend", () => {
     expect(mapModel("gemini-3.8-flash-high[1m]", defaults)).toEqual(["gemini-3.8-flash-high"]);
-    expect(mapModel("claude-sonnet-5-5[1m]", defaults)).toEqual(["gemini-3.8-flash-medium"]);
-    expect(mapModel("claude-fable-5[1m]", defaults)).toEqual(["gemini-3.8-flash-high"]);
+    expect(mapModel("claude-sonnet-5-5[1m]", defaults)).toEqual(ANTIGRAVITY_DEFAULT_TIER_MODELS.sonnet);
+    expect(mapModel("claude-fable-5[1m]", defaults)).toEqual(ANTIGRAVITY_DEFAULT_TIER_MODELS.fable);
   });
 
   it("completes a marked bare family member as if unmarked", () => {
@@ -98,8 +98,8 @@ describe("mapModel", () => {
   });
 
   it("maps the claude names Claude Code sends by tier", () => {
-    expect(mapModel("claude-sonnet-5-5", defaults)).toEqual(["gemini-3.8-flash-medium"]);
-    expect(mapModel("claude-opus-5-5[1m]", defaults)).toEqual(["gemini-3.8-flash-high"]);
+    expect(mapModel("claude-sonnet-5-5", defaults)).toEqual(ANTIGRAVITY_DEFAULT_TIER_MODELS.sonnet);
+    expect(mapModel("claude-opus-5-5[1m]", defaults)).toEqual(ANTIGRAVITY_DEFAULT_TIER_MODELS.opus);
   });
 
   it("passes a backend Claude, thinking or GPT-OSS model name through, so /model can select it", () => {

@@ -237,11 +237,14 @@ export type AntigravityEffort = (typeof ANTIGRAVITY_EFFORTS)[number];
 
 export const ANTIGRAVITY_DEFAULT_MODE: AntigravityMode = "cloud";
 export const ANTIGRAVITY_DEFAULT_MODEL = "gemini-3.8-flash-high";
-export const ANTIGRAVITY_DEFAULT_TIER_MODELS: Readonly<Record<AntigravityTier, string>> = Object.freeze({
-  fable: "gemini-3.8-flash-high",
-  opus: "gemini-3.8-flash-high",
-  sonnet: "gemini-3.8-flash-medium",
-  haiku: "gemini-3.8-flash-low",
+/**
+ * Each tier's shipped candidates in preference order: the Gemini Flash model first, then the Gemini 4 Argon model of the same effort, then a third-party model, so a request that finds the Gemini window spent is served from a family whose window is not. The three families draw on separate quota windows, and every name here is one the backend's quota summary lists under its window.
+ */
+export const ANTIGRAVITY_DEFAULT_TIER_MODELS: Readonly<Record<AntigravityTier, readonly string[]>> = Object.freeze({
+  fable: ["gemini-3.8-flash-high", "gemini-4-argon-high", "claude-opus-5-5-high"],
+  opus: ["gemini-3.8-flash-high", "gemini-4-argon-high", "claude-opus-5-5-high"],
+  sonnet: ["gemini-3.8-flash-medium", "gemini-4-argon-medium", "claude-sonnet-5-5-medium"],
+  haiku: ["gemini-3.8-flash-low", "gemini-4-argon-low", "gpt-oss-120b-medium"],
 });
 export const ANTIGRAVITY_DEFAULT_EFFORT: AntigravityEffort = "low";
 

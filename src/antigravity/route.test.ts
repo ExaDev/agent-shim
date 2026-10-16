@@ -289,9 +289,11 @@ describe("createAntigravityRoute", () => {
   const rejectedByBackend: typeof fetch = async () =>
     await Promise.resolve(new Response("Resource has been exhausted (e.g. check quota)", { status: HTTP_STATUS.tooManyRequests, headers: { "retry-after": "45" } }));
 
+  // One candidate per tier, so these requests have no other family to be routed to and what is asserted is the translation of the model's own quota.
+  const SINGLE_CANDIDATE_CONFIG = resolveAntigravityConfig({ mode: "cloud", cloud: { endpoint: "https://generativelanguage.googleapis.com" }, models: { haiku: "gemini-3.8-flash-low" } });
   const askFromClaudeCode = async (quotaSource?: () => Record<string, { remaining_fraction: number; reset_in_seconds: number }>) =>
     await createAntigravityRoute({
-      loadProvider: () => ({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "key" }),
+      loadProvider: () => ({ ok: true, config: SINGLE_CANDIDATE_CONFIG, token: "key" }),
       fetchFn: rejectedByBackend,
       ...(quotaSource === undefined ? {} : { quotaSource }),
     })({
@@ -324,6 +326,24 @@ describe("createAntigravityRoute", () => {
     expect(Number(res.headers["retry-after"])).toBeGreaterThan(FIVE_HOURS_SEC - SLACK_SEC);
     expect(errorOf(res).type).toBe("rate_limit_error");
     expect(errorOf(res).message).toMatch(/^Antigravity 5-hour limit reached; it resets at /);
+  });
+
+  it("sends a request to the next family when the shipped candidate's window is spent, and keeps the session there", async () => {
+    const urls: string[] = [];
+    const recordingBackend: typeof fetch = async (input) => {
+      urls.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return await Promise.resolve(new Response("Resource has been exhausted (e.g. check quota)", { status: HTTP_STATUS.tooManyRequests }));
+    };
+    let quota: Record<string, { remaining_fraction: number; reset_in_seconds: number }> = { "gemini-5h": { remaining_fraction: 0, reset_in_seconds: FIVE_HOURS_SEC } };
+    const route = createAntigravityRoute({ loadProvider: () => ({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "key" }), fetchFn: recordingBackend, quotaSource: () => quota });
+    const ask = async (): Promise<unknown> =>
+      await route({ method: "POST", path: "/providers/ag/v1/messages", body: JSON.stringify({ model: "claude-haiku-5-5", max_tokens: 1024, metadata: { user_id: "session-1" }, messages: [{ role: "user", content: "Hi" }] }), signal: new AbortController().signal });
+    await ask();
+    quota = {};
+    await ask();
+    expect(urls[0]).toContain("gemini-4-argon-low");
+    // The Gemini window has lifted, yet the session stays on the model it is on, so its prompt cache is not thrown away.
+    expect(urls[1]).toContain("gemini-4-argon-low");
   });
 
   it("answers a 429 no bucket explains as a plain throttle: the backend's retry hint and no claim on a window", async () => {
