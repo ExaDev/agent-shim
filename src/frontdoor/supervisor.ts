@@ -89,13 +89,14 @@ export interface FrontDoorSupervisorPorts {
 const AWAIT_PID_POLL_MS = 50;
 
 /**
- * Waits until `pid` is no longer running, or `boundMs` has passed. A door its watchdog replaced is started before the stalled one is ended, so it must not bind until the stalled one has released the sticky ports: a bind that found them held would take other ports and strand every session still pointing at the old ones. Gives up at the bound rather than blocking forever on a pid that never exits, and then lets the bind fall back as it always does.
+ * Waits until `pid` is no longer running and returns how long that took. A door its watchdog replaced is started before the stalled one is ended, so it must not bind until the stalled one has released the sticky ports: a bind that found them held would take other ports and strand every session still pointing at the old ones. The wait has no bound of its own because the stalled door has been sent SIGKILL, so it ends as soon as the kernel finishes tearing the process down, which under heavy load can take longer than any fixed bound (a bound that elapsed first stranded every session). Only a process wedged in the kernel never exits, and it would hold the ports against any fallback as well.
  */
-export async function awaitPidExit(pid: number, boundMs: number, ports: Pick<FrontDoorSupervisorPorts, "isRunning" | "now" | "sleep">): Promise<void> {
-  const deadline = ports.now() + boundMs;
-  while (ports.isRunning(pid) && ports.now() < deadline) {
+export async function awaitPidExit(pid: number, ports: Pick<FrontDoorSupervisorPorts, "isRunning" | "now" | "sleep">): Promise<number> {
+  const startedAt = ports.now();
+  while (ports.isRunning(pid)) {
     await ports.sleep(AWAIT_PID_POLL_MS);
   }
+  return ports.now() - startedAt;
 }
 
 /** Options for `runFrontDoorSupervisor`. */
