@@ -205,4 +205,12 @@ Where `agent-shim check` resolves one directory+identity's cascade in detail, `a
 
 What it draws comes from the payload and from files the client already keeps. The model, the context window's use and the prompt cache's hit ratio come from the payload; the 5h and weekly quota bars come from the payload's own `rate_limits` (claude.ai Pro and Max accounts, after the session's first API response); and the login account with its plan, organisation and seat comes from the `oauthAccount` block of `$CLAUDE_CONFIG_DIR/.claude.json`, or `~/.claude.json` when the configuration directory is not pinned. A session launched through agent-shim adds the identity, the provider, the provider's account and plan, and the provider's own usage windows from the door's usage snapshot; a provider session never shows the payload's windows, which describe the login account rather than the quota it spends.
 
-The line is laid out for the width in `COLUMNS`, which Claude Code sets, and wraps rather than truncating. `AGENT_SHIM_STATUSLINE_CMD` names a renderer of your own: it receives the same payload with an `agent_shim` key added, and its output replaces the built-in line.
+The Antigravity CLI (`agy`) takes the same command in `~/.gemini/antigravity-cli/settings.json`:
+
+```json
+{ "statusLine": { "type": "command", "command": "agent-shim statusline" } }
+```
+
+Its payload differs, and the statusline reads each difference: the 5h and weekly bars come from the payload's `quota` map (the model's own gemini or third-party buckets, the same selection the front door makes), the account and plan from its `email` and `plan_tier` (the Claude profile file is not consulted beside them), and the width from its live `terminal_width`.
+
+The line is laid out for the terminal's width, taken from the payload's `terminal_width` when the client states one and from `COLUMNS` otherwise (Claude Code sets it), and wraps rather than truncating. `AGENT_SHIM_STATUSLINE_CMD` names a renderer of your own: it receives the same payload with an `agent_shim` key added, and its output replaces the built-in line.
