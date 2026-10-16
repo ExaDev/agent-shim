@@ -1,3 +1,17 @@
+## [11.17.0](https://github.com/ExaDev/agent-shim/compare/v11.16.0...v11.17.0) (2026-10-16)
+
+### Features
+
+* **antigravity:** keep a session on its routed model and spend running windows first ([cad604b](https://github.com/ExaDev/agent-shim/commit/cad604bc946c580edb026d8958c86c03d40469c6))
+* **antigravity:** lead the opus and sonnet tiers with their matching Claude model ([c10ff8c](https://github.com/ExaDev/agent-shim/commit/c10ff8ce6b6078b766ee0f574e577c063753049e))
+* **antigravity:** rank fallback candidates by the allowance their windows would lose ([c44d3d6](https://github.com/ExaDev/agent-shim/commit/c44d3d6d1a56b120ad54eda5526084aa04428445))
+* **antigravity:** route a tier or alias across candidate models by available quota ([1ca0f70](https://github.com/ExaDev/agent-shim/commit/1ca0f70aafa9c85cf22021a77c56b4528ab7de5d))
+* **antigravity:** ship quota routing across model families as the tier default ([ff15c97](https://github.com/ExaDev/agent-shim/commit/ff15c9725545c2da6982317cbf0f5ce900a563e8))
+
+### Code Refactoring
+
+* **antigravity:** stop exporting two names only their own modules use ([c458e5e](https://github.com/ExaDev/agent-shim/commit/c458e5e66090c181eabccf088ce5279f5b7248f8))
+
 ## [11.16.0](https://github.com/ExaDev/agent-shim/compare/v11.15.0...v11.16.0) (2026-10-16)
 
 ### Features
