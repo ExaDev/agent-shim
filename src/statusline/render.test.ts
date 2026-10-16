@@ -24,6 +24,7 @@ const SUMMARY: StatuslineSummary = {
   loginOrganizationName: undefined,
   loginOrganizationType: undefined,
   loginSeatTier: undefined,
+  loginPlan: undefined,
   providerQuotaWindows: [],
   fiveHourUsed: 3.6,
   fiveHourResetAt: "2026-10-16T00:38:00.000Z",
@@ -182,7 +183,7 @@ describe("renderStatuslineBlock", () => {
   it("renders nothing when no segment has data", () => {
     expect(
       renderStatuslineBlock(
-        { identity: undefined, provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, loginAccountEmail: undefined, loginRateLimitTier: undefined, loginOrganizationName: undefined, loginOrganizationType: undefined, loginSeatTier: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined, providerQuotaWindows: [] },
+        { identity: undefined, provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, loginAccountEmail: undefined, loginRateLimitTier: undefined, loginOrganizationName: undefined, loginOrganizationType: undefined, loginSeatTier: undefined, loginPlan: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined, providerQuotaWindows: [] },
         { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
         NARROW_TERMINAL,
         NOW_MS,

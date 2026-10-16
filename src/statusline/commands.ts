@@ -11,6 +11,7 @@ import { readAccountMetadata, readAccountMetadataFile } from "../usage/account";
 import { readUsageSnapshot } from "../usage/read";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import { renderStatuslineBlock } from "./render";
+import { terminalWidthOf } from "./width";
 
 /** The payload fields the built-in statusline shows, in the Antigravity statusline's own selection: the model, the context window's use, its size, and the prompt cache's effectiveness. */
 function payloadViewOf(payload: unknown): { modelDisplayName: string | undefined; contextUsedPercentage: number | undefined; contextTotalTokens: number | undefined; contextWindowTokens: number | undefined; cacheHitRatio: number | undefined; cacheReadTokens: number | undefined; freshInputTokens: number | undefined } {
@@ -50,9 +51,6 @@ async function readAllStdin(): Promise<string> {
     process.stdin.resume();
   });
 }
-
-/** The terminal width the client's statusline wrapper exports, or a plain 80-column default when nothing names it. */
-const DEFAULT_COLUMNS = 80;
 
 /** The command a client's statusline setting names: it reads the client's payload on stdin, adds what the door knows under one `agent_shim` key, and either hands the enriched payload to the renderer named in `AGENT_SHIM_STATUSLINE_CMD` or renders the built-in line itself. */
 export function registerStatuslineCommand(program: Command, deps: { readonly paths: LayoutPaths }): void {
@@ -101,7 +99,8 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
           providerName = undefined;
         }
       }
-      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot, account, providerName });
+      const nowMs = Date.now();
+      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot, account, providerName, nowMs });
       const renderer = process.env.AGENT_SHIM_STATUSLINE_CMD;
       if (renderer !== undefined && renderer !== "") {
         const child = spawn("/bin/sh", ["-c", renderer], { stdio: ["pipe", "inherit", "inherit"] });
@@ -112,8 +111,7 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
         return;
       }
       const view = payloadViewOf(payload);
-      const columns = Number.parseInt(process.env.COLUMNS ?? "", 10);
-      console.log(renderStatuslineBlock(summary, view, Number.isNaN(columns) ? DEFAULT_COLUMNS : columns, Date.now()));
+      console.log(renderStatuslineBlock(summary, view, terminalWidthOf(payload, process.env), nowMs));
       }),
     ["$ agent-shim statusline  # a client's statusline setting names this; it renders or delegates"],
   );
