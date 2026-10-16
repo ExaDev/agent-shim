@@ -92,6 +92,8 @@ interface GeminiUsageMetadata {
   readonly promptTokenCount?: number;
   readonly candidatesTokenCount?: number;
   readonly totalTokenCount?: number;
+  /** The part of the prompt Gemini's implicit cache served, included in promptTokenCount. */
+  readonly cachedContentTokenCount?: number;
 }
 
 export interface GeminiGenerateContentResponseChunk {

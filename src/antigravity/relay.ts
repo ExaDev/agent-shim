@@ -92,10 +92,13 @@ export function createAntigravityRelay(params: RelayParams): {
     ensureStarted();
 
     if (chunk.usageMetadata !== undefined) {
+      // Gemini's promptTokenCount includes the content its implicit cache served, while Anthropic's input_tokens excludes cache reads, so the cached count comes off the prompt total and lands in cache_read_input_tokens.
+      const cached = chunk.usageMetadata.cachedContentTokenCount ?? 0;
+      const promptTotal = chunk.usageMetadata.promptTokenCount ?? usage.input_tokens + cached;
       usage = {
-        input_tokens: chunk.usageMetadata.promptTokenCount ?? usage.input_tokens,
+        input_tokens: Math.max(0, promptTotal - cached),
         cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
+        cache_read_input_tokens: cached,
         output_tokens: chunk.usageMetadata.candidatesTokenCount ?? usage.output_tokens,
       };
     }
