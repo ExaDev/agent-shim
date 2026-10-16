@@ -1,3 +1,9 @@
+## [11.20.1](https://github.com/ExaDev/agent-shim/compare/v11.20.0...v11.20.1) (2026-10-16)
+
+### Bug Fixes
+
+* **release:** always release a breaking commit as a major ([6f277fb](https://github.com/ExaDev/agent-shim/commit/6f277fb60af2789e7db93a0d2a48484eb4e9c386))
+
 ## [11.20.0](https://github.com/ExaDev/agent-shim/compare/v11.19.1...v11.20.0) (2026-10-16)
 
 ### Features
