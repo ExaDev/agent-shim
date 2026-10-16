@@ -136,7 +136,7 @@ export interface AntigravityRouting {
 /**
  * Chooses among a name's candidates by available quota: the model the session is already on while it is unspent, otherwise the first whose windows are not spent, in preference order; when every one is spent, the one whose binding window lifts soonest, since that is the first that can serve. A candidate whose quota is unknown counts as available, so an absent quota map routes to the first candidate.
  */
-export function chooseCandidate(candidates: readonly string[], routing: AntigravityRouting | undefined): string {
+function chooseCandidate(candidates: readonly string[], routing: AntigravityRouting | undefined): string {
   const first = candidates[0];
   if (first === undefined) {
     throw new Error("A model target holds at least one candidate");
