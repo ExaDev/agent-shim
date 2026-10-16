@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
 import type { Command } from "commander";
 
 import { withExamples } from "../cli/commandDeps";
 import type { LayoutPaths } from "../paths";
 import { listProviders } from "../providersStore";
 import { realFarmFs } from "../realPorts";
-import { readAccountMetadata } from "../usage/account";
+import { readAccountMetadata, readAccountMetadataFile } from "../usage/account";
 import { readUsageSnapshot } from "../usage/read";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import { renderStatuslineBlock } from "./render";
@@ -77,6 +79,14 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
         }
         try {
           account = readAccountMetadata(realFarmFs, deps.paths.identitiesDir, identity);
+        } catch {
+          account = undefined;
+        }
+      } else {
+        // A session outside agent-shim keeps its profile where Claude Code does: in the pinned configuration directory, else the home directory's `.claude.json`.
+        const configDir = process.env.CLAUDE_CONFIG_DIR;
+        try {
+          account = readAccountMetadataFile(realFarmFs, configDir === undefined || configDir === "" ? path.join(os.homedir(), ".claude.json") : path.join(configDir, ".claude.json"));
         } catch {
           account = undefined;
         }

@@ -38,7 +38,13 @@ export function readAccountMetadata(fs: Pick<FarmFs, "readFileUtf8">, identities
   if (!isIdentityName(identity)) {
     throw new Error(`"${identity}" is not a valid identity name.`);
   }
-  const file = claudeJsonPath(identitiesDir, identity);
+  return readAccountMetadataFile(fs, claudeJsonPath(identitiesDir, identity));
+}
+
+/**
+ * Reads the account metadata from a Claude Code profile file named by its path, for a session that has no agent-shim identity: `$CLAUDE_CONFIG_DIR/.claude.json` when the configuration directory is pinned, else `~/.claude.json`, where Claude Code keeps the default profile. Same contract as `readAccountMetadata`, whose file-level read this is.
+ */
+export function readAccountMetadataFile(fs: Pick<FarmFs, "readFileUtf8">, file: string): AccountMetadata | undefined {
   const raw = fs.readFileUtf8(file);
   if (raw === undefined) {
     return undefined;
