@@ -271,40 +271,28 @@ describe("systemToInstruction", () => {
 });
 
 describe("translateRequest", () => {
-  it("sanitises tool input schemas to the keys the Cloud Code endpoint accepts", () => {
-    const req = request({
-      model: "claude-sonnet-4-5",
-      messages: [{ role: "user", content: "Run bash" }],
-      tools: [
-        {
-          name: "bash_exec",
-          description: "Run a command",
-          input_schema: {
-            $schema: "https://json-schema.org/draft/2020-12/schema",
-            type: "object",
-            additionalProperties: false,
-            propertyNames: { pattern: "^[a-z]+$" },
-            properties: {
-              command: { type: "string", description: "The command" },
-              timeout: { type: ["number", "null"], minimum: 0 },
-              env: { type: "object", additionalProperties: { type: "string" }, properties: {} },
-            },
-            required: ["command"],
-          },
-        },
-      ],
-    });
-    const translated = translateRequest(req, defaults);
-    expect(translated.request.tools?.[0]?.functionDeclarations[0]?.parameters).toEqual({
+  it("passes a tool's JSON Schema through whole, so no model family receives a narrowed copy", () => {
+    const inputSchema = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",
-      description: "Keys match ^[a-z]+$.",
+      additionalProperties: false,
+      propertyNames: { pattern: "^[a-z]+$" },
       properties: {
         command: { type: "string", description: "The command" },
-        timeout: { type: "number", minimum: 0, nullable: true },
-        env: { type: "object", properties: {}, description: "Each value is a string." },
+        timeout: { type: ["number", "null"], minimum: 0 },
+        message: { anyOf: [{ type: "string" }, { type: "object", properties: { kind: { const: "stop" } } }] },
       },
       required: ["command"],
-    });
+    };
+    const req = request({ model: "claude-sonnet-4-5", messages: [{ role: "user", content: "Run bash" }], tools: [{ name: "bash_exec", description: "Run a command", input_schema: inputSchema }] });
+    const declaration = translateRequest(req, defaults).request.tools?.[0]?.functionDeclarations[0];
+    expect(declaration?.parametersJsonSchema).toEqual(inputSchema);
+    expect(declaration).not.toHaveProperty("parameters");
+  });
+
+  it("gives a tool that declares no schema an empty object schema", () => {
+    const req = request({ model: "claude-sonnet-4-5", messages: [{ role: "user", content: "Hi" }], tools: [{ name: "ping", description: "Ping" }] });
+    expect(translateRequest(req, defaults).request.tools?.[0]?.functionDeclarations[0]?.parametersJsonSchema).toEqual({ type: "object", properties: {} });
   });
 
   it("echoes a remembered call signature back onto its function call part, and the backend's bypass value onto an unremembered one", () => {

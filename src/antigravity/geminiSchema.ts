@@ -56,7 +56,8 @@ export interface GeminiSystemInstruction {
 export interface GeminiFunctionDeclaration {
   readonly name: string;
   readonly description?: string;
-  readonly parameters?: Readonly<Record<string, unknown>>;
+  /** The tool's input schema as JSON Schema, accepted whole by every backend model family. */
+  readonly parametersJsonSchema?: Readonly<Record<string, unknown>>;
 }
 
 export interface GeminiTool {
