@@ -193,6 +193,7 @@ export const openRouterQuotaAdapter: ProviderQuotaAdapter = {
 const ANTIGRAVITY_SOURCE = "Cloud Code";
 const ANTIGRAVITY_HOST = "daily-cloudcode-pa.googleapis.com";
 const ANTIGRAVITY_QUOTA_URL = `https://${ANTIGRAVITY_HOST}/v1internal:retrieveUserQuotaSummary`;
+const ANTIGRAVITY_USER_URL = `https://${ANTIGRAVITY_HOST}/v1internal:loadCodeAssist`;
 const GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo";
 const FIVE_HOURS = 5;
 const DAYS_PER_WEEK = 7;
@@ -210,6 +211,10 @@ const AntigravitySummarySchema = z.object({ groups: z.array(z.object({ buckets: 
 const GoogleTokenInfoSchema = z.object({
   email: z.string().optional(),
   sub: z.string().optional(),
+});
+
+const AntigravityUserSchema = z.object({
+  currentTier: z.object({ name: z.string().optional(), id: z.string().optional() }).optional(),
 });
 
 /** How long each of the summary's named windows lasts, when the name is one this project knows. */
@@ -249,9 +254,20 @@ export const antigravityQuotaAdapter: ProviderQuotaAdapter = {
         // The account is optional enrichment; a tokeninfo that does not parse costs only the label, not the quota.
       }
     }
+    let level: string | undefined;
+    const userResponse = await http(ANTIGRAVITY_USER_URL, headers, signal, { method: "POST", body: "{}" });
+    if (userResponse.status === HTTP_OK) {
+      try {
+        const tier = AntigravityUserSchema.parse(JSON.parse(userResponse.text)).currentTier;
+        level = tier?.name ?? tier?.id;
+      } catch {
+        // The plan is optional enrichment, same as the account.
+      }
+    }
     return ProviderQuotaSchema.parse({
       observedAt: new Date(nowMs).toISOString(),
       source: ANTIGRAVITY_SOURCE,
+      ...(level === undefined ? {} : { level }),
       ...(account === undefined ? {} : { account }),
       windows: parsed.data.groups.flatMap((group) =>
         group.buckets.map((bucket) => ({

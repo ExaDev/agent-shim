@@ -332,16 +332,20 @@ describe("antigravityQuotaAdapter", () => {
         text: JSON.stringify({ groups: [{ buckets: [{ bucketId: "gemini-5h", remainingFraction: 0.75, resetTime: "2026-10-02T15:00:00.000Z" }, { bucketId: "3p-weekly", remainingFraction: 0.9 }] }] }),
       };
     }
+    if (url === "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist") {
+      return { status: 200, text: JSON.stringify({ currentTier: { id: "free-tier", name: "Antigravity" } }) };
+    }
     if (url.startsWith("https://oauth2.googleapis.com/tokeninfo")) {
       return { status: 200, text: JSON.stringify({ email: "joe@example.com", sub: "12345" }) };
     }
     return { status: HTTP_SERVER_ERROR, text: "" };
   });
 
-  it("maps the summary's buckets into windows with their known lengths, and the token into the account", async () => {
+  it("maps the summary's buckets into windows with their known lengths, the token into the account and the tier into the plan", async () => {
     const quota = await antigravityQuotaAdapter.fetch("REDACTED", http, new AbortController().signal, NOW_MS);
     expect(quota.source).toBe("Cloud Code");
     expect(quota.account).toEqual({ email: "joe@example.com", accountId: "12345" });
+    expect(quota.level).toBe("Antigravity");
     expect(quota.windows).toHaveLength(2);
     expect(quota.windows[0]).toEqual({ measures: "gemini-5h", periodMs: FIVE_HOURS_MS, utilization: 0.25, resetsAt: "2026-10-02T15:00:00.000Z" });
     expect(quota.windows[1]?.measures).toBe("3p-weekly");
@@ -360,6 +364,7 @@ describe("antigravityQuotaAdapter", () => {
     });
     const quota = await antigravityQuotaAdapter.fetch("REDACTED", noAccount, new AbortController().signal, NOW_MS);
     expect(quota.account).toBeUndefined();
+    expect(quota.level).toBeUndefined();
     expect(quota.windows[0]?.utilization).toBeCloseTo(HALF_USED, FLOAT_PRECISION_DIGITS);
 
     const broken = vi.fn<QuotaHttpGet>(async () => await Promise.resolve({ status: 200, text: "not json" }));
