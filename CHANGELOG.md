@@ -1,3 +1,25 @@
+## [11.15.0](https://github.com/ExaDev/agent-shim/compare/v11.14.0...v11.15.0) (2026-10-16)
+
+### Features
+
+* **statusline:** colour the cache hit percentage by its band ([d0e93a8](https://github.com/ExaDev/agent-shim/commit/d0e93a89493d70563dc2b20f7886b041cf3bd785))
+* **statusline:** show what headroom saved the session ([bc083c4](https://github.com/ExaDev/agent-shim/commit/bc083c49b31458efe1afe93d772119be7b2c5529)), closes [#447](https://github.com/ExaDev/agent-shim/issues/447)
+
+### Bug Fixes
+
+* **antigravity:** report Gemini 4 Argon from its own weekly window ([71c0a1d](https://github.com/ExaDev/agent-shim/commit/71c0a1d7fa3de777ff762c0fb70cc17533371a1c))
+* **antigravity:** sign a tool call the door never saw with the backend's bypass value ([dd2a7dc](https://github.com/ExaDev/agent-shim/commit/dd2a7dc755384475de80d9b46d0aaf7472cd1623))
+* **antigravity:** translate a quota rejection into the limit it is ([a033284](https://github.com/ExaDev/agent-shim/commit/a033284de02d69d34eb1a79ec50ee52f8a8cb4d3))
+* **statusline:** show the headroom saving percentage with readable precision ([51c0827](https://github.com/ExaDev/agent-shim/commit/51c08278ed92320deb6586d51a2c64933092a718))
+
+### Code Refactoring
+
+* stop exporting a headroom timeout and a quota window type only their own modules use ([b274bc9](https://github.com/ExaDev/agent-shim/commit/b274bc90e56eafa75d6df376ca2f6697d71c878a))
+
+### Documentation
+
+* describe the statusline's headroom segment ([a72f06c](https://github.com/ExaDev/agent-shim/commit/a72f06cf3dd06000884e48d84fee87a94c3848d0))
+
 ## [11.14.0](https://github.com/ExaDev/agent-shim/compare/v11.13.0...v11.14.0) (2026-10-16)
 
 ### Features
