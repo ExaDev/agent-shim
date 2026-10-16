@@ -11,6 +11,9 @@ export interface StatuslineSummary {
   readonly providerPlan: string | undefined;
   readonly loginAccountEmail: string | undefined;
   readonly loginRateLimitTier: string | undefined;
+  readonly loginOrganizationName: string | undefined;
+  readonly loginOrganizationType: string | undefined;
+  readonly loginSeatTier: string | undefined;
   readonly fiveHourUsed: number | undefined;
   readonly fiveHourResetAt: string | undefined;
   readonly sevenDayUsed: number | undefined;
@@ -91,6 +94,9 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     providerPlan: undefined,
     loginAccountEmail: params.account?.emailAddress,
     loginRateLimitTier: params.account?.userRateLimitTier ?? params.account?.organizationRateLimitTier,
+    loginOrganizationName: params.account?.organizationName,
+    loginOrganizationType: params.account?.organizationType,
+    loginSeatTier: params.account?.seatTier === "none" ? undefined : params.account?.seatTier,
     fiveHourUsed: undefined,
     fiveHourResetAt: undefined,
     sevenDayUsed: undefined,
