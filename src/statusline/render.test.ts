@@ -8,8 +8,10 @@ const WIDE_TERMINAL = 170;
 const WIDE_TERMINAL_MAX = 166;
 const NARROW_TERMINAL = 40;
 const NARROW_MAX_LINE = 36;
-/** Wide enough for the model and the account but not all three header segments: the wrapping case between one line and one-segment-per-line. */
-const MEDIUM_TERMINAL = 60;
+/** Too narrow for the model and the account to share a line: each header segment renders on its own line. */
+const ONE_PER_LINE_TERMINAL = 46;
+/** Wide enough for the model and the account to share a line, with the identity wrapping alone: the greedy packing case. */
+const PACKING_TERMINAL = 60;
 
 const SUMMARY: StatuslineSummary = {
   identity: "antigravity",
@@ -77,12 +79,19 @@ describe("renderStatuslineBlock", () => {
     }
   });
 
-  it("wraps the first line onto one segment per line when it does not fit, instead of losing its tail", () => {
-    const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, MEDIUM_TERMINAL, NOW_MS)).split("\n");
+  it("wraps the first line onto one segment per line when no two of them share a line, instead of losing its tail", () => {
+    const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, ONE_PER_LINE_TERMINAL, NOW_MS)).split("\n");
     expect(lines[0]).toBe("Sonnet 5.5");
     expect(lines[1]).toBe("Antigravity · ada@example.com · Pro");
     expect(lines[2]).toBe("antigravity");
     expect(lines[3]).toContain("Ctx");
+  });
+
+  it("packs the header greedily, sharing a line where segments fit together", () => {
+    const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, PACKING_TERMINAL, NOW_MS)).split("\n");
+    expect(lines[0]).toBe("Sonnet 5.5 | Antigravity · ada@example.com · Pro");
+    expect(lines[1]).toBe("antigravity");
+    expect(lines[2]).toContain("Ctx");
   });
 
   it("shows the OAuth login account and its plan for a plain anthropic identity, and the identity when it is not that account", () => {
