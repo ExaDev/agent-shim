@@ -258,7 +258,7 @@ export function renderStatuslineBlock(summary: StatuslineSummary, view: Statusli
   const width = Math.max(TWENTY, terminalWidth - RESERVED_COLUMNS);
   const lines: string[] = [];
   if (header.length > 0) {
-    lines.push(header.map((segment) => segment.render(BAR_WIDTH)).join(SEPARATOR));
+    lines.push(layoutGrouped(header, [], width, "never", SEPARATOR, BAR_WIDTH));
   }
   const body = layoutGrouped(contextGroup, quotaGroup, width, "always", SEPARATOR, BAR_WIDTH);
   if (body !== "") {

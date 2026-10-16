@@ -8,6 +8,8 @@ const WIDE_TERMINAL = 170;
 const WIDE_TERMINAL_MAX = 166;
 const NARROW_TERMINAL = 40;
 const NARROW_MAX_LINE = 36;
+/** Wide enough for the model and the account but not all three header segments: the wrapping case between one line and one-segment-per-line. */
+const MEDIUM_TERMINAL = 60;
 
 const SUMMARY: StatuslineSummary = {
   identity: "antigravity",
@@ -73,6 +75,14 @@ describe("renderStatuslineBlock", () => {
       }
       expect(line.length).toBeLessThanOrEqual(NARROW_MAX_LINE);
     }
+  });
+
+  it("wraps the first line onto one segment per line when it does not fit, instead of losing its tail", () => {
+    const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, MEDIUM_TERMINAL, NOW_MS)).split("\n");
+    expect(lines[0]).toBe("Sonnet 5.5");
+    expect(lines[1]).toBe("Antigravity · ada@example.com · Pro");
+    expect(lines[2]).toBe("antigravity");
+    expect(lines[3]).toContain("Ctx");
   });
 
   it("shows the OAuth login account and its plan for a plain anthropic identity, and the identity when it is not that account", () => {
