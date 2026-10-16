@@ -460,7 +460,7 @@ export {
   type ProviderListEntry,
   type UpdateProviderInput,
 } from "./providersStore";
-export { addPool, PoolNotFoundError, readPools, removePool, requirePool, setPool } from "./poolStore";
+export { addPool, changePool, PoolNotFoundError, readPools, removePool, requirePool, type PoolChange, type PoolPolicy } from "./poolStore";
 export {
   addDirectoryRule,
   DirectoryRuleAlreadyExistsError,

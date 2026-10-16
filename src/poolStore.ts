@@ -97,8 +97,27 @@ function validateMembers(pools: Readonly<Record<string, Pool>>, name: string, me
   }
 }
 
+/** The settings of a pool beside its members: every `Pool` field but `identities`, each one optional. A field left undefined is the pool's default for it. */
+export type PoolPolicy = { readonly [Field in keyof Omit<Pool, "identities">]?: Omit<Pool, "identities">[Field] | undefined };
+
+/** The policy fields `policy` actually sets, as the object a pool stores: a pool carries only what it changes, so an undefined field is left out. Accepts a whole `Pool` and returns just its policy. */
+export function poolPolicyOf(policy: PoolPolicy): PoolPolicy {
+  return { ...(policy.preference === undefined ? {} : { preference: policy.preference }) };
+}
+
+/** What a change to an existing pool may name: the full new member list, and the policy fields to set, where `false` clears a field back to its default. A field left undefined is kept as it is. */
+export interface PoolChange {
+  readonly identities?: readonly PoolMemberEntry[] | undefined;
+  readonly preference?: PoolPreference | false | undefined;
+}
+
+/** Whether `change` names anything to change. */
+export function isPoolChange(change: PoolChange): boolean {
+  return change.identities !== undefined || change.preference !== undefined;
+}
+
 /** Defines a new pool. Throws `InvalidPoolNameError` for a name `PoolNameSchema` rejects, `PoolAlreadyExistsError` for one already defined, and `UsageError` for a nested member that names an undefined pool or a cycle. */
-export function addPool(paths: LayoutPaths, name: string, identities: readonly PoolMemberEntry[], preference?: PoolPreference): Pool {
+export function addPool(paths: LayoutPaths, name: string, identities: readonly PoolMemberEntry[], policy: PoolPolicy = {}): Pool {
   if (!PoolNameSchema.safeParse(name).success) {
     throw new InvalidPoolNameError(name);
   }
@@ -107,16 +126,18 @@ export function addPool(paths: LayoutPaths, name: string, identities: readonly P
     throw new PoolAlreadyExistsError(name);
   }
   validateMembers(pools, name, identities);
-  const pool: Pool = { identities: [...identities], ...(preference === undefined ? {} : { preference }) };
+  const pool: Pool = { identities: [...identities], ...poolPolicyOf(policy) };
   writePools(paths, { ...pools, [name]: pool });
   return pool;
 }
 
-/** Replaces an existing pool's members and preference. Throws `PoolNotFoundError` when it is not defined, and `UsageError` for a nested member that names an undefined pool or a cycle. */
-export function setPool(paths: LayoutPaths, name: string, identities: readonly PoolMemberEntry[], preference?: PoolPreference): Pool {
-  requirePool(paths, name);
+/** Applies `change` to an existing pool: the members it names replace the list, a policy field it names is set (or cleared, for `false`), and everything else is kept. Throws `PoolNotFoundError` when the pool is not defined, and `UsageError` for a nested member that names an undefined pool or a cycle. */
+export function changePool(paths: LayoutPaths, name: string, change: PoolChange): Pool {
+  const existing = requirePool(paths, name);
+  const identities = change.identities ?? existing.identities;
   validateMembers(readPools(paths), name, identities);
-  const pool: Pool = { identities: [...identities], ...(preference === undefined ? {} : { preference }) };
+  const preference = change.preference === undefined ? existing.preference : change.preference === false ? undefined : change.preference;
+  const pool: Pool = { identities: [...identities], ...poolPolicyOf({ preference }) };
   writePools(paths, { ...readPools(paths), [name]: pool });
   return pool;
 }

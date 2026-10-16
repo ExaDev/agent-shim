@@ -2,7 +2,7 @@ import { ORPCError } from "@orpc/client";
 import { openapi } from "@orpc/openapi";
 
 import { CliError } from "../cliError";
-import { type Pool, type Provider, isAntigravityProvider, isCodexProvider, isHttpProvider } from "../config/schema";
+import { type Provider, isAntigravityProvider, isCodexProvider, isHttpProvider } from "../config/schema";
 import { applyProfileChange, createProfile, ProfileAlreadyExistsError, ProfileNotFoundError, readProfile, removeProfile, requireProfileExists, setGlobalDefaultProfile } from "../configProfilesStore";
 import { summariseCredential } from "../credential";
 import { mergeCredentialCache } from "../credentialCacheChange";
@@ -24,7 +24,7 @@ import {
 } from "../identityStore";
 import { poolNameOf } from "../launcher/identity";
 import type { LayoutPaths } from "../paths";
-import { addPool, PoolAlreadyExistsError, PoolNotFoundError, readPools, removePool, requirePool, setPool } from "../poolStore";
+import { addPool, changePool, isPoolChange, PoolAlreadyExistsError, PoolNotFoundError, readPools, removePool, requirePool } from "../poolStore";
 import { addProvider, ProviderAlreadyExistsError, ProviderNotFoundError, providerExists, readProvider, removeProvider, updateProvider } from "../providersStore";
 import {
   ConfigIdentityAddOutputSchema,
@@ -309,7 +309,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
           .handler(({ input }) =>
             guarded(() => {
               requireIdentityNames(paths, input.identities);
-              const created = addPool(paths, input.name, input.identities, input.preference);
+              const created = addPool(paths, input.name, input.identities, { preference: input.preference });
               return { action: "created" as const, kind: "pool" as const, name: input.name, value: created };
             }),
           ),
@@ -318,15 +318,14 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
           .output(ConfigPoolSetOutputSchema)
           .handler(({ input }) =>
             guarded(() => {
-              requireChange(input.identities !== undefined || input.preference !== undefined, "identities or preference");
-              const existing = requirePool(paths, input.name);
+              const change = { identities: input.identities, preference: input.preference };
+              requireChange(isPoolChange(change), "identities or preference");
+              requirePool(paths, input.name);
               if (input.identities !== undefined) {
                 // Only the freshly listed names are validated: the pass-through keeps object entries whose condition the request does not restate.
                 requireIdentityNames(paths, input.identities);
               }
-              const members: Pool["identities"] = input.identities ?? existing.identities;
-              const preference = input.preference === undefined ? existing.preference : input.preference === false ? undefined : input.preference;
-              return { action: "updated" as const, kind: "pool" as const, name: input.name, value: setPool(paths, input.name, members, preference) };
+              return { action: "updated" as const, kind: "pool" as const, name: input.name, value: changePool(paths, input.name, change) };
             }),
           ),
         remove: route("/rest/config/pool/remove", "Delete a pool")
