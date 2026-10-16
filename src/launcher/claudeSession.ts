@@ -41,6 +41,22 @@ export function withConversation(passthrough: readonly string[], conversation: "
   return [...kept, conversation === "start" ? "--session-id" : "--resume", id, ...tail];
 }
 
+/** Whether the arguments already carry the caller's own `--settings`, which a supervised launch cannot add to. */
+export function hasSettingsArgument(passthrough: readonly string[]): boolean {
+  const end = passthrough.indexOf(TERMINATOR);
+  return (end === -1 ? passthrough : passthrough.slice(0, end)).some((token) => token === "--settings" || token.startsWith("--settings="));
+}
+
+/** The arguments a supervised launch gives claude: the caller's own, with the conversation argument the launch asks for (unless it takes the caller's as given) and, when it carries any, `--settings` placed before a `--` terminator. */
+export function withSupervision(passthrough: readonly string[], supervised: SupervisedLaunch): readonly string[] {
+  const conversation = supervised.conversation === "as-given" ? passthrough : withConversation(passthrough, supervised.conversation, supervised.sessionId);
+  if (supervised.settings === undefined) {
+    return conversation;
+  }
+  const end = conversation.indexOf(TERMINATOR);
+  return end === -1 ? [...conversation, "--settings", supervised.settings] : [...conversation.slice(0, end), "--settings", supervised.settings, ...conversation.slice(end)];
+}
+
 /** Whether the arguments open claude's conversation picker (`--resume` or `-r` with no id), which names no conversation until the person chooses. */
 function opensPicker(passthrough: readonly string[]): boolean {
   const end = passthrough.indexOf(TERMINATOR);
@@ -61,6 +77,8 @@ export interface SupervisedLaunch {
   readonly conversation: ClaudeConversation;
   /** The pool member to run as, for a relaunch after the previous member ran out of quota. The pool pick is skipped. */
   readonly member?: string;
+  /** Claude Code settings, as the JSON `--settings` takes, to add to the launch: the hooks that tell the supervisor when a turn begins and ends. */
+  readonly settings?: string;
 }
 
 /** A conversation id that is safe to use as a file name: the supervisor registers sessions under it. Claude's own ids are UUIDs; anything with a separator or a dot is refused rather than trusted. */

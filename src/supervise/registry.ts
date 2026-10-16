@@ -26,6 +26,20 @@ const SupervisedSessionSchema = z.strictObject({
 });
 export type SupervisedSession = z.infer<typeof SupervisedSessionSchema>;
 
+/**
+ * What a session's own hooks and its supervisor record about it, in a file of its own so that the hooks (separate processes that run at the end and start of every turn) never rewrite the registry entry the supervisor owns.
+ */
+const SessionStateSchema = z.strictObject({
+  /** `busy` from the moment a prompt is submitted until the turn ends, `idle` from then until the next prompt: the only times the child can be stopped without losing a turn. */
+  mark: z.enum(["busy", "idle"]),
+  /** The size in tokens of the context as of the last turn that ended; absent until one has. */
+  contextTokens: z.number().int().nonnegative().optional(),
+  /** Whether the session was compacted during its stay on the member it runs on now. Set by the supervisor, kept by later marks, and cleared when the session moves. */
+  compacted: z.boolean().optional(),
+  at: z.iso.datetime(),
+});
+export type SessionState = z.infer<typeof SessionStateSchema>;
+
 /** The directory one pool's shared state lives in. */
 export function superviseDirOf(paths: LayoutPaths, pool: string): string {
   return path.join(paths.superviseDir, pool);
@@ -39,15 +53,46 @@ function sessionFileOf(paths: LayoutPaths, pool: string, sessionId: string): str
   return path.join(sessionsDirOf(paths, pool), `${sessionId}.json`);
 }
 
+/** The directory the pool's session states are recorded in. */
+export function stateDirOf(paths: LayoutPaths, pool: string): string {
+  return path.join(superviseDirOf(paths, pool), "state");
+}
+
+/** The file a session's state is recorded in. */
+export function sessionStatePath(paths: LayoutPaths, pool: string, sessionId: string): string {
+  return path.join(stateDirOf(paths, pool), `${sessionId}.json`);
+}
+
+/** Records a session's state, replacing the last. The session id is a file name, so the caller has checked it is a plain identifier. */
+export function writeSessionState(fs: RegistryFs, paths: LayoutPaths, pool: string, sessionId: string, state: Readonly<SessionState>): void {
+  fs.mkdirPrivate(stateDirOf(paths, pool));
+  fs.writeFilePrivate(sessionStatePath(paths, pool, sessionId), `${JSON.stringify(SessionStateSchema.parse(state))}\n`);
+}
+
+/** A session's recorded state, or undefined when none was written or what is there is not a state of this schema. */
+export function readSessionState(fs: Pick<RegistryFs, "readFileUtf8">, paths: LayoutPaths, pool: string, sessionId: string): SessionState | undefined {
+  const raw = fs.readFileUtf8(sessionStatePath(paths, pool, sessionId));
+  if (raw === undefined) {
+    return undefined;
+  }
+  try {
+    const parsed = SessionStateSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Registers a session, or replaces its entry when it moves. The session id is a file name, so the caller has checked it is a plain identifier. */
 export function registerSupervised(fs: RegistryFs, paths: LayoutPaths, session: Readonly<SupervisedSession>): void {
   fs.mkdirPrivate(sessionsDirOf(paths, session.pool));
   fs.writeFilePrivate(sessionFileOf(paths, session.pool, session.sessionId), `${JSON.stringify(SupervisedSessionSchema.parse(session))}\n`);
 }
 
-/** Removes a session's entry. Idempotent. */
+/** Removes a session's entry and its recorded state. Idempotent. */
 export function unregisterSupervised(fs: RegistryFs, paths: LayoutPaths, pool: string, sessionId: string): void {
   fs.removeRecursive(sessionFileOf(paths, pool, sessionId));
+  fs.removeRecursive(sessionStatePath(paths, pool, sessionId));
 }
 
 /**

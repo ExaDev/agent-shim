@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { USAGE_SCHEMA_VERSION, type UsageRecord } from "../usage/schema";
-import { committedContextTokens, liveSupervised, registerSupervised, unregisterSupervised, type SupervisedSession } from "./registry";
+import { committedContextTokens, liveSupervised, readSessionState, registerSupervised, sessionStatePath, stateDirOf, unregisterSupervised, writeSessionState, type SupervisedSession } from "./registry";
 
 const paths = buildLayoutPaths("/state");
 const T0 = "2026-10-16T10:00:00.000Z";
@@ -55,6 +55,35 @@ describe("the supervised session registry", () => {
     unregisterSupervised(fs, paths, "subs", "s1");
     unregisterSupervised(fs, paths, "subs", "s1");
     expect(liveSupervised(fs, paths, "subs", () => true)).toEqual([]);
+  });
+});
+
+describe("a session's recorded state", () => {
+  const STATE = { mark: "idle" as const, contextTokens: CONTEXT, compacted: true, at: T1 };
+
+  it("is written to a file of its own, outside the registry entries, and read back", () => {
+    const fs = createFakeFarmFs({});
+    registerSupervised(fs, paths, session());
+    writeSessionState(fs, paths, "subs", "s1", STATE);
+    expect(readSessionState(fs, paths, "subs", "s1")).toEqual(STATE);
+    expect(sessionStatePath(paths, "subs", "s1").startsWith(stateDirOf(paths, "subs"))).toBe(true);
+    // The state file is not mistaken for a session by the registry listing.
+    expect(liveSupervised(fs, paths, "subs", () => true)).toEqual([session()]);
+  });
+
+  it("is absent for a session nothing has recorded, and for a file that is not a state", () => {
+    const fs = createFakeFarmFs({ [sessionStatePath(paths, "subs", "bad")]: "{not json", [sessionStatePath(paths, "subs", "odd")]: JSON.stringify({ mark: "asleep" }) });
+    expect(readSessionState(fs, paths, "subs", "none")).toBeUndefined();
+    expect(readSessionState(fs, paths, "subs", "bad")).toBeUndefined();
+    expect(readSessionState(fs, paths, "subs", "odd")).toBeUndefined();
+  });
+
+  it("is removed with the session's entry", () => {
+    const fs = createFakeFarmFs({});
+    registerSupervised(fs, paths, session());
+    writeSessionState(fs, paths, "subs", "s1", STATE);
+    unregisterSupervised(fs, paths, "subs", "s1");
+    expect(readSessionState(fs, paths, "subs", "s1")).toBeUndefined();
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { initialConversationOf, withConversation } from "./claudeSession";
+import { hasSettingsArgument, initialConversationOf, withConversation, withSupervision } from "./claudeSession";
 
 const ID = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -28,6 +28,30 @@ describe("withConversation", () => {
 
   it("leaves everything from a -- terminator alone and adds its own argument before it", () => {
     expect(withConversation(["--continue", "--", "--resume", OTHER], "resume", ID)).toEqual(["--resume", ID, "--", "--resume", OTHER]);
+  });
+});
+
+describe("withSupervision", () => {
+  const SETTINGS = '{"hooks":{}}';
+
+  it("applies the conversation argument and leaves the arguments alone when it takes the caller's as given", () => {
+    expect(withSupervision(["--model", "opus"], { sessionId: ID, conversation: "start" })).toEqual(["--model", "opus", "--session-id", ID]);
+    expect(withSupervision(["--resume", OTHER], { sessionId: OTHER, conversation: "as-given" })).toEqual(["--resume", OTHER]);
+  });
+
+  it("adds the settings after the conversation argument and before a -- terminator", () => {
+    expect(withSupervision(["--model", "opus"], { sessionId: ID, conversation: "resume", settings: SETTINGS })).toEqual(["--model", "opus", "--resume", ID, "--settings", SETTINGS]);
+    expect(withSupervision(["--", "mcp"], { sessionId: ID, conversation: "start", settings: SETTINGS })).toEqual(["--session-id", ID, "--settings", SETTINGS, "--", "mcp"]);
+    expect(withSupervision(["--resume", OTHER], { sessionId: OTHER, conversation: "as-given", settings: SETTINGS })).toEqual(["--resume", OTHER, "--settings", SETTINGS]);
+  });
+});
+
+describe("hasSettingsArgument", () => {
+  it("finds the caller's own --settings in either form, before a -- terminator only", () => {
+    expect(hasSettingsArgument(["--settings", "a.json"])).toBe(true);
+    expect(hasSettingsArgument(["--settings=a.json"])).toBe(true);
+    expect(hasSettingsArgument(["--model", "opus"])).toBe(false);
+    expect(hasSettingsArgument(["--", "--settings", "a.json"])).toBe(false);
   });
 });
 

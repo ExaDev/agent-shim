@@ -97,7 +97,7 @@ describe("buildProgram", () => {
     const built = program(runClaude);
 
     expect(built.commands.map((command) => command.name()).sort()).toEqual(
-      ["__frontdoor-supervisor", "__headroom-supervisor", "__open-window", "__run-job", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "job", "mcp", "pool", "profile", "provider", "rule", "run", "session", "shim", "statusline", "update", "usage"].sort(),
+      ["__frontdoor-supervisor", "__headroom-supervisor", "__open-window", "__run-job", "__supervise-mark", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "job", "mcp", "pool", "profile", "provider", "rule", "run", "session", "shim", "statusline", "update", "usage"].sort(),
     );
     expect(runClaude).not.toHaveBeenCalled();
     expect(fs.readdirSync(root)).toEqual([]);
@@ -646,6 +646,7 @@ describe("completion", () => {
       expect(result.stdout).toContain(shell === "fish" ? `-l '${flag}'` : `--${flag}`);
     }
     expect(result.stdout).not.toContain("__headroom-supervisor");
+    expect(result.stdout).not.toContain("__supervise-mark");
   });
 
   it("rejects an unknown shell as a usage error", async () => {

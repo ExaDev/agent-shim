@@ -13,6 +13,7 @@ import { registerCredentialCommand, type CredentialCommandPorts } from "./creden
 import { registerShimCommand } from "./claudeShim";
 import { registerDoctorCommand } from "./doctor";
 import { registerHeadroomCommand } from "./headroom/commands";
+import { registerSuperviseMarkCommand } from "./supervise/commands";
 import { registerIdentityCommand } from "./identityManager";
 import { registerProfileCommand } from "./configProfiles";
 import { registerHeadlessCommands } from "./headlessCommands";
@@ -110,6 +111,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   registerMcpCommand(program, deps);
   registerUsageCommands(program, deps);
   registerSessionCommands(program, deps);
+  registerSuperviseMarkCommand(program, deps);
   registerRunCommand(program, deps.runClaude);
   registerUpdateCommand(program, deps, deps.updatePorts);
   registerCompletionCommand(program);
