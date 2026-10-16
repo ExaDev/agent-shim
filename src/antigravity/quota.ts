@@ -156,7 +156,7 @@ export function unifiedAntigravityQuotaHeaders(params: AntigravityQuotaParams): 
 }
 
 /** The subscription windows the Antigravity CLI's quota map names, as the unified rate-limit family spells them. */
-export type AntigravityWindow = "five_hour" | "seven_day";
+type AntigravityWindow = "five_hour" | "seven_day";
 
 /** Which windows are spent and when the last of them lifts: the next request can succeed only after every spent window has reset, so the binding one is the latest. */
 export interface AntigravityExhaustion {

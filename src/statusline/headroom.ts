@@ -5,7 +5,7 @@ import { z } from "zod";
 /**
  * How long one lookup may take. The statusline runs on every interaction, so a slow or wedged proxy must cost a bounded slice of a render and then lose the segment, never stall the line.
  */
-export const HEADROOM_TIMEOUT_MS = 500;
+const HEADROOM_TIMEOUT_MS = 500;
 
 const HTTP_OK = 200;
 
