@@ -26,6 +26,7 @@ const TWENTY = 20;
 export const RESERVED_COLUMNS = 4;
 const SEPARATOR = " | ";
 const FULL_PERCENT = 100;
+const ONE_PERCENT = 1;
 /** The Antigravity statusline's colour bands on a used fraction: red from 90%, yellow from 70%, green under it. */
 const USED_RED_AT = 0.9;
 const USED_YELLOW_AT = 0.7;
@@ -97,9 +98,11 @@ function headroomText(stats: StatuslineSummary["headroom"]): string | undefined 
   if (stats === undefined) {
     return undefined;
   }
+  // Under one percent a single decimal hides most of the figure (a saving of 0.01% would read 0.0%), so it gets two.
+  const overall = stats.savingsPercent === undefined ? undefined : `${stats.savingsPercent.toFixed(stats.savingsPercent < ONE_PERCENT ? 2 : 1)}% overall`;
   const parts = [
     stats.tokensSaved === undefined ? undefined : `${formatTokens(stats.tokensSaved)} saved`,
-    stats.savingsPercent === undefined ? undefined : `${stats.savingsPercent.toFixed(1)}%`,
+    overall,
     stats.savingsUsd === undefined ? undefined : `$${stats.savingsUsd.toFixed(2)}`,
   ].filter((part) => part !== undefined);
   return parts.length === 0 ? undefined : `headroom ${parts.join(" · ")}`;
