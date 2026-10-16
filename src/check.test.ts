@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { Credential } from "./config/schema";
 import type { CredentialCacheEnv } from "./credential";
@@ -119,7 +119,7 @@ describe("runCheck", () => {
 
   it("runs the Keychain diagnostic only on darwin, with both a run port and a farm root available", () => {
     const fakeRun: RunPort = {
-      run: () => ({ status: 0, stdout: "", stderr: '    "svce"<blob>="Claude Code-credentials-abc123"\n' }),
+      run: () => ({ status: 0, stdout: "", stderr: "" }),
     };
 
     const onLinux = runCheck(baseParams({ platform: "linux", run: fakeRun, farmRoot: "/farm/work" }));
@@ -129,7 +129,8 @@ describe("runCheck", () => {
     expect(onDarwinNoRoot.keychain).toBeUndefined();
 
     const onDarwin = runCheck(baseParams({ platform: "darwin", run: fakeRun, farmRoot: "/farm/work" }));
-    expect(onDarwin.keychain?.serviceName).toBe("Claude Code-credentials-abc123");
+    expect(onDarwin.keychain?.serviceName).toBe("Claude Code-credentials-5e4594d0");
+    expect(onDarwin.keychain?.found).toBe(true);
   });
 
   it("reports the settings-secrets advisory only when the settings category resolves shared and a file has real content", () => {
@@ -206,35 +207,24 @@ describe("inspectSettingsExposure", () => {
 });
 
 describe("lookupKeychainService", () => {
-  it("parses the service name out of security's stderr attribute dump", () => {
-    const run: RunPort = {
-      run: (command, args) => {
-        expect(command).toBe("security");
-        expect(args).toContain("find-generic-password");
-        return { status: 0, stdout: "", stderr: '    "svce"<blob>="Claude Code-credentials-deadbeef"\n' };
-      },
-    };
-    const result = lookupKeychainService(run, "/farm/work");
+  it("asks the Keychain for the service Claude Code files the directory's login under, never for its secret", () => {
+    const run = vi.fn<RunPort["run"]>(() => ({ status: 0, stdout: "", stderr: "" }));
+    const result = lookupKeychainService({ run }, "/farm/work");
+    expect(run).toHaveBeenCalledWith("security", ["find-generic-password", "-s", "Claude Code-credentials-5e4594d0"]);
     expect(result).toEqual({
       checked: true,
       found: true,
-      serviceName: "Claude Code-credentials-deadbeef",
-      note: 'Keychain service name for this identity: "Claude Code-credentials-deadbeef".',
+      serviceName: "Claude Code-credentials-5e4594d0",
+      note: 'Keychain service name for this identity: "Claude Code-credentials-5e4594d0".',
     });
   });
 
-  it("reports no entry found when security exits non-zero", () => {
+  it("reports no entry found when security exits non-zero, still naming the service it looked for", () => {
     const run: RunPort = { run: () => ({ status: 44, stdout: "", stderr: "" }) };
     const result = lookupKeychainService(run, "/farm/work");
     expect(result.found).toBe(false);
-    expect(result.serviceName).toBeUndefined();
-  });
-
-  it("reports a found-but-unparseable entry distinctly from not-found", () => {
-    const run: RunPort = { run: () => ({ status: 0, stdout: "", stderr: "something unexpected" }) };
-    const result = lookupKeychainService(run, "/farm/work");
-    expect(result.found).toBe(true);
-    expect(result.serviceName).toBeUndefined();
+    expect(result.serviceName).toBe("Claude Code-credentials-5e4594d0");
+    expect(result.note).toContain("No Keychain entry found for service");
   });
 });
 
