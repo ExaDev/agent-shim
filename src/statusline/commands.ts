@@ -3,6 +3,7 @@ import type { Command } from "commander";
 
 import { withExamples } from "../cli/commandDeps";
 import { realFarmFs } from "../realPorts";
+import { readAccountMetadata } from "../usage/account";
 import { readUsageSnapshot } from "../usage/read";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import { renderStatuslineBlock } from "./render";
@@ -50,7 +51,7 @@ async function readAllStdin(): Promise<string> {
 const DEFAULT_COLUMNS = 80;
 
 /** The command a client's statusline setting names: it reads the client's payload on stdin, adds what the door knows under one `agent_shim` key, and either hands the enriched payload to the renderer named in `AGENT_SHIM_STATUSLINE_CMD` or renders the built-in line itself. */
-export function registerStatuslineCommand(program: Command, deps: { readonly paths: { readonly usageSnapshotsDir: string } }): void {
+export function registerStatuslineCommand(program: Command, deps: { readonly paths: { readonly usageSnapshotsDir: string; readonly identitiesDir: string } }): void {
   withExamples(
     program
       .command("statusline")
@@ -65,14 +66,20 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
       }
       const identity = identityOf(process.env);
       let snapshot;
+      let account;
       if (identity !== undefined) {
         try {
           snapshot = readUsageSnapshot(realFarmFs, deps.paths.usageSnapshotsDir, identity);
         } catch {
           snapshot = undefined;
         }
+        try {
+          account = readAccountMetadata(realFarmFs, deps.paths.identitiesDir, identity);
+        } catch {
+          account = undefined;
+        }
       }
-      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot });
+      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot, account });
       const renderer = process.env.AGENT_SHIM_STATUSLINE_CMD;
       if (renderer !== undefined && renderer !== "") {
         const child = spawn("/bin/sh", ["-c", renderer], { stdio: ["pipe", "inherit", "inherit"] });

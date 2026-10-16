@@ -1,4 +1,4 @@
-import type { UsageSnapshot } from "../usage/schema";
+import type { AccountMetadata, UsageSnapshot } from "../usage/schema";
 
 /** What the door knows about the session whose statusline this is: the one source a renderer can trust for whose quota the windows describe. The `Used` fields are whole percentages (0 to 100); the door's own records carry fractions, the form the real API's headers use. */
 const FULL_PERCENT = 100;
@@ -9,6 +9,8 @@ export interface StatuslineSummary {
   readonly providerAccountEmail: string | undefined;
   readonly providerAccountSub: string | undefined;
   readonly providerPlan: string | undefined;
+  readonly loginAccountEmail: string | undefined;
+  readonly loginRateLimitTier: string | undefined;
   readonly fiveHourUsed: number | undefined;
   readonly fiveHourResetAt: string | undefined;
   readonly sevenDayUsed: number | undefined;
@@ -72,6 +74,8 @@ export interface EnrichParams {
   readonly env: Readonly<Record<string, string | undefined>>;
   /** The identity's usage snapshot, or undefined when there is none. */
   readonly snapshot: UsageSnapshot | undefined;
+  /** The identity's own OAuth account metadata, or undefined when the identity never logged in. */
+  readonly account: AccountMetadata | undefined;
 }
 
 /**
@@ -85,6 +89,8 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     providerAccountEmail: undefined,
     providerAccountSub: undefined,
     providerPlan: undefined,
+    loginAccountEmail: params.account?.emailAddress,
+    loginRateLimitTier: params.account?.userRateLimitTier ?? params.account?.organizationRateLimitTier,
     fiveHourUsed: undefined,
     fiveHourResetAt: undefined,
     sevenDayUsed: undefined,
