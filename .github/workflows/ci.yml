@@ -426,14 +426,27 @@ jobs:
           cache: pnpm
           # registry-url is deliberately absent. Setting it makes setup-node write an .npmrc containing an _authToken line, and that line wins over the OIDC token exchange -- so the setting that looks like it configures the registry is exactly the one that would stop trusted publishing working.
 
+      - name: Skip the publish when this version is already on npm
+        id: published
+        # A re-run of a release whose publish already landed would otherwise fail on npm's refusal to publish a version twice, and every job that needs this one (the tap update, the install checks) would then skip. A version that is staged and not yet live is not on the registry, so it still reaches the publish and fails loudly.
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "agent-shim@${version}" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - run: pnpm install --frozen-lockfile
+        if: steps.published.outputs.already != 'true'
 
       - name: Upgrade npm for OIDC trusted publishing (needs npm CLI >=11.5.1)
+        if: steps.published.outputs.already != 'true'
         run: npm install -g npm@latest
 
       - run: pnpm build:bundle
+        if: steps.published.outputs.already != 'true'
 
       - run: npm publish
+        if: steps.published.outputs.already != 'true'
         env:
           # Blanked, not omitted -- an inherited NPM_TOKEN/NODE_AUTH_TOKEN would otherwise be used in preference to the OIDC exchange.
           NODE_AUTH_TOKEN: ""
@@ -460,17 +473,31 @@ jobs:
           cache: pnpm
           # registry-url is deliberately absent, for the reason given on publish-npm.
 
+      - name: Skip the publish when this version is already on npm
+        id: published
+        # A re-run of a release whose publish already landed would otherwise fail on npm's refusal to publish a version twice, and every job that needs this one (the tap update, the install checks) would then skip. A version that is staged and not yet live is not on the registry, so it still reaches the publish and fails loudly.
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "claude-use@${version}" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - run: pnpm install --frozen-lockfile
+        if: steps.published.outputs.already != 'true'
 
       - name: Upgrade npm for OIDC trusted publishing (needs npm CLI >=11.5.1)
+        if: steps.published.outputs.already != 'true'
         run: npm install -g npm@latest
 
       - run: pnpm build:bundle
+        if: steps.published.outputs.already != 'true'
 
       - name: Rename the package to its former name
+        if: steps.published.outputs.already != 'true'
         run: npm pkg set name="claude-use"
 
       - run: npm publish
+        if: steps.published.outputs.already != 'true'
         env:
           NODE_AUTH_TOKEN: ""
 
