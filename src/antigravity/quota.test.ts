@@ -89,14 +89,13 @@ describe("unifiedAntigravityQuotaHeaders", () => {
     expect(headers["anthropic-ratelimit-unified-reset"]).toBe(String(NOW_SEC + RETRY_AFTER_TEST_SEC));
   });
 
-  it("returns allowed status when quota is empty and not rejected", () => {
+  it("emits nothing when the quota map names no bucket and the response was allowed", () => {
     const headers = unifiedAntigravityQuotaHeaders({
       nowMs: NOW_MS,
     });
 
-    expect(headers["anthropic-ratelimit-unified-status"]).toBe("allowed");
-    expect(headers["anthropic-ratelimit-unified-5h-utilization"]).toBeUndefined();
-    expect(headers["anthropic-ratelimit-unified-7d-utilization"]).toBeUndefined();
+    // A status-only header block would overwrite the last known windows in the usage snapshot with none.
+    expect(headers).toEqual({});
   });
 });
 

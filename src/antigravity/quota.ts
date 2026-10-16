@@ -76,14 +76,11 @@ export function parseRetryAfterSeconds(raw: string | null | undefined, defaultSe
 }
 
 /**
- * Derives the `anthropic-ratelimit-unified-*` headers from Antigravity quota state or 429 status.
+ * Derives the `anthropic-ratelimit-unified-*` headers from Antigravity quota state or 429 status. Emits nothing when the quota map names no bucket and the response was allowed: a status-only block would tell the usage snapshot the windows are gone, erasing the last known ones on a response served while the quota cache was cold.
  */
 export function unifiedAntigravityQuotaHeaders(params: AntigravityQuotaParams): Record<string, string> {
   const rejected = params.rejected === true;
   const nowSec = Math.floor(params.nowMs / MS_PER_SECOND);
-  const headers: Record<string, string> = {
-    "anthropic-ratelimit-unified-status": rejected ? "rejected" : "allowed",
-  };
 
   const modelLower = (params.model ?? "").toLowerCase();
   const isGemini = modelLower.includes("gemini");
@@ -99,6 +96,14 @@ export function unifiedAntigravityQuotaHeaders(params: AntigravityQuotaParams): 
 
   const used7d = calculateUtilization(bWk?.remaining_fraction);
   const reset7d = calculateResetTimestamp(nowSec, bWk?.reset_in_seconds);
+
+  if (!rejected && used5h === undefined && reset5h === undefined && used7d === undefined && reset7d === undefined) {
+    return {};
+  }
+
+  const headers: Record<string, string> = {
+    "anthropic-ratelimit-unified-status": rejected ? "rejected" : "allowed",
+  };
 
   let earliestResetSec: number | undefined;
 
