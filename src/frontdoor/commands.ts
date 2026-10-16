@@ -545,6 +545,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         ownPid: process.pid,
         boundMs: DOOR_STALL_BOUND_MS,
         checkEveryMs: DOOR_WATCHDOG_CHECK_MS,
+        pauseWaitMs: DOOR_WATCHDOG_CHECK_MS,
         action: "kill-process",
         logFile: paths.frontdoorLogPath,
         respawn: respawnInvocation(paths),
