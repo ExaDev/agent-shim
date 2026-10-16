@@ -1,3 +1,27 @@
+## [11.14.0](https://github.com/ExaDev/agent-shim/compare/v11.13.0...v11.14.0) (2026-10-16)
+
+### Features
+
+* **statusline:** leave the model out when stacked under the Antigravity CLI's line ([a6d8eda](https://github.com/ExaDev/agent-shim/commit/a6d8edad4642375549c70fb60a8781117fb0760e))
+* **statusline:** read a providerless session's quota from the client's payload ([7a5bb2a](https://github.com/ExaDev/agent-shim/commit/7a5bb2a28885304876eb73544620831300f33aff)), closes [#446](https://github.com/ExaDev/agent-shim/issues/446)
+* **statusline:** read the login account from the session's own profile file ([4544612](https://github.com/ExaDev/agent-shim/commit/4544612a0baacdc8af8df1a60b0f2b7206e6e7fc))
+* **statusline:** render the Antigravity CLI's payload ([3882e57](https://github.com/ExaDev/agent-shim/commit/3882e57a83ab62d5a6a6bdc4f929438272cc0e63))
+
+### Bug Fixes
+
+* **statusline:** show a provider session's own usage, never another provider's ([f1a0693](https://github.com/ExaDev/agent-shim/commit/f1a0693e1375ee1aa3b71dc3232efefda3666e8c))
+
+### Code Refactoring
+
+* **antigravity:** share the five-hour and weekly bucket selection ([b4f2e8d](https://github.com/ExaDev/agent-shim/commit/b4f2e8dfe83072ea800d6d77d8eb3c1d1a93b121))
+* **statusline:** stop exporting a quota window view only its own module uses ([02bb735](https://github.com/ExaDev/agent-shim/commit/02bb73581fe43c9ff8bdf90b36ff676680a20079))
+
+### Documentation
+
+* describe the statusline for a session outside agent-shim ([e3c4b43](https://github.com/ExaDev/agent-shim/commit/e3c4b43788203776bbb1b23f013b079a5c1a2c97))
+* document the statusline under the Antigravity CLI ([dbe3ea3](https://github.com/ExaDev/agent-shim/commit/dbe3ea332303dbd3830f724cc52f30b698af037e))
+* note that the statusline reads the Antigravity CLI's stacking setting ([49d6ac2](https://github.com/ExaDev/agent-shim/commit/49d6ac2f3e8009e4c5515049d9edcecdbd709112))
+
 ## [11.13.0](https://github.com/ExaDev/agent-shim/compare/v11.12.0...v11.13.0) (2026-10-16)
 
 ### Features
