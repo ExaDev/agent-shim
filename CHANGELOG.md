@@ -1,3 +1,13 @@
+## [11.11.0](https://github.com/ExaDev/agent-shim/compare/v11.10.0...v11.11.0) (2026-10-16)
+
+### Features
+
+* **usage:** record an antigravity provider's own account and quota windows ([7728932](https://github.com/ExaDev/agent-shim/commit/7728932bf1ba75ad56e1429d390f8982535c1c48))
+
+### Bug Fixes
+
+* **usage:** attribute a provider session's bare requests to its provider ([6388f89](https://github.com/ExaDev/agent-shim/commit/6388f89e1af8809c38c3a12c98c03e8876a4a077))
+
 ## [11.10.0](https://github.com/ExaDev/agent-shim/compare/v11.9.0...v11.10.0) (2026-10-16)
 
 ### Features
