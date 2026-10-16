@@ -1,0 +1,33 @@
+name: Upload artifact, retrying once
+description: Uploads an artifact, and uploads it again when the first attempt fails. A transient network failure to GitHub's artifact service (ETIMEDOUT on CreateArtifact) otherwise fails the job that built the artifact, and every job that downloads it after. The retry overwrites, so an attempt that failed after it had created the artifact does not make the second one collide with it. Requires checkout before use, as every local action does.
+
+inputs:
+  name:
+    description: Artifact name.
+    required: true
+  path:
+    description: Files or directories to upload, one per line.
+    required: true
+  retention-days:
+    description: Days the artifact is kept.
+    required: false
+    default: "7"
+
+runs:
+  using: composite
+  steps:
+    - id: first
+      uses: actions/upload-artifact@v7
+      continue-on-error: true
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        retention-days: ${{ inputs.retention-days }}
+
+    - if: steps.first.outcome == 'failure'
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        retention-days: ${{ inputs.retention-days }}
+        overwrite: true

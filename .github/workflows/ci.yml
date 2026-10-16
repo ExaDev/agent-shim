@@ -63,7 +63,7 @@ jobs:
             " >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact-retry
         if: always()
         with:
           name: coverage-report
@@ -156,7 +156,7 @@ jobs:
 
       - run: mv dist/agent-shim-sea dist/agent-shim-macos-arm64
       - run: shasum -a 256 dist/agent-shim-macos-arm64 | awk '{print $1}' > dist/agent-shim-macos-arm64.sha256
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact-retry
         with:
           name: agent-shim-macos-arm64
           path: |
@@ -186,7 +186,7 @@ jobs:
 
       - run: mv dist/agent-shim-sea dist/agent-shim-macos-x64-unverified
       - run: shasum -a 256 dist/agent-shim-macos-x64-unverified | awk '{print $1}' > dist/agent-shim-macos-x64-unverified.sha256
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact-retry
         with:
           name: agent-shim-macos-x64-unverified
           path: |
@@ -212,7 +212,7 @@ jobs:
 
       - run: mv dist/agent-shim-sea dist/agent-shim-linux-x64
       - run: shasum -a 256 dist/agent-shim-linux-x64 | awk '{print $1}' > dist/agent-shim-linux-x64.sha256
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact-retry
         with:
           name: agent-shim-linux-x64
           path: |
@@ -237,7 +237,7 @@ jobs:
 
       - run: mv dist/agent-shim-sea dist/agent-shim-linux-arm64
       - run: shasum -a 256 dist/agent-shim-linux-arm64 | awk '{print $1}' > dist/agent-shim-linux-arm64.sha256
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact-retry
         with:
           name: agent-shim-linux-arm64
           path: |
@@ -269,7 +269,7 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 dist/agent-shim-windows-x64.zip).Hash.ToLower()
           $hash | Out-File -Encoding ascii -NoNewline dist/agent-shim-windows-x64.zip.sha256
 
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact-retry
         with:
           name: agent-shim-windows-x64
           path: |
@@ -301,7 +301,7 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 dist/agent-shim-windows-arm64.zip).Hash.ToLower()
           $hash | Out-File -Encoding ascii -NoNewline dist/agent-shim-windows-arm64.zip.sha256
 
-      - uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/upload-artifact-retry
         with:
           name: agent-shim-windows-arm64
           path: |
