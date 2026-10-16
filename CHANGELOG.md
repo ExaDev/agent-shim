@@ -1,3 +1,9 @@
+## [11.21.1](https://github.com/ExaDev/agent-shim/compare/v11.21.0...v11.21.1) (2026-10-16)
+
+### Bug Fixes
+
+* **frontdoor:** wait for a stalled door to be gone before the replacement binds ([6019b51](https://github.com/ExaDev/agent-shim/commit/6019b51610dcfc682a4b1a2e38b50819ae89340c)), references [#469](https://github.com/ExaDev/agent-shim/issues/469)
+
 ## [11.21.0](https://github.com/ExaDev/agent-shim/compare/v11.20.1...v11.21.0) (2026-10-16)
 
 ### Features
