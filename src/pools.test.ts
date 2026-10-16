@@ -137,6 +137,7 @@ describe("agent-shim pool", () => {
     // Setting the preference alone keeps the members; setting the members alone keeps the preference.
     expect((await cli(["pool", "set", "subs", "--preference", "score"])).code).toBe(0);
     expect(JSON.parse((await cli(["pool", "show", "subs", "--json"])).stdout)).toEqual({ name: "subs", identities: ["work", "personal"], preference: "score" });
+    expect((await cli(["pool", "list"])).stdout).toContain("subs: work, personal (preference: score)");
     expect((await cli(["pool", "set", "subs", "--identity", "work"])).code).toBe(0);
     expect(JSON.parse((await cli(["pool", "show", "subs", "--json"])).stdout)).toEqual({ name: "subs", identities: ["work"], preference: "score" });
     expect((await cli(["pool", "set", "subs", "--no-preference"])).code).toBe(0);

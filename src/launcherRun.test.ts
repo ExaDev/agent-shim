@@ -133,7 +133,7 @@ describe.skipIf(process.platform === "win32")("runClaudeLaunch", () => {
     const paths = buildLayoutPaths(root);
     addIdentity(paths, "work");
     addIdentity(paths, "personal");
-    addPool(paths, "main", ["work", "personal"], "listed");
+    addPool(paths, "main", ["work", "personal"], { preference: "listed" });
     const record = stubClaude(0);
     const asked: string[][] = [];
     const refresher: AnthropicUsageRefresher = {

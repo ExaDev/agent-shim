@@ -5,7 +5,7 @@ import { UsageError } from "./cliError";
 import { collectRepeated } from "./cli/parsers";
 import { POOL_PREFERENCES, POOL_SELECTOR_PREFIX, type PoolPreference } from "./config/schema";
 import { readActiveIdentity, requireIdentityNames, useIdentity } from "./identityStore";
-import { addPool, readPools, removePool, requirePool, setPool } from "./poolStore";
+import { addPool, changePool, isPoolChange, poolPolicyOf, readPools, removePool, requirePool } from "./poolStore";
 import { poolMemberIdentity } from "./config/schema";
 import { realFarmFs, realFsPort } from "./realPorts";
 import { formatAge } from "./usage/preflight";
@@ -65,7 +65,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .action((name: string, options: Readonly<PoolMembersOptions>) => {
         const members = membersOf(options);
         requireIdentityNames(paths, members);
-        const created = addPool(paths, name, members, options.preference);
+        const created = addPool(paths, name, members, { preference: options.preference });
         reportMutation(options.json, { action: "created", kind: "pool", name, value: created }, () => {
           console.log(`Created pool "${name}" with ${members.join(", ")}.`);
         });
@@ -82,20 +82,18 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .option("--no-preference", "Clear the preference back to the default, score.")
       .option("--json", "Print the result as JSON.")
       .action((name: string, options: Readonly<PoolSetOptions>) => {
-        const existing = requirePool(paths, name);
-        if (options.identity === undefined && options.preference === undefined) {
+        requirePool(paths, name);
+        const change = { identities: options.identity, preference: options.preference };
+        if (!isPoolChange(change)) {
           throw new UsageError("Nothing to change: pass --identity, --preference or --no-preference.");
         }
-        const members = options.identity === undefined ? existing.identities : membersOf(options);
         if (options.identity !== undefined) {
-          // Only the freshly listed names are validated: the pass-through keeps object entries whose condition the CLI does not restate.
+          // Only the freshly listed names are validated: a member the command does not restate keeps its object entry and the condition it carries.
           requireIdentityNames(paths, membersOf(options));
         }
-        // The listing prints member names whichever form an entry takes; an object entry's condition is configuration the ranking reads, not something the CLI restates.
-        const preference = options.preference === undefined ? existing.preference : options.preference === false ? undefined : options.preference;
-        const updated = setPool(paths, name, members, preference);
+        const updated = changePool(paths, name, change);
         reportMutation(options.json, { action: "updated", kind: "pool", name, value: updated }, () => {
-          console.log(`Pool "${name}" now has ${members.map(poolMemberIdentity).join(", ")}.`);
+          console.log(`Pool "${name}" now has ${updated.identities.map(poolMemberIdentity).join(", ")}.`);
         });
       }),
     ["agent-shim pool set subs --identity work --identity personal --identity spare", "agent-shim pool set subs --preference listed"],
@@ -110,7 +108,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         const pools = readPools(paths);
         const active = readActiveIdentity(paths);
         if (options.json === true) {
-          printJson(Object.entries(pools).map(([name, entry]) => ({ name, identities: entry.identities, ...(entry.preference === undefined ? {} : { preference: entry.preference }), active: active === `${POOL_SELECTOR_PREFIX}${name}` })));
+          printJson(Object.entries(pools).map(([name, entry]) => ({ name, identities: entry.identities, ...poolPolicyOf(entry), active: active === `${POOL_SELECTOR_PREFIX}${name}` })));
           return;
         }
         const names = Object.keys(pools).sort();
@@ -120,7 +118,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
         }
         for (const name of names) {
           const entry = pools[name];
-          console.log(`${active === `${POOL_SELECTOR_PREFIX}${name}` ? "*" : " "} ${name}: ${(entry?.identities ?? []).map(poolMemberIdentity).join(", ")}${entry?.preference === undefined ? "" : " (preference: listed)"}`);
+          console.log(`${active === `${POOL_SELECTOR_PREFIX}${name}` ? "*" : " "} ${name}: ${(entry?.identities ?? []).map(poolMemberIdentity).join(", ")}${entry?.preference === undefined ? "" : ` (preference: ${entry.preference})`}`);
         }
       }),
     ["agent-shim pool list", "agent-shim pool list --json"],
@@ -134,7 +132,7 @@ export function registerPoolCommand(program: Command, deps: CommandDeps): void {
       .action((name: string, options: Readonly<{ json?: boolean }>) => {
         const entry = requirePool(paths, name);
         if (options.json === true) {
-          printJson({ name, identities: entry.identities, ...(entry.preference === undefined ? {} : { preference: entry.preference }) });
+          printJson({ name, identities: entry.identities, ...poolPolicyOf(entry) });
           return;
         }
         console.log(`Pool: ${name}`);

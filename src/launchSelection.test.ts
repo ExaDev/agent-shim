@@ -72,7 +72,7 @@ describe("resolveLaunchSelection", () => {
   });
 
   it("names the pool a rule selects and the member a launch here would run as, with the pick's reasons", () => {
-    addPool(paths, "main", ["work", "personal"], "listed");
+    addPool(paths, "main", ["work", "personal"], { preference: "listed" });
     addDirectoryRule(paths, project, { identity: "pool:main" });
     const { identity, poolPick } = resolve();
     expect(identity).toMatchObject({ pool: "main", source: "directory-pin" });
