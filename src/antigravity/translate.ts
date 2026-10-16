@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { toolCallSignatureOf } from "./signatures";
+import { toolCallSignatureOf, UNVERIFIED_THOUGHT_SIGNATURE } from "./signatures";
 
 import {
   ANTIGRAVITY_DEFAULT_EFFORT,
@@ -230,8 +230,8 @@ function messagesToGeminiContents(
             name: sanitizedName,
             args: isRecord(block.input) ? block.input : {},
           },
-          // The relay remembered the signature the backend attached to this exact call; echoing it back is what the backend requires of a repeated function call.
-          ...(signature === undefined ? {} : { thoughtSignature: signature }),
+          // The relay remembered the signature the backend attached to this exact call; echoing it back is what the backend requires of a repeated function call. A call with none remembered (made before a door restart, evicted from the bounded store, or produced by another model in a resumed session) gets the backend's documented bypass, since history is resent whole on every request and a single unsigned call would otherwise fail the whole conversation for good.
+          thoughtSignature: signature ?? UNVERIFIED_THOUGHT_SIGNATURE,
         });
       } else if (isToolResultBlock(block)) {
         const toolName = toolIdToName.get(block.tool_use_id) ?? "unknown_tool";
