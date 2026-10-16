@@ -1,3 +1,9 @@
+## [11.17.1](https://github.com/ExaDev/agent-shim/compare/v11.17.0...v11.17.1) (2026-10-16)
+
+### Bug Fixes
+
+* **antigravity:** send tool schemas to the backend as whole JSON Schema ([f67bd8b](https://github.com/ExaDev/agent-shim/commit/f67bd8b01d779f4275783a86ba7b99d2b9a653e7))
+
 ## [11.17.0](https://github.com/ExaDev/agent-shim/compare/v11.16.0...v11.17.0) (2026-10-16)
 
 ### Features
