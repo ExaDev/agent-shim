@@ -9,6 +9,7 @@ import { listProviders } from "../providersStore";
 import { realFarmFs } from "../realPorts";
 import { readAccountMetadata, readAccountMetadataFile } from "../usage/account";
 import { readUsageSnapshot } from "../usage/read";
+import { antigravityStacksWithDefault, isAntigravityPayload } from "./client";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import { renderStatuslineBlock } from "./render";
 import { terminalWidthOf } from "./width";
@@ -110,7 +111,16 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
         });
         return;
       }
-      const view = payloadViewOf(payload);
+      // Stacked beneath the Antigravity CLI's own line, which already names the model, the model would repeat it; replacing that line, this one is the only place it appears.
+      let stackedUnderDefault = false;
+      if (isAntigravityPayload(payload)) {
+        try {
+          stackedUnderDefault = antigravityStacksWithDefault(realFarmFs, os.homedir());
+        } catch {
+          stackedUnderDefault = false;
+        }
+      }
+      const view = { ...payloadViewOf(payload), ...(stackedUnderDefault ? { modelDisplayName: undefined } : {}) };
       console.log(renderStatuslineBlock(summary, view, terminalWidthOf(payload, process.env), nowMs));
       }),
     ["$ agent-shim statusline  # a client's statusline setting names this; it renders or delegates"],
