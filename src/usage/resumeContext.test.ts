@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createFakeFarmFs } from "../test-helpers";
-import { contextTokensOfTranscript, projectDirNameOf, resumeTargetOf, resumedContextTokens } from "./resumeContext";
+import { contextTokensOfTranscript, latestConversationId, projectDirNameOf, resumeTargetOf, resumedContextTokens } from "./resumeContext";
 
 const FIVE = 5;
 const assistantLine = (usage: Readonly<Record<string, number>>): string => JSON.stringify({ type: "assistant", message: { role: "assistant", usage } });
@@ -57,5 +57,19 @@ describe("resumedContextTokens", () => {
     const fs = createFakeFarmFs({});
     expect(resumedContextTokens(fs, { claudeHome, cwd: "/work/repo", passthrough: ["--resume", "abc"] })).toBeUndefined();
     expect(resumedContextTokens(fs, { claudeHome, cwd: "/work/repo", passthrough: ["--print"] })).toBeUndefined();
+  });
+});
+
+describe("latestConversationId", () => {
+  const claudeHome = "/home/testuser/.claude";
+  const dir = `${claudeHome}/projects/-work-repo`;
+
+  it("names the conversation most recently written in the working directory", () => {
+    const fs = createFakeFarmFs({ [`${dir}/older.jsonl`]: "{}\n", [`${dir}/newer.jsonl`]: "{}\n", [`${dir}/notes.txt`]: "not a transcript" });
+    expect(latestConversationId(fs, { claudeHome, cwd: "/work/repo" })).toBe("newer");
+  });
+
+  it("is undefined when the directory has no conversation", () => {
+    expect(latestConversationId(createFakeFarmFs({}), { claudeHome, cwd: "/work/repo" })).toBeUndefined();
   });
 });

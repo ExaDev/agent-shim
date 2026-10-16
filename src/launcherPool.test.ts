@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Pool } from "./config/schema";
 import { prepareLaunch, type FarmRuntime, type LaunchDecision } from "./launcher";
+import type { SupervisedLaunch } from "./launcher/claudeSession";
 import { PROMPT_CACHE_TTL_MS } from "./usage/pick";
 import { FAKE_NOW_MS, createFakeFarmFs, discovered, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
 
@@ -381,6 +382,56 @@ describe("runLauncher with a pool selector", () => {
       const decision = second.log.infos.find((line) => line.includes("identity personal"));
       expect(decision).toContain("moved off work (");
       expect(decision).toContain("continues as extra usage");
+    });
+  });
+
+  describe("a supervised launch", () => {
+    const SESSION = "33333333-3333-4333-8333-333333333333";
+
+    /** The plan a pool launch makes under a supervising launcher, over the pool state `launch` uses. */
+    function planOf(argv: readonly string[], supervised?: SupervisedLaunch): ReturnType<typeof prepareLaunch> {
+      return prepareLaunch({
+        paths,
+        fs: fakeFs({}),
+        proc: fakeProc({}, argv),
+        log: fakeLog(),
+        resolveClaudeBinary: () => discovered,
+        farm: fakeFarm(createFakeFarmFs(WORK_SOON)),
+        frontdoor: fakeFrontDoorPort(FRONTDOOR_PORT),
+        pools: POOLS,
+        ...(supervised === undefined ? {} : { supervised }),
+      });
+    }
+
+    it("carries the session id it was given and tells claude to start the conversation under it", () => {
+      const plan = planOf(["@pool:main", "--model", "opus"], { sessionId: SESSION, conversation: "start" });
+      expect(plan.sessionId).toBe(SESSION);
+      expect(plan.args.join(" ")).toMatch(new RegExp(`--session-id ${SESSION}$`));
+      expect(plan.env.CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
+      expect(plan.decision.pool?.name).toBe("main");
+    });
+
+    it("draws a fresh session id and leaves claude's arguments alone when no launcher supervises", () => {
+      const plan = planOf(["@pool:main", "--model", "opus"]);
+      expect(plan.sessionId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(plan.args).not.toContain("--session-id");
+      expect(plan.args.join(" ")).toMatch(/--model opus$/);
+    });
+
+    it("keeps a --resume the person named, as given, under that id", () => {
+      const plan = planOf(["@pool:main", "--resume", SESSION], { sessionId: SESSION, conversation: "as-given" });
+      expect(plan.sessionId).toBe(SESSION);
+      expect(plan.args.filter((arg) => arg === "--resume")).toHaveLength(1);
+      expect(plan.args).not.toContain("--session-id");
+    });
+
+    it("runs a relaunch as the member it was given, without a pick, and resumes the conversation", () => {
+      // The ranking would still choose `work`; the supervising launcher has chosen `personal` under its own lock.
+      const plan = planOf(["@pool:main", "--continue", "--model", "opus"], { sessionId: SESSION, conversation: "resume", member: "personal" });
+      expect(plan.env.CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/personal`);
+      expect(plan.args.join(" ")).toMatch(new RegExp(`--model opus --resume ${SESSION}$`));
+      expect(plan.args).not.toContain("--continue");
+      expect(plan.decision.pool).toEqual({ name: "main", reasons: ["resumed here by the supervising launcher after the previous member ran out of quota"] });
     });
   });
 });

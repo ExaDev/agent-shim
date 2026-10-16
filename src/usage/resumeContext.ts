@@ -67,6 +67,30 @@ export function contextTokensOfTranscript(text: string): number | undefined {
   return undefined;
 }
 
+/** The transcript most recently written in a project directory, or undefined when it has none. */
+function newestTranscript(fs: Pick<FarmFs, "lstat" | "readdir">, projectDir: string): string | undefined {
+  let newest: string | undefined;
+  let newestMs = -Infinity;
+  for (const name of fs.readdir(projectDir)) {
+    if (!name.endsWith(".jsonl")) {
+      continue;
+    }
+    const candidate = path.join(projectDir, name);
+    const stat = fs.lstat(candidate);
+    if (stat?.kind === "file" && stat.mtimeMs > newestMs) {
+      newestMs = stat.mtimeMs;
+      newest = candidate;
+    }
+  }
+  return newest;
+}
+
+/** The id of the working directory's most recently written conversation, which is what `--continue` resumes, or undefined when it has none. */
+export function latestConversationId(fs: Pick<FarmFs, "lstat" | "readdir">, params: { readonly claudeHome: string; readonly cwd: string }): string | undefined {
+  const file = newestTranscript(fs, path.join(params.claudeHome, "projects", projectDirNameOf(params.cwd)));
+  return file === undefined ? undefined : path.basename(file, ".jsonl");
+}
+
 /**
  * The context size of the conversation a launch resumes, or undefined when the arguments name none, its transcript is not found under `claudeHome`, or it reports no usage. `--continue` takes the transcript of the working directory most recently written.
  */
@@ -76,23 +100,7 @@ export function resumedContextTokens(fs: Pick<FarmFs, "lstat" | "readdir" | "rea
     return undefined;
   }
   const projectDir = path.join(params.claudeHome, "projects", projectDirNameOf(params.cwd));
-  let file: string | undefined;
-  if (target.kind === "id") {
-    file = path.join(projectDir, `${target.id}.jsonl`);
-  } else {
-    let newestMs = -Infinity;
-    for (const name of fs.readdir(projectDir)) {
-      if (!name.endsWith(".jsonl")) {
-        continue;
-      }
-      const candidate = path.join(projectDir, name);
-      const stat = fs.lstat(candidate);
-      if (stat?.kind === "file" && stat.mtimeMs > newestMs) {
-        newestMs = stat.mtimeMs;
-        file = candidate;
-      }
-    }
-  }
+  const file = target.kind === "id" ? path.join(projectDir, `${target.id}.jsonl`) : newestTranscript(fs, projectDir);
   const text = file === undefined ? undefined : fs.readFileUtf8(file);
   return text === undefined ? undefined : contextTokensOfTranscript(text);
 }
