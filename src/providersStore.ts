@@ -261,6 +261,7 @@ function isEmptyAntigravityConfig(config: AntigravityProviderConfig | undefined)
     (config.mode === undefined &&
       config.defaultModel === undefined &&
       config.effort === undefined &&
+      config.degradeDownTiers === undefined &&
       config.cloud === undefined &&
       config.local === undefined &&
       (config.models === undefined || Object.keys(config.models).length === 0))

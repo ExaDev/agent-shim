@@ -738,6 +738,9 @@
                 ]
               }
             },
+            "degradeDownTiers": {
+              "type": "boolean"
+            },
             "effort": {
               "type": "string",
               "enum": [

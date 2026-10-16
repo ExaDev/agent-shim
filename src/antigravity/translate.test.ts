@@ -39,6 +39,7 @@ describe("resolveAntigravityConfig", () => {
       defaultModel: ANTIGRAVITY_DEFAULT_MODEL,
       models: ANTIGRAVITY_DEFAULT_TIER_MODELS,
       aliases: new Map(),
+      degradeDownTiers: false,
       effort: ANTIGRAVITY_DEFAULT_EFFORT,
       cloud: { endpoint: undefined, projectId: undefined, location: undefined },
       local: { command: undefined, socketPath: undefined },
@@ -183,6 +184,46 @@ describe("mapModel", () => {
 
     it("routes an alias's candidates the same way", () => {
       expect(route("any", { "gemini-5h": spent(SHORT) })).toBe("gpt-oss-120b-medium");
+    });
+  });
+
+  describe("degrading down tiers", () => {
+    const NOW = 1_000_000;
+    const RESET_SECONDS = 600;
+    const spentWindow = { remaining_fraction: 0, reset_in_seconds: RESET_SECONDS };
+    const freeWindow = { remaining_fraction: 0.5, reset_in_seconds: RESET_SECONDS };
+    // Every candidate of fable and opus is spent: the Claude models' window and Argon's own weekly window and the Gemini windows too.
+    const higherTiersSpent: AntigravityQuotaMap = { "3p-5h": spentWindow, "gemini-argon-wtu-weekly": spentWindow, "gemini-5h": spentWindow };
+    const modelFor = (requested: string, config: ReturnType<typeof resolveAntigravityConfig>, quota: AntigravityQuotaMap): string =>
+      translateRequest(request({ model: requested, messages: [{ role: "user", content: "Hi" }] }), config, { quota, nowMs: NOW }).model;
+    const degrading = resolveAntigravityConfig({ degradeDownTiers: true, models: { fable: "gemini-4-argon-high", opus: "claude-opus-5-5-high", sonnet: "gemini-3.8-flash-medium", haiku: "gpt-oss-120b-medium" } });
+
+    it("serves from the next tier down once every candidate of the named tier is spent", () => {
+      expect(modelFor("claude-fable-5", degrading, { "gemini-argon-wtu-weekly": spentWindow, "3p-5h": freeWindow })).toBe("claude-opus-5-5-high");
+    });
+
+    it("walks down through each tier whose candidates are spent", () => {
+      expect(modelFor("claude-fable-5", degrading, { "gemini-argon-wtu-weekly": spentWindow, "3p-5h": spentWindow, "gemini-5h": freeWindow })).toBe("gemini-3.8-flash-medium");
+    });
+
+    it("keeps the named tier while it has quota", () => {
+      expect(modelFor("claude-fable-5", degrading, { "3p-5h": freeWindow })).toBe("gemini-4-argon-high");
+    });
+
+    it("answers with the named tier's own model when every tier is spent, so the limit reported is the one asked for", () => {
+      expect(modelFor("claude-fable-5", degrading, { ...higherTiersSpent, "3p-weekly": spentWindow, "gemini-weekly": spentWindow })).toBe("gemini-4-argon-high");
+    });
+
+    it("does not degrade a name that is not a tier, or when the setting is off", () => {
+      expect(modelFor("claude-haiku-5-5", degrading, higherTiersSpent)).toBe("gpt-oss-120b-medium");
+      const off = resolveAntigravityConfig({ models: { fable: "gemini-4-argon-high", opus: "claude-opus-5-5-high", sonnet: "gemini-3.8-flash-medium", haiku: "gpt-oss-120b-medium" } });
+      expect(modelFor("claude-fable-5", off, { "gemini-argon-wtu-weekly": spentWindow, "3p-5h": freeWindow })).toBe("gemini-4-argon-high");
+      const aliased = resolveAntigravityConfig({ degradeDownTiers: true, models: { pick: "gemini-4-argon-high" } });
+      expect(modelFor("pick", aliased, { "gemini-argon-wtu-weekly": spentWindow })).toBe("gemini-4-argon-high");
+    });
+
+    it("is off unless the configuration turns it on", () => {
+      expect(defaults.degradeDownTiers).toBe(false);
     });
   });
 

@@ -42,6 +42,8 @@ export interface ResolvedAntigravityConfig {
   readonly models: Readonly<Record<AntigravityTier, readonly string[]>>;
   /** Configured aliases: the lower-cased requested name each key matches in full, and its candidate models in preference order. */
   readonly aliases: ReadonlyMap<string, readonly string[]>;
+  /** Whether a request whose tier has no quota left is served from the tiers below it. */
+  readonly degradeDownTiers: boolean;
   readonly effort: AntigravityEffort;
   readonly cloud: {
     readonly endpoint?: string;
@@ -81,6 +83,7 @@ export function resolveAntigravityConfig(config: AntigravityProviderConfig | und
     defaultModel: config?.defaultModel ?? ANTIGRAVITY_DEFAULT_MODEL,
     models: { fable: tierModel("fable"), opus: tierModel("opus"), sonnet: tierModel("sonnet"), haiku: tierModel("haiku") },
     aliases,
+    degradeDownTiers: config?.degradeDownTiers ?? false,
     effort: config?.effort ?? ANTIGRAVITY_DEFAULT_EFFORT,
     cloud: {
       endpoint: config?.cloud?.endpoint,
@@ -112,17 +115,33 @@ function isBackendModelName(name: string): boolean {
  * Maps a requested model name onto its backend candidates, in order: a configured alias that matches the whole name; a name that already is a backend model (Gemini, Antigravity or GPT-OSS family, or a Claude name with an effort or thinking suffix) passes through untouched, which is what lets `/model` select first and third party backend models directly; otherwise the name's tier (fable, opus, sonnet or haiku, by substring) selects that tier's candidates, and a name matching no tier maps to the default. A trailing `[1m]` context marker is stripped first: it tells Claude Code the window size and never reaches the backend.
  */
 export function mapModel(requested: string, config: ResolvedAntigravityConfig): readonly string[] {
+  return resolveName(requested, config).candidates;
+}
+
+/** A requested name resolved to its candidates, and the tier it selected when it selected one. */
+function resolveName(requested: string, config: ResolvedAntigravityConfig): { readonly candidates: readonly string[]; readonly tier: AntigravityTier | undefined } {
   const stripped = requested.toLowerCase().endsWith(CONTEXT_MARKER_1M) ? requested.slice(0, -CONTEXT_MARKER_1M.length) : requested;
   const lower = stripped.toLowerCase();
   const alias = config.aliases.get(lower);
   if (alias !== undefined) {
-    return alias;
+    return { candidates: alias, tier: undefined };
   }
   if (isBackendModelName(stripped)) {
-    return [stripped];
+    return { candidates: [stripped], tier: undefined };
   }
   const tier = ANTIGRAVITY_TIERS.find((candidate) => lower.includes(candidate));
-  return tier === undefined ? [config.defaultModel] : config.models[tier];
+  return tier === undefined ? { candidates: [config.defaultModel], tier: undefined } : { candidates: config.models[tier], tier };
+}
+
+/**
+ * The candidate lists a request is served from, best first: the name's own, and, when the configuration degrades down tiers and the name selected a tier, each lower tier's after it (`ANTIGRAVITY_TIERS` runs from the highest tier to the lowest). A later list is used only when every candidate of the lists before it has no quota left.
+ */
+export function candidateStages(requested: string, config: ResolvedAntigravityConfig): readonly (readonly string[])[] {
+  const { candidates, tier } = resolveName(requested, config);
+  if (!config.degradeDownTiers || tier === undefined) {
+    return [candidates];
+  }
+  return ANTIGRAVITY_TIERS.slice(ANTIGRAVITY_TIERS.indexOf(tier)).map((name) => config.models[name]);
 }
 
 /** The live quota a request is routed by: the account's bucket map and the instant it is read at. */
@@ -388,11 +407,34 @@ function completeEffortSuffix(model: string, request: MessagesRequest, config: R
   return configured.some((entry) => entry === suffixed || splitEffortSuffix(entry)?.base === model) ? suffixed : model;
 }
 
+/**
+ * Chooses a model across the stages of `candidateStages`: the first stage with a candidate that has quota serves the request, and when every stage is spent the first stage's soonest-lifting candidate does, so the quota limit a person sees is that of the tier they asked for.
+ */
+function chooseAcrossStages(stages: readonly (readonly string[])[], routing: AntigravityRouting | undefined): string {
+  const own = stages[0];
+  if (own === undefined) {
+    throw new Error("A request resolves to at least one candidate list");
+  }
+  if (routing === undefined) {
+    return chooseCandidate(own, undefined);
+  }
+  for (const [index, stage] of stages.entries()) {
+    const picked = chooseCandidate(stage, index === 0 ? routing : { quota: routing.quota, nowMs: routing.nowMs });
+    if (antigravityQuotaExhaustion(routing.quota, picked, routing.nowMs) === undefined) {
+      return picked;
+    }
+  }
+  return chooseCandidate(own, routing);
+}
+
 /** Translates an Anthropic MessagesRequest into a Gemini GenerateContentRequest. */
 export function translateRequest(request: MessagesRequest, config: ResolvedAntigravityConfig, routing?: AntigravityRouting): TranslatedAntigravityRequest {
   const toolNames = new Map<string, string>();
   const toolIdToName = new Map<string, string>();
-  const model = chooseCandidate(mapModel(request.model ?? "", config).map((candidate) => completeEffortSuffix(candidate, request, config)), routing);
+  const model = chooseAcrossStages(
+    candidateStages(request.model ?? "", config).map((stage) => stage.map((candidate) => completeEffortSuffix(candidate, request, config))),
+    routing,
+  );
   const thinkingBudget = mapEffort(request, config);
   const systemInstruction = systemToInstruction(request.system);
   const contents = messagesToGeminiContents(request.messages, toolNames, toolIdToName);
