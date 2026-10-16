@@ -45,7 +45,7 @@ describe("resolveAntigravityConfig", () => {
     });
     expect(ANTIGRAVITY_DEFAULT_MODE).toBe("cloud");
     expect(ANTIGRAVITY_DEFAULT_MODEL).toBe("gemini-3.8-flash-high");
-    expect(ANTIGRAVITY_DEFAULT_TIER_MODELS.sonnet[0]).toBe("gemini-3.8-flash-medium");
+    expect(ANTIGRAVITY_DEFAULT_TIER_MODELS.sonnet[0]).toBe("claude-sonnet-5-5-medium");
   });
 
   it("overrides mode, model tiers, and cloud settings", () => {
@@ -72,9 +72,9 @@ describe("resolveAntigravityConfig", () => {
 
 describe("mapModel", () => {
   it.each([
-    ["claude-fable-5", "gemini-3.8-flash-high"],
-    ["claude-opus-4-7", "gemini-3.8-flash-high"],
-    ["claude-sonnet-4-5-20250929", "gemini-3.8-flash-medium"],
+    ["claude-fable-5", "claude-opus-5-5-high"],
+    ["claude-opus-4-7", "claude-opus-5-5-high"],
+    ["claude-sonnet-4-5-20250929", "claude-sonnet-5-5-medium"],
     ["claude-haiku-4-5", "gemini-3.8-flash-low"],
     ["something-else", "gemini-3.8-flash-high"],
   ])("maps %s to the candidates led by %s by tier", (requested, expected) => {
@@ -366,7 +366,7 @@ describe("translateRequest", () => {
     });
 
     const translated = translateRequest(req, defaults);
-    expect(translated.model).toBe("gemini-3.8-flash-medium");
+    expect(translated.model).toBe("claude-sonnet-5-5-medium");
     expect(translated.request.systemInstruction?.parts[0]?.text).toBe("System prompt");
     expect(translated.request.generationConfig?.thinkingConfig?.thinkingBudget).toBe(BUDGET_MEDIUM);
     expect(translated.toolNames.get("bash_exec")).toBe("bash-exec");

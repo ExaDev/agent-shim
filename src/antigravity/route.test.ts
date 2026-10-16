@@ -393,7 +393,7 @@ describe("createAntigravityRoute", () => {
       method: "POST",
       path: "/providers/ag-local/v1/messages",
       body: JSON.stringify({
-        model: "claude-3-7-sonnet-20250219",
+        model: "gemini-3.8-flash-medium",
         max_tokens: 1024,
         messages: [{ role: "user", content: "Hi" }],
       }),
