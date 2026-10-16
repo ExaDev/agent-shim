@@ -199,6 +199,17 @@ describe("config API: pools", () => {
     expect((await api.pool.set({ name: "subs", resumeOnLimit: false })).value).toEqual({ identities: ["work"], preference: "listed" });
     expect(readPools(paths).subs).toEqual({ identities: ["work"], preference: "listed" });
   });
+
+  it("sets and clears the compaction settings, and refuses ones that contradict", async () => {
+    const api = clientWith(TOKEN).config;
+    await api.identity.add({ name: "work" });
+    expect(await codeOf(api.pool.add({ name: "subs", identities: ["work"], compactBeforeLimit: true }))).toBe("BAD_REQUEST");
+    const created = await api.pool.add({ name: "subs", identities: ["work"], resumeOnLimit: true, compactBeforeLimit: true, compactAtUtilisation: 85 });
+    expect(created.value).toEqual({ identities: ["work"], resumeOnLimit: true, compactBeforeLimit: true, compactAtUtilisation: 85 });
+    expect((await api.pool.set({ name: "subs", compactAtUtilisation: false })).value).toEqual({ identities: ["work"], resumeOnLimit: true, compactBeforeLimit: true });
+    expect(await codeOf(api.pool.set({ name: "subs", resumeOnLimit: false }))).toBe("BAD_REQUEST");
+    expect(readPools(paths).subs).toEqual({ identities: ["work"], resumeOnLimit: true, compactBeforeLimit: true });
+  });
 });
 
 describe("config API: providers", () => {

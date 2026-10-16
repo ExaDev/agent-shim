@@ -32,6 +32,11 @@ describe("poolPolicyOf", () => {
     expect(poolPolicyOf({ resumeOnLimit: false })).toEqual({});
   });
 
+  it("keeps the compaction settings when they are set, and leaves out a switch that is off", () => {
+    expect(poolPolicyOf({ compactBeforeLimit: true, compactAtUtilisation: 85 })).toEqual({ compactBeforeLimit: true, compactAtUtilisation: 85 });
+    expect(poolPolicyOf({ compactBeforeLimit: false })).toEqual({});
+  });
+
   it("returns only the policy of a whole pool, without its members", () => {
     expect(poolPolicyOf({ identities: ["a"], preference: "score" } as Parameters<typeof poolPolicyOf>[0])).toEqual({ preference: "score" });
   });
@@ -45,6 +50,8 @@ describe("isPoolChange", () => {
     expect(isPoolChange({ preference: "listed" })).toBe(true);
     expect(isPoolChange({ preference: false })).toBe(true);
     expect(isPoolChange({ resumeOnLimit: false })).toBe(true);
+    expect(isPoolChange({ compactBeforeLimit: false })).toBe(true);
+    expect(isPoolChange({ compactAtUtilisation: false })).toBe(true);
   });
 });
 
@@ -74,6 +81,24 @@ describe("addPool and changePool", () => {
     expect(changePool(paths, "subs", { preference: "listed" })).toEqual({ identities: ["work"], preference: "listed", resumeOnLimit: true });
     expect(changePool(paths, "subs", { resumeOnLimit: false })).toEqual({ identities: ["work"], preference: "listed" });
     expect(changePool(paths, "subs", { resumeOnLimit: true })).toEqual({ identities: ["work"], preference: "listed", resumeOnLimit: true });
+  });
+
+  it("sets, keeps and clears the compaction settings alongside resuming", () => {
+    addPool(paths, "subs", ["work"], { resumeOnLimit: true, compactBeforeLimit: true, compactAtUtilisation: 85 });
+    expect(readPools(paths).subs).toEqual({ identities: ["work"], resumeOnLimit: true, compactBeforeLimit: true, compactAtUtilisation: 85 });
+    expect(changePool(paths, "subs", { preference: "listed" })).toMatchObject({ compactBeforeLimit: true, compactAtUtilisation: 85 });
+    expect(changePool(paths, "subs", { compactAtUtilisation: 70 })).toMatchObject({ compactAtUtilisation: 70 });
+    expect(changePool(paths, "subs", { compactAtUtilisation: false })).not.toHaveProperty("compactAtUtilisation");
+    expect(changePool(paths, "subs", { compactBeforeLimit: false })).not.toHaveProperty("compactBeforeLimit");
+  });
+
+  it("refuses settings that need another one switched on, naming the pool and the setting, and writes nothing", () => {
+    expect(() => addPool(paths, "subs", ["work"], { compactBeforeLimit: true })).toThrow(/Pool "subs": compactBeforeLimit needs resumeOnLimit/);
+    expect(() => addPool(paths, "subs", ["work"], { resumeOnLimit: true, compactAtUtilisation: 85 })).toThrow(/compactAtUtilisation needs compactBeforeLimit/);
+    expect(readPools(paths)).toEqual({});
+    addPool(paths, "subs", ["work"], { resumeOnLimit: true, compactBeforeLimit: true });
+    expect(() => changePool(paths, "subs", { resumeOnLimit: false })).toThrow(UsageError);
+    expect(readPools(paths).subs).toEqual({ identities: ["work"], resumeOnLimit: true, compactBeforeLimit: true });
   });
 
   it("keeps a member's condition when the members are not restated", () => {

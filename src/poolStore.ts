@@ -1,7 +1,7 @@
 import { CliError, UsageError } from "./cliError";
 import { readGlobalConfig } from "./configProfilesStore";
 import { applyPatch } from "./config/store";
-import { GlobalConfigSchema, PoolNameSchema, poolMemberIdentity, type Pool, type PoolPreference } from "./config/schema";
+import { GlobalConfigSchema, PoolNameSchema, PoolSchema, poolMemberIdentity, type Pool, type PoolPreference } from "./config/schema";
 
 /** One pool member entry, whichever form it takes: the plain selector string, or the object form carrying its policy condition. */
 export type PoolMemberEntry = Pool["identities"][number];
@@ -97,6 +97,14 @@ function validateMembers(pools: Readonly<Record<string, Pool>>, name: string, me
   }
 }
 
+/** Refuses a pool whose settings contradict each other (a setting that needs another switched on), naming the pool and what is wrong, before anything is written. */
+function requireConsistent(name: string, pool: Pool): void {
+  const parsed = PoolSchema.safeParse(pool);
+  if (!parsed.success) {
+    throw new UsageError(`Pool "${name}": ${parsed.error.issues.map((issue) => issue.message).join("; ")}.`);
+  }
+}
+
 /** The settings of a pool beside its members: every `Pool` field but `identities`, each one optional. A field left undefined is the pool's default for it. */
 export type PoolPolicy = { readonly [Field in keyof Omit<Pool, "identities">]?: Omit<Pool, "identities">[Field] | undefined };
 
@@ -105,6 +113,8 @@ export function poolPolicyOf(policy: PoolPolicy): PoolPolicy {
   return {
     ...(policy.preference === undefined ? {} : { preference: policy.preference }),
     ...(policy.resumeOnLimit === true ? { resumeOnLimit: true } : {}),
+    ...(policy.compactBeforeLimit === true ? { compactBeforeLimit: true } : {}),
+    ...(policy.compactAtUtilisation === undefined ? {} : { compactAtUtilisation: policy.compactAtUtilisation }),
   };
 }
 
@@ -114,11 +124,15 @@ export interface PoolChange {
   readonly preference?: PoolPreference | false | undefined;
   /** True switches resuming on a spent quota on, false switches it off. */
   readonly resumeOnLimit?: boolean | undefined;
+  /** True switches compacting before the quota is spent on, false switches it off. */
+  readonly compactBeforeLimit?: boolean | undefined;
+  /** The percent of a window to compact at, or false to clear it back to the launcher's own decision. */
+  readonly compactAtUtilisation?: number | false | undefined;
 }
 
 /** Whether `change` names anything to change. */
 export function isPoolChange(change: PoolChange): boolean {
-  return change.identities !== undefined || change.preference !== undefined || change.resumeOnLimit !== undefined;
+  return change.identities !== undefined || change.preference !== undefined || change.resumeOnLimit !== undefined || change.compactBeforeLimit !== undefined || change.compactAtUtilisation !== undefined;
 }
 
 /** Defines a new pool. Throws `InvalidPoolNameError` for a name `PoolNameSchema` rejects, `PoolAlreadyExistsError` for one already defined, and `UsageError` for a nested member that names an undefined pool or a cycle. */
@@ -132,6 +146,7 @@ export function addPool(paths: LayoutPaths, name: string, identities: readonly P
   }
   validateMembers(pools, name, identities);
   const pool: Pool = { identities: [...identities], ...poolPolicyOf(policy) };
+  requireConsistent(name, pool);
   writePools(paths, { ...pools, [name]: pool });
   return pool;
 }
@@ -143,7 +158,10 @@ export function changePool(paths: LayoutPaths, name: string, change: PoolChange)
   validateMembers(readPools(paths), name, identities);
   const preference = change.preference === undefined ? existing.preference : change.preference === false ? undefined : change.preference;
   const resumeOnLimit = change.resumeOnLimit ?? existing.resumeOnLimit;
-  const pool: Pool = { identities: [...identities], ...poolPolicyOf({ preference, resumeOnLimit }) };
+  const compactBeforeLimit = change.compactBeforeLimit ?? existing.compactBeforeLimit;
+  const compactAtUtilisation = change.compactAtUtilisation === undefined ? existing.compactAtUtilisation : change.compactAtUtilisation === false ? undefined : change.compactAtUtilisation;
+  const pool: Pool = { identities: [...identities], ...poolPolicyOf({ preference, resumeOnLimit, compactBeforeLimit, compactAtUtilisation }) };
+  requireConsistent(name, pool);
   writePools(paths, { ...readPools(paths), [name]: pool });
   return pool;
 }
