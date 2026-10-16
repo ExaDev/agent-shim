@@ -15,6 +15,8 @@ const SUMMARY: StatuslineSummary = {
   providerAccountEmail: "ada@example.com",
   providerAccountSub: "123456789012345678901",
   providerPlan: "Pro",
+  loginAccountEmail: undefined,
+  loginRateLimitTier: undefined,
   fiveHourUsed: 3.6,
   fiveHourResetAt: "2026-10-16T00:38:00.000Z",
   sevenDayUsed: 28.2,
@@ -73,10 +75,22 @@ describe("renderStatuslineBlock", () => {
     }
   });
 
+  it("shows the OAuth login account and its plan for a plain anthropic identity, and the identity when it is not that account", () => {
+    const lines = stripAnsi(
+      renderStatuslineBlock(
+        { ...SUMMARY, identity: "zai", provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, loginAccountEmail: "ada@example.com", loginRateLimitTier: "default_claude_max_20x" },
+        VIEW,
+        WIDE_TERMINAL,
+        NOW_MS,
+      ),
+    ).split("\n");
+    expect(lines[0]).toBe("Sonnet 5.5 | ada@example.com · Max 20x | zai");
+  });
+
   it("renders nothing when no segment has data", () => {
     expect(
       renderStatuslineBlock(
-        { identity: undefined, provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined },
+        { identity: undefined, provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, loginAccountEmail: undefined, loginRateLimitTier: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined },
         { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
         NARROW_TERMINAL,
         NOW_MS,

@@ -105,6 +105,28 @@ function cacheShareText(view: StatuslinePayloadView): string {
   return "";
 }
 
+/** Anthropic's rate-limit tier names (`claude_max_20x`, organisation-prefixed `default_claude_pro`, `free`) as the plan name a person knows them by. */
+function planLabelOf(tier: string | undefined): string | undefined {
+  if (tier === undefined || tier === "") {
+    return undefined;
+  }
+  const cleaned = tier.startsWith("default_") ? tier.slice("default_".length) : tier;
+  if (cleaned === "free") {
+    return "Free";
+  }
+  const maxWithMultiplier = /^claude_max_(\d+)x$/.exec(cleaned);
+  if (maxWithMultiplier !== null) {
+    return `Max ${maxWithMultiplier[1] ?? ""}x`;
+  }
+  if (cleaned === "claude_max") {
+    return "Max";
+  }
+  if (cleaned === "claude_pro") {
+    return "Pro";
+  }
+  return cleaned;
+}
+
 function secondsUntil(resetAt: string | undefined, nowMs: number): number | undefined {
   if (resetAt === undefined) {
     return undefined;
@@ -201,7 +223,13 @@ export function renderStatuslineBlock(summary: StatuslineSummary, view: Statusli
     const account = [summary.providerAccountEmail, summary.providerPlan].filter((part) => part !== undefined);
     header.push(new Segment("static", account.length > 0 ? `${summary.provider} · ${account.join(" · ")}` : summary.provider));
   }
-  if (summary.identity !== undefined && summary.identity !== summary.providerAccountEmail) {
+  const loginPlan = planLabelOf(summary.loginRateLimitTier);
+  if (summary.loginAccountEmail !== undefined && summary.loginAccountEmail !== summary.providerAccountEmail) {
+    header.push(new Segment("static", loginPlan === undefined ? summary.loginAccountEmail : `${summary.loginAccountEmail} · ${loginPlan}`));
+  } else if (summary.provider === undefined && loginPlan !== undefined) {
+    header.push(new Segment("static", loginPlan));
+  }
+  if (summary.identity !== undefined && summary.identity !== summary.providerAccountEmail && summary.identity !== summary.loginAccountEmail) {
     header.push(new Segment("static", summary.identity));
   }
 

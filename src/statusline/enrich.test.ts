@@ -36,6 +36,7 @@ describe("enrichStatuslinePayload", () => {
       payload: { model: { display_name: "gemini-3.8-flash" } },
       env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: antigravity", AGENT_SHIM_PROVIDER: "Antigravity" },
       snapshot: SNAPSHOT,
+      account: undefined,
     });
     expect(summary).toEqual({
       identity: "antigravity",
@@ -62,6 +63,7 @@ describe("enrichStatuslinePayload", () => {
           anthropic: { rateLimit: { unified: { fiveHour: { utilization: 0.81, resetsAt: "2026-10-15T21:00:00.000Z" }, sevenDay: { utilization: 1, resetsAt: "2026-10-16T21:59:59.000Z" } } } },
         },
       } as unknown as UsageSnapshot,
+      account: undefined,
     });
     // The anthropic login's spent week does not become this session's usage line.
     expect(summary.sevenDayUsed).toBe(GEMINI_WEEKLY_USED_PERCENT);
@@ -73,10 +75,22 @@ describe("enrichStatuslinePayload", () => {
       payload: null,
       env: { AGENT_SHIM_PROVIDER: "z.ai" },
       snapshot: undefined,
+      account: undefined,
     });
     expect(payload).toBeNull();
     expect(summary.identity).toBeUndefined();
     expect(summary.provider).toBe("z.ai");
     expect(summary.fiveHourUsed).toBeUndefined();
+  });
+
+  it("carries the identity's own OAuth login account beside the provider's, preferring the user's rate-limit tier", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: {},
+      env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: work", AGENT_SHIM_PROVIDER: "Antigravity" },
+      snapshot: SNAPSHOT,
+      account: { emailAddress: "work@example.com", organizationRateLimitTier: "default_claude_max_5x", userRateLimitTier: "claude_pro" },
+    });
+    expect(summary.loginAccountEmail).toBe("work@example.com");
+    expect(summary.loginRateLimitTier).toBe("claude_pro");
   });
 });
