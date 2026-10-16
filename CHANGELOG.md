@@ -1,3 +1,10 @@
+## [11.16.0](https://github.com/ExaDev/agent-shim/compare/v11.15.0...v11.16.0) (2026-10-16)
+
+### Features
+
+* **antigravity:** select any backend model with /model, and map names with aliases ([9fc8737](https://github.com/ExaDev/agent-shim/commit/9fc8737f451b575ebe859b20e1ce66d58f7cf5fa))
+* **statusline:** draw every Antigravity model family's quota window ([f7dae82](https://github.com/ExaDev/agent-shim/commit/f7dae82da753dc9ef837fbf8cc897abae5287489))
+
 ## [11.15.0](https://github.com/ExaDev/agent-shim/compare/v11.14.0...v11.15.0) (2026-10-16)
 
 ### Features
