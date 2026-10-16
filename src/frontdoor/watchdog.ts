@@ -37,11 +37,13 @@ export interface DoorWatchdog {
 type StallAction = "kill-process" | "report";
 
 /**
- * The watchdog thread: its own event loop, which a blocked main loop cannot stall. It compares a shared beat counter against its previous reading on a fixed cadence, and when the counter has not moved for `boundMs` it records the stall in the state file (the existing `lastError` field, so no reader of the file sees a new key) and in the door's log (the next generation's first state write replaces `lastError`, and a SIGKILL runs no handler, so the log line is the only record that outlives the replacement), starts a replacement door when the door had served long enough to have proved it can, and ends the process. A thread that was itself descheduled for longer than its cadence (the machine was suspended or starved) restarts its clock instead of judging, since the main loop stalled by the same pause is not a hung one.
+ * The watchdog thread: its own event loop, which a blocked main loop cannot stall. It compares a shared beat counter against its previous reading on a fixed cadence, and when the counter has not moved for `boundMs` it records the stall in the state file (the existing `lastError` field, so no reader of the file sees a new key) and in the door's log (the next generation's first state write replaces `lastError`, and a SIGKILL runs no handler, so the log line is the only record that outlives the replacement), logs the machine's load and where the main thread was (see `describeMainThread`, so a stall that was the door's own code is told apart from one the machine caused), starts a replacement door when the door had served long enough to have proved it can, and ends the process. A thread that was itself descheduled for longer than its cadence (the machine was suspended or starved) restarts its clock instead of judging, since the main loop stalled by the same pause is not a hung one.
  */
 const WATCHDOG_SOURCE = `
 const { workerData, parentPort } = require("node:worker_threads");
 const fs = require("node:fs");
+const os = require("node:os");
+const inspector = require("node:inspector");
 const { shared, boundMs, checkEveryMs, stateFile, ownPid, action, logFile, respawn, respawnAfterServingMs, awaitPidEnv } = workerData;
 const startedAt = Date.now();
 const counter = new Int32Array(shared);
@@ -68,6 +70,45 @@ const log = (line) => {
     // Nowhere left to report a failed log write to; the process still has to end.
   }
 };
+// Enough of the stack to read the caller chain from the timer or socket callback down to the call that held the loop.
+const STACK_FRAMES_LOGGED = 12;
+// Asks the main thread where it is, through the inspector: a pause request interrupts JavaScript that is running (a loop, or a synchronous call that can be interrupted), so the top frames name what held the loop. A main thread that cannot be paused within the wait is not at such a point (it is idle in the event loop, which means it was not scheduled, or blocked inside a native call), and the answer says so rather than guessing. \`resume\` lets a thread that is not about to be killed run on again.
+const describeMainThread = (waitMs, resume) => new Promise((resolve) => {
+  let session;
+  let settled = false;
+  const finish = (text) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeout);
+    try {
+      session.disconnect();
+    } catch (error) {
+      // Never connected; there is nothing to release.
+    }
+    resolve(text);
+  };
+  const timeout = setTimeout(() => finish("the main thread could not be paused within " + String(waitMs) + "ms, so it was idle in the event loop or blocked inside a native call"), waitMs);
+  try {
+    session = new inspector.Session();
+    session.connectToMainThread();
+    session.on("Debugger.paused", (event) => {
+      if (settled) return;
+      const frames = event.params.callFrames.slice(0, STACK_FRAMES_LOGGED).map((frame) => (frame.functionName === "" ? "(anonymous)" : frame.functionName) + " " + frame.url + ":" + String(frame.location.lineNumber + 1));
+      const text = "the main thread was in " + frames.join(" <- ");
+      if (resume) {
+        session.post("Debugger.resume", () => finish(text));
+      } else {
+        finish(text);
+      }
+    });
+    session.post("Debugger.enable", () => {
+      // The wait may have run out while the main thread was too stalled to answer the enable; the session is gone then.
+      if (!settled) session.post("Debugger.pause");
+    });
+  } catch (error) {
+    finish("the main thread could not be inspected: " + (error instanceof Error ? error.message : String(error)));
+  }
+});
 const spawnReplacement = () => {
   if (respawn === undefined || logFile === undefined) return;
   const servedMs = Date.now() - startedAt;
@@ -98,16 +139,21 @@ const timer = setInterval(() => {
   }
   if (now - lastChangeAt >= boundMs) {
     const message = "the front door's event loop did not run for " + String(now - lastChangeAt) + "ms; its watchdog ended the process so the next launch starts a fresh door on the same ports";
-    record(message);
-    log(message);
-    spawnReplacement();
     stopped = true;
     clearInterval(timer);
-    if (action === "kill-process") {
-      process.kill(ownPid, "SIGKILL");
-    } else {
-      parentPort.postMessage({ stalled: true, message });
-    }
+    record(message);
+    log(message);
+    const [oneMinute, fiveMinutes, fifteenMinutes] = os.loadavg();
+    log("machine load at the stall: " + oneMinute.toFixed(1) + " (1m), " + fiveMinutes.toFixed(1) + " (5m), " + fifteenMinutes.toFixed(1) + " (15m) across " + String(os.cpus().length) + " cpus");
+    spawnReplacement();
+    describeMainThread(checkEveryMs, action !== "kill-process").then((where) => {
+      log(where);
+      if (action === "kill-process") {
+        process.kill(ownPid, "SIGKILL");
+      } else {
+        parentPort.postMessage({ stalled: true, message });
+      }
+    });
   }
 }, checkEveryMs);
 parentPort.on("message", (message) => {

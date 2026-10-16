@@ -130,6 +130,31 @@ describe("startThreadWatchdog", () => {
       expect(log).toMatch(new RegExp(`frontdoor ${String(process.pid)}: the front door's event loop did not run`));
     });
 
+    it("records the machine's load, so a stall the machine caused is told apart from the door's own", async () => {
+      const log = await stallWith({ respawnAfterServingMs: 0 });
+      expect(log).toMatch(/machine load at the stall: \d+\.\d \(1m\), \d+\.\d \(5m\), \d+\.\d \(15m\) across \d+ cpus/);
+    });
+
+    it("says a main thread idle in its event loop could not be paused, rather than naming a frame", async () => {
+      const log = await stallWith({ respawnAfterServingMs: 0 });
+      expect(log).toMatch(/the main thread could not be paused within \d+ms/);
+    });
+
+    it("names the function a blocked main thread was held in", async () => {
+      const logFile = path.join(directory, "frontdoor.log");
+      const reported = new Promise<void>((resolve) => {
+        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, action: "report", logFile, respawnAfterServingMs: 0, onReport: () => {
+            resolve();
+          } });
+      });
+      function holdTheLoopHere(): void {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)), 0, 0, TEST_BOUND_MS * BOUNDS_TO_BLOCK);
+      }
+      holdTheLoopHere();
+      await reported;
+      expect(fs.readFileSync(logFile, "utf8")).toMatch(/the main thread was in .*holdTheLoopHere/);
+    });
+
     it("starts a replacement naming the stalled pid when the door had served long enough", async () => {
       const markerFile = path.join(directory, MARKER);
       const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_AWAIT_PID_ENV})`], env: { PATH: process.env.PATH ?? "" } };
