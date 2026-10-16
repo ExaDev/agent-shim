@@ -11,6 +11,7 @@ import { credentialsFilePath, decideSignIn, keychainHasItem } from "./usage/sign
 import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
+import { describeIgnoredKeys, parseIgnoringUnrecognisedKeys } from "./config/unrecognisedKeys";
 import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, isCodexProvider, poolMemberIdentity, ProviderSchema, type Credential } from "./config/schema";
 import { describeCredential, type CredentialCacheEnv } from "./credential";
 import { describeCachedCredential, formatCachedCredentialState } from "./credentialCache";
@@ -185,7 +186,7 @@ export interface RunDoctorParams {
 function validateJson<S extends z.ZodType>(
   schema: S,
   input: DoctorFileInput,
-): { readonly ok: true; readonly data: z.infer<S> } | { readonly ok: false; readonly message: string } {
+): { readonly ok: true; readonly data: z.infer<S>; readonly warning?: string } | { readonly ok: false; readonly message: string } {
   if (input.raw === undefined) {
     return { ok: false, message: `${input.path} is missing.` };
   }
@@ -195,11 +196,11 @@ function validateJson<S extends z.ZodType>(
   } catch (error) {
     return { ok: false, message: `${input.path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}` };
   }
-  const result = schema.safeParse(parsed);
+  const result = parseIgnoringUnrecognisedKeys(schema, parsed);
   if (!result.success) {
-    return { ok: false, message: new ConfigValidationError(input.path, result.error.issues).message };
+    return { ok: false, message: new ConfigValidationError(input.path, result.issues).message };
   }
-  return { ok: true, data: result.data };
+  return { ok: true, data: result.data, ...(result.ignored.length === 0 ? {} : { warning: describeIgnoredKeys(input.path, result.ignored) }) };
 }
 
 /** Whether `raw` is the TCP-port era's state record (a `port` or `lastPort` key and no `socketPath`): content this release cannot parse but deliberately treats as claimable, so the doctor reports it as expected rather than malformed. */
@@ -320,10 +321,13 @@ function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, m
     push("provider", "fail", new LegacyProviderFileError(entry.path, conversion).message, entry.name);
     return;
   }
-  const validated = ProviderSchema.safeParse(parsed);
+  const validated = parseIgnoringUnrecognisedKeys(ProviderSchema, parsed);
   if (!validated.success) {
-    push("provider", "fail", new ConfigValidationError(entry.path, validated.error.issues).message, entry.name);
+    push("provider", "fail", new ConfigValidationError(entry.path, validated.issues).message, entry.name);
     return;
+  }
+  if (validated.ignored.length > 0) {
+    push("provider", "warn", describeIgnoredKeys(entry.path, validated.ignored), entry.name);
   }
   const cache = cacheClause(cacheEnv, `provider ${entry.name}`, validated.data.credential);
   push("provider", cache.unreadable ? "fail" : "pass", `${entry.name} is valid (${describeProviderEndpoint(validated.data)}, credential ${describeCredential(validated.data.credential)})${cache.text}.`, entry.name);
@@ -377,6 +381,14 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   const push = (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string): void => {
     findings.push({ section, severity, message, ...(subject === undefined ? {} : { subject }) });
   };
+  /** Validates a user-editable file, reporting any setting this version does not know as a warning: it is ignored, never fatal. */
+  const validate = <S extends z.ZodType>(schema: S, input: DoctorFileInput, section: DoctorSection, subject?: string): ReturnType<typeof validateJson<S>> => {
+    const validated = validateJson(schema, input);
+    if (validated.ok && validated.warning !== undefined) {
+      push(section, "warn", validated.warning, subject);
+    }
+    return validated;
+  };
 
   /** Warns when `version` is a pin that is not installed: a launch that resolves to it fails rather than falling back, so the pin is worth fixing before it is hit. */
   const checkPin = (section: DoctorSection, subject: string | undefined, where: string, version: string | undefined): void => {
@@ -425,7 +437,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
 
   const profileSources = new Map<string, ProfileSource>();
   for (const entry of params.configProfiles) {
-    const validated = validateJson(ConfigProfileSchema, entry);
+    const validated = validate(ConfigProfileSchema, entry, "config-profile", entry.name);
     if (!validated.ok) {
       push("config-profile", "fail", validated.message, entry.name);
       continue;
@@ -448,7 +460,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
 
   const validIdentityNames = new Set<string>();
   for (const entry of params.identities) {
-    const validated = validateJson(IdentitySchema, entry);
+    const validated = validate(IdentitySchema, entry, "identity", entry.name);
     if (!validated.ok) {
       push("identity", "fail", validated.message, entry.name);
       continue;
@@ -543,7 +555,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   if (params.directoryRules.raw === undefined) {
     push("directory-rules", "pass", "No directory-rules.json configured.");
   } else {
-    const validated = validateJson(DirectoryRulesSchema, params.directoryRules);
+    const validated = validate(DirectoryRulesSchema, params.directoryRules, "directory-rules");
     if (!validated.ok) {
       push("directory-rules", "fail", validated.message);
     } else {
@@ -569,7 +581,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   if (params.globalConfig.raw === undefined) {
     push("global-config", "pass", "No config.json configured.");
   } else {
-    const validated = validateJson(GlobalConfigSchema, params.globalConfig);
+    const validated = validate(GlobalConfigSchema, params.globalConfig, "global-config");
     if (!validated.ok) {
       push("global-config", "fail", validated.message);
     } else {
@@ -590,7 +602,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   if (params.categoriesLocal.raw === undefined) {
     push("categories-local", "pass", "No categories.local.json configured.");
   } else {
-    const validated = validateJson(CategoryClassificationOverlaySchema, params.categoriesLocal);
+    const validated = validate(CategoryClassificationOverlaySchema, params.categoriesLocal, "categories-local");
     push(
       "categories-local",
       validated.ok ? "pass" : "fail",

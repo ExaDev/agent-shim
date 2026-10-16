@@ -2,6 +2,7 @@ import { cosmiconfigSync, type PublicExplorerSync } from "cosmiconfig";
 import type { z } from "zod";
 
 import { CliError } from "../cliError";
+import { parseIgnoringUnrecognisedKeys, noteIgnoredKeys } from "./unrecognisedKeys";
 
 /**
  * A configuration file that has been read, parsed, and validated.
@@ -92,7 +93,7 @@ export function cosmiconfigReader(explorer: Readonly<PublicExplorerSync> = creat
 /**
  * Loads one config file by exact path, validates it against `schema`, and captures its entries key order.
  *
- * Returns undefined when the file does not exist or is empty. Throws ConfigValidationError when it exists but does not validate — a malformed config is never silently ignored or half-applied.
+ * Returns undefined when the file does not exist or is empty. Throws ConfigValidationError when it exists but does not validate — a malformed config is never silently ignored or half-applied. A key the schema does not know is the one exception: it is dropped with a warning, so a file written by a newer release still loads.
  */
 export function loadConfigFile<S extends z.ZodType>(
   filepath: string,
@@ -103,10 +104,11 @@ export function loadConfigFile<S extends z.ZodType>(
   if (raw === undefined) {
     return undefined;
   }
-  const parsed = schema.safeParse(raw);
+  const parsed = parseIgnoringUnrecognisedKeys(schema, raw);
   if (!parsed.success) {
-    throw new ConfigValidationError(filepath, parsed.error.issues);
+    throw new ConfigValidationError(filepath, parsed.issues);
   }
+  noteIgnoredKeys(filepath, parsed.ignored);
   return {
     filepath,
     config: parsed.data,

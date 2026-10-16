@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ConfigValidationError } from "./config/load";
 import { writeJsonAtomic } from "./config/store";
+import { parseIgnoringUnrecognisedKeys, noteIgnoredKeys } from "./config/unrecognisedKeys";
 import {
   ANTIGRAVITY_DEFAULT_MODE,
   CREDENTIAL_TARGET_VARS,
@@ -139,10 +140,11 @@ function parseProviderFile(filePath: string, raw: unknown): Provider {
   if (conversion !== undefined) {
     throw new LegacyProviderFileError(filePath, conversion);
   }
-  const parsed = ProviderSchema.safeParse(raw);
+  const parsed = parseIgnoringUnrecognisedKeys(ProviderSchema, raw);
   if (!parsed.success) {
-    throw new ConfigValidationError(filePath, parsed.error.issues);
+    throw new ConfigValidationError(filePath, parsed.issues);
   }
+  noteIgnoredKeys(filePath, parsed.ignored);
   return parsed.data;
 }
 

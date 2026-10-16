@@ -50,7 +50,7 @@ describe("configProfiles", () => {
 
     it("throws ConfigValidationError for a malformed profile file", () => {
       fs.mkdirSync(paths.configProfilesDir, { recursive: true });
-      fs.writeFileSync(path.join(paths.configProfilesDir, "broken.json"), JSON.stringify({ categories: { secret: true } }));
+      fs.writeFileSync(path.join(paths.configProfilesDir, "broken.json"), JSON.stringify({ categories: { history: "yes" } }));
       expect(() => readProfile(paths, "broken")).toThrow(ConfigValidationError);
     });
   });
