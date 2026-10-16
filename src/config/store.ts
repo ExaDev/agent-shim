@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { z } from "zod";
 
 import { ConfigValidationError } from "./load";
+import { noteIgnoredKeys, parseIgnoringUnrecognisedKeys, restoreIgnoredKeys } from "./unrecognisedKeys";
 
 /**
  * Filesystem primitives `store.ts` needs, injected so tests can simulate a crash between the temp-file write and the rename without touching real process semantics (e.g. actually killing the process mid-write). The default implementation (`nodeStoreFs`) is real `node:fs`, used by every CLI adapter in normal operation and by this module's own tests when exercising the real atomic-rename behaviour end to end.
@@ -77,10 +78,11 @@ export function readJson<S extends z.ZodType>(
     return undefined;
   }
   const parsed: unknown = JSON.parse(raw);
-  const result = schema.safeParse(parsed);
+  const result = parseIgnoringUnrecognisedKeys(schema, parsed);
   if (!result.success) {
-    throw new ConfigValidationError(filePath, result.error.issues);
+    throw new ConfigValidationError(filePath, result.issues);
   }
+  noteIgnoredKeys(filePath, result.ignored);
   return result.data;
 }
 
@@ -102,9 +104,9 @@ export function writeTextAtomic(filePath: string, contents: string, storeFs: Sto
   }
 }
 
-/** Writes `data` as pretty-printed JSON to `filePath`, via `writeTextAtomic`. */
+/** Writes `data` as pretty-printed JSON to `filePath`, via `writeTextAtomic`, with any keys that reading that file ignored as unknown to this release put back. */
 export function writeJsonAtomic(filePath: string, data: unknown, storeFs: StoreFs = nodeStoreFs): void {
-  writeTextAtomic(filePath, `${JSON.stringify(data, null, 2)}\n`, storeFs);
+  writeTextAtomic(filePath, `${JSON.stringify(restoreIgnoredKeys(filePath, data), null, 2)}\n`, storeFs);
 }
 
 /** Inputs to `applyPatch`. */

@@ -407,8 +407,15 @@ describe("runDoctor: config-profile extends chain", () => {
     expect(findingsFor(report, "config-profile").some((finding) => finding.severity === "fail")).toBe(false);
   });
 
+  it("warns, and does not fail, on a profile with a key this version does not know", () => {
+    const report = runDoctor(baseParams({ configProfiles: [profile("newer", { categories: { history: true }, fromANewerRelease: true })] }));
+    const findings = findingsFor(report, "config-profile");
+    expect(findings.some((finding) => finding.severity === "warn" && finding.message.includes("fromANewerRelease"))).toBe(true);
+    expect(findings.some((finding) => finding.severity === "fail")).toBe(false);
+  });
+
   it("fails a profile with a schema violation", () => {
-    const report = runDoctor(baseParams({ configProfiles: [profile("bad", { categories: { secret: true } })] }));
+    const report = runDoctor(baseParams({ configProfiles: [profile("bad", { categories: { history: "yes" } })] }));
     const [finding] = findingsFor(report, "config-profile");
     expect(finding?.severity).toBe("fail");
   });
@@ -565,7 +572,7 @@ describe("runDoctor: aggregation contract", () => {
   it("returns a full report with one fail per broken input, rather than throwing, when everything is malformed at once", () => {
     const params = baseParams({
       identities: [identity("work", { raw: "{not json" })],
-      configProfiles: [profile("bad", { categories: { secret: true } })],
+      configProfiles: [profile("bad", { categories: { history: "yes" } })],
       directoryRules: { path: "/x/directory-rules.json", raw: "{not json" },
       globalConfig: { path: "/x/config.json", raw: "{not json" },
       categoriesLocal: { path: "/x/categories.local.json", raw: "{not json" },

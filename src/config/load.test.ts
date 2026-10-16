@@ -31,8 +31,16 @@ describe("loadConfigFile", () => {
 
   it("throws a ConfigValidationError naming the file when the content does not validate", () => {
     expect(() =>
-      loadConfigFile("/cfg/bad.json", ConfigProfileSchema, reader({ "/cfg/bad.json": { categories: { secret: true } } })),
+      loadConfigFile("/cfg/bad.json", ConfigProfileSchema, reader({ "/cfg/bad.json": { categories: { history: "yes" } } })),
     ).toThrow(ConfigValidationError);
+  });
+
+  it("loads a file with a key this version does not know, dropping it with a warning on standard error", () => {
+    const write = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const loaded = loadConfigFile("/cfg/newer.json", ConfigProfileSchema, reader({ "/cfg/newer.json": { categories: { history: true }, fromANewerRelease: true } }));
+    expect(loaded?.config).toEqual({ categories: { history: true } });
+    expect(String(write.mock.calls[0]?.[0])).toContain("fromANewerRelease");
+    write.mockRestore();
   });
 
   it("captures the entries key insertion order from the raw parsed JSON, not from the validated clone", () => {
