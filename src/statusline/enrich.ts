@@ -27,7 +27,7 @@ export interface StatuslineSummary {
 }
 
 /** One of a provider's quota windows, in the form the statusline draws. */
-export interface ProviderQuotaWindowView {
+interface ProviderQuotaWindowView {
   readonly measures: string;
   readonly utilization: number;
   readonly resetsAt: string | undefined;
