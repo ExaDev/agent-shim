@@ -37,6 +37,9 @@ export interface AntigravityRoutePorts {
 
 const MS_PER_SECOND = 1000;
 
+/** How many sessions' last routing choices the route remembers; the oldest is dropped first, so a forgotten session is merely routed afresh by preference on its next request. */
+const ROUTING_MEMORY_SESSIONS = 256;
+
 /** What a spent window says to the person: which limit was reached and when it lifts, in place of the backend's own error text, which names neither. */
 function exhaustedMessage(exhaustion: AntigravityExhaustion): string {
   const window = exhaustion.window === "five_hour" ? "5-hour" : "weekly";
@@ -45,6 +48,7 @@ function exhaustedMessage(exhaustion: AntigravityExhaustion): string {
 
 export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: RouteRequest) => Promise<RouteResponse> {
   const fallbackId = ports.fallbackId ?? (() => randomUUID());
+  const lastRouted = new Map<string, string>();
 
   return async (request: RouteRequest): Promise<RouteResponse> => {
     await Promise.resolve();
@@ -103,7 +107,19 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
     const { config, token, credentialTarget } = lookup;
     const requestedModel = parsed.data.model ?? config.defaultModel;
     const nowMs = ports.now?.() ?? Date.now();
-    const translated = translateRequest(parsed.data, config, { quota: ports.quotaSource?.(), nowMs });
+    // `metadata.user_id` is stable for one Claude Code session; a request without one belongs to no session and is routed afresh every time.
+    const sessionKey = parsed.data.metadata?.user_id === undefined ? undefined : `${parsed.data.metadata.user_id}\u0000${parsed.data.model ?? ""}`;
+    const translated = translateRequest(parsed.data, config, { quota: ports.quotaSource?.(), nowMs, previous: sessionKey === undefined ? undefined : lastRouted.get(sessionKey) });
+    if (sessionKey !== undefined) {
+      lastRouted.delete(sessionKey);
+      lastRouted.set(sessionKey, translated.model);
+      if (lastRouted.size > ROUTING_MEMORY_SESSIONS) {
+        const oldest = lastRouted.keys().next();
+        if (oldest.done !== true) {
+          lastRouted.delete(oldest.value);
+        }
+      }
+    }
     const relay = createAntigravityRelay({
       requestedModel,
       toolNames: translated.toolNames,
