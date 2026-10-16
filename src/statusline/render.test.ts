@@ -115,7 +115,8 @@ describe("renderStatuslineBlock", () => {
     ).split("\n");
     const header = lines[0] ?? "";
     expect(header.startsWith("Sonnet 5.5")).toBe(true);
-    expect(header.endsWith("zai")).toBe(true);
+    expect(header.endsWith("Max 20x"));
+    expect(header).not.toContain("zai");
     expect(header).toContain("ada@example.com · Max 20x");
     expect(header.length).toBe(WIDE_TERMINAL_MAX);
   });
@@ -132,7 +133,8 @@ describe("renderStatuslineBlock", () => {
     const header = lines[0] ?? "";
     expect(header).toContain("ada@example.com · ExampleOrg · Team Premium");
     expect(header).not.toContain("Max 5x");
-    expect(header.endsWith("ada@example.com_team")).toBe(true);
+    expect(header).not.toContain("ada@example.com_team");
+    expect(header.endsWith("Team Premium")).toBe(true);
   });
 
   it("renders nothing when no segment has data", () => {
