@@ -105,6 +105,21 @@ describe("unifiedAntigravityQuotaHeaders", () => {
     expect(unifiedAntigravityQuotaHeaders({ quota, rejected: true, nowMs: NOW_MS, model: "gemini-3.8-flash" })["anthropic-ratelimit-unified-representative-claim"]).toBe("seven_day");
   });
 
+  it("answers for Gemini 4 Argon from its own weekly window, never the Gemini family's spent five-hour one", () => {
+    const quota: AntigravityQuotaMap = {
+      "gemini-5h": { remaining_fraction: 0, reset_in_seconds: FIVE_HOURS_SEC },
+      "gemini-weekly": { remaining_fraction: 0.7, reset_in_seconds: SEVEN_DAYS_SEC },
+      "gemini-argon-wtu-weekly": { remaining_fraction: 0.9, reset_in_seconds: SEVEN_DAYS_SEC },
+    };
+    const headers = unifiedAntigravityQuotaHeaders({ quota, rejected: false, nowMs: NOW_MS, model: "gemini-4-argon-medium" });
+
+    expect(headers["anthropic-ratelimit-unified-status"]).toBe("allowed");
+    expect(headers["anthropic-ratelimit-unified-7d-utilization"]).toBe("0.100");
+    // Argon has no five-hour window, so none is reported, and nothing here is spent.
+    expect(headers["anthropic-ratelimit-unified-5h-utilization"]).toBeUndefined();
+    expect(antigravityQuotaExhaustion(quota, "gemini-4-argon-medium", NOW_MS)).toBeUndefined();
+  });
+
   it("claims no window on a 429 that no bucket explains, rather than reporting limits the account has not reached", () => {
     expect(unifiedAntigravityQuotaHeaders({ rejected: true, nowMs: NOW_MS })).toEqual({});
     const unspent: AntigravityQuotaMap = { "gemini-5h": { remaining_fraction: 0.4, reset_in_seconds: FIVE_HOURS_SEC } };

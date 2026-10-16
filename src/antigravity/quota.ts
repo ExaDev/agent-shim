@@ -24,7 +24,8 @@ export interface AntigravityQuotaParams {
 
 const GEMINI_5H_KEYS = ["gemini-5h", "gemini_5h", "gemini"] as const;
 const GEMINI_WEEKLY_KEYS = ["gemini-weekly", "gemini_weekly"] as const;
-const THIRD_PARTY_5H_KEYS = ["3p-5h", "claude-5h", "3p_5h", "claude_5h", "claude"] as const;
+const ARGON_WEEKLY_KEYS = ["gemini-argon-wtu-weekly"] as const;
+const THIRD_PARTY_5H_KEYS =["3p-5h", "claude-5h", "3p_5h", "claude_5h", "claude"] as const;
 const THIRD_PARTY_WEEKLY_KEYS = ["3p-weekly", "claude-weekly", "3p_weekly", "claude_weekly"] as const;
 
 function findBucket(quota: AntigravityQuotaMap, keys: readonly string[]): AntigravityQuotaBucket | undefined {
@@ -41,7 +42,12 @@ function findBucket(quota: AntigravityQuotaMap, keys: readonly string[]): Antigr
  * The five-hour and weekly buckets a model draws from: a gemini model its gemini buckets, any other model the third-party ones. The map is the one the quota endpoint's translation and the Antigravity CLI's own statusline payload share, keyed by bucket id.
  */
 export function selectAntigravityBuckets(quota: AntigravityQuotaMap, model: string | undefined): { readonly fiveHour: AntigravityQuotaBucket | undefined; readonly weekly: AntigravityQuotaBucket | undefined } {
-  const isGemini = (model ?? "").toLowerCase().includes("gemini");
+  const lower = (model ?? "").toLowerCase();
+  // Gemini 4 Argon draws on a weekly window of its own and has no five-hour one, so the Gemini family's five-hour bucket (spent, or not) says nothing about it.
+  if (lower.includes("argon")) {
+    return { fiveHour: undefined, weekly: findBucket(quota, ARGON_WEEKLY_KEYS) };
+  }
+  const isGemini = lower.includes("gemini");
   return {
     fiveHour: findBucket(quota, isGemini ? GEMINI_5H_KEYS : THIRD_PARTY_5H_KEYS),
     weekly: findBucket(quota, isGemini ? GEMINI_WEEKLY_KEYS : THIRD_PARTY_WEEKLY_KEYS),
