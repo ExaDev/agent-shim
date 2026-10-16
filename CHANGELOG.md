@@ -1,3 +1,14 @@
+## [11.20.0](https://github.com/ExaDev/agent-shim/compare/v11.19.1...v11.20.0) (2026-10-16)
+
+### Features
+
+* **launcher:** let a supervising launcher fix a launch's session id, conversation and member ([039a2e8](https://github.com/ExaDev/agent-shim/commit/039a2e825b9bbafdeeb63f98300a7e179f2322ac))
+* **pool:** add settings for compacting a pool's sessions before their member runs out ([d556eef](https://github.com/ExaDev/agent-shim/commit/d556eef1515c9596e8964807bcfa4c6d7f9f3d35))
+* **pool:** resume a session under the next member when its identity runs out of quota ([282ce84](https://github.com/ExaDev/agent-shim/commit/282ce8486e493e7f38fe2ddbcfb9ff13c4c00b3d))
+* **supervise:** compact a session's context before its member's quota is spent ([dfad0dc](https://github.com/ExaDev/agent-shim/commit/dfad0dc80e42665c3177a81a12cb76e95026320f))
+* **supervise:** record when a supervised session's turns begin and end ([6afe8b3](https://github.com/ExaDev/agent-shim/commit/6afe8b3286bbdeebfa77cccb211e77db8beba486))
+* **usage:** leave room for context already moving onto a member when ranking ([b1bf9ee](https://github.com/ExaDev/agent-shim/commit/b1bf9ee82b895186108006a6eb4450095ec41c6b))
+
 ## [11.19.1](https://github.com/ExaDev/agent-shim/compare/v11.19.0...v11.19.1) (2026-10-16)
 
 ### ⚠ BREAKING CHANGES
