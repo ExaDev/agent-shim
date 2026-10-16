@@ -633,7 +633,8 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       // Not inherited by anything this door starts.
       Reflect.deleteProperty(process.env, DOOR_AWAIT_PID_ENV);
       if (Number.isInteger(awaited) && awaited > 0) {
-        await awaitPidExit(awaited, DOOR_STALL_BOUND_MS, supervisorPorts);
+        const waitedMs = await awaitPidExit(awaited, supervisorPorts);
+        supervisorPorts.log(`frontdoor ${String(ownPid)}: stalled door ${String(awaited)} released the sticky ports after ${String(waitedMs)}ms`);
       }
       // Declared before anything is served, so a launch the door plans for itself never asks `ps` or probes its own held event loop whether it is alive.
       declareThisProcessTheFrontDoor();

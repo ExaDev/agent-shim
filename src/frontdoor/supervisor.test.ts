@@ -202,9 +202,10 @@ const SIBLING_EXISTS = (): boolean => true;
 
 describe("awaitPidExit", () => {
   const PREDECESSOR_PID = 4242;
-  const WAIT_BOUND_MS = 2 * FRONTDOOR_POLL_MS;
+  /** Long enough that a fixed bound on the wait, of any size the door could have chosen, would have elapsed first. */
+  const SLOW_TEARDOWN_POLLS = 1_000;
 
-  /** A clock the fake sleep advances, so the wait's bound is exercised without real time. */
+  /** A clock the fake sleep advances, so the wait is exercised without real time. */
   function fakeClock(runningUntil: number) {
     let now = 0;
     return {
@@ -219,15 +220,21 @@ describe("awaitPidExit", () => {
 
   it("returns as soon as the pid is gone, so the replacement binds the freed sticky ports", async () => {
     const clock = fakeClock(FRONTDOOR_POLL_MS);
-    await awaitPidExit(PREDECESSOR_PID, WAIT_BOUND_MS, clock);
-    expect(clock.now()).toBeGreaterThanOrEqual(FRONTDOOR_POLL_MS);
-    expect(clock.now()).toBeLessThan(WAIT_BOUND_MS);
+    const waited = await awaitPidExit(PREDECESSOR_PID, clock);
+    expect(waited).toBeGreaterThanOrEqual(FRONTDOOR_POLL_MS);
+    expect(clock.now()).toBe(waited);
+    expect(clock.isRunning()).toBe(false);
   });
 
-  it("gives up at the bound for a pid that never exits, so a wedged predecessor cannot keep the door down", async () => {
-    const clock = fakeClock(Number.POSITIVE_INFINITY);
-    await awaitPidExit(PREDECESSOR_PID, WAIT_BOUND_MS, clock);
-    expect(clock.now()).toBeGreaterThanOrEqual(WAIT_BOUND_MS);
+  it("keeps waiting for a predecessor that is slow to be torn down, rather than binding other ports while it holds the sticky ones", async () => {
+    const runningUntil = SLOW_TEARDOWN_POLLS * FRONTDOOR_POLL_MS;
+    const clock = fakeClock(runningUntil);
+    const waited = await awaitPidExit(PREDECESSOR_PID, clock);
+    expect(waited).toBeGreaterThanOrEqual(runningUntil);
+  });
+
+  it("returns at once when the pid is already gone", async () => {
+    expect(await awaitPidExit(PREDECESSOR_PID, fakeClock(0))).toBe(0);
   });
 });
 
