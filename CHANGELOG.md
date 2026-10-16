@@ -1,3 +1,18 @@
+## [11.23.0](https://github.com/ExaDev/agent-shim/compare/v11.22.0...v11.23.0) (2026-10-16)
+
+### Features
+
+* **launcher:** let a provider session run on an identity with no stored login ([c3b5a96](https://github.com/ExaDev/agent-shim/commit/c3b5a965be252e1c9c30c539d463c3a99b319801))
+
+### Bug Fixes
+
+* **doctor:** find an identity's login by the Keychain service name Claude Code uses ([50fa342](https://github.com/ExaDev/agent-shim/commit/50fa3428acf42a3fc8fc3a0b17148af235403315))
+* **frontdoor:** wait for the main thread to pause as long as the caller says ([a0c1a14](https://github.com/ExaDev/agent-shim/commit/a0c1a143e37dee504354031dae4ccb56367a23ad)), references [#470](https://github.com/ExaDev/agent-shim/issues/470)
+
+### Documentation
+
+* **launcher:** describe how a provider session authenticates and what Remote Control needs ([27e22f7](https://github.com/ExaDev/agent-shim/commit/27e22f7914d10c354ec2d5778a59ea8e92573ad6))
+
 ## [11.22.0](https://github.com/ExaDev/agent-shim/compare/v11.21.1...v11.22.0) (2026-10-16)
 
 ### Features
