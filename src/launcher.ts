@@ -11,7 +11,7 @@ import { evaluateAmbientCredentialGuard } from "./launcher/guard";
 import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDecisionSource, type IdentityDecision, type IdentityDecisionSource } from "./launcher/identity";
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
-import { withConversation, type SupervisedLaunch } from "./launcher/claudeSession";
+import { withSupervision, type SupervisedLaunch } from "./launcher/claudeSession";
 import { resolvePoolLaunch } from "./launcher/pool";
 import { resumedContextTokens } from "./usage/resumeContext";
 import { IdentityLockBusyError } from "./launcher/lock";
@@ -469,7 +469,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   const args = buildArgv({
     toolFlags: buildFlagArgs(flags),
     extraFlags: splitExtraFlags(env.CLAUDE_EXTRA_FLAGS),
-    passthrough: params.supervised === undefined || params.supervised.conversation === "as-given" ? parsedArgv.rest : withConversation(parsedArgv.rest, params.supervised.conversation, params.supervised.sessionId),
+    passthrough: params.supervised === undefined ? parsedArgv.rest : withSupervision(parsedArgv.rest, params.supervised),
   });
 
   // The configuration directory the child runs with, as `buildEnv` will set it: the identity's own directory unless the caller named one.
