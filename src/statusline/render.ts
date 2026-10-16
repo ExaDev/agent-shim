@@ -180,6 +180,30 @@ function renderLineWithExtra(segments: readonly Segment[], maxWidth: number, sep
   return segments.map((segment) => segment.render(baseBarWidth + (extraById.get(segment) ?? 0))).join(separator);
 }
 
+/** Packs segments onto as few lines as fit, in order: a segment joins the current line when it fits beside what is there, and a segment already alone on a line that is still too wide renders whole, exactly as the Antigravity statusline's own fallback does. */
+function packSegments(segments: readonly Segment[], maxWidth: number, separator: string, baseBarWidth: number, fillWrapped: boolean): string[] {
+  const separatorLength = visibleLength(separator);
+  const lines: Segment[][] = [];
+  let current: Segment[] = [];
+  let currentWidth = 0;
+  for (const segment of segments) {
+    const width = segment.baseLength(baseBarWidth);
+    const added = current.length === 0 ? width : width + separatorLength;
+    if (current.length > 0 && currentWidth + added > maxWidth) {
+      lines.push(current);
+      current = [segment];
+      currentWidth = width;
+    } else {
+      current.push(segment);
+      currentWidth += added;
+    }
+  }
+  if (current.length > 0) {
+    lines.push(current);
+  }
+  return lines.map((line) => (fillWrapped ? renderLineWithExtra(line, maxWidth, separator, baseBarWidth) : line.map((segment) => segment.render(baseBarWidth)).join(separator)));
+}
+
 /**
  * The Antigravity statusline's own layout: one line when everything fits, two when it does not (context and git above, quota windows below), with the bars expanding to share whatever width is left.
  */
@@ -206,7 +230,7 @@ function layoutGrouped(group1: readonly Segment[], group2: readonly Segment[], m
     if (groupBase <= maxWidth) {
       return fillWrapped ? renderLineWithExtra(group, maxWidth, separator, baseBarWidth) : group.map((segment) => segment.render(baseBarWidth)).join(separator);
     }
-    return group.map((segment) => (fillWrapped ? renderLineWithExtra([segment], maxWidth, separator, baseBarWidth) : segment.render(baseBarWidth))).join("\n");
+    return packSegments(group, maxWidth, separator, baseBarWidth, fillWrapped).join("\n");
   });
   return lines.filter((line) => line !== "").join("\n");
 }
