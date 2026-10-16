@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 import type { FarmFs, RunPort } from "../launcher/ports";
@@ -21,9 +22,22 @@ export interface SignInProbe {
   readonly run?: RunPort;
 }
 
-/** Whether the Keychain holds an item for `account`. Without `-g` or `-w`, `security` prints the item's attributes only, so the secret is never requested and the item's access list never prompts. */
-export function keychainHasItem(run: RunPort, account: string): boolean {
-  return run.run("security", ["find-generic-password", "-a", account]).status === 0;
+/** The Keychain service name prefix Claude Code files a configuration directory's login under. */
+const KEYCHAIN_SERVICE_PREFIX = "Claude Code-credentials";
+
+/** How many hex digits of the directory path's SHA-256 Claude Code appends to the service name. */
+const KEYCHAIN_SERVICE_HASH_DIGITS = 8;
+
+/**
+ * The Keychain service name Claude Code keeps the login of one configuration directory under: the prefix, then the first eight hex digits of the SHA-256 of the directory path exactly as `CLAUDE_CONFIG_DIR` names it. The account on the item is the operating system user, so the directory is only recoverable through this name. Observed on Claude Code 2.1, not a documented contract.
+ */
+export function claudeCodeKeychainService(configDir: string): string {
+  return `${KEYCHAIN_SERVICE_PREFIX}-${createHash("sha256").update(configDir).digest("hex").slice(0, KEYCHAIN_SERVICE_HASH_DIGITS)}`;
+}
+
+/** Whether the Keychain holds Claude Code's login item for the configuration directory `configDir`. Without `-g` or `-w`, `security` prints the item's attributes only, so the secret is never requested and the item's access list never prompts. */
+export function keychainHasItem(run: RunPort, configDir: string): boolean {
+  return run.run("security", ["find-generic-password", "-s", claudeCodeKeychainService(configDir)]).status === 0;
 }
 
 /** The facts a sign-in state is decided from, each gathered by the caller so the decision itself is pure. `keychainItem` is undefined where the Keychain is not asked (off macOS). */

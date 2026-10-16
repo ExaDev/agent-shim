@@ -6,6 +6,7 @@ import { loadCascadeInput } from "./launcher/cascade";
 import { resolveClaudeHome } from "./paths";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { cascadeProviderName } from "./providersStore";
+import { claudeCodeKeychainService } from "./usage/signIn";
 import { realFarmFs, realFsPort, realInstalledClaudeVersions, realRunPort, resolveGitBranch } from "./realPorts";
 import path from "node:path";
 import { z } from "zod";
@@ -113,37 +114,23 @@ export interface KeychainLookupResult {
   readonly note: string;
 }
 
-/** Extracts the `svce` (service name) attribute from `security`'s own human-readable attribute dump, which it writes to stderr rather than stdout. */
-function parseKeychainServiceName(stderr: string): string | undefined {
-  const match = /"svce"<blob>="([^"]*)"/.exec(stderr);
-  return match?.[1];
-}
-
 /**
  * Looks up the macOS Keychain entry Claude Code is using for one identity's configuration directory, via `security find-generic-password`, run through the injected `RunPort` so no test ever shells out for real.
  *
  * This is real OS state: the exact account/service naming Claude Code uses in the Keychain is empirically observed (per this project's README), not a documented contract, so genuinely exercising this against a real Keychain is a manual/integration check on a macOS runner, never something a unit test fakes convincingly — a unit test here can only prove that this function parses `security`'s own output shape correctly, not that the shape matches what a real installation produces.
  */
 export function lookupKeychainService(run: RunPort, farmRoot: string): KeychainLookupResult {
-  const result = run.run("security", ["find-generic-password", "-a", farmRoot, "-g"]);
+  const serviceName = claudeCodeKeychainService(farmRoot);
+  const result = run.run("security", ["find-generic-password", "-s", serviceName]);
   if (result.status !== 0) {
     return {
       checked: true,
       found: false,
-      note: `No Keychain entry found for account "${farmRoot}" (security exited ${result.status === null ? "with no status" : String(result.status)}).`,
+      serviceName,
+      note: `No Keychain entry found for service "${serviceName}" (security exited ${result.status === null ? "with no status" : String(result.status)}).`,
     };
   }
-  const serviceName = parseKeychainServiceName(result.stderr);
-  return {
-    checked: true,
-    found: true,
-    ...(serviceName === undefined ? {} : { serviceName }),
-    note:
-      serviceName === undefined
-        ? `A Keychain entry was found for account "${farmRoot}" but its service name could not be parsed from ` +
-          "security's output."
-        : `Keychain service name for this identity: "${serviceName}".`,
-  };
+  return { checked: true, found: true, serviceName, note: `Keychain service name for this identity: "${serviceName}".` };
 }
 
 /** The loose shape of `settings.json`/`settings.local.json` this diagnostic actually reads. Deliberately not a full schema for the file — nothing else in this project needs to validate the rest of it, and being loose here means an unrelated field never breaks this one advisory. */

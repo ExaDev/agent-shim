@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { FarmStat, RunPort } from "../launcher/ports";
-import { decideSignIn, identitySignIn } from "./signIn";
+import { claudeCodeKeychainService, decideSignIn, identitySignIn } from "./signIn";
 
 const FARM_ROOT = "/state/identities/work";
 const FILE_STAT: FarmStat = { kind: "file", mtimeMs: 0, sizeBytes: 2 };
@@ -39,12 +39,25 @@ describe("decideSignIn", () => {
   });
 });
 
+describe("claudeCodeKeychainService", () => {
+  it("names the item by the first eight hex digits of the directory path's SHA-256, as Claude Code does", () => {
+    // Both values are the SHA-256 of the path as `shasum -a 256` computes it; the scheme itself was read off the Keychain items of identities known to be signed in.
+    expect(claudeCodeKeychainService("/farm/work")).toBe("Claude Code-credentials-5e4594d0");
+    expect(claudeCodeKeychainService("/home/testuser/.agent-shim/identities/work")).toBe("Claude Code-credentials-c4aa727c");
+  });
+
+  it("distinguishes directories and does not normalise the path it is given", () => {
+    expect(claudeCodeKeychainService("/farm/work")).not.toBe(claudeCodeKeychainService("/farm/other"));
+    expect(claudeCodeKeychainService("/farm/work/")).not.toBe(claudeCodeKeychainService("/farm/work"));
+  });
+});
+
 describe("identitySignIn", () => {
   it("asks the Keychain for the item's existence only, never for its secret", () => {
     const { port, run } = runWith(0);
     const answer = identitySignIn({ lstat: () => undefined }, { platform: "darwin", run: port }, { farmRoot: FARM_ROOT, hasCredentialBlock: false });
     expect(answer.state).toBe("signed-in");
-    expect(run).toHaveBeenCalledWith("security", ["find-generic-password", "-a", FARM_ROOT]);
+    expect(run).toHaveBeenCalledWith("security", ["find-generic-password", "-s", claudeCodeKeychainService(FARM_ROOT)]);
   });
 
   it("does not ask the Keychain off macOS, and reads the file's presence only", () => {
