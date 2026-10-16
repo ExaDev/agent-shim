@@ -137,6 +137,20 @@ describe("renderStatuslineBlock", () => {
     expect(header.endsWith("Team Premium")).toBe(true);
   });
 
+  it("names a provider session's login by its organisation, not the plan the session is not drawing from", () => {
+    const lines = stripAnsi(
+      renderStatuslineBlock(
+        { ...SUMMARY, providerAccountEmail: "ada@z.ai", loginAccountEmail: "ada@example.com", loginRateLimitTier: "default_claude_max_20x" },
+        VIEW,
+        WIDE_TERMINAL,
+        NOW_MS,
+      ),
+    ).split("\n");
+    const header = lines[0] ?? "";
+    expect(header).toContain("ada@example.com");
+    expect(header).not.toContain("Max 20x");
+  });
+
   it("renders nothing when no segment has data", () => {
     expect(
       renderStatuslineBlock(
