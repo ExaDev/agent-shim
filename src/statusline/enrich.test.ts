@@ -13,7 +13,7 @@ const SNAPSHOT = {
     anthropic: { rateLimit: { unified: { fiveHour: { utilization: 0.03, resetsAt: "2026-10-15T18:52:54.000Z" }, sevenDay: { utilization: 0.02, resetsAt: "2026-10-22T13:52:54.000Z" } } } },
     antigravity: {
       rateLimit: { unified: { fiveHour: { utilization: 0.094, resetsAt: "2026-10-15T20:45:00.000Z" }, sevenDay: { utilization: 0.282, resetsAt: "2026-10-22T13:52:54.000Z" } } },
-      quota: { account: { email: "ada@example.com", accountId: "123456789012345678901" } },
+      quota: { level: "Pro", account: { email: "ada@example.com", accountId: "123456789012345678901" } },
     },
   },
 } as unknown as UsageSnapshot;
@@ -41,6 +41,8 @@ describe("enrichStatuslinePayload", () => {
       identity: "antigravity",
       provider: "Antigravity",
       providerAccountEmail: "ada@example.com",
+      providerAccountSub: "123456789012345678901",
+      providerPlan: "Pro",
       fiveHourUsed: 9,
       fiveHourResetAt: "2026-10-15T20:45:00.000Z",
       sevenDayUsed: 28,
