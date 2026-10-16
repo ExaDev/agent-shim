@@ -71,6 +71,33 @@ export function selectAntigravityBuckets(quota: AntigravityQuotaMap, model: stri
   };
 }
 
+const SECONDS_PER_HOUR = 3600;
+const HOURS_PER_FIVE_HOUR_WINDOW = 5;
+const DAYS_PER_WEEK = 7;
+const HOURS_PER_DAY = 24;
+const FIVE_HOUR_PERIOD_SECONDS = HOURS_PER_FIVE_HOUR_WINDOW * SECONDS_PER_HOUR;
+const WEEK_PERIOD_SECONDS = DAYS_PER_WEEK * HOURS_PER_DAY * SECONDS_PER_HOUR;
+
+/** How much more allowance a window holds than its remaining time would let a steady burn use: the allowance left over the share of its period still to run. Above one, spending at the pace the period implies would still leave allowance to lapse unused at the reset, so the window is worth spending now; at one it is on pace, and below one it is being drawn faster than its period refills, so it is worth sparing. A window not yet used since its reset has all of its allowance and all of its period, which is one: neutral, neither urgent nor spared. */
+function windowPressure(bucket: AntigravityQuotaBucket | undefined, periodSeconds: number): number | undefined {
+  const remaining = bucket?.remaining_fraction;
+  const resetIn = bucket?.reset_in_seconds;
+  if (remaining === undefined || resetIn === undefined || !Number.isFinite(remaining) || !Number.isFinite(resetIn)) {
+    return undefined;
+  }
+  const periodLeft = Math.min(1, Math.max(resetIn, 1) / periodSeconds);
+  return Math.max(0, remaining) / periodLeft;
+}
+
+/**
+ * How worth spending a model's quota is right now, across both of its windows (five-hour and weekly): the lower of the two windows' pressures, because a request must clear both, so the tighter window limits how fast the allowance can be used. Undefined when neither window's state is known.
+ */
+export function antigravityQuotaPressure(quota: AntigravityQuotaMap | undefined, model: string): number | undefined {
+  const { fiveHour, weekly } = selectAntigravityBuckets(quota ?? {}, model);
+  const pressures = [windowPressure(fiveHour, FIVE_HOUR_PERIOD_SECONDS), windowPressure(weekly, WEEK_PERIOD_SECONDS)].filter((pressure) => pressure !== undefined);
+  return pressures.length === 0 ? undefined : Math.min(...pressures);
+}
+
 /** Utilization is a used fraction from 0 to 1 (`0.81` is 81% used), the form the real API's headers carry: an integer percent here reads as a vast fraction, which Claude Code clamps to an exhausted window. */
 function calculateUtilization(remainingFraction?: number): string | undefined {
   if (remainingFraction === undefined || !Number.isFinite(remainingFraction)) {
