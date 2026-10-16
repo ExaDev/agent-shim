@@ -53,19 +53,18 @@ export const realTimerPort: TimerPort = {
 };
 
 /**
- * Watches the usage snapshots directory and calls `onChange` when `<identity>.json` is written. The door replaces a snapshot by renaming a temporary file over it, which a directory watch reports; a watch on the file itself would be left pointing at the replaced one. The watcher does not keep the process alive, and a watcher error is reported once and ends the watch rather than going unseen.
+ * Watches `directory` and calls `onChange` when a file `accepts` is written in it. Files the writer replaces by renaming a temporary one over them (the usage snapshots, the session state) are only seen by a watch on their directory: a watch on the file itself would be left pointing at the replaced one. The directory is created when it is not there yet. The watcher does not keep the process alive, and a watcher error is reported once, naming what was being watched, and ends the watch rather than going unseen.
  */
-export function realWatchUsage(snapshotsDir: string, log: LogPort): (identity: string, onChange: () => void) => () => void {
-  return (identity, onChange) => {
-    // The door creates the directory at its first record; an identity that has never been routed has none yet.
-    realFarmFs.mkdirPrivate(snapshotsDir);
-    const watcher = fs.watch(snapshotsDir, { persistent: false }, (_event, filename) => {
-      if (filename === null || filename === `${identity}.json`) {
+export function realWatchDirectory(directory: string, accepts: (filename: string) => boolean, what: string, log: LogPort): (onChange: () => void) => () => void {
+  return (onChange) => {
+    realFarmFs.mkdirPrivate(directory);
+    const watcher = fs.watch(directory, { persistent: false }, (_event, filename) => {
+      if (filename === null || accepts(filename)) {
         onChange();
       }
     });
     watcher.on("error", (error) => {
-      log.warn(`agent-shim: the usage watch for ${identity} stopped (${error.message}); this session will not be moved when ${identity} runs out of quota`);
+      log.warn(`agent-shim: the watch on ${what} stopped (${error.message}); this session will not be moved or compacted when it changes`);
       watcher.close();
     });
     return () => {
