@@ -38,6 +38,8 @@ export interface ResolvedAntigravityConfig {
   readonly mode: AntigravityMode;
   readonly defaultModel: string;
   readonly models: Readonly<Record<AntigravityTier, string>>;
+  /** Configured aliases: the lower-cased requested name each key matches in full, and the backend model it selects. */
+  readonly aliases: ReadonlyMap<string, string>;
   readonly effort: AntigravityEffort;
   readonly cloud: {
     readonly endpoint?: string;
@@ -50,18 +52,29 @@ export interface ResolvedAntigravityConfig {
   };
 }
 
+function isAntigravityTier(key: string): key is AntigravityTier {
+  return ANTIGRAVITY_TIERS.some((tier) => tier === key);
+}
+
 /** Applies shipped defaults to a provider's `antigravity` configuration block. */
 export function resolveAntigravityConfig(config: AntigravityProviderConfig | undefined): ResolvedAntigravityConfig {
-  const overrides = config?.models;
+  const overrides = config?.models ?? {};
+  const aliases = new Map<string, string>();
+  for (const [key, model] of Object.entries(overrides)) {
+    if (!isAntigravityTier(key)) {
+      aliases.set(key.toLowerCase(), model);
+    }
+  }
   return {
     mode: config?.mode ?? ANTIGRAVITY_DEFAULT_MODE,
     defaultModel: config?.defaultModel ?? ANTIGRAVITY_DEFAULT_MODEL,
     models: {
-      fable: overrides?.fable ?? ANTIGRAVITY_DEFAULT_TIER_MODELS.fable,
-      opus: overrides?.opus ?? ANTIGRAVITY_DEFAULT_TIER_MODELS.opus,
-      sonnet: overrides?.sonnet ?? ANTIGRAVITY_DEFAULT_TIER_MODELS.sonnet,
-      haiku: overrides?.haiku ?? ANTIGRAVITY_DEFAULT_TIER_MODELS.haiku,
+      fable: overrides.fable ?? ANTIGRAVITY_DEFAULT_TIER_MODELS.fable,
+      opus: overrides.opus ?? ANTIGRAVITY_DEFAULT_TIER_MODELS.opus,
+      sonnet: overrides.sonnet ?? ANTIGRAVITY_DEFAULT_TIER_MODELS.sonnet,
+      haiku: overrides.haiku ?? ANTIGRAVITY_DEFAULT_TIER_MODELS.haiku,
     },
+    aliases,
     effort: config?.effort ?? ANTIGRAVITY_DEFAULT_EFFORT,
     cloud: {
       endpoint: config?.cloud?.endpoint,
@@ -78,15 +91,30 @@ export function resolveAntigravityConfig(config: AntigravityProviderConfig | und
 /** The context-window marker Claude Code parses out of a model name (`glm-5.3[1m]` sizes its window at 1M instead of assuming 200k for a name it does not know). The backend names carry no such marker, so it is stripped before the name is mapped or passed through. */
 const CONTEXT_MARKER_1M = "[1m]";
 
+/** Backend model families whose every name is the backend's own: Gemini and its Antigravity builds, and the open GPT-OSS models Antigravity serves. */
+const BACKEND_FAMILY_PREFIXES = ["gemini-", "antigravity-", "gpt-oss-"] as const;
+
+/** The Claude models the backend serves carry a trailing effort or thinking variant (`claude-sonnet-5-5-high`, `claude-opus-4-6-thinking`), which the names Claude Code itself sends (`claude-sonnet-5-5`) never do; that suffix is what tells a backend Claude model from a Claude Code tier name. */
+const BACKEND_CLAUDE_NAME = /^claude-.+-(?:low|medium|high|thinking)$/;
+
+/** True when a requested name already is one of the backend's own model names. */
+function isBackendModelName(name: string): boolean {
+  return BACKEND_FAMILY_PREFIXES.some((prefix) => name.startsWith(prefix)) || BACKEND_CLAUDE_NAME.test(name);
+}
+
 /**
- * Maps a requested Claude model name onto a Gemini model name. A name that already targets the backend directly (a `gemini-...` or `antigravity-...` model) passes through untouched; every other name is mapped onto its tier's model. A trailing `[1m]` context marker is stripped first: it tells Claude Code the window size and never reaches the backend.
+ * Maps a requested model name onto a backend model name, in order: a configured alias that matches the whole name; a name that already is a backend model (Gemini, Antigravity or GPT-OSS family, or a Claude name with an effort or thinking suffix) passes through untouched, which is what lets `/model` select first and third party backend models directly; otherwise the name's tier (fable, opus, sonnet or haiku, by substring) selects that tier's model, and a name matching no tier maps to the default. A trailing `[1m]` context marker is stripped first: it tells Claude Code the window size and never reaches the backend.
  */
 export function mapModel(requested: string, config: ResolvedAntigravityConfig): string {
   const stripped = requested.toLowerCase().endsWith(CONTEXT_MARKER_1M) ? requested.slice(0, -CONTEXT_MARKER_1M.length) : requested;
-  if (stripped.startsWith("gemini-") || stripped.startsWith("antigravity-")) {
+  const lower = stripped.toLowerCase();
+  const alias = config.aliases.get(lower);
+  if (alias !== undefined) {
+    return alias;
+  }
+  if (isBackendModelName(stripped)) {
     return stripped;
   }
-  const lower = stripped.toLowerCase();
   const tier = ANTIGRAVITY_TIERS.find((candidate) => lower.includes(candidate));
   return tier === undefined ? config.defaultModel : config.models[tier];
 }
@@ -372,7 +400,7 @@ function completeEffortSuffix(model: string, request: MessagesRequest, config: R
   if (splitEffortSuffix(model) !== undefined) {
     return model;
   }
-  const configured = [config.defaultModel, ...Object.values(config.models)];
+  const configured = [config.defaultModel, ...Object.values(config.models), ...config.aliases.values()];
   const effort = request.output_config?.effort;
   const level = ANTIGRAVITY_EFFORTS.find((candidate) => candidate === effort) ?? config.effort;
   const suffixed = `${model}-${effortSuffixOf(level)}`;

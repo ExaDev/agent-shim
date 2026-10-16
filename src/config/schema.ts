@@ -253,15 +253,8 @@ export const AntigravityProviderConfigSchema = z.strictObject({
   mode: z.enum(ANTIGRAVITY_MODES).optional(),
   /** The model a request maps to when no tier matches its model name. */
   defaultModel: z.string().min(1).optional(),
-  /** Per-tier overrides of the shipped mapping, matched by substring of the requested model name in `ANTIGRAVITY_TIERS` order. */
-  models: z
-    .strictObject({
-      fable: z.string().min(1).optional(),
-      opus: z.string().min(1).optional(),
-      sonnet: z.string().min(1).optional(),
-      haiku: z.string().min(1).optional(),
-    } satisfies Record<AntigravityTier, z.ZodType>)
-    .optional(),
+  /** Model name mapping. A key naming a tier (`fable`, `opus`, `sonnet`, `haiku`) overrides that tier's shipped model and is matched by substring of the requested name in `ANTIGRAVITY_TIERS` order; any other key is an alias, matched against the whole requested name case-insensitively, so `/model <alias>` selects its backend model. An alias outranks every other rule, including the pass-through of backend names. */
+  models: z.record(z.string().min(1), z.string().min(1)).optional(),
   /** The reasoning effort used when the request's own effort is not one the backend accepts. */
   effort: z.enum(ANTIGRAVITY_EFFORTS).optional(),
   /** Cloud-specific settings (for `mode: "cloud"`). */

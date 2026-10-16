@@ -184,7 +184,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .addOption(new Option("--codex-login <login>", "Codex providers: which login the upstream call uses, the Codex CLI's own login or a Sign in with ChatGPT grant from `agent-shim codex login`.").choices(CODEX_LOGINS))
       .addOption(new Option("--antigravity-mode <mode>", "Antigravity providers: cloud (direct Gemini/Vertex) or local (ACP daemon).").choices(ANTIGRAVITY_MODES))
       .option("--antigravity-default-model <model>", "Antigravity providers: the model a request maps to when no tier matches.")
-      .option("--antigravity-model <tier=model>", "Antigravity providers: the model one tier (fable, opus, sonnet or haiku) maps to (repeatable).", collectStringPair)
+      .option("--antigravity-model <tier=model>", "Antigravity providers: the model a tier (fable, opus, sonnet or haiku, matched by substring) or an alias (any other name, matched whole, selectable with /model) maps to (repeatable).", collectStringPair)
       .addOption(new Option("--antigravity-effort <effort>", "Antigravity providers: reasoning effort.").choices(ANTIGRAVITY_EFFORTS))
       .option("--antigravity-endpoint <url>", "Antigravity cloud providers: custom API endpoint URL.")
       .option("--antigravity-project-id <id>", "Antigravity cloud providers: Google Cloud project ID (for Vertex AI).")
@@ -338,6 +338,9 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           const config = resolveAntigravityConfig(found.antigravity);
           console.log(`Antigravity mode: ${config.mode}`);
           console.log(`Antigravity models: ${ANTIGRAVITY_TIERS.map((tier) => `${tier}=${config.models[tier]}`).join(", ")}, otherwise ${config.defaultModel}`);
+          if (config.aliases.size > 0) {
+            console.log(`Antigravity aliases: ${[...config.aliases].map(([alias, model]) => `${alias}=${model}`).join(", ")}`);
+          }
           console.log(`Antigravity effort: ${config.effort}`);
           console.log(`Endpoint: ${describeProviderEndpoint(found)}`);
         } else {
