@@ -321,7 +321,8 @@ export function renderStatuslineBlock(summary: StatuslineSummary, view: Statusli
   } else if (summary.provider === undefined && loginParts.length > 0) {
     header.push(new Segment("static", loginParts.join(" · ")));
   }
-  if (summary.identity !== undefined && summary.identity !== summary.providerAccountEmail && summary.identity !== summary.loginAccountEmail) {
+  // The identity names which login launched the session, worth its own segment only beside a provider, where it is not the account already named; a plain anthropic session is its login account, so the identity name would repeat it.
+  if (summary.identity !== undefined && summary.provider !== undefined && summary.identity !== summary.providerAccountEmail && summary.identity !== summary.loginAccountEmail) {
     header.push(new Segment("static", summary.identity));
   }
 
