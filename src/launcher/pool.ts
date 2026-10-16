@@ -31,6 +31,8 @@ export interface ResolvePoolParams {
   readonly passthrough: readonly string[];
   /** The size in tokens of the context a resumed conversation continues with, when the launch resumes one whose transcript was read. */
   readonly resumeContextTokens?: number;
+  /** The context tokens already moving onto each member, by identity, for a pick made while other sessions are being placed: the pick must leave room for them. */
+  readonly committedContextTokens?: Readonly<Record<string, number>>;
   /** Sleep until the earliest member returns, instead of refusing, when every member is refused. */
   readonly wait: boolean;
   /** Whether the chosen member is recorded as this directory's last pick. A caller that only reports what a launch would pick passes false, so the report leaves the next launch's keep-warm preference as it was. */
@@ -89,6 +91,7 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
         nowMs,
         resuming,
         ...(params.resumeContextTokens === undefined ? {} : { resumeContextTokens: params.resumeContextTokens }),
+        ...(params.committedContextTokens === undefined ? {} : { committedContextTokens: params.committedContextTokens }),
         identityExists: (name) => loadIdentity(params.paths.identitiesDir, name, params.fs) !== undefined,
         ...(stickyRead.sticky === undefined ? {} : { sticky: stickyRead.sticky }),
       });

@@ -65,6 +65,8 @@ export interface RankPoolInput {
   readonly resuming: boolean;
   /** The size in tokens of the context a resumed conversation continues with. A member that is not the warm account of that conversation must pay to write this context again, so one whose five-hour window cannot cover it is not feasible. */
   readonly resumeContextTokens?: number;
+  /** The context tokens already on their way to each member, by identity: what sessions that moved onto it carry and have not yet written there. The member must afford them as well as `resumeContextTokens`, since they are written there too. */
+  readonly committedContextTokens?: Readonly<Record<string, number>>;
   /** How members are ordered: "score" (the default when absent) by the use-it-or-lose-it ranking, "listed" strictly in `members` order. */
   readonly preference?: "score" | "listed";
 }
@@ -445,10 +447,12 @@ export function rankPool(input: RankPoolInput): PoolRanking {
     const warmHere = sticky?.identity === candidate.identity && nowMs - Date.parse(sticky.at) <= PROMPT_CACHE_TTL_MS;
     if (input.resuming && input.resumeContextTokens !== undefined && fiveHour !== undefined && !warmHere) {
       const perToken = utilisationPerBilledToken(assessment.member.records);
-      const cost = perToken === undefined ? undefined : input.resumeContextTokens * perToken;
+      const committed = input.committedContextTokens?.[candidate.identity] ?? 0;
+      const cost = perToken === undefined ? undefined : (input.resumeContextTokens + committed) * perToken;
       if (cost !== undefined && cost > fiveHour.remaining) {
         dryAfterMs.push(0);
-        drySpots.push(`resuming a ${String(input.resumeContextTokens)}-token conversation here would cost about ${percent(cost)} of the 5h window, which has ${percent(fiveHour.remaining)} left`);
+        const alongside = committed === 0 ? "" : ` (with ${String(committed)} tokens of other conversations already moving here)`;
+        drySpots.push(`resuming a ${String(input.resumeContextTokens)}-token conversation here${alongside} would cost about ${percent(cost)} of the 5h window, which has ${percent(fiveHour.remaining)} left`);
       }
     }
     if (drySpots.length === 0) {

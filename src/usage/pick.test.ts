@@ -341,6 +341,16 @@ describe("rankPool", () => {
       expect(ranking.pick?.identity).toBe("old");
     });
 
+    it("counts the context other conversations are already moving onto a member against what it can afford", () => {
+      const THREE_HUNDRED_K = 300_000;
+      const alone = rank(members(), { sticky: COLD, resuming: true, resumeContextTokens: THREE_HUNDRED_K });
+      expect(alone.pick?.identity).toBe("old");
+      const crowded = rank(members(), { sticky: COLD, resuming: true, resumeContextTokens: THREE_HUNDRED_K, committedContextTokens: { old: THREE_HUNDRED_K } });
+      expect(crowded.pick?.identity).toBe("better");
+      expect(crowded.movedOff?.reason).toContain("300000 tokens of other conversations already moving here");
+      expect(rank(members(), { sticky: COLD, resuming: true, resumeContextTokens: THREE_HUNDRED_K, committedContextTokens: { better: THREE_HUNDRED_K } }).pick?.identity).toBe("old");
+    });
+
     it("sets no constraint for a member whose cost per token has not been measured", () => {
       const unmeasured = [
         member("old", { five: { utilization: U50, resetsInMs: FOUR_HOURS_MS }, seven: { utilization: U90, resetsInMs: SIX_DAYS_MS } }),
