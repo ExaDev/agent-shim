@@ -38,6 +38,23 @@ function findBucket(quota: AntigravityQuotaMap, keys: readonly string[]): Antigr
   return undefined;
 }
 
+/** The quota windows an Antigravity account holds, in display order: each is named for the model family it limits (the Gemini family's five-hour and weekly windows, the third-party Claude and GPT-OSS pair, and Gemini 4 Argon's weekly window of its own) and found by the same bucket ids a model's own selection uses. */
+const QUOTA_FAMILY_WINDOWS = [
+  { label: "Gem 5h", keys: GEMINI_5H_KEYS },
+  { label: "Gem Wk", keys: GEMINI_WEEKLY_KEYS },
+  { label: "3P 5h", keys: THIRD_PARTY_5H_KEYS },
+  { label: "3P Wk", keys: THIRD_PARTY_WEEKLY_KEYS },
+  { label: "Argon Wk", keys: ARGON_WEEKLY_KEYS },
+] as const;
+
+/** Every quota window the map holds, labelled by the family it limits and in a fixed order, whichever model is in use: a session shows the whole account's limits, not just the window its current model draws on. */
+export function antigravityFamilyBuckets(quota: AntigravityQuotaMap): readonly { readonly label: string; readonly bucket: AntigravityQuotaBucket }[] {
+  return QUOTA_FAMILY_WINDOWS.flatMap(({ label, keys }) => {
+    const bucket = findBucket(quota, keys);
+    return bucket === undefined ? [] : [{ label, bucket }];
+  });
+}
+
 /**
  * The five-hour and weekly buckets a model draws from: a gemini model its gemini buckets, any other model the third-party ones. The map is the one the quota endpoint's translation and the Antigravity CLI's own statusline payload share, keyed by bucket id.
  */

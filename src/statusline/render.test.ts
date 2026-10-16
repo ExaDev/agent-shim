@@ -37,6 +37,7 @@ const SUMMARY: StatuslineSummary = {
   loginSeatTier: undefined,
   loginPlan: undefined,
   providerQuotaWindows: [],
+  quotaFamilies: [],
   headroom: undefined,
   fiveHourUsed: 3.6,
   fiveHourResetAt: "2026-10-16T00:38:00.000Z",
@@ -192,6 +193,31 @@ describe("renderStatuslineBlock", () => {
     expect(bars).not.toContain("5h [");
   });
 
+  it("draws every model family's window when the account's quota is per family, whichever model is in use", () => {
+    const bars = stripAnsi(
+      renderStatuslineBlock(
+        {
+          ...SUMMARY,
+          fiveHourUsed: 100,
+          sevenDayUsed: 28,
+          quotaFamilies: [
+            { measures: "Gem 5h", utilization: 1, resetsAt: "2026-10-16T00:38:00.000Z" },
+            { measures: "3P 5h", utilization: 0.0001, resetsAt: "2026-10-16T03:00:00.000Z" },
+            { measures: "3P Wk", utilization: 0.015, resetsAt: "2026-10-21T00:00:00.000Z" },
+          ],
+        },
+        VIEW,
+        WIDE_TERMINAL,
+        NOW_MS,
+      ),
+    );
+    expect(bars).toContain("Gem 5h [");
+    expect(bars).toContain("3P 5h [");
+    expect(bars).toContain("3P Wk [");
+    expect(bars).toContain("1.5%");
+    expect(bars).not.toContain("28.0%");
+  });
+
   it("shows what headroom saved the session at the end of the first line, and nothing when there are no figures", () => {
     const withSavings = stripAnsi(renderStatuslineBlock({ ...SUMMARY, headroom: { tokensSaved: HEADROOM_TOKENS_SAVED, savingsPercent: HEADROOM_SAVINGS_PERCENT, savingsUsd: HEADROOM_SAVINGS_USD } }, VIEW, WIDE_TERMINAL, NOW_MS)).split("\n");
     expect(withSavings[0]?.endsWith("headroom 42k saved · 3.5% overall · $0.13")).toBe(true);
@@ -228,7 +254,7 @@ describe("renderStatuslineBlock", () => {
   it("renders nothing when no segment has data", () => {
     expect(
       renderStatuslineBlock(
-        { identity: undefined, provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, loginAccountEmail: undefined, loginRateLimitTier: undefined, loginOrganizationName: undefined, loginOrganizationType: undefined, loginSeatTier: undefined, loginPlan: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined, providerQuotaWindows: [], headroom: undefined },
+        { identity: undefined, provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, loginAccountEmail: undefined, loginRateLimitTier: undefined, loginOrganizationName: undefined, loginOrganizationType: undefined, loginSeatTier: undefined, loginPlan: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined, providerQuotaWindows: [], quotaFamilies: [], headroom: undefined },
         { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
         NARROW_TERMINAL,
         NOW_MS,

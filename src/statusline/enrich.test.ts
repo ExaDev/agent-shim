@@ -9,6 +9,10 @@ const GEMINI_FIVE_HOUR_USED_PERCENT = 9;
 const ANTIGRAVITY_FIVE_HOUR_USED_PERCENT = 20;
 const ANTIGRAVITY_WEEKLY_USED_PERCENT = 5;
 const FLOAT_PRECISION_DIGITS = 10;
+const THIRD_PARTY_WEEKLY_REMAINING = 0.985;
+const THIRD_PARTY_WEEKLY_USED = 1 - THIRD_PARTY_WEEKLY_REMAINING;
+const ARGON_RESET_SECONDS = 7200;
+const MS_PER_SECOND = 1000;
 const PAYLOAD_FIVE_HOUR_USED_PERCENT = 23.5;
 const PAYLOAD_SEVEN_DAY_USED_PERCENT = 41.2;
 const PAYLOAD_PARTIAL_FIVE_HOUR_USED_PERCENT = 7;
@@ -39,6 +43,44 @@ describe("identityOf", () => {
 });
 
 describe("enrichStatuslinePayload", () => {
+  it("carries every model family's window from the Antigravity CLI's quota map, labelled and in a fixed order", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: {
+        model: { id: "gemini-3.8-flash-medium" },
+        quota: {
+          "3p-weekly": { remaining_fraction: THIRD_PARTY_WEEKLY_REMAINING, reset_in_seconds: 3600 },
+          "gemini-5h": { remaining_fraction: 0, reset_in_seconds: 60 },
+          "gemini-argon-wtu-weekly": { remaining_fraction: 0.75, reset_in_seconds: ARGON_RESET_SECONDS },
+        },
+      },
+      env: {},
+      snapshot: undefined,
+      account: undefined,
+      providerName: undefined,
+      nowMs: NOW_MS,
+      headroom: undefined,
+    });
+    expect(summary.quotaFamilies.map((window) => window.measures)).toEqual(["Gem 5h", "3P Wk", "Argon Wk"]);
+    expect(summary.quotaFamilies[0]?.utilization).toBe(1);
+    expect(summary.quotaFamilies[1]?.utilization).toBeCloseTo(THIRD_PARTY_WEEKLY_USED, FLOAT_PRECISION_DIGITS);
+    expect(summary.quotaFamilies[2]?.resetsAt).toBe(new Date(NOW_MS + ARGON_RESET_SECONDS * MS_PER_SECOND).toISOString());
+  });
+
+  it("carries every family's window for a session on an Antigravity provider, from the snapshot's bucket windows", () => {
+    const snapshot = {
+      schemaVersion: 1,
+      identity: "antigravity",
+      updatedAt: "2026-10-15T20:07:50.836Z",
+      providers: {
+        antigravity: {
+          quota: { windows: [{ measures: "gemini-weekly", utilization: 0.28, resetsAt: "2026-10-22T00:00:00.000Z" }, { measures: "3p-5h", utilization: 0.01, resetsAt: "2026-10-16T03:00:00.000Z" }] },
+        },
+      },
+    } as unknown as UsageSnapshot;
+    const { summary } = enrichStatuslinePayload({ payload: {}, env: { AGENT_SHIM_PROVIDER: "Antigravity" }, snapshot, account: undefined, providerName: "antigravity", nowMs: NOW_MS, headroom: undefined });
+    expect(summary.quotaFamilies.map((window) => window.measures)).toEqual(["Gem Wk", "3P 5h"]);
+  });
+
   it("adds the identity, provider, account and binding windows under one agent_shim key", () => {
     const { payload, summary } = enrichStatuslinePayload({
       payload: { model: { display_name: "gemini-3.8-flash" } },
@@ -60,6 +102,7 @@ describe("enrichStatuslinePayload", () => {
       sevenDayUsed: 28,
       sevenDayResetAt: "2026-10-22T13:52:54.000Z",
       providerQuotaWindows: [],
+      quotaFamilies: [],
     });
     expect(payload).toEqual({ model: { display_name: "gemini-3.8-flash" }, agent_shim: summary });
   });

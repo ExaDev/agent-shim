@@ -1,4 +1,4 @@
-import { selectAntigravityBuckets, type AntigravityQuotaBucket, type AntigravityQuotaMap } from "../antigravity/quota";
+import { antigravityFamilyBuckets, selectAntigravityBuckets, type AntigravityQuotaBucket, type AntigravityQuotaMap } from "../antigravity/quota";
 import type { AccountMetadata, UsageSnapshot } from "../usage/schema";
 import type { HeadroomStats } from "./headroom";
 
@@ -25,6 +25,8 @@ export interface StatuslineSummary {
   readonly sevenDayResetAt: string | undefined;
   /** The scoped provider's own quota windows, as its usage endpoint reports them: a provider outside Anthropic's unified rate-limit family (z.ai's five-hour token window, its monthly tool-call window) carries its usage only here. */
   readonly providerQuotaWindows: readonly ProviderQuotaWindowView[];
+  /** An Antigravity account's windows for every model family at once (Gemini, third party, Argon), labelled by family. Present only when the session's quota source is an Antigravity account's bucket map, and drawn in place of the single pair of windows the active model draws on. */
+  readonly quotaFamilies: readonly ProviderQuotaWindowView[];
   /** What headroom's proxy reports having saved this session, when the session is routed through one that answered. */
   readonly headroom: HeadroomStats | undefined;
 }
@@ -115,16 +117,13 @@ function payloadWindowsOf(payload: unknown): Pick<StatuslineSummary, "fiveHourUs
   return { fiveHourUsed: five?.used, fiveHourResetAt: five?.resetAt, sevenDayUsed: seven?.used, sevenDayResetAt: seven?.resetAt };
 }
 
-/**
- * The windows the Antigravity CLI puts in its statusline payload: a `quota` map keyed by bucket id, each with a remaining fraction and the seconds to its reset, from which the model's five-hour and weekly buckets are picked exactly as the door picks them. A window is drawn as the fraction used.
- */
-function antigravityWindowsOf(payload: unknown, nowMs: number): Pick<StatuslineSummary, "fiveHourUsed" | "fiveHourResetAt" | "sevenDayUsed" | "sevenDayResetAt"> {
+/** The Antigravity CLI's `quota` map from its statusline payload, keyed by bucket id with each bucket's remaining fraction and seconds to reset; undefined when the payload carries none. */
+function antigravityQuotaMapOf(payload: unknown): AntigravityQuotaMap | undefined {
   const quota = isObject(payload) ? payload.quota : undefined;
   if (!isObject(quota)) {
-    return { fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined };
+    return undefined;
   }
-  const model = isObject(payload) && isObject(payload.model) && typeof payload.model.id === "string" ? payload.model.id : undefined;
-  const buckets: AntigravityQuotaMap = Object.fromEntries(
+  return Object.fromEntries(
     Object.entries(quota).flatMap(([key, bucket]) => {
       if (!isObject(bucket)) {
         return [];
@@ -134,14 +133,37 @@ function antigravityWindowsOf(payload: unknown, nowMs: number): Pick<StatuslineS
       return [[key, { ...(typeof remaining === "number" ? { remaining_fraction: remaining } : {}), ...(typeof resetIn === "number" ? { reset_in_seconds: resetIn } : {}) }]];
     }),
   );
-  const { fiveHour, weekly } = selectAntigravityBuckets(buckets, model);
-  const windowOf = (bucket: AntigravityQuotaBucket | undefined): { used: number | undefined; resetAt: string | undefined } => ({
+}
+
+/** A bucket's use as a fraction and the instant it resets, as the statusline draws a window. */
+function bucketView(bucket: AntigravityQuotaBucket | undefined, nowMs: number): { used: number | undefined; resetAt: string | undefined } {
+  return {
     used: bucket?.remaining_fraction === undefined || !Number.isFinite(bucket.remaining_fraction) ? undefined : (1 - Math.min(1, Math.max(0, bucket.remaining_fraction))) * FULL_PERCENT,
     resetAt: bucket?.reset_in_seconds === undefined || !Number.isFinite(bucket.reset_in_seconds) ? undefined : new Date(nowMs + bucket.reset_in_seconds * MS_PER_SECOND).toISOString(),
-  });
-  const five = windowOf(fiveHour);
-  const seven = windowOf(weekly);
+  };
+}
+
+/**
+ * The windows the Antigravity CLI puts in its statusline payload: from the `quota` map, the model's five-hour and weekly buckets, picked exactly as the door picks them. A window is drawn as the fraction used.
+ */
+function antigravityWindowsOf(payload: unknown, nowMs: number): Pick<StatuslineSummary, "fiveHourUsed" | "fiveHourResetAt" | "sevenDayUsed" | "sevenDayResetAt"> {
+  const buckets = antigravityQuotaMapOf(payload);
+  if (buckets === undefined) {
+    return { fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined };
+  }
+  const model = isObject(payload) && isObject(payload.model) && typeof payload.model.id === "string" ? payload.model.id : undefined;
+  const { fiveHour, weekly } = selectAntigravityBuckets(buckets, model);
+  const five = bucketView(fiveHour, nowMs);
+  const seven = bucketView(weekly, nowMs);
   return { fiveHourUsed: five.used, fiveHourResetAt: five.resetAt, sevenDayUsed: seven.used, sevenDayResetAt: seven.resetAt };
+}
+
+/** Every family's window in a bucket map, each as the view a renderer draws. */
+function quotaFamiliesOf(buckets: AntigravityQuotaMap, nowMs: number): readonly ProviderQuotaWindowView[] {
+  return antigravityFamilyBuckets(buckets).flatMap(({ label, bucket }) => {
+    const { used, resetAt } = bucketView(bucket, nowMs);
+    return used === undefined ? [] : [{ measures: label, utilization: used / FULL_PERCENT, resetsAt: resetAt }];
+  });
 }
 
 export interface EnrichParams {
@@ -186,6 +208,7 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     sevenDayUsed: undefined,
     sevenDayResetAt: undefined,
     providerQuotaWindows: [],
+    quotaFamilies: [],
     headroom: params.headroom,
   };
   if (params.snapshot !== undefined) {
@@ -215,10 +238,24 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     const providerQuotaWindows = [...(scopedState?.quota?.windows ?? [])]
       .sort((a, b) => (a.periodMs ?? Number.POSITIVE_INFINITY) - (b.periodMs ?? Number.POSITIVE_INFINITY))
       .map((window) => ({ measures: window.measures, utilization: window.utilization, resetsAt: window.resetsAt }));
-    summary = { ...summary, ...windowsOf(states), providerAccountEmail: email, providerAccountSub: sub, providerPlan: plan, providerQuotaWindows };
+    // An Antigravity account's windows are keyed by the bucket ids its quota endpoint names, and the session's own provider is the only source whose windows describe the account the session spends.
+    const providerBuckets: AntigravityQuotaMap = Object.fromEntries(
+      (scopedState?.quota?.windows ?? []).map((window) => [
+        window.measures,
+        {
+          remaining_fraction: 1 - window.utilization,
+          ...(window.resetsAt === undefined ? {} : { reset_in_seconds: (Date.parse(window.resetsAt) - params.nowMs) / MS_PER_SECOND }),
+        },
+      ]),
+    );
+    summary = { ...summary, ...windowsOf(states), providerAccountEmail: email, providerAccountSub: sub, providerPlan: plan, providerQuotaWindows, quotaFamilies: quotaFamiliesOf(providerBuckets, params.nowMs) };
   }
   if (summary.provider === undefined) {
     // The client's own windows (Claude Code's rate_limits, the Antigravity CLI's quota map) describe exactly the account a providerless session spends, so each present one replaces the snapshot's binding window; a window the payload lacks keeps the snapshot's.
+    const agyBuckets = antigravityQuotaMapOf(params.payload);
+    if (agyBuckets !== undefined) {
+      summary = { ...summary, quotaFamilies: quotaFamiliesOf(agyBuckets, params.nowMs) };
+    }
     for (const own of [antigravityWindowsOf(params.payload, params.nowMs), payloadWindowsOf(params.payload)]) {
       summary = {
         ...summary,

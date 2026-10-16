@@ -363,24 +363,28 @@ export function renderStatuslineBlock(summary: StatuslineSummary, view: Statusli
   }
 
   const quotaGroup: Segment[] = [];
-  if (summary.fiveHourUsed !== undefined) {
-    const fraction = Math.max(0, Math.min(1, summary.fiveHourUsed / FULL_PERCENT));
-    const color = statusColor(fraction, true);
-    quotaGroup.push(new Segment("bar", "", "5h ", ` ${color}${summary.fiveHourUsed.toFixed(1)}%${RESET} (${formatDuration(secondsUntil(summary.fiveHourResetAt, nowMs))})`, fraction, true));
-  }
-  if (summary.sevenDayUsed !== undefined) {
-    const fraction = Math.max(0, Math.min(1, summary.sevenDayUsed / FULL_PERCENT));
-    const color = statusColor(fraction, true);
-    quotaGroup.push(new Segment("bar", "", "Wk ", ` ${color}${summary.sevenDayUsed.toFixed(1)}%${RESET} (${formatDuration(secondsUntil(summary.sevenDayResetAt, nowMs))})`, fraction, true));
-  }
-
-  // A provider outside Anthropic's unified rate-limit family (z.ai) reports its usage only through its own quota windows, which are drawn when no unified window is.
-  if (summary.fiveHourUsed === undefined && summary.sevenDayUsed === undefined) {
-    for (const window of summary.providerQuotaWindows) {
-      const used = window.utilization * FULL_PERCENT;
-      const fraction = Math.max(0, Math.min(1, window.utilization));
-      const color = statusColor(fraction, true);
-      quotaGroup.push(new Segment("bar", "", `${window.measures} `, ` ${color}${used.toFixed(1)}%${RESET} (${formatDuration(secondsUntil(window.resetsAt, nowMs))})`, fraction, true));
+  const drawWindow = (label: string, fraction: number, resetsAt: string | undefined): void => {
+    const clamped = Math.max(0, Math.min(1, fraction));
+    const color = statusColor(clamped, true);
+    quotaGroup.push(new Segment("bar", "", `${label} `, ` ${color}${(fraction * FULL_PERCENT).toFixed(1)}%${RESET} (${formatDuration(secondsUntil(resetsAt, nowMs))})`, clamped, true));
+  };
+  if (summary.quotaFamilies.length > 0) {
+    // An Antigravity account's limits are per model family, so every family's window is drawn whichever model is in use.
+    for (const window of summary.quotaFamilies) {
+      drawWindow(window.measures, window.utilization, window.resetsAt);
+    }
+  } else {
+    if (summary.fiveHourUsed !== undefined) {
+      drawWindow("5h", summary.fiveHourUsed / FULL_PERCENT, summary.fiveHourResetAt);
+    }
+    if (summary.sevenDayUsed !== undefined) {
+      drawWindow("Wk", summary.sevenDayUsed / FULL_PERCENT, summary.sevenDayResetAt);
+    }
+    // A provider outside Anthropic's unified rate-limit family (z.ai) reports its usage only through its own quota windows, which are drawn when no unified window is.
+    if (summary.fiveHourUsed === undefined && summary.sevenDayUsed === undefined) {
+      for (const window of summary.providerQuotaWindows) {
+        drawWindow(window.measures, window.utilization, window.resetsAt);
+      }
     }
   }
 
