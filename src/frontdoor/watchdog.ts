@@ -44,7 +44,7 @@ const { workerData, parentPort } = require("node:worker_threads");
 const fs = require("node:fs");
 const os = require("node:os");
 const inspector = require("node:inspector");
-const { shared, boundMs, checkEveryMs, stateFile, ownPid, action, logFile, respawn, respawnAfterServingMs, awaitPidEnv } = workerData;
+const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnAfterServingMs, awaitPidEnv } = workerData;
 const startedAt = Date.now();
 const counter = new Int32Array(shared);
 let lastValue = Atomics.load(counter, 0);
@@ -146,7 +146,7 @@ const timer = setInterval(() => {
     const [oneMinute, fiveMinutes, fifteenMinutes] = os.loadavg();
     log("machine load at the stall: " + oneMinute.toFixed(1) + " (1m), " + fiveMinutes.toFixed(1) + " (5m), " + fifteenMinutes.toFixed(1) + " (15m) across " + String(os.cpus().length) + " cpus");
     spawnReplacement();
-    describeMainThread(checkEveryMs, action !== "kill-process").then((where) => {
+    describeMainThread(pauseWaitMs, action !== "kill-process").then((where) => {
       log(where);
       if (action === "kill-process") {
         process.kill(ownPid, "SIGKILL");
@@ -171,6 +171,8 @@ export interface ThreadWatchdogParams {
   readonly ownPid: number;
   readonly boundMs: number;
   readonly checkEveryMs: number;
+  /** How long the thread waits for the main thread to pause so its frames can be logged before it ends the process anyway (`DOOR_WATCHDOG_CHECK_MS` in production, the same cadence that bounds how late a stall is noticed). */
+  readonly pauseWaitMs: number;
   readonly action: StallAction;
   /** The door's log file, which the thread appends the stall to before ending the process. Omitted by a host with no log of its own. */
   readonly logFile?: string;
@@ -188,7 +190,7 @@ export function startThreadWatchdog(params: Readonly<ThreadWatchdogParams>): Doo
   const counter = new Int32Array(shared);
   const worker = new Worker(WATCHDOG_SOURCE, {
     eval: true,
-    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnAfterServingMs: params.respawnAfterServingMs, awaitPidEnv: DOOR_AWAIT_PID_ENV },
+    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnAfterServingMs: params.respawnAfterServingMs, awaitPidEnv: DOOR_AWAIT_PID_ENV },
   });
   worker.unref();
   worker.on("message", (message: unknown) => {

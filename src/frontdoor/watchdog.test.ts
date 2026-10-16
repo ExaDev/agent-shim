@@ -17,6 +17,10 @@ const TEST_BOUND_MS = TEST_CHECK_MS * CHECKS_IN_TEST_BOUND;
 const BOUNDS_TO_WAIT_FOR_REPORT = 10;
 const BOUNDS_TO_WAIT_FOR_SILENCE = 4;
 const BOUNDS_TO_BLOCK = 3;
+/** The wait for the main thread to pause for the tests that do not read its frames: none, so a stall is reported as soon as it is seen. */
+const NO_PAUSE_WAIT_MS = 0;
+/** The wait for the test that does read them: a guard against a pause that never comes, not an expectation of how long one takes, so a loaded machine cannot make it flaky. */
+const PAUSE_WAIT_GUARD_MS = 60_000;
 
 describe("the watchdog's derived constants", () => {
   it("is more patient than a launcher is with a door, so a door a launcher still calls busy is never acted on", () => {
@@ -54,7 +58,7 @@ describe("startThreadWatchdog", () => {
         stateFile,
         ownPid: process.pid,
         boundMs: TEST_BOUND_MS,
-        checkEveryMs: TEST_CHECK_MS,
+        checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS,
         action: "report",
         respawnAfterServingMs: 0,
         onReport: (message) => {
@@ -87,7 +91,7 @@ describe("startThreadWatchdog", () => {
 
   it("acts while the main thread is blocked, which is the case it exists for", async () => {
     const reported = new Promise<string>((resolve) => {
-      watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, action: "report", respawnAfterServingMs: 0, onReport: (message) => {
+      watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnAfterServingMs: 0, onReport: (message) => {
           resolve(message);
         } });
     });
@@ -100,7 +104,7 @@ describe("startThreadWatchdog", () => {
 
   it("does nothing once stopped, so a slow orderly retirement is never taken for a stall", async () => {
     const reported: string[] = [];
-    watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, action: "report", respawnAfterServingMs: 0, onReport: (message) => {
+    watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnAfterServingMs: 0, onReport: (message) => {
         reported.push(message);
       } });
     watchdog.stop();
@@ -118,7 +122,7 @@ describe("startThreadWatchdog", () => {
     async function stallWith(extra: { readonly respawnAfterServingMs: number; readonly respawn?: ThreadWatchdogParams["respawn"] }): Promise<string> {
       const logFile = path.join(directory, "frontdoor.log");
       await new Promise<void>((resolve) => {
-        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, action: "report", logFile, ...extra, onReport: () => {
+        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", logFile, ...extra, onReport: () => {
             resolve();
           } });
       });
@@ -135,20 +139,25 @@ describe("startThreadWatchdog", () => {
       expect(log).toMatch(/machine load at the stall: \d+\.\d \(1m\), \d+\.\d \(5m\), \d+\.\d \(15m\) across \d+ cpus/);
     });
 
-    it("says a main thread idle in its event loop could not be paused, rather than naming a frame", async () => {
+    it("says the main thread could not be paused when the wait is over before it was, rather than naming a frame", async () => {
       const log = await stallWith({ respawnAfterServingMs: 0 });
-      expect(log).toMatch(/the main thread could not be paused within \d+ms/);
+      expect(log).toMatch(/the main thread could not be paused within 0ms/);
     });
 
     it("names the function a blocked main thread was held in", async () => {
       const logFile = path.join(directory, "frontdoor.log");
       const reported = new Promise<void>((resolve) => {
-        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, action: "report", logFile, respawnAfterServingMs: 0, onReport: () => {
+        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: PAUSE_WAIT_GUARD_MS, action: "report", logFile, respawnAfterServingMs: 0, onReport: () => {
             resolve();
           } });
       });
+      const sleeper = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+      // Holds this thread until the watchdog has logged where it found it, so the test depends on no timing: the pause interrupts the wait, the thread logs the frames and resumes it, and the log then holds the line this loop is waiting for.
       function holdTheLoopHere(): void {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)), 0, 0, TEST_BOUND_MS * BOUNDS_TO_BLOCK);
+        const deadline = Date.now() + PAUSE_WAIT_GUARD_MS;
+        while (Date.now() < deadline && !(fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : "").includes("the main thread")) {
+          Atomics.wait(sleeper, 0, 0, TEST_CHECK_MS);
+        }
       }
       holdTheLoopHere();
       await reported;
