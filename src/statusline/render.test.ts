@@ -12,6 +12,7 @@ const NARROW_MAX_LINE = 36;
 const HEADROOM_TOKENS_SAVED = 41_816;
 const HEADROOM_SAVINGS_PERCENT = 3.5;
 const HEADROOM_SAVINGS_USD = 0.13;
+const HEADROOM_TINY_PERCENT = 0.01;
 const GREEN_CODE = "32";
 const YELLOW_CODE = "33";
 const RED_CODE = "31";
@@ -193,7 +194,9 @@ describe("renderStatuslineBlock", () => {
 
   it("shows what headroom saved the session at the end of the first line, and nothing when there are no figures", () => {
     const withSavings = stripAnsi(renderStatuslineBlock({ ...SUMMARY, headroom: { tokensSaved: HEADROOM_TOKENS_SAVED, savingsPercent: HEADROOM_SAVINGS_PERCENT, savingsUsd: HEADROOM_SAVINGS_USD } }, VIEW, WIDE_TERMINAL, NOW_MS)).split("\n");
-    expect(withSavings[0]?.endsWith("headroom 42k saved · 3.5% · $0.13")).toBe(true);
+    expect(withSavings[0]?.endsWith("headroom 42k saved · 3.5% overall · $0.13")).toBe(true);
+    const tiny = stripAnsi(renderStatuslineBlock({ ...SUMMARY, headroom: { tokensSaved: HEADROOM_TOKENS_SAVED, savingsPercent: HEADROOM_TINY_PERCENT, savingsUsd: undefined } }, VIEW, WIDE_TERMINAL, NOW_MS));
+    expect(tiny).toContain("0.01% overall");
     const partial = stripAnsi(renderStatuslineBlock({ ...SUMMARY, headroom: { tokensSaved: HEADROOM_TOKENS_SAVED, savingsPercent: undefined, savingsUsd: undefined } }, VIEW, WIDE_TERMINAL, NOW_MS));
     expect(partial).toContain("headroom 42k saved");
     expect(partial).not.toContain("$");
