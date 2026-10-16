@@ -37,6 +37,7 @@ describe("resolveAntigravityConfig", () => {
       mode: ANTIGRAVITY_DEFAULT_MODE,
       defaultModel: ANTIGRAVITY_DEFAULT_MODEL,
       models: ANTIGRAVITY_DEFAULT_TIER_MODELS,
+      aliases: new Map(),
       effort: ANTIGRAVITY_DEFAULT_EFFORT,
       cloud: { endpoint: undefined, projectId: undefined, location: undefined },
       local: { command: undefined, socketPath: undefined },
@@ -95,9 +96,43 @@ describe("mapModel", () => {
     expect(translated.model).toBe("gemini-3.8-flash-high");
   });
 
-  it("maps claude names with effort suffixes by tier", () => {
-    expect(mapModel("claude-sonnet-5-5-high", defaults)).toBe("gemini-3.8-flash-medium");
-    expect(mapModel("claude-opus-5-5-high", defaults)).toBe("gemini-3.8-flash-high");
+  it("maps the claude names Claude Code sends by tier", () => {
+    expect(mapModel("claude-sonnet-5-5", defaults)).toBe("gemini-3.8-flash-medium");
+    expect(mapModel("claude-opus-5-5[1m]", defaults)).toBe("gemini-3.8-flash-high");
+  });
+
+  it("passes a backend Claude, thinking or GPT-OSS model name through, so /model can select it", () => {
+    expect(mapModel("claude-sonnet-5-5-high", defaults)).toBe("claude-sonnet-5-5-high");
+    expect(mapModel("claude-opus-4-6-thinking[1m]", defaults)).toBe("claude-opus-4-6-thinking");
+    expect(mapModel("gpt-oss-120b-medium", defaults)).toBe("gpt-oss-120b-medium");
+    expect(mapModel("gemini-4-argon-medium", defaults)).toBe("gemini-4-argon-medium");
+  });
+
+  describe("aliases", () => {
+    const aliased = resolveAntigravityConfig({ models: { sonnet: "claude-sonnet-5-5-medium", Fast: "gemini-3.8-flash-low", oss: "gpt-oss-120b-medium" } });
+
+    it("matches a configured alias against the whole name, ignoring case and a context marker", () => {
+      expect(mapModel("fast", aliased)).toBe("gemini-3.8-flash-low");
+      expect(mapModel("OSS[1m]", aliased)).toBe("gpt-oss-120b-medium");
+    });
+
+    it("does not match an alias inside a longer name", () => {
+      expect(mapModel("fastest-thing", aliased)).toBe(aliased.defaultModel);
+    });
+
+    it("outranks the pass-through of backend names", () => {
+      const redirected = resolveAntigravityConfig({ models: { "gemini-3.8-flash-high": "claude-opus-5-5-high" } });
+      expect(mapModel("gemini-3.8-flash-high", redirected)).toBe("claude-opus-5-5-high");
+    });
+
+    it("keeps a tier key a tier override, matched by substring", () => {
+      expect(mapModel("claude-sonnet-5-5", aliased)).toBe("claude-sonnet-5-5-medium");
+    });
+
+    it("completes an alias's bare family with the request's effort, as a tier model does", () => {
+      const bare = resolveAntigravityConfig({ models: { pro: "gemini-3.8-pro-medium" } });
+      expect(translateRequest(request({ model: "gemini-3.8-pro", output_config: { effort: "high" }, messages: [{ role: "user", content: "Hi" }] }), bare).model).toBe("gemini-3.8-pro-high");
+    });
   });
 
   it("completes a bare family member with the request's effort suffix, and leaves every other spelling alone", () => {
