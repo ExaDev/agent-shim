@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { rememberToolCallSignature } from "./signatures";
+import { rememberToolCallSignature, UNVERIFIED_THOUGHT_SIGNATURE } from "./signatures";
 
 import {
   ANTIGRAVITY_DEFAULT_EFFORT,
@@ -194,7 +194,7 @@ describe("translateRequest", () => {
     });
   });
 
-  it("echoes a remembered call signature back onto its function call part, and nothing onto an unremembered one", () => {
+  it("echoes a remembered call signature back onto its function call part, and the backend's bypass value onto an unremembered one", () => {
     rememberToolCallSignature("call_signed", "sig-abc");
     const req = request({
       model: "claude-sonnet-4-5",
@@ -220,7 +220,7 @@ describe("translateRequest", () => {
     const modelTurn = translated.request.contents.find((content) => content.role === "model");
     expect(modelTurn?.parts).toEqual([
       { functionCall: { name: "bash_exec", args: { cmd: "ls" } }, thoughtSignature: "sig-abc" },
-      { functionCall: { name: "bash_exec", args: { cmd: "pwd" } } },
+      { functionCall: { name: "bash_exec", args: { cmd: "pwd" } }, thoughtSignature: UNVERIFIED_THOUGHT_SIGNATURE },
     ]);
   });
 
@@ -268,6 +268,7 @@ describe("translateRequest", () => {
     expect(contents[1]?.parts[0]).toEqual({ text: "Running command" });
     expect(contents[1]?.parts[1]).toEqual({
       functionCall: { name: "bash_exec", args: { cmd: "ls" } },
+      thoughtSignature: UNVERIFIED_THOUGHT_SIGNATURE,
     });
 
     expect(contents[2]?.role).toBe("user");
