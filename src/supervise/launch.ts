@@ -2,18 +2,21 @@ import { randomUUID } from "node:crypto";
 
 import type { Pool } from "../config/schema";
 import type { FarmRuntime, LaunchPlan } from "../launcher";
-import { initialConversationOf, type SupervisedLaunch } from "../launcher/claudeSession";
+import { hasSettingsArgument, initialConversationOf, type SupervisedLaunch } from "../launcher/claudeSession";
 import { resolvePoolLaunch } from "../launcher/pool";
 import type { LogPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { refreshPools } from "../poolUsageRefresh";
-import { realFarmFs, realFsPort, type DaemonSpawner } from "../realPorts";
+import { realFarmFs, realFsPort, selfInvocation, type DaemonSpawner } from "../realPorts";
 import { latestConversationId, resumedContextTokens } from "../usage/resumeContext";
+import { createCompactionDeps } from "./compactionDeps";
 import { quotaHitOf } from "./limit";
+import { markHooksSettings } from "./marks";
 import { createMover } from "./move";
-import { realSignalPort, realSupervisedSpawnPort, realTimerPort, realWatchUsage, resetTerminal } from "./realPorts";
-import { registerSupervised, unregisterSupervised } from "./registry";
-import { supervise } from "./supervise";
+import { createRealCompactor } from "./realCompact";
+import { realSignalPort, realSupervisedSpawnPort, realTimerPort, realWatchDirectory, resetTerminal } from "./realPorts";
+import { registerSupervised, stateDirOf, unregisterSupervised } from "./registry";
+import { supervise, type CompactionDeps } from "./supervise";
 
 /** What `runSupervised` needs from the launcher that calls it. */
 export interface RunSupervisedParams {
@@ -49,6 +52,28 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
     log.warn(`agent-shim: pool "${pool}" resumes on a spent quota, but this launch runs unsupervised: ${first.reason}`);
     return undefined;
   }
+  // Compacting needs to know when a turn begins and ends, which the session's own hooks tell it. They are passed with `--settings`, which a launch that passes its own cannot take.
+  let launch: SupervisedLaunch = first;
+  let compaction: CompactionDeps | undefined;
+  const policy = params.pools[pool];
+  if (policy?.compactBeforeLimit === true) {
+    if (hasSettingsArgument(params.passthrough)) {
+      log.warn(`agent-shim: pool "${pool}" compacts before its quota is spent, which needs --settings for its turn hooks; this launch passes its own, so it moves without compacting`);
+    } else {
+      launch = { ...first, settings: markHooksSettings(selfInvocation([]), paths.root, pool, first.sessionId) };
+      compaction = createCompactionDeps({
+        paths,
+        fs: realFarmFs,
+        pool,
+        policy,
+        pid: farm.lock.pid,
+        now: farm.now,
+        isRunning: farm.lock.isRunning,
+        sleep: farm.lock.sleep,
+        compact: createRealCompactor({ paths, spawnDaemon: params.spawnDaemon }),
+      });
+    }
+  }
   const mover = createMover({
     paths,
     fs: realFsPort,
@@ -72,7 +97,15 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
       spawn: realSupervisedSpawnPort,
       signals: realSignalPort,
       timer: realTimerPort,
-      watchUsage: realWatchUsage(paths.usageSnapshotsDir, log),
+      watchChanges: (identity, onChange) => {
+        const stopSnapshot = realWatchDirectory(paths.usageSnapshotsDir, (filename) => filename === `${identity}.json`, `${identity}'s usage`, log)(onChange);
+        // The end of a turn is recorded after its last response has updated the snapshot, so a session that has just gone idle is only seen by watching the state. The whole pool's state is watched: a sibling that finished compacting frees the identity's slot for the next session.
+        const stopState = compaction === undefined ? undefined : realWatchDirectory(stateDirOf(paths, pool), (filename) => filename.endsWith(".json"), "the pool's sessions", log)(onChange);
+        return () => {
+          stopSnapshot();
+          stopState?.();
+        };
+      },
       quotaHit: (identity, sessionId, sinceMs) => quotaHitOf(realFarmFs, paths, identity, sessionId, sinceMs, farm.now()),
       decideMove: async (request) => {
         // The ranking reads recorded usage, which only moves when a request passes the door: members whose record has gone stale are asked for current figures first, as at a launch.
@@ -80,6 +113,7 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
         return mover(request);
       },
       contextTokens: (sessionId) => resumedContextTokens(farm.fs, { claudeHome: farm.claudeHome, cwd: farm.cwd, passthrough: ["--resume", sessionId] }),
+      ...(compaction === undefined ? {} : { compaction }),
       register: (session) => {
         registerSupervised(realFarmFs, paths, session);
       },
@@ -90,6 +124,6 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
       now: farm.now,
       log,
     },
-    first,
+    launch,
   );
 }

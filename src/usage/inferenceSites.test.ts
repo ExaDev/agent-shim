@@ -4,12 +4,13 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * agent-shim sends a model request itself in two places, each behind something the person configured, and queries quota in one place that sends none. Any other file that loads the Agent SDK is a new way to spend tokens or start a window, and has to be added here deliberately, with the configuration that justifies it.
+ * agent-shim sends a model request itself in three places, each behind something the person configured, and queries quota in one place that sends none. Any other file that loads the Agent SDK is a new way to spend tokens or start a window, and has to be added here deliberately, with the configuration that justifies it.
  */
 const SDK_SITES: Readonly<Record<string, string>> = {
   "usage/realWindowOpener.ts": "sends one real request: only for an identity with an anchor",
   "usage/realJobRunner.ts": "sends the job's prompt: only for a job the person added",
   "usage/realAnthropicUsageProbe.ts": "calls the SDK's usage control request and sends no model request",
+  "supervise/realCompact.ts": "sends one summarisation request over a session's own context: only for a pool the person set to compact before its quota is spent",
 };
 
 function sourceFiles(directory: string): string[] {

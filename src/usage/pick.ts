@@ -179,7 +179,7 @@ function billedTokensOf(record: UsageRecord): number {
 /**
  * How much five-hour utilisation one billed token costs this member, measured over its records in the current instance of the window, or undefined without two readings in which utilisation rose over tokens that were billed. It converts a resumed conversation's context size into the share of the window rewriting it would take.
  */
-function utilisationPerBilledToken(records: readonly UsageRecord[]): number | undefined {
+export function utilisationPerBilledToken(records: readonly UsageRecord[]): number | undefined {
   const points: { resetsAt: string; utilization: number; billed: number }[] = [];
   for (const record of records) {
     const window = record.rateLimitHeaders === undefined ? undefined : parseUnifiedRateLimit(record.rateLimitHeaders)?.fiveHour;
