@@ -249,7 +249,7 @@ export const ANTIGRAVITY_DEFAULT_TIER_MODELS: Readonly<Record<AntigravityTier, r
 export const ANTIGRAVITY_DEFAULT_EFFORT: AntigravityEffort = "low";
 
 /** One backend model, or an ordered list of candidates a request is routed across by available quota. */
-export const AntigravityModelTargetSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
+const AntigravityModelTargetSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
 
 /**
  * How an Antigravity provider translates Claude Code's requests and connects to its backend.
