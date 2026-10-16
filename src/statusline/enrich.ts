@@ -7,6 +7,8 @@ export interface StatuslineSummary {
   readonly identity: string | undefined;
   readonly provider: string | undefined;
   readonly providerAccountEmail: string | undefined;
+  readonly providerAccountSub: string | undefined;
+  readonly providerPlan: string | undefined;
   readonly fiveHourUsed: number | undefined;
   readonly fiveHourResetAt: string | undefined;
   readonly sevenDayUsed: number | undefined;
@@ -81,6 +83,8 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     identity,
     provider: params.env.AGENT_SHIM_PROVIDER === undefined || params.env.AGENT_SHIM_PROVIDER === "" ? undefined : params.env.AGENT_SHIM_PROVIDER,
     providerAccountEmail: undefined,
+    providerAccountSub: undefined,
+    providerPlan: undefined,
     fiveHourUsed: undefined,
     fiveHourResetAt: undefined,
     sevenDayUsed: undefined,
@@ -91,13 +95,24 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     const scopedState = scopedName === undefined ? undefined : params.snapshot.providers[scopedName];
     const states = scopedState === undefined ? Object.values(params.snapshot.providers) : [scopedState];
     let email: string | undefined;
+    let sub: string | undefined;
+    let plan: string | undefined;
     for (const state of states) {
-      const candidate = state.quota?.account?.email;
-      if (email === undefined && typeof candidate === "string" && candidate !== "") {
-        email = candidate;
+      const account = state.quota?.account;
+      const candidateEmail = account?.email;
+      if (email === undefined && typeof candidateEmail === "string" && candidateEmail !== "") {
+        email = candidateEmail;
+      }
+      const candidateSub = account?.accountId;
+      if (sub === undefined && typeof candidateSub === "string" && candidateSub !== "") {
+        sub = candidateSub;
+      }
+      const candidatePlan = state.quota?.level;
+      if (plan === undefined && typeof candidatePlan === "string" && candidatePlan !== "") {
+        plan = candidatePlan;
       }
     }
-    summary = { ...summary, ...windowsOf(states), providerAccountEmail: email };
+    summary = { ...summary, ...windowsOf(states), providerAccountEmail: email, providerAccountSub: sub, providerPlan: plan };
   }
   if (typeof params.payload !== "object" || params.payload === null || Array.isArray(params.payload)) {
     return { payload: params.payload, summary };

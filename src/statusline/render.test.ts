@@ -13,6 +13,8 @@ const SUMMARY: StatuslineSummary = {
   identity: "antigravity",
   provider: "Antigravity",
   providerAccountEmail: "ada@example.com",
+  providerAccountSub: "123456789012345678901",
+  providerPlan: "Pro",
   fiveHourUsed: 3.6,
   fiveHourResetAt: "2026-10-16T00:38:00.000Z",
   sevenDayUsed: 28.2,
@@ -37,10 +39,10 @@ function stripAnsi(text: string): string {
 }
 
 describe("renderStatuslineBlock", () => {
-  it("lays the model on its own first line, the context and quota bars below with fills that expand to the terminal's width", () => {
+  it("lays the model, provider account and identity on the first line, the context and quota bars below with fills that expand to the terminal's width", () => {
     const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, WIDE_TERMINAL, NOW_MS)).split("\n");
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toBe("Sonnet 5.5");
+    expect(lines[0]).toBe("Sonnet 5.5 | Antigravity · ada@example.com · Pro | antigravity");
     expect(lines[1]).toContain("Ctx 634k/1M");
     expect(lines[1]).toContain("63.4%");
     expect(lines[1]).toContain("Cache: 99%");
@@ -48,7 +50,7 @@ describe("renderStatuslineBlock", () => {
     expect(lines[1]).toContain("3.6% (38m)");
     expect(lines[1]).toContain("Wk ");
     expect(lines[1]).toContain("28.2% (6d 13h)");
-    expect(lines[1]).toContain("Antigravity · ada@example.com");
+    expect(lines[1]).not.toContain("Antigravity");
     const bars = lines[1];
     if (bars !== undefined) {
       expect(bars.length).toBeLessThanOrEqual(WIDE_TERMINAL_MAX);
@@ -74,7 +76,7 @@ describe("renderStatuslineBlock", () => {
   it("renders nothing when no segment has data", () => {
     expect(
       renderStatuslineBlock(
-        { identity: undefined, provider: undefined, providerAccountEmail: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined },
+        { identity: undefined, provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined },
         { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
         NARROW_TERMINAL,
         NOW_MS,

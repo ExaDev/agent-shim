@@ -190,12 +190,19 @@ function layoutGrouped(group1: readonly Segment[], group2: readonly Segment[], m
 }
 
 /**
- * The built-in statusline, laid out and coloured the way the Antigravity CLI's own statusline is: the model on the first line (with room for what joins it there), then the context window's use (tokens against the window, the prompt cache's hit percentage) and the quota windows the door reports, each a bar that fills with use and turns yellow then red, one line when they fit and two when they do not.
+ * The built-in statusline, laid out and coloured the way the Antigravity CLI's own statusline is: the model, the provider's account (email and subscription plan) and the identity when it is not that account, on the first line; then the context window's use (tokens against the window, the prompt cache's hit percentage) and the quota windows the door reports, each a bar that fills with use and turns yellow then red, one line when they fit and two when they do not.
  */
 export function renderStatuslineBlock(summary: StatuslineSummary, view: StatuslinePayloadView, terminalWidth: number, nowMs: number): string {
   const header: Segment[] = [];
   if (view.modelDisplayName !== undefined && view.modelDisplayName !== "") {
     header.push(new Segment("static", view.modelDisplayName));
+  }
+  if (summary.provider !== undefined) {
+    const account = [summary.providerAccountEmail, summary.providerPlan].filter((part) => part !== undefined);
+    header.push(new Segment("static", account.length > 0 ? `${summary.provider} · ${account.join(" · ")}` : summary.provider));
+  }
+  if (summary.identity !== undefined && summary.identity !== summary.providerAccountEmail) {
+    header.push(new Segment("static", summary.identity));
   }
 
   const contextGroup: Segment[] = [];
@@ -218,9 +225,6 @@ export function renderStatuslineBlock(summary: StatuslineSummary, view: Statusli
     const fraction = Math.max(0, Math.min(1, summary.sevenDayUsed / FULL_PERCENT));
     const color = statusColor(fraction, true);
     quotaGroup.push(new Segment("bar", "", "Wk ", ` ${color}${summary.sevenDayUsed.toFixed(1)}%${RESET} (${formatDuration(secondsUntil(summary.sevenDayResetAt, nowMs))})`, fraction, true));
-  }
-  if (summary.provider !== undefined) {
-    quotaGroup.push(new Segment("static", summary.providerAccountEmail === undefined ? summary.provider : `${summary.provider} · ${summary.providerAccountEmail}`));
   }
 
   const width = Math.max(TWENTY, terminalWidth - RESERVED_COLUMNS);
