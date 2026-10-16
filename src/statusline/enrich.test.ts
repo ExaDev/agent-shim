@@ -88,9 +88,12 @@ describe("enrichStatuslinePayload", () => {
       payload: {},
       env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: work", AGENT_SHIM_PROVIDER: "Antigravity" },
       snapshot: SNAPSHOT,
-      account: { emailAddress: "work@example.com", organizationRateLimitTier: "default_claude_max_5x", userRateLimitTier: "claude_pro" },
+      account: { emailAddress: "work@example.com", organizationName: "ExampleOrg", organizationType: "claude_team", seatTier: "team_tier_1", organizationRateLimitTier: "default_claude_max_5x", userRateLimitTier: "claude_pro" },
     });
     expect(summary.loginAccountEmail).toBe("work@example.com");
     expect(summary.loginRateLimitTier).toBe("claude_pro");
+    expect(summary.loginOrganizationName).toBe("ExampleOrg");
+    expect(summary.loginOrganizationType).toBe("claude_team");
+    expect(summary.loginSeatTier).toBe("team_tier_1");
   });
 });
