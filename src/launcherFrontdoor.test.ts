@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { HeadroomPort } from "./launcher/ports";
 import { runLauncher } from "./launcher";
-import { captureExitCode, discovered, FAKE_HOME, FAKE_TRUST_BUNDLE, fakeCredentials, fakeFs, fakeFrontDoorPort, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
+import { captureExitCode, discovered, FAKE_HOME, FAKE_TRUST_BUNDLE, fakeCredentials, fakeFs, fakeFrontDoorPort, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv, reportedRow } from "./test-helpers";
 
 const FRONTDOOR_PORT = 4100;
 const HEADROOM_SOCKET = "/home/testuser/.agent-shim/headroom/run/8123.sock";
@@ -184,7 +184,7 @@ describe("runLauncher with a provider", () => {
     expect(frontdoor.ensures()).toBe(1);
     expect(childEnv.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(childEnv.HTTPS_PROXY).toContain("127.0.0.1");
-    expect(log.infos.join("\n")).toContain("OAuth via the door's CONNECT surface");
+    expect(reportedRow(log, "routing")?.detail).toContain("OAuth via CONNECT");
     expect(frontdoor.releases()).toBeGreaterThan(0);
   });
 

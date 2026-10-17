@@ -13,7 +13,8 @@ import { expect, vi, type Mock } from "vitest";
 
 import { runLauncher, type FarmRuntime, type RunLauncherParams } from "./launcher";
 import type { CredentialCommandResult, CredentialPort } from "./credential";
-import type { FsPort, FrontDoorPort, LogPort, ProcPort, SpawnPort, SpawnResult } from "./launcher/ports";
+import type { FsPort, FrontDoorPort, LogPort, ProcPort, ReportRow, SpawnPort, SpawnResult } from "./launcher/ports";
+import { renderReport } from "./launcher/report";
 import { buildLayoutPaths } from "./paths";
 import type { CascadeInput } from "./resolve/walk";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
@@ -482,18 +483,30 @@ export function admitLaunchToken(token: string): PipelineDeps["admit"] {
   return (request) => (request.headers[AUTH_HEADER] === token ? { ok: true, headers: { ...request.forwardable } } : { ok: false, message: "no live capability" });
 }
 
-export function fakeLog(): LogPort & { infos: string[]; warns: string[]; errors: string[] } {
+/** A `LogPort` that records what it is given: `infos` holds information lines and the lines of every report rendered as plain text, `reports` the rows of each report as data. */
+export function fakeLog(): LogPort & { infos: string[]; warns: string[]; errors: string[]; reports: (readonly ReportRow[])[] } {
   const infos: string[] = [];
+  const reports: (readonly ReportRow[])[] = [];
   const warns: string[] = [];
   const errors: string[] = [];
   return {
     infos,
     warns,
     errors,
+    reports,
     info: (message) => { infos.push(message); },
+    report: (rows) => {
+      reports.push(rows);
+      infos.push(...renderReport(rows, (_formats, text) => text));
+    },
     warn: (message) => { warns.push(message); },
     error: (message) => { errors.push(message); },
   };
+}
+
+/** The row a launch reported under `label`, from a `fakeLog`, or undefined when it reported none. */
+export function reportedRow(log: Readonly<{ reports: readonly (readonly ReportRow[])[] }>, label: string): ReportRow | undefined {
+  return log.reports.flat().find((row) => row.label === label);
 }
 
 export function fakeSpawn(result: SpawnResult = { status: 0, signal: null }): SpawnPort & { spawnSync: Mock<SpawnPort["spawnSync"]> } {

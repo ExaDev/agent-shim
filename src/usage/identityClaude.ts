@@ -54,6 +54,7 @@ export async function withIdentityClaude<T>(params: Readonly<IdentityClaudeParam
       },
       log: {
         info: () => undefined,
+        report: () => undefined,
         warn: () => undefined,
         error: (message) => {
           refusals.push(message);
