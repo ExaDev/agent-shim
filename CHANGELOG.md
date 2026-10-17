@@ -1,3 +1,9 @@
+## [11.38.0](https://github.com/ExaDev/agent-shim/compare/v11.37.0...v11.38.0) (2026-10-17)
+
+### Features
+
+* **frontdoor:** route qualified model names from a provider-less session ([77d55e3](https://github.com/ExaDev/agent-shim/commit/77d55e31037255c3a46a6ba3ce63750aaaac01f1))
+
 ## [11.37.0](https://github.com/ExaDev/agent-shim/compare/v11.36.0...v11.37.0) (2026-10-17)
 
 ### Features
