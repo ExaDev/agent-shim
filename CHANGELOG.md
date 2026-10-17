@@ -1,3 +1,9 @@
+## [11.40.4](https://github.com/ExaDev/agent-shim/compare/v11.40.3...v11.40.4) (2026-10-17)
+
+### Bug Fixes
+
+* **models:** say how account and family members are served instead of reading as spent ([7cda506](https://github.com/ExaDev/agent-shim/commit/7cda50696a2046c9594e22152541c8eec019bc77))
+
 ## [11.40.3](https://github.com/ExaDev/agent-shim/compare/v11.40.2...v11.40.3) (2026-10-17)
 
 ### Bug Fixes
