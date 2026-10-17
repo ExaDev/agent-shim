@@ -44,6 +44,17 @@ function providerQuotaOf(paths: LayoutPaths): (provider: string) => Readonly<Par
   };
 }
 
+/** What `explain` says of the members the door does not choose by quota: an account member is served by relaunching the session under its identity, so no signal ranks it, and a family member is resolved from the live catalogues, which the door does not read yet. A member is listed with how it is served so an account-only model never reads as spent. */
+export function describeUnroutedMembers(members: readonly string[]): readonly string[] {
+  return members.flatMap((member) => {
+    if (member.startsWith("acct:")) {
+      const [identity] = member.slice("acct:".length).split("/");
+      return [`${member} is served by relaunching the session under identity "${identity ?? ""}", so no quota signal ranks it`];
+    }
+    return member.startsWith("family:") ? [`${member} is resolved from the live catalogues, which the door does not read yet, so it is not a candidate`] : [];
+  });
+}
+
 /** Explains one virtual model's choice: the member its mode picks over the live signals, and why each candidate stands where it does. */
 function explainVirtualModel(paths: LayoutPaths, name: string): void {
   const models = readModels(paths);
@@ -53,7 +64,8 @@ function explainVirtualModel(paths: LayoutPaths, name: string): void {
   }
   const quotaOf = providerQuotaOf(paths);
   const observations = createTargetObservationStore(realFarmFs, paths);
-  const candidates = expandMembers(name, models)
+  const members = expandMembers(name, models);
+  const candidates = members
     .filter((member) => !member.startsWith("acct:") && !member.startsWith("family:"))
     .map((ref, order) => {
       const [provider] = ref.split("/");
@@ -61,8 +73,10 @@ function explainVirtualModel(paths: LayoutPaths, name: string): void {
     });
   const evaluated = candidates.map((candidate) => ({ candidate, capabilities: { vision: true, tools: true, thinking: true } }));
   const selection = selectMember(definition.mode, evaluated, {});
-  console.log(`${name} (${definition.mode}) chooses ${selection.ref ?? "nothing"}:`);
-  for (const line of selection.reasons) {
+  const unrouted = describeUnroutedMembers(members);
+  console.log(`${name} (${definition.mode}) chooses ${selection.ref ?? (candidates.length === 0 ? "nothing by quota" : "nothing")}:`);
+  // With no routable candidate the engine's own reasons describe an empty set (it reads as every member being spent), so only what the members are is said.
+  for (const line of candidates.length === 0 ? unrouted : [...selection.reasons, ...unrouted]) {
     console.log(`  ${line}`);
   }
 }
