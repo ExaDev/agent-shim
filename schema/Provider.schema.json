@@ -230,6 +230,44 @@
             "additionalProperties": false
           }
         },
+        "catalogue": {
+          "type": "object",
+          "properties": {
+            "tier": {
+              "type": "string",
+              "enum": [
+                "fable",
+                "opus",
+                "sonnet",
+                "haiku"
+              ]
+            },
+            "include": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "exclude": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "required": [
+            "tier"
+          ],
+          "additionalProperties": false
+        },
         "routes": {
           "type": "array",
           "items": {

@@ -1,5 +1,6 @@
 import { resolveAntigravityConfig } from "../antigravity/translate";
 import { resolveCodexConfig } from "../codex/translate";
+import { filterCatalogue, type CatalogueModel } from "../providerCatalogue";
 import { CLAUDE_TIERS, type ClaudeTier, type PickerModel, type Provider } from "../config/schema";
 
 type Tier = ClaudeTier;
@@ -125,20 +126,34 @@ function declaredRow(entry: Readonly<PickerModel>): ModelPickerRow {
   };
 }
 
+/** The rows for the models an `http` provider's catalogue last listed, after its `include` and `exclude` patterns: each borrows the handling of the catalogue's tier, and shows the display name the endpoint gave, when it gave one, in its description. */
+function catalogueRows(provider: Provider, models: readonly CatalogueModel[]): readonly ModelPickerRow[] {
+  if ((provider.kind !== undefined && provider.kind !== "http") || provider.catalogue === undefined) {
+    return [];
+  }
+  const { tier } = provider.catalogue;
+  return filterCatalogue(models, provider.catalogue)
+    .map((model) => ({ model: model.id, label: labelOf(model.id), description: describedAs(model.id, model.name === undefined ? "Listed by the provider" : `Listed by the provider as ${model.name}`), behavesAs: TIER_BEHAVES_AS[tier] }))
+    .sort((left, right) => left.model.localeCompare(right.model));
+}
+
 /**
- * The real models a provider serves, as `/model` rows: the ones its tier settings reach, then the ones its file declares in `pickerModels`, which replace a derived row for the same model. Empty when the provider names none (an `http` provider that leaves every tier to Claude Code's own names and declares nothing), in which case the picker keeps its built-in lineup.
+ * The real models a provider serves, as `/model` rows: the ones its tier settings reach, then the ones its file declares in `pickerModels`, which replace a derived row for the same model, then the ones its catalogue last listed (an `http` provider that opted into one), each only where an earlier part has not already named it. Empty when the provider names none, in which case the picker keeps its built-in lineup.
  */
-export function providerModelRows(provider: Provider): readonly ModelPickerRow[] {
+export function providerModelRows(provider: Provider, catalogue: readonly CatalogueModel[] = []): readonly ModelPickerRow[] {
   const derived = provider.kind === "codex" ? codexRows(provider) : provider.kind === "antigravity" ? antigravityRows(provider) : httpRows(provider);
   const declared = (provider.pickerModels ?? []).map(declaredRow);
   const declaredModels = new Set(declared.map((row) => row.model));
-  return [...derived.filter((row) => !declaredModels.has(row.model)), ...declared];
+  const named = [...derived.filter((row) => !declaredModels.has(row.model)), ...declared];
+  // A model the provider's own settings name with the context marker is the same model its catalogue lists without it, so the marker is ignored when asking whether a row repeats one.
+  const taken = new Set(named.map((row) => labelOf(row.model)));
+  return [...named, ...catalogueRows(provider, catalogue).filter((row) => !taken.has(labelOf(row.model)))];
 }
 
 /**
  * The Claude Code settings, as the JSON `--settings` takes, that make `/model` list `provider`'s real models in place of Claude Code's own names, or `undefined` when the provider names none. The built-in lineup is replaced because it would show a Claude name for a model the provider serves under another. Choosing a row sends that model's name verbatim, which every translator passes through, so a person can pick a backend model directly instead of going through a tier.
  */
-export function modelPickerSettings(provider: Provider): string | undefined {
-  const options = providerModelRows(provider);
+export function modelPickerSettings(provider: Provider, catalogue: readonly CatalogueModel[] = []): string | undefined {
+  const options = providerModelRows(provider, catalogue);
   return options.length === 0 ? undefined : JSON.stringify({ modelPicker: { options, replaceBuiltInOptions: true } });
 }

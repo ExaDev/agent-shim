@@ -24,10 +24,15 @@ import {
   type CodexProviderConfig,
   type CredentialSource,
   PickerModelSchema,
+  ProviderCatalogueSchema,
   type PickerModel,
+  type ProviderCatalogue,
   type Provider,
 } from "./config/schema";
 import { UsageError } from "./cliError";
+import { catalogueCachePath, filterCatalogue, parseCatalogueCache } from "./providerCatalogue";
+import { refreshCatalogueForReal } from "./realCatalogueRefresh";
+import fs from "node:fs";
 import { describeCredential, summariseCredential } from "./credential";
 import { ProviderNotFoundError, providerExists, readProvider, listProviders, type ProviderCredentialTarget, type ProviderKind, describeProviderEndpoint, addProvider, updateProvider, removeProvider } from "./providersStore";
 
@@ -45,6 +50,7 @@ function toProviderView(name: string, provider: Provider): Record<string, unknow
     credential: summariseCredential(provider.credential),
     ...(provider.env === undefined ? {} : { env: provider.env }),
     ...(provider.pickerModels === undefined ? {} : { pickerModels: provider.pickerModels }),
+    ...(isCodexProvider(provider) || isAntigravityProvider(provider) || provider.catalogue === undefined ? {} : { catalogue: provider.catalogue }),
   };
 }
 
@@ -120,8 +126,42 @@ function pickerModelsFromOption(option: Readonly<Record<string, string>>): reado
   });
 }
 
+/** The catalogue options `provider add` and `provider set` share. */
+interface CatalogueOptions {
+  readonly catalogueTier?: ProviderCatalogue["tier"];
+  readonly catalogueInclude?: readonly string[];
+  readonly catalogueExclude?: readonly string[];
+  readonly catalogueUrl?: string;
+}
+
+/** Whether any catalogue option was given. */
+function hasCatalogueOptions(options: CatalogueOptions): boolean {
+  return options.catalogueTier !== undefined || options.catalogueInclude !== undefined || options.catalogueExclude !== undefined || options.catalogueUrl !== undefined;
+}
+
+/**
+ * The catalogue setting the options describe laid over `existing` (the provider's current one, when it has one): a field given replaces that field, and the lists replace whole. `undefined` when no catalogue option was given. The schema refuses a result with no tier, naming it.
+ */
+function catalogueFromOptions(options: CatalogueOptions, existing: ProviderCatalogue | undefined): ProviderCatalogue | undefined {
+  if (!hasCatalogueOptions(options)) {
+    return undefined;
+  }
+  const candidate = {
+    ...existing,
+    ...(options.catalogueTier === undefined ? {} : { tier: options.catalogueTier }),
+    ...(options.catalogueInclude === undefined ? {} : { include: options.catalogueInclude }),
+    ...(options.catalogueExclude === undefined ? {} : { exclude: options.catalogueExclude }),
+    ...(options.catalogueUrl === undefined ? {} : { url: options.catalogueUrl }),
+  };
+  const parsed = ProviderCatalogueSchema.safeParse(candidate);
+  if (!parsed.success) {
+    throw new UsageError(`Invalid catalogue settings: ${parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}. Name the Claude tier its models borrow with --catalogue-tier.`);
+  }
+  return parsed.data;
+}
+
 /** Options `provider add` accepts. */
-interface ProviderAddOptions extends CodexOptions, AntigravityOptions {
+interface ProviderAddOptions extends CodexOptions, AntigravityOptions, CatalogueOptions {
   readonly json?: boolean;
   readonly kind?: ProviderKind;
   readonly displayName: string;
@@ -159,7 +199,7 @@ function codexConfigFromOptions(options: CodexOptions): CodexProviderConfig | un
 }
 
 /** Options `provider set` accepts. */
-interface ProviderSetOptions extends CodexOptions, AntigravityOptions, CredentialCacheOptions {
+interface ProviderSetOptions extends CodexOptions, AntigravityOptions, CatalogueOptions, CredentialCacheOptions {
   readonly json?: boolean;
   readonly displayName?: string;
   readonly baseUrl?: string;
@@ -169,6 +209,7 @@ interface ProviderSetOptions extends CodexOptions, AntigravityOptions, Credentia
   readonly unsetEnv?: readonly string[];
   readonly pickerModel?: Record<string, string>;
   readonly unsetPickerModel?: readonly string[];
+  readonly unsetCatalogue?: boolean;
 }
 
 /** Registers the `agent-shim provider` subcommand tree onto `program`. */
@@ -198,6 +239,10 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       )
       .option("--env <KEY=VALUE>", "Extra environment entry for the child (repeatable).", collectStringPair)
       .option("--picker-model <model=tier>", "A model /model lists beside the ones the tier settings name, with the Claude tier (fable, opus, sonnet or haiku) whose handling it borrows (repeatable).", collectStringPair)
+      .addOption(new Option("--catalogue-tier <tier>", "http providers: list the models the provider's own catalogue reports in /model, each borrowing the handling of this Claude tier.").choices(CLAUDE_TIERS))
+      .option("--catalogue-include <glob>", "http providers: list only catalogue models whose id matches this glob (repeatable).", collectRepeated)
+      .option("--catalogue-exclude <glob>", "http providers: leave out catalogue models whose id matches this glob (repeatable; wins over --catalogue-include).", collectRepeated)
+      .option("--catalogue-url <url>", "http providers: the catalogue endpoint, when it is not /v1/models under the base URL or under its host.")
       .option("--codex-default-model <model>", "Codex providers: the codex model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: the codex model one tier (fable, opus, sonnet or haiku) maps to (repeatable).", collectStringPair)
       .addOption(new Option("--codex-effort <effort>", "Codex providers: the reasoning effort when a request asks for none the backend accepts.").choices(CODEX_EFFORTS))
@@ -217,6 +262,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .action((name: string, options: ProviderAddOptions) => {
         const codex = codexConfigFromOptions(options);
         const antigravity = antigravityConfigFromOptions(options);
+        const catalogue = catalogueFromOptions(options, undefined);
         const created = addProvider(paths, name, {
           ...(options.kind === undefined ? {} : { kind: options.kind }),
           displayName: options.displayName,
@@ -225,6 +271,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(options.credentialTarget === undefined ? {} : { target: options.credentialTarget }),
           ...(options.env === undefined ? {} : { env: options.env }),
           ...(options.pickerModel === undefined ? {} : { pickerModels: pickerModelsFromOption(options.pickerModel) }),
+          ...(catalogue === undefined ? {} : { catalogue }),
           ...(codex === undefined ? {} : { codex }),
           ...(antigravity === undefined ? {} : { antigravity }),
         });
@@ -263,6 +310,11 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--unset-env <KEY>", "Remove an environment entry (repeatable).", collectRepeated)
       .option("--picker-model <model=tier>", "Add or replace a model /model lists beside the ones the tier settings name, with the Claude tier (fable, opus, sonnet or haiku) whose handling it borrows (repeatable).", collectStringPair)
       .option("--unset-picker-model <model>", "Remove a model from the /model list (repeatable).", collectRepeated)
+      .addOption(new Option("--catalogue-tier <tier>", "http providers: list the models the provider's own catalogue reports in /model, each borrowing the handling of this Claude tier.").choices(CLAUDE_TIERS))
+      .option("--catalogue-include <glob>", "http providers: list only catalogue models whose id matches this glob (repeatable).", collectRepeated)
+      .option("--catalogue-exclude <glob>", "http providers: leave out catalogue models whose id matches this glob (repeatable; wins over --catalogue-include).", collectRepeated)
+      .option("--catalogue-url <url>", "http providers: the catalogue endpoint, when it is not /v1/models under the base URL or under its host.")
+      .option("--unset-catalogue", "http providers: stop listing the provider's catalogue in /model.")
       .option("--codex-default-model <model>", "Codex providers: replace the model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: set the codex model one tier maps to (repeatable; other tiers are kept).", collectStringPair)
       .addOption(new Option("--codex-effort <effort>", "Codex providers: replace the default reasoning effort.").choices(CODEX_EFFORTS))
@@ -286,12 +338,17 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         const { json, ...options } = allOptions;
         if (Object.entries(allOptions).every(([key, value]) => key === "json" || value === undefined)) {
           throw new UsageError(
-            "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, a --credential-cache option, --env, --unset-env, --picker-model, --unset-picker-model, or codex/antigravity settings.",
+            "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, a --credential-cache option, --env, --unset-env, --picker-model, --unset-picker-model, a --catalogue option, --unset-catalogue, or codex/antigravity settings.",
           );
         }
         const codex = codexConfigFromOptions(options);
         const antigravity = antigravityConfigFromOptions(options);
         const cache = cacheChange(options, readProvider(paths, name)?.credential.cache);
+        if (options.unsetCatalogue === true && hasCatalogueOptions(options)) {
+          throw new UsageError("--unset-catalogue cannot be combined with another --catalogue option.");
+        }
+        const existingProvider = readProvider(paths, name);
+        const catalogue = options.unsetCatalogue === true ? false : catalogueFromOptions(options, existingProvider !== undefined && !isCodexProvider(existingProvider) && !isAntigravityProvider(existingProvider) ? existingProvider.catalogue : undefined);
         const updated = updateProvider(paths, name, {
           ...(codex === undefined ? {} : { codex }),
           ...(antigravity === undefined ? {} : { antigravity }),
@@ -304,6 +361,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(options.unsetEnv === undefined ? {} : { unsetEnv: options.unsetEnv }),
           ...(options.pickerModel === undefined ? {} : { pickerModels: pickerModelsFromOption(options.pickerModel) }),
           ...(options.unsetPickerModel === undefined ? {} : { unsetPickerModels: options.unsetPickerModel }),
+          ...(catalogue === undefined ? {} : { catalogue }),
         });
         reportMutation(json, { action: "updated", kind: "provider", name, value: updated }, () => {
           console.log(`Updated provider "${name}" (${describeProviderEndpoint(updated)}, credential ${describeCredential(updated.credential)}).`);
@@ -383,8 +441,45 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         if (found.pickerModels !== undefined) {
           console.log(`Picker models: ${found.pickerModels.map((entry) => `${entry.model} (${entry.tier})`).join(", ")}`);
         }
+        if (!isCodexProvider(found) && !isAntigravityProvider(found) && found.catalogue !== undefined) {
+          const { tier, include, exclude, url } = found.catalogue;
+          console.log(`Catalogue: tier ${tier}${include === undefined ? "" : `, include ${include.join(" ")}`}${exclude === undefined ? "" : `, exclude ${exclude.join(" ")}`}${url === undefined ? "" : `, url ${url}`} (see \`provider models ${name}\`)`);
+        }
       }),
     ["agent-shim provider show z", "agent-shim provider show z --json"],
+  );
+
+  withExamples(
+    provider
+      .command("models <name>")
+      .description("Show the model catalogue an http provider with a catalogue setting last fetched, and which of its models /model lists. The front door fetches it in the background; --refresh fetches it now.")
+      .option("--refresh", "Fetch the catalogue now instead of reading the last one.")
+      .option("--json", "Print the catalogue as JSON.")
+      .action(async (name: string, options: Readonly<{ refresh?: boolean; json?: boolean }>) => {
+        const found = readProvider(paths, name);
+        if (found === undefined) {
+          throw new ProviderNotFoundError(name);
+        }
+        if (isCodexProvider(found) || isAntigravityProvider(found) || found.catalogue === undefined) {
+          throw new UsageError(`Provider "${name}" has no catalogue setting. Set one with \`agent-shim provider set ${name} --catalogue-tier <tier>\`.`);
+        }
+        const catalogueSetting = found.catalogue;
+        const cache = options.refresh === true ? await refreshCatalogueForReal(paths, name, process.env) : parseCatalogueCache(fs.existsSync(catalogueCachePath(paths, name)) ? fs.readFileSync(catalogueCachePath(paths, name), "utf8") : undefined);
+        if (cache === undefined) {
+          throw new UsageError(`No catalogue has been fetched for "${name}" yet: the front door fetches it shortly after it starts, or run \`agent-shim provider models ${name} --refresh\`.`);
+        }
+        const listed = filterCatalogue(cache.models, catalogueSetting);
+        if (options.json === true) {
+          printJson({ name, tier: catalogueSetting.tier, url: cache.url, fetchedAt: new Date(cache.fetchedAt).toISOString(), models: cache.models, listed: listed.map((model) => model.id) });
+          return;
+        }
+        console.log(`Catalogue of ${name}: ${String(cache.models.length)} models from ${cache.url}, fetched ${new Date(cache.fetchedAt).toISOString()}; /model lists ${String(listed.length)} as tier ${catalogueSetting.tier}.`);
+        const listedIds = new Set(listed.map((model) => model.id));
+        for (const model of cache.models) {
+          console.log(`${listedIds.has(model.id) ? "*" : " "} ${model.id}${model.name === undefined ? "" : `  (${model.name})`}`);
+        }
+      }),
+    ["agent-shim provider models o", "agent-shim provider models o --refresh --json"],
   );
 
   withExamples(

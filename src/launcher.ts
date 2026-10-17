@@ -13,6 +13,7 @@ import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLa
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { hasSettingsArgument, mergeSettings, withLauncherSettings, withSupervision, type SupervisedLaunch } from "./launcher/claudeSession";
 import { modelPickerSettings } from "./launcher/modelPicker";
+import { catalogueCachePath, parseCatalogueCache } from "./providerCatalogue";
 import { resolvePoolLaunch } from "./launcher/pool";
 import { resumedContextTokens } from "./usage/resumeContext";
 import { IdentityLockBusyError } from "./launcher/lock";
@@ -477,7 +478,8 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   const flags = loginlessProvider === undefined ? requestedFlags : { ...requestedFlags, remoteControl: false };
 
   // `/model` lists the provider's real models, which needs claude's `--settings`; a launch that passes its own keeps claude's names, since claude takes one value and a second replaces the first.
-  const pickerSettings = selectedProvider === undefined ? undefined : modelPickerSettings(selectedProvider.definition);
+  const catalogue = selectedProvider === undefined ? undefined : parseCatalogueCache(params.fs.readFileUtf8(catalogueCachePath(paths, selectedProvider.name)));
+  const pickerSettings = selectedProvider === undefined ? undefined : modelPickerSettings(selectedProvider.definition, catalogue?.models);
   const callerSettings = hasSettingsArgument(parsedArgv.rest);
   if (pickerSettings !== undefined && callerSettings && !readOnly) {
     log.info("agent-shim: this launch passes its own --settings, so /model keeps Claude Code's own model names instead of listing the provider's models");

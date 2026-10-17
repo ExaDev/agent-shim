@@ -21,6 +21,9 @@ import { ANTHROPIC_USAGE_FRESHNESS_MS } from "../usage/anthropicUsageRefresh";
 import { loadPoolMembers } from "../usage/poolPick";
 import { createRealAnthropicUsageRefresher } from "../usage/realAnthropicUsageProbe";
 import { runChild } from "../usage/childRun";
+import { createCatalogueKeeper } from "../catalogueKeeper";
+import { CATALOGUE_REFRESH_TIMEOUT_MS, catalogueCachePath } from "../providerCatalogue";
+import { listProviders } from "../providersStore";
 import { WINDOW_OPEN_TIMEOUT_MS } from "../usage/realWindowOpener";
 import { runJobs } from "../usage/jobKeeper";
 import { resolveJobIdentity } from "../usage/jobTarget";
@@ -298,6 +301,18 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       log(`job keeper failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
+  // A provider that opted into a model catalogue is fetched in a child process, never in the door, for the same reason the window opener is: the door's event loop answers every session. The first tick runs at start, so a new catalogue does not wait a period, and a fresh cache costs no request.
+  const catalogueKeeper = createCatalogueKeeper({
+    providers: () => listProviders(paths, (name, message) => { log(`catalogue keeper skipped provider ${name}: ${message}`); }).map((entry) => [entry.name, entry.provider] as const),
+    readCache: (name) => realFsPort.readFileUtf8(catalogueCachePath(paths, name)),
+    refresh: async (name) => {
+      await runChild({ paths, args: ["__refresh-catalogue", name], timeoutMs: CATALOGUE_REFRESH_TIMEOUT_MS });
+    },
+    nowMs: () => Date.now(),
+    log,
+  });
+  catalogueKeeper.tick();
+  setInterval(catalogueKeeper.tick, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
   const headroomDecision = createHeadroomDecision(createRoutingSettingReader(paths));
   const recordUsage = withQuotaRefresh(usageStore.record, quotaRefresher);
   const usageMiddleware = createUsageMiddleware({
