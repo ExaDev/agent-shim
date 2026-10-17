@@ -1,4 +1,4 @@
-import { isAntigravityProvider, isHttpProvider } from "../config/schema";
+import { isAntigravityProvider, isHttpProvider, isRouterProvider } from "../config/schema";
 import { resolveCredential, type CredentialPort } from "../credential";
 import type { FsPort } from "../launcher/ports";
 import { loadProvider } from "../providersStore";
@@ -144,7 +144,7 @@ export function createProviderLookup(ports: ProviderLookupPorts): (name: string)
     return {
       baseUrl,
       apiKey: () => {
-        const resolution = resolveCredential({ credential: definition.credential, env: ports.env, port: ports.credentials, subject: `provider ${name}` });
+        const resolution = resolveCredential({ credential: isRouterProvider(definition) ? { sources: [] } : definition.credential, env: ports.env, port: ports.credentials, subject: `provider ${name}` });
         if (!resolution.ok) {
           throw new Error(resolution.message);
         }

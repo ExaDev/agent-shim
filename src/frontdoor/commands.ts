@@ -52,6 +52,7 @@ import { createQuotaExpiringPublisher } from "./quotaExpiringEvents";
 import { createLaunchEventPublisher } from "./launchEvents";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
+import { readModels } from "../modelsStore";
 import { realRestartFrontDoor } from "./realFrontDoorPort";
 import { MINTED_TOKEN_RANDOM_BYTES, registerRcCommand } from "./rcCommands";
 import { createRcControlHandler } from "./rcControl";
@@ -207,6 +208,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   const rcControlToken = randomUUID();
   const resolveRoute = rcObservingResolver(
     createProviderRouteResolver({
+      // Read live so a models-block edit reaches the next request without a door restart.
+      models: () => readModels(paths),
       fs: realFsPort,
       providersDir: paths.providersDir,
       codexPorts,

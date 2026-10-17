@@ -13,7 +13,7 @@ import { z } from "zod";
 import { parseEnvBool } from "./cli/envBool";
 import type { CHECK_CREDENTIAL_APPLIES, CheckReportJson } from "./checkReportSchema";
 import { ConfigValidationError } from "./config/load";
-import { SHIPPED_CATEGORY_DEFAULTS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type Identity, type Provider } from "./config/schema";
+import { SHIPPED_CATEGORY_DEFAULTS, isRouterProvider, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type Identity, type Provider } from "./config/schema";
 import { formatCredentialSummary, summariseCredential, type CredentialCacheEnv, type CredentialSummary } from "./credential";
 import { resolveClaudeVersion, type PinnedClaudeVersion } from "./launcher/claudeVersion";
 import { describeCachedCredential, formatCachedCredentialState, type CachedCredentialState } from "./credentialCache";
@@ -225,7 +225,7 @@ type CheckProviderInput =
 interface CredentialReport {
   readonly applies: (typeof CHECK_CREDENTIAL_APPLIES)[number];
   /** The selected provider's usable block (with what its cache holds), or why it could not be used; the two never appear together, exactly as `CheckProviderInput` states it. */
-  readonly provider?: { readonly name: string; readonly credential: CredentialSummary; readonly cached?: CachedCredentialState; readonly problem?: never } | { readonly name: string; readonly problem: string; readonly credential?: never; readonly cached?: never };
+  readonly provider?: { readonly name: string; readonly credential?: CredentialSummary; readonly cached?: CachedCredentialState; readonly problem?: never } | { readonly name: string; readonly problem: string; readonly credential?: never; readonly cached?: never };
   readonly identity?: CredentialSummary;
   /** What the identity's own credential cache holds, when its block caches and the cache could be read. */
   readonly identityCached?: CachedCredentialState;
@@ -242,7 +242,8 @@ function cachedState(cacheEnv: CredentialCacheEnv | undefined, owner: string, bl
 function buildCredentialReport(provider: CheckProviderInput | undefined, identity: Identity | undefined, identityName: string | undefined, cacheEnv: CredentialCacheEnv | undefined): CredentialReport {
   const identityCredential = identity?.credential === undefined ? undefined : summariseCredential(identity.credential);
   const identityCached = identity?.credential === undefined || identityName === undefined ? undefined : cachedState(cacheEnv, `identity ${identityName}`, identity.credential);
-  const providerCached = provider?.definition === undefined ? undefined : cachedState(cacheEnv, `provider ${provider.name}`, provider.definition.credential);
+  const providerCredential = provider?.definition !== undefined && !isRouterProvider(provider.definition) ? provider.definition.credential : undefined;
+  const providerCached = providerCredential === undefined || provider === undefined ? undefined : cachedState(cacheEnv, `provider ${provider.name}`, providerCredential);
   return {
     applies: provider !== undefined ? "provider" : identityCredential !== undefined ? "identity" : "stored-login",
     ...(provider === undefined
@@ -250,7 +251,7 @@ function buildCredentialReport(provider: CheckProviderInput | undefined, identit
       : {
           provider:
             provider.problem === undefined
-              ? { name: provider.name, credential: summariseCredential(provider.definition.credential), ...(providerCached === undefined ? {} : { cached: providerCached }) }
+              ? { name: provider.name, ...(providerCredential === undefined ? {} : { credential: summariseCredential(providerCredential), ...(providerCached === undefined ? {} : { cached: providerCached }) }) }
               : { name: provider.name, problem: provider.problem },
         }),
     ...(identityCredential === undefined ? {} : { identity: identityCredential }),
@@ -437,7 +438,7 @@ export function formatCheckReport(report: CheckReport): string[] {
   const { credential } = report;
   if (credential.provider !== undefined) {
     lines.push(
-      `  Provider ${credential.provider.name}: ${credential.provider.credential === undefined ? `unusable: ${credential.provider.problem}` : formatCredentialSummary(credential.provider.credential)}${credential.provider.cached === undefined ? "" : `; ${formatCachedCredentialState(credential.provider.cached)}`}`,
+      `  Provider ${credential.provider.name}: ${credential.provider.credential === undefined ? `unusable: ${credential.provider.problem ?? ""}` : formatCredentialSummary(credential.provider.credential)}${credential.provider.cached === undefined ? "" : `; ${formatCachedCredentialState(credential.provider.cached)}`}`,
     );
   }
   if (credential.identity !== undefined) {

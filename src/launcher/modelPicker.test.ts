@@ -7,9 +7,12 @@ const CREDENTIAL = { sources: [{ env: "PROVIDER_TOKEN" }] };
 
 const codex = (config?: Extract<Provider, { kind: "codex" }>["codex"]): Provider => ({ kind: "codex", displayName: "Codex", credential: CREDENTIAL, ...(config === undefined ? {} : { codex: config }) });
 const antigravity = (config?: Extract<Provider, { kind: "antigravity" }>["antigravity"]): Provider => ({ kind: "antigravity", displayName: "Antigravity", credential: CREDENTIAL, ...(config === undefined ? {} : { antigravity: config }) });
-const http = (env?: Record<string, string>): Provider => ({ displayName: "Z", baseUrl: "https://z.example/api", credential: CREDENTIAL, ...(env === undefined ? {} : { env }) });
+const http = (env?: Record<string, string>): Extract<Provider, { kind?: "http" }> => ({ kind: "http", displayName: "Z", baseUrl: "https://z.example/api", credential: CREDENTIAL, ...(env === undefined ? {} : { env }) });
 
 const AUTO_DESCRIPTION = "Routes each request to a backend model with quota left, best first (4 models)";
+
+/** An http provider carrying declared picker models. */
+const withPicker = (pickerModels: readonly { model: string; tier: "fable" | "opus" | "sonnet" | "haiku"; label?: string; description?: string }[]): Provider => ({ ...http(), pickerModels: [...pickerModels] });
 
 describe("providerModelRows", () => {
   it("lists a codex provider's distinct models once each, naming the tiers that reach them", () => {
@@ -88,12 +91,12 @@ describe("declared picker models", () => {
   });
 
   it("lists declared models for a provider whose tier settings name none, so the picker stops keeping Claude's own", () => {
-    expect(providerModelRows({ ...http(), pickerModels: [{ model: "deepseek/r1", tier: "opus" }] }).map((row) => row.model)).toEqual(["deepseek/r1"]);
-    expect(modelPickerSettings({ ...http(), pickerModels: [{ model: "deepseek/r1", tier: "opus" }] })).toBeDefined();
+    expect(providerModelRows(withPicker([{ model: "deepseek/r1", tier: "opus" }])).map((row) => row.model)).toEqual(["deepseek/r1"]);
+    expect(modelPickerSettings(withPicker([{ model: "deepseek/r1", tier: "opus" }]))).toBeDefined();
   });
 
   it("lets a declared entry replace the derived row for the same model", () => {
-    const rows = providerModelRows({ ...codex({ models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } }), pickerModels: [{ model: "mid", tier: "opus", label: "Mid" }] });
+    const rows = providerModelRows({ ...codex({ models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } }), pickerModels: [{ model: "mid", tier: "opus", label: "Mid" }] } as Provider);
     expect(rows.map((row) => row.model)).toEqual(["big", "small", "mid"]);
     expect(rows.find((row) => row.model === "mid")).toMatchObject({ label: "Mid", behavesAs: "claude-opus-5-5" });
   });
@@ -121,7 +124,7 @@ describe("catalogue rows", () => {
   });
 
   it("lists tier models and declared models first and does not list a catalogue model they already name", () => {
-    const provider: Provider = { ...catalogued({ tier: "sonnet" }, { ANTHROPIC_DEFAULT_OPUS_MODEL: "alpha" }), pickerModels: [{ model: "zeta", tier: "haiku" }] };
+    const provider: Provider = { ...catalogued({ tier: "sonnet" }, { ANTHROPIC_DEFAULT_OPUS_MODEL: "alpha" }), pickerModels: [{ model: "zeta", tier: "haiku" }] } as Provider;
     expect(providerModelRows(provider, listed).map((row) => row.model)).toEqual(["alpha", "zeta", "big[1m]"]);
   });
 
@@ -148,7 +151,7 @@ describe("the one-million-token context marker", () => {
   });
 
   it("applies to declared models and aliases as well", () => {
-    expect(providerModelRows({ ...http(), pickerModels: [{ model: "x[1m]", tier: "opus" }] })[0]).toMatchObject({ label: "x", description: "Declared by the provider for the opus tier; 1M context" });
+    expect(providerModelRows(withPicker([{ model: "x[1m]", tier: "opus" }]))[0]).toMatchObject({ label: "x", description: "Declared by the provider for the opus tier; 1M context" });
   });
 });
 

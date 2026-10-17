@@ -12,7 +12,7 @@ import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
 import { describeIgnoredKeys, parseIgnoringUnrecognisedKeys } from "./config/unrecognisedKeys";
-import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, isCodexProvider, poolMemberIdentity, ProviderSchema, type Credential, type ModelsConfig } from "./config/schema";
+import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, isCodexProvider, poolMemberIdentity, ProviderSchema, type Credential, type ModelsConfig, isRouterProvider } from "./config/schema";
 import { describeCredential, type CredentialCacheEnv } from "./credential";
 import { describeCachedCredential, formatCachedCredentialState } from "./credentialCache";
 import { realCredentialCacheEnv } from "./realCredentialCache";
@@ -334,10 +334,12 @@ function pushProvider(push: (section: DoctorSection, severity: DoctorSeverity, m
   if (validated.ignored.length > 0) {
     push("provider", "warn", describeIgnoredKeys(entry.path, validated.ignored), entry.name);
   }
-  const cache = cacheClause(cacheEnv, `provider ${entry.name}`, validated.data.credential);
-  push("provider", cache.unreadable ? "fail" : "pass", `${entry.name} is valid (${describeProviderEndpoint(validated.data)}, credential ${describeCredential(validated.data.credential)})${cache.text}.`, entry.name);
+  const router = isRouterProvider(validated.data);
+  const noCache = { unreadable: false, text: "" };
+  const cache = router ? noCache : cacheClause(cacheEnv, `provider ${entry.name}`, validated.data.credential);
+  push("provider", cache.unreadable ? "fail" : "pass", router ? `${entry.name} is valid (${describeProviderEndpoint(validated.data)})` : `${entry.name} is valid (${describeProviderEndpoint(validated.data)}, credential ${describeCredential(validated.data.credential)})${cache.text}.`, entry.name);
   // A provider session keeps the OAuth launch's shape (its base URL stays Claude Code's own API), so Claude Code defers MCP tool loading and the tool_reference payloads ride the door to the provider untouched. Naming the env-block lever here keeps the default visible; whether to pull it stays the reader's call, because turning it off only helps when the upstream backend cannot understand tool_reference itself.
-  if (validated.data.env?.ENABLE_TOOL_SEARCH === undefined) {
+  if (!router && validated.data.env?.ENABLE_TOOL_SEARCH === undefined) {
     push("provider", "warn", `${entry.name} does not set ENABLE_TOOL_SEARCH: a session on this provider keeps Claude Code's own API as its base URL, so it defers MCP tool loading and sends tool_reference payloads the upstream backend must understand. Set ENABLE_TOOL_SEARCH=false in the provider's env block to load tools upfront instead, when the backend does not support them.`, entry.name);
   }
   if (signIn !== undefined && isCodexProvider(validated.data) && validated.data.codex?.login === "chatgpt-sign-in") {

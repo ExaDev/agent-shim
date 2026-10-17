@@ -87,7 +87,7 @@ const CachedCredentialStateSchema = z.union([
 
 /** The selected provider as the report states it: its usable credential block, or why it could not be used. The two never appear together. */
 const CheckCredentialProviderSchema = z.union([
-  z.strictObject({ name: z.string(), credential: CredentialSummarySchema, cached: CachedCredentialStateSchema.optional() }),
+  z.strictObject({ name: z.string(), credential: CredentialSummarySchema.optional(), cached: CachedCredentialStateSchema.optional() }),
   z.strictObject({ name: z.string(), problem: z.string() }),
 ]);
 

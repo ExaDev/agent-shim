@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Help, type Command } from "commander";
+import { isRouterProvider, type Provider } from "./config/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EXIT_FAILURE, EXIT_USAGE } from "./cliError";
@@ -90,6 +91,12 @@ function subcommandNames(command: Command, name: string): string[] {
   }
   return noun.commands.map((sub) => sub.name()).sort();
 }
+
+/** The stored provider's credential, narrowing the router away: these tests never store a router. */
+  function httpCredentialOf(name: string): { target?: string; sources: unknown[] } | undefined {
+    const provider = readProvider(paths, name);
+    return provider !== undefined && !isRouterProvider(provider) ? (provider as Extract<Provider, { kind?: "http" }>).credential : undefined;
+  }
 
 describe("buildProgram", () => {
   it("registers every top-level command without parsing or launching anything", () => {
@@ -477,7 +484,7 @@ describe("provider commands", () => {
       "--credential", '{"command":["my tool","--flag"],"interactive":true,"timeoutMs":5000}',
     ];
     expect((await cli(add)).code).toBe(0);
-    expect(readProvider(paths, "a")?.credential).toEqual({
+    expect(httpCredentialOf("a")).toEqual({
       target: "apiKey",
       sources: [
         { env: "ANTHROPIC_KEY" },
@@ -493,9 +500,9 @@ describe("provider commands", () => {
     );
 
     expect((await cli(["provider", "set", "a", "--credential", "env:OTHER"])).code).toBe(0);
-    expect(readProvider(paths, "a")?.credential).toEqual({ target: "apiKey", sources: [{ env: "OTHER" }] });
+    expect(httpCredentialOf("a")).toEqual({ target: "apiKey", sources: [{ env: "OTHER" }] });
     expect((await cli(["provider", "set", "a", "--credential-target", "bearer"])).code).toBe(0);
-    expect(readProvider(paths, "a")?.credential).toEqual({ target: "bearer", sources: [{ env: "OTHER" }] });
+    expect(httpCredentialOf("a")).toEqual({ target: "bearer", sources: [{ env: "OTHER" }] });
   });
 
   it("rejects a malformed --credential or an unsupported target as a usage error, leaving the file untouched", async () => {
@@ -504,7 +511,7 @@ describe("provider commands", () => {
       expect((await cli(["provider", "set", "z", "--credential", bad])).code).toBe(EXIT_USAGE);
     }
     expect((await cli(["provider", "set", "z", "--credential-target", "oauthToken"])).code).toBe(EXIT_USAGE);
-    expect(readProvider(paths, "z")?.credential).toEqual({ sources: [{ env: "Z_API_TOKEN" }] });
+    expect(httpCredentialOf("z")).toEqual({ sources: [{ env: "Z_API_TOKEN" }] });
   });
 
   it("never prints a literal source's value in show or --json", async () => {

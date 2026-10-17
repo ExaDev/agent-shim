@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { CodexRoutePorts } from "../codex/route";
+import type { ModelsConfig } from "../config/schema";
 import { HTTP_STATUS } from "../codex/http";
 import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { FAKE_HOME, admitLaunchToken, fakeCredentials, fakeFs, followsLaunchFlag } from "../test-helpers";
@@ -53,8 +54,8 @@ function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
   };
 }
 
-function resolver(files: Record<string, unknown>, directPort = OWN_PORT): ReturnType<typeof createProviderRouteResolver> {
-  return createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => directPort, env: { Z: "tok-from-z" }, credentials: fakeCredentials() });
+function resolver(files: Record<string, unknown>, directPort = OWN_PORT, models?: unknown): ReturnType<typeof createProviderRouteResolver> {
+  return createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => directPort, env: { Z: "tok-from-z" }, ...(models === undefined ? {} : { models: () => models as ModelsConfig | undefined }), credentials: fakeCredentials() });
 }
 
 function request(url: string, body = "{}"): RoutedRequest {
@@ -551,6 +552,52 @@ describe("per-request routing by model", () => {
       const response = await fetch(`${door.url}/providers/main/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body: JSON.stringify({ model: "claude-haiku-4-5" }) });
       expect(response.status).toBe(HTTP_STATUS.internalServerError);
       expect(await response.text()).toContain("provider routing cycle");
+    } finally {
+      await door.close();
+    }
+  });
+});
+
+describe("a router provider", () => {
+  it("resolves a provider-qualified model name to that provider's route", async () => {
+    const router = { kind: "router", displayName: "Router" };
+    const upstream = await bodyRecordingUpstream();
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/router.json`]: router,
+      [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-token" }] } },
+    };
+    const door = await startDoor(resolver(files));
+    try {
+      const response = await fetch(`${door.url}/providers/router/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" },
+        body: JSON.stringify({ model: "z/glm-5.3", max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
+      });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(upstream.seen()[0]?.url).toContain("/v1/messages");
+      expect((JSON.parse(upstream.seen()[0]?.body ?? "{}") as { model?: string }).model).toBe("z/glm-5.3");
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("resolves a virtual model's name through the models block to its member's provider", async () => {
+    const router = { kind: "router", displayName: "Router" };
+    const upstream = await bodyRecordingUpstream();
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/router.json`]: router,
+      [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-token" }] } },
+    };
+    const models: ModelsConfig = { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } };
+    const door = await startDoor(resolver(files, OWN_PORT, models));
+    try {
+      const response = await fetch(`${door.url}/providers/router/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" },
+        body: JSON.stringify({ model: "fast", max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
+      });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(upstream.seen()[0]?.url).toContain("/v1/messages");
     } finally {
       await door.close();
     }

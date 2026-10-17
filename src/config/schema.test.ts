@@ -22,6 +22,7 @@ import {
   isCodexProvider,
   isAntigravityProvider,
   ProviderSchema,
+  type Provider,
   SHIPPED_CATEGORY_DEFAULTS,
   WhenConditionObjectSchema,
   WhenSchema,
@@ -261,7 +262,7 @@ describe("ProviderSchema", () => {
   const credential = { sources: [{ env: "Z_API_TOKEN" }] };
 
   it("accepts a full provider definition with static extra env", () => {
-    const provider = ProviderSchema.parse({ ...base, credential, env: { ANTHROPIC_MODEL: "glm-4.6" } });
+    const provider = ProviderSchema.parse({ ...base, credential, env: { ANTHROPIC_MODEL: "glm-4.6" } }) as Extract<Provider, { kind?: "http" }>;
     expect(provider.env).toEqual({ ANTHROPIC_MODEL: "glm-4.6" });
     expect(provider.credential).toEqual(credential);
   });
@@ -285,9 +286,10 @@ describe("ProviderSchema", () => {
   });
 
   it("accepts target bearer or apiKey and rejects oauthToken, which only an identity may use", () => {
-    expect(ProviderSchema.parse({ ...base, credential: { ...credential, target: "apiKey" } }).credential.target).toBe("apiKey");
-    expect(ProviderSchema.parse({ ...base, credential: { ...credential, target: "bearer" } }).credential.target).toBe("bearer");
-    expect(ProviderSchema.parse({ ...base, credential }).credential.target).toBeUndefined();
+    const parsed = (override: unknown): Extract<Provider, { kind?: "http" }> => ProviderSchema.parse({ ...base, credential: override }) as Extract<Provider, { kind?: "http" }>;
+    expect(parsed({ ...credential, target: "apiKey" }).credential.target).toBe("apiKey");
+    expect(parsed({ ...credential, target: "bearer" }).credential.target).toBe("bearer");
+    expect(parsed(credential).credential.target).toBeUndefined();
     expect(ProviderSchema.safeParse({ ...base, credential: { ...credential, target: "oauthToken" } }).success).toBe(false);
   });
 
