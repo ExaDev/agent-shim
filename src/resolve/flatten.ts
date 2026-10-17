@@ -20,7 +20,7 @@ function unpackEntryValue(value: EntryValue): { value: boolean; when?: CompiledR
 export function flattenLayers(layers: readonly Layer[], options: Readonly<{ home: string }>): FlattenedCascade {
   const categories = new Map<OverridableCategory, boolean>();
   const rules = new Map<string, CompiledRule>();
-  const launch: { skipPermissions?: boolean; remoteControl?: boolean; provider?: string; headroom?: boolean; trackUsage?: boolean; claudeVersion?: string; delay?: string; pause?: boolean; explain?: boolean } = {};
+  const launch: { skipPermissions?: boolean; remoteControl?: boolean; provider?: string; headroom?: boolean; trackUsage?: boolean; claudeVersion?: string; delay?: string; pause?: boolean; explain?: boolean; routeByName?: boolean } = {};
   const diagnostics: Diagnostic[] = [];
   let models: ModelsConfig | undefined;
 
@@ -61,6 +61,9 @@ export function flattenLayers(layers: readonly Layer[], options: Readonly<{ home
       }
       if (layer.launch.explain !== undefined) {
         launch.explain = layer.launch.explain;
+      }
+      if (layer.launch.routeByName !== undefined) {
+        launch.routeByName = layer.launch.routeByName;
       }
     }
 

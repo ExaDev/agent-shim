@@ -204,18 +204,18 @@ describe("phase one: launch flags", () => {
 
   it("resolves headroom last-layer-wins like every other launch flag", () => {
     const flattened = flattenLayers(
-      [layer(0, { launch: { headroom: true } }), layer(1, { launch: { headroom: false } })],
+      [layer(0, { launch: { headroom: true, routeByName: false } }), layer(1, { launch: { headroom: false, routeByName: false } })],
       { home: FAKE_HOME },
     );
-    expect(flattened.launch).toEqual({ headroom: false });
+    expect(flattened.launch).toEqual({ headroom: false, routeByName: false });
   });
 
   it("resolves trackUsage last-layer-wins, independently of headroom", () => {
     const flattened = flattenLayers(
-      [layer(0, { launch: { trackUsage: true, headroom: true } }), layer(1, { launch: { trackUsage: false } })],
+      [layer(0, { launch: { trackUsage: true, headroom: true, routeByName: false } }), layer(1, { launch: { trackUsage: false } })],
       { home: FAKE_HOME },
     );
-    expect(flattened.launch).toEqual({ trackUsage: false, headroom: true });
+    expect(flattened.launch).toEqual({ trackUsage: false, headroom: true, routeByName: false });
   });
 });
 

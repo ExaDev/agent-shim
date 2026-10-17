@@ -18,6 +18,7 @@ The full flag/command reference table, the complete command list, `configure`'s 
 | **Claude Code version** | `agent-shim profile set <name> --launch-claude-version <version>` (or `--no-launch-claude-version`); a `launch.claudeVersion` key in `~/.agent-shim/config.json` or any cascade layer | `claude --claude-version <version>` / `AGENT_SHIM_CLAUDE_VERSION=<version> claude` | rule's inline `"launch": { "claudeVersion": "2.1.220" }` field; or `.agent-shim.json`'s `"launch"` |
 | **Models (cascade)** | `models` in a configuration profile, directory rule or committed `.agent-shim.json`; any definition may be `null` to remove what the shallower layers set | not applicable (the global `models` block is the first layer) | the committed file's `models` merges like any other layer |
 | **Launch delay and pause** | `agent-shim profile set <name> --launch-delay <duration>` (or `--no-launch-delay`) and `--launch-pause` (or `--no-launch-pause`); `launch.delay` and `launch.pause` keys in `~/.agent-shim/config.json` or any cascade layer | `claude --delay <duration>` / `claude --pause` / `claude --no-pause` / `AGENT_SHIM_DELAY=5s claude` / `AGENT_SHIM_PAUSE=true claude` | a rule's inline `"launch": { "delay": "5s" }` field; or `.agent-shim.json`'s `"launch"` |
+| **Route by model name** | `agent-shim profile set <name> --launch-route-by-name` (or `--no-launch-route-by-name`); a `launch.routeByName` key in `~/.agent-shim/config.json` or any cascade layer | `claude --route-by-name` / `claude --no-route-by-name` / `AGENT_SHIM_ROUTE_BY_NAME=true claude` | a rule's inline `"launch": { "routeByName": true }` field; or `.agent-shim.json`'s `"launch"` |
 | **Explain a pool pick** | `agent-shim profile set <name> --launch-explain` (or `--no-launch-explain`); a `launch.explain` key in `~/.agent-shim/config.json` or any cascade layer | `claude --explain` / `claude --no-explain` / `AGENT_SHIM_EXPLAIN=true claude` | a rule's inline `"launch": { "explain": true }` field; or `.agent-shim.json`'s `"launch"` |
 | **Usage tracking** | `agent-shim profile set <name> --launch-track-usage` (or `--no-launch-track-usage`); a `launch.trackUsage` key in `~/.agent-shim/config.json` or any cascade layer | `claude --track-usage` / `claude --no-track-usage` / `AGENT_SHIM_TRACK_USAGE=true claude` | rule's inline `"launch": { "trackUsage": true }` field; or `.agent-shim.json`'s `"launch"` |
 | **Identity credential** | `agent-shim identity set <name> --credential <source> [--credential-target oauthToken]` (in its `identity.json`); `--no-credential` returns it to its stored login | not applicable | not applicable: a credential belongs to the identity, not a directory |
@@ -70,7 +71,7 @@ agent-shim profile set <name> [--category <category>=<bool>]... [--entry <catego
 agent-shim profile set <name> [--extends <profile>]... [--no-extends] [--description <text> | --no-description]
 agent-shim profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage]
 agent-shim profile set <name> [--launch-claude-version <version> | --no-launch-claude-version]
-agent-shim profile set <name> [--launch-delay <duration> | --no-launch-delay] [--[no-]launch-pause] [--[no-]launch-explain]
+agent-shim profile set <name> [--launch-delay <duration> | --no-launch-delay] [--[no-]launch-pause] [--[no-]launch-explain] [--[no-]launch-route-by-name]
 agent-shim profile set <name> [--launch-provider <provider> | --no-launch-provider]
 agent-shim profile list [--json]
 agent-shim profile show <name> [--json]
@@ -170,6 +171,7 @@ agent-shim run [@<identity>] [launch flags] [claude arguments]
   #   --claude-version <version>   run exactly this installed Claude Code version
   #   --delay <duration>   wait this long after the launcher's own output before starting claude; --[no-]pause waits for a key press instead
   #   --[no-]explain   with @pool:<name>, list every member the pick ranked and why, not only the one picked
+  #   --[no-]route-by-name   route provider-qualified model names through the models block to the provider that serves them
   #   --native   run the real claude with nothing from agent-shim applied; cannot be combined with the flags above
 claude @<identity> ...                      # the same, once `agent-shim shim enable` has run
 ```

@@ -42,19 +42,22 @@ function scopeSessionProviderPath(request: RoutedRequest): RoutedRequest {
 }
 
 /** The provider a model name resolves to through the models block: a provider-qualified name (`z/glm-5.3`) names its provider directly, a virtual model contributes its first ordered member's provider, and a bare unknown name has no target. */
-function resolveModelTarget(model: string, models: ModelsConfig | undefined): string | undefined {
+function resolveModelTarget(model: string, models: ModelsConfig | undefined, includeUnqualified: boolean): string | undefined {
   if (models === undefined) {
     return model.includes("/") && !model.startsWith("acct:") ? model.split("/")[0] : undefined;
   }
   if (model.includes("/") && !model.startsWith("acct:")) {
     return model.split("/")[0];
   }
+  if (!includeUnqualified) {
+    return undefined;
+  }
   const virtual = models.virtual?.[model];
   const first = virtual?.members.find((member) => !member.startsWith("acct:") && !member.startsWith("family:"));
   if (first === undefined) {
     return undefined;
   }
-  return first.includes("/") ? first.split("/")[0] : resolveModelTarget(first, models);
+  return first.includes("/") ? first.split("/")[0] : resolveModelTarget(first, models, true);
 }
 
 export function createProviderRouteResolver(deps: {
@@ -269,12 +272,19 @@ export function createProviderRouteResolver(deps: {
         isRouter = false;
       }
       // A router resolves each request's model name through the models block to a target provider, whose own kind handling and credential then serve it: the same one-scan, one-rewrite shape the `routes` list below uses.
-      if (isRouter) {
+      // A session that asked to route by name gets the same resolution on the provider it launched on: a qualified model name leaves that provider for the one that serves it.
+      const routesByName = isRouter || (current.session.routeByName && providerName !== undefined);
+      if (routesByName) {
         const scan = await scanRequestHead(current, false);
         if (scan.replayed !== undefined) {
           replay = scan.replayed;
         }
-        const target = scan.model === undefined ? undefined : resolveModelTarget(scan.model, deps.models?.());
+        const target = scan.model === undefined || providerName === undefined ? undefined : resolveModelTarget(scan.model, deps.models?.(), isRouter || current.session.routeByName);
+        if (target === providerName) {
+          // The qualified name points back at the provider the session is already on: nothing to rewrite, serve it here.
+          const resolution = resolve(current);
+          return resolution.ok && replay !== undefined ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } } : resolution.ok ? serveScoped(resolution) : resolution;
+        }
         if (target !== undefined) {
           const rest = path.slice(`${PROVIDER_PATH_PREFIX}${encodeURIComponent(providerName ?? "")}`.length);
           const query = current.url.includes("?") ? current.url.slice(current.url.indexOf("?")) : "";

@@ -392,7 +392,7 @@ describe("runLauncher headroom routing", () => {
       proc: fakeProc({}, ["@work"]),
       log,
       resolveClaudeBinary: () => discovered,
-      farm: fakeFarm(fs, { launch: { headroom: true } }),
+      farm: fakeFarm(fs, { launch: { headroom: true, routeByName: false } }),
       frontdoor: fakeFrontDoorPort(),
       headroom,
     });
@@ -414,7 +414,7 @@ describe("runLauncher headroom routing", () => {
       proc: fakeProc({ CLAUDE_CONFIG_DIR: "/somewhere/explicit" }, ["--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
-      farm: fakeFarm(fs, { launch: { headroom: true } }),
+      farm: fakeFarm(fs, { launch: { headroom: true, routeByName: false } }),
       frontdoor: fakeFrontDoorPort(),
       headroom,
     });

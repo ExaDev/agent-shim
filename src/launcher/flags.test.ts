@@ -5,14 +5,14 @@ import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedPr
 
 describe("resolveLaunchFlags", () => {
   it("defaults skipPermissions, remoteControl and headroom to off and trackUsage to on when nothing sets them", () => {
-    expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: true, pause: false, explain: false, delayMs: 0 });
+    expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, routeByName: false, trackUsage: true, pause: false, explain: false, delayMs: 0 });
   });
 
   it("turns skipPermissions on via the AGENT_SHIM_SKIP_PERMISSIONS=1 escape hatch", () => {
     expect(resolveLaunchFlags({ env: { AGENT_SHIM_SKIP_PERMISSIONS: "1" } })).toEqual({
       skipPermissions: true,
       remoteControl: false,
-      headroom: false,
+      headroom: false, routeByName: false,
       trackUsage: true,
       pause: false,
       explain: false,
@@ -24,7 +24,7 @@ describe("resolveLaunchFlags", () => {
     expect(resolveLaunchFlags({ env: { AGENT_SHIM_REMOTE_CONTROL: "1" } })).toEqual({
       skipPermissions: false,
       remoteControl: true,
-      headroom: false,
+      headroom: false, routeByName: false,
       trackUsage: true,
       pause: false,
       explain: false,
@@ -35,14 +35,14 @@ describe("resolveLaunchFlags", () => {
   it("treats an empty env value as unset", () => {
     expect(
       resolveLaunchFlags({ env: { AGENT_SHIM_SKIP_PERMISSIONS: "", AGENT_SHIM_REMOTE_CONTROL: "0" } }),
-    ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: true, pause: false, explain: false, delayMs: 0 });
+    ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, routeByName: false, trackUsage: true, pause: false, explain: false, delayMs: 0 });
   });
 
   it("honours a cascade value once one is supplied, independent of the env escape hatch", () => {
     expect(resolveLaunchFlags({ env: {}, cascade: { skipPermissions: true, remoteControl: true } })).toEqual({
       skipPermissions: true,
       remoteControl: true,
-      headroom: false,
+      headroom: false, routeByName: false,
       trackUsage: true,
       pause: false,
       explain: false,
@@ -53,7 +53,7 @@ describe("resolveLaunchFlags", () => {
   it("combines settings from different sources independently, each setting decided on its own", () => {
     expect(
       resolveLaunchFlags({ env: { AGENT_SHIM_REMOTE_CONTROL: "1" }, cascade: { skipPermissions: true } }),
-    ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false, trackUsage: true, pause: false, explain: false, delayMs: 0 });
+    ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false, routeByName: false, trackUsage: true, pause: false, explain: false, delayMs: 0 });
   });
 
   it.each(["skipPermissions", "remoteControl", "headroom", "trackUsage"] as const)(
@@ -83,16 +83,16 @@ describe("resolveLaunchFlags", () => {
   });
 
   it("keeps the env escape hatch over the cascade for headroom when no flag was given", () => {
-    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "1" }, cascade: { headroom: false } }).headroom).toBe(true);
-    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true } }).headroom).toBe(true);
-    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: false } }).headroom).toBe(false);
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "1" }, cascade: { headroom: false, routeByName: false } }).headroom).toBe(true);
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true, routeByName: false } }).headroom).toBe(true);
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: false, routeByName: false } }).headroom).toBe(false);
   });
 
   it("turns headroom on via the AGENT_SHIM_HEADROOM=1 escape hatch", () => {
     expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "1" } })).toEqual({
       skipPermissions: false,
       remoteControl: false,
-      headroom: true,
+      headroom: true, routeByName: false,
       trackUsage: true,
       pause: false,
       explain: false,
@@ -101,23 +101,23 @@ describe("resolveLaunchFlags", () => {
   });
 
   it("defaults trackUsage to on, so every launch engages the front door, independent of headroom", () => {
-    expect(resolveLaunchFlags({ env: {} })).toMatchObject({ trackUsage: true, headroom: false });
-    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true } })).toMatchObject({ trackUsage: true, headroom: true });
-    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: false } })).toMatchObject({ trackUsage: true, headroom: false });
+    expect(resolveLaunchFlags({ env: {} })).toMatchObject({ trackUsage: true, headroom: false, routeByName: false });
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true, routeByName: false } })).toMatchObject({ trackUsage: true, headroom: true, routeByName: false });
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: false, routeByName: false } })).toMatchObject({ trackUsage: true, headroom: false, routeByName: false });
   });
 
   it("turns trackUsage off through a flag, its env variable or the cascade, each independent of headroom", () => {
-    expect(resolveLaunchFlags({ env: {}, flags: { trackUsage: false } })).toMatchObject({ trackUsage: false, headroom: false });
-    expect(resolveLaunchFlags({ env: { AGENT_SHIM_TRACK_USAGE: "0" } })).toMatchObject({ trackUsage: false, headroom: false });
-    expect(resolveLaunchFlags({ env: {}, cascade: { trackUsage: false } })).toMatchObject({ trackUsage: false, headroom: false });
-    expect(resolveLaunchFlags({ env: {}, cascade: { trackUsage: false, headroom: true } })).toMatchObject({ trackUsage: false, headroom: true });
-    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "1", AGENT_SHIM_TRACK_USAGE: "0" } })).toMatchObject({ trackUsage: false, headroom: true });
+    expect(resolveLaunchFlags({ env: {}, flags: { trackUsage: false } })).toMatchObject({ trackUsage: false, headroom: false, routeByName: false });
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_TRACK_USAGE: "0" } })).toMatchObject({ trackUsage: false, headroom: false, routeByName: false });
+    expect(resolveLaunchFlags({ env: {}, cascade: { trackUsage: false } })).toMatchObject({ trackUsage: false, headroom: false, routeByName: false });
+    expect(resolveLaunchFlags({ env: {}, cascade: { trackUsage: false, headroom: true, routeByName: false } })).toMatchObject({ trackUsage: false, headroom: true, routeByName: false });
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "1", AGENT_SHIM_TRACK_USAGE: "0" } })).toMatchObject({ trackUsage: false, headroom: true, routeByName: false });
   });
 
   it("resolves headroom from a cascade value and ORs it with the escape hatch", () => {
-    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true } }).headroom).toBe(true);
-    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "0" }, cascade: { headroom: false } }).headroom).toBe(false);
-    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "1" }, cascade: { headroom: false } }).headroom).toBe(true);
+    expect(resolveLaunchFlags({ env: {}, cascade: { headroom: true, routeByName: false } }).headroom).toBe(true);
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "0" }, cascade: { headroom: false, routeByName: false } }).headroom).toBe(false);
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_HEADROOM: "1" }, cascade: { headroom: false, routeByName: false } }).headroom).toBe(true);
   });
 });
 
@@ -212,7 +212,7 @@ describe("buildEnv", () => {
   const baseEnv = { PATH: "/usr/bin", HOME: "/home/testuser" };
 
   it("leaves the environment unchanged when the CLAUDE_CONFIG_DIR escape hatch applied", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false,
       baseEnv: { ...baseEnv, CLAUDE_CONFIG_DIR: "/somewhere/else" },
       configDirEscapeHatch: true,
       resolvedIdentityName: "work",
@@ -222,7 +222,7 @@ describe("buildEnv", () => {
   });
 
   it("leaves the environment unchanged when no identity was resolved at all", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false,
       baseEnv,
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.agent-shim/identities",
@@ -232,7 +232,7 @@ describe("buildEnv", () => {
   });
 
   it("sets CLAUDE_CONFIG_DIR to the resolved identity's own directory otherwise", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false,
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -243,7 +243,7 @@ describe("buildEnv", () => {
   });
 
   it("never strips CLAUDE_EXTRA_FLAGS from the child environment", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false,
       baseEnv: { ...baseEnv, CLAUDE_EXTRA_FLAGS: "--continue continue" },
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -273,7 +273,7 @@ describe("buildEnv", () => {
   }
 
   it("applies a resolved provider on top of the identity's CLAUDE_CONFIG_DIR", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false, baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider() });
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false, baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider() });
     expect(env.CLAUDE_CONFIG_DIR).toBe("/home/testuser/.agent-shim/identities/work");
     // The child keeps the OAuth shape: no base URL (it believes it talks to api.anthropic.com through the door's CONNECT surface), and what it presents is a placeholder, never the provider's own token (the door attaches that at its route).
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
@@ -282,25 +282,25 @@ describe("buildEnv", () => {
   });
 
   it("carries no credential variable for a provider session with Remote Control on, which needs Claude Code's OAuth mode", () => {
-    const env = buildEnv({ sessionId: "session-test", baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "tok-ambient" }, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider(), remoteControl: true });
+    const env = buildEnv({ sessionId: "session-test", baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "tok-ambient" }, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider(), remoteControl: true, routeByName: false });
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
   it("never hands a provider session the provider's own token as what it presents", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false, baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider({ token: "tok-the-provider-secret" }) });
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false, baseEnv, configDirEscapeHatch: false, resolvedIdentityName: "work", identitiesDir, provider: resolvedProvider({ token: "tok-the-provider-secret" }) });
     expect(JSON.stringify(env)).not.toContain("tok-the-provider-secret");
   });
 
   it("applies a resolved provider even when no identity was resolved, since it selects an endpoint, not a login", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false, baseEnv, configDirEscapeHatch: false, identitiesDir, provider: resolvedProvider() });
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false, baseEnv, configDirEscapeHatch: false, identitiesDir, provider: resolvedProvider() });
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
   });
 
   it("replaces every ambient credential variable for a provider session, so the child presents the placeholder and no other credential", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false,
       baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "tok-ambient", ANTHROPIC_API_KEY: "sk-ambient", CLAUDE_CODE_OAUTH_TOKEN: "oauth-ambient" },
       configDirEscapeHatch: false,
       identitiesDir,
@@ -312,7 +312,7 @@ describe("buildEnv", () => {
   });
 
   it("gives an apiKey-target provider's session the same placeholder, in the bearer variable: the door attaches the key whatever the target", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false,
       baseEnv: { ...baseEnv, ANTHROPIC_AUTH_TOKEN: "sk-ambient-bearer", ANTHROPIC_API_KEY: "sk-ambient-key" },
       configDirEscapeHatch: false,
       identitiesDir,
@@ -324,7 +324,7 @@ describe("buildEnv", () => {
   });
 
   it("exports an identity's own credential as its target when no provider was selected", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false,
       baseEnv: { ...baseEnv, ANTHROPIC_API_KEY: "sk-ambient" },
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -337,7 +337,7 @@ describe("buildEnv", () => {
   });
 
   it("never applies an identity's credential alongside a provider's, whose credential authenticates against its endpoint", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false,
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -350,7 +350,7 @@ describe("buildEnv", () => {
   });
 
   it("lands every entry of the provider's own env verbatim in the child environment", () => {
-    const env = buildEnv({ sessionId: "session-test", remoteControl: false,
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false,
       baseEnv,
       configDirEscapeHatch: false,
       identitiesDir,
@@ -364,6 +364,7 @@ describe("buildEnv", () => {
     const env = buildEnv({
       sessionId: "session-test",
       remoteControl: false,
+      routeByName: false,
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -385,6 +386,7 @@ describe("buildEnv", () => {
     const env = buildEnv({
       sessionId: "session-test",
       remoteControl: false,
+      routeByName: false,
       baseEnv: { ...baseEnv, HTTPS_PROXY: "http://agent-shim:parent-token@127.0.0.1:4200", NO_PROXY: "corp.example", no_proxy: "corp.example" },
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -401,6 +403,7 @@ describe("buildEnv", () => {
     const env = buildEnv({
       sessionId: "session-test",
       remoteControl: false,
+      routeByName: false,
       baseEnv: { ...baseEnv, NO_PROXY: "localhost" },
       configDirEscapeHatch: false,
       identitiesDir,
@@ -413,6 +416,7 @@ describe("buildEnv", () => {
     const env = buildEnv({
       sessionId: "session-test",
       remoteControl: false,
+      routeByName: false,
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -427,6 +431,7 @@ describe("buildEnv", () => {
     const env = buildEnv({
       sessionId: "session-test",
       remoteControl: false,
+      routeByName: false,
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
@@ -445,6 +450,7 @@ describe("buildEnv", () => {
     const env = buildEnv({
       sessionId: "session-test",
       remoteControl: false,
+      routeByName: false,
       baseEnv: { ...baseEnv, ANTHROPIC_BASE_URL: "https://custom-gateway.example" },
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.agent-shim/identities",
@@ -458,6 +464,7 @@ describe("buildEnv", () => {
     const env = buildEnv({
       sessionId: "session-test",
       remoteControl: false,
+      routeByName: false,
       baseEnv: { ...baseEnv, ANTHROPIC_CUSTOM_HEADERS: "x-from-parent: yes" },
       configDirEscapeHatch: false,
       identitiesDir: "/home/testuser/.agent-shim/identities",
@@ -471,6 +478,7 @@ describe("buildEnv", () => {
     const env = buildEnv({
       sessionId: "session-test",
       remoteControl: false,
+      routeByName: false,
       baseEnv,
       configDirEscapeHatch: false,
       resolvedIdentityName: "work",
