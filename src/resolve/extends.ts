@@ -105,6 +105,7 @@ export function profileLayers(
       ...(source.profile.entries === undefined ? {} : { entries: source.profile.entries }),
       ...(source.entryOrder === undefined ? {} : { entryOrder: source.entryOrder }),
       ...(source.profile.launch === undefined ? {} : { launch: source.profile.launch }),
+      ...(source.profile.models === undefined ? {} : { models: source.profile.models }),
     });
     nextId += 1;
   }

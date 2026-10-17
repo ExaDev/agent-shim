@@ -126,6 +126,44 @@ describe("phase one: malformed keys", () => {
   });
 });
 
+describe("phase one: models", () => {
+  const withModels = (models: unknown): Layer => layer(0, { models: models as Layer["models"] });
+
+  it("merges definitions per name, the deeper layer winning, and hides and shows replace wholesale", () => {
+    const flattened = flattenLayers(
+      [
+        withModels({ virtual: { fast: { mode: "ordered", members: ["z/1"] }, slow: { mode: "spread", members: ["m/2"] } }, tiers: { opus: "fast" }, hide: ["a", "b"] }),
+        withModels({ virtual: { fast: { mode: "cheapest", members: ["z/3"] } }, show: ["fast"] }),
+      ],
+      { home: FAKE_HOME },
+    );
+    expect(flattened.models).toEqual({
+      virtual: { fast: { mode: "cheapest", members: ["z/3"] }, slow: { mode: "spread", members: ["m/2"] } },
+      tiers: { opus: "fast" },
+      hide: ["a", "b"],
+      show: ["fast"],
+    });
+  });
+
+  it("removes what a null in a deeper layer names, and drops the piece nothing fills", () => {
+    const flattened = flattenLayers(
+      [
+        withModels({ virtual: { fast: { mode: "ordered", members: ["z/1"] }, gone: { mode: "ordered", members: ["m/2"] } }, tiers: { opus: "fast", sonnet: "gone" } }),
+        withModels({ virtual: { gone: null }, tiers: { sonnet: null } }),
+      ],
+      { home: FAKE_HOME },
+    );
+    expect(flattened.models).toEqual({ virtual: { fast: { mode: "ordered", members: ["z/1"] } }, tiers: { opus: "fast" } });
+  });
+
+  it("is absent when no layer carries models, and a layer removing everything empties the block", () => {
+    expect(flattenLayers([layer(0)], { home: FAKE_HOME }).models).toBeUndefined();
+    expect(
+      flattenLayers([withModels({ virtual: { only: { mode: "ordered", members: ["z/1"] } } }), withModels({ virtual: { only: null } })], { home: FAKE_HOME }).models,
+    ).toBeUndefined();
+  });
+});
+
 describe("phase one: launch explain", () => {
   it("takes the last layer's value", () => {
     const flattened = flattenLayers([layer(0, { launch: { explain: true } }), layer(1, { launch: { explain: false } })], { home: FAKE_HOME });

@@ -1,4 +1,4 @@
-import { isOverridableCategory, type EntryValue, type OverridableCategory } from "../config/schema";
+import { isOverridableCategory, type EntryValue, type ModelsConfig, type ModelsLayer, type OverridableCategory } from "../config/schema";
 import { isVacuousWhen } from "./conditions";
 import { canonicaliseEntryKey, compareSpecificity, compileMatcher, EntryKeyError, isExactPattern, literalPrefixOf } from "./match";
 import type { CompiledRule, Diagnostic, FlattenedCascade, Layer } from "./types";
@@ -22,6 +22,7 @@ export function flattenLayers(layers: readonly Layer[], options: Readonly<{ home
   const rules = new Map<string, CompiledRule>();
   const launch: { skipPermissions?: boolean; remoteControl?: boolean; provider?: string; headroom?: boolean; trackUsage?: boolean; claudeVersion?: string; delay?: string; pause?: boolean; explain?: boolean } = {};
   const diagnostics: Diagnostic[] = [];
+  let models: ModelsConfig | undefined;
 
   for (const layer of layers) {
     if (layer.categories !== undefined) {
@@ -61,6 +62,10 @@ export function flattenLayers(layers: readonly Layer[], options: Readonly<{ home
       if (layer.launch.explain !== undefined) {
         launch.explain = layer.launch.explain;
       }
+    }
+
+    if (layer.models !== undefined) {
+      models = mergeModels(models, layer.models);
     }
 
     if (layer.entries === undefined) {
@@ -133,7 +138,7 @@ export function flattenLayers(layers: readonly Layer[], options: Readonly<{ home
     }
   }
 
-  return { categories, rules, launch: launch, diagnostics };
+  return { categories, rules, launch: launch, ...(models === undefined ? {} : { models }), diagnostics };
 }
 
 /**
@@ -165,4 +170,70 @@ export function matchingRules(flattened: FlattenedCascade, relPath: string): Com
     }
   }
   return matches.sort((a, b) => compareSpecificity(b, a));
+}
+
+/** Merges one layer's models into the accumulated block: every definition the layer names is set (or, when `null`, removed), and `hide`/`show` replace what the shallower layers listed. */
+function mergeModels(current: ModelsConfig | undefined, layer: ModelsLayer): ModelsConfig | undefined {
+  const pieces = { ...(current ?? {}) };
+  if (layer.virtual !== undefined) {
+    const virtual: NonNullable<ModelsConfig["virtual"]> = {};
+    for (const [name, definition] of Object.entries(current?.virtual ?? {})) {
+      // A null in this layer removes the inherited definition; an absent name leaves it standing.
+      if (layer.virtual[name] === undefined) {
+        virtual[name] = definition;
+      }
+    }
+    for (const [name, definition] of Object.entries(layer.virtual)) {
+      if (definition !== null) {
+        virtual[name] = definition;
+      }
+    }
+    pieces.virtual = virtual;
+  }
+  if (layer.tiers !== undefined) {
+    const tiers: NonNullable<ModelsConfig["tiers"]> = {};
+    for (const tier of ["fable", "opus", "sonnet", "haiku"] as const) {
+      const ref = layer.tiers[tier];
+      const inherited = current?.tiers?.[tier];
+      if (ref !== null && ref !== undefined) {
+        tiers[tier] = ref;
+      } else if (ref === undefined && inherited !== undefined) {
+        tiers[tier] = inherited;
+      }
+    }
+    pieces.tiers = tiers;
+  }
+  if (layer.prices !== undefined) {
+    const priced: NonNullable<ModelsConfig["prices"]> = {};
+    for (const [ref, prices] of Object.entries(current?.prices ?? {})) {
+      if (layer.prices[ref] === undefined) {
+        priced[ref] = prices;
+      }
+    }
+    for (const [ref, prices] of Object.entries(layer.prices)) {
+      if (prices !== null) {
+        priced[ref] = prices;
+      }
+    }
+    pieces.prices = priced;
+  }
+  if (layer.hide !== undefined) {
+    pieces.hide = layer.hide;
+  }
+  if (layer.show !== undefined) {
+    pieces.show = layer.show;
+  }
+  const merged = modelsOf(pieces);
+  return Object.keys(merged).length === 0 ? undefined : merged;
+}
+
+/** Builds the merged block's sub-objects into a fresh `ModelsConfig`, dropping the pieces nothing filled. */
+function modelsOf(pieces: { virtual?: NonNullable<ModelsConfig["virtual"]>; tiers?: NonNullable<ModelsConfig["tiers"]>; prices?: NonNullable<ModelsConfig["prices"]>; hide?: readonly string[]; show?: readonly string[] }): ModelsConfig {
+  return {
+    ...(pieces.virtual === undefined || Object.keys(pieces.virtual).length === 0 ? {} : { virtual: pieces.virtual }),
+    ...(pieces.tiers === undefined || Object.keys(pieces.tiers).length === 0 ? {} : { tiers: pieces.tiers }),
+    ...(pieces.prices === undefined || Object.keys(pieces.prices).length === 0 ? {} : { prices: pieces.prices }),
+    ...(pieces.hide === undefined || pieces.hide.length === 0 ? {} : { hide: [...pieces.hide] }),
+    ...(pieces.show === undefined || pieces.show.length === 0 ? {} : { show: [...pieces.show] }),
+  };
 }
