@@ -16,6 +16,10 @@ import { createPassthroughRoute } from "./passthrough";
 import type { RouteResolution } from "./pipeline";
 import { evaluateWhen, referencesFact, type ConditionContext } from "../resolve/conditions";
 import { quotaFactsOf } from "../usage/quotaFacts";
+import { expandMembers } from "../modelsStore";
+import { candidateOf } from "../selection/candidates";
+import { selectMember } from "../selection/engine";
+import type { TargetObservation } from "../selection/signals";
 import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
 import { Readable } from "node:stream";
@@ -41,23 +45,59 @@ function scopeSessionProviderPath(request: RoutedRequest): RoutedRequest {
   return { ...request, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(request.session.provider)}${request.url}` };
 }
 
-/** The provider a model name resolves to through the models block: a provider-qualified name (`z/glm-5.3`) names its provider directly, a virtual model contributes its first ordered member's provider, and a bare unknown name has no target. An `acct:` member is not a provider target; `resolveAccountTarget` handles those. */
-function resolveModelTarget(model: string, models: ModelsConfig | undefined, includeUnqualified: boolean): string | undefined {
-  if (models === undefined) {
-    return model.includes("/") && !model.startsWith("acct:") ? model.split("/")[0] : undefined;
+/** What a request's model name resolves to when it routes by name: the provider that serves it, the model name that provider serves it under (a qualified name loses its qualifier, a virtual model resolves to the member its mode chose), and the member ref the choice landed on, for the stickiness the next request of the same session reads. */
+interface RoutedModel {
+  readonly provider: string;
+  readonly model: string;
+  readonly ref: string;
+}
+
+/** Resolves a routing session's model name to its target: a qualified name names its provider directly, a virtual model chooses among its members through its selection mode (quota windows from the session's snapshot, latency and success from the observed targets, prices from the models block), and a bare unknown name has no target. */
+function resolveRoutedModel(
+  model: string,
+  providerName: string | undefined,
+  session: Readonly<{ readonly identity?: string; readonly sessionId?: string }>,
+  includeUnqualified: boolean,
+  deps: Readonly<{ readonly models?: () => ModelsConfig | undefined; readonly usageSnapshotOf?: (identity: string | undefined) => UsageSnapshot | undefined; readonly observations?: (target: string) => TargetObservation | undefined }>,
+  memory: Readonly<Map<string, string>>,
+  rotations: Readonly<Map<string, number>>,
+): RoutedModel | undefined {
+  const models = deps.models?.();
+  const qualified = model.includes("/") && !model.startsWith("acct:") ? model : undefined;
+  if (qualified !== undefined) {
+    const [provider, ...rest] = qualified.split("/");
+    const named = rest.join("/");
+    return provider === undefined || named === "" ? undefined : { provider, model: named, ref: qualified };
   }
-  if (model.includes("/") && !model.startsWith("acct:")) {
-    return model.split("/")[0];
-  }
-  if (!includeUnqualified) {
+  const virtual = models?.virtual?.[model];
+  if (virtual === undefined || !includeUnqualified) {
     return undefined;
   }
-  const virtual = models.virtual?.[model];
-  const first = virtual?.members.find((member) => !member.startsWith("acct:") && !member.startsWith("family:"));
-  if (first === undefined) {
+  const members = expandMembers(model, models).filter((member) => !member.startsWith("acct:") && !member.startsWith("family:"));
+  if (members.length === 0) {
     return undefined;
   }
-  return first.includes("/") ? first.split("/")[0] : resolveModelTarget(first, models, true);
+  const snapshot = deps.usageSnapshotOf?.(session.identity);
+  const current = memory.get(session.sessionId ?? "");
+  const candidates = members.map((ref, order) => {
+    const [provider] = ref.split("/");
+    const facts = quotaFactsOf(snapshot?.providers[provider ?? ""]?.rateLimit?.unified, Date.now());
+    return candidateOf(ref, order, {
+      quota: facts,
+      ...(deps.observations?.(ref) === undefined ? {} : { observation: deps.observations(ref) }),
+      ...(models?.prices?.[ref] === undefined ? {} : { price: models.prices[ref] }),
+    }, ref === current);
+  });
+  const evaluated = candidates.map((candidate) => ({ candidate, capabilities: { vision: true, tools: true, thinking: true } }));
+  const rotation = rotations.get(model) ?? 0;
+  rotations.set(model, rotation + 1);
+  const selection = selectMember(virtual.mode, evaluated, { rotation });
+  if (selection.ref === undefined) {
+    return undefined;
+  }
+  const [provider, ...rest] = selection.ref.split("/");
+  const chosen = rest.join("/");
+  return provider === undefined || chosen === "" ? undefined : { provider, model: chosen, ref: selection.ref };
 }
 
 /** The identity and model an `acct:` member names, when the model a session asked for is one (`acct:work/opus` directly, or a virtual model whose first member is). One login per process, so no route can serve it: only a relaunch under the identity can. */
@@ -97,6 +137,8 @@ export function createProviderRouteResolver(deps: {
    * Serves an `acct:` model member by leaving a move request for the session's supervisor, returning whether the session is supervised (so the request was written and a relaunch is coming); unsupervised sessions get the message that names the command to run instead. Wired to the supervise registry by the door's own process; absent in every other caller, where no session is supervised.
    */
   readonly accountMoves?: (sessionId: string, to: string, model: string) => boolean;
+  /** The observed latency, success and token mix of one target (`provider/model`), from the door's observation store seeded by the usage log: what the ranked modes of a virtual model's selection read. */
+  readonly observations?: (target: string) => TargetObservation | undefined;
   /**
    * The self-hosted Remote Control route, when the door runs that mode: it takes over the `/v1/code/sessions` family and the `/v1/sessions` compatibility list, which would otherwise ride the pass-through to the real API. Absent, every `/v1/` target rides the pass-through exactly as before.
    */
@@ -111,6 +153,9 @@ export function createProviderRouteResolver(deps: {
   const antigravityQuotaSources = new Map<string, () => AntigravityQuotaMap | undefined>();
   // The routing memory an antigravity provider's sessions keep their last model in: one per provider, held by the resolver, because the route is mounted afresh for every request and a memory inside the mount would forget between requests.
   const antigravityRoutingMemory = new Map<string, Map<string, string>>();
+  // The routing memory a by-name session keeps its last chosen member in, and the rotation counter that keeps `spread` turning, both held by the resolver for the same reason: the route is mounted afresh for every request.
+  const routingMemory = new Map<string, string>();
+  const rotations = new Map<string, number>();
   const memoryFor = (provider: string): Map<string, string> => {
     const existing = antigravityRoutingMemory.get(provider);
     if (existing !== undefined) {
@@ -291,10 +336,18 @@ export function createProviderRouteResolver(deps: {
       // A router resolves each request's model name through the models block to a target provider, whose own kind handling and credential then serve it: the same one-scan, one-rewrite shape the `routes` list below uses. A session that asked to route by name gets the same resolution on the provider it launched on: a qualified model name leaves that provider for the one that serves it. A provider-less (OAuth) session gets it too, but qualified names only: its bare names are Claude Code's own and still go to Anthropic, and the Remote Control family of paths is never a provider's to serve.
       const routesByName = (isRouter || current.session.routeByName) && !isRcSelfHostPath(path);
       if (routesByName) {
-        const scan = await scanRequestHead(current, false);
-        if (scan.replayed !== undefined) {
-          replay = scan.replayed;
+        // Whole-body, because a resolved name is served under its target's own model name: the qualified or virtual name the session sent is rewritten in the one copy of the body this scan holds, exactly as a `routes` entry that names a model is.
+        const scan = await scanRequestHead(current, true);
+        if (scan.replayed === undefined) {
+          // Nothing was read (the body was empty): the original request is the honest handover.
+          const resolution = resolve(current);
+          return resolution.ok && replay !== undefined
+            ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } }
+            : resolution.ok
+              ? serveScoped(resolution)
+              : resolution;
         }
+        replay = scan.replayed;
         // An `acct:` member is served by relaunch, never by a route: one login per process. The door asks the session's supervisor to move it (when one is watching) and answers the request with what is happening, so the turn ends cleanly rather than hanging or 502-ing.
         const account = scan.model === undefined ? undefined : resolveAccountTarget(scan.model, deps.models?.());
         if (account !== undefined) {
@@ -308,19 +361,32 @@ export function createProviderRouteResolver(deps: {
               : `model "${account.model}" runs under identity "${account.identity}", which needs a relaunch this session cannot make; start it there with: claude @${account.identity} --resume`,
           };
         }
-        const target = scan.model === undefined ? undefined : resolveModelTarget(scan.model, deps.models?.(), isRouter || (current.session.routeByName && providerName !== undefined));
-        if (target === providerName) {
-          // The qualified name points back at the provider the session is already on: nothing to rewrite, serve it here.
+        const routed = scan.model === undefined ? undefined : resolveRoutedModel(scan.model, providerName, current.session, isRouter || providerName !== undefined, deps, routingMemory, rotations);
+        const requested = scan.model;
+        if (routed !== undefined) {
+          routingMemory.set(current.session.sessionId ?? "", routed.ref);
+          if (requested !== undefined && routed.provider === providerName && routed.model === requested) {
+            // The name points back at the provider the session is already on under the name it serves: nothing to rewrite, serve it here.
+            const resolution = resolve(current);
+            return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } } : resolution;
+          }
+          if (requested !== undefined && routed.model !== requested) {
+            // The rewrite replaces the model field's value in the one copy of the body the whole-body scan already holds, so the target receives exactly the request that matched with exactly one field changed; the framing header is dropped because the new name is a different length.
+            const rewritten = (scan.text ?? "").replace(new RegExp('"model":\\s*"' + requested.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"'), '"model":"' + routed.model + '"');
+            const headers = Object.fromEntries(Object.entries(replay.headers).filter(([name]) => name.toLowerCase() !== "content-length"));
+            replay = { ...replay, headers, body: Readable.from([Buffer.from(rewritten, "utf8")]) };
+          }
+          if (routed.provider !== providerName) {
+            const scopedPrefix = providerName === undefined ? undefined : `${PROVIDER_PATH_PREFIX}${encodeURIComponent(providerName)}`;
+            const rest = scopedPrefix !== undefined && path.startsWith(scopedPrefix) ? path.slice(scopedPrefix.length) : path;
+            const query = current.url.includes("?") ? current.url.slice(current.url.indexOf("?")) : "";
+            const carried = replay;
+            current = { ...current, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(routed.provider)}${rest}${query}`, body: carried.body, headers: carried.headers };
+            continue;
+          }
+          // Same provider, renamed model: serve the rewritten body here, on the provider the session is already on.
           const resolution = resolve(current);
-          return resolution.ok && replay !== undefined ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } } : resolution.ok ? serveScoped(resolution) : resolution;
-        }
-        if (target !== undefined) {
-          const scopedPrefix = providerName === undefined ? undefined : `${PROVIDER_PATH_PREFIX}${encodeURIComponent(providerName)}`;
-          const rest = scopedPrefix !== undefined && path.startsWith(scopedPrefix) ? path.slice(scopedPrefix.length) : path;
-          const query = current.url.includes("?") ? current.url.slice(current.url.indexOf("?")) : "";
-          const carried = scan.replayed ?? current;
-          current = { ...current, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(target)}${rest}${query}`, body: carried.body, headers: carried.headers };
-          continue;
+          return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } } : resolution;
         }
       }
       if (routes === undefined || routes.length === 0) {

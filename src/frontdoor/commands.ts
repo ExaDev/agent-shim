@@ -14,6 +14,7 @@ import { collectSessionList, showSession } from "../agents/sessions";
 import { listIdentities } from "../identityStore";
 import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { supervisedSessionOf, writeModelMove } from "../supervise/registry";
+import { createTargetObservationStore } from "../selection/targetStore";
 import { checkForUpdate } from "../update/commands";
 import { identityExists, listAnchoredIdentities } from "../identityStore";
 import { readJobs } from "../jobStore";
@@ -80,7 +81,6 @@ import { withQuotaRefresh } from "../usage/quotaRefresh";
 import { createRealQuotaRefresher } from "../usage/realQuotaRefresher";
 import { createUsageStore } from "../usage/store";
 import type { UsageRecord } from "../usage/schema";
-import { createTargetObservationStore } from "../selection/targetStore";
 
 /** How a door's watchdog starts a replacement: this very executable running the supervisor subcommand, pinned to this door's state root exactly as `spawnDetachedSupervisor` pins it. Every environment value is a string, as the watchdog thread's `spawn` requires. */
 function respawnInvocation(paths: LayoutPaths): { readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> } {
@@ -204,6 +204,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     },
   });
   // This generation's control token, minted per door start and written owner-only: the value the door's control routes demand and only this user's CLI can read. A crashed door's stale file never authenticates, because the next generation mints a fresh one over it.
+  // The per-target observations a virtual model's selection ranks on: seeded from the usage log at door start, then kept live by every record the store writes below.
+  const observations = createTargetObservationStore(realFarmFs, paths);
   // The routing layer's snapshot cache, kept fresh by the usage store's publish below: a route condition reading a target's quota sees the state this process last wrote without a file read, and a cold cache (a door just started) falls back to the snapshot on disk once before the store's next write makes it live.
   const routingSnapshots = new Map<string, UsageSnapshot>();
   const rcControlToken = randomUUID();
@@ -220,6 +222,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       credentials: { ...realCredentialPort, cache: realCredentialCacheEnv(paths) },
       usageSnapshotOf: (identity) => (identity === undefined ? undefined : routingSnapshots.get(identity) ?? readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity)),
       // An `acct:` model member is served by relaunch: the door leaves a move request for the session's supervisor (found across every pool's registry, since the door does not know which pool launched the session) and answers the request with what is happening. A session nothing supervises gets the message naming the command to run instead.
+      observations: (target) => observations.observation(target),
       accountMoves: (sessionId, to, model) => {
         if (supervisedSessionOf(realFarmFs, paths, sessionId, realIsProcessRunning) === undefined) {
           return false;
@@ -247,6 +250,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
     publish: (snapshot) => {
       routingSnapshots.set(snapshot.identity, snapshot);
       usagePublisher.publish(snapshot);
+    },
+    onRecord: (record) => {
+      observations.observe(record);
     },
   });
   // A provider whose quota only its own usage endpoint reports is refreshed after its requests are recorded, throttled by the quota's own resolution; the refresh runs detached from the request.

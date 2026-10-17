@@ -132,6 +132,7 @@ agent-shim model remove <name> [--yes]
 agent-shim model tier <tier> --ref <ref> | --clear
 agent-shim model price <ref> --input <usd> --output <usd> | --clear
 agent-shim model list [--json]
+agent-shim model explain <name>   # which member the virtual model's mode picks now, and why
 agent-shim provider remove <name> [--yes] [--json]
 
 agent-shim rule add <path> [--config-profile <profile>] [--identity <identity>] [--json]
