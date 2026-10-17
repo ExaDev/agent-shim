@@ -10,10 +10,10 @@ import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } fro
 import { FAKE_HOME, admitLaunchToken, fakeCredentials, fakeFs, followsLaunchFlag } from "../test-helpers";
 import type { FsPort } from "../launcher/ports";
 import type { UsageSnapshot } from "../usage/schema";
-import { createProviderRouteResolver } from "./providerRoute";
+import { createProviderRouteResolver} from "./providerRoute";
 import { serveRouted } from "./pipeline";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { AUTH_HEADER, type RoutedRequest, type RoutedResponse } from "./route";
+import { AUTH_HEADER, ROUTE_BY_NAME_HEADER, type RoutedRequest, type RoutedResponse } from "./route";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 
@@ -59,7 +59,7 @@ function resolver(files: Record<string, unknown>, directPort = OWN_PORT, models?
 }
 
 function request(url: string, body = "{}"): RoutedRequest {
-  return { method: "POST", url, headers: {}, body: Readable.from([Buffer.from(body)]), signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined } };
+  return { method: "POST", url, headers: {}, body: Readable.from([Buffer.from(body)]), signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, routeByName: false, projectId: undefined } };
 }
 
 describe("createProviderRouteResolver", () => {
@@ -133,7 +133,7 @@ describe("createProviderRouteResolver", () => {
   it("serves a provider session's bare /v1/ target through its provider's route, the request rewritten under the scoped path the route parses", async () => {
     // An antigravity provider whose credential never resolves: the route must get as far as its credential (a 401 naming the provider), which a bare unrewritten path never reaches because the route cannot parse a provider out of it.
     const resolve = resolver({ [`${PROVIDERS_DIR}/ag.json`]: { kind: "antigravity", displayName: "AG", credential: { sources: [{ env: "NOT_SET_ANYWHERE" }] }, antigravity: { mode: "cloud" } } });
-    const sessionRequest = (url: string): RoutedRequest => ({ ...request(url, JSON.stringify({ model: "claude-haiku-5-5", messages: [{ role: "user", content: "Reply OK" }] })), session: { identity: undefined, sessionId: undefined, provider: "ag", headroom: false, projectId: undefined } });
+    const sessionRequest = (url: string): RoutedRequest => ({ ...request(url, JSON.stringify({ model: "claude-haiku-5-5", messages: [{ role: "user", content: "Reply OK" }] })), session: { identity: undefined, sessionId: undefined, provider: "ag", headroom: false, routeByName: false, projectId: undefined } });
     const resolution = await resolve(sessionRequest("/v1/messages?beta=true"));
     expect(resolution.ok).toBe(true);
     if (!resolution.ok) {
@@ -598,6 +598,30 @@ describe("a router provider", () => {
       });
       expect(response.status).toBe(HTTP_STATUS.ok);
       expect(upstream.seen()[0]?.url).toContain("/v1/messages");
+    } finally {
+      await door.close();
+    }
+  });
+});
+
+describe("routing by name from a provider session", () => {
+  it("routes a provider-qualified model name off the launch provider when the session asked to route by name", async () => {
+    const upstream = await bodyRecordingUpstream();
+    const elsewhere = await bodyRecordingUpstream();
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-token" }] } },
+      [`${PROVIDERS_DIR}/m.json`]: { displayName: "M", baseUrl: `http://127.0.0.1:${String(elsewhere.port)}`, credential: { sources: [{ literal: "m-token" }] } },
+    };
+    const door = await startDoor(resolver(files));
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests", [ROUTE_BY_NAME_HEADER]: "1" },
+        body: JSON.stringify({ model: "m/glm-5.3", max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
+      });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(upstream.seen()).toHaveLength(0);
+      expect(elsewhere.seen()).toHaveLength(1);
     } finally {
       await door.close();
     }

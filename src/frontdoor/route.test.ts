@@ -13,13 +13,13 @@ describe("identifyRequest", () => {
       authorization: "Bearer token",
       "user-agent": "claude/1",
     });
-    expect(identified.session).toEqual({ identity: "work", sessionId: "session-1", provider: "z", headroom: true, projectId: "/repo" });
+    expect(identified.session).toEqual({ identity: "work", sessionId: "session-1", provider: "z", headroom: true, routeByName: false, projectId: "/repo" });
     expect(identified.forwardableHeaders).toEqual({ authorization: "Bearer token", "user-agent": "claude/1" });
   });
 
   it("reads internal header names case-insensitively, as the transport normalises them", () => {
     const identified = identifyRequest({ "X-Agent-Shim-Identity": "work", "X-AGENT-SHIM-SESSION": "session-2" });
-    expect(identified.session).toEqual({ identity: "work", sessionId: "session-2", provider: undefined, headroom: false, projectId: undefined });
+    expect(identified.session).toEqual({ identity: "work", sessionId: "session-2", provider: undefined, headroom: false, routeByName: false, projectId: undefined });
     expect(identified.forwardableHeaders).toEqual({});
   });
 
@@ -30,11 +30,11 @@ describe("identifyRequest", () => {
 
   it("treats a session with no injected headers as headroom-less and anonymous", () => {
     const identified = identifyRequest({ authorization: "Bearer token" });
-    expect(identified.session).toEqual({ identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined });
+    expect(identified.session).toEqual({ identity: undefined, sessionId: undefined, provider: undefined, headroom: false, routeByName: false, projectId: undefined });
   });
 
   it("names exactly the internal headers, so a new one cannot be added without widening the strip", () => {
-    expect(INTERNAL_HEADER_NAMES).toEqual(["x-agent-shim-identity", "x-agent-shim-session", "x-agent-shim-headroom", "x-agent-shim-auth", "x-agent-shim-provider", "x-agent-shim-hop", "x-agent-shim-hop-id", "x-headroom-project-id", "x-headroom-session-id", "x-headroom-base-url"]);
+    expect(INTERNAL_HEADER_NAMES).toEqual(["x-agent-shim-identity", "x-agent-shim-session", "x-agent-shim-headroom", "x-agent-shim-route-by-name", "x-agent-shim-auth", "x-agent-shim-provider", "x-agent-shim-hop", "x-agent-shim-hop-id", "x-headroom-project-id", "x-headroom-session-id", "x-headroom-base-url"]);
   });
 });
 

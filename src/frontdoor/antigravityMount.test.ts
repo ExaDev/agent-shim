@@ -115,7 +115,7 @@ describe("createAntigravityRouteMount", () => {
         identity: undefined,
         sessionId: undefined,
         provider: undefined,
-        headroom: false,
+        headroom: false, routeByName: false,
         projectId: undefined,
       },
     };
@@ -151,7 +151,7 @@ describe("createAntigravityRouteMount", () => {
         identity: undefined,
         sessionId: undefined,
         provider: undefined,
-        headroom: false,
+        headroom: false, routeByName: false,
         projectId: undefined,
       },
     };

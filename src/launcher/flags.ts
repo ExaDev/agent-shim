@@ -7,7 +7,7 @@ import type { LaunchFlags, Provider } from "../config/schema";
 import { credentialVariables, type ResolvedCredential } from "../credential";
 import { mergeAnthropicCustomHeaders } from "../headroom/headers";
 import { connectProxyUrl } from "../frontdoor/capability";
-import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, SESSION_HEADER } from "../frontdoor/route";
+import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, ROUTE_BY_NAME_HEADER, SESSION_HEADER } from "../frontdoor/route";
 import type { FrontDoorUp, HeadroomUp } from "./ports";
 
 /** The fully resolved launch flags for one launch. */
@@ -21,6 +21,8 @@ export interface ResolvedLaunchFlags {
   readonly pause: boolean;
   /** Whether the launch's report lists every pool member the pick ranked and why, and not only the one picked. */
   readonly explain: boolean;
+  /** Whether a provider session routes provider-qualified model names through the models block to the provider that serves them. */
+  readonly routeByName: boolean;
   /** How long the launcher waits after its own output before it starts claude, in milliseconds; zero for no wait. */
   readonly delayMs: number;
 }
@@ -33,6 +35,7 @@ interface LaunchFlagOverrides {
   readonly trackUsage?: boolean;
   readonly pause?: boolean;
   readonly explain?: boolean;
+  readonly routeByName?: boolean;
   /** `--delay`, as typed. */
   readonly delay?: string;
 }
@@ -74,6 +77,7 @@ export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLa
       true,
     pause: params.flags?.pause ?? parseEnvBool("AGENT_SHIM_PAUSE", params.env.AGENT_SHIM_PAUSE) ?? params.cascade?.pause ?? false,
     explain: params.flags?.explain ?? parseEnvBool("AGENT_SHIM_EXPLAIN", params.env.AGENT_SHIM_EXPLAIN) ?? params.cascade?.explain ?? false,
+    routeByName: params.flags?.routeByName ?? parseEnvBool("AGENT_SHIM_ROUTE_BY_NAME", params.env.AGENT_SHIM_ROUTE_BY_NAME) ?? params.cascade?.routeByName ?? false,
     delayMs: resolveDelayMs(params),
   };
 }
@@ -170,6 +174,8 @@ export interface BuildEnvParams {
   readonly sessionId: string;
   /** Whether Remote Control is on for this launch. It needs Claude Code in OAuth mode, so a provider launch with it on carries no credential variable; one with it off carries a placeholder, which lets the session run on an identity with no usable login. */
   readonly remoteControl: boolean;
+  /** Whether the session routes provider-qualified model names through the models block: rides the session headers so the door's routing layer sees it. */
+  readonly routeByName: boolean;
 }
 
 /**
@@ -227,6 +233,7 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
         { name: SESSION_HEADER, value: params.sessionId },
         { name: AUTH_HEADER, value: params.frontdoor.sessionToken },
         ...(params.provider === undefined ? [] : [{ name: PROVIDER_HEADER, value: params.provider.name }]),
+        ...(params.routeByName ? [{ name: ROUTE_BY_NAME_HEADER, value: "1" }] : []),
         ...(params.headroom === undefined
           ? []
           : [

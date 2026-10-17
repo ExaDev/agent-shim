@@ -61,11 +61,12 @@ Launching:
     --delay <duration>           wait this long (5s, 500ms) after the launcher's own output before starting claude
     --[no-]pause                 wait for a key press after the launcher's own output before starting claude
     --[no-]explain               with @pool:<name>, list every member the pick ranked and why, not only the one picked
+    --[no-]route-by-name         route provider-qualified model names through the models block to the provider that serves them
     --native                     run the real claude with nothing from agent-shim applied (no other launch flag allowed)
 
 Environment:
   AGENT_SHIM_IDENTITY, AGENT_SHIM_CONFIG_PROFILE, AGENT_SHIM_SKIP_PERMISSIONS,
-  AGENT_SHIM_REMOTE_CONTROL, AGENT_SHIM_HEADROOM, AGENT_SHIM_TRACK_USAGE, AGENT_SHIM_DELAY, AGENT_SHIM_PAUSE, AGENT_SHIM_EXPLAIN, AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL,
+  AGENT_SHIM_REMOTE_CONTROL, AGENT_SHIM_HEADROOM, AGENT_SHIM_TRACK_USAGE, AGENT_SHIM_DELAY, AGENT_SHIM_PAUSE, AGENT_SHIM_EXPLAIN, AGENT_SHIM_ROUTE_BY_NAME, AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL,
   AGENT_SHIM_CATEGORY_OVERRIDE, AGENT_SHIM_ENTRY_OVERRIDE, AGENT_SHIM_HOME,
   AGENT_SHIM_DEBUG (print stack traces), NO_COLOR. Booleans are true, false, 1 or 0.
 

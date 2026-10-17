@@ -149,7 +149,7 @@ describe("createFrontDoorServer", () => {
       expect(echoed).not.toContain(IDENTITY_HEADER);
       expect(echoed).not.toContain(SESSION_HEADER);
       expect(echoed).not.toContain(HEADROOM_FLAG_HEADER);
-      expect(seen?.session).toEqual({ identity: "work", sessionId: "session-1", headroom: true, projectId: undefined });
+      expect(seen?.session).toEqual({ identity: "work", sessionId: "session-1", headroom: true, routeByName: false, projectId: undefined });
     } finally {
       await door.close();
     }

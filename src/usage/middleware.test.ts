@@ -23,7 +23,7 @@ const JSON_HEADERS = { "content-type": "application/json" };
 
 function event(overrides: Partial<RoutedResponseEvent> = {}): RoutedResponseEvent {
   return {
-    session: { identity: "work", sessionId: "session-1", provider: undefined, headroom: false, projectId: undefined },
+    session: { identity: "work", sessionId: "session-1", provider: undefined, headroom: false, routeByName: false, projectId: undefined },
     route: "passthrough",
     method: "POST",
     path: "/v1/messages",
@@ -160,7 +160,7 @@ describe("createUsageMiddleware", () => {
 
   it("attributes a provider session's bare /v1/ request to the provider its launch selected", () => {
     const h = harness();
-    const body = begin(h, event({ session: { identity: "work", sessionId: "session-1", provider: "antigravity", headroom: false, projectId: undefined } }));
+    const body = begin(h, event({ session: { identity: "work", sessionId: "session-1", provider: "antigravity", headroom: false, routeByName: false, projectId: undefined } }));
 
     finishBody(h, body);
     h.flush();
@@ -349,7 +349,7 @@ describe("createUsageMiddleware", () => {
 
     it("records a request a routing layer sent to another provider under the provider that served it, not the one the launch selected", () => {
       const h = harness();
-      finishBody(h, begin(h, event({ path: "/v1/messages", servedPath: "/providers/codex/v1/messages", session: { identity: "work", sessionId: "session-1", provider: "router", headroom: false, projectId: undefined } })));
+      finishBody(h, begin(h, event({ path: "/v1/messages", servedPath: "/providers/codex/v1/messages", session: { identity: "work", sessionId: "session-1", provider: "router", headroom: false, routeByName: false, projectId: undefined } })));
       h.flush();
 
       expect(singleRecord(h)).toMatchObject({ provider: "codex", endpoint: "/v1/messages" });
@@ -357,10 +357,10 @@ describe("createUsageMiddleware", () => {
 
     it("omits identity, session and project when the launch resolved none, and records the project when it did", () => {
       const anonymous = harness();
-      finishBody(anonymous, begin(anonymous, event({ session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined } })));
+      finishBody(anonymous, begin(anonymous, event({ session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, routeByName: false, projectId: undefined } })));
       anonymous.flush();
       const scoped = harness();
-      finishBody(scoped, begin(scoped, event({ session: { identity: "work", sessionId: "s", provider: undefined, headroom: true, projectId: "repo-root" } })));
+      finishBody(scoped, begin(scoped, event({ session: { identity: "work", sessionId: "s", provider: undefined, headroom: true, routeByName: false, projectId: "repo-root" } })));
       scoped.flush();
 
       const bare = singleRecord(anonymous);
