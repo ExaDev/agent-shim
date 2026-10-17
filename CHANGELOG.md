@@ -1,3 +1,9 @@
+## [11.39.0](https://github.com/ExaDev/agent-shim/compare/v11.38.0...v11.39.0) (2026-10-17)
+
+### Features
+
+* **supervise:** serve an acct model member by relaunching under its identity ([1dfed91](https://github.com/ExaDev/agent-shim/commit/1dfed9166d6976e27092e3f155baf0e399a1f2dc))
+
 ## [11.38.0](https://github.com/ExaDev/agent-shim/compare/v11.37.0...v11.38.0) (2026-10-17)
 
 ### Features
