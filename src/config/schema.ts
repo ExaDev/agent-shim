@@ -106,6 +106,8 @@ const LaunchSchema = z.strictObject({
   delay: z.string().regex(DURATION_RE, "must be a duration such as 5s or 500ms").optional(),
   /** Whether the launcher waits for a key press after its own output before it starts claude. Takes the place of `delay` when both are set. Applies only when a terminal is watching. */
   pause: z.boolean().optional(),
+  /** Whether a provider session routes provider-qualified model names (`z/glm-5.3`, `auto`) through the `models` block to the provider that serves them, instead of sending every request to the launch provider. */
+  routeByName: z.boolean().optional(),
   /** Whether the launcher's report, for a launch that picks from a pool, lists every member the pick ranked with why each stands where it does, and not only the member it picked. */
   explain: z.boolean().optional(),
 });
@@ -227,7 +229,7 @@ const ProviderEnvSchema = z
   });
 
 /** The kinds of provider: `http` is an Anthropic Messages endpoint at a fixed `baseUrl` (the default when `kind` is absent), and `codex` is ChatGPT's Codex backend reached through agent-shim's own supervised translation daemon. */
-export const PROVIDER_KINDS = ["http", "codex", "antigravity"] as const;
+export const PROVIDER_KINDS = ["http", "codex", "antigravity", "router"] as const;
 
 /**
  * The operational modes for an Antigravity provider: `cloud` makes direct HTTPS calls to Google Gemini API or Vertex AI; `local` communicates with an Agent Client Protocol (ACP) server or local daemon.
@@ -420,6 +422,14 @@ const CodexProviderSchema = z.strictObject({
 });
 export type CodexProvider = z.infer<typeof CodexProviderSchema>;
 
+/** A `router` provider: no endpoint and no credential of its own. A session launched on it has each request's model name resolved through the `models` block to a target provider, whose own kind handling and credential serve the request. */
+const RouterProviderSchema = z.strictObject({
+  $schema: z.string().optional(),
+  kind: z.literal("router"),
+  displayName: z.string().min(1),
+});
+export type RouterProvider = z.infer<typeof RouterProviderSchema>;
+
 /** An `antigravity` provider: see `ProviderSchema`. */
 const AntigravityProviderSchema = z.strictObject({
   $schema: z.string().optional(),
@@ -434,7 +444,7 @@ const AntigravityProviderSchema = z.strictObject({
 export type AntigravityProvider = z.infer<typeof AntigravityProviderSchema>;
 
 /** All kinds of provider; see `HttpProviderSchema` for the shared fields. */
-export const ProviderSchema = z.discriminatedUnion("kind", [HttpProviderSchema, CodexProviderSchema, AntigravityProviderSchema]);
+export const ProviderSchema = z.discriminatedUnion("kind", [HttpProviderSchema, CodexProviderSchema, AntigravityProviderSchema, RouterProviderSchema]);
 export type Provider = z.infer<typeof ProviderSchema>;
 
 /** True when `provider` is an http provider. */
@@ -448,6 +458,10 @@ export function isCodexProvider(provider: Provider): provider is CodexProvider {
 }
 
 /** True when `provider` is an antigravity provider. */
+export function isRouterProvider(provider: Provider): provider is RouterProvider {
+  return provider.kind === "router";
+}
+
 export function isAntigravityProvider(provider: Provider): provider is AntigravityProvider {
   return provider.kind === "antigravity";
 }

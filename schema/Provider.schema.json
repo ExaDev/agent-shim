@@ -938,6 +938,27 @@
         "credential"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "const": "router"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind",
+        "displayName"
+      ],
+      "additionalProperties": false
     }
   ],
   "$defs": {

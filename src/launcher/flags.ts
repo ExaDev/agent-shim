@@ -194,7 +194,7 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
   }
 
   if (params.provider !== undefined) {
-    const providerEnv = params.provider.definition.env ?? {};
+    const providerEnv = params.provider.definition.kind !== undefined && params.provider.definition.kind !== "http" ? {} : (params.provider.definition.env ?? {});
     providerCustomHeaders = providerEnv.ANTHROPIC_CUSTOM_HEADERS;
     // The child keeps believing it talks to Claude Code's own API (the base URL stays unset, exactly as an OAuth launch leaves it), because that belief is load-bearing: Claude Code's Remote Control activation gate admits only api.anthropic.com and honours no override, so a provider-scoped base URL is what kept provider inference and Remote Control from coexisting in one session. The door, which terminates that host's TLS, routes the session's traffic to the provider named in the provider header injected below. An ambient base URL inherited from the parent is removed too, or the child would dial somewhere the door never sees.
     env.ANTHROPIC_BASE_URL = undefined;

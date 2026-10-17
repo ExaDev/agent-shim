@@ -132,6 +132,9 @@
         "pause": {
           "type": "boolean"
         },
+        "routeByName": {
+          "type": "boolean"
+        },
         "explain": {
           "type": "boolean"
         }

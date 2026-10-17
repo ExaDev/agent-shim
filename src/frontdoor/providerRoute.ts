@@ -1,5 +1,5 @@
 import { ConfigValidationError } from "../config/load";
-import { isAntigravityProvider, isCodexProvider, isHttpProvider, type AntigravityProvider, type CodexProvider, type HttpProvider, type Credential } from "../config/schema";
+import { isAntigravityProvider, isCodexProvider, isHttpProvider, type AntigravityProvider, type CodexProvider, type HttpProvider, type Credential, isRouterProvider, type ModelsConfig } from "../config/schema";
 import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
 import { resolveCodexConfig } from "../codex/translate";
@@ -41,10 +41,28 @@ function scopeSessionProviderPath(request: RoutedRequest): RoutedRequest {
   return { ...request, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(request.session.provider)}${request.url}` };
 }
 
+/** The provider a model name resolves to through the models block: a provider-qualified name (`z/glm-5.3`) names its provider directly, a virtual model contributes its first ordered member's provider, and a bare unknown name has no target. */
+function resolveModelTarget(model: string, models: ModelsConfig | undefined): string | undefined {
+  if (models === undefined) {
+    return model.includes("/") && !model.startsWith("acct:") ? model.split("/")[0] : undefined;
+  }
+  if (model.includes("/") && !model.startsWith("acct:")) {
+    return model.split("/")[0];
+  }
+  const virtual = models.virtual?.[model];
+  const first = virtual?.members.find((member) => !member.startsWith("acct:") && !member.startsWith("family:"));
+  if (first === undefined) {
+    return undefined;
+  }
+  return first.includes("/") ? first.split("/")[0] : resolveModelTarget(first, models);
+}
+
 export function createProviderRouteResolver(deps: {
   /** Reads provider files, the same filesystem port the launcher uses. */
   readonly fs: FsPort;
   readonly providersDir: string;
+  /** The models block the router resolves names against, read live so edits take effect without a relaunch. */
+  readonly models?: () => ModelsConfig | undefined;
   /** The ports the codex translation route needs, already wired to the real auth store and upstream fetch. */
   readonly codexPorts: Omit<CodexRoutePorts, "loadProvider">;
   /**
@@ -191,6 +209,10 @@ export function createProviderRouteResolver(deps: {
         ),
       };
     }
+    if (isRouterProvider(definition)) {
+      // The router mounts in the routing layer below: it has no route of its own until a request's model name resolves to a target, so the resolver serves the OAuth passthrough for any path a routing layer did not claim.
+      return { ok: true, route: passthroughFor(`router:${provider}`, { baseUrl: `http://127.0.0.1:${String(deps.directPort())}`, stripPrefix: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`, headroomUpstream: directOrigin(deps.directPort()) }) };
+    }
     const httpProvider: HttpProvider = definition;
     return {
       ok: true,
@@ -236,12 +258,30 @@ export function createProviderRouteResolver(deps: {
         visited.add(providerName);
       }
       let routes;
+      let isRouter;
       try {
         const definition = providerName === undefined ? undefined : loadProvider(deps.providersDir, providerName, deps.fs);
         routes = definition === undefined || !isHttpProvider(definition) ? undefined : definition.routes;
+        isRouter = definition !== undefined && isRouterProvider(definition);
       } catch {
         // An invalid provider file is the sync resolver's own refusal to report, not this layer's.
         routes = undefined;
+        isRouter = false;
+      }
+      // A router resolves each request's model name through the models block to a target provider, whose own kind handling and credential then serve it: the same one-scan, one-rewrite shape the `routes` list below uses.
+      if (isRouter) {
+        const scan = await scanRequestHead(current, false);
+        if (scan.replayed !== undefined) {
+          replay = scan.replayed;
+        }
+        const target = scan.model === undefined ? undefined : resolveModelTarget(scan.model, deps.models?.());
+        if (target !== undefined) {
+          const rest = path.slice(`${PROVIDER_PATH_PREFIX}${encodeURIComponent(providerName ?? "")}`.length);
+          const query = current.url.includes("?") ? current.url.slice(current.url.indexOf("?")) : "";
+          const carried = scan.replayed ?? current;
+          current = { ...current, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(target)}${rest}${query}`, body: carried.body, headers: carried.headers };
+          continue;
+        }
       }
       if (routes === undefined || routes.length === 0) {
         const resolution = resolve(current);

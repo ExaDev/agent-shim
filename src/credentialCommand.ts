@@ -4,7 +4,7 @@ import type { Command } from "commander";
 
 import { withExamples, type CommandDeps } from "./cli/commandDeps";
 import { CliError, EXIT_FAILURE, UsageError } from "./cliError";
-import type { Credential } from "./config/schema";
+import { isRouterProvider, type Credential } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, describeCredential, resolveCredential, type CredentialPort } from "./credential";
 import { effectiveStore, ttlMs, type CredentialCachePort } from "./credentialCache";
 import { IdentityNotFoundError, readIdentity, setIdentityCredential } from "./identityStore";
@@ -74,6 +74,9 @@ function credentialSubject(deps: CommandDeps, name: string, asProvider: boolean)
     const provider = readProvider(deps.paths, name);
     if (provider === undefined) {
       throw new ProviderNotFoundError(name);
+    }
+    if (isRouterProvider(provider)) {
+      throw new UsageError(`Provider "${name}" is a router: it has no credential of its own.`);
     }
     return { name, subject: `provider ${name}`, credential: provider.credential };
   }

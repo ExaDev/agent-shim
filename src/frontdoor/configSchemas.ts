@@ -76,7 +76,7 @@ const ProviderValueSchema = z.strictObject({
   displayName: z.string(),
   baseUrl: z.string().optional(),
   codex: CodexProviderConfigSchema.optional(),
-  credential: CredentialSummarySchema,
+  credential: CredentialSummarySchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
 });
 

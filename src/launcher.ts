@@ -26,7 +26,7 @@ import { childExitCode } from "./launcher/spawn";
 import { resolveProvider, selectProvider, type SelectedProvider } from "./providersStore";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
-import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool, type UpdateMode } from "./config/schema";
+import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool, type UpdateMode, isRouterProvider } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, credentialVariables, describeSource, resolveCredential, summariseCredential, type CredentialPort, type CredentialSummary, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
 import { ANTHROPIC_PROVIDER } from "./usage/middleware";
@@ -707,7 +707,9 @@ export function resolveLaunch(params: PrepareLaunchParams): LaunchResolution {
   const environment = [...new Set([...Object.keys(built).filter((name) => built[name] !== env[name]), ...credentialNames])].sort();
   const credential =
     decided.provider !== undefined
-      ? { subject: "provider" as const, name: decided.provider.name, summary: summariseCredential(decided.provider.definition.credential) }
+      ? isRouterProvider(decided.provider.definition)
+        ? undefined
+        : { subject: "provider" as const, name: decided.provider.name, summary: summariseCredential(decided.provider.definition.credential) }
       : decided.identityCredentialBlock !== undefined && decided.farmIdentity !== undefined
         ? { subject: "identity" as const, name: decided.farmIdentity, summary: summariseCredential(decided.identityCredentialBlock) }
         : undefined;

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ConfigValidationError } from "./config/load";
+import { isRouterProvider, type Provider } from "./config/schema";
 import type { FsPort } from "./launcher/ports";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { addProvider, InvalidProviderNameError, LEGACY_LITERAL_PLACEHOLDER, legacyProviderConversion, LegacyProviderFileError, listProviders, loadProvider, ProviderAlreadyExistsError, providerExists, ProviderKindMismatchError, ProviderNotFoundError, readProvider, removeProvider, resolveProvider, updateProvider } from "./providersStore";
@@ -71,8 +72,11 @@ describe("providers", () => {
         sources: [{ env: "ANTHROPIC_KEY" }, { op: "op://vault/anthropic/key" }],
         target: "apiKey",
       });
-      expect(readProvider(paths, "anthropic-api")?.credential).toEqual({ sources: [{ env: "ANTHROPIC_KEY" }, { op: "op://vault/anthropic/key" }], target: "apiKey" });
-      expect(provider.credential.target).toBe("apiKey");
+      {
+        const stored = readProvider(paths, "anthropic-api");
+        expect(stored !== undefined && !isRouterProvider(stored) ? (stored as Extract<Provider, { kind?: "http" }>).credential : undefined).toEqual({ sources: [{ env: "ANTHROPIC_KEY" }, { op: "op://vault/anthropic/key" }], target: "apiKey" });
+      }
+      expect(provider.kind === "router" ? undefined : provider.credential.target).toBe("apiKey");
     });
 
     it("throws ProviderAlreadyExistsError when the provider already exists", () => {
@@ -194,11 +198,11 @@ describe("providers", () => {
   describe("pickerModels", () => {
     it("writes the declared models on any provider kind and reads them back", () => {
       const declared = [{ model: "glm-5.3[1m]", tier: "opus" as const, label: "GLM 5.3" }, { model: "glm-air", tier: "haiku" as const }];
-      const http = addProvider(paths, "z", { ...zInput, pickerModels: declared });
-      const codex = addProvider(paths, "cx", { kind: "codex", displayName: "Codex", sources: [{ env: "KEY" }], pickerModels: declared });
+      const http = addProvider(paths, "z", { ...zInput, pickerModels: declared }) as Extract<Provider, { kind?: "http" }>;
+      const codex = addProvider(paths, "cx", { kind: "codex", displayName: "Codex", sources: [{ env: "KEY" }], pickerModels: declared }) as Extract<Provider, { kind: "codex" }>;
       expect(http.pickerModels).toEqual(declared);
       expect(codex.pickerModels).toEqual(declared);
-      expect(readProvider(paths, "z")?.pickerModels).toEqual(declared);
+      expect((readProvider(paths, "z") as Extract<Provider, { kind?: "http" }>).pickerModels).toEqual(declared);
     });
 
     it("writes no key when nothing is declared", () => {
@@ -213,20 +217,20 @@ describe("providers", () => {
     it("merges added models over the existing ones per model, in place, and removes the ones named", () => {
       addProvider(paths, "z", { ...zInput, pickerModels: [{ model: "a", tier: "opus" }, { model: "b", tier: "sonnet" }, { model: "c", tier: "haiku" }] });
 
-      const updated = updateProvider(paths, "z", { pickerModels: [{ model: "b", tier: "haiku" }, { model: "d", tier: "opus" }], unsetPickerModels: ["c"] });
+      const updated = updateProvider(paths, "z", { pickerModels: [{ model: "b", tier: "haiku" }, { model: "d", tier: "opus" }], unsetPickerModels: ["c"] }) as Extract<Provider, { kind?: "http" }>;
 
       expect(updated.pickerModels).toEqual([{ model: "a", tier: "opus" }, { model: "b", tier: "haiku" }, { model: "d", tier: "opus" }]);
     });
 
     it("drops the key when the last model is removed", () => {
       addProvider(paths, "z", { ...zInput, pickerModels: [{ model: "a", tier: "opus" }] });
-      expect(updateProvider(paths, "z", { unsetPickerModels: ["a"] }).pickerModels).toBeUndefined();
+      expect((updateProvider(paths, "z", { unsetPickerModels: ["a"] }) as Extract<Provider, { kind?: "http" }>).pickerModels).toBeUndefined();
       expect(JSON.parse(fs.readFileSync(path.join(paths.providersDir, "z.json"), "utf8"))).not.toHaveProperty("pickerModels");
     });
 
     it("leaves the declared models alone when an update does not mention them", () => {
       addProvider(paths, "z", { ...zInput, pickerModels: [{ model: "a", tier: "opus" }] });
-      expect(updateProvider(paths, "z", { displayName: "Other" }).pickerModels).toEqual([{ model: "a", tier: "opus" }]);
+      expect((updateProvider(paths, "z", { displayName: "Other" }) as Extract<Provider, { kind?: "http" }>).pickerModels).toEqual([{ model: "a", tier: "opus" }]);
     });
   });
 

@@ -28,6 +28,7 @@ import {
   type PickerModel,
   type ProviderCatalogue,
   type Provider,
+  isRouterProvider,
 } from "./config/schema";
 import { UsageError } from "./cliError";
 import { catalogueCachePath, filterCatalogue, parseCatalogueCache } from "./providerCatalogue";
@@ -46,11 +47,13 @@ function toProviderView(name: string, provider: Provider): Record<string, unknow
       ? (provider.codex === undefined ? {} : { codex: provider.codex })
       : isAntigravityProvider(provider)
       ? (provider.antigravity === undefined ? {} : { antigravity: provider.antigravity })
+      : isRouterProvider(provider)
+      ? {}
       : { baseUrl: provider.baseUrl }),
-    credential: summariseCredential(provider.credential),
-    ...(provider.env === undefined ? {} : { env: provider.env }),
-    ...(provider.pickerModels === undefined ? {} : { pickerModels: provider.pickerModels }),
-    ...(isCodexProvider(provider) || isAntigravityProvider(provider) || provider.catalogue === undefined ? {} : { catalogue: provider.catalogue }),
+    ...(isRouterProvider(provider) ? {} : { credential: summariseCredential(provider.credential) }),
+    ...(!isRouterProvider(provider) && provider.env !== undefined ? { env: provider.env } : {}),
+    ...(!isRouterProvider(provider) && provider.pickerModels !== undefined ? { pickerModels: provider.pickerModels } : {}),
+    ...(isCodexProvider(provider) || isAntigravityProvider(provider) || isRouterProvider(provider) || provider.catalogue === undefined ? {} : { catalogue: provider.catalogue }),
   };
 }
 
@@ -276,7 +279,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(antigravity === undefined ? {} : { antigravity }),
         });
         reportMutation(options.json, { action: "created", kind: "provider", name, value: created }, () => {
-          console.log(`Created provider "${name}" (${describeProviderEndpoint(created)}, credential ${describeCredential(created.credential)}).`);
+          console.log(`Created provider "${name}" (${describeProviderEndpoint(created)}${isRouterProvider(created) ? "" : `, credential ${describeCredential(created.credential)}`}).`);
         });
       }),
     [
@@ -343,12 +346,13 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         }
         const codex = codexConfigFromOptions(options);
         const antigravity = antigravityConfigFromOptions(options);
-        const cache = cacheChange(options, readProvider(paths, name)?.credential.cache);
+        const existingForCache = readProvider(paths, name);
+        const cache = cacheChange(options, existingForCache !== undefined && !isRouterProvider(existingForCache) ? existingForCache.credential.cache : undefined);
         if (options.unsetCatalogue === true && hasCatalogueOptions(options)) {
           throw new UsageError("--unset-catalogue cannot be combined with another --catalogue option.");
         }
         const existingProvider = readProvider(paths, name);
-        const catalogue = options.unsetCatalogue === true ? false : catalogueFromOptions(options, existingProvider !== undefined && !isCodexProvider(existingProvider) && !isAntigravityProvider(existingProvider) ? existingProvider.catalogue : undefined);
+        const catalogue = options.unsetCatalogue === true ? false : catalogueFromOptions(options, existingProvider !== undefined && !isCodexProvider(existingProvider) && !isAntigravityProvider(existingProvider) && !isRouterProvider(existingProvider) ? existingProvider.catalogue : undefined);
         const updated = updateProvider(paths, name, {
           ...(codex === undefined ? {} : { codex }),
           ...(antigravity === undefined ? {} : { antigravity }),
@@ -364,7 +368,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(catalogue === undefined ? {} : { catalogue }),
         });
         reportMutation(json, { action: "updated", kind: "provider", name, value: updated }, () => {
-          console.log(`Updated provider "${name}" (${describeProviderEndpoint(updated)}, credential ${describeCredential(updated.credential)}).`);
+          console.log(`Updated provider "${name}" (${describeProviderEndpoint(updated)}${isRouterProvider(updated) ? "" : `, credential ${describeCredential(updated.credential)}`}).`);
         });
       }),
     [
@@ -432,16 +436,18 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           console.log(`Antigravity effort: ${config.effort}`);
           console.log(`Antigravity degrade down tiers: ${config.degradeDownTiers ? "on" : "off"}`);
           console.log(`Endpoint: ${describeProviderEndpoint(found)}`);
-        } else {
+        } else if (!isRouterProvider(found)) {
           console.log(`Base URL: ${found.baseUrl}`);
         }
-        console.log(`Credential: ${describeCredential(found.credential)}`);
-        const env = Object.entries(found.env ?? {});
+        if (!isRouterProvider(found)) {
+          console.log(`Credential: ${describeCredential(found.credential)}`);
+        }
+        const env = Object.entries(isRouterProvider(found) ? {} : found.env ?? {});
         console.log(`Environment: ${env.length === 0 ? "(none)" : env.map(([key, value]) => `${key}=${value}`).join(", ")}`);
-        if (found.pickerModels !== undefined) {
+        if (!isRouterProvider(found) && found.pickerModels !== undefined) {
           console.log(`Picker models: ${found.pickerModels.map((entry) => `${entry.model} (${entry.tier})`).join(", ")}`);
         }
-        if (!isCodexProvider(found) && !isAntigravityProvider(found) && found.catalogue !== undefined) {
+        if (!isCodexProvider(found) && !isAntigravityProvider(found) && !isRouterProvider(found) && found.catalogue !== undefined) {
           const { tier, include, exclude, url } = found.catalogue;
           console.log(`Catalogue: tier ${tier}${include === undefined ? "" : `, include ${include.join(" ")}`}${exclude === undefined ? "" : `, exclude ${exclude.join(" ")}`}${url === undefined ? "" : `, url ${url}`} (see \`provider models ${name}\`)`);
         }
@@ -460,7 +466,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         if (found === undefined) {
           throw new ProviderNotFoundError(name);
         }
-        if (isCodexProvider(found) || isAntigravityProvider(found) || found.catalogue === undefined) {
+        if (isCodexProvider(found) || isAntigravityProvider(found) || isRouterProvider(found) || found.catalogue === undefined) {
           throw new UsageError(`Provider "${name}" has no catalogue setting. Set one with \`agent-shim provider set ${name} --catalogue-tier <tier>\`.`);
         }
         const catalogueSetting = found.catalogue;

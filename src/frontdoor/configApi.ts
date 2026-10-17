@@ -2,7 +2,7 @@ import { ORPCError } from "@orpc/client";
 import { openapi } from "@orpc/openapi";
 
 import { CliError } from "../cliError";
-import { type Provider, isAntigravityProvider, isCodexProvider, isHttpProvider } from "../config/schema";
+import { type Provider, isAntigravityProvider, isCodexProvider, isHttpProvider, isRouterProvider } from "../config/schema";
 import { applyProfileChange, createProfile, ProfileAlreadyExistsError, ProfileNotFoundError, readProfile, removeProfile, requireProfileExists, setGlobalDefaultProfile } from "../configProfilesStore";
 import { summariseCredential } from "../credential";
 import { mergeCredentialCache } from "../credentialCacheChange";
@@ -156,9 +156,10 @@ function providerValue(name: string, provider: Provider) {
       ? (provider.codex === undefined ? {} : { codex: provider.codex })
       : isAntigravityProvider(provider)
       ? (provider.antigravity === undefined ? {} : { antigravity: provider.antigravity })
+      : isRouterProvider(provider)
+      ? {}
       : { baseUrl: provider.baseUrl }),
-    credential: summariseCredential(provider.credential),
-    ...(provider.env === undefined ? {} : { env: provider.env }),
+    ...(isRouterProvider(provider) ? {} : { credential: summariseCredential(provider.credential), ...(provider.env === undefined ? {} : { env: provider.env }) }),
   };
 }
 
@@ -389,7 +390,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
                 throw new ORPCError("BAD_REQUEST", { message: `Changing the base URL of provider "${input.name}" requires a credential block in the same call: the stored credential is not sent to a different endpoint.` });
               }
               const cache =
-                credential?.cache === undefined ? undefined : mergeCredentialCache(credential.cache === false ? { enabled: false } : { ...credential.cache, enabled: true }, existing.credential.cache);
+                credential?.cache === undefined || isRouterProvider(existing) ? undefined : mergeCredentialCache(credential.cache === false ? { enabled: false } : { ...credential.cache, enabled: true }, isRouterProvider(existing) ? undefined : existing.credential.cache);
               const updated = updateProvider(paths, input.name, {
                 ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
                 ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }),

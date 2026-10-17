@@ -143,8 +143,8 @@ function catalogueRows(provider: Provider, models: readonly CatalogueModel[]): r
  * The real models a provider serves, as `/model` rows: the ones its tier settings reach, then the ones its file declares in `pickerModels`, which replace a derived row for the same model, then the ones its catalogue last listed (an `http` provider that opted into one), each only where an earlier part has not already named it. Empty when the provider names none, in which case the picker keeps its built-in lineup.
  */
 export function providerModelRows(provider: Provider, catalogue: readonly CatalogueModel[] = []): readonly ModelPickerRow[] {
-  const derived = provider.kind === "codex" ? codexRows(provider) : provider.kind === "antigravity" ? antigravityRows(provider) : httpRows(provider);
-  const declared = (provider.pickerModels ?? []).map(declaredRow);
+  const derived = provider.kind === "codex" ? codexRows(provider) : provider.kind === "antigravity" ? antigravityRows(provider) : provider.kind === "router" ? [] : httpRows(provider);
+  const declared = (provider.kind === "router" ? [] : (provider.pickerModels ?? []).map(declaredRow));
   const declaredModels = new Set(declared.map((row) => row.model));
   const named = [...derived.filter((row) => !declaredModels.has(row.model)), ...declared];
   // A model the provider's own settings name with the context marker is the same model its catalogue lists without it, so the marker is ignored when asking whether a row repeats one.

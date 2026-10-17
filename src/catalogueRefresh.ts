@@ -1,13 +1,13 @@
 import { CatalogueFetchError, catalogueCachePath, fetchCatalogue, type CatalogueCache, type CatalogueFetch } from "./providerCatalogue";
 import type { CredentialResolution } from "./credential";
-import type { Provider } from "./config/schema";
+import type { HttpProvider, Provider } from "./config/schema";
 import type { LayoutPaths } from "./paths";
 
 /** The effects `refreshProviderCatalogue` needs: reading the provider, resolving its credential, asking the network, and storing the result. */
 export interface RefreshCatalogueDeps {
   readonly paths: LayoutPaths;
   readonly readProvider: (name: string) => Provider | undefined;
-  readonly resolveCredential: (name: string, provider: Provider) => CredentialResolution;
+  readonly resolveCredential: (name: string, provider: HttpProvider) => CredentialResolution;
   readonly fetch: CatalogueFetch;
   readonly now: () => number;
   readonly write: (filePath: string, cache: CatalogueCache) => void;

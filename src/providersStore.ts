@@ -18,6 +18,7 @@ import {
   type PROVIDER_KINDS,
   ProviderSchema,
   type Provider,
+  isRouterProvider,
 } from "./config/schema";
 import { CliError, UsageError } from "./cliError";
 import { CREDENTIAL_UNAVAILABLE_EXIT, resolveCredential, type CredentialPort } from "./credential";
@@ -235,7 +236,7 @@ export function describeProviderEndpoint(provider: Provider): string {
       ? "antigravity local (ACP daemon)"
       : "antigravity cloud (Gemini API)";
   }
-  return provider.baseUrl;
+  return isRouterProvider(provider) ? "the models block" : provider.baseUrl;
 }
 
 /** Everything `addProvider` writes into a fresh provider file. `baseUrl` is required for an `http` provider and refused for codex/antigravity ones; `codex` applies only to codex, `antigravity` applies only to antigravity. */
@@ -298,10 +299,16 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
   if (kind === "antigravity" && input.baseUrl !== undefined) {
     throw new ProviderKindMismatchError("An antigravity provider has no base URL: the launcher points its sessions at the front-door daemon. Drop --base-url.");
   }
+  if (kind === "router" && input.baseUrl !== undefined) {
+    throw new ProviderKindMismatchError("A router provider has no base URL: it resolves each request's model name through the models block. Drop --base-url.");
+  }
   if (kind === "http" && input.baseUrl === undefined) {
     throw new ProviderKindMismatchError("An http provider needs --base-url.");
   }
-  if (kind !== "http" && input.catalogue !== undefined) {
+  if (kind === "router" && (input.sources.length > 0 || input.target !== undefined || input.env !== undefined || input.pickerModels !== undefined)) {
+    throw new ProviderKindMismatchError("A router provider has no credential, env or picker models of its own: the models block's targets carry their own.");
+  }
+  if (kind !== "http" && kind !== "router" && input.catalogue !== undefined) {
     throw new ProviderKindMismatchError("A model catalogue applies only to an http provider.");
   }
   if (kind !== "codex" && !isEmptyCodexConfig(input.codex)) {
@@ -317,7 +324,9 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
     ...(input.pickerModels === undefined || input.pickerModels.length === 0 ? {} : { pickerModels: input.pickerModels }),
   };
   const parsed = ProviderSchema.safeParse(
-    kind === "codex"
+    kind === "router"
+      ? { kind, displayName: input.displayName }
+      : kind === "codex"
       ? { kind, ...shared, ...(isEmptyCodexConfig(input.codex) ? {} : { codex: input.codex }) }
       : kind === "antigravity"
       ? { kind, ...shared, ...(isEmptyAntigravityConfig(input.antigravity) ? {} : { antigravity: input.antigravity }) }
@@ -363,15 +372,18 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
     throw new ProviderNotFoundError(name);
   }
   const unset = new Set(input.unsetEnv);
-  const env = Object.fromEntries(Object.entries({ ...existing.env, ...input.env }).filter(([key]) => !unset.has(key)));
+  const existingEnv = isRouterProvider(existing) ? {} : existing.env;
+  const env = Object.fromEntries(Object.entries({ ...existingEnv, ...input.env }).filter(([key]) => !unset.has(key)));
   const unsetPicker = new Set(input.unsetPickerModels);
   const added = new Map((input.pickerModels ?? []).map((entry) => [entry.model, entry] as const));
+  const existingPicker = isRouterProvider(existing) ? [] : existing.pickerModels;
   const pickerModels = [
-    ...(existing.pickerModels ?? []).filter((entry) => !unsetPicker.has(entry.model)).map((entry) => added.get(entry.model) ?? entry),
-    ...[...added.values()].filter((entry) => !(existing.pickerModels ?? []).some((kept) => kept.model === entry.model)),
+    ...(existingPicker ?? []).filter((entry) => !unsetPicker.has(entry.model)).map((entry) => added.get(entry.model) ?? entry),
+    ...[...added.values()].filter((entry) => !(existingPicker ?? []).some((kept) => kept.model === entry.model)),
   ];
-  const target = input.target ?? existing.credential.target;
-  const cache = input.cache === undefined ? existing.credential.cache : input.cache === false ? undefined : input.cache;
+  const router = isRouterProvider(existing);
+  const target = router ? undefined : input.target ?? existing.credential.target;
+  const cache = router ? undefined : input.cache === undefined ? existing.credential.cache : input.cache === false ? undefined : input.cache;
   if (isCodexProvider(existing) && input.baseUrl !== undefined) {
     throw new ProviderKindMismatchError(`Provider "${name}" is a codex provider, which has no base URL.`);
   }
@@ -389,11 +401,15 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
   }
   const shared = {
     ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
-    credential: {
-      sources: input.sources ?? existing.credential.sources,
-      ...(target === undefined ? {} : { target }),
-      ...(cache === undefined ? {} : { cache }),
-    },
+    ...(router
+      ? {}
+      : {
+          credential: {
+            sources: input.sources ?? existing.credential.sources,
+            ...(target === undefined ? {} : { target }),
+            ...(cache === undefined ? {} : { cache }),
+          },
+        }),
     env: Object.keys(env).length === 0 ? undefined : env,
     pickerModels: pickerModels.length === 0 ? undefined : pickerModels,
   };
@@ -412,6 +428,8 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
       ...(existing.antigravity?.models === undefined && input.antigravity?.models === undefined ? {} : { models: { ...existing.antigravity?.models, ...input.antigravity?.models } }),
     };
     candidate = { ...existing, ...shared, antigravity: isEmptyAntigravityConfig(antigravity) ? undefined : antigravity };
+  } else if (router) {
+    candidate = { kind: "router", ...shared };
   } else {
     const catalogue = input.catalogue === undefined ? existing.catalogue : input.catalogue === false ? undefined : input.catalogue;
     candidate = { ...existing, ...shared, catalogue, ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }) };
@@ -515,6 +533,10 @@ export function resolveProvider(params: ResolveProviderParams): ProviderResoluti
     return selection;
   }
   const { name, definition } = selection.provider;
+  // A router has no credential of its own: the targets it resolves to carry their own, checked when the models block names them.
+  if (isRouterProvider(definition)) {
+    return { ok: true, provider: { name, definition, credential: { target: "bearer", token: "", source: { env: "AGENT_SHIM_ROUTER" }, warnings: [] } }, warnings: [] };
+  }
   if (params.credentials === undefined) {
     return { ok: false, status: 1, message: `agent-shim: provider ${name} needs its credential resolved, but this launcher has no credential port wired` };
   }
