@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Provider, ProviderCatalogue } from "../config/schema";
-import { modelPickerSettings, providerModelRows, routedModelRows } from "./modelPicker";
+import { modelPickerSettings, modelPickerSettingsFromRows, providerModelRows, routedModelRows } from "./modelPicker";
 
 const CREDENTIAL = { sources: [{ env: "PROVIDER_TOKEN" }] };
 
@@ -168,6 +168,11 @@ describe("modelPickerSettings", () => {
 
   it("is undefined when the provider names no model, so the picker keeps its own", () => {
     expect(modelPickerSettings(http())).toBeUndefined();
+  });
+
+  it("appends the rows after Claude Code's own for a provider-less session that routes by name, whose bare names still reach Anthropic", () => {
+    const rows = routedModelRows({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } }, [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3" })] as const]);
+    expect(JSON.parse(modelPickerSettingsFromRows(rows, false) ?? "")).toMatchObject({ modelPicker: { replaceBuiltInOptions: false } });
   });
 });
 

@@ -130,6 +130,35 @@ describe("createProviderRouteResolver", () => {
     }
   });
 
+  it("routes a provider-qualified model name from a provider-less (OAuth) session that asked to route by name onto that provider's route", async () => {
+    const byName = (model: string, url = "/v1/messages"): RoutedRequest => ({
+      ...request(url, JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),
+      session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, routeByName: true, projectId: undefined },
+    });
+    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider });
+
+    const qualified = await resolve(byName("z/glm-5.3"));
+    expect(qualified.ok).toBe(true);
+    if (qualified.ok) {
+      expect(qualified.route.name).toBe("http:z");
+      expect(qualified.request?.url).toContain("/providers/z/v1/messages");
+    }
+
+    // A bare name is Claude Code's own on an OAuth session: it still rides the pass-through to Anthropic, never resolved through the models block.
+    const bare = await resolve(byName("claude-sonnet-4-5"));
+    expect(bare.ok).toBe(true);
+    if (bare.ok) {
+      expect(bare.route.name).toBe("anthropic");
+    }
+
+    // The Remote Control family of paths is never a provider's to serve, whatever the model field would resolve to.
+    const rc = await resolve(byName("z/glm-5.3", "/v1/code/sessions/s-1/events"));
+    expect(rc.ok).toBe(true);
+    if (rc.ok) {
+      expect(rc.route.name).not.toBe("http:z");
+    }
+  });
+
   it("serves a provider session's bare /v1/ target through its provider's route, the request rewritten under the scoped path the route parses", async () => {
     // An antigravity provider whose credential never resolves: the route must get as far as its credential (a 401 naming the provider), which a bare unrewritten path never reaches because the route cannot parse a provider out of it.
     const resolve = resolver({ [`${PROVIDERS_DIR}/ag.json`]: { kind: "antigravity", displayName: "AG", credential: { sources: [{ env: "NOT_SET_ANYWHERE" }] }, antigravity: { mode: "cloud" } } });
