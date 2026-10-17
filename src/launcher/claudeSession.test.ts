@@ -35,6 +35,9 @@ describe("withSupervision", () => {
   it("applies the conversation argument and leaves the arguments alone when it takes the caller's as given", () => {
     expect(withSupervision(["--model", "opus"], { sessionId: ID, conversation: "start" })).toEqual(["--model", "opus", "--session-id", ID]);
     expect(withSupervision(["--resume", OTHER], { sessionId: OTHER, conversation: "as-given" })).toEqual(["--resume", OTHER]);
+    // A model move's model replaces whatever the caller named, placed before any `--` terminator.
+    expect(withSupervision(["--model", "opus", "--", "-x"], { sessionId: ID, conversation: "resume", model: "glm-5.3" })).toEqual(["--resume", ID, "--model", "glm-5.3", "--", "-x"]);
+    expect(withSupervision(["--model=opus"], { sessionId: ID, conversation: "start", model: "glm-5.3" })).toEqual(["--session-id", ID, "--model", "glm-5.3"]);
   });
 });
 

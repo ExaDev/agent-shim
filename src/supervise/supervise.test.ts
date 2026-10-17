@@ -66,6 +66,8 @@ interface World {
   readonly log: ReturnType<typeof fakeLog>;
   readonly resetTerminal: ReturnType<typeof vi.fn>;
   readonly decideMove: MockedFunction<SupervisorDeps["decideMove"]>;
+  readonly decideRemodel: MockedFunction<SupervisorDeps["decideRemodel"]>;
+  readonly claimModelMove: MockedFunction<SupervisorDeps["claimModelMove"]>;
   readonly timers: { fire: () => void; cancelled: number };
   readonly handlers: Map<NodeJS.Signals, () => void>;
   readonly watchers: Map<string, () => void>;
@@ -84,6 +86,8 @@ function world(): World {
   const log = fakeLog();
   const resetTerminal = vi.fn();
   const decideMove = vi.fn<SupervisorDeps["decideMove"]>().mockResolvedValue(MOVE);
+  const decideRemodel = vi.fn<SupervisorDeps["decideRemodel"]>().mockReturnValue({ kind: "move", to: "work", explanation: "the picked model runs under work" });
+  const claimModelMove = vi.fn<SupervisorDeps["claimModelMove"]>().mockReturnValue(undefined);
   const timers = { fire: (): void => undefined, cancelled: 0 };
   const handlers = new Map<NodeJS.Signals, () => void>();
   const watchers = new Map<string, () => void>();
@@ -150,6 +154,8 @@ function world(): World {
     },
     quotaHit: (identity) => state.quotaHit(identity),
     decideMove,
+    decideRemodel,
+    claimModelMove,
     contextTokens: () => CONTEXT_TOKENS,
     register: (session) => {
       registered.push(session);
@@ -174,6 +180,8 @@ function world(): World {
     log,
     resetTerminal,
     decideMove,
+    decideRemodel,
+    claimModelMove,
     timers,
     handlers,
     watchers,
@@ -262,6 +270,39 @@ describe("supervise", () => {
     await expect(done).resolves.toBe(0);
     expect(w.released).toEqual(["work", "spare"]);
     expect(w.unregistered).toEqual([SESSION]);
+  });
+
+  it("stops the child and relaunches under the identity a claimed model move names, resuming with the model it picked", async () => {
+    const w = world();
+    const done = supervise(w.deps, FIRST);
+    await settle();
+    w.claimModelMove.mockReturnValue({ to: "spare", model: "glm-5.3" });
+    w.decideRemodel.mockReturnValue({ kind: "move", to: "spare", explanation: "the picked model runs under spare" });
+    w.watchers.get("work")?.();
+    await settle();
+    expect(w.decideRemodel).toHaveBeenCalledWith({ sessionId: SESSION, from: "work", to: "spare" });
+    expect(w.children[0]?.signals).toEqual(["SIGTERM"]);
+    expect(w.released).toEqual(["work"]);
+    expect(w.launches[1]).toEqual({ sessionId: SESSION, conversation: "resume", member: "spare", model: "glm-5.3" });
+    expect(w.log.infos.join("\n")).toContain(`resuming session ${SESSION} under spare with glm-5.3`);
+    // The claim is one request: it served its relaunch and is not asked again.
+    expect(w.claimModelMove).toHaveBeenCalledTimes(1);
+    w.children[1]?.exitWith(0);
+    await expect(done).resolves.toBe(0);
+  });
+
+  it("stays on its identity, saying why, when the identity a model move names cannot take the session", async () => {
+    const w = world();
+    const done = supervise(w.deps, FIRST);
+    await settle();
+    w.claimModelMove.mockReturnValueOnce({ to: "ghost", model: "glm-5.3" });
+    w.decideRemodel.mockReturnValueOnce({ kind: "stay", reason: "no identity \"ghost\"" });
+    w.watchers.get("work")?.();
+    await settle();
+    expect(w.children[0]?.signals).toEqual([]);
+    expect(w.log.warns.join("\n")).toContain("stays on work: no identity");
+    w.children[0]?.exitWith(0);
+    await done;
   });
 
   it("does not move a session whose own request has met no refusal, however often the snapshot changes", async () => {

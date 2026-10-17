@@ -98,6 +98,8 @@ export interface LayoutPaths {
   readonly jobLogsDir: string;
   /** Directory of the supervised sessions' shared state, one subdirectory per pool: the live sessions each launcher registers, so sessions on one account see each other, and the lock that serialises their moves. Runtime state, never configuration. */
   readonly superviseDir: string;
+  /** Directory of the model-move requests the front door writes for supervised sessions that picked a model served under another identity: one `<sessionId>.json` per pending request, claimed and removed by the session's supervisor. Runtime state, never configuration. */
+  readonly modelMovesDir: string;
 }
 
 /**
@@ -176,6 +178,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     usageJobsFile: path.join(root, "usage", "jobs.json"),
     jobLogsDir: path.join(root, "logs", "jobs"),
     superviseDir: path.join(root, "supervise"),
+    modelMovesDir: path.join(root, "model-moves"),
     mcpPermissionsFile: path.join(root, "mcp", "permissions.json"),
   };
 }

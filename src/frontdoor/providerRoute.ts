@@ -41,7 +41,7 @@ function scopeSessionProviderPath(request: RoutedRequest): RoutedRequest {
   return { ...request, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(request.session.provider)}${request.url}` };
 }
 
-/** The provider a model name resolves to through the models block: a provider-qualified name (`z/glm-5.3`) names its provider directly, a virtual model contributes its first ordered member's provider, and a bare unknown name has no target. */
+/** The provider a model name resolves to through the models block: a provider-qualified name (`z/glm-5.3`) names its provider directly, a virtual model contributes its first ordered member's provider, and a bare unknown name has no target. An `acct:` member is not a provider target; `resolveAccountTarget` handles those. */
 function resolveModelTarget(model: string, models: ModelsConfig | undefined, includeUnqualified: boolean): string | undefined {
   if (models === undefined) {
     return model.includes("/") && !model.startsWith("acct:") ? model.split("/")[0] : undefined;
@@ -58,6 +58,19 @@ function resolveModelTarget(model: string, models: ModelsConfig | undefined, inc
     return undefined;
   }
   return first.includes("/") ? first.split("/")[0] : resolveModelTarget(first, models, true);
+}
+
+/** The identity and model an `acct:` member names, when the model a session asked for is one (`acct:work/opus` directly, or a virtual model whose first member is). One login per process, so no route can serve it: only a relaunch under the identity can. */
+function resolveAccountTarget(model: string, models: ModelsConfig | undefined): { readonly identity: string; readonly model: string } | undefined {
+  if (model.startsWith("acct:")) {
+    const ref = model.slice("acct:".length);
+    const [identity, ...rest] = ref.split("/");
+    const named = rest.join("/");
+    return identity === undefined || named === "" ? undefined : { identity, model: named };
+  }
+  const virtual = models?.virtual?.[model];
+  const first = virtual?.members.find((member) => member.startsWith("acct:"));
+  return first === undefined ? undefined : resolveAccountTarget(first, undefined);
 }
 
 export function createProviderRouteResolver(deps: {
@@ -80,6 +93,10 @@ export function createProviderRouteResolver(deps: {
   readonly credentials: CredentialPort;
   /** Reads the session identity's usage snapshot, kept fresh by the caller (the door's own store writes it): the per-provider quota facts a route condition skips an exhausted target with. */
   readonly usageSnapshotOf?: (identity: string | undefined) => UsageSnapshot | undefined;
+  /**
+   * Serves an `acct:` model member by leaving a move request for the session's supervisor, returning whether the session is supervised (so the request was written and a relaunch is coming); unsupervised sessions get the message that names the command to run instead. Wired to the supervise registry by the door's own process; absent in every other caller, where no session is supervised.
+   */
+  readonly accountMoves?: (sessionId: string, to: string, model: string) => boolean;
   /**
    * The self-hosted Remote Control route, when the door runs that mode: it takes over the `/v1/code/sessions` family and the `/v1/sessions` compatibility list, which would otherwise ride the pass-through to the real API. Absent, every `/v1/` target rides the pass-through exactly as before.
    */
@@ -277,6 +294,19 @@ export function createProviderRouteResolver(deps: {
         const scan = await scanRequestHead(current, false);
         if (scan.replayed !== undefined) {
           replay = scan.replayed;
+        }
+        // An `acct:` member is served by relaunch, never by a route: one login per process. The door asks the session's supervisor to move it (when one is watching) and answers the request with what is happening, so the turn ends cleanly rather than hanging or 502-ing.
+        const account = scan.model === undefined ? undefined : resolveAccountTarget(scan.model, deps.models?.());
+        if (account !== undefined) {
+          const sessionId = current.session.sessionId ?? "";
+          const moved = sessionId !== "" && (deps.accountMoves?.(sessionId, account.identity, account.model) ?? false);
+          return {
+            ok: false,
+            status: HTTP_STATUS.badRequest,
+            message: moved
+              ? `model "${account.model}" runs under identity "${account.identity}"; this session is being moved there and will resume with it`
+              : `model "${account.model}" runs under identity "${account.identity}", which needs a relaunch this session cannot make; start it there with: claude @${account.identity} --resume`,
+          };
         }
         const target = scan.model === undefined ? undefined : resolveModelTarget(scan.model, deps.models?.(), isRouter || (current.session.routeByName && providerName !== undefined));
         if (target === providerName) {

@@ -12,10 +12,10 @@ import { latestConversationId, resumedContextTokens } from "../usage/resumeConte
 import { createCompactionDeps } from "./compactionDeps";
 import { quotaHitOf } from "./limit";
 import { markHooksSettings } from "./marks";
-import { createMover } from "./move";
+import { createIdentityMover, createMover } from "./move";
 import { createRealCompactor } from "./realCompact";
 import { realSignalPort, realSupervisedSpawnPort, realTimerPort, realWatchDirectory, resetTerminal } from "./realPorts";
-import { registerSupervised, stateDirOf, unregisterSupervised } from "./registry";
+import { readModelMove, registerSupervised, removeModelMove, stateDirOf, unregisterSupervised } from "./registry";
 import { supervise, type CompactionDeps } from "./supervise";
 
 /** What `runSupervised` needs from the launcher that calls it. */
@@ -88,6 +88,20 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
     pickMember: resolvePoolLaunch,
     log,
   });
+  const identityMover = createIdentityMover({
+    paths,
+    fs: realFsPort,
+    farmFs: realFarmFs,
+    pool,
+    pools: params.pools,
+    cwd: farm.cwd,
+    pid: farm.lock.pid,
+    now: farm.now,
+    isRunning: farm.lock.isRunning,
+    sleep: farm.lock.sleep,
+    pickMember: resolvePoolLaunch,
+    log,
+  });
   return await supervise(
     {
       pool,
@@ -113,6 +127,16 @@ export async function runSupervised(params: Readonly<RunSupervisedParams>): Prom
         return mover(request);
       },
       contextTokens: (sessionId) => resumedContextTokens(farm.fs, { claudeHome: farm.claudeHome, cwd: farm.cwd, passthrough: ["--resume", sessionId] }),
+      claimModelMove: (sessionId) => {
+        const request = readModelMove(realFarmFs, paths, sessionId);
+        if (request === undefined) {
+          return undefined;
+        }
+        removeModelMove(realFarmFs, paths, sessionId);
+        return { to: request.to, model: request.model };
+      },
+      decideRemodel: (request) => identityMover({ sessionId: request.sessionId, from: request.from, to: request.to, contextTokens: undefined }),
+      watchModelMoves: (onChange) => realWatchDirectory(paths.modelMovesDir, () => true, "the model-move requests", log)(onChange),
       ...(compaction === undefined ? {} : { compaction }),
       register: (session) => {
         registerSupervised(realFarmFs, paths, session);

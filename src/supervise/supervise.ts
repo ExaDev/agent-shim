@@ -56,6 +56,12 @@ export interface SupervisorDeps {
   readonly quotaHit: (identity: string, sessionId: string, sinceMs: number) => QuotaHit | undefined;
   /** Decides where a session leaving an identity goes, and registers it there. Asynchronous because it first brings the pool's stale usage figures up to date, which asks each stale member. */
   readonly decideMove: (request: MoveRequest) => Promise<MoveOutcome>;
+  /** The model move the front door left for this session, when one is pending: claimed (removed from the directory) by this read. An `acct:` model member is served by relaunch, and this is how the door asks for one. */
+  readonly claimModelMove: (sessionId: string) => { readonly to: string; readonly model: string } | undefined;
+  /** Moves the session onto the identity a model pick named, and registers it there: no re-rank, the `acct:` member is the decision. */
+  readonly decideRemodel: (request: { readonly sessionId: string; readonly from: string; readonly to: string }) => MoveOutcome;
+  /** Calls `onChange` whenever the model-move directory changes, the cue to look for a request the door left. Absent when this supervisor cannot watch it. */
+  readonly watchModelMoves?: (onChange: () => void) => () => void;
   /** The size in tokens of the conversation's context, when its transcript can be read. */
   readonly contextTokens: (sessionId: string) => number | undefined;
   /** Present for a pool that compacts before its quota is spent. */
@@ -71,7 +77,8 @@ export interface SupervisorDeps {
 /** Why a child was stopped before it exited by itself. */
 type Departure =
   | { readonly kind: "move"; readonly to: string; readonly explanation: string }
-  | { readonly kind: "compact"; readonly slot: CompactionSlot; readonly contextTokens: number; readonly reason: string };
+  | { readonly kind: "compact"; readonly slot: CompactionSlot; readonly contextTokens: number; readonly reason: string }
+  | { readonly kind: "remodel"; readonly to: string; readonly model: string };
 
 /** What one child's run came to: it exited by itself, or it was stopped for a departure. */
 type RunOutcome = { readonly kind: "exited"; readonly result: SpawnResult } | Departure;
@@ -174,6 +181,17 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
         if (isLeaving()) {
           break;
         }
+        const move = deps.claimModelMove(plan.sessionId);
+        if (move !== undefined) {
+          const outcome = deps.decideRemodel({ sessionId: plan.sessionId, from: identity, to: move.to });
+          if (outcome.kind === "move") {
+            state.leaving = true;
+            depart({ kind: "remodel", to: outcome.to, model: move.model });
+          } else {
+            deps.log.warn(`agent-shim: session ${plan.sessionId} picked a model under ${move.to}, but stays on ${identity}: ${outcome.reason}`);
+          }
+          continue;
+        }
         const hit = deps.quotaHit(identity, plan.sessionId, startedMs);
         if (hit !== undefined) {
           if (!state.declined) {
@@ -200,17 +218,24 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
   const stopWatching = deps.watchChanges(identity, () => {
     void check();
   });
+  // A model move arrives from the door rather than the usage log, so it has its own watcher; it is checked in the same one-at-a-time loop, and a departure decided while a check awaits is seen the same way.
+  const stopWatchingMoves = deps.watchModelMoves?.(() => {
+    void check();
+  });
 
   try {
     const first = await Promise.race([child.exit.then((result) => ({ kind: "exited" as const, result })), departing]);
     stopWatching();
+    stopWatchingMoves?.();
     if (first.kind === "exited") {
       return first;
     }
     deps.log.info(
       first.kind === "move"
         ? `agent-shim: ${identity} is out of quota; resuming session ${plan.sessionId} under ${first.to} (${first.explanation})`
-        : `agent-shim: ${first.reason}; compacting the ${String(first.contextTokens)}-token context of session ${plan.sessionId} on ${identity}`,
+        : first.kind === "remodel"
+          ? `agent-shim: resuming session ${plan.sessionId} under ${first.to} with ${first.model}, which only runs there`
+          : `agent-shim: ${first.reason}; compacting the ${String(first.contextTokens)}-token context of session ${plan.sessionId} on ${identity}`,
     );
     const result = await stopChild(deps, child);
     if (state.terminating) {
@@ -222,6 +247,7 @@ async function runChild(deps: Readonly<SupervisorDeps>, plan: LaunchPlan, identi
     return first;
   } finally {
     stopWatching();
+    stopWatchingMoves?.();
     for (const stop of stopHandlers) {
       stop();
     }
@@ -320,7 +346,7 @@ export async function supervise(deps: Readonly<SupervisorDeps>, first: Supervise
         launch = { ...base, conversation: "resume", member: identity };
         continue;
       }
-      launch = { ...base, conversation: "resume", member: outcome.to };
+      launch = { ...base, conversation: "resume", member: outcome.to, ...(outcome.kind === "remodel" ? { model: outcome.model } : {}) };
       const compactedOnOld = compactedHere;
       compactedHere = false;
       if (compaction !== undefined) {
