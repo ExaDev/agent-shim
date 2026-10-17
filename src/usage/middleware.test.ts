@@ -27,6 +27,7 @@ function event(overrides: Partial<RoutedResponseEvent> = {}): RoutedResponseEven
     route: "passthrough",
     method: "POST",
     path: "/v1/messages",
+    servedPath: "/v1/messages",
     receivedAt: RECEIVED_AT,
     viaHeadroom: false,
     lineage: undefined,
@@ -340,10 +341,18 @@ describe("createUsageMiddleware", () => {
 
     it("records a provider-scoped path under that provider with the prefix stripped", () => {
       const h = harness();
-      finishBody(h, begin(h, event({ path: "/providers/z/v1/messages" })));
+      finishBody(h, begin(h, event({ path: "/providers/z/v1/messages", servedPath: "/providers/z/v1/messages" })));
       h.flush();
 
       expect(singleRecord(h)).toMatchObject({ provider: "z", endpoint: "/v1/messages" });
+    });
+
+    it("records a request a routing layer sent to another provider under the provider that served it, not the one the launch selected", () => {
+      const h = harness();
+      finishBody(h, begin(h, event({ path: "/v1/messages", servedPath: "/providers/codex/v1/messages", session: { identity: "work", sessionId: "session-1", provider: "router", headroom: false, projectId: undefined } })));
+      h.flush();
+
+      expect(singleRecord(h)).toMatchObject({ provider: "codex", endpoint: "/v1/messages" });
     });
 
     it("omits identity, session and project when the launch resolved none, and records the project when it did", () => {

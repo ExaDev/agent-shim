@@ -76,7 +76,7 @@ function destinationOf(path: string, sessionProvider: string | undefined): { rea
 /** Builds one finished request's record from its head, what the body scan found, and how it ended. */
 function buildRecord(event: RoutedResponseEvent, context: { readonly headAt: number; readonly endedAt: number; readonly outcome: "completed" | "aborted"; readonly scan: ScanResult | undefined }): UsageRecord {
   const { scan } = context;
-  const { provider, endpoint } = destinationOf(event.path, event.session.provider);
+  const { provider, endpoint } = destinationOf(event.servedPath, event.session.provider);
   const rateLimitHeaders = rateLimitHeadersOf(event.headers);
   const limit = classifyLimit({ status: event.status, headers: rateLimitHeaders ?? {}, error: scan?.error, nowMs: context.endedAt });
   const requestId = headerValue(event.headers, "request-id");

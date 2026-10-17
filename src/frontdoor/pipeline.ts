@@ -15,6 +15,8 @@ export interface RoutedResponseEvent {
   readonly method: string;
   /** The request target's path, without its query string. */
   readonly path: string;
+  /** The path the request was actually served on, without its query string: the target a routing layer resolved, when it rewrote the request, and the request's own path otherwise. Usage attribution reads this, so a request a provider's `routes` sent to another provider is recorded against the provider that served it. */
+  readonly servedPath: string;
   /** When the pipeline received the request, in epoch milliseconds from the injected clock. */
   readonly receivedAt: number;
   /** Whether the request crossed the headroom hop on its way upstream, as decided by the pipeline for this request (a session's headroom flag alone does not say: the route may be ineligible or no daemon wired). */
@@ -45,7 +47,7 @@ export type ResponseObserver = (event: RoutedResponseEvent) => ResponseBodyObser
 
 /** The outcome of resolving a request's target to a route. */
 export type RouteResolution =
-  | { readonly ok: true; readonly route: FrontDoorRoute }
+  | { readonly ok: true; readonly route: FrontDoorRoute; /** The request this resolution serves, when resolving it rewrote the original (a routed request carries a body the route's own scan replayed): consumers that read the body again, the headroom hop above all, must read this one, because the original's remainder is teed into the replay and stalls once the replay's buffer fills. Absent when the resolution serves the original request as received. */ readonly request?: RoutedRequest }
   | { readonly ok: false; readonly status: number; readonly message: string };
 
 /** Everything the ordered pipeline depends on, injected so it runs against fakes in tests. */
@@ -144,7 +146,7 @@ function describeThrown(error: unknown): string {
  */
 export function createRoutedResponse(
   response: ServerResponse,
-  context: { readonly deps: PipelineDeps; readonly session: SessionIdentity; readonly route: string; readonly request: ObservedRequest },
+  context: { readonly deps: PipelineDeps; readonly session: SessionIdentity; readonly route: string; readonly request: ObservedRequest; readonly servedPath: string },
 ): RoutedResponse {
   const { deps, session, route, request } = context;
   let headersSent = false;
@@ -195,7 +197,7 @@ export function createRoutedResponse(
     start: (status, headers) => {
       for (const observe of deps.responseObservers) {
         try {
-          const body = observe({ session, route, method: request.method, path: request.path, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, lineage: request.thread.lineage, status, headers });
+          const body = observe({ session, route, method: request.method, path: request.path, servedPath: context.servedPath, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, lineage: request.thread.lineage, status, headers });
           if (body !== undefined) {
             bodyObservers.push(body);
           }
@@ -247,7 +249,7 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
   const identified = identifyRequest(request.headers);
   const admission = deps.admit({ url: request.url, headers: request.headers, forwardable: identified.forwardableHeaders });
   if (!admission.ok) {
-    const response = createRoutedResponse(request.response, { deps, session: identified.session, route: "(unauthorized)", request: observed });
+    const response = createRoutedResponse(request.response, { deps, session: identified.session, route: "(unauthorized)", request: observed, servedPath: observed.path });
     response.start(HTTP_STATUS.unauthorized, { "Content-Type": "application/json" });
     await response.write(errorBody(HTTP_STATUS.unauthorized, admission.message));
     response.end();
@@ -263,7 +265,7 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
   };
   const resolution = await deps.resolveRoute(routed);
   if (!resolution.ok) {
-    const response = createRoutedResponse(request.response, { deps, session: identified.session, route: "(unrouted)", request: observed });
+    const response = createRoutedResponse(request.response, { deps, session: identified.session, route: "(unrouted)", request: observed, servedPath: observed.path });
     response.start(resolution.status, { "Content-Type": "application/json" });
     await response.write(errorBody(resolution.status, resolution.message));
     response.end();
@@ -275,11 +277,11 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
     headroom !== undefined &&
     (await deps.headroomDecision.decide(identified.session.sessionId, identified.session.headroom, deps.now(), async () => await headroomReady(headroom, request.signal)));
   const viaHeadroom = wantsHeadroom && resolution.route.headroomEligible && deps.headroom !== undefined;
-  const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom } });
+  const response = createRoutedResponse(request.response, { deps, session: identified.session, route: resolution.route.name, request: { ...observed, viaHeadroom }, servedPath: pathOf(resolution.request?.url ?? request.url) });
   try {
     if (viaHeadroom) {
       // The ordering the whole design turns on: headroom first, on the Anthropic-shaped request, then the route (a translator receives what headroom compressed). A route that opts out, or a listener that serves routes directly, falls through to serving.
-      await applyHeadroomHop(routed, response, resolution.route.headroomUpstream, deps.headroom, (lineage) => {
+      await applyHeadroomHop(resolution.request ?? routed, response, resolution.route.headroomUpstream, deps.headroom, (lineage) => {
         observed.thread.lineage = lineage;
       });
     } else {

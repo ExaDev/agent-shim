@@ -37,6 +37,8 @@ const PROVIDER_TOKEN = "made-up-provider-token";
 const CLIENT_PRESENTED_BEARER = "client-presented-bearer";
 const CLIENT_PRESENTED_KEY = "client-presented-key";
 const SETTLE_MS = 50;
+/** How long a routed request through the hop may take before the test calls it hung. */
+const HOP_ROUTED_TIMEOUT_MS = 5_000;
 const MESSAGES_BODY = JSON.stringify({ model: "claude-sonnet-4-5", stream: false, messages: [{ role: "user", content: "hi" }], metadata: { user_id: "user-a" } });
 /** The pid the fake headroom's supervisor generation is recorded under, which names its socket. */
 const SUPERVISOR_PID = 4242;
@@ -294,6 +296,8 @@ function httpProvider(upstreamPort: number): Record<string, unknown> {
   return { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstreamPort)}`, credential: { sources: [{ literal: PROVIDER_TOKEN }] } };
 }
 
+/** An http provider whose routes send every sonnet request to the codex provider, which makes the routing layer read the request's body before it is served. */
+const ROUTER_TO_CODEX = { kind: "http", displayName: "Router", baseUrl: "http://127.0.0.1:9", credential: { sources: [{ literal: "router-token" }] }, routes: [{ when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*sonnet.*" } }, provider: "codex" }] };
 const codexProvider = { kind: "codex", displayName: "Codex", credential: { sources: [{ literal: "placeholder" }] } };
 
 /** Lets the event loop turn once, so an unwanted background request would have landed in the recorder. */
@@ -325,6 +329,27 @@ describe("the headroom hop", () => {
       expect(seen?.url).toBe("/providers/codex/v1/messages");
       expect(JSON.parse(seen?.body ?? "{}")).toMatchObject({ model: "claude-sonnet-4-5" });
       expect(seen?.headers["x-headroom-base-url"]).toBe(`http://127.0.0.1:${String(door.directPort())}`);
+    } finally {
+      await door.close();
+      await headroom.close();
+    }
+  });
+
+  it("hands headroom the whole body of a request a provider's routes read and redirected, and serves the target the hop forwards back", async () => {
+    const headroom = await fakeHeadroom();
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/router.json`]: ROUTER_TO_CODEX, [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
+    try {
+      const response = await fetch(`${door.url}/providers/router/v1/messages`, {
+        dispatcher: trusting,
+        method: "POST",
+        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN },
+        body: MESSAGES_BODY,
+        signal: AbortSignal.timeout(HOP_ROUTED_TIMEOUT_MS),
+      });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(headroom.seen()).toHaveLength(1);
+      expect(headroom.seen()[0]?.url).toBe("/providers/codex/v1/messages");
+      expect(JSON.parse(headroom.seen()[0]?.body ?? "{}")).toMatchObject({ model: "claude-sonnet-4-5", messages: [{ role: "user", content: "hi" }] });
     } finally {
       await door.close();
       await headroom.close();

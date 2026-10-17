@@ -71,6 +71,17 @@ export function createProviderRouteResolver(deps: {
    * One cached quota source per antigravity provider, for this resolver's lifetime: each refresh resolves the provider's own credential block and polls the backend's quota summary exactly as its CLI does, so the unified headers a session's responses carry describe the account's real windows.
    */
   const antigravityQuotaSources = new Map<string, () => AntigravityQuotaMap | undefined>();
+  // The routing memory an antigravity provider's sessions keep their last model in: one per provider, held by the resolver, because the route is mounted afresh for every request and a memory inside the mount would forget between requests.
+  const antigravityRoutingMemory = new Map<string, Map<string, string>>();
+  const memoryFor = (provider: string): Map<string, string> => {
+    const existing = antigravityRoutingMemory.get(provider);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created = new Map<string, string>();
+    antigravityRoutingMemory.set(provider, created);
+    return created;
+  };
   const antigravityQuotaOf = (
     provider: string,
     definition: AntigravityProvider,
@@ -173,6 +184,7 @@ export function createProviderRouteResolver(deps: {
               };
             },
             quotaSource: antigravityQuotaOf(provider, antigravityProvider, config),
+            lastRouted: memoryFor(provider),
           },
           directOrigin(deps.directPort()),
           provider,
@@ -234,7 +246,7 @@ export function createProviderRouteResolver(deps: {
       if (routes === undefined || routes.length === 0) {
         const resolution = resolve(current);
         return resolution.ok && replay !== undefined
-          ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }) }
+          ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } }
           : resolution.ok
             ? serveScoped(resolution)
             : resolution;
@@ -253,7 +265,7 @@ export function createProviderRouteResolver(deps: {
         // Nothing was read (the body was empty): the original request is the honest handover.
         const resolution = resolve(current);
         return resolution.ok && replay !== undefined
-          ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }) }
+          ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } }
           : resolution.ok
             ? serveScoped(resolution)
             : resolution;
@@ -278,7 +290,7 @@ export function createProviderRouteResolver(deps: {
       }
       if (matched === undefined) {
         const resolution = resolve(current);
-        return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }) } : resolution;
+        return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } } : resolution;
       }
       if (matched.model !== undefined && scan.text !== undefined && scan.model !== undefined) {
         // The rewrite replaces the model field's value in the one copy of the body the whole-body scan already holds, so the target receives exactly the request that matched with exactly one field changed.

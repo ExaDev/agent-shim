@@ -38,7 +38,7 @@ export interface RequestScan {
 /**
  * Reads the head of a request's body for the facts a route condition needs, and hands back a request whose body replays exactly what was read. The stream contract on `RoutedRequest.body` ("a route either pipes it onward untouched or reads it whole, never both") is why the scan never reads without teeing: whatever it consumes is re-emitted in front of the unread remainder, so the route sees one unbroken body.
  *
- * The mechanism is persistent `data`/`end` listeners with pause and resume, not an async iterator: an iterator broken out of mid-flight detaches its listeners, and a stream that ends while nobody is listening leaves a later `next()` waiting for an `end` that already fired. Persistent listeners cannot miss it, and pausing the source the moment the head is decided is what keeps the scan bounded while the remainder streams straight through to the replay under real backpressure.
+ * The mechanism is persistent `data`/`end` listeners, not an async iterator: an iterator broken out of mid-flight detaches its listeners, and a stream that ends while nobody is listening leaves a later `next()` waiting for an `end` that already fired. Persistent listeners cannot miss it, and pausing the source the moment the head is decided is what keeps the scan bounded while the remainder streams straight through to the replay under real backpressure.
  *
  * Nothing here parses the body: the model field is found as the first `"model": "..."` pair of the head's text, and an image block as the first `"type": "image"` inside it, which is exactly how the fields appear in the JSON Claude Code serialises. A head with neither (or a body the cap could not cover) reports the fact as absent, which the condition evaluator carries as indeterminate.
  */
@@ -74,7 +74,7 @@ export async function scanRequestHead(request: RoutedRequest, wholeBody = false)
     };
     body.on("data", (chunk: Buffer) => {
       if (decided) {
-        // The remainder streams straight through under backpressure: a full replay pauses the source until the consumer drains it.
+        // The remainder streams straight through under the replay's own backpressure: a full replay pauses the source until the consumer drains it, whatever style the consumer reads in (a pipe switches the replay to flowing; a for-await reads it in paused mode), so the replay never buffers more than its high-water mark ahead of the consumer.
         if (!replay.write(chunk)) {
           body.pause();
           replay.once("drain", () => {
@@ -88,11 +88,6 @@ export async function scanRequestHead(request: RoutedRequest, wholeBody = false)
       text += chunk.toString("utf8");
       if (!wholeBody && (modelIn() !== undefined || seen >= REQUEST_SCAN_CAP_BYTES)) {
         decided = true;
-        body.pause();
-        // Let the scan's caller resume the source when it is ready to consume the replay, so the remainder never buffers unread.
-        replay.once("resume", () => {
-          body.resume();
-        });
         settle();
       }
     });
