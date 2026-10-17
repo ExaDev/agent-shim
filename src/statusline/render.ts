@@ -261,6 +261,10 @@ export function renderStatuslineBlock(summary: StatuslineSummary, view: Statusli
     const account = [summary.providerAccountEmail, summary.providerPlan].filter((part) => part !== undefined);
     header.push(account.length > 0 ? `${summary.provider} · ${account.join(" · ")}` : summary.provider);
   }
+  // The target the last request was served by, when routing by name sent it off the launch's provider: a virtual model's or a qualified name's choice, shown where the person is looking rather than only in the usage log.
+  if (summary.routedTarget !== undefined) {
+    header.push(`via ${summary.routedTarget}`);
+  }
   // An account in an organisation is on the organisation's plan with its seat's tier naming the variant, and the seat's rate-limit tier names limits, not the plan; a personal account's plan is the tier itself. A personal plan's organizationName is only the account holder's own name, redundant beside the email, so an organisation's name shows only for the organisation types. Beside a provider the login's plan names quota the session is not drawing from, so there the login names its organisation, or just its account when it has none.
   const loginPlan = summary.provider === undefined ? (summary.loginPlan ?? accountPlanLabel(summary)) : undefined;
   const loginOrgName = summary.loginOrganizationType === "claude_team" || summary.loginOrganizationType === "claude_enterprise" ? summary.loginOrganizationName : undefined;

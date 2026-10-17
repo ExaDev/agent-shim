@@ -13,6 +13,7 @@ import { headroomSocketTarget } from "../frontdoor/status";
 import { antigravityStacksWithDefault, isAntigravityPayload } from "./client";
 import { fetchHeadroomSessionStats, headroomSessionIdOf, headroomTargetOf, realHeadroomGet } from "./headroom";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
+import { readUsageLog } from "../usage/read";
 import { renderStatuslineBlock } from "./render";
 import { terminalWidthOf } from "./width";
 
@@ -54,6 +55,9 @@ async function readAllStdin(): Promise<string> {
     process.stdin.resume();
   });
 }
+
+/** How far back the statusline looks for the session's last served target: long enough that an idle session still shows its last routing, short enough that the records read stay few. */
+const ROUTED_TARGET_LOOKBACK_MS = 3_600_000;
 
 /** The command a client's statusline setting names: it reads the client's payload on stdin, adds what the door knows under one `agent_shim` key, and either hands the enriched payload to the renderer named in `AGENT_SHIM_STATUSLINE_CMD` or renders the built-in line itself. */
 export function registerStatuslineCommand(program: Command, deps: { readonly paths: LayoutPaths }): void {
@@ -108,7 +112,20 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
       const target = headroomTargetOf(process.env, socketTarget === undefined || socketTarget.refused !== undefined ? undefined : socketTarget.socketPath);
       const sessionId = headroomSessionIdOf(payload, process.env);
       const headroom = target === undefined || sessionId === undefined ? undefined : await fetchHeadroomSessionStats(realHeadroomGet, target, sessionId);
-      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot, account, providerName, nowMs, headroom });
+      // The target this session's last request was served by, from the usage log's recent records for its session id: what shows a routing session's virtual-model choice where the person is looking. A record only names something other than the launch's own provider when routing sent it there.
+      const sessionHeader = /x-agent-shim-session:\s*([A-Za-z0-9@._-]+)/i.exec(process.env.ANTHROPIC_CUSTOM_HEADERS ?? "")?.[1];
+      let routedTarget: string | undefined;
+      if (sessionHeader !== undefined) {
+        try {
+          const last = readUsageLog(realFarmFs, deps.paths.usageLogDir, { sinceMs: nowMs - ROUTED_TARGET_LOOKBACK_MS }).records.filter((record) => record.sessionId === sessionHeader).at(-1);
+          if (last?.model !== undefined && last.provider !== providerName) {
+            routedTarget = `${last.provider}/${last.model}`;
+          }
+        } catch {
+          routedTarget = undefined;
+        }
+      }
+      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot, account, providerName, nowMs, headroom, routedTarget });
       const renderer = process.env.AGENT_SHIM_STATUSLINE_CMD;
       if (renderer !== undefined && renderer !== "") {
         const child = spawn("/bin/sh", ["-c", renderer], { stdio: ["pipe", "inherit", "inherit"] });
