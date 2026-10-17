@@ -1,3 +1,10 @@
+## [11.40.0](https://github.com/ExaDev/agent-shim/compare/v11.39.0...v11.40.0) (2026-10-17)
+
+### Features
+
+* **frontdoor:** choose a virtual model's member by its mode ([f455778](https://github.com/ExaDev/agent-shim/commit/f4557780a65764d2401697085a5c197df16ab6e5))
+* **statusline:** show the target a routing session's last request was served by ([8d2cd42](https://github.com/ExaDev/agent-shim/commit/8d2cd42308675f9add5ebc7590cf9814e442b3d8))
+
 ## [11.39.0](https://github.com/ExaDev/agent-shim/compare/v11.38.0...v11.39.0) (2026-10-17)
 
 ### Features
