@@ -193,4 +193,9 @@ describe("routedModelRows", () => {
     expect(routedModelRows({ hide: ["z/glm-5.3"] }, providers).map((row) => row.model)).not.toContain("z/glm-5.3");
     expect(routedModelRows({ show: ["fast"] , virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } }, providers).map((row) => row.model)).toEqual(["fast"]);
   });
+
+  it("keeps a virtual model's row when the provider's default-model env holds the same value as its tier default", () => {
+    const rows = routedModelRows({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } }, [["z", http({ ANTHROPIC_MODEL: "glm-5.3", ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3" })] as const]);
+    expect(rows.map((row) => row.model)).toContain("fast");
+  });
 });
