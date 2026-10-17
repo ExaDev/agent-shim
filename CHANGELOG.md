@@ -1,3 +1,9 @@
+## [11.40.1](https://github.com/ExaDev/agent-shim/compare/v11.40.0...v11.40.1) (2026-10-17)
+
+### Bug Fixes
+
+* **launcher:** match only tier-default env keys when a virtual row borrows a tier ([a6304ed](https://github.com/ExaDev/agent-shim/commit/a6304eddf1142a15350261a5f7c1835c9ff1c956))
+
 ## [11.40.0](https://github.com/ExaDev/agent-shim/compare/v11.39.0...v11.40.0) (2026-10-17)
 
 ### Features
