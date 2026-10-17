@@ -40,7 +40,7 @@ export interface ResolvedAntigravityConfig {
   readonly defaultModel: string;
   /** Each tier's candidate models in preference order; a request is routed to the first whose quota is not spent. */
   readonly models: Readonly<Record<ClaudeTier, readonly string[]>>;
-  /** Configured aliases: the lower-cased requested name each key matches in full, and its candidate models in preference order. */
+  /** The aliases: the lower-cased requested name each key matches in full, and its candidate models in preference order. The configured ones, and `auto` unless one is configured under that name. */
   readonly aliases: ReadonlyMap<string, readonly string[]>;
   /** Whether a request whose tier has no quota left is served from the tiers below it. */
   readonly degradeDownTiers: boolean;
@@ -55,6 +55,11 @@ export interface ResolvedAntigravityConfig {
     readonly socketPath?: string;
   };
 }
+
+/**
+ * The name of the virtual model that goes to whichever backend model has quota: every tier's candidates, strongest tier first, each once, so a request is served by the first of them that is unspent and otherwise by the one whose allowance is worth the most. It is an alias like any configured one, so `/model auto` and `--model auto` select it, and a configured alias of the same name replaces it.
+ */
+export const AUTO_ALIAS = "auto";
 
 /** A configured target as its ordered candidate list. */
 function candidatesOf(target: string | readonly string[]): readonly string[] {
@@ -78,6 +83,9 @@ export function resolveAntigravityConfig(config: AntigravityProviderConfig | und
     const target = overrides[tier];
     return target === undefined ? ANTIGRAVITY_DEFAULT_TIER_MODELS[tier] : candidatesOf(target);
   };
+  if (!aliases.has(AUTO_ALIAS)) {
+    aliases.set(AUTO_ALIAS, [...new Set(CLAUDE_TIERS.flatMap(tierModel))]);
+  }
   return {
     mode: config?.mode ?? ANTIGRAVITY_DEFAULT_MODE,
     defaultModel: config?.defaultModel ?? ANTIGRAVITY_DEFAULT_MODEL,
