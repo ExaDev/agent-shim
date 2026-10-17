@@ -11,7 +11,8 @@ import { evaluateAmbientCredentialGuard } from "./launcher/guard";
 import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDecisionSource, type IdentityDecision, type IdentityDecisionSource } from "./launcher/identity";
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
-import { withSupervision, type SupervisedLaunch } from "./launcher/claudeSession";
+import { hasSettingsArgument, mergeSettings, withLauncherSettings, withSupervision, type SupervisedLaunch } from "./launcher/claudeSession";
+import { modelPickerSettings } from "./launcher/modelPicker";
 import { resolvePoolLaunch } from "./launcher/pool";
 import { resumedContextTokens } from "./usage/resumeContext";
 import { IdentityLockBusyError } from "./launcher/lock";
@@ -475,10 +476,18 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   }
   const flags = loginlessProvider === undefined ? requestedFlags : { ...requestedFlags, remoteControl: false };
 
+  // `/model` lists the provider's real models, which needs claude's `--settings`; a launch that passes its own keeps claude's names, since claude takes one value and a second replaces the first.
+  const pickerSettings = selectedProvider === undefined ? undefined : modelPickerSettings(selectedProvider.definition);
+  const callerSettings = hasSettingsArgument(parsedArgv.rest);
+  if (pickerSettings !== undefined && callerSettings && !readOnly) {
+    log.info("agent-shim: this launch passes its own --settings, so /model keeps Claude Code's own model names instead of listing the provider's models");
+  }
+  const launcherSettings = mergeSettings([params.supervised?.settings, callerSettings ? undefined : pickerSettings]);
+
   const args = buildArgv({
     toolFlags: buildFlagArgs(flags),
     extraFlags: splitExtraFlags(env.CLAUDE_EXTRA_FLAGS),
-    passthrough: params.supervised === undefined ? parsedArgv.rest : withSupervision(parsedArgv.rest, params.supervised),
+    passthrough: withLauncherSettings(params.supervised === undefined ? parsedArgv.rest : withSupervision(parsedArgv.rest, params.supervised), launcherSettings),
   });
 
   // The configuration directory the child runs with, as `buildEnv` will set it: the identity's own directory unless the caller named one.
