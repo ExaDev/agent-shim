@@ -41,20 +41,54 @@ export function withConversation(passthrough: readonly string[], conversation: "
   return [...kept, conversation === "start" ? "--session-id" : "--resume", id, ...tail];
 }
 
-/** Whether the arguments already carry the caller's own `--settings`, which a supervised launch cannot add to. */
+/** Whether the arguments already carry the caller's own `--settings`, which a launch cannot add to (claude takes one value). */
 export function hasSettingsArgument(passthrough: readonly string[]): boolean {
   const end = passthrough.indexOf(TERMINATOR);
   return (end === -1 ? passthrough : passthrough.slice(0, end)).some((token) => token === "--settings" || token.startsWith("--settings="));
 }
 
-/** The arguments a supervised launch gives claude: the caller's own, with the conversation argument the launch asks for (unless it takes the caller's as given) and, when it carries any, `--settings` placed before a `--` terminator. */
+/** The arguments a supervised launch gives claude: the caller's own, with the conversation argument the launch asks for, unless it takes the caller's as given. */
 export function withSupervision(passthrough: readonly string[], supervised: SupervisedLaunch): readonly string[] {
-  const conversation = supervised.conversation === "as-given" ? passthrough : withConversation(passthrough, supervised.conversation, supervised.sessionId);
-  if (supervised.settings === undefined) {
-    return conversation;
+  return supervised.conversation === "as-given" ? passthrough : withConversation(passthrough, supervised.conversation, supervised.sessionId);
+}
+
+/** `passthrough` with `--settings <settings>` placed before a `--` terminator, or unchanged when the launch adds no settings. claude takes one `--settings` value (a second replaces the first rather than merging), so everything the launch adds travels in the one value `mergeSettings` builds. */
+export function withLauncherSettings(passthrough: readonly string[], settings: string | undefined): readonly string[] {
+  if (settings === undefined) {
+    return passthrough;
   }
-  const end = conversation.indexOf(TERMINATOR);
-  return end === -1 ? [...conversation, "--settings", supervised.settings] : [...conversation.slice(0, end), "--settings", supervised.settings, ...conversation.slice(end)];
+  const end = passthrough.indexOf(TERMINATOR);
+  return end === -1 ? [...passthrough, "--settings", settings] : [...passthrough.slice(0, end), "--settings", settings, ...passthrough.slice(end)];
+}
+
+/** Whether `value` is a plain JSON object. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * One `--settings` value from every part a launch adds (each a JSON object, or absent), or `undefined` when none is present. The parts own disjoint top-level keys (the supervisor's hooks, the model picker), so a key two parts both set is a defect and throws rather than letting one silently win.
+ */
+export function mergeSettings(parts: readonly (string | undefined)[]): string | undefined {
+  const merged: Record<string, unknown> = {};
+  let any = false;
+  for (const part of parts) {
+    if (part === undefined) {
+      continue;
+    }
+    const parsed: unknown = JSON.parse(part);
+    if (!isRecord(parsed)) {
+      throw new Error("a launch's settings part is not a JSON object");
+    }
+    for (const [key, value] of Object.entries(parsed)) {
+      if (key in merged) {
+        throw new Error(`two launch settings parts both set "${key}"`);
+      }
+      merged[key] = value;
+    }
+    any = true;
+  }
+  return any ? JSON.stringify(merged) : undefined;
 }
 
 /** Whether the arguments open claude's conversation picker (`--resume` or `-r` with no id), which names no conversation until the person chooses. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hasSettingsArgument, initialConversationOf, withConversation, withSupervision } from "./claudeSession";
+import { hasSettingsArgument, initialConversationOf, mergeSettings, withConversation, withLauncherSettings, withSupervision } from "./claudeSession";
 
 const ID = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -32,17 +32,46 @@ describe("withConversation", () => {
 });
 
 describe("withSupervision", () => {
-  const SETTINGS = '{"hooks":{}}';
-
   it("applies the conversation argument and leaves the arguments alone when it takes the caller's as given", () => {
     expect(withSupervision(["--model", "opus"], { sessionId: ID, conversation: "start" })).toEqual(["--model", "opus", "--session-id", ID]);
     expect(withSupervision(["--resume", OTHER], { sessionId: OTHER, conversation: "as-given" })).toEqual(["--resume", OTHER]);
   });
+});
 
-  it("adds the settings after the conversation argument and before a -- terminator", () => {
-    expect(withSupervision(["--model", "opus"], { sessionId: ID, conversation: "resume", settings: SETTINGS })).toEqual(["--model", "opus", "--resume", ID, "--settings", SETTINGS]);
-    expect(withSupervision(["--", "mcp"], { sessionId: ID, conversation: "start", settings: SETTINGS })).toEqual(["--session-id", ID, "--settings", SETTINGS, "--", "mcp"]);
-    expect(withSupervision(["--resume", OTHER], { sessionId: OTHER, conversation: "as-given", settings: SETTINGS })).toEqual(["--resume", OTHER, "--settings", SETTINGS]);
+describe("withLauncherSettings", () => {
+  const SETTINGS = '{"hooks":{}}';
+
+  it("adds the settings after the arguments and before a -- terminator", () => {
+    expect(withLauncherSettings(["--model", "opus"], SETTINGS)).toEqual(["--model", "opus", "--settings", SETTINGS]);
+    expect(withLauncherSettings(["--session-id", ID, "--", "mcp"], SETTINGS)).toEqual(["--session-id", ID, "--settings", SETTINGS, "--", "mcp"]);
+  });
+
+  it("leaves the arguments alone when the launch adds no settings", () => {
+    const args = ["--model", "opus"];
+    expect(withLauncherSettings(args, undefined)).toBe(args);
+  });
+});
+
+describe("mergeSettings", () => {
+  it("is undefined when no part is present", () => {
+    expect(mergeSettings([])).toBeUndefined();
+    expect(mergeSettings([undefined, undefined])).toBeUndefined();
+  });
+
+  it("returns a single part's keys unchanged", () => {
+    expect(JSON.parse(mergeSettings(['{"hooks":{"Stop":[]}}', undefined]) ?? "")).toEqual({ hooks: { Stop: [] } });
+  });
+
+  it("combines the top-level keys of every part into one object", () => {
+    expect(JSON.parse(mergeSettings(['{"hooks":{"Stop":[]}}', '{"modelPicker":{"options":[]}}']) ?? "")).toEqual({ hooks: { Stop: [] }, modelPicker: { options: [] } });
+  });
+
+  it("refuses a key two parts both set rather than letting one win", () => {
+    expect(() => mergeSettings(['{"hooks":{}}', '{"hooks":{"Stop":[]}}'])).toThrow('both set "hooks"');
+  });
+
+  it("refuses a part that is not a JSON object", () => {
+    expect(() => mergeSettings(["[]"])).toThrow("not a JSON object");
   });
 });
 

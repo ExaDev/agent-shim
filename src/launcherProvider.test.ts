@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
 import { prepareLaunch, type RunLauncherParams } from "./launcher";
+import type { SupervisedLaunch } from "./launcher/claudeSession";
 import {
   createFakeFarmFs, discovered, FAKE_HOME, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv,
 } from "./test-helpers";
@@ -447,5 +448,73 @@ describe("runLauncher provider selection", () => {
       });
       expect(built.args).toContain("--remote-control=");
     });
+  });
+});
+
+describe("runLauncher /model picker", () => {
+  const codexProvider = {
+    kind: "codex",
+    displayName: "Codex",
+    credential: { sources: [{ env: "CODEX_TOKEN" }] },
+    codex: { models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } },
+  };
+  const plainProvider = {
+    displayName: "GLM",
+    baseUrl: "https://api.z.ai/api/anthropic",
+    credential: { sources: [{ env: "Z_API_TOKEN" }] },
+  };
+
+  /** The arguments claude is spawned with, and what the launcher logged, for a launch through `provider` with `argv`. */
+  function spawnedWith(provider: object, argv: readonly string[], supervised?: SupervisedLaunch): { readonly args: readonly string[] | undefined; readonly infos: readonly string[] } {
+    const spawn = fakeSpawn();
+    const log = fakeLog();
+    launch({
+      paths,
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/p.json`]: provider }),
+      spawn,
+      proc: fakeProc({ CODEX_TOKEN: "tok", Z_API_TOKEN: "tok" }, ["--provider", "p", ...argv]),
+      log,
+      resolveClaudeBinary: () => discovered,
+      ...(supervised === undefined ? {} : { supervised }),
+    });
+    return { args: spawn.spawnSync.mock.calls[0]?.[1], infos: log.infos };
+  }
+
+  /** The `--settings` value in `args`, parsed. */
+  function settingsIn(args: readonly string[] | undefined): unknown {
+    const index = args?.indexOf("--settings") ?? -1;
+    return index === -1 ? undefined : JSON.parse(args?.[index + 1] ?? "");
+  }
+
+  it("lists the provider's real models in /model through the launch's one --settings value", () => {
+    const { args } = spawnedWith(codexProvider, ["--print"]);
+
+    expect(args?.filter((token) => token === "--settings")).toHaveLength(1);
+    expect(settingsIn(args)).toMatchObject({ modelPicker: { replaceBuiltInOptions: true, options: [{ model: "big" }, { model: "mid" }, { model: "small" }] } });
+  });
+
+  it("carries a supervised launch's hooks and the picker in the same --settings value", () => {
+    const { args } = spawnedWith(codexProvider, ["--print"], { sessionId: "11111111-1111-4111-8111-111111111111", conversation: "start", settings: '{"hooks":{"Stop":[]}}' });
+
+    expect(args?.filter((token) => token === "--settings")).toHaveLength(1);
+    expect(settingsIn(args)).toMatchObject({ hooks: { Stop: [] }, modelPicker: { replaceBuiltInOptions: true } });
+  });
+
+  it("places the settings before a -- terminator", () => {
+    const { args } = spawnedWith(codexProvider, ["--print", "--", "mcp"]);
+
+    expect(args?.indexOf("--settings")).toBeLessThan(args?.indexOf("--") ?? -1);
+    expect(args?.slice(args.indexOf("--"))).toEqual(["--", "mcp"]);
+  });
+
+  it("adds nothing for a provider that names no model of its own", () => {
+    expect(spawnedWith(plainProvider, ["--print"]).args).toEqual(["--print"]);
+  });
+
+  it("leaves a caller's own --settings alone and says /model keeps Claude Code's names", () => {
+    const { args, infos } = spawnedWith(codexProvider, ["--settings", "mine.json", "--print"]);
+
+    expect(args).toEqual(["--settings", "mine.json", "--print"]);
+    expect(infos.some((line) => line.includes("passes its own --settings"))).toBe(true);
   });
 });

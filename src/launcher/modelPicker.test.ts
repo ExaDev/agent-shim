@@ -1,0 +1,78 @@
+import { describe, expect, it } from "vitest";
+
+import type { Provider } from "../config/schema";
+import { modelPickerSettings, providerModelRows } from "./modelPicker";
+
+const CREDENTIAL = { sources: [{ env: "PROVIDER_TOKEN" }] };
+
+const codex = (config?: Extract<Provider, { kind: "codex" }>["codex"]): Provider => ({ kind: "codex", displayName: "Codex", credential: CREDENTIAL, ...(config === undefined ? {} : { codex: config }) });
+const antigravity = (config?: Extract<Provider, { kind: "antigravity" }>["antigravity"]): Provider => ({ kind: "antigravity", displayName: "Antigravity", credential: CREDENTIAL, ...(config === undefined ? {} : { antigravity: config }) });
+const http = (env?: Record<string, string>): Provider => ({ displayName: "Z", baseUrl: "https://z.example/api", credential: CREDENTIAL, ...(env === undefined ? {} : { env }) });
+
+describe("providerModelRows", () => {
+  it("lists a codex provider's distinct models once each, naming the tiers that reach them", () => {
+    const rows = providerModelRows(codex({ models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } }));
+    expect(rows.map((row) => row.model)).toEqual(["big", "mid", "small"]);
+    expect(rows.map((row) => row.label)).toEqual(["big", "mid", "small"]);
+    expect(rows.map((row) => row.description)).toEqual(["Serves the fable and opus tiers", "Serves the sonnet tier", "Serves the haiku tier"]);
+  });
+
+  it("borrows each row's client-side handling from the highest tier that reaches it", () => {
+    const rows = providerModelRows(codex({ models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } }));
+    expect(rows.map((row) => row.behavesAs)).toEqual(["claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-5-5"]);
+  });
+
+  it("applies the shipped codex mapping when the provider configures none", () => {
+    const rows = providerModelRows(codex());
+    expect(new Set(rows.map((row) => row.model)).size).toBe(rows.length);
+    expect(rows.length).toBeGreaterThan(1);
+  });
+
+  it("lists every backend model across an antigravity provider's tiers, marking a fallback as one", () => {
+    const rows = providerModelRows(antigravity({ models: { fable: ["a", "b"], opus: ["b", "c"], sonnet: "c", haiku: "d" } }));
+    expect(rows.map((row) => row.model)).toEqual(["a", "b", "c", "d"]);
+    expect(rows.map((row) => row.description)).toEqual(["Serves the fable tier", "Serves the opus tier; fallback for fable", "Serves the sonnet tier; fallback for opus", "Serves the haiku tier"]);
+  });
+
+  it("takes the highest tier a model is the first choice of for its handling, and the highest reaching tier when it is only a fallback", () => {
+    const rows = providerModelRows(antigravity({ models: { fable: ["a", "only-fallback"], opus: ["b", "only-fallback"], sonnet: "c", haiku: "d" } }));
+    const fallback = rows.find((row) => row.model === "only-fallback");
+    expect(fallback?.description).toBe("Fallback for fable and opus");
+    expect(fallback?.behavesAs).toBe("claude-fable-5-1");
+  });
+
+  it("adds an antigravity alias as a row that resolves to its own candidates", () => {
+    const rows = providerModelRows(antigravity({ models: { fable: "a", opus: "a", sonnet: "c", haiku: "d", flash: ["c", "d"] } }));
+    const alias = rows.find((row) => row.model === "flash");
+    expect(alias).toEqual({ model: "flash", label: "flash", description: "Alias for c, then d", behavesAs: "claude-sonnet-5-5" });
+  });
+
+  it("lists the distinct models an http provider's own env names for the tiers", () => {
+    const rows = providerModelRows(http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5", ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5", ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-air" }));
+    expect(rows.map((row) => [row.model, row.description, row.behavesAs])).toEqual([
+      ["glm-5", "Serves the opus and sonnet tiers", "claude-opus-5-5"],
+      ["glm-air", "Serves the haiku tier", "claude-haiku-5-5"],
+    ]);
+  });
+
+  it("offers nothing for an http provider that names no tier model", () => {
+    expect(providerModelRows(http())).toEqual([]);
+    expect(providerModelRows(http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "" }))).toEqual([]);
+  });
+});
+
+describe("modelPickerSettings", () => {
+  it("replaces the built-in lineup with the provider's rows, as the JSON --settings takes", () => {
+    const settings = modelPickerSettings(codex({ models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } }));
+    expect(JSON.parse(settings ?? "")).toEqual({
+      modelPicker: {
+        replaceBuiltInOptions: true,
+        options: providerModelRows(codex({ models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } })),
+      },
+    });
+  });
+
+  it("is undefined when the provider names no model, so the picker keeps its own", () => {
+    expect(modelPickerSettings(http())).toBeUndefined();
+  });
+});
