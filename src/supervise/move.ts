@@ -114,3 +114,57 @@ export function createMover(deps: Readonly<MoverDeps>): (request: MoveRequest) =
     }
   };
 }
+
+/** One session's request to relaunch under a named identity, as the front door leaves it when the session picks an `acct:` model member. */
+export interface IdentityMoveRequest {
+  readonly sessionId: string;
+  /** The identity the session is leaving. */
+  readonly from: string;
+  /** The identity the picked model runs under, named by the `acct:` member. */
+  readonly to: string;
+  /** The size in tokens of the conversation's context, when its transcript was read: what the new member must write again. */
+  readonly contextTokens: number | undefined;
+}
+
+/**
+ * Moves a session onto the identity a model pick named, under the same lock a quota move takes. No re-rank happens: the `acct:` member is the decision. The named identity must exist and share the conversation's transcript, exactly as a re-ranked member must, and the session is registered on it with the context it carries so a concurrent mover counts it.
+ */
+export function createIdentityMover(deps: Readonly<MoverDeps>): (request: IdentityMoveRequest) => MoveOutcome {
+  const { paths, farmFs, pool } = deps;
+  return (request) => {
+    let lock;
+    try {
+      lock = acquireIdentityLock({ identity: "move", dir: superviseDirOf(paths, pool), fs: farmFs, nowMs: deps.now, pid: deps.pid, isRunning: deps.isRunning, sleep: deps.sleep });
+    } catch (error) {
+      if (error instanceof IdentityLockBusyError) {
+        return { kind: "stay", reason: error.message };
+      }
+      throw error;
+    }
+    try {
+      if (farmFs.readFileUtf8(path.join(paths.identitiesDir, request.to, "identity.json")) === undefined) {
+        return { kind: "stay", reason: `no identity "${request.to}"` };
+      }
+      if (request.to === request.from) {
+        return { kind: "stay", reason: `the model already runs under this session's identity` };
+      }
+      const transcript = path.join(paths.identitiesDir, request.to, "projects", projectDirNameOf(deps.cwd), `${request.sessionId}.jsonl`);
+      if (farmFs.lstat(transcript)?.kind !== "file") {
+        return { kind: "stay", reason: `${request.to} does not share this conversation's history, so it could not resume it` };
+      }
+      const nowMs = deps.now();
+      registerSupervised(farmFs, paths, {
+        pid: deps.pid,
+        sessionId: request.sessionId,
+        pool,
+        identity: request.to,
+        cwd: deps.cwd,
+        since: new Date(nowMs).toISOString(),
+        ...(request.contextTokens === undefined ? {} : { carriedTokens: request.contextTokens }),
+      });
+      return { kind: "move", to: request.to, explanation: `the picked model runs under ${request.to}` };
+    } finally {
+      lock.release();
+    }
+  };
+}

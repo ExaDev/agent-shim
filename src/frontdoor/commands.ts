@@ -13,6 +13,7 @@ import { realSessionFs } from "../agents/realFs";
 import { collectSessionList, showSession } from "../agents/sessions";
 import { listIdentities } from "../identityStore";
 import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
+import { supervisedSessionOf, writeModelMove } from "../supervise/registry";
 import { checkForUpdate } from "../update/commands";
 import { identityExists, listAnchoredIdentities } from "../identityStore";
 import { readJobs } from "../jobStore";
@@ -218,6 +219,14 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
       env: process.env,
       credentials: { ...realCredentialPort, cache: realCredentialCacheEnv(paths) },
       usageSnapshotOf: (identity) => (identity === undefined ? undefined : routingSnapshots.get(identity) ?? readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity)),
+      // An `acct:` model member is served by relaunch: the door leaves a move request for the session's supervisor (found across every pool's registry, since the door does not know which pool launched the session) and answers the request with what is happening. A session nothing supervises gets the message naming the command to run instead.
+      accountMoves: (sessionId, to, model) => {
+        if (supervisedSessionOf(realFarmFs, paths, sessionId, realIsProcessRunning) === undefined) {
+          return false;
+        }
+        writeModelMove(realFarmFs, paths, { sessionId, to, model, at: new Date().toISOString() });
+        return true;
+      },
       ...(rcSelfHostSurface === undefined ? {} : { rcSelfHostRoute: rcSelfHostSurface.route }),
     }),
     rcTracker,

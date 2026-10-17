@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ResolvePoolParams } from "../launcher/pool";
 import { createFakeFarmFs, FAKE_NOW_MS, fakeFs, fakeLog, paths } from "../test-helpers";
 import { projectDirNameOf } from "../usage/resumeContext";
-import { createMover, type MoverDeps } from "./move";
+import { createIdentityMover, createMover, type MoverDeps } from "./move";
 import { liveSupervised, registerSupervised, superviseDirOf, type SupervisedSession } from "./registry";
 
 const CWD = "/work/repo";
@@ -48,6 +48,45 @@ const lockFile = `${superviseDirOf(paths, POOL)}/.move.lock`;
 function sibling(overrides: Readonly<Partial<SupervisedSession>>): SupervisedSession {
   return { pid: SIBLING_PID, sessionId: "other", pool: POOL, identity: "spare", cwd: CWD, since: iso(-SIBLING_AGE_MS), ...overrides };
 }
+
+/** An identity mover over the same shape of fake store: `existing` names identities that have an `identity.json`, `visibleTo` the ones that share the transcript. */
+function identitySetup(options: Readonly<{ existing?: readonly string[]; visibleTo?: readonly string[] }>) {
+  const farmFs = createFakeFarmFs({
+    ...Object.fromEntries((options.existing ?? ["work", "spare"]).map((identity) => [`${paths.identitiesDir}/${identity}/identity.json`, "{}\n"])),
+    ...Object.fromEntries((options.visibleTo ?? ["spare"]).map((identity) => [transcriptOf(identity), "{}\n"])),
+  });
+  const identityMover = createIdentityMover({
+    paths,
+    fs: fakeFs({}),
+    farmFs,
+    pool: POOL,
+    pools: { [POOL]: { identities: ["work", "spare"] } },
+    cwd: CWD,
+    pid: PID,
+    now: () => FAKE_NOW_MS,
+    isRunning: () => true,
+    sleep: () => undefined,
+    pickMember: picks("spare"),
+    log: fakeLog(),
+  });
+  return { farmFs, identityMover };
+}
+
+describe("the identity mover", () => {
+  it("moves a session onto the named identity and registers it there with the context it carries", () => {
+    const { farmFs, identityMover } = identitySetup({});
+    expect(identityMover({ ...request, to: "spare" })).toEqual({ kind: "move", to: "spare", explanation: "the picked model runs under spare" });
+    expect(liveSupervised(farmFs, paths, POOL, () => true)).toMatchObject([{ sessionId: SESSION, identity: "spare", carriedTokens: CONTEXT }]);
+  });
+
+  it("stays, saying why, when the named identity does not exist, is the one it is on, or does not share the transcript", () => {
+    const { identityMover } = identitySetup({ existing: ["work"] });
+    expect(identityMover({ ...request, to: "ghost" })).toMatchObject({ kind: "stay", reason: 'no identity "ghost"' });
+    expect(identityMover({ ...request, to: "work" })).toMatchObject({ kind: "stay", reason: "the model already runs under this session's identity" });
+    const { identityMover: blind } = identitySetup({ visibleTo: [] });
+    expect(blind({ ...request, to: "spare" })).toMatchObject({ kind: "stay", reason: "spare does not share this conversation's history, so it could not resume it" });
+  });
+});
 
 describe("the move coordinator", () => {
   it("moves the session to the member the ranking chose, records the pick and registers the session on it with the context it carries", () => {

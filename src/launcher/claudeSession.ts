@@ -47,9 +47,30 @@ export function hasSettingsArgument(passthrough: readonly string[]): boolean {
   return (end === -1 ? passthrough : passthrough.slice(0, end)).some((token) => token === "--settings" || token.startsWith("--settings="));
 }
 
-/** The arguments a supervised launch gives claude: the caller's own, with the conversation argument the launch asks for, unless it takes the caller's as given. */
+/** The arguments a supervised launch gives claude: the caller's own, with the conversation argument the launch asks for and the model a model move chose (replacing any the caller passed), unless it takes the caller's as given. */
 export function withSupervision(passthrough: readonly string[], supervised: SupervisedLaunch): readonly string[] {
-  return supervised.conversation === "as-given" ? passthrough : withConversation(passthrough, supervised.conversation, supervised.sessionId);
+  if (supervised.conversation === "as-given") {
+    return passthrough;
+  }
+  const conversed = withConversation(passthrough, supervised.conversation, supervised.sessionId);
+  if (supervised.model === undefined) {
+    return conversed;
+  }
+  const end = conversed.indexOf(TERMINATOR);
+  const head = end === -1 ? conversed : conversed.slice(0, end);
+  const tail = end === -1 ? [] : conversed.slice(end);
+  const kept: string[] = [];
+  for (let index = 0; index < head.length; index += 1) {
+    const token = head[index];
+    if (token === "--model") {
+      index += 1;
+      continue;
+    }
+    if (token !== undefined && !token.startsWith("--model=")) {
+      kept.push(token);
+    }
+  }
+  return [...kept, "--model", supervised.model, ...tail];
 }
 
 /** `passthrough` with `--settings <settings>` placed before a `--` terminator, or unchanged when the launch adds no settings. claude takes one `--settings` value (a second replaces the first rather than merging), so everything the launch adds travels in the one value `mergeSettings` builds. */
@@ -111,6 +132,8 @@ export interface SupervisedLaunch {
   readonly conversation: ClaudeConversation;
   /** The pool member to run as, for a relaunch after the previous member ran out of quota. The pool pick is skipped. */
   readonly member?: string;
+  /** The model to resume with, named by a model move that brought the session onto its member: the model part of the `acct:` member the session picked. Replaces any model the caller's own arguments name. */
+  readonly model?: string;
   /** Claude Code settings, as the JSON `--settings` takes, to add to the launch: the hooks that tell the supervisor when a turn begins and ends. */
   readonly settings?: string;
 }

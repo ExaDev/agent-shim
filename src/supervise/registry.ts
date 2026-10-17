@@ -139,3 +139,56 @@ export function committedContextTokens(sessions: readonly SupervisedSession[], r
   }
   return committed;
 }
+
+/**
+ * One request from the front door for a supervised session to relaunch under another identity: the session picked a model member (`acct:<identity>/<model>`) that only a relaunch can serve, one login per process, so the door asks the session's supervisor to move it. Written by the door, claimed and removed by the supervisor.
+ */
+const ModelMoveRequestSchema = z.strictObject({
+  /** The session the request is for: the id its supervisor registered it under. */
+  sessionId: z.string().min(1),
+  /** The identity the model runs under, as the `acct:` member names it. */
+  to: z.string().min(1),
+  /** The model to resume with, the part after the identity in the `acct:` member. */
+  model: z.string().min(1),
+  /** When the door wrote the request, so a supervisor can tell a fresh request from one left behind. */
+  at: z.iso.datetime(),
+});
+export type ModelMoveRequest = z.infer<typeof ModelMoveRequestSchema>;
+
+/** Writes one model-move request, replacing any the session already holds. The session id is a file name, so the caller has checked it is a plain identifier. */
+export function writeModelMove(fs: RegistryFs, paths: LayoutPaths, request: Readonly<ModelMoveRequest>): void {
+  fs.mkdirPrivate(paths.modelMovesDir);
+  fs.writeFilePrivate(path.join(paths.modelMovesDir, `${request.sessionId}.json`), `${JSON.stringify(ModelMoveRequestSchema.parse(request))}\n`);
+}
+
+/** Reads the session's pending model-move request, when one is there and parses. */
+export function readModelMove(fs: Pick<RegistryFs, "readFileUtf8">, paths: LayoutPaths, sessionId: string): ModelMoveRequest | undefined {
+  const raw = fs.readFileUtf8(path.join(paths.modelMovesDir, `${sessionId}.json`));
+  if (raw === undefined) {
+    return undefined;
+  }
+  try {
+    return ModelMoveRequestSchema.parse(JSON.parse(raw));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Removes the session's model-move request, claimed or superseded. Idempotent. */
+export function removeModelMove(fs: Pick<RegistryFs, "removeRecursive">, paths: LayoutPaths, sessionId: string): void {
+  fs.removeRecursive(path.join(paths.modelMovesDir, `${sessionId}.json`));
+}
+
+/**
+ * The live registry entry a session id belongs to, across every pool: what tells the door a session is supervised (so a model move can be left for its supervisor) and which pool's lock the move belongs under. A session id registers once, so the first live entry is the entry.
+ */
+export function supervisedSessionOf(fs: RegistryFs, paths: LayoutPaths, sessionId: string, isRunning: (pid: number) => boolean): SupervisedSession | undefined {
+  for (const pool of fs.readdir(paths.superviseDir)) {
+    const sessions = liveSupervised(fs, paths, pool, isRunning);
+    const found = sessions.find((session) => session.sessionId === sessionId);
+    if (found !== undefined) {
+      return found;
+    }
+  }
+  return undefined;
+}

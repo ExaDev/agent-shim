@@ -54,8 +54,8 @@ function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
   };
 }
 
-function resolver(files: Record<string, unknown>, directPort = OWN_PORT, models?: unknown): ReturnType<typeof createProviderRouteResolver> {
-  return createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => directPort, env: { Z: "tok-from-z" }, ...(models === undefined ? {} : { models: () => models as ModelsConfig | undefined }), credentials: fakeCredentials() });
+function resolver(files: Record<string, unknown>, directPort = OWN_PORT, models?: unknown, accountMoves?: (sessionId: string, to: string, model: string) => boolean): ReturnType<typeof createProviderRouteResolver> {
+  return createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => directPort, env: { Z: "tok-from-z" }, ...(models === undefined ? {} : { models: () => models as ModelsConfig | undefined }), ...(accountMoves === undefined ? {} : { accountMoves }), credentials: fakeCredentials() });
 }
 
 function request(url: string, body = "{}"): RoutedRequest {
@@ -630,6 +630,50 @@ describe("a router provider", () => {
     } finally {
       await door.close();
     }
+  });
+});
+
+describe("an account model member", () => {
+  const sessionRequest = (model: string): RoutedRequest => ({
+    ...request("/providers/z/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),
+    session: { identity: undefined, sessionId: "s-1", provider: "z", headroom: false, routeByName: true, projectId: undefined },
+  });
+
+  it("is answered with a clear refusal naming the identity, and a move request is left for the session's supervisor", async () => {
+    const moves: [string, string, string][] = [];
+    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }, OWN_PORT, undefined, (sessionId, to, model) => {
+      moves.push([sessionId, to, model]);
+      return true;
+    });
+    const resolution = await resolve(sessionRequest("acct:work/opus"));
+    expect(resolution.ok).toBe(false);
+    if (!resolution.ok) {
+      expect(resolution.status).toBe(HTTP_STATUS.badRequest);
+      expect(resolution.message).toContain('identity "work"');
+      expect(resolution.message).toContain("being moved there");
+    }
+    expect(moves).toEqual([["s-1", "work", "opus"]]);
+  });
+
+  it("names the command to run when nothing supervises the session", async () => {
+    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider });
+    const resolution = await resolve(sessionRequest("acct:work/opus"));
+    expect(resolution.ok).toBe(false);
+    if (!resolution.ok) {
+      expect(resolution.message).toContain(`claude @work --resume`);
+    }
+  });
+
+  it("resolves a virtual model whose first member is an account member the same way", async () => {
+    const moves: [string, string, string][] = [];
+    const models: ModelsConfig = { virtual: { opusAnywhere: { mode: "ordered", members: ["acct:work/opus"] } } };
+    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }, OWN_PORT, models, (sessionId, to, model) => {
+      moves.push([sessionId, to, model]);
+      return true;
+    });
+    const resolution = await resolve(sessionRequest("opusAnywhere"));
+    expect(resolution.ok).toBe(false);
+    expect(moves).toEqual([["s-1", "work", "opus"]]);
   });
 });
 

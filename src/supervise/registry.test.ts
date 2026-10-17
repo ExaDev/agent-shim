@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { USAGE_SCHEMA_VERSION, type UsageRecord } from "../usage/schema";
-import { committedContextTokens, liveSupervised, readSessionState, registerSupervised, sessionStatePath, stateDirOf, unregisterSupervised, writeSessionState, type SupervisedSession } from "./registry";
+import { committedContextTokens, liveSupervised, readModelMove, readSessionState, registerSupervised, removeModelMove, sessionStatePath, stateDirOf, supervisedSessionOf, unregisterSupervised, writeModelMove, writeSessionState, type SupervisedSession } from "./registry";
 
 const paths = buildLayoutPaths("/state");
 const T0 = "2026-10-16T10:00:00.000Z";
@@ -55,6 +55,34 @@ describe("the supervised session registry", () => {
     unregisterSupervised(fs, paths, "subs", "s1");
     unregisterSupervised(fs, paths, "subs", "s1");
     expect(liveSupervised(fs, paths, "subs", () => true)).toEqual([]);
+  });
+});
+
+describe("model-move requests", () => {
+  it("writes a request for a session, reads it back, and removes it once claimed", () => {
+    const fs = createFakeFarmFs({});
+    writeModelMove(fs, paths, { sessionId: "s1", to: "work", model: "opus", at: T1 });
+    expect(readModelMove(fs, paths, "s1")).toEqual({ sessionId: "s1", to: "work", model: "opus", at: T1 });
+    expect(readModelMove(fs, paths, "s2")).toBeUndefined();
+    removeModelMove(fs, paths, "s1");
+    expect(readModelMove(fs, paths, "s1")).toBeUndefined();
+  });
+
+  it("replaces the request a session already holds, and ignores one that does not parse", () => {
+    const fs = createFakeFarmFs({ "/state/model-moves/s1.json": "{not json" });
+    expect(readModelMove(fs, paths, "s1")).toBeUndefined();
+    writeModelMove(fs, paths, { sessionId: "s1", to: "spare", model: "glm-5.3", at: T2 });
+    expect(readModelMove(fs, paths, "s1")).toEqual({ sessionId: "s1", to: "spare", model: "glm-5.3", at: T2 });
+  });
+});
+
+describe("finding a session's registry entry across pools", () => {
+  it("returns the live entry a session id registered, whichever pool holds it", () => {
+    const fs = createFakeFarmFs({});
+    registerSupervised(fs, paths, session({ sessionId: "s9", pool: "other", identity: "spare" }));
+    expect(supervisedSessionOf(fs, paths, "s9", () => true)).toMatchObject({ pool: "other", identity: "spare" });
+    expect(supervisedSessionOf(fs, paths, "s9", () => false)).toBeUndefined();
+    expect(supervisedSessionOf(fs, paths, "missing", () => true)).toBeUndefined();
   });
 });
 
