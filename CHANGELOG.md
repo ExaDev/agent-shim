@@ -1,3 +1,9 @@
+## [11.32.0](https://github.com/ExaDev/agent-shim/compare/v11.31.1...v11.32.0) (2026-10-17)
+
+### Features
+
+* **models:** add model identity, the selection engine and per-target observations ([cbb2a47](https://github.com/ExaDev/agent-shim/commit/cbb2a4731794d7c2971cff468176ea38aaa356bf))
+
 ## [11.31.1](https://github.com/ExaDev/agent-shim/compare/v11.31.0...v11.31.1) (2026-10-17)
 
 ### Bug Fixes
