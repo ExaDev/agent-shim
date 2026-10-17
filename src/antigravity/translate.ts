@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
 
+import { selectMember, type SelectionCandidate } from "../selection/engine";
+
+/** Seconds per hour, to hand the engine a reset time in its own unit. */
+const SECONDS_PER_HOUR = 3600;
+
+/** The pressure a candidate whose quota the map does not measure competes at. */
+const NEUTRAL_PRESSURE = 1;
+
 import { antigravityQuotaExhaustion, antigravityQuotaPressure, type AntigravityQuotaMap } from "./quota";
 import { toolCallSignatureOf, UNVERIFIED_THOUGHT_SIGNATURE } from "./signatures";
 
@@ -161,7 +169,7 @@ export interface AntigravityRouting {
 }
 
 /**
- * Chooses among a name's candidates by available quota: the model the session is already on while it is unspent, otherwise the first whose windows are not spent, in preference order; when every one is spent, the one whose binding window lifts soonest, since that is the first that can serve. A candidate whose quota is unknown counts as available, so an absent quota map routes to the first candidate.
+ * Chooses among a name's candidates by available quota, on the selection engine's `ordered` mode: the model the session is already on while it is unspent, otherwise the first candidate in preference order, and when the preferred one is spent, the fallback whose allowance is worth the most, with every candidate spent, the one whose binding window lifts soonest.
  */
 function chooseCandidate(candidates: readonly string[], routing: AntigravityRouting | undefined): string {
   const first = candidates[0];
@@ -171,33 +179,24 @@ function chooseCandidate(candidates: readonly string[], routing: AntigravityRout
   if (routing === undefined || candidates.length === 1) {
     return first;
   }
-  if (routing.previous !== undefined && candidates.includes(routing.previous) && antigravityQuotaExhaustion(routing.quota, routing.previous, routing.nowMs) === undefined) {
-    return routing.previous;
-  }
-  const unspent = candidates.filter((model) => antigravityQuotaExhaustion(routing.quota, model, routing.nowMs) === undefined);
-  if (unspent[0] === first) {
-    return first;
-  }
-  // The preferred candidate is spent, so the fallbacks compete on what their allowance is worth: the one whose windows hold the most allowance beyond what their remaining time would let a steady burn use is spent first, since that surplus lapses at the reset. A window starts its clock on its first use after a reset, so an unused one holds all of its allowance and all of its period and sits at neutral pressure: it neither jumps the queue nor is spared, and one already running with surplus goes ahead of it. Preference order breaks ties.
-  const neutral = 1;
-  let best: { model: string; pressure: number } | undefined;
-  for (const model of unspent) {
-    const pressure = antigravityQuotaPressure(routing.quota, model) ?? neutral;
-    if (best === undefined || pressure > best.pressure) {
-      best = { model, pressure };
-    }
-  }
-  if (best !== undefined) {
-    return best.model;
-  }
-  let soonest: { model: string; resetSec: number } | undefined;
-  for (const model of candidates) {
-    const exhaustion = antigravityQuotaExhaustion(routing.quota, model, routing.nowMs);
-    if (exhaustion !== undefined && (soonest === undefined || exhaustion.resetSec < soonest.resetSec)) {
-      soonest = { model, resetSec: exhaustion.resetSec };
-    }
-  }
-  return soonest?.model ?? first;
+  const exhaustionOf = (model: string): { readonly resetSec: number } | undefined => antigravityQuotaExhaustion(routing.quota, model, routing.nowMs);
+  const evaluated = candidates.map((model, index): { readonly candidate: SelectionCandidate; readonly capabilities: { vision: true; tools: true; thinking: true } } => {
+    const exhaustion = exhaustionOf(model);
+    return {
+      candidate: {
+        ref: model,
+        order: index,
+        available: exhaustion === undefined,
+        // A quota the map does not measure competes at the neutral pressure the old in-place ranking gave it, not as an unknown that always loses.
+        pressure: antigravityQuotaPressure(routing.quota, model) ?? NEUTRAL_PRESSURE,
+        hoursToReset: exhaustion === undefined ? undefined : exhaustion.resetSec / SECONDS_PER_HOUR,
+        feasible: true,
+        isCurrent: routing.previous === model,
+      },
+      capabilities: { vision: true, tools: true, thinking: true },
+    };
+  });
+  return selectMember("ordered", evaluated).ref ?? first;
 }
 
 /** Token budgets for each effort level in Gemini's thinking configuration. */
