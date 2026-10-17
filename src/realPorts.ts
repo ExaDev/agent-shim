@@ -17,6 +17,7 @@ import type { HeadroomSocketTrustPorts } from "./headroom/socket";
 import { removeSession } from "./headroom/state";
 import type { LayoutPaths } from "./paths";
 import type { FarmFs, FsPort, HeadroomPort, LogPort, ProcPort, RunPort, SpawnPort } from "./launcher/ports";
+import { createLogPort, styleTextFor } from "./logStyle";
 
 function isEnoent(error: unknown): boolean {
   return (
@@ -528,12 +529,11 @@ export const realProcPort: ProcPort = {
   exit: (code: number): never => process.exit(code),
 };
 
-/** The real `LogPort`, writing info/warn to stdout and errors to stderr. */
-export const realLogPort: LogPort = {
-  info: (message: string) => { console.log(message); },
-  warn: (message: string) => { console.warn(message); },
-  error: (message: string) => { console.error(message); },
-};
+/** The real `LogPort`: information to stdout, warnings and errors to stderr, with the colour `createLogPort` applies where the stream takes it. */
+export const realLogPort: LogPort = createLogPort(
+  { out: (line) => { console.log(line); }, warn: (line) => { console.warn(line); }, err: (line) => { console.error(line); } },
+  { out: styleTextFor(process.stdout), err: styleTextFor(process.stderr) },
+);
 
 // The owner/group/other execute bits (0b001 repeated in each of the three permission triads) -- a nonzero result means at least one of the three "may execute" bits is set.
 const EXECUTE_BITS_MASK = 0o111;

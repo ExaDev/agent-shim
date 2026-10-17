@@ -14,7 +14,10 @@
     "usage-data",
     "ide",
     "cache",
-    "scheduled_tasks.lock"
+    "scheduled_tasks.lock",
+    "policy-limits.json*",
+    "remote-settings.json*",
+    "state"
   ],
   "history": [
     "projects",
