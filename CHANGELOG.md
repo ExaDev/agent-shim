@@ -1,3 +1,9 @@
+## [11.31.1](https://github.com/ExaDev/agent-shim/compare/v11.31.0...v11.31.1) (2026-10-17)
+
+### Bug Fixes
+
+* **frontdoor:** serve routed requests and record them under the serving provider ([d80421e](https://github.com/ExaDev/agent-shim/commit/d80421e1775a75a3e29526e4cf605e365c3f1ac7))
+
 ## [11.31.0](https://github.com/ExaDev/agent-shim/compare/v11.30.0...v11.31.0) (2026-10-17)
 
 ### Features
