@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { describeUnroutedMembers, matchModels } from "./models";
+import { buildFamilies } from "./models/families";
 import type { ProviderModel } from "./models/targets";
 
 const of = (provider: string, model: string): ProviderModel => ({ provider, model });
@@ -41,14 +42,16 @@ describe("matchModels", () => {
 });
 
 describe("describeUnroutedMembers", () => {
-  it("says an account member is served by relaunching under its identity, and a family is not yet a candidate", () => {
-    expect(describeUnroutedMembers(["acct:work/opus", "family:glm-5", "z/glm-5.3"])).toEqual([
+  const families = buildFamilies(["z/glm-5.1", "s/hf:zai-org/GLM-5.1"], undefined);
+
+  it("says an account member is served by relaunching under its identity, and a family no target belongs to has nothing to choose among", () => {
+    expect(describeUnroutedMembers(["acct:work/opus", "family:ghost-9", "z/glm-5.3"], families)).toEqual([
       'acct:work/opus is served by relaunching the session under identity "work", so no quota signal ranks it',
-      "family:glm-5 is resolved from the live catalogues, which the door does not read yet, so it is not a candidate",
+      "no target the providers offer belongs to family:ghost-9, so it has nothing to choose among",
     ]);
   });
 
-  it("says nothing of a member the door chooses by signal", () => {
-    expect(describeUnroutedMembers(["z/glm-5.3", "m/MiniMax-M3"])).toEqual([]);
+  it("says nothing of a member the door chooses by signal, nor of a family some target belongs to", () => {
+    expect(describeUnroutedMembers(["z/glm-5.3", "m/MiniMax-M3", "family:glm-5-1"], families)).toEqual([]);
   });
 });

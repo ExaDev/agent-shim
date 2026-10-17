@@ -18,7 +18,8 @@ import { evaluateWhen, referencesFact, type ConditionContext } from "../resolve/
 import { quotaFactsOf } from "../usage/quotaFacts";
 import { expandMembers } from "../modelsStore";
 import { candidateOf } from "../selection/candidates";
-import { selectMember } from "../selection/engine";
+import { selectMember, type RequestNeeds } from "../selection/engine";
+import { FAMILY_PREFIX, buildFamilies, expandFamilyMembers, familyCapabilities, familyMode, familyNamed, familyOfRef } from "../models/families";
 import { withoutContextMarker } from "../models/identity";
 import type { TargetObservation } from "../selection/signals";
 import type { UsageSnapshot } from "../usage/schema";
@@ -53,17 +54,34 @@ interface RoutedModel {
   readonly ref: string;
 }
 
-/** Resolves a routing session's model name to its target: a qualified name names its provider directly, a virtual model chooses among its members through its selection mode (quota windows from the session's snapshot, latency and success from the observed targets, prices from the models block), and a bare unknown name has no target. */
+/** What `resolveRoutedModel` reads from the door: the session's models block, the quota snapshot of its identity, what each target's recent requests observed, and the targets the providers offer (which families are formed from). */
+interface RoutedModelDeps {
+  readonly models?: (session: Readonly<{ readonly sessionId?: string }>) => ModelsConfig | undefined;
+  readonly usageSnapshotOf?: (identity: string | undefined) => UsageSnapshot | undefined;
+  readonly observations?: (target: string) => TargetObservation | undefined;
+  readonly targets?: () => readonly string[];
+}
+
+/** How many characters of a request body are taken to be one token when the size of the context a switch would re-send is estimated: the common rule of thumb for English text and code, an estimate and never a measurement. */
+const CHARS_PER_TOKEN = 4;
+
+/** What a request asks of the model that serves it, from the facts a whole-body scan found, for the modes that filter before they rank. */
+function needsOf(scan: Readonly<{ readonly hasImage?: boolean; readonly toolsPresent?: boolean; readonly thinking?: boolean; readonly text?: string }>): RequestNeeds {
+  return { hasImage: scan.hasImage === true, hasTools: scan.toolsPresent === true, thinking: scan.thinking === true, contextTokens: Math.ceil((scan.text?.length ?? 0) / CHARS_PER_TOKEN) };
+}
+
+/** Resolves a routing session's model name to its target: a qualified name names its provider directly, a virtual model or a family (`family:<key>`) chooses among its members through its selection mode (quota windows from the session's snapshot, latency and success from the observed targets, prices from the models block, what the request needs against what each member's family carries), and a bare unknown name has no target. */
 function resolveRoutedModel(
   model: string,
   providerName: string | undefined,
   session: Readonly<{ readonly identity?: string; readonly sessionId?: string }>,
   includeUnqualified: boolean,
-  deps: Readonly<{ readonly models?: () => ModelsConfig | undefined; readonly usageSnapshotOf?: (identity: string | undefined) => UsageSnapshot | undefined; readonly observations?: (target: string) => TargetObservation | undefined }>,
+  deps: Readonly<RoutedModelDeps>,
   memory: Readonly<Map<string, string>>,
   rotations: Readonly<Map<string, number>>,
+  needs: RequestNeeds | undefined,
 ): RoutedModel | undefined {
-  const models = deps.models?.();
+  const models = deps.models?.(session);
   // The wire name a provider expects carries no context marker: Claude Code strips it from the names it sends, and a member ref may name its model with it (`z/glm-5.3[1m]`), so the target the resolver writes has it stripped too or the provider sees a model it does not know.
   const qualified = model.includes("/") && !model.startsWith("acct:") ? model : undefined;
   if (qualified !== undefined) {
@@ -71,29 +89,34 @@ function resolveRoutedModel(
     const named = rest.join("/");
     return provider === undefined || named === "" ? undefined : { provider, model: withoutContextMarker(named), ref: qualified };
   }
-  const virtual = models?.virtual?.[model];
-  if (virtual === undefined || !includeUnqualified) {
+  const isFamily = model.startsWith(FAMILY_PREFIX);
+  const virtual = isFamily ? undefined : models?.virtual?.[model];
+  if ((virtual === undefined && !isFamily) || !includeUnqualified) {
     return undefined;
   }
-  const members = expandMembers(model, models).filter((member) => !member.startsWith("acct:") && !member.startsWith("family:"));
+  const declared = isFamily ? [model] : expandMembers(model, models);
+  // Families are formed from the targets the providers offer, which is read only when a member names a family or the block holds family settings the candidates' capabilities are read from.
+  const families = isFamily || declared.some((member) => member.startsWith(FAMILY_PREFIX)) || models?.families !== undefined ? buildFamilies(deps.targets?.() ?? [], models) : [];
+  const mode = virtual?.mode ?? familyMode(familyNamed(families, model)?.settings ?? {});
+  const members = expandFamilyMembers(declared, families).filter((member) => !member.startsWith("acct:"));
   if (members.length === 0) {
     return undefined;
   }
   const snapshot = deps.usageSnapshotOf?.(session.identity);
   const current = memory.get(session.sessionId ?? "");
-  const candidates = members.map((ref, order) => {
+  const evaluated = members.map((ref, order) => {
     const [provider] = ref.split("/");
     const facts = quotaFactsOf(snapshot?.providers[provider ?? ""]?.rateLimit?.unified, Date.now());
-    return candidateOf(ref, order, {
+    const candidate = candidateOf(ref, order, {
       quota: facts,
       ...(deps.observations?.(ref) === undefined ? {} : { observation: deps.observations(ref) }),
       ...(models?.prices?.[ref] === undefined ? {} : { price: models.prices[ref] }),
     }, ref === current);
+    return { candidate, capabilities: familyCapabilities(familyOfRef(families, ref)?.settings ?? {}) };
   });
-  const evaluated = candidates.map((candidate) => ({ candidate, capabilities: { vision: true, tools: true, thinking: true } }));
   const rotation = rotations.get(model) ?? 0;
   rotations.set(model, rotation + 1);
-  const selection = selectMember(virtual.mode, evaluated, { rotation });
+  const selection = selectMember(mode, evaluated, { rotation, ...(needs === undefined ? {} : { needs }) });
   if (selection.ref === undefined) {
     return undefined;
   }
@@ -119,8 +142,10 @@ export function createProviderRouteResolver(deps: {
   /** Reads provider files, the same filesystem port the launcher uses. */
   readonly fs: FsPort;
   readonly providersDir: string;
-  /** The models block the router resolves names against, read live so edits take effect without a relaunch. */
-  readonly models?: () => ModelsConfig | undefined;
+  /** The models block the router resolves a session's names against: the block the session launched with when it carried definitions of its own, else the global block read live so edits take effect without a relaunch. */
+  readonly models?: (session: Readonly<{ readonly sessionId?: string }>) => ModelsConfig | undefined;
+  /** Every target the providers offer, as `<provider>/<model>` refs: what families are formed from. Absent when nothing offers the door a catalogue. */
+  readonly targets?: () => readonly string[];
   /** The ports the codex translation route needs, already wired to the real auth store and upstream fetch. */
   readonly codexPorts: Omit<CodexRoutePorts, "loadProvider">;
   /**
@@ -313,6 +338,8 @@ export function createProviderRouteResolver(deps: {
       scopedRequest === request ? resolution : { ok: true, route: servingRewritten(resolution.route, scopedRequest) };
     let current = scopedRequest;
     let replay: RoutedRequest | undefined;
+    // Set once a model name has been resolved to its target: the name the target now carries is its own (a provider may serve a model named like `hf:zai-org/GLM-5.1`, which would read as a qualified ref), so the target's turn of the loop serves it as it is and never resolves it by name again.
+    let nameResolved = false;
     const visited = new Set<string>();
     for (;;) {
       const path = new URL(current.url, "http://127.0.0.1").pathname;
@@ -336,7 +363,7 @@ export function createProviderRouteResolver(deps: {
         isRouter = false;
       }
       // A router resolves each request's model name through the models block to a target provider, whose own kind handling and credential then serve it: the same one-scan, one-rewrite shape the `routes` list below uses. A session that asked to route by name gets the same resolution on the provider it launched on: a qualified model name leaves that provider for the one that serves it. A provider-less (OAuth) session gets it too, but qualified names only: its bare names are Claude Code's own and still go to Anthropic, and the Remote Control family of paths is never a provider's to serve.
-      const routesByName = (isRouter || current.session.routeByName) && !isRcSelfHostPath(path);
+      const routesByName = !nameResolved && (isRouter || current.session.routeByName) && !isRcSelfHostPath(path);
       if (routesByName) {
         // Whole-body, because a resolved name is served under its target's own model name: the qualified or virtual name the session sent is rewritten in the one copy of the body this scan holds, exactly as a `routes` entry that names a model is.
         const scan = await scanRequestHead(current, true);
@@ -351,7 +378,7 @@ export function createProviderRouteResolver(deps: {
         }
         replay = scan.replayed;
         // An `acct:` member is served by relaunch, never by a route: one login per process. The door asks the session's supervisor to move it (when one is watching) and answers the request with what is happening, so the turn ends cleanly rather than hanging or 502-ing.
-        const account = scan.model === undefined ? undefined : resolveAccountTarget(scan.model, deps.models?.());
+        const account = scan.model === undefined ? undefined : resolveAccountTarget(scan.model, deps.models?.(current.session));
         if (account !== undefined) {
           const sessionId = current.session.sessionId ?? "";
           const moved = sessionId !== "" && (deps.accountMoves?.(sessionId, account.identity, account.model) ?? false);
@@ -363,7 +390,7 @@ export function createProviderRouteResolver(deps: {
               : `model "${account.model}" runs under identity "${account.identity}", which needs a relaunch this session cannot make; start it there with: claude @${account.identity} --resume`,
           };
         }
-        const routed = scan.model === undefined ? undefined : resolveRoutedModel(scan.model, providerName, current.session, isRouter || providerName !== undefined, deps, routingMemory, rotations);
+        const routed = scan.model === undefined ? undefined : resolveRoutedModel(scan.model, providerName, current.session, isRouter || providerName !== undefined, deps, routingMemory, rotations, needsOf(scan));
         const requested = scan.model;
         if (routed !== undefined) {
           routingMemory.set(current.session.sessionId ?? "", routed.ref);
@@ -384,6 +411,7 @@ export function createProviderRouteResolver(deps: {
             const query = current.url.includes("?") ? current.url.slice(current.url.indexOf("?")) : "";
             const carried = replay;
             current = { ...current, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(routed.provider)}${rest}${query}`, body: carried.body, headers: carried.headers };
+            nameResolved = true;
             continue;
           }
           // Same provider, renamed model: serve the rewritten body here, on the provider the session is already on.

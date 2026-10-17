@@ -1,4 +1,5 @@
 import type { ConfigFileReader } from "../config/load";
+import type { FrontDoorSessionDetails } from "../frontdoor/state";
 
 /**
  * Filesystem operations the launcher needs, injected so no test in this project ever touches a real filesystem — consistent with the resolver core's own injected-facts approach in `src/resolve/types.ts`.
@@ -156,8 +157,8 @@ export interface HeadroomPort {
  * Everything the launcher needs from the front-door daemon, injected like `HeadroomPort`: `ensure` brings the door up (spawning its detached supervisor when nothing authenticated is serving), registers this launch in its session registry and returns both listeners' loopback ports plus the CA bundle the child must trust; `release` removes that registration when the spawned `claude` exits.
  */
 export interface FrontDoorPort {
-  /** `inheritedExtraCaCerts` is the parent environment's own `NODE_EXTRA_CA_CERTS`, which the returned trust bundle keeps (see `resolveTrustBundle`). */
-  readonly ensure: (inheritedExtraCaCerts: string | undefined) => FrontDoorUp;
+  /** `inheritedExtraCaCerts` is the parent environment's own `NODE_EXTRA_CA_CERTS`, which the returned trust bundle keeps (see `resolveTrustBundle`). `session` is what the launch tells the door about itself: its session id and the models block it resolved. */
+  readonly ensure: (inheritedExtraCaCerts: string | undefined, session?: FrontDoorSessionDetails) => FrontDoorUp;
   readonly release: () => void;
 }
 

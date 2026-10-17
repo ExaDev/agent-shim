@@ -49,8 +49,8 @@ export function realRestartFrontDoor(paths: LayoutPaths, spawnDaemon: DaemonSpaw
 /** The real `FrontDoorPort` for one launch: `ensure` runs the lock-and-poll coordination, authenticates the listener and registers this launcher; `release` removes its registration. */
 export function realFrontDoorPort(paths: LayoutPaths, spawnDaemon: DaemonSpawner): FrontDoorPort {
   return {
-    ensure: (inheritedExtraCaCerts) => {
-      const up = ensureFrontDoor({ paths, launcherPid: process.pid, ports: realEnsurePorts(paths, spawnDaemon) });
+    ensure: (inheritedExtraCaCerts, session) => {
+      const up = ensureFrontDoor({ paths, launcherPid: process.pid, ports: realEnsurePorts(paths, spawnDaemon), ...(session === undefined ? {} : { session }) });
       const trust = resolveTrustBundle({ caCertFile: paths.frontdoorCaCertFile, bundlesDir: paths.frontdoorCaBundlesDir, variable: "NODE_EXTRA_CA_CERTS", inherited: inheritedExtraCaCerts, fs: realTrustBundleFs });
       return {
         port: up.port,

@@ -97,3 +97,29 @@ export function familyMode(settings: FamilySettings): SelectionModeName {
 export function sharedFamilies(families: readonly Family[]): readonly Family[] {
   return families.filter((family) => family.refs.length > 1);
 }
+
+/**
+ * A member list with every `family:` member replaced by the targets of the family it names, in place and without repeating a ref the list already holds. A family no target belongs to expands to nothing: the doctor reports it, and a request is served from what remains.
+ */
+export function expandFamilyMembers(members: readonly string[], families: readonly Family[]): readonly string[] {
+  const expanded: string[] = [];
+  for (const member of members) {
+    for (const ref of member.startsWith(FAMILY_PREFIX) ? (familyNamed(families, member)?.refs ?? []) : [member]) {
+      if (!expanded.includes(ref)) {
+        expanded.push(ref);
+      }
+    }
+  }
+  return expanded;
+}
+
+/** The family a target belongs to, for reading the capabilities its family carries. */
+export function familyOfRef(families: readonly Family[], ref: string): Family | undefined {
+  return families.find((family) => family.refs.includes(ref));
+}
+
+/** The account refs the user's assertions and family settings name, since nothing else says which models an account offers: the only account targets a family can hold. */
+export function accountRefsOf(models: ModelsConfig | undefined): readonly string[] {
+  const named = [...(models?.same ?? []).flat(), ...Object.values(models?.families ?? {}).flatMap((settings) => settings.names ?? [])];
+  return [...new Set(named.filter((ref) => ref.startsWith("acct:")))];
+}

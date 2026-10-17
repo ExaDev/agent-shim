@@ -52,6 +52,17 @@ describe("walkDirectoryAncestors", () => {
   });
 });
 
+describe("assembleCascade global models", () => {
+  it("carries the global config's models block as the shallowest layer, so deeper layers add to or remove from it", () => {
+    const assembled = assembleCascade({
+      home: FAKE_HOME,
+      globalConfig: { config: { models: { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } } }, filepath: "/cfg/config.json" },
+      loadProfile: () => undefined,
+    });
+    expect(assembled.layers[0]).toMatchObject({ kind: "global-config", models: { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } } });
+  });
+});
+
 describe("assembleCascade layer ordering", () => {
   const load = loader({ base: {}, work: { extends: ["base"] }, strict: {} });
 

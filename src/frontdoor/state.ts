@@ -1,6 +1,7 @@
 import path from "node:path";
 import { z } from "zod";
 
+import { ModelsConfigSchema, type ModelsConfig } from "../config/schema";
 import type { HeadroomFs } from "../headroom/state";
 
 /**
@@ -17,9 +18,9 @@ import type { HeadroomFs } from "../headroom/state";
 export const FRONT_DOOR_PROTOCOL = 4;
 
 /**
- * The record held in one front-door session-registry file: the launcher's pid plus the per-launch capability token its child presents on every request, and the supervisor of the door the launch was sent to. `supervisorPid` is absent on a record written before it existed and on a door's own transparent-surface record; such a launch cannot be attributed to a door, so a superseded door treats it as its own.
+ * The record held in one front-door session-registry file: the launcher's pid plus the per-launch capability token its child presents on every request, and the supervisor of the door the launch was sent to. `sessionId` is the id the launch's requests carry in their session header, and `models` the models block this launch resolved when its directory, profile or committed file added definitions of its own to the global block (absent otherwise, so the door follows the global block live). `supervisorPid` is absent on a record written before it existed and on a door's own transparent-surface record; such a launch cannot be attributed to a door, so a superseded door treats it as its own.
  */
-const FrontDoorSessionSchema = z.strictObject({ pid: z.number().int().positive(), startedAt: z.number(), token: z.string().min(1), supervisorPid: z.number().int().positive().optional() });
+const FrontDoorSessionSchema = z.strictObject({ pid: z.number().int().positive(), startedAt: z.number(), token: z.string().min(1), supervisorPid: z.number().int().positive().optional(), sessionId: z.string().min(1).optional(), models: ModelsConfigSchema.optional() });
 export type FrontDoorSession = z.infer<typeof FrontDoorSessionSchema>;
 
 /**
@@ -202,6 +203,17 @@ export function pruneDeadFrontDoorDirectRecords(fs: HeadroomFs, recordsDir: stri
   }
 }
 
+/** What a launch records about itself in its registry entry beyond the token: the id its requests carry and, when it resolved one that differs from the global block, its models block. */
+export interface FrontDoorSessionDetails {
+  readonly sessionId: string;
+  readonly models?: ModelsConfig;
+}
+
+/** The fields of a registry entry that `details` contributes, none when the launch told the door nothing. */
+export function recordOf(details: FrontDoorSessionDetails | undefined): Pick<FrontDoorSession, "sessionId" | "models"> | Record<string, never> {
+  return details === undefined ? {} : { sessionId: details.sessionId, ...(details.models === undefined ? {} : { models: details.models }) };
+}
+
 /**
  * Writes one launch's session record: the registry entry that both keeps the door from idling out and holds the token that launch's requests must present. The token is a bearer capability, so the directory is created owner-only (0700) and the record written owner-only (0600): on a multi-user host another local account must be able neither to list nor to read it, since presenting it to a listener would spend the victim's provider credential or Codex login.
  */
@@ -270,4 +282,22 @@ export function liveSessionTokens(fs: HeadroomFs, sessionsDir: string): Readonly
     }
   }
   return tokens;
+}
+
+/** The models block a launch resolved for itself, found by the session id its requests carry, or undefined when no live launch carries one by that id or the launch added nothing to the global block. Read from the registry the launch wrote, so it lives and is pruned with the launch. */
+export function readFrontDoorSessionModels(fs: HeadroomFs, sessionsDir: string, sessionId: string): ModelsConfig | undefined {
+  for (const name of fs.readdir(sessionsDir)) {
+    if (!name.endsWith(".json")) {
+      continue;
+    }
+    try {
+      const parsed = FrontDoorSessionSchema.safeParse(JSON.parse(fs.readFileUtf8(path.join(sessionsDir, name)) ?? ""));
+      if (parsed.success && parsed.data.sessionId === sessionId) {
+        return parsed.data.models;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
 }

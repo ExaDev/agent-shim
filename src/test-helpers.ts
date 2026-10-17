@@ -20,6 +20,7 @@ import type { CascadeInput } from "./resolve/walk";
 import type { DiscoveredClaudeBinary } from "./versionDiscovery";
 import type { PipelineDeps } from "./frontdoor/pipeline";
 import { AUTH_HEADER } from "./frontdoor/route";
+import type { FrontDoorSessionDetails } from "./frontdoor/state";
 
 /** The shipped classification map, parsed once, for use as the default in tests. */
 export const shippedClassification: CategoryClassification = CategoryClassificationSchema.parse(categoriesDefaultJson);
@@ -440,17 +441,20 @@ export function fakeFrontDoorPort(
   port = 4100,
   connectPort = 4200,
   trust: { readonly path: string; readonly warning?: string } = { path: FAKE_TRUST_BUNDLE },
-): FrontDoorPort & { readonly ensures: () => number; readonly releases: () => number; readonly inherited: () => readonly (string | undefined)[] } {
+): FrontDoorPort & { readonly ensures: () => number; readonly releases: () => number; readonly inherited: () => readonly (string | undefined)[]; readonly sessions: () => readonly (FrontDoorSessionDetails | undefined)[] } {
   let ensures = 0;
   let releases = 0;
   const inherited: (string | undefined)[] = [];
+  const sessions: (FrontDoorSessionDetails | undefined)[] = [];
   return {
     ensures: () => ensures,
     releases: () => releases,
     inherited: () => inherited,
-    ensure: (inheritedExtraCaCerts) => {
+    sessions: () => sessions,
+    ensure: (inheritedExtraCaCerts, session) => {
       ensures += 1;
       inherited.push(inheritedExtraCaCerts);
+      sessions.push(session);
       return { port, connectPort, trustBundlePath: trust.path, ...(trust.warning === undefined ? {} : { trustWarning: trust.warning }), sessionToken: "launch-token-for-tests" };
     },
     release: () => {

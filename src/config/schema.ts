@@ -503,7 +503,7 @@ const FamilySettingsSchema = z.strictObject({
 export type FamilySettings = z.infer<typeof FamilySettingsSchema>;
 
 /** The global `models` block: the virtual models, the tier pointers, the prices and the visibility filter. */
-const ModelsConfigSchema = z.strictObject({
+export const ModelsConfigSchema = z.strictObject({
   /** Virtual models, by name. */
   virtual: z.record(z.string().min(1), VirtualModelSchema).optional(),
   /** Which model ref each Claude tier (`fable`, `opus`, `sonnet`, `haiku`) points at: a concrete target, an account model, a virtual model, or a family. */

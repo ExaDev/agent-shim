@@ -3,6 +3,8 @@ import { resolveCodexConfig } from "../codex/translate";
 import { filterCatalogue, type CatalogueModel } from "../providerCatalogue";
 import { CLAUDE_TIERS, type ClaudeTier, type ModelsConfig, type PickerModel, type Provider } from "../config/schema";
 import { CONTEXT_MARKER_1M, withoutContextMarker } from "../models/identity";
+import { FAMILY_PREFIX, accountRefsOf, buildFamilies, expandFamilyMembers, familyMode, sharedFamilies } from "../models/families";
+import { expandMembers } from "../modelsStore";
 
 type Tier = ClaudeTier;
 
@@ -151,37 +153,37 @@ export function providerModelRows(provider: Provider, catalogue: readonly Catalo
 }
 
 /**
- * The rows a session that routes by model name offers: its virtual models first (the mode in the description), then every provider's models grouped under the provider's name, honouring the block's `hide` and `show` lists. A virtual model's row borrows the handling of its first member's tier when that member names a tier-shaped target; a provider-qualified row borrows the tier of the env that names it when one does.
+ * The rows a session that routes by model name offers: its virtual models first (the mode in the description), then one row per model family offered by more than one target (every provider and account offering it in the description; selecting it lets the family's mode choose among them), then every provider's models grouped under the provider's name, honouring the block's `hide` and `show` lists. A virtual or family row borrows the handling of the first target it can serve from that has a row of its own, since the provider's own tier table says how that model is handled; one with no such target is handled as a sonnet.
  */
 export function routedModelRows(models: ModelsConfig, providers: readonly (readonly [string, Provider])[]): readonly ModelPickerRow[] {
   const hidden = new Set(models.hide ?? []);
   const shown = models.show === undefined ? undefined : new Set(models.show);
   const visible = (model: string): boolean => (shown === undefined ? !hidden.has(model) : shown.has(model));
-  const tierOf = (model: string): ClaudeTier | undefined => {
-    for (const [, provider] of providers) {
-      if (provider.kind !== undefined && provider.kind !== "http") {
-        continue;
-      }
-      // Only an `ANTHROPIC_DEFAULT_<TIER>_MODEL` key places a model in a tier: `ANTHROPIC_MODEL` names the provider's default rather than a tier and usually holds the same value, so a plain value match would shadow the tier the row needs.
-      const match = Object.entries(provider.env ?? {}).find(([key, value]) => value === model && key.startsWith("ANTHROPIC_DEFAULT_") && key.endsWith("_MODEL"));
-      if (match !== undefined) {
-        const tier = match[0].replace("ANTHROPIC_DEFAULT_", "").replace("_MODEL", "").toLowerCase();
-        return tier === "fable" || tier === "opus" || tier === "sonnet" || tier === "haiku" ? tier : undefined;
-      }
-    }
-    return undefined;
-  };
+  const concrete = providers.flatMap(([name, provider]) => providerModelRows(provider).map((row) => ({ ...row, model: `${name}/${row.model}`, label: `${name} / ${row.label}`, description: `${name}: ${row.description}` })));
+  const concreteByRef = new Map(concrete.map((row) => [row.model, row]));
+  const families = buildFamilies([...concrete.map((row) => row.model), ...accountRefsOf(models)], models);
+  const handlingOf = (refs: readonly string[]): string => refs.map((ref) => concreteByRef.get(ref)?.behavesAs).find((behavesAs) => behavesAs !== undefined) ?? TIER_BEHAVES_AS.sonnet;
   const virtual = Object.entries(models.virtual ?? {}).flatMap(([name, definition]) => {
     if (!visible(name)) {
       return [];
     }
-    const first = definition.members.find((member) => member.includes("/"));
-    const tier = first === undefined ? undefined : tierOf(first.split("/").slice(1).join("/"));
-    const behavesAs = tier === undefined ? undefined : TIER_BEHAVES_AS[tier];
-    return behavesAs === undefined ? [] : [{ model: name, label: name, description: `Virtual (${definition.mode})`, behavesAs }];
+    const targets = expandFamilyMembers(safeExpand(name, models), families);
+    return [{ model: name, label: name, description: `Virtual (${definition.mode})`, behavesAs: handlingOf(targets) }];
   });
-  const concrete = providers.flatMap(([name, provider]) => providerModelRows(provider).map((row) => ({ ...row, model: `${name}/${row.model}`, label: `${name} / ${row.label}`, description: `${name}: ${row.description}` })));
-  return [...virtual, ...concrete.filter((row) => visible(row.model))];
+  const familyRows = sharedFamilies(families).flatMap((family) => {
+    const member = `${FAMILY_PREFIX}${family.key}`;
+    return visible(member) ? [{ model: member, label: family.key, description: `Family (${familyMode(family.settings)}): ${family.refs.join(", ")}`, behavesAs: handlingOf(family.refs) }] : [];
+  });
+  return [...virtual, ...familyRows, ...concrete.filter((row) => visible(row.model))];
+}
+
+/** The members of a virtual model with nested ones followed, or just its own members when the nesting cannot be followed (a cycle or a missing model, which `doctor` reports): a picker still lists what it can. */
+function safeExpand(name: string, models: ModelsConfig): readonly string[] {
+  try {
+    return expandMembers(name, models);
+  } catch {
+    return models.virtual?.[name]?.members ?? [];
+  }
 }
 
 /**
