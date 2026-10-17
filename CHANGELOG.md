@@ -1,3 +1,9 @@
+## [11.30.0](https://github.com/ExaDev/agent-shim/compare/v11.29.0...v11.30.0) (2026-10-17)
+
+### Features
+
+* **launcher:** explain a pool pick by listing every member it ranked ([177845a](https://github.com/ExaDev/agent-shim/commit/177845a2fcf2da62f7dd5132606e7ea49433b424))
+
 ## [11.29.0](https://github.com/ExaDev/agent-shim/compare/v11.28.0...v11.29.0) (2026-10-17)
 
 ### Features
