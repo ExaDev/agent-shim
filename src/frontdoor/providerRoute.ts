@@ -70,12 +70,11 @@ function needsOf(scan: Readonly<{ readonly hasImage?: boolean; readonly toolsPre
   return { hasImage: scan.hasImage === true, hasTools: scan.toolsPresent === true, thinking: scan.thinking === true, contextTokens: Math.ceil((scan.text?.length ?? 0) / CHARS_PER_TOKEN) };
 }
 
-/** Resolves a routing session's model name to its target: a qualified name names its provider directly, a virtual model or a family (`family:<key>`) chooses among its members through its selection mode (quota windows from the session's snapshot, latency and success from the observed targets, prices from the models block, what the request needs against what each member's family carries), and a bare unknown name has no target. */
+/** Resolves a routing session's model name to its target: a qualified name names its provider directly, a virtual model or a family (`family:<key>`) chooses among its members through its selection mode (quota windows from the session's snapshot, latency and success from the observed targets, prices from the models block, what the request needs against what each member's family carries), and a bare name the block does not define has no target. */
 function resolveRoutedModel(
   model: string,
   providerName: string | undefined,
   session: Readonly<{ readonly identity?: string; readonly sessionId?: string }>,
-  includeUnqualified: boolean,
   deps: Readonly<RoutedModelDeps>,
   memory: Readonly<Map<string, string>>,
   rotations: Readonly<Map<string, number>>,
@@ -91,7 +90,8 @@ function resolveRoutedModel(
   }
   const isFamily = model.startsWith(FAMILY_PREFIX);
   const virtual = isFamily ? undefined : models?.virtual?.[model];
-  if ((virtual === undefined && !isFamily) || !includeUnqualified) {
+  // A name the models block defines is the user's own, so it is routed on any session that asked to route by name, a provider-less (OAuth) one included; a bare name the block does not define stays Claude Code's own and is never resolved here.
+  if (virtual === undefined && !isFamily) {
     return undefined;
   }
   const declared = isFamily ? [model] : expandMembers(model, models);
@@ -390,7 +390,7 @@ export function createProviderRouteResolver(deps: {
               : `model "${account.model}" runs under identity "${account.identity}", which needs a relaunch this session cannot make; start it there with: claude @${account.identity} --resume`,
           };
         }
-        const routed = scan.model === undefined ? undefined : resolveRoutedModel(scan.model, providerName, current.session, isRouter || providerName !== undefined, deps, routingMemory, rotations, needsOf(scan));
+        const routed = scan.model === undefined ? undefined : resolveRoutedModel(scan.model, providerName, current.session, deps, routingMemory, rotations, needsOf(scan));
         const requested = scan.model;
         if (routed !== undefined) {
           routingMemory.set(current.session.sessionId ?? "", routed.ref);
