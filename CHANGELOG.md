@@ -1,3 +1,9 @@
+## [11.40.3](https://github.com/ExaDev/agent-shim/compare/v11.40.2...v11.40.3) (2026-10-17)
+
+### Bug Fixes
+
+* **frontdoor:** keep the replayed request when the Remote Control wrapper observes a resolution ([26b8c97](https://github.com/ExaDev/agent-shim/commit/26b8c977911267d963a6477871fdffb135c261a7))
+
 ## [11.40.2](https://github.com/ExaDev/agent-shim/compare/v11.40.1...v11.40.2) (2026-10-17)
 
 ### Bug Fixes
