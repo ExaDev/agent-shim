@@ -1,3 +1,9 @@
+## [11.42.0](https://github.com/ExaDev/agent-shim/compare/v11.41.0...v11.42.0) (2026-10-17)
+
+### Features
+
+* **models:** route families and the cascaded models block through launches and the door ([77cde95](https://github.com/ExaDev/agent-shim/commit/77cde957f5c857ffcc5cef9ad89a3efba91cd937))
+
 ## [11.41.0](https://github.com/ExaDev/agent-shim/compare/v11.40.5...v11.41.0) (2026-10-17)
 
 ### Features
