@@ -1,3 +1,9 @@
+## [11.28.0](https://github.com/ExaDev/agent-shim/compare/v11.27.0...v11.28.0) (2026-10-17)
+
+### Features
+
+* **launcher:** hold a launch after its output so it can be read, by a delay or until a key press ([7499178](https://github.com/ExaDev/agent-shim/commit/74991788a9151e003da5718a14a3df750d2db2fd))
+
 ## [11.27.0](https://github.com/ExaDev/agent-shim/compare/v11.26.0...v11.27.0) (2026-10-17)
 
 ### Features
