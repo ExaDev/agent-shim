@@ -1,3 +1,9 @@
+## [11.25.0](https://github.com/ExaDev/agent-shim/compare/v11.24.0...v11.25.0) (2026-10-17)
+
+### Features
+
+* **provider:** let a provider declare the models /model lists ([0999170](https://github.com/ExaDev/agent-shim/commit/0999170c35a77f7e06c08449433496bb955f17c4))
+
 ## [11.24.0](https://github.com/ExaDev/agent-shim/compare/v11.23.0...v11.24.0) (2026-10-17)
 
 ### Features
