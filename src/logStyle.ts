@@ -1,6 +1,7 @@
 import { styleText } from "node:util";
 
 import type { LogPort } from "./launcher/ports";
+import { renderReport } from "./launcher/report";
 
 /** A terminal text format: one of `util.styleText`'s names. */
 type TextFormat = "bold" | "dim" | "red" | "yellow";
@@ -11,14 +12,19 @@ export type StyleText = (formats: readonly TextFormat[], text: string) => string
 /** The `agent-shim: CODE: ` lead a diagnostic line carries. The code is the part worth picking out. */
 const DIAGNOSTIC_LEAD = /^(agent-shim: )([A-Z][A-Z0-9_]*)(: )/;
 
-/** `line` styled as a diagnostic of colour `colour`: the whole line in it, with the code in bold when the line leads with one. */
-function styledDiagnostic(style: StyleText, colour: "red" | "yellow", line: string): string {
-  const lead = DIAGNOSTIC_LEAD.exec(line);
-  if (lead === null) {
-    return style([colour], line);
-  }
-  const [whole, prefix = "", code = "", separator = ""] = lead;
-  return `${style([colour], prefix)}${style([colour, "bold"], code)}${style([colour], `${separator}${line.slice(whole.length)}`)}`;
+/** `text` styled as a diagnostic of colour `colour`: every line of it in that colour, with the code in bold when the first line leads with one. */
+function styledDiagnostic(style: StyleText, colour: "red" | "yellow", text: string): string {
+  return text
+    .split("\n")
+    .map((line, index) => {
+      const lead = index === 0 ? DIAGNOSTIC_LEAD.exec(line) : null;
+      if (lead === null) {
+        return style([colour], line);
+      }
+      const [whole, prefix = "", code = "", separator = ""] = lead;
+      return `${style([colour], prefix)}${style([colour, "bold"], code)}${style([colour], `${separator}${line.slice(whole.length)}`)}`;
+    })
+    .join("\n");
 }
 
 /** Where a log port's lines go. */
@@ -35,6 +41,11 @@ export function createLogPort(sinks: Readonly<LogSinks>, styleFor: { readonly ou
   return {
     info: (message: string) => {
       sinks.out(styleFor.out(["dim"], message));
+    },
+    report: (rows) => {
+      for (const line of renderReport(rows, styleFor.out)) {
+        sinks.out(line);
+      }
     },
     warn: (message: string) => {
       sinks.warn(styledDiagnostic(styleFor.err, "yellow", message));

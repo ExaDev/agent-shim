@@ -1,9 +1,9 @@
 import type { Diagnostic } from "../resolve/types";
-import { unclassifiedEntryMessage } from "../resolve/decide";
+import { unclassifiedEntryFix, unclassifiedEntrySummary } from "../resolve/decide";
 import type { LogPort } from "./ports";
 
 /** One line a launch prints for its resolution diagnostics: how serious it is and the text, which already carries the `agent-shim:` prefix and the diagnostic's code. */
-interface DiagnosticLine {
+export interface DiagnosticLine {
   readonly severity: "error" | "warning";
   readonly text: string;
 }
@@ -22,7 +22,8 @@ export function diagnosticLines(diagnostics: readonly Diagnostic[]): readonly Di
     if (diagnostic.code === "UNCLASSIFIED_ENTRY") {
       if (!unclassifiedReported) {
         unclassifiedReported = true;
-        lines.push({ severity: diagnostic.severity, text: `agent-shim: ${diagnostic.code}: ${unclassifiedEntryMessage(unclassified.filter((name): name is string => name !== undefined))}` });
+        const names = unclassified.filter((name): name is string => name !== undefined);
+        lines.push({ severity: diagnostic.severity, text: `agent-shim: ${diagnostic.code}: ${unclassifiedEntrySummary(names)}\n  ${unclassifiedEntryFix(names)}.` });
       }
       continue;
     }
@@ -31,13 +32,18 @@ export function diagnosticLines(diagnostics: readonly Diagnostic[]): readonly Di
   return lines;
 }
 
-/** Prints `diagnostics` through `log`: errors as errors, or as warnings when `errorsAsWarnings` says the launch carries on regardless (a read-only decision), and warnings as warnings. */
-export function reportDiagnostics(log: Pick<LogPort, "warn" | "error">, diagnostics: readonly Diagnostic[], options: Readonly<{ errorsAsWarnings: boolean }>): void {
-  for (const line of diagnosticLines(diagnostics)) {
+/** Prints `lines` through `log`: errors as errors, or as warnings when `errorsAsWarnings` says the launch carries on regardless (a read-only decision), and warnings as warnings. */
+export function printDiagnosticLines(log: Pick<LogPort, "warn" | "error">, lines: readonly DiagnosticLine[], options: Readonly<{ errorsAsWarnings: boolean }>): void {
+  for (const line of lines) {
     if (line.severity === "error" && !options.errorsAsWarnings) {
       log.error(line.text);
     } else {
       log.warn(line.text);
     }
   }
+}
+
+/** Prints `diagnostics` through `log` at once. */
+export function reportDiagnostics(log: Pick<LogPort, "warn" | "error">, diagnostics: readonly Diagnostic[], options: Readonly<{ errorsAsWarnings: boolean }>): void {
+  printDiagnosticLines(log, diagnosticLines(diagnostics), options);
 }

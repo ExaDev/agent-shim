@@ -113,9 +113,23 @@ export interface ProcPort {
   readonly exit: (code: number) => never;
 }
 
+/** One fact the launcher reports about the launch it is about to start. */
+export interface ReportRow {
+  /** What the fact is about (`identity`, `routing`), in a column of its own. */
+  readonly label: string;
+  /** The fact itself. */
+  readonly value: string;
+  /** What qualifies the value, after it and dimmed: where it came from, or how it was reached. */
+  readonly detail?: string;
+  /** Further lines under the row, lined up under its value and dimmed. */
+  readonly notes?: readonly string[];
+}
+
 /** Where the launcher reports what it decided and why — refusals, warnings about an identity that could not be loaded, and (per the "strictly-better than the legacy script" goal) which identity/profile ended up selected. */
 export interface LogPort {
   readonly info: (message: string) => void;
+  /** Prints the facts a launch reports about itself as one block, with the formatting the output takes. */
+  readonly report: (rows: readonly ReportRow[]) => void;
   readonly warn: (message: string) => void;
   readonly error: (message: string) => void;
 }

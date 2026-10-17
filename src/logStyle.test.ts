@@ -50,6 +50,22 @@ describe("createLogPort", () => {
     expect(err).toEqual(["<red>agent-shim: </><red+bold>FARM_FAILED</><red>: could not swap</>"]);
   });
 
+  it("colours every line of a multi-line warning, with the code in bold on the first only", () => {
+    const { port, warn } = setup(visible);
+
+    port.warn("agent-shim: UNCLASSIFIED_ENTRY: 2 entries are excluded\n  Run the fix");
+
+    expect(warn).toEqual(["<yellow>agent-shim: </><yellow+bold>UNCLASSIFIED_ENTRY</><yellow>: 2 entries are excluded</>\n<yellow>  Run the fix</>"]);
+  });
+
+  it("prints a launch report as lines on the output channel, styled by the report's own rules", () => {
+    const { port, out } = setup(visible);
+
+    port.report([{ label: "identity", value: "work", detail: "argv" }]);
+
+    expect(out).toEqual(["<bold>agent-shim</>", "  <dim>identity</>  work <dim>(argv)</>"]);
+  });
+
   it("colours a line with no code whole", () => {
     const { port, warn, err } = setup(visible);
 

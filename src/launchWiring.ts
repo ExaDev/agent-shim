@@ -165,6 +165,7 @@ export function prepareClaudeLaunch(options: PrepareClaudeLaunchOptions): Launch
   const refusals: string[] = [];
   const log: LogPort = {
     info: () => undefined,
+    report: () => undefined,
     warn: () => undefined,
     error: (message) => {
       refusals.push(message);
@@ -201,6 +202,7 @@ export function resolveClaudeLaunch(options: ResolveClaudeLaunchOptions): Claude
   const warnings: string[] = [];
   const log: LogPort = {
     info: () => undefined,
+    report: () => undefined,
     warn: (message) => {
       warnings.push(message);
     },

@@ -7,7 +7,7 @@ import { ClaudeVersionNotInstalledError, type ClaudeBinaryResolver } from "./ver
 import { identityLockPath } from "./launcher/lock";
 import type { FsPort, HeadroomPort } from "./launcher/ports";
 import { prepareLaunch, runLauncher } from "./launcher";
-import { FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, createFakeFarmFs, discovered, fakeCredentials, fakeFarm, fakeFrontDoorEnv, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
+import { FAKE_CLAUDE_HOME, FAKE_HOME, FAKE_NOW_MS, createFakeFarmFs, discovered, fakeCredentials, fakeFarm, fakeFrontDoorEnv, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv, reportedRow } from "./test-helpers";
 
 /** The unix socket the fake headroom daemon pretends to serve on. */
 const HEADROOM_SOCKET = "/home/testuser/.agent-shim/headroom/run/8123.sock";
@@ -373,7 +373,7 @@ describe("runLauncher headroom routing", () => {
     expect(env.NODE_EXTRA_CA_CERTS).toBe("/home/testuser/.agent-shim/frontdoor/ca/ca.pem");
     // The daemon serves only on its unix socket, which the door's hop dials: nothing in the child's environment names it.
     expect(Object.keys(env).filter((name) => name.startsWith("HEADROOM_"))).toEqual([]);
-    expect(log.infos.join("\n")).toContain(`with headroom on unix socket ${HEADROOM_SOCKET}`);
+    expect(reportedRow(log, "headroom")).toEqual({ label: "headroom", value: "on", detail: "project /home/testuser/work/repo" });
     expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
     expect(headroom.releases).toBeGreaterThan(0);
     expect(frontdoor.releases()).toBeGreaterThan(0);
@@ -398,7 +398,8 @@ describe("runLauncher headroom routing", () => {
     });
 
     expect(headroom.ensures).toBe(1);
-    expect(log.infos.join("\n")).toContain(`with headroom on unix socket ${OTHER_HEADROOM_SOCKET} (OAuth via the door's CONNECT surface on 127.0.0.1:4200, project /repo)`);
+    expect(reportedRow(log, "headroom")).toEqual({ label: "headroom", value: "on", detail: "project /repo" });
+    expect(reportedRow(log, "routing")).toMatchObject({ value: "front door 127.0.0.1:4100", detail: "OAuth via CONNECT 127.0.0.1:4200" });
   });
 
   it("resolves headroom from the cascade on an escape-hatch launch, where no farm resync runs", () => {
@@ -876,7 +877,7 @@ describe("runLauncher Claude Code version pin", () => {
     const { requests, run, log } = launch(options);
     expect(run()).toBe(0);
     expect(requests).toEqual([{ version: PINNED }]);
-    expect(log.infos.join("\n")).toContain(`Claude Code ${PINNED} (pinned by ${source})`);
+    expect(reportedRow(log, "claude")).toEqual({ label: "claude", value: PINNED, detail: `pinned by ${source}` });
   });
 
   it("lets the flag outrank the environment, and the environment outrank the cascade", () => {

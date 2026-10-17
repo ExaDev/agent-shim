@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
-import { discovered, FAKE_HOME, fakeCredentials, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv , fakeFrontDoorPort } from "./test-helpers";
+import { discovered, FAKE_HOME, fakeCredentials, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv , fakeFrontDoorPort, reportedRow } from "./test-helpers";
 
 const WORK_TOKEN = "oauth-work-token";
 
@@ -37,7 +37,7 @@ describe("runLauncher identity credential", () => {
     expect(env.CLAUDE_CONFIG_DIR).toBe(`${FAKE_HOME}/.agent-shim/identities/work`);
     expect(spawn.spawnSync.mock.calls[0]?.[1]).toEqual(["--print"]);
     expect([...log.infos, ...log.warns, ...log.errors].join("\n")).not.toContain(WORK_TOKEN);
-    expect(log.infos.join("\n")).toContain("identity credential oauthToken from op op://vault/claude-work/token");
+    expect(reportedRow(log, "credential")).toEqual({ label: "credential", value: "oauthToken from op op://vault/claude-work/token", detail: "the identity's own" });
   });
 
   it("does not trip the ambient-credential guard on the same token a agent-shim launch of this identity left in the environment", () => {

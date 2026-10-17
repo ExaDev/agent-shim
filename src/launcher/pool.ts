@@ -45,7 +45,7 @@ export type PoolResolution =
   | {
       readonly ok: true;
       readonly identity: string;
-      /** The pool and the chosen member's leading reasons, for the launch's decision line. */
+      /** The pool and the chosen member's leading reasons, for the supervisor's account of a move. */
       readonly explanation: string;
       /** Every reason the ranking gave for choosing the member, in the ranking's order. */
       readonly reasons: readonly string[];

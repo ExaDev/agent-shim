@@ -12,14 +12,15 @@ import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDe
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { hasSettingsArgument, mergeSettings, withLauncherSettings, withSupervision, type SupervisedLaunch } from "./launcher/claudeSession";
-import { reportDiagnostics } from "./launcher/diagnostics";
+import { diagnosticLines, printDiagnosticLines, reportDiagnostics, type DiagnosticLine } from "./launcher/diagnostics";
 import { holdBeforeLaunch, LAUNCH_CANCELLED_EXIT, type HoldOutcome, type HoldPort } from "./launcher/hold";
+import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows } from "./launcher/launchReport";
 import { modelPickerSettings } from "./launcher/modelPicker";
 import { catalogueCachePath, parseCatalogueCache } from "./providerCatalogue";
 import { resolvePoolLaunch } from "./launcher/pool";
 import { resumedContextTokens } from "./usage/resumeContext";
 import { IdentityLockBusyError } from "./launcher/lock";
-import type { FarmFs, FsPort, FrontDoorPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, SpawnPort } from "./launcher/ports";
+import type { FarmFs, FsPort, FrontDoorPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, ReportRow, SpawnPort } from "./launcher/ports";
 import { childExitCode } from "./launcher/spawn";
 import { resolveProvider, selectProvider, type SelectedProvider } from "./providersStore";
 import { flattenLayers } from "./resolve/flatten";
@@ -152,7 +153,7 @@ export interface LaunchPlan {
   readonly sessionId: string;
   /** Releases the daemon session registrations this launch holds. Call it when the child has exited; it is safe to call more than once. */
   readonly release: () => void;
-  /** What the launch resolved to, as data: the facts the launcher's decision line reports. */
+  /** What the launch resolved to, as data: the facts the launcher's report states. */
   readonly decision: LaunchDecision;
   /** Marks the moment this plan's child is spawned: the launch-time update check suppresses its notify line from then on, since a line printed after the child took over the terminal would land mid-session. Call it immediately before spawning; it is safe to call more than once. */
   readonly markChildStarted: () => void;
@@ -185,7 +186,7 @@ function pickFromPool(
   params: PrepareLaunchParams,
   parsedArgv: ParsedLauncherArgv,
   readOnly: boolean,
-): { readonly identityDecision: IdentityDecision; readonly poolExplanation?: string; readonly poolPick?: LaunchPoolDecision } {
+): { readonly identityDecision: IdentityDecision; readonly poolPick?: LaunchPoolDecision } {
   const { paths, fs, proc, log } = params;
   if (decided.pool === undefined) {
     return { identityDecision: decided };
@@ -193,7 +194,7 @@ function pickFromPool(
   // A supervising launcher has already chosen the member this relaunch runs as, under its own lock and with the other moving sessions counted, so no pick is made here.
   if (params.supervised?.member !== undefined) {
     const reasons = ["resumed here by the supervising launcher after the previous member ran out of quota"];
-    return { identityDecision: { ...decided, name: params.supervised.member }, poolExplanation: `pool ${decided.pool}: ${reasons.join("; ")}`, poolPick: { name: decided.pool, reasons } };
+    return { identityDecision: { ...decided, name: params.supervised.member }, poolPick: { name: decided.pool, reasons } };
   }
   const farmRuntime = params.farm;
   if (farmRuntime === undefined) {
@@ -224,7 +225,6 @@ function pickFromPool(
   }
   return {
     identityDecision: { ...decided, name: resolution.identity },
-    poolExplanation: resolution.explanation,
     poolPick: { name: decided.pool, reasons: resolution.reasons, ...(resolution.movedOff === undefined ? {} : { movedOff: resolution.movedOff }) },
   };
 }
@@ -235,7 +235,6 @@ function pickFromPool(
 interface DecidedLaunch {
   readonly parsedArgv: ParsedLauncherArgv;
   readonly identityDecision: IdentityDecision;
-  readonly poolExplanation: string | undefined;
   readonly poolPick: LaunchPoolDecision | undefined;
   readonly configDirEscapeHatch: boolean;
   /** The identity whose farm this launch manages: absent when the caller named a configuration directory or no identity resolved. */
@@ -251,6 +250,8 @@ interface DecidedLaunch {
   /** That block resolved to a token; absent from a read-only decision, which resolves none. */
   readonly identityCredential: ResolvedCredential | undefined;
   readonly pinnedVersion: PinnedClaudeVersion | undefined;
+  /** What a person should know about this launch that is not one of its decisions: a setting that did not apply, and why. */
+  readonly notes: readonly string[];
   readonly flags: ResolvedLaunchFlags;
   readonly bin: string;
   readonly args: readonly string[];
@@ -292,7 +293,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   });
 
   // A pool selector is resolved to one member here, ahead of everything that reads the identity: farm recovery, loading, the credential and the resync all work on the chosen name exactly as if it had been typed.
-  const { identityDecision, poolExplanation, poolPick } = pickFromPool(decidedIdentity, params, parsedArgv, readOnly);
+  const { identityDecision, poolPick } = pickFromPool(decidedIdentity, params, parsedArgv, readOnly);
 
   // There is a farm to manage only when an identity resolved and the caller did not name a configuration directory itself.
   const farmIdentity = configDirEscapeHatchApplies ? undefined : identityDecision.name;
@@ -470,8 +471,9 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   // Remote Control is a claude.ai feature and needs the identity's own login. A provider session does not: the door attaches the provider's credential. So a provider launch on an identity with no stored login runs without Remote Control instead of failing at its first turn with "Not logged in".
   const loginlessProvider =
     requestedFlags.remoteControl && selectedProvider !== undefined && farmIdentity !== undefined && params.hasStoredLogin?.(farmIdentity) === false ? { identity: farmIdentity, provider: selectedProvider.name } : undefined;
-  if (loginlessProvider !== undefined && !readOnly) {
-    log.info(`agent-shim: identity ${loginlessProvider.identity} has no stored login, so Remote Control, which needs one, is off for this launch; provider ${loginlessProvider.provider} runs without it`);
+  const notes: string[] = [];
+  if (loginlessProvider !== undefined) {
+    notes.push(`${loginlessProvider.identity} has no stored login, so Remote Control is off; provider ${loginlessProvider.provider} runs without it`);
   }
   const flags = loginlessProvider === undefined ? requestedFlags : { ...requestedFlags, remoteControl: false };
 
@@ -479,8 +481,8 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   const catalogue = selectedProvider === undefined ? undefined : parseCatalogueCache(params.fs.readFileUtf8(catalogueCachePath(paths, selectedProvider.name)));
   const pickerSettings = selectedProvider === undefined ? undefined : modelPickerSettings(selectedProvider.definition, catalogue?.models);
   const callerSettings = hasSettingsArgument(parsedArgv.rest);
-  if (pickerSettings !== undefined && callerSettings && !readOnly) {
-    log.info("agent-shim: this launch passes its own --settings, so /model keeps Claude Code's own model names instead of listing the provider's models");
+  if (pickerSettings !== undefined && callerSettings) {
+    notes.push("--settings was passed, so /model keeps Claude Code's own model names");
   }
   const launcherSettings = mergeSettings([params.supervised?.settings, callerSettings ? undefined : pickerSettings]);
 
@@ -505,8 +507,8 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   return {
     parsedArgv,
     identityDecision,
-    poolExplanation,
     poolPick,
+    notes,
     configDirEscapeHatch: configDirEscapeHatchApplies,
     farmIdentity,
     farmContext,
@@ -536,20 +538,22 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   const { paths, proc, log } = params;
   const { env } = proc;
   const decided = decideLaunch(params, false);
-  const { identityDecision, configProfileDecision, resolvedProvider, identityCredential, poolExplanation, flags: resolvedFlags, args: finalArgv, configDirEscapeHatch: configDirEscapeHatchApplies, decision } = decided;
+  const { identityDecision, configProfileDecision, resolvedProvider, identityCredential, poolPick, notes, flags: resolvedFlags, args: finalArgv, configDirEscapeHatch: configDirEscapeHatchApplies, decision } = decided;
 
-  log.info(
-    `agent-shim: identity ${identityDecision.name ?? "(none)"} (${identityDecision.source}${poolExplanation === undefined ? "" : `, ${poolExplanation}`}), ` +
-      `config profile ${configProfileDecision.name ?? "(none)"} (${configProfileDecision.source})` +
-      (resolvedProvider === undefined
-        ? ""
-        : `, provider ${resolvedProvider.name} (credential ${resolvedProvider.credential.target} from ${describeSource(resolvedProvider.credential.source)})`) +
-      (identityCredential === undefined
-        ? ""
-        : `, identity credential ${identityCredential.target} from ${describeSource(identityCredential.source)}`),
-  );
+  // Everything the launch has to say about itself is collected as it is decided and printed as one block once the launch is ready to start, so what a person reads is a single table of facts and not lines scattered between the steps. Warnings follow it.
+  const rows: ReportRow[] = [
+    ...decisionRows({
+      identity: identityDecision.name,
+      identitySource: identityDecision.source,
+      pool: poolPick,
+      profile: configProfileDecision.name === undefined ? undefined : { name: configProfileDecision.name, source: configProfileDecision.source },
+      provider: resolvedProvider === undefined ? undefined : { name: resolvedProvider.name, credential: `${resolvedProvider.credential.target} from ${describeSource(resolvedProvider.credential.source)}` },
+      identityCredential: identityCredential === undefined ? undefined : `${identityCredential.target} from ${describeSource(identityCredential.source)}`,
+    }),
+  ];
+  let warnings: readonly DiagnosticLine[] = [];
 
-  // The launch-time update check sits directly after the decision line: it is the last thing that may write to the terminal before the child owns it, it never awaits anything (its answer arrives, if at all, while the child runs), and it is wrapped so a network or filesystem failure never delays, blocks or fails the launch.
+  // The launch-time update check sits directly after the launch's decisions are made: it is the last thing that may write to the terminal before the child owns it, it never awaits anything (its answer arrives, if at all, while the child runs), and it is wrapped so a network or filesystem failure never delays, blocks or fails the launch.
   const updateCheck = runLaunchUpdateCheck({
     mode: params.updateMode ?? "off",
     checkPath: path.join(paths.root, "update.check"),
@@ -587,18 +591,15 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
       throw error;
     }
 
-    reportDiagnostics(log, result.diagnostics, { errorsAsWarnings: false });
-    // A farm that already matched has nothing to report: the line would say the same on every launch.
+    warnings = diagnosticLines(result.diagnostics);
+    // A farm that already matched has nothing to report: the row would say the same on every launch.
     if (!result.noOp) {
-      log.info(
-        `agent-shim: farm at ${result.farmRoot} resynced (${String(result.manifest.links.length)} link(s), ` +
-          `${String(result.manifest.materialised.length)} built director(ies)${result.adopted.length === 0 ? "" : `, ${String(result.adopted.length)} adopted into ${resyncFarmRuntime.claudeHome}`})`,
-      );
+      rows.push(farmRow(result.manifest.links.length, result.manifest.materialised.length, result.adopted.length));
     }
   }
 
   if (decided.pinnedVersion !== undefined) {
-    log.info(`agent-shim: Claude Code ${decided.pinnedVersion.version} (pinned by ${decided.pinnedVersion.source})`);
+    rows.push(pinnedVersionRow(decided.pinnedVersion.version, decided.pinnedVersion.source));
   }
 
   // The front door comes up first, before headroom: every routed session (a provider's, or headroom's) enters through it, and headroom's allowlist must hold the door's direct origin, which is what every provider session routed through headroom (a codex session's included) is forwarded back to, and the headroom supervisor lists the origin of a door that has served. `ensure` authenticates the door's listener over TLS before returning anything, so the address the child is handed below (and sends its credential to) belongs to a listener holding a leaf from agent-shim's CA.
@@ -617,14 +618,11 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   const headroomPort = params.headroom;
   if (resolvedFlags.headroom && headroomPort !== undefined) {
     headroom = headroomPort.ensure({ routesProvider: resolvedProvider !== undefined });
-    const via = resolvedProvider === undefined ? `OAuth via the door's CONNECT surface on 127.0.0.1:${String(frontDoor?.connectPort ?? 0)}` : `provider ${resolvedProvider.name}`;
-    log.info(`agent-shim: routing through the front door on 127.0.0.1:${String(frontDoor?.port ?? 0)} with headroom on unix socket ${headroom.socketPath} (${via}, project ${headroom.projectId})`);
   } else if (resolvedFlags.headroom) {
     log.error("agent-shim: headroom routing was requested but this launcher has no headroom port wired; refusing to launch without it.");
     proc.exit(1);
-  } else if (frontDoor !== undefined) {
-    log.info(`agent-shim: routing through the front door on 127.0.0.1:${String(frontDoor.port)}${resolvedProvider === undefined ? ` (OAuth via the door's CONNECT surface on 127.0.0.1:${String(frontDoor.connectPort)}, usage recorded)` : ` (provider ${resolvedProvider.name})`}`);
   }
+  rows.push(...routingRows({ frontDoor, headroom, provider: resolvedProvider !== undefined }));
   const frontDoorRelease = frontDoor === undefined ? undefined : frontDoorPort?.release;
 
   const sessionId = params.supervised?.sessionId ?? randomUUID();
@@ -648,6 +646,9 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
       registered();
     }
   };
+  rows.push(...notes.map(noteRow));
+  log.report(rows);
+  printDiagnosticLines(log, warnings, { errorsAsWarnings: false });
   const hold = (): HoldOutcome => holdBeforeLaunch({ delayMs: resolvedFlags.delayMs, pause: resolvedFlags.pause }, params.hold, log);
   return { bin: decided.bin, args: finalArgv, env: finalEnv, sessionId, release, markChildStarted: updateCheck.markChildStarted, hold, decision };
 }

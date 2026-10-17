@@ -4,7 +4,7 @@ import type { Pool } from "./config/schema";
 import { prepareLaunch, type FarmRuntime, type LaunchDecision } from "./launcher";
 import type { SupervisedLaunch } from "./launcher/claudeSession";
 import { PROMPT_CACHE_TTL_MS } from "./usage/pick";
-import { FAKE_NOW_MS, createFakeFarmFs, discovered, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv } from "./test-helpers";
+import { FAKE_NOW_MS, createFakeFarmFs, discovered, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv, reportedRow } from "./test-helpers";
 
 const HOUR_MS = 3_600_000;
 const SIX_DAYS_MS = 518_400_000;
@@ -115,13 +115,13 @@ describe("the decision of a pool launch", () => {
 });
 
 describe("runLauncher with a pool selector", () => {
-  it("launches as the member whose quota expires soonest, and says why on the decision line", () => {
+  it("launches as the member whose quota expires soonest, and says why in the pool row", () => {
     const { log, code, spawn } = launch();
     expect(code).toBe(0);
     expect(spawnedEnv(spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
-    const decision = log.infos.find((line) => line.includes("identity work"));
-    expect(decision).toContain("pool main:");
-    expect(decision).toContain("7d 60% used");
+    const pool = reportedRow(log, "pool");
+    expect(pool?.value).toBe("main");
+    expect(pool?.detail).toContain("7d 60% used");
   });
 
   it("takes a pool from AGENT_SHIM_IDENTITY and from --identity", () => {
@@ -143,9 +143,9 @@ describe("runLauncher with a pool selector", () => {
     const nested = launch({ seed, pools: { main: { identities: ["personal", "pool:fleet"], preference: "listed" }, fleet: { identities: ["work"] } } });
     expect(nested.code).toBe(0);
     expect(spawnedEnv(nested.spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
-    const decision = nested.log.infos.find((line) => line.includes("identity work"));
-    expect(decision).toContain("pool main:");
-    expect(decision).toContain('picked by pool "fleet"');
+    const pool = reportedRow(nested.log, "pool");
+    expect(pool?.value).toBe("main");
+    expect(pool?.detail).toContain('picked by pool "fleet"');
   });
 
   it("refuses a launch whose pool graph is a cycle or names an undefined pool", () => {
@@ -373,15 +373,15 @@ describe("runLauncher with a pool selector", () => {
       expect(spawnedEnv(second.spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/personal`);
     });
 
-    it("says on the decision line which member a resumed conversation moved off, and why", () => {
+    it("says in the pool row which member a resumed conversation moved off, and why", () => {
       // Between the launches, the member the conversation started on exhausts its plan and keeps serving on extra usage: stickiness yields, the conversation continues on the other member, and the line names the move.
       const { second } = twoLaunches(PROMPT_CACHE_TTL_MS + FIVE_MINUTES_MS, ["@pool:main", "--resume"], (farmFs) => {
         farmFs.writeFileUtf8(snapshotPath("work"), snapshotOf("work", { utilization: 1, resetsInMs: SIX_DAYS_MS, status: "rejected" }, "allowed"));
       });
       expect(spawnedEnv(second.spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/personal`);
-      const decision = second.log.infos.find((line) => line.includes("identity personal"));
-      expect(decision).toContain("moved off work (");
-      expect(decision).toContain("continues as extra usage");
+      const pool = reportedRow(second.log, "pool");
+      expect(pool?.detail).toContain("moved off work: ");
+      expect(pool?.detail).toContain("continues as extra usage");
     });
   });
 

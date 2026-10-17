@@ -5,6 +5,7 @@ import { prepareLaunch, type RunLauncherParams } from "./launcher";
 import type { SupervisedLaunch } from "./launcher/claudeSession";
 import {
   createFakeFarmFs, discovered, FAKE_HOME, fakeCredentials, fakeFarm, fakeFrontDoorPort, fakeFs, fakeLog, fakeProc, fakeSpawn, paths, runAndCaptureExit, spawnedEnv,
+  reportedRow,
 } from "./test-helpers";
 
 /** `runAndCaptureExit` with a fake credential port and a fake front door wired unless the test supplies its own, since every provider launch resolves a credential block and routes through the door. */
@@ -262,7 +263,7 @@ describe("runLauncher provider selection", () => {
       expect(env.ANTHROPIC_API_KEY).toBeUndefined();
       expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
       expect([...log.infos, ...log.warns, ...log.errors].join("\n")).not.toContain("sk-ant-REDACTED");
-      expect(log.infos.join("\n")).toContain("provider anthropic-api (credential apiKey from op op://vault/item/field)");
+      expect(reportedRow(log, "provider")).toEqual({ label: "provider", value: "anthropic-api", detail: "credential apiKey from op op://vault/item/field" });
     });
 
     it("resolves a bearer provider's command output for the launch log while the child still carries no credential variable", () => {
@@ -409,7 +410,7 @@ describe("runLauncher provider selection", () => {
       const { built, log } = plan(false);
       expect(built.args).not.toContain("--remote-control=");
       expect(built.env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
-      expect(log.infos.join("\n")).toContain("agent-shim: identity work has no stored login, so Remote Control, which needs one, is off for this launch; provider z runs without it");
+      expect(reportedRow(log, "note")?.value).toBe("work has no stored login, so Remote Control is off; provider z runs without it");
     });
 
     it("assumes a login when the caller cannot ask, so a launch is never changed on a guess", () => {
@@ -539,6 +540,6 @@ describe("runLauncher /model picker", () => {
     const { args, infos } = spawnedWith(codexProvider, ["--settings", "mine.json", "--print"]);
 
     expect(args).toEqual(["--settings", "mine.json", "--print"]);
-    expect(infos.some((line) => line.includes("passes its own --settings"))).toBe(true);
+    expect(infos.some((line) => line.includes("--settings was passed"))).toBe(true);
   });
 });
