@@ -667,6 +667,29 @@ describe("a router provider", () => {
       await door.close();
     }
   });
+
+  it("strips the context marker from the member name it writes, because no provider serves a model under it", async () => {
+    const router = { kind: "router", displayName: "Router" };
+    const upstream = await bodyRecordingUpstream();
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/router.json`]: router,
+      [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: `http://127.0.0.1:${String(upstream.port)}`, credential: { sources: [{ literal: "z-token" }] } },
+    };
+    const models: ModelsConfig = { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3[1m]"] } } };
+    const door = await startDoor(resolver(files, OWN_PORT, models));
+    try {
+      const response = await fetch(`${door.url}/providers/router/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" },
+        body: JSON.stringify({ model: "fast", max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
+      });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      // The marker sizes Claude Code's context window and never reaches a provider: the rewrite writes the name the provider serves, not the ref verbatim.
+      expect((JSON.parse(upstream.seen()[0]?.body ?? "{}") as { model?: string }).model).toBe("glm-5.3");
+    } finally {
+      await door.close();
+    }
+  });
 });
 
 describe("an account model member", () => {
