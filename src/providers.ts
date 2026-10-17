@@ -7,11 +7,10 @@ import { resolveAntigravityConfig } from "./antigravity/translate";
 import {
   ANTIGRAVITY_EFFORTS,
   ANTIGRAVITY_MODES,
-  ANTIGRAVITY_TIERS,
+  CLAUDE_TIERS,
   AntigravityProviderConfigSchema,
   CODEX_EFFORTS,
   CODEX_LOGINS,
-  CODEX_TIERS,
   CodexProviderConfigSchema,
   isAntigravityProvider,
   isCodexProvider,
@@ -24,6 +23,8 @@ import {
   type CodexLogin,
   type CodexProviderConfig,
   type CredentialSource,
+  PickerModelSchema,
+  type PickerModel,
   type Provider,
 } from "./config/schema";
 import { UsageError } from "./cliError";
@@ -43,6 +44,7 @@ function toProviderView(name: string, provider: Provider): Record<string, unknow
       : { baseUrl: provider.baseUrl }),
     credential: summariseCredential(provider.credential),
     ...(provider.env === undefined ? {} : { env: provider.env }),
+    ...(provider.pickerModels === undefined ? {} : { pickerModels: provider.pickerModels }),
   };
 }
 
@@ -107,6 +109,17 @@ function antigravityConfigFromOptions(options: AntigravityOptions): AntigravityP
   return parsed.data;
 }
 
+/** The picker entries `--picker-model <model=tier>` describes. A tier that is not one of the four is refused by the schema, which names it. */
+function pickerModelsFromOption(option: Readonly<Record<string, string>>): readonly PickerModel[] {
+  return Object.entries(option).map(([model, tier]) => {
+    const parsed = PickerModelSchema.safeParse({ model, tier });
+    if (!parsed.success) {
+      throw new UsageError(`Invalid --picker-model ${model}=${tier}: ${parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
+    }
+    return parsed.data;
+  });
+}
+
 /** Options `provider add` accepts. */
 interface ProviderAddOptions extends CodexOptions, AntigravityOptions {
   readonly json?: boolean;
@@ -116,6 +129,7 @@ interface ProviderAddOptions extends CodexOptions, AntigravityOptions {
   readonly credential: CredentialSource[];
   readonly credentialTarget?: ProviderCredentialTarget;
   readonly env?: Record<string, string>;
+  readonly pickerModel?: Record<string, string>;
 }
 
 /** The codex settings options `provider add` and `provider set` share. */
@@ -153,6 +167,8 @@ interface ProviderSetOptions extends CodexOptions, AntigravityOptions, Credentia
   readonly credentialTarget?: ProviderCredentialTarget;
   readonly env?: Record<string, string>;
   readonly unsetEnv?: readonly string[];
+  readonly pickerModel?: Record<string, string>;
+  readonly unsetPickerModel?: readonly string[];
 }
 
 /** Registers the `agent-shim provider` subcommand tree onto `program`. */
@@ -181,6 +197,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         ),
       )
       .option("--env <KEY=VALUE>", "Extra environment entry for the child (repeatable).", collectStringPair)
+      .option("--picker-model <model=tier>", "A model /model lists beside the ones the tier settings name, with the Claude tier (fable, opus, sonnet or haiku) whose handling it borrows (repeatable).", collectStringPair)
       .option("--codex-default-model <model>", "Codex providers: the codex model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: the codex model one tier (fable, opus, sonnet or haiku) maps to (repeatable).", collectStringPair)
       .addOption(new Option("--codex-effort <effort>", "Codex providers: the reasoning effort when a request asks for none the backend accepts.").choices(CODEX_EFFORTS))
@@ -207,6 +224,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           sources: options.credential,
           ...(options.credentialTarget === undefined ? {} : { target: options.credentialTarget }),
           ...(options.env === undefined ? {} : { env: options.env }),
+          ...(options.pickerModel === undefined ? {} : { pickerModels: pickerModelsFromOption(options.pickerModel) }),
           ...(codex === undefined ? {} : { codex }),
           ...(antigravity === undefined ? {} : { antigravity }),
         });
@@ -243,6 +261,8 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       )
       .option("--env <KEY=VALUE>", "Add or replace an environment entry for the child (repeatable).", collectStringPair)
       .option("--unset-env <KEY>", "Remove an environment entry (repeatable).", collectRepeated)
+      .option("--picker-model <model=tier>", "Add or replace a model /model lists beside the ones the tier settings name, with the Claude tier (fable, opus, sonnet or haiku) whose handling it borrows (repeatable).", collectStringPair)
+      .option("--unset-picker-model <model>", "Remove a model from the /model list (repeatable).", collectRepeated)
       .option("--codex-default-model <model>", "Codex providers: replace the model a request maps to when no tier matches.")
       .option("--codex-model <tier=model>", "Codex providers: set the codex model one tier maps to (repeatable; other tiers are kept).", collectStringPair)
       .addOption(new Option("--codex-effort <effort>", "Codex providers: replace the default reasoning effort.").choices(CODEX_EFFORTS))
@@ -266,7 +286,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         const { json, ...options } = allOptions;
         if (Object.entries(allOptions).every(([key, value]) => key === "json" || value === undefined)) {
           throw new UsageError(
-            "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, a --credential-cache option, --env, --unset-env, or codex/antigravity settings.",
+            "Nothing to change: pass --display-name, --base-url, --credential, --credential-target, a --credential-cache option, --env, --unset-env, --picker-model, --unset-picker-model, or codex/antigravity settings.",
           );
         }
         const codex = codexConfigFromOptions(options);
@@ -282,6 +302,8 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           ...(options.credentialTarget === undefined ? {} : { target: options.credentialTarget }),
           ...(options.env === undefined ? {} : { env: options.env }),
           ...(options.unsetEnv === undefined ? {} : { unsetEnv: options.unsetEnv }),
+          ...(options.pickerModel === undefined ? {} : { pickerModels: pickerModelsFromOption(options.pickerModel) }),
+          ...(options.unsetPickerModel === undefined ? {} : { unsetPickerModels: options.unsetPickerModel }),
         });
         reportMutation(json, { action: "updated", kind: "provider", name, value: updated }, () => {
           console.log(`Updated provider "${name}" (${describeProviderEndpoint(updated)}, credential ${describeCredential(updated.credential)}).`);
@@ -294,6 +316,7 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       "agent-shim provider set anthropic-api --credential-target apiKey",
       "agent-shim provider set codex --codex-model haiku=gpt-5.6-terra",
       "agent-shim provider set agy --antigravity-model haiku=gemini-2.5-flash",
+      "agent-shim provider set o --picker-model deepseek/deepseek-r1=opus --picker-model qwen/qwen3-coder=sonnet",
     ],
   );
 
@@ -338,13 +361,13 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         console.log(`Kind: ${found.kind ?? "http"}`);
         if (isCodexProvider(found)) {
           const config = resolveCodexConfig(found.codex);
-          console.log(`Codex models: ${CODEX_TIERS.map((tier) => `${tier}=${config.models[tier]}`).join(", ")}, otherwise ${config.defaultModel}`);
+          console.log(`Codex models: ${CLAUDE_TIERS.map((tier) => `${tier}=${config.models[tier]}`).join(", ")}, otherwise ${config.defaultModel}`);
           console.log(`Codex effort: ${config.effort}`);
           console.log(`Codex login: ${config.login}`);
         } else if (isAntigravityProvider(found)) {
           const config = resolveAntigravityConfig(found.antigravity);
           console.log(`Antigravity mode: ${config.mode}`);
-          console.log(`Antigravity models: ${ANTIGRAVITY_TIERS.map((tier) => `${tier}=${config.models[tier].join(" > ")}`).join(", ")}, otherwise ${config.defaultModel}`);
+          console.log(`Antigravity models: ${CLAUDE_TIERS.map((tier) => `${tier}=${config.models[tier].join(" > ")}`).join(", ")}, otherwise ${config.defaultModel}`);
           if (config.aliases.size > 0) {
             console.log(`Antigravity aliases: ${[...config.aliases].map(([alias, model]) => `${alias}=${model.join(" > ")}`).join(", ")}`);
           }
@@ -357,6 +380,9 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         console.log(`Credential: ${describeCredential(found.credential)}`);
         const env = Object.entries(found.env ?? {});
         console.log(`Environment: ${env.length === 0 ? "(none)" : env.map(([key, value]) => `${key}=${value}`).join(", ")}`);
+        if (found.pickerModels !== undefined) {
+          console.log(`Picker models: ${found.pickerModels.map((entry) => `${entry.model} (${entry.tier})`).join(", ")}`);
+        }
       }),
     ["agent-shim provider show z", "agent-shim provider show z --json"],
   );

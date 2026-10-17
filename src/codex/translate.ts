@@ -5,11 +5,11 @@ import {
   CODEX_DEFAULT_LOGIN,
   CODEX_DEFAULT_MODEL,
   CODEX_DEFAULT_TIER_MODELS,
-  CODEX_TIERS,
+  CLAUDE_TIERS,
   type CodexEffort,
   type CodexLogin,
   type CodexProviderConfig,
-  type CodexTier,
+  type ClaudeTier,
 } from "../config/schema";
 import {
   isImageBlock,
@@ -26,7 +26,7 @@ import {
 /** A codex provider's translation settings with every default applied. */
 export interface ResolvedCodexConfig {
   readonly defaultModel: string;
-  readonly models: Readonly<Record<CodexTier, string>>;
+  readonly models: Readonly<Record<ClaudeTier, string>>;
   readonly effort: CodexEffort;
   readonly login: CodexLogin;
 }
@@ -93,14 +93,14 @@ export interface TranslatedRequest {
 }
 
 /**
- * Maps a requested Claude model onto a codex model. A request that already names a codex model (every model the backend serves is `gpt-*`) passes through untouched, so Claude Code's own model settings (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_*_MODEL`) can name one explicitly. Otherwise the first tier in `CODEX_TIERS` order whose name appears in the requested model (case-insensitive) decides, and `defaultModel` covers everything else.
+ * Maps a requested Claude model onto a codex model. A request that already names a codex model (every model the backend serves is `gpt-*`) passes through untouched, so Claude Code's own model settings (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_*_MODEL`) can name one explicitly. Otherwise the first tier in `CLAUDE_TIERS` order whose name appears in the requested model (case-insensitive) decides, and `defaultModel` covers everything else.
  */
 export function mapModel(requested: string, config: ResolvedCodexConfig): string {
   if (requested.startsWith("gpt-")) {
     return requested;
   }
   const lower = requested.toLowerCase();
-  const tier = CODEX_TIERS.find((candidate) => lower.includes(candidate));
+  const tier = CLAUDE_TIERS.find((candidate) => lower.includes(candidate));
   return tier === undefined ? config.defaultModel : config.models[tier];
 }
 

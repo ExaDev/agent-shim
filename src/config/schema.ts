@@ -229,8 +229,10 @@ export const PROVIDER_KINDS = ["http", "codex", "antigravity"] as const;
 export const ANTIGRAVITY_MODES = ["cloud", "local"] as const;
 export type AntigravityMode = (typeof ANTIGRAVITY_MODES)[number];
 
-export const ANTIGRAVITY_TIERS = ["fable", "opus", "sonnet", "haiku"] as const;
-export type AntigravityTier = (typeof ANTIGRAVITY_TIERS)[number];
+/** The Claude model tiers a provider maps onto its own models, highest first. */
+export const CLAUDE_TIERS = ["fable", "opus", "sonnet", "haiku"] as const;
+export type ClaudeTier = (typeof CLAUDE_TIERS)[number];
+
 
 export const ANTIGRAVITY_EFFORTS = ["none", "low", "medium", "high", "xhigh", "max"] as const;
 export type AntigravityEffort = (typeof ANTIGRAVITY_EFFORTS)[number];
@@ -240,7 +242,7 @@ export const ANTIGRAVITY_DEFAULT_MODEL = "gemini-3.8-flash-high";
 /**
  * Each tier's shipped candidates in preference order, over the families the backend serves (the third-party Claude models, Gemini 4 Argon and Gemini Flash), whose quota windows are separate, so a request whose first choice is spent is served from a family that still has quota. Fable leads with Gemini 4 Argon, the backend's own default agent model and first in its recommended order; opus and sonnet lead with the Claude model of their name; haiku leads with Gemini Flash, which has no Claude counterpart. Every candidate holds a context window of a million tokens: the backend's open GPT-OSS model holds a ninth of that, too little for a Claude Code conversation to fall back to. Every name is one the backend lists as served.
  */
-export const ANTIGRAVITY_DEFAULT_TIER_MODELS: Readonly<Record<AntigravityTier, readonly string[]>> = Object.freeze({
+export const ANTIGRAVITY_DEFAULT_TIER_MODELS: Readonly<Record<ClaudeTier, readonly string[]>> = Object.freeze({
   fable: ["gemini-4-argon-high", "claude-opus-5-5-high", "gemini-3.8-flash-high"],
   opus: ["claude-opus-5-5-high", "gemini-4-argon-high", "gemini-3.8-flash-high"],
   sonnet: ["claude-sonnet-5-5-medium", "gemini-4-argon-medium", "gemini-3.8-flash-medium"],
@@ -259,7 +261,7 @@ export const AntigravityProviderConfigSchema = z.strictObject({
   mode: z.enum(ANTIGRAVITY_MODES).optional(),
   /** The model a request maps to when no tier matches its model name. */
   defaultModel: z.string().min(1).optional(),
-  /** Model name mapping. A key naming a tier (`fable`, `opus`, `sonnet`, `haiku`) overrides that tier's shipped model and is matched by substring of the requested name in `ANTIGRAVITY_TIERS` order; any other key is an alias, matched against the whole requested name case-insensitively, so `/model <alias>` selects its backend model. An alias outranks every other rule, including the pass-through of backend names. A value is one model or an ordered list of candidates: the request goes to the first whose quota windows are not spent, and when every candidate is spent, to the one whose binding window lifts soonest. */
+  /** Model name mapping. A key naming a tier (`fable`, `opus`, `sonnet`, `haiku`) overrides that tier's shipped model and is matched by substring of the requested name in `CLAUDE_TIERS` order; any other key is an alias, matched against the whole requested name case-insensitively, so `/model <alias>` selects its backend model. An alias outranks every other rule, including the pass-through of backend names. A value is one model or an ordered list of candidates: the request goes to the first whose quota windows are not spent, and when every candidate is spent, to the one whose binding window lifts soonest. */
   models: z.record(z.string().min(1), AntigravityModelTargetSchema).optional(),
   /** When every candidate of the tier a request names has no quota left, serve it from the next tier down, and onward through the lower tiers, instead of failing with the quota limit. Applies to a name that selects a tier (`/model fable`), not to an alias or a backend model name. Defaults to false. */
   degradeDownTiers: z.boolean().optional(),
@@ -291,8 +293,6 @@ export type AntigravityProviderConfig = z.infer<typeof AntigravityProviderConfig
 /**
  * The Claude model tiers the codex translator maps, in the order they are matched: the first tier whose name is a substring of the requested model (case-insensitive) decides the codex model. `fable` comes before `opus` because a fable model name is the most specific.
  */
-export const CODEX_TIERS = ["fable", "opus", "sonnet", "haiku"] as const;
-export type CodexTier = (typeof CODEX_TIERS)[number];
 
 /** The reasoning efforts the codex backend accepts, plus `none`, which omits the reasoning block from the upstream request entirely. */
 export const CODEX_EFFORTS = ["none", "low", "medium", "high"] as const;
@@ -311,7 +311,7 @@ export const CODEX_DEFAULT_LOGIN: CodexLogin = "codex-cli";
 export const CODEX_DEFAULT_MODEL = "gpt-5.6-sol";
 
 /** The shipped tier mapping: the flagship model for fable and opus, the mid-size one for sonnet, the small one for haiku. */
-export const CODEX_DEFAULT_TIER_MODELS: Readonly<Record<CodexTier, string>> = Object.freeze({
+export const CODEX_DEFAULT_TIER_MODELS: Readonly<Record<ClaudeTier, string>> = Object.freeze({
   fable: "gpt-5.6-sol",
   opus: "gpt-5.6-sol",
   sonnet: "gpt-5.6-terra",
@@ -327,14 +327,14 @@ export const CODEX_DEFAULT_EFFORT: CodexEffort = "low";
 export const CodexProviderConfigSchema = z.strictObject({
   /** The codex model a request maps to when no tier matches its model name. */
   defaultModel: z.string().min(1).optional(),
-  /** Per-tier overrides of the shipped mapping, matched by substring of the requested model name in `CODEX_TIERS` order. */
+  /** Per-tier overrides of the shipped mapping, matched by substring of the requested model name in `CLAUDE_TIERS` order. */
   models: z
     .strictObject({
       fable: z.string().min(1).optional(),
       opus: z.string().min(1).optional(),
       sonnet: z.string().min(1).optional(),
       haiku: z.string().min(1).optional(),
-    } satisfies Record<CodexTier, z.ZodType>)
+    } satisfies Record<ClaudeTier, z.ZodType>)
     .optional(),
   /** The reasoning effort used when the request's own `output_config.effort` is not one the backend accepts. */
   effort: z.enum(CODEX_EFFORTS).optional(),
@@ -360,6 +360,20 @@ const ProviderRouteSchema = z.strictObject({
   model: z.string().min(1).optional(),
 });
 
+/**
+ * A model a provider serves that `/model` should list beside the ones its tier settings name. `tier` is the Claude tier whose client-side handling (prompt profile, effort defaults) the row borrows, since Claude Code knows no handling for a model it has not heard of. `label` defaults to the model name and `description` to a generic line.
+ */
+export const PickerModelSchema = z.strictObject({
+  model: z.string().min(1),
+  tier: z.enum(CLAUDE_TIERS),
+  label: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+});
+export type PickerModel = z.infer<typeof PickerModelSchema>;
+
+/** The `pickerModels` list every provider kind accepts. A model named twice would make two rows that select the same thing, so the list is refused. */
+const PickerModelsSchema = z.array(PickerModelSchema).refine((models) => new Set(models.map((entry) => entry.model)).size === models.length, { message: "pickerModels names a model more than once" });
+
 const HttpProviderSchema = z.strictObject({
   $schema: z.string().optional(),
   kind: z.literal("http").optional(),
@@ -367,6 +381,8 @@ const HttpProviderSchema = z.strictObject({
   baseUrl: z.url(),
   credential: ProviderCredentialSchema,
   env: ProviderEnvSchema.optional(),
+  /** Extra models `/model` lists beside the ones the tier settings name. */
+  pickerModels: PickerModelsSchema.optional(),
   /** Per-request routing: when present, each request this provider would serve is matched against the list in order, and the first definite match is sent to that entry's provider instead (itself resolved exactly as a directly dialled request would be). Unmatched requests stay on this provider. */
   routes: z.array(ProviderRouteSchema).optional(),
 });
@@ -379,6 +395,8 @@ const CodexProviderSchema = z.strictObject({
   displayName: z.string().min(1),
   credential: ProviderCredentialSchema,
   env: ProviderEnvSchema.optional(),
+  /** Extra models `/model` lists beside the ones the tier settings name. */
+  pickerModels: PickerModelsSchema.optional(),
   codex: CodexProviderConfigSchema.optional(),
 });
 export type CodexProvider = z.infer<typeof CodexProviderSchema>;
@@ -390,6 +408,8 @@ const AntigravityProviderSchema = z.strictObject({
   displayName: z.string().min(1),
   credential: ProviderCredentialSchema,
   env: ProviderEnvSchema.optional(),
+  /** Extra models `/model` lists beside the ones the tier settings name. */
+  pickerModels: PickerModelsSchema.optional(),
   antigravity: AntigravityProviderConfigSchema.optional(),
 });
 export type AntigravityProvider = z.infer<typeof AntigravityProviderSchema>;

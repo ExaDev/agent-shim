@@ -61,6 +61,40 @@ describe("providerModelRows", () => {
   });
 });
 
+describe("declared picker models", () => {
+  it("lists a declared model after the derived ones, with its tier's handling and its own label and description", () => {
+    const rows = providerModelRows({ ...http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5" }), pickerModels: [{ model: "glm-air", tier: "haiku", label: "GLM Air", description: "Fast and cheap" }] });
+    expect(rows.map((row) => row.model)).toEqual(["glm-5", "glm-air"]);
+    expect(rows[1]).toEqual({ model: "glm-air", label: "GLM Air", description: "Fast and cheap", behavesAs: "claude-haiku-5-5" });
+  });
+
+  it("lists declared models for a provider whose tier settings name none, so the picker stops keeping Claude's own", () => {
+    expect(providerModelRows({ ...http(), pickerModels: [{ model: "deepseek/r1", tier: "opus" }] }).map((row) => row.model)).toEqual(["deepseek/r1"]);
+    expect(modelPickerSettings({ ...http(), pickerModels: [{ model: "deepseek/r1", tier: "opus" }] })).toBeDefined();
+  });
+
+  it("lets a declared entry replace the derived row for the same model", () => {
+    const rows = providerModelRows({ ...codex({ models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } }), pickerModels: [{ model: "mid", tier: "opus", label: "Mid" }] });
+    expect(rows.map((row) => row.model)).toEqual(["big", "small", "mid"]);
+    expect(rows.find((row) => row.model === "mid")).toMatchObject({ label: "Mid", behavesAs: "claude-opus-5-5" });
+  });
+
+  it("describes a declared model by its tier when it gives no description", () => {
+    expect(providerModelRows({ ...http(), pickerModels: [{ model: "m", tier: "sonnet" }] })[0]?.description).toBe("Declared by the provider for the sonnet tier");
+  });
+});
+
+describe("the one-million-token context marker", () => {
+  it("is dropped from a row's title, kept in the name it sends, and noted in its description", () => {
+    const [row] = providerModelRows(http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1m]" }));
+    expect(row).toEqual({ model: "glm-5.3[1m]", label: "glm-5.3", description: "Serves the opus tier; 1M context", behavesAs: "claude-opus-5-5" });
+  });
+
+  it("applies to declared models and aliases as well", () => {
+    expect(providerModelRows({ ...http(), pickerModels: [{ model: "x[1m]", tier: "opus" }] })[0]).toMatchObject({ label: "x", description: "Declared by the provider for the opus tier; 1M context" });
+  });
+});
+
 describe("modelPickerSettings", () => {
   it("replaces the built-in lineup with the provider's rows, as the JSON --settings takes", () => {
     const settings = modelPickerSettings(codex({ models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } }));

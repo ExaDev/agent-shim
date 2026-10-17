@@ -196,6 +196,40 @@
             "type": "string"
           }
         },
+        "pickerModels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tier": {
+                "type": "string",
+                "enum": [
+                  "fable",
+                  "opus",
+                  "sonnet",
+                  "haiku"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "model",
+              "tier"
+            ],
+            "additionalProperties": false
+          }
+        },
         "routes": {
           "type": "array",
           "items": {
@@ -455,6 +489,40 @@
             "type": "string"
           }
         },
+        "pickerModels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tier": {
+                "type": "string",
+                "enum": [
+                  "fable",
+                  "opus",
+                  "sonnet",
+                  "haiku"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "model",
+              "tier"
+            ],
+            "additionalProperties": false
+          }
+        },
         "codex": {
           "type": "object",
           "properties": {
@@ -699,6 +767,40 @@
           },
           "additionalProperties": {
             "type": "string"
+          }
+        },
+        "pickerModels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tier": {
+                "type": "string",
+                "enum": [
+                  "fable",
+                  "opus",
+                  "sonnet",
+                  "haiku"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "model",
+              "tier"
+            ],
+            "additionalProperties": false
           }
         },
         "antigravity": {

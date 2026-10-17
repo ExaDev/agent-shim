@@ -1,9 +1,21 @@
 import { resolveAntigravityConfig } from "../antigravity/translate";
 import { resolveCodexConfig } from "../codex/translate";
-import { ANTIGRAVITY_TIERS, CODEX_TIERS, type Provider } from "../config/schema";
+import { CLAUDE_TIERS, type ClaudeTier, type PickerModel, type Provider } from "../config/schema";
 
-/** The Claude tiers a provider maps onto its own models, highest first. Every provider kind names the same four. */
-type Tier = (typeof CODEX_TIERS)[number];
+type Tier = ClaudeTier;
+
+/** The marker Claude Code parses out of a model name to size its context window at one million tokens instead of assuming a smaller one. It stays in the name a row sends, and is shown as the row's description instead of its title. */
+const CONTEXT_MARKER_1M = "[1m]";
+
+/** The title a row shows for `model`: its name without the context marker, which says nothing about which model it is. */
+function labelOf(model: string): string {
+  return model.toLowerCase().endsWith(CONTEXT_MARKER_1M) ? model.slice(0, -CONTEXT_MARKER_1M.length) : model;
+}
+
+/** `description` with a note of the one-million-token window when `model` carries the marker that asks for it. */
+function describedAs(model: string, description: string): string {
+  return model.toLowerCase().endsWith(CONTEXT_MARKER_1M) ? `${description}; 1M context` : description;
+}
 
 /**
  * The Claude model each tier's picker row borrows its client-side handling from (prompt profile, capability and effort defaults). Claude Code accepts only a model ID it knows here, never the tier alias, and a name it does not know gets the unrecognised-model notice and a 200k window instead, so an ID a later release drops degrades a row to that generic handling without breaking it: the row still names and selects the provider's own model.
@@ -56,7 +68,7 @@ function rowOf(model: string, reaches: readonly Reach[]): ModelPickerRow {
   const fallbacks = reaches.filter((reach) => reach.standing === "fallback").map((reach) => reach.tier);
   const serves = firsts.length === 0 ? [] : [`Serves the ${joined(firsts)} tier${firsts.length === 1 ? "" : "s"}`];
   const falls = fallbacks.length === 0 ? [] : [`${serves.length === 0 ? "Fallback" : "fallback"} for ${joined(fallbacks)}`];
-  return { model, label: model, description: [...serves, ...falls].join("; "), behavesAs: TIER_BEHAVES_AS[lead.tier] };
+  return { model, label: labelOf(model), description: describedAs(model, [...serves, ...falls].join("; ")), behavesAs: TIER_BEHAVES_AS[lead.tier] };
 }
 
 /** One row per distinct model across `table`, in the order the tiers first reach them, each with the tiers that reach it. */
@@ -77,12 +89,12 @@ function rowsOfTable(table: readonly (readonly [Tier, readonly string[]])[]): re
 /** The rows an `antigravity` provider offers: its backend models across every tier's candidates, then each alias a person can select by name. */
 function antigravityRows(provider: Extract<Provider, { kind: "antigravity" }>): readonly ModelPickerRow[] {
   const config = resolveAntigravityConfig(provider.antigravity);
-  const tiers = rowsOfTable(ANTIGRAVITY_TIERS.map((tier) => [tier, config.models[tier]] as const));
+  const tiers = rowsOfTable(CLAUDE_TIERS.map((tier) => [tier, config.models[tier]] as const));
   const behavesAsOf = new Map(tiers.map((row) => [row.model, row.behavesAs]));
   const aliases = [...config.aliases].flatMap(([alias, candidates]): readonly ModelPickerRow[] => {
     const [first] = candidates;
     const behavesAs = first === undefined ? undefined : behavesAsOf.get(first);
-    return behavesAs === undefined ? [] : [{ model: alias, label: alias, description: `Alias for ${candidates.join(", then ")}`, behavesAs }];
+    return behavesAs === undefined ? [] : [{ model: alias, label: labelOf(alias), description: `Alias for ${candidates.join(", then ")}`, behavesAs }];
   });
   return [...tiers, ...aliases];
 }
@@ -90,30 +102,37 @@ function antigravityRows(provider: Extract<Provider, { kind: "antigravity" }>): 
 /** The rows a `codex` provider offers: the distinct codex models its tiers map to. */
 function codexRows(provider: Extract<Provider, { kind: "codex" }>): readonly ModelPickerRow[] {
   const config = resolveCodexConfig(provider.codex);
-  return rowsOfTable(CODEX_TIERS.map((tier) => [tier, [config.models[tier]]] as const));
+  return rowsOfTable(CLAUDE_TIERS.map((tier) => [tier, [config.models[tier]]] as const));
 }
 
 /** The rows an `http` provider offers: the distinct models its own `env` block names for the tiers, since the tier names Claude Code shows would otherwise hide that the provider serves something else under them. */
 function httpRows(provider: Extract<Provider, { kind?: "http" }>): readonly ModelPickerRow[] {
   const env = provider.env ?? {};
-  const table = CODEX_TIERS.flatMap((tier): readonly (readonly [Tier, readonly string[]])[] => {
+  const table = CLAUDE_TIERS.flatMap((tier): readonly (readonly [Tier, readonly string[]])[] => {
     const model = env[TIER_ENV_VARIABLES[tier]];
     return model === undefined || model === "" ? [] : [[tier, [model]]];
   });
   return rowsOfTable(table);
 }
 
+/** The row for a model the provider's own file declares: its label and description when it gives them, and the handling of the tier it names. */
+function declaredRow(entry: Readonly<PickerModel>): ModelPickerRow {
+  return {
+    model: entry.model,
+    label: entry.label ?? labelOf(entry.model),
+    description: entry.description ?? describedAs(entry.model, `Declared by the provider for the ${entry.tier} tier`),
+    behavesAs: TIER_BEHAVES_AS[entry.tier],
+  };
+}
+
 /**
- * The real models a provider serves, as `/model` rows. Empty when the provider names none (an `http` provider that leaves every tier to Claude Code's own names), in which case the picker keeps its built-in lineup.
+ * The real models a provider serves, as `/model` rows: the ones its tier settings reach, then the ones its file declares in `pickerModels`, which replace a derived row for the same model. Empty when the provider names none (an `http` provider that leaves every tier to Claude Code's own names and declares nothing), in which case the picker keeps its built-in lineup.
  */
 export function providerModelRows(provider: Provider): readonly ModelPickerRow[] {
-  if (provider.kind === "codex") {
-    return codexRows(provider);
-  }
-  if (provider.kind === "antigravity") {
-    return antigravityRows(provider);
-  }
-  return httpRows(provider);
+  const derived = provider.kind === "codex" ? codexRows(provider) : provider.kind === "antigravity" ? antigravityRows(provider) : httpRows(provider);
+  const declared = (provider.pickerModels ?? []).map(declaredRow);
+  const declaredModels = new Set(declared.map((row) => row.model));
+  return [...derived.filter((row) => !declaredModels.has(row.model)), ...declared];
 }
 
 /**

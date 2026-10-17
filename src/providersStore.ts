@@ -12,6 +12,7 @@ import {
   type CodexProviderConfig,
   type CredentialCache,
   type CredentialSource,
+  type PickerModel,
   type PROVIDER_CREDENTIAL_TARGETS,
   type PROVIDER_KINDS,
   ProviderSchema,
@@ -239,6 +240,8 @@ export interface AddProviderInput {
   readonly sources: readonly CredentialSource[];
   readonly target?: ProviderCredentialTarget;
   readonly env?: Readonly<Record<string, string>>;
+  /** Extra models `/model` lists beside the ones the tier settings name; applies to every provider kind. */
+  readonly pickerModels?: readonly PickerModel[];
   readonly codex?: CodexProviderConfig;
   readonly antigravity?: AntigravityProviderConfig;
 }
@@ -300,6 +303,7 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
     displayName: input.displayName,
     credential: { sources: input.sources, ...(input.target === undefined ? {} : { target: input.target }) },
     ...(input.env === undefined || Object.keys(input.env).length === 0 ? {} : { env: input.env }),
+    ...(input.pickerModels === undefined || input.pickerModels.length === 0 ? {} : { pickerModels: input.pickerModels }),
   };
   const parsed = ProviderSchema.safeParse(
     kind === "codex"
@@ -327,6 +331,10 @@ export interface UpdateProviderInput {
   readonly cache?: CredentialCache | false;
   readonly env?: Readonly<Record<string, string>>;
   readonly unsetEnv?: readonly string[];
+  /** Picker models to add; one for a model the provider already declares replaces that entry in place. */
+  readonly pickerModels?: readonly PickerModel[];
+  /** Models whose picker entries are removed. */
+  readonly unsetPickerModels?: readonly string[];
   /** Merged over a codex provider's existing settings: a field given here replaces that field, and `models` entries merge per tier. */
   readonly codex?: CodexProviderConfig;
   /** Merged over an antigravity provider's existing settings: a field given here replaces that field, and `models` entries merge per tier. */
@@ -343,6 +351,12 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
   }
   const unset = new Set(input.unsetEnv);
   const env = Object.fromEntries(Object.entries({ ...existing.env, ...input.env }).filter(([key]) => !unset.has(key)));
+  const unsetPicker = new Set(input.unsetPickerModels);
+  const added = new Map((input.pickerModels ?? []).map((entry) => [entry.model, entry] as const));
+  const pickerModels = [
+    ...(existing.pickerModels ?? []).filter((entry) => !unsetPicker.has(entry.model)).map((entry) => added.get(entry.model) ?? entry),
+    ...[...added.values()].filter((entry) => !(existing.pickerModels ?? []).some((kept) => kept.model === entry.model)),
+  ];
   const target = input.target ?? existing.credential.target;
   const cache = input.cache === undefined ? existing.credential.cache : input.cache === false ? undefined : input.cache;
   if (isCodexProvider(existing) && input.baseUrl !== undefined) {
@@ -365,6 +379,7 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
       ...(cache === undefined ? {} : { cache }),
     },
     env: Object.keys(env).length === 0 ? undefined : env,
+    pickerModels: pickerModels.length === 0 ? undefined : pickerModels,
   };
   let candidate: unknown;
   if (isCodexProvider(existing)) {
