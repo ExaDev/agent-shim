@@ -13,6 +13,13 @@ export default defineConfig([
   },
   ...exadev,
   {
+    files: ["src/frontdoor/headroomHop.test.ts"],
+    rules: {
+      // This file is the whole-door integration harness (a fake headroom daemon, a TLS door over the production pipelines) plus one test per hop behaviour; every helper is shared by those tests and splitting it would duplicate the harness. Its size limit is lifted rather than the harness copied.
+      "max-lines": ["error", { max: 1000, skipComments: true }],
+    },
+  },
+  {
     rules: {
       // exadev's own consistent-type-imports leaves fixStyle at the rule's default (separate-type-imports); this repo prefers the type keyword inline on the same import statement instead.
       "@typescript-eslint/consistent-type-imports": ["error", { fixStyle: "inline-type-imports" }],

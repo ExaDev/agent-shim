@@ -33,6 +33,8 @@ export interface AntigravityRoutePorts {
   readonly localConnector?: (config: ResolvedAntigravityConfig, signal: AbortSignal) => AcpConnection;
   readonly now?: () => number;
   readonly quotaSource?: () => AntigravityQuotaMap | undefined;
+  /** The sessions' last routing choices, shared by every mounting of this route. A caller that mounts the route per request (the front door's resolver) supplies one map per provider, so a session keeps its model across the remounts; without it the route keeps its own, which lives only as long as one mounting. */
+  readonly lastRouted?: Map<string, string>;
 }
 
 const MS_PER_SECOND = 1000;
@@ -48,7 +50,7 @@ function exhaustedMessage(exhaustion: AntigravityExhaustion): string {
 
 export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: RouteRequest) => Promise<RouteResponse> {
   const fallbackId = ports.fallbackId ?? (() => randomUUID());
-  const lastRouted = new Map<string, string>();
+  const lastRouted = ports.lastRouted ?? new Map<string, string>();
 
   return async (request: RouteRequest): Promise<RouteResponse> => {
     await Promise.resolve();

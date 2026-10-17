@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { CodexRoutePorts } from "../codex/route";
 import { HTTP_STATUS } from "../codex/http";
-import { fakeAuth, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
+import { fakeAuth, fakeResponse, recordingFetch, sameUpstreamForEveryLogin } from "../codex/testing";
 import { FAKE_HOME, admitLaunchToken, fakeCredentials, fakeFs, followsLaunchFlag } from "../test-helpers";
 import type { FsPort } from "../launcher/ports";
 import type { UsageSnapshot } from "../usage/schema";
@@ -31,6 +31,15 @@ const codexProvider = { kind: "codex", displayName: "Codex", credential: { sourc
 const httpProvider = { displayName: "GLM", baseUrl: "https://api.z.ai/api/anthropic", credential: { sources: [{ env: "Z" }] } };
 const antigravityProvider = { kind: "antigravity", displayName: "Antigravity", credential: { sources: [{ env: "Z" }] }, antigravity: { mode: "cloud" } };
 
+/** A complete Responses API text turn, the shape the codex translator turns into an Anthropic SSE reply. */
+const TEXT_TURN = [
+  { type: "response.created", response: { id: "resp_1" } },
+  { type: "response.output_item.added", output_index: 0, item: { type: "message", id: "msg_1" } },
+  { type: "response.output_text.delta", output_index: 0, delta: "Hello" },
+  { type: "response.output_item.done", output_index: 0 },
+  { type: "response.completed", response: { id: "resp_1", status: "completed", usage: { input_tokens: 9, output_tokens: 2 } } },
+];
+
 /** The codex ports the resolver mounts, faked to the shape the real front-door process wires: a recording fetch and the fixed-token auth store. */
 function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
   const fetch = recordingFetch(() => {
@@ -53,6 +62,33 @@ function request(url: string, body = "{}"): RoutedRequest {
 }
 
 describe("createProviderRouteResolver", () => {
+  it("serves a request a provider's routes redirected to a codex target, whose body the routing layer read and replayed", async () => {
+    const router = {
+      kind: "http",
+      displayName: "Router",
+      baseUrl: "http://127.0.0.1:9",
+      credential: { sources: [{ literal: "router-token" }] },
+      routes: [{ when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*sonnet.*" } }, provider: "codex" }],
+    };
+    const answering = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
+    const ports: Omit<CodexRoutePorts, "loadProvider"> = {
+      upstreams: sameUpstreamForEveryLogin({ fetch: answering.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }),
+      writeUsageSnapshot: () => undefined,
+      now: () => 0,
+      log: () => undefined,
+    };
+    const door = await startDoor(
+      createProviderRouteResolver({ fs: fakeFs({ [`${PROVIDERS_DIR}/router.json`]: router, [`${PROVIDERS_DIR}/codex.json`]: codexProvider }), providersDir: PROVIDERS_DIR, codexPorts: ports, directPort: () => OWN_PORT, env: {}, credentials: fakeCredentials() }),
+    );
+    try {
+      const body = JSON.stringify({ model: "claude-sonnet-4-5", stream: false, messages: [{ role: "user", content: "hi" }], metadata: { user_id: "user-a" } });
+      const response = await fetch(`${door.url}/providers/router/v1/messages`, { method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" }, body });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+    } finally {
+      await door.close();
+    }
+  });
+
   it("mounts the in-process codex translator for a codex provider, named for it and headroom-eligible with the direct listener's bare origin as the hop's upstream", async () => {
     const resolution = await resolver({ [`${PROVIDERS_DIR}/codex.json`]: codexProvider })(request("/providers/codex/v1/messages"));
     expect(resolution.ok).toBe(true);

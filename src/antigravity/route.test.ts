@@ -346,6 +346,27 @@ describe("createAntigravityRoute", () => {
     expect(urls[1]).toContain("gemini-4-argon-low");
   });
 
+  it("keeps a session on its model across remountings when the caller shares the routing memory, as the front door's per-request mounting does", async () => {
+    const urls: string[] = [];
+    const recordingBackend: typeof fetch = async (input) => {
+      urls.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return await Promise.resolve(new Response("Resource has been exhausted (e.g. check quota)", { status: HTTP_STATUS.tooManyRequests }));
+    };
+    let quota: Record<string, { remaining_fraction: number; reset_in_seconds: number }> = { "gemini-5h": { remaining_fraction: 0, reset_in_seconds: FIVE_HOURS_SEC } };
+    // One map held by the caller, handed to each mounting: the resolver builds the route afresh per request, and without the shared memory every remount forgets where the session was.
+    const lastRouted = new Map<string, string>();
+    const mount = (): ReturnType<typeof createAntigravityRoute> =>
+      createAntigravityRoute({ loadProvider: () => ({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "key" }), fetchFn: recordingBackend, quotaSource: () => quota, lastRouted });
+    const ask = async (): Promise<void> => {
+      await mount()({ method: "POST", path: "/providers/ag/v1/messages", body: JSON.stringify({ model: "claude-haiku-5-5", max_tokens: 1024, metadata: { user_id: "session-1" }, messages: [{ role: "user", content: "hi" }] }), signal: new AbortController().signal });
+    };
+    await ask();
+    quota = {};
+    await ask();
+    expect(urls[0]).toContain("gemini-4-argon-low");
+    expect(urls[1]).toContain("gemini-4-argon-low");
+  });
+
   it("answers a 429 no bucket explains as a plain throttle: the backend's retry hint and no claim on a window", async () => {
     const res = await askFromClaudeCode();
 
