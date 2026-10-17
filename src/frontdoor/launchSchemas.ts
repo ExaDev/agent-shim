@@ -46,6 +46,9 @@ const LaunchFlagsSchema = z.strictObject({
   remoteControl: z.boolean(),
   headroom: z.boolean(),
   trackUsage: z.boolean(),
+  pause: z.boolean(),
+  /** How long the launch waits after its own output before it starts claude, in milliseconds. */
+  delayMs: z.number(),
 });
 
 /** One launch resolved, with the warnings the resolution raised. Nothing was started, written or recorded to produce it. */

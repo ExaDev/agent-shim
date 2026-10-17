@@ -202,6 +202,8 @@ export interface ProfileChange {
   readonly launchTrackUsage?: boolean;
   readonly launchProvider?: string | false;
   readonly launchClaudeVersion?: string | false;
+  readonly launchDelay?: string | false;
+  readonly launchPause?: boolean;
 }
 
 /** Applies every field `change` names to profile `name`, returning whether any was given. The one implementation `profile set` and the typed API's `config.profile.set` share. */
@@ -240,6 +242,12 @@ export function applyProfileChange(paths: LayoutPaths, name: string, change: Pro
   }
   if (change.launchClaudeVersion !== undefined) {
     launchPatch.claudeVersion = change.launchClaudeVersion === false ? undefined : change.launchClaudeVersion;
+  }
+  if (change.launchDelay !== undefined) {
+    launchPatch.delay = change.launchDelay === false ? undefined : change.launchDelay;
+  }
+  if (change.launchPause !== undefined) {
+    launchPatch.pause = change.launchPause;
   }
   if (Object.keys(launchPatch).length > 0) {
     setProfileLaunchFlags(paths, name, launchPatch);

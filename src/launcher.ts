@@ -13,6 +13,7 @@ import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLa
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { hasSettingsArgument, mergeSettings, withLauncherSettings, withSupervision, type SupervisedLaunch } from "./launcher/claudeSession";
 import { reportDiagnostics } from "./launcher/diagnostics";
+import { holdBeforeLaunch, LAUNCH_CANCELLED_EXIT, type HoldOutcome, type HoldPort } from "./launcher/hold";
 import { modelPickerSettings } from "./launcher/modelPicker";
 import { catalogueCachePath, parseCatalogueCache } from "./providerCatalogue";
 import { resolvePoolLaunch } from "./launcher/pool";
@@ -97,6 +98,8 @@ export interface PrepareLaunchParams {
   readonly supervised?: SupervisedLaunch;
   /** Wires the launch-time update check behind `update.mode`. Omitted by a caller that cannot resolve releases, re-invoke this binary, or write to the terminal; a mode of `notify` or `auto` with no port wired simply checks nothing. */
   readonly update?: UpdateLaunchPort;
+  /** Waits for the person where the launch's `delay` and `pause` settings ask. Omitted by a caller that has no terminal to wait on, and then the launch is never held. */
+  readonly hold?: HoldPort;
   /** Whether an identity has a stored login Claude Code can use (a Keychain item or a credentials file). Absent when the caller cannot ask, in which case a launch assumes it does. */
   readonly hasStoredLogin?: (identity: string) => boolean;
 }
@@ -153,6 +156,8 @@ export interface LaunchPlan {
   readonly decision: LaunchDecision;
   /** Marks the moment this plan's child is spawned: the launch-time update check suppresses its notify line from then on, since a line printed after the child took over the terminal would land mid-session. Call it immediately before spawning; it is safe to call more than once. */
   readonly markChildStarted: () => void;
+  /** Holds the launch as its `delay` and `pause` settings say, once the launcher has printed everything it will: call it just before spawning the child. `cancelled` means the person pressed Ctrl-C at the pause, and the child must not start. A launch with no hold port, or nobody watching, goes at once. */
+  readonly hold: () => HoldOutcome;
 }
 
 /** The outcome of resolving the launching identity's own credential block: the credential, or a refusal with its exit status. */
@@ -458,6 +463,8 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
       ...(parsedArgv.remoteControl === undefined ? {} : { remoteControl: parsedArgv.remoteControl }),
       ...(parsedArgv.headroom === undefined ? {} : { headroom: parsedArgv.headroom }),
       ...(parsedArgv.trackUsage === undefined ? {} : { trackUsage: parsedArgv.trackUsage }),
+      ...(parsedArgv.pause === undefined ? {} : { pause: parsedArgv.pause }),
+      ...(parsedArgv.delay === undefined ? {} : { delay: parsedArgv.delay }),
     },
   });
   // Remote Control is a claude.ai feature and needs the identity's own login. A provider session does not: the door attaches the provider's credential. So a provider launch on an identity with no stored login runs without Remote Control instead of failing at its first turn with "Not logged in".
@@ -641,7 +648,8 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
       registered();
     }
   };
-  return { bin: decided.bin, args: finalArgv, env: finalEnv, sessionId, release, markChildStarted: updateCheck.markChildStarted, decision };
+  const hold = (): HoldOutcome => holdBeforeLaunch({ delayMs: resolvedFlags.delayMs, pause: resolvedFlags.pause }, params.hold, log);
+  return { bin: decided.bin, args: finalArgv, env: finalEnv, sessionId, release, markChildStarted: updateCheck.markChildStarted, hold, decision };
 }
 
 /**
@@ -712,6 +720,9 @@ export function resolveLaunch(params: PrepareLaunchParams): LaunchResolution {
  */
 export function runLaunchPlan(plan: LaunchPlan, spawn: SpawnPort): number {
   try {
+    if (plan.hold() === "cancelled") {
+      return LAUNCH_CANCELLED_EXIT;
+    }
     // Marked before the spawn, not after it: the synchronous spawn blocks the event loop for the whole session, so a check answer arriving from here on is late by definition and must print nothing.
     plan.markChildStarted();
     const result = spawn.spawnSync(plan.bin, plan.args, { stdio: "inherit", env: plan.env });

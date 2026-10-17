@@ -19,6 +19,8 @@ function otherLaunchFlags(parsed: ParsedLauncherArgv): string[] {
     ...(parsed.configProfile === undefined ? [] : ["--config-profile"]),
     ...(parsed.provider === undefined ? [] : [parsed.provider === false ? "--no-provider" : "--provider"]),
     ...(parsed.claudeVersion === undefined ? [] : ["--claude-version"]),
+    ...(parsed.delay === undefined ? [] : ["--delay"]),
+    ...(parsed.pause === undefined ? [] : ["--[no-]pause"]),
     ...(parsed.headroom === undefined ? [] : ["--[no-]headroom"]),
     ...(parsed.trackUsage === undefined ? [] : ["--[no-]track-usage"]),
     ...(parsed.skipPermissions === undefined ? [] : ["--[no-]skip-permissions"]),

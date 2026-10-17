@@ -26,7 +26,7 @@ const RESOLUTION: LaunchResolution = {
     configDir: "/home/testuser/.agent-shim/identities/work",
     configProfileSource: "none",
   },
-  flags: { skipPermissions: false, remoteControl: false, headroom: true, trackUsage: false },
+  flags: { skipPermissions: false, remoteControl: false, headroom: true, trackUsage: false, pause: false, delayMs: 0 },
   claudeVersion: { version: "2.1.0", source: "flag" },
   bin: "/home/testuser/.local/share/claude/versions/2.1.0",
   args: ["--print"],

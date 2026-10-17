@@ -5,7 +5,7 @@ import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedPr
 
 describe("resolveLaunchFlags", () => {
   it("defaults skipPermissions, remoteControl and headroom to off and trackUsage to on when nothing sets them", () => {
-    expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: true });
+    expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: true, pause: false, delayMs: 0 });
   });
 
   it("turns skipPermissions on via the AGENT_SHIM_SKIP_PERMISSIONS=1 escape hatch", () => {
@@ -14,6 +14,8 @@ describe("resolveLaunchFlags", () => {
       remoteControl: false,
       headroom: false,
       trackUsage: true,
+      pause: false,
+      delayMs: 0,
     });
   });
 
@@ -23,13 +25,15 @@ describe("resolveLaunchFlags", () => {
       remoteControl: true,
       headroom: false,
       trackUsage: true,
+      pause: false,
+      delayMs: 0,
     });
   });
 
   it("treats an empty env value as unset", () => {
     expect(
       resolveLaunchFlags({ env: { AGENT_SHIM_SKIP_PERMISSIONS: "", AGENT_SHIM_REMOTE_CONTROL: "0" } }),
-    ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: true });
+    ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: true, pause: false, delayMs: 0 });
   });
 
   it("honours a cascade value once one is supplied, independent of the env escape hatch", () => {
@@ -38,13 +42,15 @@ describe("resolveLaunchFlags", () => {
       remoteControl: true,
       headroom: false,
       trackUsage: true,
+      pause: false,
+      delayMs: 0,
     });
   });
 
   it("combines settings from different sources independently, each setting decided on its own", () => {
     expect(
       resolveLaunchFlags({ env: { AGENT_SHIM_REMOTE_CONTROL: "1" }, cascade: { skipPermissions: true } }),
-    ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false, trackUsage: true });
+    ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false, trackUsage: true, pause: false, delayMs: 0 });
   });
 
   it.each(["skipPermissions", "remoteControl", "headroom", "trackUsage"] as const)(
@@ -85,6 +91,8 @@ describe("resolveLaunchFlags", () => {
       remoteControl: false,
       headroom: true,
       trackUsage: true,
+      pause: false,
+      delayMs: 0,
     });
   });
 
@@ -109,25 +117,56 @@ describe("resolveLaunchFlags", () => {
   });
 });
 
+const FIVE_SECONDS_MS = 5000;
+const TWO_SECONDS_MS = 2000;
+const HALF_SECOND_MS = 500;
+
+describe("resolveLaunchFlags pause and delay", () => {
+  it("defaults to no pause and no delay", () => {
+    expect(resolveLaunchFlags({ env: {} })).toMatchObject({ pause: false, delayMs: 0 });
+  });
+
+  it("resolves pause from the flag, then the environment, then the cascade", () => {
+    expect(resolveLaunchFlags({ env: {}, cascade: { pause: true } }).pause).toBe(true);
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_PAUSE: "0" }, cascade: { pause: true } }).pause).toBe(false);
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_PAUSE: "0" }, cascade: { pause: true }, flags: { pause: true } }).pause).toBe(true);
+  });
+
+  it("resolves the delay in milliseconds from the flag, then the environment, then the cascade", () => {
+    expect(resolveLaunchFlags({ env: {}, cascade: { delay: "5s" } }).delayMs).toBe(FIVE_SECONDS_MS);
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_DELAY: "2s" }, cascade: { delay: "5s" } }).delayMs).toBe(TWO_SECONDS_MS);
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_DELAY: "2s" }, cascade: { delay: "5s" }, flags: { delay: "500ms" } }).delayMs).toBe(HALF_SECOND_MS);
+  });
+
+  it("treats an empty AGENT_SHIM_DELAY as unset", () => {
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_DELAY: "" }, cascade: { delay: "5s" } }).delayMs).toBe(FIVE_SECONDS_MS);
+  });
+
+  it("refuses a delay from the command line or the environment that is not a duration, naming where it came from", () => {
+    expect(() => resolveLaunchFlags({ env: {}, flags: { delay: "soon" } })).toThrow("--delay");
+    expect(() => resolveLaunchFlags({ env: { AGENT_SHIM_DELAY: "5" } })).toThrow("AGENT_SHIM_DELAY");
+  });
+});
+
 describe("buildFlagArgs", () => {
   it("emits nothing when both flags are off", () => {
-    expect(buildFlagArgs({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: false })).toEqual([]);
+    expect(buildFlagArgs({ skipPermissions: false, remoteControl: false })).toEqual([]);
   });
 
   it("emits --dangerously-skip-permissions when skipPermissions is on", () => {
-    expect(buildFlagArgs({ skipPermissions: true, remoteControl: false, headroom: false, trackUsage: false })).toEqual([
+    expect(buildFlagArgs({ skipPermissions: true, remoteControl: false })).toEqual([
       "--dangerously-skip-permissions",
     ]);
   });
 
   it("emits --remote-control= with a literal trailing equals and empty value, never bare --remote-control", () => {
-    const args = buildFlagArgs({ skipPermissions: false, remoteControl: true, headroom: false, trackUsage: false });
+    const args = buildFlagArgs({ skipPermissions: false, remoteControl: true });
     expect(args).toEqual(["--remote-control="]);
     expect(args).not.toContain("--remote-control");
   });
 
   it("emits both flags, skip-permissions before remote-control, matching the legacy script's own order", () => {
-    expect(buildFlagArgs({ skipPermissions: true, remoteControl: true, headroom: false, trackUsage: false })).toEqual([
+    expect(buildFlagArgs({ skipPermissions: true, remoteControl: true })).toEqual([
       "--dangerously-skip-permissions",
       "--remote-control=",
     ]);

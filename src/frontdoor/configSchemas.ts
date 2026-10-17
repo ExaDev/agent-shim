@@ -7,6 +7,7 @@ import {
   CREDENTIAL_TARGETS,
   CredentialCacheSchema,
   DirectoryRuleSchema,
+  DURATION_RE,
   CompactAtUtilisationSchema,
   PoolSchema,
   POOL_PREFERENCES,
@@ -122,6 +123,8 @@ export const ConfigProfileSetInputSchema = z.strictObject({
       trackUsage: z.boolean().optional(),
       provider: z.union([z.string().min(1), z.literal(false)]).optional(),
       claudeVersion: z.union([z.string().min(1), z.literal(false)]).optional(),
+      delay: z.union([z.string().regex(DURATION_RE), z.literal(false)]).optional(),
+      pause: z.boolean().optional(),
     })
     .optional(),
 });

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runLaunchPlan, type LaunchPlan } from "./launcher";
+import { LAUNCH_CANCELLED_EXIT, type HoldOutcome } from "./launcher/hold";
 import { runClaudeLaunch } from "./launchRun";
 import { LaunchRefusedError } from "./launchWiring";
 import type { SpawnResult } from "./launcher/ports";
@@ -22,7 +23,7 @@ const SIGNAL_EXIT_OFFSET = 128;
 const SIX_DAYS_MS = 518_400_000;
 
 /** A plan whose callbacks call `record` in the order they run, beside the spawn. */
-function recordedPlan(record: (entry: string) => void): LaunchPlan {
+function recordedPlan(record: (entry: string) => void, held: HoldOutcome = "go"): LaunchPlan {
   return {
     bin: "/real/claude",
     args: ["--print"],
@@ -34,6 +35,10 @@ function recordedPlan(record: (entry: string) => void): LaunchPlan {
     decision: { identitySource: "none", configDirEscapeHatch: false, configProfileSource: "none" },
     markChildStarted: () => {
       record("started");
+    },
+    hold: () => {
+      record("hold");
+      return held;
     },
   };
 }
@@ -49,7 +54,7 @@ describe("runLaunchPlan", () => {
     expect(runLaunchPlan(recordedPlan((entry) => {
       order.push(entry);
     }), spawn)).toBe(CHILD_EXIT_CODE);
-    expect(order).toEqual(["started", 'spawn /real/claude --print {"A":"1"}', "release"]);
+    expect(order).toEqual(["hold", "started", 'spawn /real/claude --print {"A":"1"}', "release"]);
   });
 
   it("reports a child ended by a signal as 128 plus the signal's number", () => {
@@ -62,7 +67,20 @@ describe("runLaunchPlan", () => {
     expect(() => runLaunchPlan(recordedPlan((entry) => {
       order.push(entry);
     }), fakeSpawn({ status: null, signal: null, error: failure }))).toThrow(failure);
-    expect(order).toEqual(["started", "release"]);
+    expect(order).toEqual(["hold", "started", "release"]);
+  });
+
+  it("holds before the child is marked started, and does not start it at all when the person cancels the pause", () => {
+    const order: string[] = [];
+    const spawn = fakeSpawn();
+
+    const code = runLaunchPlan(recordedPlan((entry) => {
+      order.push(entry);
+    }, "cancelled"), spawn);
+
+    expect(code).toBe(LAUNCH_CANCELLED_EXIT);
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+    expect(order).toEqual(["hold", "release"]);
   });
 });
 

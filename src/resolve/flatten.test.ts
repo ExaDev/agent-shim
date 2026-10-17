@@ -126,6 +126,16 @@ describe("phase one: malformed keys", () => {
   });
 });
 
+describe("phase one: launch delay and pause", () => {
+  it("takes the last layer's delay and pause, each decided on its own", () => {
+    const flattened = flattenLayers(
+      [layer(0, { launch: { delay: "5s", pause: true } }), layer(1, { launch: { delay: "1s" } }), layer(2, { launch: { skipPermissions: true } })],
+      { home: FAKE_HOME },
+    );
+    expect(flattened.launch).toEqual({ delay: "1s", pause: true, skipPermissions: true });
+  });
+});
+
 describe("phase one: launch flags", () => {
   it("resolves each flag independently, last layer wins", () => {
     const flattened = flattenLayers(

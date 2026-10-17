@@ -277,6 +277,8 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
                 ...(launch?.trackUsage === undefined ? {} : { launchTrackUsage: launch.trackUsage }),
                 ...(launch?.provider === undefined ? {} : { launchProvider: launch.provider }),
                 ...(launch?.claudeVersion === undefined ? {} : { launchClaudeVersion: launch.claudeVersion }),
+                ...(launch?.delay === undefined ? {} : { launchDelay: launch.delay }),
+                ...(launch?.pause === undefined ? {} : { launchPause: launch.pause }),
               });
               return { action: "updated" as const, kind: "profile" as const, name: input.name, value: profileValue(input.name, paths) };
             }),
