@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import type { ModelsConfig } from "./config/schema";
-import { expandMembers, memberKindOf, removeVirtualModel, setTier, setVirtualModel, setPrice, VirtualModelNotFoundError } from "./modelsStore";
+import { addDistinctPair, addSameGroup, expandMembers, memberKindOf, removeAssertionsNaming, removeVirtualModel, setFamily, setTier, setVirtualModel, setPrice, VirtualModelNotFoundError } from "./modelsStore";
 
 describe("the models store", () => {
   let root: string;
@@ -22,6 +22,27 @@ describe("the models store", () => {
 
   /** The parsed models block of the config file as written. */
   const blockOf = (): unknown => (JSON.parse(fs.readFileSync(paths.globalConfigFile, "utf8")) as { models?: unknown }).models;
+
+  it("keeps identity assertions as transitive groups and unrepeated pairs, and removes everything naming a ref", () => {
+    addSameGroup(paths, ["a/x", "b/y"]);
+    addSameGroup(paths, ["b/y", "c/z"]);
+    addSameGroup(paths, ["d/p", "e/q"]);
+    addDistinctPair(paths, "a/x", "f/m");
+    addDistinctPair(paths, "f/m", "a/x");
+    expect(blockOf()).toEqual({ same: [["a/x", "b/y", "c/z"], ["d/p", "e/q"]], distinct: [["a/x", "f/m"]] });
+    expect(removeAssertionsNaming(paths, "a/x")).toBe(2);
+    expect(blockOf()).toEqual({ same: [["d/p", "e/q"]] });
+    expect(removeAssertionsNaming(paths, "nothing/here")).toBe(0);
+  });
+
+  it("sets and removes one family's settings, leaving an empty block no key", () => {
+    setFamily(paths, "glm-5-1", { mode: "cheapest", vision: false });
+    setFamily(paths, "other", { names: ["o/odd"] });
+    setFamily(paths, "other", undefined);
+    expect(blockOf()).toEqual({ families: { "glm-5-1": { mode: "cheapest", vision: false } } });
+    setFamily(paths, "glm-5-1", undefined);
+    expect(blockOf()).toBeUndefined();
+  });
 
   it("writes a virtual model into the global config's models block and reads it back", () => {
     setVirtualModel(paths, "fast", { mode: "soonest-reset", members: ["z/glm-5.3", "m/MiniMax-M3"] });

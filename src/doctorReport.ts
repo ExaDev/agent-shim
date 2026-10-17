@@ -18,6 +18,7 @@ import { describeCachedCredential, formatCachedCredentialState } from "./credent
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { isMovingGitSource } from "./headroom/source";
 import { modelsFindings } from "./models/doctor";
+import { targetRefs } from "./models/targets";
 import { readGlobalConfig } from "./configProfilesStore";
 import { diagnoseAllowlistDrift } from "./headroom/allowlistDrift";
 import { earlierReleaseDaemon } from "./headroom/earlierRelease";
@@ -156,6 +157,8 @@ export interface RunDoctorParams {
   readonly globalConfig: DoctorFileInput;
   /** The parsed `models` block of the global config, when one is defined. Omit to skip the models checks. */
   readonly models?: ModelsConfig;
+  /** Every target the defined providers offer as `<provider>/<model>` refs, for checking a `family:` member against the families they form. Omit to skip that check. */
+  readonly modelTargets?: readonly string[];
   readonly categoriesLocal: DoctorFileInput;
   readonly activeIdentity: DoctorFileInput;
   readonly binaryDiscovery: DoctorBinaryDiscovery;
@@ -616,7 +619,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     if (models === undefined) {
       push("models", "pass", "No models block configured.");
     } else {
-      for (const finding of modelsFindings({ models, providers: params.providers.map((entry) => entry.name), identities: params.identities.map((entry) => entry.name) })) {
+      for (const finding of modelsFindings({ models, providers: params.providers.map((entry) => entry.name), identities: params.identities.map((entry) => entry.name), ...(params.modelTargets === undefined ? {} : { targets: params.modelTargets }) })) {
         push("models", finding.severity, finding.message);
       }
       push("models", "pass", "The models block is consistent.");
@@ -907,6 +910,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     directoryRules: { path: paths.directoryRulesFile, raw: realFsPort.readFileUtf8(paths.directoryRulesFile) },
     globalConfig: { path: paths.globalConfigFile, raw: realFsPort.readFileUtf8(paths.globalConfigFile) },
     models: parsedModelsOf(paths),
+    modelTargets: targetRefs(paths),
     categoriesLocal: { path: paths.categoriesLocalFile, raw: realFsPort.readFileUtf8(paths.categoriesLocalFile) },
     activeIdentity: { path: paths.activeIdentityFile, raw: realFsPort.readFileUtf8(paths.activeIdentityFile) },
     binaryDiscovery,

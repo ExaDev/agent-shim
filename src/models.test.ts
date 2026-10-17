@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { describeUnroutedMembers, matchModels, type ProviderModel } from "./models";
+import { describeUnroutedMembers, matchModels } from "./models";
+import type { ProviderModel } from "./models/targets";
 
 const of = (provider: string, model: string): ProviderModel => ({ provider, model });
 
@@ -13,6 +14,14 @@ describe("matchModels", () => {
   it("does not group two models of one provider, or two different models", () => {
     const { same } = matchModels([of("z", "glm-5.1"), of("z", "glm-5.3"), of("z", "glm-5.1[1m]")]);
     expect(same).toEqual([]);
+  });
+
+  it("applies the user's assertions: a pair asserted one model groups, a pair asserted distinct neither groups nor is proposed", () => {
+    const grouped = matchModels([of("z", "glm-5.1"), of("o", "zai-glm-51")], { same: [["z/glm-5.1", "o/zai-glm-51"]] });
+    expect(grouped.same).toEqual([[of("z", "glm-5.1"), of("o", "zai-glm-51")]]);
+    const split = matchModels([of("z", "glm-5.1"), of("openrouter", "hf:zai-org/GLM-5.1")], { distinct: [["z/glm-5.1", "openrouter/hf:zai-org/GLM-5.1"]] });
+    expect(split.same).toEqual([]);
+    expect(split.similar).toEqual([]);
   });
 
   it("lists a version or variant apart as similar, without grouping it", () => {

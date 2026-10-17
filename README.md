@@ -131,6 +131,10 @@ agent-shim model set <name> [--mode <mode>] [--member <ref>]...
 agent-shim model remove <name> [--yes]
 agent-shim model tier <tier> --ref <ref> | --clear
 agent-shim model price <ref> --input <usd> --output <usd> | --clear
+agent-shim model same <ref> <ref>...   # assert these refs are one model under several names
+agent-shim model distinct <left> <right>   # assert two alike names are two models
+agent-shim model unassert <ref>
+agent-shim model family <key> [--mode <mode>] [--name <ref>]... [--context <tokens>] [--[no-]vision|tools|thinking] | --clear
 agent-shim model list [--json]
 agent-shim model explain <name>   # which member the virtual model's mode picks now, and why
 agent-shim provider remove <name> [--yes] [--json]
