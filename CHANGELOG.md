@@ -1,3 +1,10 @@
+## [11.33.0](https://github.com/ExaDev/agent-shim/compare/v11.32.0...v11.33.0) (2026-10-17)
+
+### Features
+
+* **models:** cascade the models block through profiles, directory rules and committed files ([3b6e36a](https://github.com/ExaDev/agent-shim/commit/3b6e36a8fc290f09a5c9a154b7c93b482a602f90))
+* **models:** store virtual models, tiers and prices in the global config ([487c81d](https://github.com/ExaDev/agent-shim/commit/487c81dfbdcbb80e85272d4841efa0f52d94a420))
+
 ## [11.32.0](https://github.com/ExaDev/agent-shim/compare/v11.31.1...v11.32.0) (2026-10-17)
 
 ### Features
