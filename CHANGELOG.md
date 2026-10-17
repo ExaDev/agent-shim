@@ -1,3 +1,9 @@
+## [11.35.0](https://github.com/ExaDev/agent-shim/compare/v11.34.0...v11.35.0) (2026-10-17)
+
+### Features
+
+* **launcher:** route provider-qualified model names by name from any provider session ([0add72d](https://github.com/ExaDev/agent-shim/commit/0add72df58b28d5cd1a0658deb6691e1593cfa00))
+
 ## [11.34.0](https://github.com/ExaDev/agent-shim/compare/v11.33.0...v11.34.0) (2026-10-17)
 
 ### Features
