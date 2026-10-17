@@ -29,6 +29,8 @@ export interface StatuslineSummary {
   readonly quotaFamilies: readonly ProviderQuotaWindowView[];
   /** What headroom's proxy reports having saved this session, when the session is routed through one that answered. */
   readonly headroom: HeadroomStats | undefined;
+  /** The target the session's last request was served by, `provider/model`, when routing by name sent it somewhere other than the launch's own provider or under another name; what makes a virtual model's choice visible where the person is looking. Absent when the caller cannot read the usage log. */
+  readonly routedTarget?: string | undefined;
 }
 
 /** One of a provider's quota windows, in the form the statusline draws. */
@@ -180,6 +182,8 @@ export interface EnrichParams {
   readonly nowMs: number;
   /** The session's headroom savings as the proxy reported them, or undefined when there are none to show. */
   readonly headroom: HeadroomStats | undefined;
+  /** The target the session's last request was served by, `provider/model`, when routing by name sent it somewhere other than the launch's own provider or under another name; what makes a virtual model's choice visible where the person is looking. Absent when the caller cannot read the usage log. */
+  readonly routedTarget?: string | undefined;
 }
 
 /**
@@ -210,6 +214,7 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     providerQuotaWindows: [],
     quotaFamilies: [],
     headroom: params.headroom,
+    routedTarget: params.routedTarget,
   };
   if (params.snapshot !== undefined) {
     const scopedName = providerScopedState(params.snapshot, params.providerName, params.env.AGENT_SHIM_PROVIDER);
