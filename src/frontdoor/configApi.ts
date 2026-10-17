@@ -279,6 +279,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
                 ...(launch?.claudeVersion === undefined ? {} : { launchClaudeVersion: launch.claudeVersion }),
                 ...(launch?.delay === undefined ? {} : { launchDelay: launch.delay }),
                 ...(launch?.pause === undefined ? {} : { launchPause: launch.pause }),
+                ...(launch?.explain === undefined ? {} : { launchExplain: launch.explain }),
               });
               return { action: "updated" as const, kind: "profile" as const, name: input.name, value: profileValue(input.name, paths) };
             }),

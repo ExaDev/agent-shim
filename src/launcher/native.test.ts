@@ -50,6 +50,7 @@ describe("runNativeLaunch", () => {
       [["--native", "--wait"], "--[no-]wait"],
       [["--native", "--delay", "5s"], "--delay"],
       [["--native", "--pause"], "--[no-]pause"],
+      [["--native", "--explain"], "--[no-]explain"],
       [["--native", "--config-profile", "p"], "--config-profile"],
       [["--native", "--share", "knowledge/skills"], "--share"],
     ] as const) {

@@ -126,6 +126,13 @@ describe("phase one: malformed keys", () => {
   });
 });
 
+describe("phase one: launch explain", () => {
+  it("takes the last layer's value", () => {
+    const flattened = flattenLayers([layer(0, { launch: { explain: true } }), layer(1, { launch: { explain: false } })], { home: FAKE_HOME });
+    expect(flattened.launch).toEqual({ explain: false });
+  });
+});
+
 describe("phase one: launch delay and pause", () => {
   it("takes the last layer's delay and pause, each decided on its own", () => {
     const flattened = flattenLayers(

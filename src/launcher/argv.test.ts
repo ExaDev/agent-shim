@@ -13,6 +13,12 @@ describe("parseLauncherArgv", () => {
     expect(parseLauncherArgv(["--print"]).delay).toBeUndefined();
   });
 
+  it("reads --explain and --no-explain, taking the last", () => {
+    expect(parseLauncherArgv(["--explain"]).explain).toBe(true);
+    expect(parseLauncherArgv(["--explain", "--no-explain"]).explain).toBe(false);
+    expect(parseLauncherArgv(["--print"]).explain).toBeUndefined();
+  });
+
   it("leaves --delay and --pause after the terminator for claude", () => {
     expect(parseLauncherArgv(["--", "--delay", "5s", "--pause"])).toMatchObject({ rest: ["--", "--delay", "5s", "--pause"] });
   });

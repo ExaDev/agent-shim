@@ -1,4 +1,6 @@
 import type { LaunchPoolDecision } from "../launcher";
+import { candidateHeading } from "../usage/candidateText";
+import type { Candidate } from "../usage/pick";
 import type { ReportRow } from "./ports";
 
 /** What a launch decided about who it runs as, as data. */
@@ -8,6 +10,8 @@ interface DecisionFacts {
   readonly identitySource: string;
   /** The pool pick behind the identity, when the launch selected a pool. */
   readonly pool: LaunchPoolDecision | undefined;
+  /** Every member the pool pick ranked, best first, when the launch asks for its pick explained. */
+  readonly ranking: readonly Candidate[] | undefined;
   /** The configuration profile that applied, when one did. */
   readonly profile: { readonly name: string; readonly source: string } | undefined;
   /** The provider the launch routes through, with where its credential comes from. */
@@ -25,6 +29,14 @@ function poolDetail(pool: LaunchPoolDecision): Pick<ReportRow, "detail" | "notes
   return reason === undefined ? {} : { detail: reason };
 }
 
+/** The lines that explain a pool pick: every member in rank order with its class and score, the one picked marked, and the facts behind each, in the words `pool pick` uses. */
+function rankingNotes(ranking: readonly Candidate[], picked: string | undefined): readonly string[] {
+  return ranking.flatMap((candidate, index) => [
+    `${String(index + 1)}. ${candidate.identity} ${candidateHeading(candidate)}${candidate.identity === picked ? " (picked)" : ""}`,
+    `   ${candidate.reasons.join("; ")}`,
+  ]);
+}
+
 /**
  * The rows that say who a launch runs as: the identity and where it was chosen, the pool it was picked from and the reason for the pick, the configuration profile and the provider when there are any, and the identity's own credential. A launch with no profile or provider says nothing about them rather than that they are absent.
  */
@@ -38,6 +50,7 @@ export function decisionRows(facts: Readonly<DecisionFacts>): readonly ReportRow
             label: "pool",
             value: facts.pool.name,
             ...poolDetail(facts.pool),
+            ...(facts.ranking === undefined ? {} : { notes: rankingNotes(facts.ranking, facts.identity) }),
           },
         ]),
     ...(facts.profile === undefined ? [] : [{ label: "profile", value: facts.profile.name, detail: facts.profile.source }]),

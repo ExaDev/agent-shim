@@ -1,6 +1,7 @@
 import type { Pool } from "../config/schema";
 import { loadIdentity } from "./identity";
 import type { LayoutPaths } from "../paths";
+import type { Candidate } from "../usage/pick";
 import { formatAge } from "../usage/preflight";
 import { PoolGraphError, rankPoolGraph, readStickyPick, recordStickyPick, type PoolPickFs } from "../usage/poolPick";
 import type { FarmFs, FsPort, LogPort } from "./ports";
@@ -49,6 +50,8 @@ export type PoolResolution =
       readonly explanation: string;
       /** Every reason the ranking gave for choosing the member, in the ranking's order. */
       readonly reasons: readonly string[];
+      /** Every member the pick ranked, best first, for a launch that explains its choice. */
+      readonly candidates: readonly Candidate[];
       /** The member a resumed conversation left, and why the ranking could not keep it. */
       readonly movedOff?: { readonly identity: string; readonly reason: string };
     }
@@ -136,6 +139,7 @@ export function resolvePoolLaunch(params: ResolvePoolParams): PoolResolution {
         identity: pick.identity,
         explanation: `pool ${poolName}: ${move}${pick.reasons.slice(0, REASONS_LOGGED).join("; ")}`,
         reasons: pick.reasons,
+        candidates: graph.ranking.candidates,
         ...(movedOff === undefined ? {} : { movedOff }),
       };
     }

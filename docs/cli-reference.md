@@ -17,6 +17,7 @@ The full flag/command reference table, the complete command list, `configure`'s 
 | **Headroom routing** | `agent-shim profile set <name> --launch-headroom` (or `--no-launch-headroom`); a `launch.headroom` key in `~/.agent-shim/config.json` or any cascade layer; the daemon's own `source`, `idleShutdownMinutes` and token-saving settings (`mode`, `targetRatio`, `ccr`, `rolloutChannel`, `interceptToolResults`, `readMaturation`) live in that file's global-only `headroom` block | `claude --headroom` / `claude --no-headroom` / `AGENT_SHIM_HEADROOM=true claude` | rule's inline `"launch": { "headroom": true }` field; or `.agent-shim.json`'s `"launch"` |
 | **Claude Code version** | `agent-shim profile set <name> --launch-claude-version <version>` (or `--no-launch-claude-version`); a `launch.claudeVersion` key in `~/.agent-shim/config.json` or any cascade layer | `claude --claude-version <version>` / `AGENT_SHIM_CLAUDE_VERSION=<version> claude` | rule's inline `"launch": { "claudeVersion": "2.1.220" }` field; or `.agent-shim.json`'s `"launch"` |
 | **Launch delay and pause** | `agent-shim profile set <name> --launch-delay <duration>` (or `--no-launch-delay`) and `--launch-pause` (or `--no-launch-pause`); `launch.delay` and `launch.pause` keys in `~/.agent-shim/config.json` or any cascade layer | `claude --delay <duration>` / `claude --pause` / `claude --no-pause` / `AGENT_SHIM_DELAY=5s claude` / `AGENT_SHIM_PAUSE=true claude` | a rule's inline `"launch": { "delay": "5s" }` field; or `.agent-shim.json`'s `"launch"` |
+| **Explain a pool pick** | `agent-shim profile set <name> --launch-explain` (or `--no-launch-explain`); a `launch.explain` key in `~/.agent-shim/config.json` or any cascade layer | `claude --explain` / `claude --no-explain` / `AGENT_SHIM_EXPLAIN=true claude` | a rule's inline `"launch": { "explain": true }` field; or `.agent-shim.json`'s `"launch"` |
 | **Usage tracking** | `agent-shim profile set <name> --launch-track-usage` (or `--no-launch-track-usage`); a `launch.trackUsage` key in `~/.agent-shim/config.json` or any cascade layer | `claude --track-usage` / `claude --no-track-usage` / `AGENT_SHIM_TRACK_USAGE=true claude` | rule's inline `"launch": { "trackUsage": true }` field; or `.agent-shim.json`'s `"launch"` |
 | **Identity credential** | `agent-shim identity set <name> --credential <source> [--credential-target oauthToken]` (in its `identity.json`); `--no-credential` returns it to its stored login | not applicable | not applicable: a credential belongs to the identity, not a directory |
 | **Ambient-credential guard** | `agent-shim identity set <name> --allow-ambient-credential` (per identity, in its `identity.json`) | `AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL=true claude` | not applicable: this guard is about the active identity's own credential, not a directory context. Deliberately identity-only, with no cascade key, because it is a security setting |
@@ -68,7 +69,7 @@ agent-shim profile set <name> [--category <category>=<bool>]... [--entry <catego
 agent-shim profile set <name> [--extends <profile>]... [--no-extends] [--description <text> | --no-description]
 agent-shim profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage]
 agent-shim profile set <name> [--launch-claude-version <version> | --no-launch-claude-version]
-agent-shim profile set <name> [--launch-delay <duration> | --no-launch-delay] [--[no-]launch-pause]
+agent-shim profile set <name> [--launch-delay <duration> | --no-launch-delay] [--[no-]launch-pause] [--[no-]launch-explain]
 agent-shim profile set <name> [--launch-provider <provider> | --no-launch-provider]
 agent-shim profile list [--json]
 agent-shim profile show <name> [--json]
@@ -160,6 +161,7 @@ agent-shim run [@<identity>] [launch flags] [claude arguments]
   #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom  --[no-]track-usage  --[no-]wait
   #   --claude-version <version>   run exactly this installed Claude Code version
   #   --delay <duration>   wait this long after the launcher's own output before starting claude; --[no-]pause waits for a key press instead
+  #   --[no-]explain   with @pool:<name>, list every member the pick ranked and why, not only the one picked
   #   --native   run the real claude with nothing from agent-shim applied; cannot be combined with the flags above
 claude @<identity> ...                      # the same, once `agent-shim shim enable` has run
 ```

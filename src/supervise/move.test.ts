@@ -41,7 +41,7 @@ function setup(options: Readonly<{ visibleTo?: readonly string[]; pick: (params:
   return { farmFs, calls, mover };
 }
 
-const picks = (identity: string) => (): ReturnType<MoverDeps["pickMember"]> => ({ ok: true, identity, explanation: `pool ${POOL}: ${identity} is next`, reasons: [] });
+const picks = (identity: string) => (): ReturnType<MoverDeps["pickMember"]> => ({ ok: true, identity, explanation: `pool ${POOL}: ${identity} is next`, reasons: [], candidates: [] });
 const request = { sessionId: SESSION, from: "work", contextTokens: CONTEXT };
 const lockFile = `${superviseDirOf(paths, POOL)}/.move.lock`;
 

@@ -194,6 +194,11 @@ describe("configProfiles", () => {
       expect(setProfileLaunchFlags(paths, "base", { delay: "5s", pause: false }).launch).toEqual({ headroom: true, delay: "5s", pause: false });
     });
 
+    it("stores explain beside the other launch flags", () => {
+      createProfile(paths, "base");
+      expect(setProfileLaunchFlags(paths, "base", { explain: true }).launch).toEqual({ explain: true });
+    });
+
     it("refuses a delay that is not a duration", () => {
       createProfile(paths, "base");
       expect(() => setProfileLaunchFlags(paths, "base", { delay: "soon" })).toThrow();
