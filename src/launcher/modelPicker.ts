@@ -164,11 +164,11 @@ export function routedModelRows(models: ModelsConfig, providers: readonly (reado
       if (provider.kind !== undefined && provider.kind !== "http") {
         continue;
       }
-      const env = provider.env ?? {};
-      const match = Object.entries(env).find(([, value]) => value === model);
-      if (match?.[0].endsWith("_MODEL") === true) {
+      // Only an `ANTHROPIC_DEFAULT_<TIER>_MODEL` key places a model in a tier: `ANTHROPIC_MODEL` names the provider's default rather than a tier and usually holds the same value, so a plain value match would shadow the tier the row needs.
+      const match = Object.entries(provider.env ?? {}).find(([key, value]) => value === model && key.startsWith("ANTHROPIC_DEFAULT_") && key.endsWith("_MODEL"));
+      if (match !== undefined) {
         const tier = match[0].replace("ANTHROPIC_DEFAULT_", "").replace("_MODEL", "").toLowerCase();
-    return tier === "fable" || tier === "opus" || tier === "sonnet" || tier === "haiku" ? tier : undefined;
+        return tier === "fable" || tier === "opus" || tier === "sonnet" || tier === "haiku" ? tier : undefined;
       }
     }
     return undefined;
