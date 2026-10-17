@@ -77,6 +77,8 @@ import { createUsageMiddleware } from "../usage/middleware";
 import { withQuotaRefresh } from "../usage/quotaRefresh";
 import { createRealQuotaRefresher } from "../usage/realQuotaRefresher";
 import { createUsageStore } from "../usage/store";
+import type { UsageRecord } from "../usage/schema";
+import { createTargetObservationStore } from "../selection/targetStore";
 
 /** How a door's watchdog starts a replacement: this very executable running the supervisor subcommand, pinned to this door's state root exactly as `spawnDetachedSupervisor` pins it. Every environment value is a string, as the watchdog thread's `spawn` requires. */
 function respawnInvocation(paths: LayoutPaths): { readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> } {
@@ -314,7 +316,12 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   catalogueKeeper.tick();
   setInterval(catalogueKeeper.tick, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
   const headroomDecision = createHeadroomDecision(createRoutingSettingReader(paths));
-  const recordUsage = withQuotaRefresh(usageStore.record, quotaRefresher);
+  // The door's per-target observations (latency, success, token mix), folded from every finished record: the selection engine's ranked and adaptive modes read them when a virtual model chooses a member. Seeded from the recent usage log so a restarted door does not start blind.
+  const targetObservations = createTargetObservationStore(realFarmFs, paths);
+  const recordUsage = (record: UsageRecord): void => {
+    withQuotaRefresh(usageStore.record, quotaRefresher)(record);
+    targetObservations.observe(record);
+  };
   const usageMiddleware = createUsageMiddleware({
     // Each finished response also tells the per-session headroom decision when the session's cache was last touched and whether it read from it.
     record: (record, event) => {

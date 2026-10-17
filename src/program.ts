@@ -20,6 +20,7 @@ import { registerHeadlessCommands } from "./headlessCommands";
 import { registerJobCommand } from "./jobs";
 import { registerPoolCommand } from "./pools";
 import { registerProviderCommand } from "./providers";
+import { registerModelsCommand } from "./models";
 import { registerRuleCommand } from "./directoryRules";
 import { registerRunCommand } from "./runCommand";
 import { registerUpdateCommand } from "./update/commands";
@@ -101,6 +102,7 @@ export function buildProgram(deps: ProgramDeps): Command {
   registerJobCommand(program, deps);
   registerHeadlessCommands(program, deps);
   registerProviderCommand(program, deps);
+  registerModelsCommand(program, deps);
   registerRuleCommand(program, deps);
   registerCredentialCommand(program, deps, deps.credentialPorts);
   registerCheckCommand(program, deps);

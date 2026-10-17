@@ -97,7 +97,7 @@ describe("buildProgram", () => {
     const built = program(runClaude);
 
     expect(built.commands.map((command) => command.name()).sort()).toEqual(
-      ["__frontdoor-supervisor", "__headroom-supervisor", "__open-window", "__refresh-catalogue", "__run-job", "__supervise-mark", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "job", "mcp", "pool", "profile", "provider", "rule", "run", "session", "shim", "statusline", "update", "usage"].sort(),
+      ["__frontdoor-supervisor", "__headroom-supervisor", "__open-window", "__refresh-catalogue", "__run-job", "__supervise-mark", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "job", "mcp", "model", "pool", "profile", "provider", "rule", "run", "session", "shim", "statusline", "update", "usage"].sort(),
     );
     expect(runClaude).not.toHaveBeenCalled();
     expect(fs.readdirSync(root)).toEqual([]);
