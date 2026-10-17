@@ -10,9 +10,11 @@ import type { HeadroomFs } from "../headroom/state";
  *
  * Protocol 3: the door attaches an http provider's own credential at its route, and this release's launcher no longer hands the child a provider credential to present. A protocol 2 door forwards whatever the child presented, so a protocol 3 launcher's provider sessions would arrive with no credential at all and fail at the provider; the door is replaced rather than joined.
  *
+ * Protocol 4: the door resolves a request's model name through the models block for a session that routes by name, and this release's launcher states that choice in a session header. A protocol 3 door ignores the header and sends every request to the session's own provider under the name it was given, so a protocol 4 launcher's route-by-name sessions would reach the wrong provider with a model name it does not serve; the door is replaced rather than joined.
+ *
  * The rule that makes a bump safe: a door accepts every lower protocol's launches (protocol 1 accepts the former `x-claude-use-*` header names), and a launcher replaces a door whose protocol is lower than its own, never one that is higher. Replacing is safe because restarts are what the door is designed for: the capability registry is on disk and the listeners keep their sticky ports, so launches already running reach the replacement on the addresses they froze at launch.
  */
-export const FRONT_DOOR_PROTOCOL = 3;
+export const FRONT_DOOR_PROTOCOL = 4;
 
 /**
  * The record held in one front-door session-registry file: the launcher's pid plus the per-launch capability token its child presents on every request, and the supervisor of the door the launch was sent to. `supervisorPid` is absent on a record written before it existed and on a door's own transparent-surface record; such a launch cannot be attributed to a door, so a superseded door treats it as its own.
