@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { matchModels, type ProviderModel } from "./models";
+import { describeUnroutedMembers, matchModels, type ProviderModel } from "./models";
 
 const of = (provider: string, model: string): ProviderModel => ({ provider, model });
 
@@ -28,5 +28,18 @@ describe("matchModels", () => {
     const { same, similar } = matchModels([of("z", "glm-5.1"), of("codex", "gpt-5.6-sol")]);
     expect(same).toEqual([]);
     expect(similar).toEqual([]);
+  });
+});
+
+describe("describeUnroutedMembers", () => {
+  it("says an account member is served by relaunching under its identity, and a family is not yet a candidate", () => {
+    expect(describeUnroutedMembers(["acct:work/opus", "family:glm-5", "z/glm-5.3"])).toEqual([
+      'acct:work/opus is served by relaunching the session under identity "work", so no quota signal ranks it',
+      "family:glm-5 is resolved from the live catalogues, which the door does not read yet, so it is not a candidate",
+    ]);
+  });
+
+  it("says nothing of a member the door chooses by signal", () => {
+    expect(describeUnroutedMembers(["z/glm-5.3", "m/MiniMax-M3"])).toEqual([]);
   });
 });
