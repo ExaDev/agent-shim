@@ -19,6 +19,7 @@ import { quotaFactsOf } from "../usage/quotaFacts";
 import { expandMembers } from "../modelsStore";
 import { candidateOf } from "../selection/candidates";
 import { selectMember } from "../selection/engine";
+import { withoutContextMarker } from "../models/identity";
 import type { TargetObservation } from "../selection/signals";
 import type { UsageSnapshot } from "../usage/schema";
 import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
@@ -63,11 +64,12 @@ function resolveRoutedModel(
   rotations: Readonly<Map<string, number>>,
 ): RoutedModel | undefined {
   const models = deps.models?.();
+  // The wire name a provider expects carries no context marker: Claude Code strips it from the names it sends, and a member ref may name its model with it (`z/glm-5.3[1m]`), so the target the resolver writes has it stripped too or the provider sees a model it does not know.
   const qualified = model.includes("/") && !model.startsWith("acct:") ? model : undefined;
   if (qualified !== undefined) {
     const [provider, ...rest] = qualified.split("/");
     const named = rest.join("/");
-    return provider === undefined || named === "" ? undefined : { provider, model: named, ref: qualified };
+    return provider === undefined || named === "" ? undefined : { provider, model: withoutContextMarker(named), ref: qualified };
   }
   const virtual = models?.virtual?.[model];
   if (virtual === undefined || !includeUnqualified) {
@@ -97,7 +99,7 @@ function resolveRoutedModel(
   }
   const [provider, ...rest] = selection.ref.split("/");
   const chosen = rest.join("/");
-  return provider === undefined || chosen === "" ? undefined : { provider, model: chosen, ref: selection.ref };
+  return provider === undefined || chosen === "" ? undefined : { provider, model: withoutContextMarker(chosen), ref: selection.ref };
 }
 
 /** The identity and model an `acct:` member names, when the model a session asked for is one (`acct:work/opus` directly, or a virtual model whose first member is). One login per process, so no route can serve it: only a relaunch under the identity can. */

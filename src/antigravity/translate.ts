@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { withoutContextMarker as stripContextMarker } from "../models/identity";
 import { selectMember, type SelectionCandidate } from "../selection/engine";
 
 /** Seconds per hour, to hand the engine a reset time in its own unit. */
@@ -113,9 +114,6 @@ export function resolveAntigravityConfig(config: AntigravityProviderConfig | und
   };
 }
 
-/** The context-window marker Claude Code parses out of a model name (`glm-5.3[1m]` sizes its window at 1M instead of assuming 200k for a name it does not know). The backend names carry no such marker, so it is stripped before the name is mapped or passed through. */
-const CONTEXT_MARKER_1M = "[1m]";
-
 /** Backend model families whose every name is the backend's own: Gemini and its Antigravity builds, and the open GPT-OSS models Antigravity serves. */
 const BACKEND_FAMILY_PREFIXES = ["gemini-", "antigravity-", "gpt-oss-"] as const;
 
@@ -136,7 +134,7 @@ export function mapModel(requested: string, config: ResolvedAntigravityConfig): 
 
 /** A requested name resolved to its candidates, and the tier it selected when it selected one. */
 function resolveName(requested: string, config: ResolvedAntigravityConfig): { readonly candidates: readonly string[]; readonly tier: ClaudeTier | undefined } {
-  const stripped = requested.toLowerCase().endsWith(CONTEXT_MARKER_1M) ? requested.slice(0, -CONTEXT_MARKER_1M.length) : requested;
+  const stripped = stripContextMarker(requested);
   const lower = stripped.toLowerCase();
   const alias = config.aliases.get(lower);
   if (alias !== undefined) {

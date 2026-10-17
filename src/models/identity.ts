@@ -7,6 +7,14 @@
 /** The bracketed suffixes a name may carry that say nothing about which model it is. The `[1m]` context-window marker is the known one. */
 const NON_IDENTITY_BRACKET_RE = /\[[^\]]*\]/g;
 
+/** The context-window marker Claude Code parses out of a model name (`glm-5.3[1m]` sizes its window at one million tokens instead of assuming a smaller one for a name it does not know). It tells the client the window size and never reaches a provider: Claude Code strips it from the names it sends, and the routing layer strips it from the target names it writes. */
+export const CONTEXT_MARKER_1M = "[1m]";
+
+/** The name a provider expects on the wire: `model` without its trailing context marker. */
+export function withoutContextMarker(model: string): string {
+  return model.toLowerCase().endsWith(CONTEXT_MARKER_1M) ? model.slice(0, -CONTEXT_MARKER_1M.length) : model;
+}
+
 /** A date stamp Anthropic family names may carry (`claude-haiku-4-5-20251001`): part of the release name, not the model. */
 const DATE_STAMP_RE = /-(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$/;
 

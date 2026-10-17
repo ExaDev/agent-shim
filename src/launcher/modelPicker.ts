@@ -2,15 +2,13 @@ import { AUTO_ALIAS, resolveAntigravityConfig } from "../antigravity/translate";
 import { resolveCodexConfig } from "../codex/translate";
 import { filterCatalogue, type CatalogueModel } from "../providerCatalogue";
 import { CLAUDE_TIERS, type ClaudeTier, type ModelsConfig, type PickerModel, type Provider } from "../config/schema";
+import { CONTEXT_MARKER_1M, withoutContextMarker } from "../models/identity";
 
 type Tier = ClaudeTier;
 
-/** The marker Claude Code parses out of a model name to size its context window at one million tokens instead of assuming a smaller one. It stays in the name a row sends, and is shown as the row's description instead of its title. */
-const CONTEXT_MARKER_1M = "[1m]";
-
 /** The title a row shows for `model`: its name without the context marker, which says nothing about which model it is. */
 function labelOf(model: string): string {
-  return model.toLowerCase().endsWith(CONTEXT_MARKER_1M) ? model.slice(0, -CONTEXT_MARKER_1M.length) : model;
+  return withoutContextMarker(model);
 }
 
 /** `description` with a note of the one-million-token window when `model` carries the marker that asks for it. */
