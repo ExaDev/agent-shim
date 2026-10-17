@@ -465,12 +465,12 @@ describe("runLauncher /model picker", () => {
   };
 
   /** The arguments claude is spawned with, and what the launcher logged, for a launch through `provider` with `argv`. */
-  function spawnedWith(provider: object, argv: readonly string[], supervised?: SupervisedLaunch): { readonly args: readonly string[] | undefined; readonly infos: readonly string[] } {
+  function spawnedWith(provider: object, argv: readonly string[], supervised?: SupervisedLaunch, extraFiles: Record<string, unknown> = {}): { readonly args: readonly string[] | undefined; readonly infos: readonly string[] } {
     const spawn = fakeSpawn();
     const log = fakeLog();
     launch({
       paths,
-      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/p.json`]: provider }),
+      fs: fakeFs({ [`${FAKE_HOME}/.agent-shim/providers/p.json`]: provider, ...extraFiles }),
       spawn,
       proc: fakeProc({ CODEX_TOKEN: "tok", Z_API_TOKEN: "tok" }, ["--provider", "p", ...argv]),
       log,
@@ -498,6 +498,30 @@ describe("runLauncher /model picker", () => {
 
     expect(args?.filter((token) => token === "--settings")).toHaveLength(1);
     expect(settingsIn(args)).toMatchObject({ hooks: { Stop: [] }, modelPicker: { replaceBuiltInOptions: true } });
+  });
+
+  describe("a provider's fetched catalogue", () => {
+    const catalogued = { ...plainProvider, catalogue: { tier: "sonnet", exclude: ["*air"] } };
+    const cacheFile = `${FAKE_HOME}/.agent-shim/catalogues/p.json`;
+    const cache = JSON.stringify({ fetchedAt: 1, url: "https://api.z.ai/api/anthropic/v1/models", models: [{ id: "glm-5" }, { id: "glm-air" }, { id: "glm-4" }] });
+
+    it("lists the models the door last fetched, after the provider's own filters", () => {
+      const { args } = spawnedWith(catalogued, ["--print"], undefined, { [cacheFile]: cache });
+
+      expect(settingsIn(args)).toMatchObject({ modelPicker: { replaceBuiltInOptions: true, options: [{ model: "glm-4" }, { model: "glm-5" }] } });
+    });
+
+    it("keeps Claude Code's own picker until a catalogue has been fetched", () => {
+      expect(spawnedWith(catalogued, ["--print"]).args).toEqual(["--print"]);
+    });
+
+    it("keeps it when the cache file is not a catalogue", () => {
+      expect(spawnedWith(catalogued, ["--print"], undefined, { [cacheFile]: "{}" }).args).toEqual(["--print"]);
+    });
+
+    it("lists nothing from a cache for a provider that did not opt in", () => {
+      expect(spawnedWith(plainProvider, ["--print"], undefined, { [cacheFile]: cache }).args).toEqual(["--print"]);
+    });
   });
 
   it("places the settings before a -- terminator", () => {

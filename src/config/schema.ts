@@ -374,6 +374,17 @@ export type PickerModel = z.infer<typeof PickerModelSchema>;
 /** The `pickerModels` list every provider kind accepts. A model named twice would make two rows that select the same thing, so the list is refused. */
 const PickerModelsSchema = z.array(PickerModelSchema).refine((models) => new Set(models.map((entry) => entry.model)).size === models.length, { message: "pickerModels names a model more than once" });
 
+/**
+ * Opt-in listing of the models an `http` provider's own catalogue endpoint reports in `/model`. The door refreshes the catalogue in the background and a launch lists what it last fetched. `tier` is the Claude tier whose handling every listed model borrows, since the catalogue says nothing about it. `include` and `exclude` are glob patterns over model ids (`exclude` wins), because a large catalogue would bury the picker. `url` replaces the endpoint, which otherwise is the provider's `/v1/models` under its base URL, then under its host.
+ */
+export const ProviderCatalogueSchema = z.strictObject({
+  tier: z.enum(CLAUDE_TIERS),
+  include: z.array(z.string().min(1)).min(1).optional(),
+  exclude: z.array(z.string().min(1)).min(1).optional(),
+  url: z.url().optional(),
+});
+export type ProviderCatalogue = z.infer<typeof ProviderCatalogueSchema>;
+
 const HttpProviderSchema = z.strictObject({
   $schema: z.string().optional(),
   kind: z.literal("http").optional(),
@@ -383,6 +394,8 @@ const HttpProviderSchema = z.strictObject({
   env: ProviderEnvSchema.optional(),
   /** Extra models `/model` lists beside the ones the tier settings name. */
   pickerModels: PickerModelsSchema.optional(),
+  /** The provider's own model catalogue, listed in `/model` when set. */
+  catalogue: ProviderCatalogueSchema.optional(),
   /** Per-request routing: when present, each request this provider would serve is matched against the list in order, and the first definite match is sent to that entry's provider instead (itself resolved exactly as a directly dialled request would be). Unmatched requests stay on this provider. */
   routes: z.array(ProviderRouteSchema).optional(),
 });

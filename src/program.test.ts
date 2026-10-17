@@ -97,7 +97,7 @@ describe("buildProgram", () => {
     const built = program(runClaude);
 
     expect(built.commands.map((command) => command.name()).sort()).toEqual(
-      ["__frontdoor-supervisor", "__headroom-supervisor", "__open-window", "__run-job", "__supervise-mark", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "job", "mcp", "pool", "profile", "provider", "rule", "run", "session", "shim", "statusline", "update", "usage"].sort(),
+      ["__frontdoor-supervisor", "__headroom-supervisor", "__open-window", "__refresh-catalogue", "__run-job", "__supervise-mark", "account", "check", "codex", "completion", "configure", "credential", "doctor", "frontdoor", "headroom", "identity", "job", "mcp", "pool", "profile", "provider", "rule", "run", "session", "shim", "statusline", "update", "usage"].sort(),
     );
     expect(runClaude).not.toHaveBeenCalled();
     expect(fs.readdirSync(root)).toEqual([]);
@@ -109,7 +109,7 @@ describe("buildProgram", () => {
     expect(subcommandNames(built, "pool")).toEqual(["add", "list", "pick", "remove", "set", "show", "use"]);
     expect(subcommandNames(built, "job")).toEqual(["add", "list", "remove", "run", "show"]);
     expect(subcommandNames(built, "profile")).toEqual(["add", "list", "remove", "set", "show", "use"]);
-    expect(subcommandNames(built, "provider")).toEqual(["add", "list", "remove", "set", "show"]);
+    expect(subcommandNames(built, "provider")).toEqual(["add", "list", "models", "remove", "set", "show"]);
     expect(subcommandNames(built, "rule")).toEqual(["add", "list", "remove", "set", "show"]);
     expect(subcommandNames(built, "credential")).toEqual(["forget", "push", "store", "warm"]);
   });

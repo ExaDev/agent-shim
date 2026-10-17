@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Provider } from "../config/schema";
+import type { Provider, ProviderCatalogue } from "../config/schema";
 import { modelPickerSettings, providerModelRows } from "./modelPicker";
 
 const CREDENTIAL = { sources: [{ env: "PROVIDER_TOKEN" }] };
@@ -81,6 +81,44 @@ describe("declared picker models", () => {
 
   it("describes a declared model by its tier when it gives no description", () => {
     expect(providerModelRows({ ...http(), pickerModels: [{ model: "m", tier: "sonnet" }] })[0]?.description).toBe("Declared by the provider for the sonnet tier");
+  });
+});
+
+describe("catalogue rows", () => {
+  const catalogued = (catalogue: ProviderCatalogue, env?: Record<string, string>): Provider => ({ displayName: "Z", baseUrl: "https://z.example/api", credential: CREDENTIAL, ...(env === undefined ? {} : { env }), catalogue });
+  const listed = [{ id: "zeta" }, { id: "alpha", name: "Alpha One" }, { id: "big[1m]" }];
+
+  it("lists what the catalogue last listed, sorted, each borrowing the catalogue's tier", () => {
+    const rows = providerModelRows(catalogued({ tier: "haiku" }), listed);
+    expect(rows).toEqual([
+      { model: "alpha", label: "alpha", description: "Listed by the provider as Alpha One", behavesAs: "claude-haiku-5-5" },
+      { model: "big[1m]", label: "big", description: "Listed by the provider; 1M context", behavesAs: "claude-haiku-5-5" },
+      { model: "zeta", label: "zeta", description: "Listed by the provider", behavesAs: "claude-haiku-5-5" },
+    ]);
+  });
+
+  it("applies the include and exclude patterns", () => {
+    expect(providerModelRows(catalogued({ tier: "sonnet", include: ["a*", "z*"], exclude: ["zeta"] }), listed).map((row) => row.model)).toEqual(["alpha"]);
+  });
+
+  it("lists tier models and declared models first and does not list a catalogue model they already name", () => {
+    const provider: Provider = { ...catalogued({ tier: "sonnet" }, { ANTHROPIC_DEFAULT_OPUS_MODEL: "alpha" }), pickerModels: [{ model: "zeta", tier: "haiku" }] };
+    expect(providerModelRows(provider, listed).map((row) => row.model)).toEqual(["alpha", "zeta", "big[1m]"]);
+  });
+
+  it("does not repeat a model the provider names with the context marker when its catalogue lists it without", () => {
+    const provider = catalogued({ tier: "sonnet" }, { ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5[1m]" });
+    expect(providerModelRows(provider, [{ id: "glm-5" }, { id: "glm-4" }]).map((row) => row.model)).toEqual(["glm-5[1m]", "glm-4"]);
+  });
+
+  it("lists nothing from a catalogue the provider has not opted into, or that has not been fetched", () => {
+    expect(providerModelRows(http(), listed)).toEqual([]);
+    expect(providerModelRows(catalogued({ tier: "sonnet" }), [])).toEqual([]);
+    expect(modelPickerSettings(catalogued({ tier: "sonnet" }))).toBeUndefined();
+  });
+
+  it("is passed to the settings the launch carries", () => {
+    expect(JSON.parse(modelPickerSettings(catalogued({ tier: "sonnet" }), listed) ?? "")).toMatchObject({ modelPicker: { replaceBuiltInOptions: true, options: [{ model: "alpha" }, { model: "big[1m]" }, { model: "zeta" }] } });
   });
 });
 

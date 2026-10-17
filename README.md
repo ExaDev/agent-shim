@@ -120,6 +120,8 @@ agent-shim provider add <name> --display-name <name> (--base-url <url> | --kind 
 agent-shim provider set <name> [--display-name <name>] ([--base-url <url>] | --kind codex) [--credential <source>]... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]... [--json]
                                               [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>] [--codex-login <codex-cli|chatgpt-sign-in>]
 agent-shim provider add|set <name> [--picker-model <model=tier>]...   # models /model lists beside the tier models; set also takes [--unset-picker-model <model>]...
+agent-shim provider add|set <name> [--catalogue-tier <tier>] [--catalogue-include <glob>]... [--catalogue-exclude <glob>]... [--catalogue-url <url>]   # http providers: list the provider's own catalogue in /model; set also takes [--unset-catalogue]
+agent-shim provider models <name> [--refresh] [--json]   # the catalogue last fetched, and which of its models /model lists
 agent-shim provider list [--json]
 agent-shim provider show <name> [--json]
 agent-shim provider remove <name> [--yes] [--json]

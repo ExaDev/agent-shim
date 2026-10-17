@@ -13,6 +13,7 @@ import {
   type CredentialCache,
   type CredentialSource,
   type PickerModel,
+  type ProviderCatalogue,
   type PROVIDER_CREDENTIAL_TARGETS,
   type PROVIDER_KINDS,
   ProviderSchema,
@@ -168,14 +169,19 @@ export function loadProvider(providersDir: string, name: string, port: FsPort): 
   return raw === undefined ? undefined : parseProviderFile(filePath, raw);
 }
 
+/** Reports a provider file `listProviders` skipped, on standard error. */
+function reportInvalidProvider(name: string, message: string): void {
+  console.error(`agent-shim: providers/${name}.json is invalid and was skipped: ${message}`);
+}
+
 /** One provider definition as reported by `listProviders`. */
 export interface ProviderListEntry {
   readonly name: string;
   readonly provider: Provider;
 }
 
-/** Lists every provider under `providersDir` that has a valid `<name>.json`. A file that fails validation is skipped here; `provider list` is the place a broken definition gets surfaced, not a launch. */
-export function listProviders(paths: LayoutPaths): readonly ProviderListEntry[] {
+/** Lists every provider under `providersDir` that has a valid `<name>.json`. A file that fails validation is skipped here and reported through `onInvalid` (standard error by default); `provider list` is the place a broken definition gets surfaced, not a launch. */
+export function listProviders(paths: LayoutPaths, onInvalid: (name: string, message: string) => void = reportInvalidProvider): readonly ProviderListEntry[] {
   const names = listProviderNames(
     (dir) => fs.readdirSync(dir),
     paths.providersDir,
@@ -189,7 +195,7 @@ export function listProviders(paths: LayoutPaths): readonly ProviderListEntry[] 
       if (!(error instanceof ConfigValidationError || error instanceof LegacyProviderFileError)) {
         throw error;
       }
-      console.error(`agent-shim: providers/${name}.json is invalid and was skipped: ${error.message}`);
+      onInvalid(name, error.message);
       continue;
     }
     if (provider !== undefined) {
@@ -242,6 +248,8 @@ export interface AddProviderInput {
   readonly env?: Readonly<Record<string, string>>;
   /** Extra models `/model` lists beside the ones the tier settings name; applies to every provider kind. */
   readonly pickerModels?: readonly PickerModel[];
+  /** Opt an http provider into listing its own model catalogue in `/model`. */
+  readonly catalogue?: ProviderCatalogue;
   readonly codex?: CodexProviderConfig;
   readonly antigravity?: AntigravityProviderConfig;
 }
@@ -293,6 +301,9 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
   if (kind === "http" && input.baseUrl === undefined) {
     throw new ProviderKindMismatchError("An http provider needs --base-url.");
   }
+  if (kind !== "http" && input.catalogue !== undefined) {
+    throw new ProviderKindMismatchError("A model catalogue applies only to an http provider.");
+  }
   if (kind !== "codex" && !isEmptyCodexConfig(input.codex)) {
     throw new ProviderKindMismatchError("Codex settings apply only to a codex provider (--kind codex).");
   }
@@ -310,7 +321,7 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
       ? { kind, ...shared, ...(isEmptyCodexConfig(input.codex) ? {} : { codex: input.codex }) }
       : kind === "antigravity"
       ? { kind, ...shared, ...(isEmptyAntigravityConfig(input.antigravity) ? {} : { antigravity: input.antigravity }) }
-      : { ...shared, baseUrl: input.baseUrl },
+      : { ...shared, baseUrl: input.baseUrl, ...(input.catalogue === undefined ? {} : { catalogue: input.catalogue }) },
   );
   if (!parsed.success) {
     throw new ConfigValidationError(providerJsonPath(paths, name), parsed.error.issues);
@@ -335,6 +346,8 @@ export interface UpdateProviderInput {
   readonly pickerModels?: readonly PickerModel[];
   /** Models whose picker entries are removed. */
   readonly unsetPickerModels?: readonly string[];
+  /** The provider's whole new catalogue setting, or false to remove it; undefined leaves the existing one. Applies only to an http provider. */
+  readonly catalogue?: ProviderCatalogue | false;
   /** Merged over a codex provider's existing settings: a field given here replaces that field, and `models` entries merge per tier. */
   readonly codex?: CodexProviderConfig;
   /** Merged over an antigravity provider's existing settings: a field given here replaces that field, and `models` entries merge per tier. */
@@ -364,6 +377,9 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
   }
   if (isAntigravityProvider(existing) && input.baseUrl !== undefined) {
     throw new ProviderKindMismatchError(`Provider "${name}" is an antigravity provider, which has no base URL.`);
+  }
+  if ((isCodexProvider(existing) || isAntigravityProvider(existing)) && input.catalogue !== undefined && input.catalogue !== false) {
+    throw new ProviderKindMismatchError(`Provider "${name}" is not an http provider; a model catalogue applies only to an http provider.`);
   }
   if (!isCodexProvider(existing) && !isEmptyCodexConfig(input.codex)) {
     throw new ProviderKindMismatchError(`Provider "${name}" is not a codex provider; codex settings apply only to a codex provider.`);
@@ -397,7 +413,8 @@ export function updateProvider(paths: LayoutPaths, name: string, input: UpdatePr
     };
     candidate = { ...existing, ...shared, antigravity: isEmptyAntigravityConfig(antigravity) ? undefined : antigravity };
   } else {
-    candidate = { ...existing, ...shared, ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }) };
+    const catalogue = input.catalogue === undefined ? existing.catalogue : input.catalogue === false ? undefined : input.catalogue;
+    candidate = { ...existing, ...shared, catalogue, ...(input.baseUrl === undefined ? {} : { baseUrl: input.baseUrl }) };
   }
   const parsed = ProviderSchema.safeParse(candidate);
   if (!parsed.success) {

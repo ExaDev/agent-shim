@@ -230,6 +230,41 @@ describe("providers", () => {
     });
   });
 
+  describe("catalogue", () => {
+    it("opts an http provider in at creation and reads the setting back", () => {
+      const created = addProvider(paths, "z", { ...zInput, catalogue: { tier: "sonnet", include: ["glm-*"], url: "https://api.z.ai/api/paas/v4/models" } });
+      expect(created.kind).toBeUndefined();
+      expect(readProvider(paths, "z")).toMatchObject({ catalogue: { tier: "sonnet", include: ["glm-*"], url: "https://api.z.ai/api/paas/v4/models" } });
+    });
+
+    it("refuses a catalogue on a codex or antigravity provider, at creation and on update", () => {
+      expect(() => addProvider(paths, "cx", { kind: "codex", displayName: "C", sources: [{ env: "K" }], catalogue: { tier: "opus" } })).toThrow("only to an http provider");
+      addProvider(paths, "ag", { kind: "antigravity", displayName: "AG", sources: [{ env: "K" }] });
+      expect(() => updateProvider(paths, "ag", { catalogue: { tier: "opus" } })).toThrow("applies only to an http provider");
+    });
+
+    it("replaces the whole setting on update and removes it with false", () => {
+      addProvider(paths, "z", { ...zInput, catalogue: { tier: "sonnet", exclude: ["*air"] } });
+
+      const replaced = updateProvider(paths, "z", { catalogue: { tier: "opus" } });
+      expect(replaced).toMatchObject({ catalogue: { tier: "opus" } });
+      expect((replaced as { catalogue?: { exclude?: string[] } }).catalogue?.exclude).toBeUndefined();
+
+      updateProvider(paths, "z", { catalogue: false });
+      expect(JSON.parse(fs.readFileSync(path.join(paths.providersDir, "z.json"), "utf8"))).not.toHaveProperty("catalogue");
+    });
+
+    it("keeps the setting when an update does not mention it", () => {
+      addProvider(paths, "z", { ...zInput, catalogue: { tier: "sonnet" } });
+      expect(updateProvider(paths, "z", { displayName: "Other" })).toMatchObject({ catalogue: { tier: "sonnet" } });
+    });
+
+    it("refuses a catalogue with no tier or an empty pattern list", () => {
+      expect(() => addProvider(paths, "z", { ...zInput, catalogue: {} as never })).toThrow(ConfigValidationError);
+      expect(() => addProvider(paths, "y", { ...zInput, catalogue: { tier: "opus", include: [] } })).toThrow(ConfigValidationError);
+    });
+  });
+
   describe("listProviders", () => {
     it("lists providers sorted by name and skips a file that fails validation or is in the old format", () => {
       addProvider(paths, "z", zInput);
