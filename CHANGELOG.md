@@ -1,3 +1,9 @@
+## [11.26.0](https://github.com/ExaDev/agent-shim/compare/v11.25.0...v11.26.0) (2026-10-17)
+
+### Features
+
+* **provider:** list an http provider's own model catalogue in /model ([f195c8f](https://github.com/ExaDev/agent-shim/commit/f195c8f5140ca673ecfb62c934d20252b324f57e))
+
 ## [11.25.0](https://github.com/ExaDev/agent-shim/compare/v11.24.0...v11.25.0) (2026-10-17)
 
 ### Features
