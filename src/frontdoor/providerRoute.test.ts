@@ -144,7 +144,7 @@ describe("createProviderRouteResolver", () => {
       expect(qualified.request?.url).toContain("/providers/z/v1/messages");
     }
 
-    // A bare name is Claude Code's own on an OAuth session: it still rides the pass-through to Anthropic, never resolved through the models block.
+    // A bare name the models block does not define is Claude Code's own on an OAuth session: it still rides the pass-through to Anthropic, never resolved through the models block.
     const bare = await resolve(byName("claude-sonnet-4-5"));
     expect(bare.ok).toBe(true);
     if (bare.ok) {
@@ -156,6 +156,32 @@ describe("createProviderRouteResolver", () => {
     expect(rc.ok).toBe(true);
     if (rc.ok) {
       expect(rc.route.name).not.toBe("http:z");
+    }
+  });
+
+  it("routes a name the models block defines, a virtual model's or a family's, from a provider-less (OAuth) session that asked to route by name", async () => {
+    const byName = (model: string): RoutedRequest => ({
+      ...request("/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),
+      session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, routeByName: true, projectId: undefined },
+    });
+    const models: ModelsConfig = { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } };
+    const resolve = createProviderRouteResolver({ fs: fakeFs({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: { Z: "tok-from-z" }, credentials: fakeCredentials(), models: () => models, targets: () => ["z/glm-5.3"] });
+
+    const virtual = await resolve(byName("fast"));
+    expect(virtual.ok).toBe(true);
+    if (virtual.ok) {
+      expect(virtual.route.name).toBe("http:z");
+    }
+    const family = await resolve(byName("family:glm-5-3"));
+    expect(family.ok).toBe(true);
+    if (family.ok) {
+      expect(family.route.name).toBe("http:z");
+    }
+    // The same block leaves a bare name it does not define on the pass-through to Anthropic.
+    const bare = await resolve(byName("claude-sonnet-4-5"));
+    expect(bare.ok).toBe(true);
+    if (bare.ok) {
+      expect(bare.route.name).toBe("anthropic");
     }
   });
 
