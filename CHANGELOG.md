@@ -1,3 +1,9 @@
+## [11.37.0](https://github.com/ExaDev/agent-shim/compare/v11.36.0...v11.37.0) (2026-10-17)
+
+### Features
+
+* **launcher:** refuse a route-by-name launch when a routed provider's credential is unusable ([7dcc406](https://github.com/ExaDev/agent-shim/commit/7dcc4068e703a179c22801d18b4cefa45df269ec))
+
 ## [11.36.0](https://github.com/ExaDev/agent-shim/compare/v11.35.0...v11.36.0) (2026-10-17)
 
 ### Features
