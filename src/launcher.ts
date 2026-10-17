@@ -16,8 +16,11 @@ import { diagnosticLines, printDiagnosticLines, reportDiagnostics, type Diagnost
 import { holdBeforeLaunch, LAUNCH_CANCELLED_EXIT, type HoldOutcome, type HoldPort } from "./launcher/hold";
 import type { Candidate } from "./usage/pick";
 import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows } from "./launcher/launchReport";
-import { modelPickerSettings } from "./launcher/modelPicker";
+import { modelPickerSettings, modelPickerSettingsFromRows, routedModelRows } from "./launcher/modelPicker";
 import { catalogueCachePath, parseCatalogueCache } from "./providerCatalogue";
+import { readModels } from "./modelsStore";
+import { listProviders } from "./providersStore";
+import type { Provider } from "./config/schema";
 import { resolvePoolLaunch } from "./launcher/pool";
 import { resumedContextTokens } from "./usage/resumeContext";
 import { IdentityLockBusyError } from "./launcher/lock";
@@ -485,7 +488,13 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
 
   // `/model` lists the provider's real models, which needs claude's `--settings`; a launch that passes its own keeps claude's names, since claude takes one value and a second replaces the first.
   const catalogue = selectedProvider === undefined ? undefined : parseCatalogueCache(params.fs.readFileUtf8(catalogueCachePath(paths, selectedProvider.name)));
-  const pickerSettings = selectedProvider === undefined ? undefined : modelPickerSettings(selectedProvider.definition, catalogue?.models);
+  // A session that routes by model name (the flag, or a router provider) lists the whole catalogue instead: its virtual models first, then every provider's models qualified.
+  const routesByName = flags.routeByName || (selectedProvider !== undefined && isRouterProvider(selectedProvider.definition));
+  const pickerSettings = routesByName
+    ? modelPickerSettingsFromRows(routedModelRows(readModels(paths) ?? {}, listProviders(paths).map((entry): readonly [string, Provider] => [entry.name, entry.provider])))
+    : selectedProvider === undefined
+      ? undefined
+      : modelPickerSettings(selectedProvider.definition, catalogue?.models);
   const callerSettings = hasSettingsArgument(parsedArgv.rest);
   if (pickerSettings !== undefined && callerSettings) {
     notes.push("--settings was passed, so /model keeps Claude Code's own model names");

@@ -1,7 +1,7 @@
 import { AUTO_ALIAS, resolveAntigravityConfig } from "../antigravity/translate";
 import { resolveCodexConfig } from "../codex/translate";
 import { filterCatalogue, type CatalogueModel } from "../providerCatalogue";
-import { CLAUDE_TIERS, type ClaudeTier, type PickerModel, type Provider } from "../config/schema";
+import { CLAUDE_TIERS, type ClaudeTier, type ModelsConfig, type PickerModel, type Provider } from "../config/schema";
 
 type Tier = ClaudeTier;
 
@@ -153,9 +153,47 @@ export function providerModelRows(provider: Provider, catalogue: readonly Catalo
 }
 
 /**
+ * The rows a session that routes by model name offers: its virtual models first (the mode in the description), then every provider's models grouped under the provider's name, honouring the block's `hide` and `show` lists. A virtual model's row borrows the handling of its first member's tier when that member names a tier-shaped target; a provider-qualified row borrows the tier of the env that names it when one does.
+ */
+export function routedModelRows(models: ModelsConfig, providers: readonly (readonly [string, Provider])[]): readonly ModelPickerRow[] {
+  const hidden = new Set(models.hide ?? []);
+  const shown = models.show === undefined ? undefined : new Set(models.show);
+  const visible = (model: string): boolean => (shown === undefined ? !hidden.has(model) : shown.has(model));
+  const tierOf = (model: string): ClaudeTier | undefined => {
+    for (const [, provider] of providers) {
+      if (provider.kind !== undefined && provider.kind !== "http") {
+        continue;
+      }
+      const env = provider.env ?? {};
+      const match = Object.entries(env).find(([, value]) => value === model);
+      if (match?.[0].endsWith("_MODEL") === true) {
+        const tier = match[0].replace("ANTHROPIC_DEFAULT_", "").replace("_MODEL", "").toLowerCase();
+    return tier === "fable" || tier === "opus" || tier === "sonnet" || tier === "haiku" ? tier : undefined;
+      }
+    }
+    return undefined;
+  };
+  const virtual = Object.entries(models.virtual ?? {}).flatMap(([name, definition]) => {
+    if (!visible(name)) {
+      return [];
+    }
+    const first = definition.members.find((member) => member.includes("/"));
+    const tier = first === undefined ? undefined : tierOf(first.split("/").slice(1).join("/"));
+    const behavesAs = tier === undefined ? undefined : TIER_BEHAVES_AS[tier];
+    return behavesAs === undefined ? [] : [{ model: name, label: name, description: `Virtual (${definition.mode})`, behavesAs }];
+  });
+  const concrete = providers.flatMap(([name, provider]) => providerModelRows(provider).map((row) => ({ ...row, model: `${name}/${row.model}`, label: `${name} / ${row.label}`, description: `${name}: ${row.description}` })));
+  return [...virtual, ...concrete.filter((row) => visible(row.model))];
+}
+
+/**
  * The Claude Code settings, as the JSON `--settings` takes, that make `/model` list `provider`'s real models in place of Claude Code's own names, or `undefined` when the provider names none. The built-in lineup is replaced because it would show a Claude name for a model the provider serves under another. Choosing a row sends that model's name verbatim, which every translator passes through, so a person can pick a backend model directly instead of going through a tier.
  */
 export function modelPickerSettings(provider: Provider, catalogue: readonly CatalogueModel[] = []): string | undefined {
-  const options = providerModelRows(provider, catalogue);
+  return modelPickerSettingsFromRows(providerModelRows(provider, catalogue));
+}
+
+/** The settings from rows already built, so a routing session's catalogue rows take the same shape a provider's own do. */
+export function modelPickerSettingsFromRows(options: readonly ModelPickerRow[]): string | undefined {
   return options.length === 0 ? undefined : JSON.stringify({ modelPicker: { options, replaceBuiltInOptions: true } });
 }

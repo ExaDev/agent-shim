@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Provider, ProviderCatalogue } from "../config/schema";
-import { modelPickerSettings, providerModelRows } from "./modelPicker";
+import { modelPickerSettings, providerModelRows, routedModelRows } from "./modelPicker";
 
 const CREDENTIAL = { sources: [{ env: "PROVIDER_TOKEN" }] };
 
@@ -168,5 +168,24 @@ describe("modelPickerSettings", () => {
 
   it("is undefined when the provider names no model, so the picker keeps its own", () => {
     expect(modelPickerSettings(http())).toBeUndefined();
+  });
+});
+
+describe("routedModelRows", () => {
+  const providers: readonly (readonly [string, Provider])[] = [
+    ["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3" })],
+    ["m", http({ ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2.7" })],
+  ];
+
+  it("lists the virtual models first, then every provider's models qualified with the provider's name", () => {
+    const rows = routedModelRows({ virtual: { fast: { mode: "soonest-reset", members: ["z/glm-5.3"] } } }, providers);
+    expect(rows.map((row) => row.model)).toEqual(["fast", "z/glm-5.3", "m/MiniMax-M2.7"]);
+    expect(rows[0]).toMatchObject({ description: "Virtual (soonest-reset)", behavesAs: "claude-opus-5-5" });
+    expect(rows[1]).toMatchObject({ label: "z / glm-5.3", description: "z: Serves the opus tier" });
+  });
+
+  it("hides what the block hides and, when show is set, lists only what it names", () => {
+    expect(routedModelRows({ hide: ["z/glm-5.3"] }, providers).map((row) => row.model)).not.toContain("z/glm-5.3");
+    expect(routedModelRows({ show: ["fast"] , virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } }, providers).map((row) => row.model)).toEqual(["fast"]);
   });
 });
