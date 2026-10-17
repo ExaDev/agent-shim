@@ -19,6 +19,7 @@ import {
   ProviderSchema,
   type Provider,
   isRouterProvider,
+  type ModelsConfig,
 } from "./config/schema";
 import { CliError, UsageError } from "./cliError";
 import { CREDENTIAL_UNAVAILABLE_EXIT, resolveCredential, type CredentialPort } from "./credential";
@@ -545,4 +546,80 @@ export function resolveProvider(params: ResolveProviderParams): ProviderResoluti
     return { ok: false, status: CREDENTIAL_UNAVAILABLE_EXIT, message: resolution.message };
   }
   return { ok: true, provider: { name, definition, credential: resolution.credential }, warnings: resolution.credential.warnings };
+}
+
+/**
+ * The outcome of checking every provider the models block can route to: the distinct provider names checked, or one refusal naming every failure at once, so a launch fails once with the full picture rather than one provider per attempt.
+ *
+ * An unknown provider name exits 1; a provider whose credential block yields no token exits `CREDENTIAL_UNAVAILABLE_EXIT`, matching what selecting that provider directly would do.
+ */
+export type RoutedProviderCredentials =
+  | { readonly ok: true; readonly checked: readonly string[] }
+  | { readonly ok: false; readonly status: number; readonly message: string };
+
+/** Inputs to `resolveRoutedProviderCredentials`. */
+export interface ResolveRoutedProviderCredentialsParams {
+  readonly paths: LayoutPaths;
+  readonly port: FsPort;
+  readonly env: Readonly<Record<string, string | undefined>>;
+  /** Resolves the providers' credential sources. Omitted by a caller that cannot read secret files or run commands; a non-empty set of routed providers is then refused rather than launched unauthenticated. */
+  readonly credentials?: CredentialPort;
+  /** The models block whose provider targets to check. Absent when none is defined, which checks nothing. */
+  readonly models: ModelsConfig | undefined;
+}
+
+/**
+ * Checks that every provider the models block can route a request to is usable now, by resolving each named provider's credential the same way `resolveProvider` resolves a selected one. Only provider members are checked: a `family:` member's providers depend on live catalogues the door holds, an `acct:` member relaunches under its identity rather than dialling out, and a nested virtual model's own members are already in the set this walk collects. Pure over its injected ports, so the launcher's tests exercise refusals without touching a real providers directory or secret store.
+ */
+export function resolveRoutedProviderCredentials(params: ResolveRoutedProviderCredentialsParams): RoutedProviderCredentials {
+  const { models } = params;
+  if (models === undefined) {
+    return { ok: true, checked: [] };
+  }
+  const virtualNames = new Set(Object.keys(models.virtual ?? {}));
+  const providerNames = new Set<string>();
+  const collect = (ref: string): void => {
+    if (ref.startsWith("acct:") || ref.startsWith("family:") || virtualNames.has(ref)) {
+      return;
+    }
+    const [provider] = ref.split("/", 1);
+    if (provider !== undefined && provider !== "") {
+      providerNames.add(provider);
+    }
+  };
+  for (const model of Object.values(models.virtual ?? {})) {
+    for (const member of model.members) {
+      collect(member);
+    }
+  }
+  for (const ref of Object.values(models.tiers ?? {})) {
+    collect(ref);
+  }
+  if (providerNames.size === 0) {
+    return { ok: true, checked: [] };
+  }
+  if (params.credentials === undefined) {
+    return { ok: false, status: 1, message: `agent-shim: the models block routes to providers ${[...providerNames].sort().join(", ")}, which need their credentials resolved, but this launcher has no credential port wired` };
+  }
+  const failures: string[] = [];
+  let credentialFailure = false;
+  for (const name of [...providerNames].sort()) {
+    const definition = loadProvider(params.paths.providersDir, name, params.port);
+    if (definition === undefined) {
+      failures.push(`no provider named "${name}"`);
+      continue;
+    }
+    if (isRouterProvider(definition)) {
+      continue;
+    }
+    const resolution = resolveCredential({ credential: definition.credential, env: params.env, port: params.credentials, subject: `provider ${name}` });
+    if (!resolution.ok) {
+      failures.push(resolution.message.replace(/^agent-shim: /, ""));
+      credentialFailure = true;
+    }
+  }
+  if (failures.length > 0) {
+    return { ok: false, status: credentialFailure ? CREDENTIAL_UNAVAILABLE_EXIT : 1, message: `agent-shim: this launch routes model names through the models block, but: ${failures.join("; ")}` };
+  }
+  return { ok: true, checked: [...providerNames].sort() };
 }

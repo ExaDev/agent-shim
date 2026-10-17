@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { FarmRuntime } from "./launcher";
+import { CREDENTIAL_UNAVAILABLE_EXIT } from "./credential";
 import { ConflictingIdentityError } from "./launcher/argv";
 import { InvalidClaudeVersionError } from "./launcher/claudeVersion";
 import { ClaudeVersionNotInstalledError, type ClaudeBinaryResolver } from "./versionDiscovery";
@@ -493,6 +494,63 @@ describe("runLauncher headroom routing", () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("agent-shim-provider-session");
     expect(env.HTTPS_PROXY).toBe("http://agent-shim:launch-token-for-tests@127.0.0.1:4200");
     expect(injectedSessionHeaders(env)).toEqual(["x-agent-shim-auth: launch-token-for-tests", "x-agent-shim-provider: anthropic-api", "x-agent-shim-headroom: 1", "x-headroom-project-id: /home/testuser/work/repo"]);
+  });
+
+  it("refuses a route-by-name launch when the models block names a provider whose credential yields no token, before anything is spawned", () => {
+    const spawn = fakeSpawn();
+    const log = fakeLog();
+
+    const code = runAndCaptureExit({
+      paths,
+      fs: fakeFs({
+        [`${FAKE_HOME}/.agent-shim/config.json`]: {
+          models: { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } },
+        },
+        [`${FAKE_HOME}/.agent-shim/providers/z.json`]: {
+          displayName: "GLM",
+          baseUrl: "https://api.z.ai/api/anthropic",
+          credential: { sources: [{ env: "Z_API_TOKEN" }] },
+        },
+      }),
+      spawn,
+      proc: fakeProc({}, ["--route-by-name"]),
+      log,
+      resolveClaudeBinary: () => discovered,
+      frontdoor: fakeFrontDoorPort(),
+      credentials: fakeCredentials(),
+    });
+
+    expect(code).toBe(CREDENTIAL_UNAVAILABLE_EXIT);
+    expect(spawn.spawnSync).not.toHaveBeenCalled();
+    expect(log.errors[0]).toContain("routes model names through the models block");
+    expect(log.errors[0]).toContain("provider z has no usable credential");
+  });
+
+  it("launches a route-by-name session whose routed providers all resolve, stripping the route flag into the session headers", () => {
+    const spawn = fakeSpawn();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({
+        [`${FAKE_HOME}/.agent-shim/config.json`]: {
+          models: { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } },
+        },
+        [`${FAKE_HOME}/.agent-shim/providers/z.json`]: {
+          displayName: "GLM",
+          baseUrl: "https://api.z.ai/api/anthropic",
+          credential: { sources: [{ env: "Z_API_TOKEN" }] },
+        },
+      }),
+      spawn,
+      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--route-by-name"]),
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+      frontdoor: fakeFrontDoorPort(),
+      credentials: fakeCredentials(),
+    });
+
+    const env = spawnedEnv(spawn);
+    expect(injectedSessionHeaders(env)).toContain("x-agent-shim-route-by-name: 1");
   });
 
   it("refuses loudly when headroom resolved on but no front-door port was wired", () => {
