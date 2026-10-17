@@ -9,11 +9,11 @@ import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ANTIGRAVITY_DEFAULT_TIER_MODELS,
   ANTIGRAVITY_EFFORTS,
-  ANTIGRAVITY_TIERS,
+  CLAUDE_TIERS,
   type AntigravityEffort,
   type AntigravityMode,
   type AntigravityProviderConfig,
-  type AntigravityTier,
+  type ClaudeTier,
 } from "../config/schema";
 import {
   isImageBlock,
@@ -39,7 +39,7 @@ export interface ResolvedAntigravityConfig {
   readonly mode: AntigravityMode;
   readonly defaultModel: string;
   /** Each tier's candidate models in preference order; a request is routed to the first whose quota is not spent. */
-  readonly models: Readonly<Record<AntigravityTier, readonly string[]>>;
+  readonly models: Readonly<Record<ClaudeTier, readonly string[]>>;
   /** Configured aliases: the lower-cased requested name each key matches in full, and its candidate models in preference order. */
   readonly aliases: ReadonlyMap<string, readonly string[]>;
   /** Whether a request whose tier has no quota left is served from the tiers below it. */
@@ -61,8 +61,8 @@ function candidatesOf(target: string | readonly string[]): readonly string[] {
   return typeof target === "string" ? [target] : target;
 }
 
-function isAntigravityTier(key: string): key is AntigravityTier {
-  return ANTIGRAVITY_TIERS.some((tier) => tier === key);
+function isAntigravityTier(key: string): key is ClaudeTier {
+  return CLAUDE_TIERS.some((tier) => tier === key);
 }
 
 /** Applies shipped defaults to a provider's `antigravity` configuration block. */
@@ -74,7 +74,7 @@ export function resolveAntigravityConfig(config: AntigravityProviderConfig | und
       aliases.set(key.toLowerCase(), candidatesOf(target));
     }
   }
-  const tierModel = (tier: AntigravityTier): readonly string[] => {
+  const tierModel = (tier: ClaudeTier): readonly string[] => {
     const target = overrides[tier];
     return target === undefined ? ANTIGRAVITY_DEFAULT_TIER_MODELS[tier] : candidatesOf(target);
   };
@@ -119,7 +119,7 @@ export function mapModel(requested: string, config: ResolvedAntigravityConfig): 
 }
 
 /** A requested name resolved to its candidates, and the tier it selected when it selected one. */
-function resolveName(requested: string, config: ResolvedAntigravityConfig): { readonly candidates: readonly string[]; readonly tier: AntigravityTier | undefined } {
+function resolveName(requested: string, config: ResolvedAntigravityConfig): { readonly candidates: readonly string[]; readonly tier: ClaudeTier | undefined } {
   const stripped = requested.toLowerCase().endsWith(CONTEXT_MARKER_1M) ? requested.slice(0, -CONTEXT_MARKER_1M.length) : requested;
   const lower = stripped.toLowerCase();
   const alias = config.aliases.get(lower);
@@ -129,19 +129,19 @@ function resolveName(requested: string, config: ResolvedAntigravityConfig): { re
   if (isBackendModelName(stripped)) {
     return { candidates: [stripped], tier: undefined };
   }
-  const tier = ANTIGRAVITY_TIERS.find((candidate) => lower.includes(candidate));
+  const tier = CLAUDE_TIERS.find((candidate) => lower.includes(candidate));
   return tier === undefined ? { candidates: [config.defaultModel], tier: undefined } : { candidates: config.models[tier], tier };
 }
 
 /**
- * The candidate lists a request is served from, best first: the name's own, and, when the configuration degrades down tiers and the name selected a tier, each lower tier's after it (`ANTIGRAVITY_TIERS` runs from the highest tier to the lowest). A later list is used only when every candidate of the lists before it has no quota left.
+ * The candidate lists a request is served from, best first: the name's own, and, when the configuration degrades down tiers and the name selected a tier, each lower tier's after it (`CLAUDE_TIERS` runs from the highest tier to the lowest). A later list is used only when every candidate of the lists before it has no quota left.
  */
 function candidateStages(requested: string, config: ResolvedAntigravityConfig): readonly (readonly string[])[] {
   const { candidates, tier } = resolveName(requested, config);
   if (!config.degradeDownTiers || tier === undefined) {
     return [candidates];
   }
-  return ANTIGRAVITY_TIERS.slice(ANTIGRAVITY_TIERS.indexOf(tier)).map((name) => config.models[name]);
+  return CLAUDE_TIERS.slice(CLAUDE_TIERS.indexOf(tier)).map((name) => config.models[name]);
 }
 
 /** The live quota a request is routed by: the account's bucket map and the instant it is read at. */

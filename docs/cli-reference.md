@@ -86,6 +86,7 @@ agent-shim provider add <name> --display-name <name> (--base-url <url> | --kind 
 agent-shim provider set <name> [--display-name <name>] ([--base-url <url>] | --kind codex) [--credential <source>]... [--credential-target <bearer|apiKey>] [--env KEY=VALUE]... [--unset-env KEY]...
 agent-shim provider set <name> [--credential-cache] [--credential-cache-ttl <ttl>] [--credential-cache-store <keychain|file>] [--no-credential-cache]
                                               [--codex-default-model <model>] [--codex-model <tier=model>]... [--codex-effort <none|low|medium|high>] [--codex-login <codex-cli|chatgpt-sign-in>]
+agent-shim provider add|set <name> [--picker-model <model=tier>]...   # models /model lists beside the tier models; set also takes [--unset-picker-model <model>]...
 agent-shim provider list [--json]
 agent-shim provider show <name> [--json]
 agent-shim provider remove <name> [--yes]

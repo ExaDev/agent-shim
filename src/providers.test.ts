@@ -191,6 +191,45 @@ describe("providers", () => {
     });
   });
 
+  describe("pickerModels", () => {
+    it("writes the declared models on any provider kind and reads them back", () => {
+      const declared = [{ model: "glm-5.3[1m]", tier: "opus" as const, label: "GLM 5.3" }, { model: "glm-air", tier: "haiku" as const }];
+      const http = addProvider(paths, "z", { ...zInput, pickerModels: declared });
+      const codex = addProvider(paths, "cx", { kind: "codex", displayName: "Codex", sources: [{ env: "KEY" }], pickerModels: declared });
+      expect(http.pickerModels).toEqual(declared);
+      expect(codex.pickerModels).toEqual(declared);
+      expect(readProvider(paths, "z")?.pickerModels).toEqual(declared);
+    });
+
+    it("writes no key when nothing is declared", () => {
+      expect(addProvider(paths, "z", { ...zInput, pickerModels: [] })).not.toHaveProperty("pickerModels");
+    });
+
+    it("refuses a model named twice and a tier that is not one of the four", () => {
+      expect(() => addProvider(paths, "z", { ...zInput, pickerModels: [{ model: "a", tier: "opus" }, { model: "a", tier: "haiku" }] })).toThrow(ConfigValidationError);
+      expect(() => addProvider(paths, "y", { ...zInput, pickerModels: [{ model: "a", tier: "giant" as never }] })).toThrow(ConfigValidationError);
+    });
+
+    it("merges added models over the existing ones per model, in place, and removes the ones named", () => {
+      addProvider(paths, "z", { ...zInput, pickerModels: [{ model: "a", tier: "opus" }, { model: "b", tier: "sonnet" }, { model: "c", tier: "haiku" }] });
+
+      const updated = updateProvider(paths, "z", { pickerModels: [{ model: "b", tier: "haiku" }, { model: "d", tier: "opus" }], unsetPickerModels: ["c"] });
+
+      expect(updated.pickerModels).toEqual([{ model: "a", tier: "opus" }, { model: "b", tier: "haiku" }, { model: "d", tier: "opus" }]);
+    });
+
+    it("drops the key when the last model is removed", () => {
+      addProvider(paths, "z", { ...zInput, pickerModels: [{ model: "a", tier: "opus" }] });
+      expect(updateProvider(paths, "z", { unsetPickerModels: ["a"] }).pickerModels).toBeUndefined();
+      expect(JSON.parse(fs.readFileSync(path.join(paths.providersDir, "z.json"), "utf8"))).not.toHaveProperty("pickerModels");
+    });
+
+    it("leaves the declared models alone when an update does not mention them", () => {
+      addProvider(paths, "z", { ...zInput, pickerModels: [{ model: "a", tier: "opus" }] });
+      expect(updateProvider(paths, "z", { displayName: "Other" }).pickerModels).toEqual([{ model: "a", tier: "opus" }]);
+    });
+  });
+
   describe("listProviders", () => {
     it("lists providers sorted by name and skips a file that fails validation or is in the old format", () => {
       addProvider(paths, "z", zInput);
