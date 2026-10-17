@@ -1,3 +1,9 @@
+## [11.43.1](https://github.com/ExaDev/agent-shim/compare/v11.43.0...v11.43.1) (2026-10-17)
+
+### Bug Fixes
+
+* **frontdoor:** route the names the models block defines from a provider-less session ([9338878](https://github.com/ExaDev/agent-shim/commit/9338878a2370eb8662ca0d85e3bab3314d91cc4d))
+
 ## [11.43.0](https://github.com/ExaDev/agent-shim/compare/v11.42.0...v11.43.0) (2026-10-17)
 
 ### Features
