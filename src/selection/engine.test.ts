@@ -130,7 +130,24 @@ describe("adaptive", () => {
   it("keeps the current member while it stands, rather than re-sending the conversation", () => {
     const selection = selectMember("adaptive", trio({ b: { isCurrent: true, pressure: 0.1 }, a: { pressure: 2 } }));
     expect(selection.ref).toBe("b");
-    expect(selection.reasons.join("\n")).toContain("not re-sent");
+    expect(selection.reasons.join("\n")).toContain("already on");
+  });
+
+  it("moves off the current member only when the gain beats the cost of re-sending the conversation", () => {
+    const pool = (): ReturnType<typeof trio> => trio({ b: { isCurrent: true, pressure: 1 }, a: { pressure: 1.5 } });
+    // Half again the allowance to spend against a small conversation: the gain (0.5) beats the cost (0.01).
+    const small = selectMember("adaptive", pool(), { needs: { ...needs, contextTokens: 10_000 } });
+    expect(small.ref).toBe("a");
+    expect(small.reasons.join("\n")).toContain("re-sending the conversation costs");
+    // The same gain against a conversation that half fills the largest window: the cost (0.5) is not beaten.
+    const large = selectMember("adaptive", pool(), { needs: { ...needs, contextTokens: 500_000 } });
+    expect(large.ref).toBe("b");
+    expect(large.reasons.join("\n")).toContain("does not beat");
+  });
+
+  it("stays on the current member when the request states no size or there is no pressure to compare", () => {
+    expect(selectMember("adaptive", trio({ b: { isCurrent: true, pressure: 1 }, a: { pressure: 9 } })).ref).toBe("b");
+    expect(selectMember("adaptive", trio({ b: { isCurrent: true }, a: { pressure: 9 } }), { needs }).ref).toBe("b");
   });
 
   it("falls back to ordered when nothing stands", () => {

@@ -62,6 +62,9 @@ export interface Selection {
 /** Below this observed success rate, `adaptive` treats a candidate as unhealthy and rules it out while others stand. */
 const ADAPTIVE_HEALTH_FLOOR = 0.5;
 
+/** The largest context window of the models served here, in tokens: the yardstick a re-sent conversation's cost is measured against, so a conversation that fills the largest window costs one whole unit to send again uncached. */
+const FULL_CONTEXT_TOKENS = 1_000_000;
+
 /** Compares two numbers that may be absent: an absent value always loses, whether the larger or the smaller wins, because an unknown signal must never outrank a measured one. */
 function compareMaybe(left: number | undefined, right: number | undefined, preferHigh: boolean): number {
   if (left === undefined && right === undefined) {
@@ -214,9 +217,6 @@ function selectAdaptive(candidates: readonly EvaluatedCandidate[], needs: Reques
     return { ref: fallback.ref, reasons: [...reasons, "nothing stands: serving by order"] };
   }
   const current = standing.find((entry) => entry.candidate.isCurrent);
-  if (current !== undefined) {
-    return { ref: current.candidate.ref, reasons: [...reasons, `${current.candidate.ref} stands and is the model this session is already on, so the conversation is not re-sent`] };
-  }
   const ranked = by(
     (left, right) =>
       compareMaybe(left.pressure, right.pressure, true) ||
@@ -225,8 +225,30 @@ function selectAdaptive(candidates: readonly EvaluatedCandidate[], needs: Reques
     standing.map((entry) => entry.candidate),
   );
   const best = ranked[0];
+  if (current !== undefined) {
+    return stayOrSwitch(current.candidate, best, needs, reasons);
+  }
   if (best === undefined) {
     return { ref: undefined, reasons };
   }
   return { ref: best.ref, reasons: [...reasons, `${best.ref} stands and carries the most allowance its reset would waste`] };
+}
+
+/**
+ * Whether a session on a standing member moves to the best candidate: only when the gain beats the cost of re-sending the conversation to a model that has none of it cached. The gain is the best candidate's pressure over the current one's, less one (how much more of the allowance a steady burn would leave unspent there, as a share), and the cost is the share of a full context window the conversation re-sends; a request that does not state its size, or a candidate pair with no pressure to compare, leaves the session where it is.
+ */
+function stayOrSwitch(current: SelectionCandidate, best: SelectionCandidate | undefined, needs: RequestNeeds | undefined, reasons: readonly string[]): Selection {
+  const stay = (why: string): Selection => ({ ref: current.ref, reasons: [...reasons, `${current.ref} stands and is the model this session is already on${why}`] });
+  if (best === undefined || best.ref === current.ref) {
+    return stay(", so the conversation is not re-sent");
+  }
+  if (needs === undefined || best.pressure === undefined || current.pressure === undefined || current.pressure <= 0) {
+    return stay(", and nothing says a move would pay for re-sending the conversation");
+  }
+  const gain = best.pressure / current.pressure - 1;
+  const cost = needs.contextTokens / FULL_CONTEXT_TOKENS;
+  if (gain > cost) {
+    return { ref: best.ref, reasons: [...reasons, `${best.ref} carries ${gain.toFixed(2)} more of the allowance its reset would waste, more than the ${cost.toFixed(2)} of a full context that re-sending the conversation costs`] };
+  }
+  return stay(`, and ${best.ref}'s gain of ${gain.toFixed(2)} does not beat the ${cost.toFixed(2)} of a full context that re-sending the conversation costs`);
 }

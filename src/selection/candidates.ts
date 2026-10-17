@@ -8,6 +8,9 @@ export interface CandidateWindowFacts {
   readonly hoursUntilReset: number;
 }
 
+/** The least share of a window's period that must have elapsed before its pace is projected forward: earlier than that, a single burst is most of what the window has seen, so the average pace says little and the window is not taken to run dry. */
+const MIN_PROJECTION_ELAPSED_SHARE = 0.1;
+
 /** The period each named window runs over, in hours: what turns "remaining allowance" into the pressure of a steady burn. */
 const WINDOW_PERIOD_HOURS: Readonly<Record<string, number>> = { fiveHour: 5, sevenDay: 168, extraUsage: 168 };
 
@@ -36,6 +39,16 @@ export function candidateOf(ref: string, order: number, facts: CandidateFacts, i
             return period > 0 && window.hoursUntilReset > 0 ? window.remaining / (window.hoursUntilReset / period) : Number.NaN;
           }),
         );
+  // The observed pace is the window's own: the allowance spent so far over the time elapsed since the window opened. Projected forward it says whether the remainder lasts to the reset, which is what separates a candidate with allowance left from one that will not have it when the request is served.
+  const runsDry = present.some((window) => {
+    const period = WINDOW_PERIOD_HOURS[window.name] ?? Number.NaN;
+    const elapsed = period - window.hoursUntilReset;
+    if (!(elapsed >= period * MIN_PROJECTION_ELAPSED_SHARE) || window.hoursUntilReset <= 0) {
+      return false;
+    }
+    const pace = (1 - window.remaining) / elapsed;
+    return pace > 0 && window.remaining / pace < window.hoursUntilReset;
+  });
   return {
     ref,
     order,
@@ -43,8 +56,7 @@ export function candidateOf(ref: string, order: number, facts: CandidateFacts, i
     ...(remainingAllowance === undefined ? {} : { remainingAllowance }),
     ...(hoursToReset === undefined ? {} : { hoursToReset }),
     ...(pressure === undefined || Number.isNaN(pressure) ? {} : { pressure }),
-    // Feasibility at the observed burn needs a burn rate no signal yet carries, so an available candidate counts as feasible and the run-dry projection waits on one.
-    feasible: available,
+    feasible: available && !runsDry,
     ...(facts.observation?.latencyMs === undefined ? {} : { latencyMs: facts.observation.latencyMs }),
     ...(facts.observation?.successRate === undefined ? {} : { successRate: facts.observation.successRate }),
     ...(facts.price === undefined || facts.observation?.tokenMix === undefined

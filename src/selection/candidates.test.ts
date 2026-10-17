@@ -25,6 +25,17 @@ describe("candidateOf", () => {
     expect(even.pressure).toBeCloseTo(1);
   });
 
+  it("marks a member infeasible when the pace its window has run at would exhaust the rest before the reset, and feasible when it would last", () => {
+    // Ten percent left with two of five hours gone: the pace so far (0.45 of the allowance an hour) leaves minutes, not the three hours still to run.
+    expect(candidateOf("z/1", 0, { quota: { fiveHour: { remaining: 0.1, hoursUntilReset: 3 } } }, false)).toMatchObject({ available: true, feasible: false });
+    // Sixty percent left with four of five hours gone: the pace (0.1 an hour) lasts six hours against one to run.
+    expect(candidateOf("z/1", 0, { quota: { fiveHour: { remaining: 0.6, hoursUntilReset: 1 } } }, false)).toMatchObject({ feasible: true });
+  });
+
+  it("does not project a window that has only just opened, where one burst is all the pace says", () => {
+    expect(candidateOf("z/1", 0, { quota: { fiveHour: { remaining: 0.1, hoursUntilReset: 4.9 } } }, false)).toMatchObject({ feasible: true });
+  });
+
   it("blends the configured price with the observed token mix", () => {
     // Three input tokens at 1 and one output token at 3: a quarter of the spend is the output price, so the blend is weighted by the mix.
     const INPUT_SHARE = 3;
