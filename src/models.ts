@@ -9,7 +9,63 @@ import { realFsPort } from "./realPorts";
 import { CLAUDE_TIERS, SELECTION_MODES, type SelectionModeName } from "./config/schema";
 import { UsageError } from "./cliError";
 import { relateModels } from "./models/identity";
-import { readModels, removeVirtualModel, setPrice, setTier, setVirtualModel, VirtualModelNotFoundError } from "./modelsStore";
+import { expandMembers, readModels, removeVirtualModel, setPrice, setTier, setVirtualModel, VirtualModelNotFoundError } from "./modelsStore";
+import { realFarmFs } from "./realPorts";
+import { readUsageSnapshot } from "./usage/read";
+import { quotaFactsOf } from "./usage/quotaFacts";
+import { createTargetObservationStore } from "./selection/targetStore";
+import { candidateOf, type CandidateWindowFacts } from "./selection/candidates";
+import type { LayoutPaths } from "./paths";
+import type { UsageSnapshot } from "./usage/schema";
+import { selectMember } from "./selection/engine";
+
+/** The quota facts for one provider, from the newest snapshot of any identity that records it: the identities this machine actually uses, each contributing what it last saw. */
+function providerQuotaOf(paths: LayoutPaths): (provider: string) => Readonly<Partial<Record<"fiveHour" | "sevenDay" | "extraUsage", CandidateWindowFacts>>> {
+  const newest = new Map<string, UsageSnapshot>();
+  for (const name of realFarmFs.readdir(paths.usageSnapshotsDir)) {
+    if (!name.endsWith(".json")) {
+      continue;
+    }
+    const identity = name.slice(0, -".json".length);
+    const snapshot = readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity);
+    if (snapshot === undefined) {
+      continue;
+    }
+    for (const provider of Object.keys(snapshot.providers)) {
+      const known = newest.get(provider);
+      if (known === undefined || snapshot.updatedAt.localeCompare(known.updatedAt) > 0) {
+        newest.set(provider, snapshot);
+      }
+    }
+  }
+  return (provider) => {
+    const snapshot = newest.get(provider);
+    return snapshot === undefined ? {} : quotaFactsOf(snapshot.providers[provider]?.rateLimit?.unified, Date.now());
+  };
+}
+
+/** Explains one virtual model's choice: the member its mode picks over the live signals, and why each candidate stands where it does. */
+function explainVirtualModel(paths: LayoutPaths, name: string): void {
+  const models = readModels(paths);
+  const definition = models?.virtual?.[name];
+  if (definition === undefined) {
+    throw new UsageError(`No virtual model named "${name}".`);
+  }
+  const quotaOf = providerQuotaOf(paths);
+  const observations = createTargetObservationStore(realFarmFs, paths);
+  const candidates = expandMembers(name, models)
+    .filter((member) => !member.startsWith("acct:") && !member.startsWith("family:"))
+    .map((ref, order) => {
+      const [provider] = ref.split("/");
+      return candidateOf(ref, order, { quota: quotaOf(provider ?? ""), ...(observations.observation(ref) === undefined ? {} : { observation: observations.observation(ref) }), ...(models?.prices?.[ref] === undefined ? {} : { price: models.prices[ref] }) }, false);
+    });
+  const evaluated = candidates.map((candidate) => ({ candidate, capabilities: { vision: true, tools: true, thinking: true } }));
+  const selection = selectMember(definition.mode, evaluated, {});
+  console.log(`${name} (${definition.mode}) chooses ${selection.ref ?? "nothing"}:`);
+  for (const line of selection.reasons) {
+    console.log(`  ${line}`);
+  }
+}
 
 /** One model a provider offers, as `model match` names it. */
 export interface ProviderModel {
@@ -58,6 +114,15 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
   const modelsCommand = program
     .command("model")
     .description("Define and inspect the models the providers offer and the virtual models chosen among them.");
+  withExamples(
+    modelsCommand
+      .command("explain <name>")
+      .description("Show which member a virtual model's mode picks over the live signals, and why each candidate stands where it does.")
+      .action((name: string) => {
+        explainVirtualModel(paths, name);
+      }),
+    ["agent-shim model explain fast"],
+  );
   withExamples(modelsCommand, ["agent-shim model match", "agent-shim model add fast --mode soonest-reset --member z/glm-5.3 --member m/MiniMax-M3"]);
   withExamples(
     modelsCommand.command("match").description("List every model every provider offers, grouped into the ones that are the same model across providers, with the pairs that are merely similar named beside them.").option("--json", "Print the match as JSON."),

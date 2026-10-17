@@ -42,6 +42,8 @@ export interface UsageStoreDeps {
    * Told every snapshot the store writes, after the write succeeded, when the door wires its event backbone's usage source to this store; absent otherwise, so the store stays a plain filesystem writer for every other embedder. One event per write is the honest unit: the consumer reads the change or the reset out of the payload itself.
    */
   readonly publish?: (snapshot: UsageSnapshot) => void;
+  /** Sees every record as it is written, after validation: what keeps an observation store (the per-target latency, success and token mix a virtual model's selection ranks on) live without reading the log back. */
+  readonly onRecord?: (record: UsageRecord) => void;
 }
 
 /** The store's writer. */
@@ -161,6 +163,7 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
         prunedDay = day;
       }
       fs.appendFilePrivate(path.join(paths.usageLogDir, segmentName(day, deps.pid)), `${JSON.stringify(record)}\n`);
+      deps.onRecord?.(record);
       if (record.identity !== undefined) {
         rewriteSnapshot(record.identity, (current) => ({ ...current?.providers, [record.provider]: foldProviderState(current?.providers[record.provider], record) }));
       }

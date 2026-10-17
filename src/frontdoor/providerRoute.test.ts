@@ -604,7 +604,43 @@ describe("a router provider", () => {
       });
       expect(response.status).toBe(HTTP_STATUS.ok);
       expect(upstream.seen()[0]?.url).toContain("/v1/messages");
-      expect((JSON.parse(upstream.seen()[0]?.body ?? "{}") as { model?: string }).model).toBe("z/glm-5.3");
+      // The qualified name is rewritten to the model name the target serves it under: the provider receives `glm-5.3`, not the routing qualifier.
+      expect((JSON.parse(upstream.seen()[0]?.body ?? "{}") as { model?: string }).model).toBe("glm-5.3");
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("chooses a virtual model's member through its selection mode, skipping the member whose quota is spent, and serves the member's own model name", async () => {
+    const router = { kind: "router", displayName: "Router" };
+    const spent = await bodyRecordingUpstream();
+    const fresh = await bodyRecordingUpstream();
+    const files: Record<string, unknown> = {
+      [`${PROVIDERS_DIR}/router.json`]: router,
+      [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: `http://127.0.0.1:${String(spent.port)}`, credential: { sources: [{ literal: "z-token" }] } },
+      [`${PROVIDERS_DIR}/m.json`]: { displayName: "M", baseUrl: `http://127.0.0.1:${String(fresh.port)}`, credential: { sources: [{ literal: "m-token" }] } },
+    };
+    const models: ModelsConfig = { virtual: { fast: { mode: "ordered", members: ["z/one", "m/two"] } } };
+    const snapshot: UsageSnapshot = { schemaVersion: 1, identity: "work", updatedAt: new Date(0).toISOString(), providers: { z: { lastRequestAt: new Date(0).toISOString(), lastStatus: 200, rateLimit: { observedAt: new Date(0).toISOString(), headers: {}, unified: { sevenDay: { utilization: 1, resetsAt: new Date(DAY_RESET_MS).toISOString(), status: "rejected" } } } } } };
+    const resolve = createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeCredentials(), models: () => models, usageSnapshotOf: (identity) => (identity === "work" ? snapshot : undefined) });
+    const server = createFrontDoorServer(
+      async (pipelineRequest) => {
+        await serveRouted(pipelineRequest, { resolveRoute: resolve, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
+      },
+      () => undefined,
+    );
+    const handle = await listenFrontDoor(server);
+    const door = { url: `http://127.0.0.1:${String(handle.port)}`, close: handle.close };
+    try {
+      const response = await fetch(`${door.url}/providers/router/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests", "x-agent-shim-identity": "work" },
+        body: JSON.stringify({ model: "fast", max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
+      });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(spent.seen()).toEqual([]);
+      expect(fresh.seen()).toHaveLength(1);
+      expect((JSON.parse(fresh.seen()[0]?.body ?? "{}") as { model?: string }).model).toBe("two");
     } finally {
       await door.close();
     }
