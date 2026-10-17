@@ -491,7 +491,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   // A session that routes by model name (the flag, or a router provider) lists the whole catalogue instead: its virtual models first, then every provider's models qualified.
   const routesByName = flags.routeByName || (selectedProvider !== undefined && isRouterProvider(selectedProvider.definition));
   const pickerSettings = routesByName
-    ? modelPickerSettingsFromRows(routedModelRows(readModels(paths) ?? {}, listProviders(paths).map((entry): readonly [string, Provider] => [entry.name, entry.provider])))
+    ? modelPickerSettingsFromRows(routedModelRows(readModels(paths) ?? {}, listProviders(paths).map((entry): readonly [string, Provider] => [entry.name, entry.provider])), selectedProvider !== undefined)
     : selectedProvider === undefined
       ? undefined
       : modelPickerSettings(selectedProvider.definition, catalogue?.models);

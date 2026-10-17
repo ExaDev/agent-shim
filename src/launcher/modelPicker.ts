@@ -190,10 +190,12 @@ export function routedModelRows(models: ModelsConfig, providers: readonly (reado
  * The Claude Code settings, as the JSON `--settings` takes, that make `/model` list `provider`'s real models in place of Claude Code's own names, or `undefined` when the provider names none. The built-in lineup is replaced because it would show a Claude name for a model the provider serves under another. Choosing a row sends that model's name verbatim, which every translator passes through, so a person can pick a backend model directly instead of going through a tier.
  */
 export function modelPickerSettings(provider: Provider, catalogue: readonly CatalogueModel[] = []): string | undefined {
-  return modelPickerSettingsFromRows(providerModelRows(provider, catalogue));
+  return modelPickerSettingsFromRows(providerModelRows(provider, catalogue), true);
 }
 
-/** The settings from rows already built, so a routing session's catalogue rows take the same shape a provider's own do. */
-export function modelPickerSettingsFromRows(options: readonly ModelPickerRow[]): string | undefined {
-  return options.length === 0 ? undefined : JSON.stringify({ modelPicker: { options, replaceBuiltInOptions: true } });
+/**
+ * The settings from rows already built, so a routing session's catalogue rows take the same shape a provider's own do. A provider session replaces the built-in lineup (it would show a Claude name for a model the provider serves under another), while a provider-less session appends: its bare names still reach Anthropic, so Claude Code's own rows stay ahead of the qualified ones a person can route by.
+ */
+export function modelPickerSettingsFromRows(options: readonly ModelPickerRow[], replaceBuiltInOptions: boolean): string | undefined {
+  return options.length === 0 ? undefined : JSON.stringify({ modelPicker: { options, replaceBuiltInOptions } });
 }

@@ -271,22 +271,22 @@ export function createProviderRouteResolver(deps: {
         routes = undefined;
         isRouter = false;
       }
-      // A router resolves each request's model name through the models block to a target provider, whose own kind handling and credential then serve it: the same one-scan, one-rewrite shape the `routes` list below uses.
-      // A session that asked to route by name gets the same resolution on the provider it launched on: a qualified model name leaves that provider for the one that serves it.
-      const routesByName = isRouter || (current.session.routeByName && providerName !== undefined);
+      // A router resolves each request's model name through the models block to a target provider, whose own kind handling and credential then serve it: the same one-scan, one-rewrite shape the `routes` list below uses. A session that asked to route by name gets the same resolution on the provider it launched on: a qualified model name leaves that provider for the one that serves it. A provider-less (OAuth) session gets it too, but qualified names only: its bare names are Claude Code's own and still go to Anthropic, and the Remote Control family of paths is never a provider's to serve.
+      const routesByName = (isRouter || current.session.routeByName) && !isRcSelfHostPath(path);
       if (routesByName) {
         const scan = await scanRequestHead(current, false);
         if (scan.replayed !== undefined) {
           replay = scan.replayed;
         }
-        const target = scan.model === undefined || providerName === undefined ? undefined : resolveModelTarget(scan.model, deps.models?.(), isRouter || current.session.routeByName);
+        const target = scan.model === undefined ? undefined : resolveModelTarget(scan.model, deps.models?.(), isRouter || (current.session.routeByName && providerName !== undefined));
         if (target === providerName) {
           // The qualified name points back at the provider the session is already on: nothing to rewrite, serve it here.
           const resolution = resolve(current);
           return resolution.ok && replay !== undefined ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } } : resolution.ok ? serveScoped(resolution) : resolution;
         }
         if (target !== undefined) {
-          const rest = path.slice(`${PROVIDER_PATH_PREFIX}${encodeURIComponent(providerName ?? "")}`.length);
+          const scopedPrefix = providerName === undefined ? undefined : `${PROVIDER_PATH_PREFIX}${encodeURIComponent(providerName)}`;
+          const rest = scopedPrefix !== undefined && path.startsWith(scopedPrefix) ? path.slice(scopedPrefix.length) : path;
           const query = current.url.includes("?") ? current.url.slice(current.url.indexOf("?")) : "";
           const carried = scan.replayed ?? current;
           current = { ...current, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(target)}${rest}${query}`, body: carried.body, headers: carried.headers };
