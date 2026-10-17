@@ -175,7 +175,7 @@ export function matchingRules(flattened: FlattenedCascade, relPath: string): Com
   return matches.sort((a, b) => compareSpecificity(b, a));
 }
 
-/** Merges one layer's models into the accumulated block: every definition the layer names is set (or, when `null`, removed), and `hide`/`show` replace what the shallower layers listed. */
+/** Merges one layer's models into the accumulated block: every definition the layer names is set (or, when `null`, removed), `hide`/`show` replace what the shallower layers listed, and identity assertions accumulate across layers. */
 function mergeModels(current: ModelsConfig | undefined, layer: ModelsLayer): ModelsConfig | undefined {
   const pieces = { ...(current ?? {}) };
   if (layer.virtual !== undefined) {
@@ -226,17 +226,42 @@ function mergeModels(current: ModelsConfig | undefined, layer: ModelsLayer): Mod
   if (layer.show !== undefined) {
     pieces.show = layer.show;
   }
+  // Identity assertions accumulate: a statement made at any depth that two refs are one model, or two models, stands unless a deeper layer states the opposite of the same pair, which would be a contradiction the doctor reports rather than a merge rule.
+  if (layer.same !== undefined) {
+    pieces.same = [...(current?.same ?? []), ...layer.same.filter((group) => !(current?.same ?? []).some((known) => known.length === group.length && known.every((ref, index) => ref === group[index])))];
+  }
+  if (layer.distinct !== undefined) {
+    pieces.distinct = [...(current?.distinct ?? []), ...layer.distinct.filter(([left, right]) => !(current?.distinct ?? []).some(([a, b]) => a === left && b === right))];
+  }
+  if (layer.families !== undefined) {
+    const families: NonNullable<ModelsConfig["families"]> = {};
+    for (const [key, settings] of Object.entries(current?.families ?? {})) {
+      // A null in this layer removes the inherited settings; an absent key leaves them standing.
+      if (layer.families[key] === undefined) {
+        families[key] = settings;
+      }
+    }
+    for (const [key, settings] of Object.entries(layer.families)) {
+      if (settings !== null) {
+        families[key] = settings;
+      }
+    }
+    pieces.families = families;
+  }
   const merged = modelsOf(pieces);
   return Object.keys(merged).length === 0 ? undefined : merged;
 }
 
 /** Builds the merged block's sub-objects into a fresh `ModelsConfig`, dropping the pieces nothing filled. */
-function modelsOf(pieces: { virtual?: NonNullable<ModelsConfig["virtual"]>; tiers?: NonNullable<ModelsConfig["tiers"]>; prices?: NonNullable<ModelsConfig["prices"]>; hide?: readonly string[]; show?: readonly string[] }): ModelsConfig {
+function modelsOf(pieces: { virtual?: NonNullable<ModelsConfig["virtual"]>; tiers?: NonNullable<ModelsConfig["tiers"]>; prices?: NonNullable<ModelsConfig["prices"]>; hide?: readonly string[]; show?: readonly string[]; same?: NonNullable<ModelsConfig["same"]>; distinct?: NonNullable<ModelsConfig["distinct"]>; families?: NonNullable<ModelsConfig["families"]> }): ModelsConfig {
   return {
     ...(pieces.virtual === undefined || Object.keys(pieces.virtual).length === 0 ? {} : { virtual: pieces.virtual }),
     ...(pieces.tiers === undefined || Object.keys(pieces.tiers).length === 0 ? {} : { tiers: pieces.tiers }),
     ...(pieces.prices === undefined || Object.keys(pieces.prices).length === 0 ? {} : { prices: pieces.prices }),
     ...(pieces.hide === undefined || pieces.hide.length === 0 ? {} : { hide: [...pieces.hide] }),
     ...(pieces.show === undefined || pieces.show.length === 0 ? {} : { show: [...pieces.show] }),
+    ...(pieces.same === undefined || pieces.same.length === 0 ? {} : { same: pieces.same.map((group) => [...group]) }),
+    ...(pieces.distinct === undefined || pieces.distinct.length === 0 ? {} : { distinct: pieces.distinct.map(([left, right]): [string, string] => [left, right]) }),
+    ...(pieces.families === undefined || Object.keys(pieces.families).length === 0 ? {} : { families: pieces.families }),
   };
 }

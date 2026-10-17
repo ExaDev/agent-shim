@@ -156,6 +156,21 @@ describe("phase one: models", () => {
     expect(flattened.models).toEqual({ virtual: { fast: { mode: "ordered", members: ["z/1"] } }, tiers: { opus: "fast" } });
   });
 
+  it("accumulates identity assertions across layers without repeating one, and merges family settings per key with null removing", () => {
+    const flattened = flattenLayers(
+      [
+        withModels({ same: [["a/x", "b/y"]], distinct: [["a/x", "c/z"]], families: { "glm-5-1": { mode: "ordered" }, gone: { vision: false } } }),
+        withModels({ same: [["a/x", "b/y"], ["d/p", "e/q"]], distinct: [["a/x", "c/z"], ["f/m", "g/n"]], families: { "glm-5-1": { mode: "cheapest", names: ["o/odd"] }, gone: null } }),
+      ],
+      { home: FAKE_HOME },
+    );
+    expect(flattened.models).toEqual({
+      same: [["a/x", "b/y"], ["d/p", "e/q"]],
+      distinct: [["a/x", "c/z"], ["f/m", "g/n"]],
+      families: { "glm-5-1": { mode: "cheapest", names: ["o/odd"] } },
+    });
+  });
+
   it("is absent when no layer carries models, and a layer removing everything empties the block", () => {
     expect(flattenLayers([layer(0)], { home: FAKE_HOME }).models).toBeUndefined();
     expect(

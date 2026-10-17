@@ -489,6 +489,19 @@ const ModelPricesSchema = z.strictObject({
   output: z.number().positive(),
 });
 
+/**
+ * One family's own settings, keyed by the family's canonical key (`glm-5-1`, or `claude-opus-5-5+high` for one variant of a family). `names` pins refs or bare model names into the family where the normaliser cannot know they belong; `mode` is how a picker row that selects the whole family chooses among its targets (`ordered` when absent); the capability flags and `context` are shared by every target of the family, so `adaptive` reads the family rather than a hand-tagged target. A capability left out is taken as supported.
+ */
+const FamilySettingsSchema = z.strictObject({
+  names: z.array(z.string().min(1)).optional(),
+  mode: z.enum(SELECTION_MODES).optional(),
+  context: z.number().int().positive().optional(),
+  vision: z.boolean().optional(),
+  tools: z.boolean().optional(),
+  thinking: z.boolean().optional(),
+});
+export type FamilySettings = z.infer<typeof FamilySettingsSchema>;
+
 /** The global `models` block: the virtual models, the tier pointers, the prices and the visibility filter. */
 const ModelsConfigSchema = z.strictObject({
   /** Virtual models, by name. */
@@ -506,6 +519,12 @@ const ModelsConfigSchema = z.strictObject({
   hide: z.array(z.string().min(1)).optional(),
   /** When set, the only model refs visible; everything else is hidden. */
   show: z.array(z.string().min(1)).optional(),
+  /** Assertions that each group of refs is one model under several names, overriding what the names alone say. */
+  same: z.array(z.array(z.string().min(1)).min(2)).optional(),
+  /** Assertions that each pair of refs is two models however alike their names look. */
+  distinct: z.array(z.tuple([z.string().min(1), z.string().min(1)])).optional(),
+  /** Per-family settings and the names the normaliser cannot know, by family key. */
+  families: z.record(z.string().min(1), FamilySettingsSchema).optional(),
 });
 export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
 
@@ -525,6 +544,9 @@ const ModelsLayerSchema = z.strictObject({
   prices: z.record(z.string().min(1), z.union([ModelPricesSchema, z.null()])).optional(),
   hide: z.array(z.string().min(1)).optional(),
   show: z.array(z.string().min(1)).optional(),
+  same: z.array(z.array(z.string().min(1)).min(2)).optional(),
+  distinct: z.array(z.tuple([z.string().min(1), z.string().min(1)])).optional(),
+  families: z.record(z.string().min(1), z.union([FamilySettingsSchema, z.null()])).optional(),
 });
 export type ModelsLayer = z.infer<typeof ModelsLayerSchema>;
 

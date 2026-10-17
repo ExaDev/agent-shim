@@ -2,14 +2,12 @@ import type { Command } from "commander";
 
 import { printJson, reportMutation, withExamples, confirmRemoval, type CommandDeps } from "./cli/commandDeps";
 import { collectRepeated } from "./cli/parsers";
-import { listProviders } from "./providersStore";
-import { providerModelRows } from "./launcher/modelPicker";
-import { catalogueCachePath, parseCatalogueCache } from "./providerCatalogue";
-import { realFsPort } from "./realPorts";
-import { CLAUDE_TIERS, SELECTION_MODES, type SelectionModeName } from "./config/schema";
+import { providerModels, type ProviderModel } from "./models/targets";
+import { CLAUDE_TIERS, SELECTION_MODES, type ModelsConfig, type SelectionModeName } from "./config/schema";
 import { UsageError } from "./cliError";
+import { buildFamilies } from "./models/families";
 import { relateModels } from "./models/identity";
-import { expandMembers, readModels, removeVirtualModel, setPrice, setTier, setVirtualModel, VirtualModelNotFoundError } from "./modelsStore";
+import { addDistinctPair, addSameGroup, expandMembers, readModels, removeAssertionsNaming, removeVirtualModel, setFamily, setPrice, setTier, setVirtualModel, VirtualModelNotFoundError } from "./modelsStore";
 import { realFarmFs } from "./realPorts";
 import { readUsageSnapshot } from "./usage/read";
 import { quotaFactsOf } from "./usage/quotaFacts";
@@ -81,31 +79,16 @@ function explainVirtualModel(paths: LayoutPaths, name: string): void {
   }
 }
 
-/** One model a provider offers, as `model match` names it. */
-export interface ProviderModel {
-  readonly provider: string;
-  readonly model: string;
-}
-
-/** Every model the defined providers offer, from the same rows a launch's /model list is built from: tier models, aliases, declared picker models and the fetched catalogues. */
-function providerModels(paths: Parameters<typeof listProviders>[0]): readonly ProviderModel[] {
-  return listProviders(paths).flatMap((entry) => {
-    const catalogue = parseCatalogueCache(realFsPort.readFileUtf8(catalogueCachePath(paths, entry.name)));
-    return providerModelRows(entry.provider, catalogue?.models).map((row) => ({ provider: entry.name, model: row.model }));
-  });
-}
-
-/** Groups the models whose names are the same model, and lists the pairs that are merely similar, across every provider given. */
-export function matchModels(models: readonly ProviderModel[]): { readonly same: readonly (readonly ProviderModel[])[]; readonly similar: readonly [ProviderModel, ProviderModel][] } {
-  const same: ProviderModel[][] = [];
-  for (const model of models) {
-    const group = same.find((candidates) => candidates.some((other) => relateModels(other.model, model.model) === "same" && other.provider !== model.provider));
-    if (group === undefined) {
-      same.push([model]);
-    } else {
-      group.push(model);
-    }
-  }
+/** Groups the models whose names are the same model across providers (a family, with the user's assertions applied), and lists the pairs that are merely similar, across every provider given. */
+export function matchModels(models: readonly ProviderModel[], config?: ModelsConfig): { readonly same: readonly (readonly ProviderModel[])[]; readonly similar: readonly [ProviderModel, ProviderModel][] } {
+  const refOf = (model: ProviderModel): string => `${model.provider}/${model.model}`;
+  const byRef = new Map(models.map((model) => [refOf(model), model]));
+  const families = buildFamilies(models.map(refOf), config);
+  const familyOf = new Map(families.flatMap((family) => family.refs.map((ref) => [ref, family] as const)));
+  const same = families
+    .map((family) => family.refs.flatMap((ref) => byRef.get(ref) ?? []))
+    .filter((group) => new Set(group.map((entry) => entry.provider)).size > 1);
+  const distinct = config?.distinct ?? [];
   const similar: [ProviderModel, ProviderModel][] = [];
   for (let outer = 0; outer < models.length; outer += 1) {
     for (let inner = outer + 1; inner < models.length; inner += 1) {
@@ -114,12 +97,13 @@ export function matchModels(models: readonly ProviderModel[]): { readonly same: 
       if (left === undefined || right === undefined || left.provider === right.provider) {
         continue;
       }
-      if (relateModels(left.model, right.model) === "similar" && !same.some((group) => group.includes(left) && group.includes(right))) {
+      const asserted = distinct.some(([a, b]) => (a === refOf(left) && b === refOf(right)) || (a === refOf(right) && b === refOf(left)));
+      if (!asserted && familyOf.get(refOf(left)) !== familyOf.get(refOf(right)) && relateModels(left.model, right.model) === "similar") {
         similar.push([left, right]);
       }
     }
   }
-  return { same: same.filter((group) => group.length > 1), similar };
+  return { same, similar };
 }
 
 /** Registers the `agent-shim model` subcommand tree. */
@@ -143,7 +127,7 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
     ["agent-shim model match"],
   ).action((options: Readonly<{ json?: boolean }>) => {
     const models = providerModels(paths);
-    const { same, similar } = matchModels(models);
+    const { same, similar } = matchModels(models, readModels(paths));
     if (options.json === true) {
       printJson({ models, same, similar });
       return;
@@ -239,7 +223,65 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
     console.log(options.clear === true ? `Removed prices for ${ref}.` : `Prices for ${ref}: ${String(options.input)} in, ${String(options.output)} out per million tokens.`);
   });
   withExamples(
-    modelsCommand.command("list").description("List the defined virtual models, the tier pointers and the visibility filter.").option("--json", "Print the models block as JSON."),
+    modelsCommand.command("same <ref> <ref...>").description("Assert that these refs are one model under several names, which makes them one family a mode can route across."),
+    ["agent-shim model same z/glm-5.1 o/zai-glm-51"],
+  ).action((first: string, rest: readonly string[]) => {
+    addSameGroup(paths, [first, ...rest]);
+    console.log(`Asserted one model: ${[first, ...rest].join(" = ")}`);
+  });
+  withExamples(
+    modelsCommand.command("distinct <left> <right>").description("Assert that two refs are two models, however alike their names look, so they are never put in one family."),
+    ["agent-shim model distinct z/glm-5.1 s/hf:zai-org/GLM-5.1"],
+  ).action((left: string, right: string) => {
+    addDistinctPair(paths, left, right);
+    console.log(`Asserted two models: ${left} / ${right}`);
+  });
+  withExamples(
+    modelsCommand.command("unassert <ref>").description("Remove every identity assertion that names this ref."),
+    ["agent-shim model unassert z/glm-5.1"],
+  ).action((ref: string) => {
+    const removed = removeAssertionsNaming(paths, ref);
+    console.log(removed === 0 ? `No assertion names ${ref}.` : `Removed ${String(removed)} assertion${removed === 1 ? "" : "s"} naming ${ref}.`);
+  });
+  withExamples(
+    modelsCommand
+      .command("family <key>")
+      .description("Set one family's own settings: how a row that selects the whole family chooses, the names the normaliser cannot know, and what every target of it can do.")
+      .option("--mode <mode>", "How a row selecting the whole family chooses among its targets.", (value: string) => asMode(value))
+      .option("--name <ref>", "Pin a ref or bare model name into the family (repeatable).", collectRepeated)
+      .option("--context <tokens>", "The family's context window, in tokens.", (value: string) => asPositiveInteger(value))
+      .option("--vision", "Every target of the family accepts images.")
+      .option("--no-vision", "No target of the family accepts images.")
+      .option("--tools", "Every target of the family accepts tools.")
+      .option("--no-tools", "No target of the family accepts tools.")
+      .option("--thinking", "Every target of the family thinks.")
+      .option("--no-thinking", "No target of the family thinks.")
+      .option("--clear", "Remove the family's settings instead."),
+    ["agent-shim model family glm-5-1 --mode cheapest --no-vision", "agent-shim model family claude-opus-5-5 --name o/opus-latest"],
+  ).action((key: string, options: Readonly<{ mode?: SelectionModeName; name?: string[]; context?: number; vision?: boolean; tools?: boolean; thinking?: boolean; clear?: boolean }>) => {
+    if (options.clear === true) {
+      setFamily(paths, key, undefined);
+      console.log(`Removed the settings of family ${key}.`);
+      return;
+    }
+    const existing = readModels(paths)?.families?.[key] ?? {};
+    const settings = {
+      ...existing,
+      ...(options.mode === undefined ? {} : { mode: options.mode }),
+      ...(options.name === undefined ? {} : { names: [...new Set([...(existing.names ?? []), ...options.name])] }),
+      ...(options.context === undefined ? {} : { context: options.context }),
+      ...(options.vision === undefined ? {} : { vision: options.vision }),
+      ...(options.tools === undefined ? {} : { tools: options.tools }),
+      ...(options.thinking === undefined ? {} : { thinking: options.thinking }),
+    };
+    if (Object.keys(settings).length === 0) {
+      throw new UsageError("Nothing to set: pass --mode, --name, --context, a capability flag, or --clear.");
+    }
+    setFamily(paths, key, settings);
+    console.log(`Family ${key}: ${JSON.stringify(settings)}`);
+  });
+  withExamples(
+    modelsCommand.command("list").description("List the defined virtual models, the tier pointers, the visibility filter, the identity assertions and the family settings.").option("--json", "Print the models block as JSON."),
     ["agent-shim model list"],
   ).action((options: Readonly<{ json?: boolean }>) => {
     const found = readModels(paths);
@@ -263,7 +305,25 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
     if (found.show !== undefined) {
       console.log(`visible only: ${found.show.join(", ")}`);
     }
+    for (const group of found.same ?? []) {
+      console.log(`same: ${group.join(" = ")}`);
+    }
+    for (const [left, right] of found.distinct ?? []) {
+      console.log(`distinct: ${left} / ${right}`);
+    }
+    for (const [key, settings] of Object.entries(found.families ?? {})) {
+      console.log(`family ${key}: ${JSON.stringify(settings)}`);
+    }
   });
+}
+
+/** Parses a count of tokens, refusing anything that is not a positive whole number. */
+function asPositiveInteger(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new UsageError(`"${value}" is not a token count: pass a positive whole number.`);
+  }
+  return parsed;
 }
 
 /** Parses a mode name, refusing an unknown one with the known names. */
