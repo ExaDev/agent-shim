@@ -124,6 +124,20 @@ describe("runLauncher with a pool selector", () => {
     expect(pool?.detail).toContain("7d 60% used");
   });
 
+  it("lists every member the pick ranked, with the one picked marked, when the launch asks to explain it", () => {
+    const { log } = launch({ argv: ["@pool:main", "--explain", "--print"] });
+
+    const notes = reportedRow(log, "pool")?.notes ?? [];
+    expect(notes.filter((line) => /^\d+\. /.test(line))).toEqual([expect.stringContaining("work [scored"), expect.stringContaining("personal [scored")]);
+    expect(notes[0]).toContain("(picked)");
+    expect(notes.join("\n")).not.toContain("personal [scored score 0.00 by 7d reset] (picked)");
+    expect(notes[1]).toContain("7d 60% used");
+  });
+
+  it("names no member beyond the one picked when the launch does not ask", () => {
+    expect(reportedRow(launch().log, "pool")).not.toHaveProperty("notes");
+  });
+
   it("takes a pool from AGENT_SHIM_IDENTITY and from --identity", () => {
     expect(spawnedEnv(launch({ argv: ["--print"], env: { AGENT_SHIM_IDENTITY: "pool:main" } }).spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);
     expect(spawnedEnv(launch({ argv: ["--identity", "pool:main", "--print"] }).spawn).CLAUDE_CONFIG_DIR).toBe(`${paths.identitiesDir}/work`);

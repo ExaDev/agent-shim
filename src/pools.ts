@@ -8,6 +8,7 @@ import { readActiveIdentity, requireIdentityNames, useIdentity } from "./identit
 import { addPool, changePool, isPoolChange, poolPolicyOf, readPools, removePool, requirePool } from "./poolStore";
 import { poolMemberIdentity } from "./config/schema";
 import { realFarmFs, realFsPort } from "./realPorts";
+import { candidateHeading } from "./usage/candidateText";
 import { formatAge } from "./usage/preflight";
 import { collectPoolPick } from "./poolPickReport";
 import type { PoolPickReport } from "./usage/pickReportSchema";
@@ -18,9 +19,7 @@ function formatPoolPick(report: PoolPickReport, nowMs: number): string[] {
       ? `Pool ${report.pool}: every member is refused right now${report.earliestReturn === undefined ? "" : `; ${report.earliestReturn.identity} returns at ${report.earliestReturn.at} (in ${formatAge(Date.parse(report.earliestReturn.at) - nowMs)})`}`
       : `Pool ${report.pool}: a launch from ${report.directory} would run as ${report.pick}`;
   const rows = report.candidates.map((candidate, index) => {
-    const score = candidate.score === undefined ? "" : ` score ${candidate.score.toFixed(2)}${candidate.scoreWindow === "fiveHour" ? " by 5h reset" : " by 7d reset"}`;
-    const dry = candidate.feasible ? "" : " (5h would run dry)";
-    return `  ${String(index + 1)}. ${candidate.identity} [${candidate.class}${score}]${dry}\n     ${candidate.reasons.join("; ")}`;
+    return `  ${String(index + 1)}. ${candidate.identity} ${candidateHeading(candidate)}\n     ${candidate.reasons.join("; ")}`;
   });
   return [head, ...rows, ...report.missing.map((name) => `  (skipped: ${name} is not an identity)`), ...(report.stickyProblem === undefined ? [] : [`Note: ${report.stickyProblem}; the last-pick record was ignored.`])];
 }

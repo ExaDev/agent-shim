@@ -119,6 +119,8 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
       .option("--no-launch-delay", "Clear this profile's launch delay.")
       .option("--launch-pause", "Launches under this profile wait for a key press after the launcher's own output before starting claude.")
       .option("--no-launch-pause", "Launches under this profile start claude without waiting for a key press.")
+      .option("--launch-explain", "Launches under this profile that pick from a pool list every member the pick ranked and why, in the launcher's report.")
+      .option("--no-launch-explain", "Launches under this profile name only the member a pool pick chose.")
       .option("--json", "Print the result as JSON.")
       .action(async (name: string, allOptions: ProfileSetOptions) => {
         const { json, ...options } = allOptions;

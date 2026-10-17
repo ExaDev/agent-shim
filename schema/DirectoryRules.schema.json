@@ -138,6 +138,9 @@
               },
               "pause": {
                 "type": "boolean"
+              },
+              "explain": {
+                "type": "boolean"
               }
             },
             "additionalProperties": false

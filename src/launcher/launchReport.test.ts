@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import type { Candidate } from "../usage/pick";
 import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows } from "./launchReport";
 
 const FEW = 1;
 const SEVERAL = 2;
 const MANY = 3;
-const NONE = { identity: undefined, identitySource: "none", pool: undefined, profile: undefined, provider: undefined, identityCredential: undefined } as const;
+const NONE = { identity: undefined, identitySource: "none", pool: undefined, ranking: undefined, profile: undefined, provider: undefined, identityCredential: undefined } as const;
 
 describe("decisionRows", () => {
   it("reports the identity and where it was chosen, and nothing about a profile or provider the launch has none of", () => {
@@ -43,6 +44,31 @@ describe("decisionRows", () => {
       { label: "provider", value: "z", detail: "credential bearer from env Z" },
       { label: "credential", value: "oauthToken from op", detail: "the identity's own" },
     ]);
+  });
+});
+
+describe("decisionRows explaining a pool pick", () => {
+  const candidate = (identity: string, overrides: Partial<Candidate> = {}): Candidate => ({ identity, class: "scored", score: 0.5, scoreWindow: "sevenDay", feasible: true, plan: { kind: "subscription", capacity: 20, recognised: true }, reasons: [`${identity} reason one`, `${identity} reason two`], ...overrides });
+
+  it("lists every ranked member in order with its heading and reasons, marking the one picked, as notes of the pool row", () => {
+    const rows = decisionRows({
+      ...NONE,
+      identity: "b",
+      pool: { name: "subs", reasons: ["b reason one"] },
+      ranking: [candidate("a", { class: "ineligible", score: undefined, scoreWindow: undefined }), candidate("b", { feasible: false })],
+    });
+
+    expect(rows[1]?.notes).toEqual([
+      "1. a [ineligible]",
+      "   a reason one; a reason two",
+      "2. b [scored score 0.50 by 7d reset] (5h would run dry) (picked)",
+      "   b reason one; b reason two",
+    ]);
+    expect(rows[1]?.detail).toBe("b reason one");
+  });
+
+  it("adds no notes when the launch does not ask for the ranking", () => {
+    expect(decisionRows({ ...NONE, identity: "a", pool: { name: "subs", reasons: ["r"] } })[1]).not.toHaveProperty("notes");
   });
 });
 

@@ -125,6 +125,7 @@ export const ConfigProfileSetInputSchema = z.strictObject({
       claudeVersion: z.union([z.string().min(1), z.literal(false)]).optional(),
       delay: z.union([z.string().regex(DURATION_RE), z.literal(false)]).optional(),
       pause: z.boolean().optional(),
+      explain: z.boolean().optional(),
     })
     .optional(),
 });

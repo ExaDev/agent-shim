@@ -19,6 +19,8 @@ export interface ResolvedLaunchFlags {
   readonly trackUsage: boolean;
   /** Whether the launcher waits for a key press after its own output before it starts claude. */
   readonly pause: boolean;
+  /** Whether the launch's report lists every pool member the pick ranked and why, and not only the one picked. */
+  readonly explain: boolean;
   /** How long the launcher waits after its own output before it starts claude, in milliseconds; zero for no wait. */
   readonly delayMs: number;
 }
@@ -30,6 +32,7 @@ interface LaunchFlagOverrides {
   readonly headroom?: boolean;
   readonly trackUsage?: boolean;
   readonly pause?: boolean;
+  readonly explain?: boolean;
   /** `--delay`, as typed. */
   readonly delay?: string;
 }
@@ -70,6 +73,7 @@ export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLa
       params.cascade?.trackUsage ??
       true,
     pause: params.flags?.pause ?? parseEnvBool("AGENT_SHIM_PAUSE", params.env.AGENT_SHIM_PAUSE) ?? params.cascade?.pause ?? false,
+    explain: params.flags?.explain ?? parseEnvBool("AGENT_SHIM_EXPLAIN", params.env.AGENT_SHIM_EXPLAIN) ?? params.cascade?.explain ?? false,
     delayMs: resolveDelayMs(params),
   };
 }

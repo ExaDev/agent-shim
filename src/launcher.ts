@@ -14,6 +14,7 @@ import { splitExtraFlags } from "./launcher/extraFlags";
 import { hasSettingsArgument, mergeSettings, withLauncherSettings, withSupervision, type SupervisedLaunch } from "./launcher/claudeSession";
 import { diagnosticLines, printDiagnosticLines, reportDiagnostics, type DiagnosticLine } from "./launcher/diagnostics";
 import { holdBeforeLaunch, LAUNCH_CANCELLED_EXIT, type HoldOutcome, type HoldPort } from "./launcher/hold";
+import type { Candidate } from "./usage/pick";
 import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows } from "./launcher/launchReport";
 import { modelPickerSettings } from "./launcher/modelPicker";
 import { catalogueCachePath, parseCatalogueCache } from "./providerCatalogue";
@@ -186,7 +187,7 @@ function pickFromPool(
   params: PrepareLaunchParams,
   parsedArgv: ParsedLauncherArgv,
   readOnly: boolean,
-): { readonly identityDecision: IdentityDecision; readonly poolPick?: LaunchPoolDecision } {
+): { readonly identityDecision: IdentityDecision; readonly poolPick?: LaunchPoolDecision; readonly poolRanking?: readonly Candidate[] } {
   const { paths, fs, proc, log } = params;
   if (decided.pool === undefined) {
     return { identityDecision: decided };
@@ -226,6 +227,7 @@ function pickFromPool(
   return {
     identityDecision: { ...decided, name: resolution.identity },
     poolPick: { name: decided.pool, reasons: resolution.reasons, ...(resolution.movedOff === undefined ? {} : { movedOff: resolution.movedOff }) },
+    poolRanking: resolution.candidates,
   };
 }
 
@@ -236,6 +238,8 @@ interface DecidedLaunch {
   readonly parsedArgv: ParsedLauncherArgv;
   readonly identityDecision: IdentityDecision;
   readonly poolPick: LaunchPoolDecision | undefined;
+  /** Every member the pool pick ranked, best first. Absent when the launch picked no member itself (no pool, or a supervisor already chose the member). */
+  readonly poolRanking: readonly Candidate[] | undefined;
   readonly configDirEscapeHatch: boolean;
   /** The identity whose farm this launch manages: absent when the caller named a configuration directory or no identity resolved. */
   readonly farmIdentity: string | undefined;
@@ -293,7 +297,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   });
 
   // A pool selector is resolved to one member here, ahead of everything that reads the identity: farm recovery, loading, the credential and the resync all work on the chosen name exactly as if it had been typed.
-  const { identityDecision, poolPick } = pickFromPool(decidedIdentity, params, parsedArgv, readOnly);
+  const { identityDecision, poolPick, poolRanking } = pickFromPool(decidedIdentity, params, parsedArgv, readOnly);
 
   // There is a farm to manage only when an identity resolved and the caller did not name a configuration directory itself.
   const farmIdentity = configDirEscapeHatchApplies ? undefined : identityDecision.name;
@@ -465,6 +469,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
       ...(parsedArgv.headroom === undefined ? {} : { headroom: parsedArgv.headroom }),
       ...(parsedArgv.trackUsage === undefined ? {} : { trackUsage: parsedArgv.trackUsage }),
       ...(parsedArgv.pause === undefined ? {} : { pause: parsedArgv.pause }),
+      ...(parsedArgv.explain === undefined ? {} : { explain: parsedArgv.explain }),
       ...(parsedArgv.delay === undefined ? {} : { delay: parsedArgv.delay }),
     },
   });
@@ -508,6 +513,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
     parsedArgv,
     identityDecision,
     poolPick,
+    poolRanking,
     notes,
     configDirEscapeHatch: configDirEscapeHatchApplies,
     farmIdentity,
@@ -538,7 +544,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   const { paths, proc, log } = params;
   const { env } = proc;
   const decided = decideLaunch(params, false);
-  const { identityDecision, configProfileDecision, resolvedProvider, identityCredential, poolPick, notes, flags: resolvedFlags, args: finalArgv, configDirEscapeHatch: configDirEscapeHatchApplies, decision } = decided;
+  const { identityDecision, configProfileDecision, resolvedProvider, identityCredential, poolPick, poolRanking, notes, flags: resolvedFlags, args: finalArgv, configDirEscapeHatch: configDirEscapeHatchApplies, decision } = decided;
 
   // Everything the launch has to say about itself is collected as it is decided and printed as one block once the launch is ready to start, so what a person reads is a single table of facts and not lines scattered between the steps. Warnings follow it.
   const rows: ReportRow[] = [
@@ -546,6 +552,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
       identity: identityDecision.name,
       identitySource: identityDecision.source,
       pool: poolPick,
+      ranking: resolvedFlags.explain ? poolRanking : undefined,
       profile: configProfileDecision.name === undefined ? undefined : { name: configProfileDecision.name, source: configProfileDecision.source },
       provider: resolvedProvider === undefined ? undefined : { name: resolvedProvider.name, credential: `${resolvedProvider.credential.target} from ${describeSource(resolvedProvider.credential.source)}` },
       identityCredential: identityCredential === undefined ? undefined : `${identityCredential.target} from ${describeSource(identityCredential.source)}`,

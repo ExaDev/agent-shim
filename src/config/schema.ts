@@ -106,6 +106,8 @@ const LaunchSchema = z.strictObject({
   delay: z.string().regex(DURATION_RE, "must be a duration such as 5s or 500ms").optional(),
   /** Whether the launcher waits for a key press after its own output before it starts claude. Takes the place of `delay` when both are set. Applies only when a terminal is watching. */
   pause: z.boolean().optional(),
+  /** Whether the launcher's report, for a launch that picks from a pool, lists every member the pick ranked with why each stands where it does, and not only the member it picked. */
+  explain: z.boolean().optional(),
 });
 export type LaunchFlags = z.infer<typeof LaunchSchema>;
 

@@ -47,6 +47,7 @@ const LaunchFlagsSchema = z.strictObject({
   headroom: z.boolean(),
   trackUsage: z.boolean(),
   pause: z.boolean(),
+  explain: z.boolean(),
   /** How long the launch waits after its own output before it starts claude, in milliseconds. */
   delayMs: z.number(),
 });

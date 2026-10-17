@@ -18,6 +18,8 @@ export interface ParsedLauncherArgv {
   readonly delay?: string;
   /** The last `--pause`/`--no-pause` occurrence, when either was given: whether the launcher waits for a key press after its own output before it starts claude. */
   readonly pause?: boolean;
+  /** The last `--explain`/`--no-explain` occurrence, when either was given: whether the launcher's report lists every pool member the pick ranked. */
+  readonly explain?: boolean;
   /** The last `--wait`/`--no-wait` occurrence, when either was given: with a pool selected and every member refused, sleep until the earliest returns instead of refusing the launch. */
   readonly wait?: boolean;
   /** True when `--native` was given: run the real `claude` with nothing from agent-shim applied. It has no `--no-` form and cannot be combined with any other launch flag. */
@@ -55,6 +57,7 @@ const BOOLEAN_FLAGS = [
   { flag: "--remote-control", key: "remoteControl" },
   { flag: "--wait", key: "wait" },
   { flag: "--pause", key: "pause" },
+  { flag: "--explain", key: "explain" },
 ] as const;
 type BooleanFlagKey = (typeof BOOLEAN_FLAGS)[number]["key"];
 

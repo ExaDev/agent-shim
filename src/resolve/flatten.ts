@@ -20,7 +20,7 @@ function unpackEntryValue(value: EntryValue): { value: boolean; when?: CompiledR
 export function flattenLayers(layers: readonly Layer[], options: Readonly<{ home: string }>): FlattenedCascade {
   const categories = new Map<OverridableCategory, boolean>();
   const rules = new Map<string, CompiledRule>();
-  const launch: { skipPermissions?: boolean; remoteControl?: boolean; provider?: string; headroom?: boolean; trackUsage?: boolean; claudeVersion?: string; delay?: string; pause?: boolean } = {};
+  const launch: { skipPermissions?: boolean; remoteControl?: boolean; provider?: string; headroom?: boolean; trackUsage?: boolean; claudeVersion?: string; delay?: string; pause?: boolean; explain?: boolean } = {};
   const diagnostics: Diagnostic[] = [];
 
   for (const layer of layers) {
@@ -57,6 +57,9 @@ export function flattenLayers(layers: readonly Layer[], options: Readonly<{ home
       }
       if (layer.launch.pause !== undefined) {
         launch.pause = layer.launch.pause;
+      }
+      if (layer.launch.explain !== undefined) {
+        launch.explain = layer.launch.explain;
       }
     }
 
