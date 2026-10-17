@@ -1,3 +1,9 @@
+## [11.36.0](https://github.com/ExaDev/agent-shim/compare/v11.35.0...v11.36.0) (2026-10-17)
+
+### Features
+
+* **launcher:** list the models catalogue for a session that routes by name ([f73005e](https://github.com/ExaDev/agent-shim/commit/f73005ea93a07039f8f8a1b123f2c44890602304))
+
 ## [11.35.0](https://github.com/ExaDev/agent-shim/compare/v11.34.0...v11.35.0) (2026-10-17)
 
 ### Features
