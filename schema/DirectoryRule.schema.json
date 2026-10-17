@@ -123,6 +123,13 @@
         "claudeVersion": {
           "type": "string",
           "pattern": "^\\d+(?:\\.\\d+)*$"
+        },
+        "delay": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]*)(?:ms|s|m|h|d|w)$"
+        },
+        "pause": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

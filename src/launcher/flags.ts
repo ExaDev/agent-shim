@@ -1,6 +1,8 @@
 import path from "node:path";
 
 import { parseEnvBool } from "../cli/envBool";
+import { UsageError } from "../cliError";
+import { parseDuration } from "../resolve/conditions";
 import type { LaunchFlags, Provider } from "../config/schema";
 import { credentialVariables, type ResolvedCredential } from "../credential";
 import { mergeAnthropicCustomHeaders } from "../headroom/headers";
@@ -15,6 +17,10 @@ export interface ResolvedLaunchFlags {
   readonly headroom: boolean;
   /** Whether the launch routes through the front door so its requests are recorded, even with no provider and no headroom. */
   readonly trackUsage: boolean;
+  /** Whether the launcher waits for a key press after its own output before it starts claude. */
+  readonly pause: boolean;
+  /** How long the launcher waits after its own output before it starts claude, in milliseconds; zero for no wait. */
+  readonly delayMs: number;
 }
 
 /** The one-off command-line forms of the four boolean launch flags, each undefined when neither its positive nor its `--no-` form was given. */
@@ -23,6 +29,9 @@ interface LaunchFlagOverrides {
   readonly remoteControl?: boolean;
   readonly headroom?: boolean;
   readonly trackUsage?: boolean;
+  readonly pause?: boolean;
+  /** `--delay`, as typed. */
+  readonly delay?: string;
 }
 
 /** Inputs to `resolveLaunchFlags`. */
@@ -60,7 +69,30 @@ export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLa
       parseEnvBool("AGENT_SHIM_TRACK_USAGE", params.env.AGENT_SHIM_TRACK_USAGE) ??
       params.cascade?.trackUsage ??
       true,
+    pause: params.flags?.pause ?? parseEnvBool("AGENT_SHIM_PAUSE", params.env.AGENT_SHIM_PAUSE) ?? params.cascade?.pause ?? false,
+    delayMs: resolveDelayMs(params),
   };
+}
+
+/**
+ * The launch's delay in milliseconds, from the first of `--delay`, `AGENT_SHIM_DELAY` (an empty one counts as unset) and the cascade's `launch.delay` that is set, and zero when none is. A value from the command line or the environment that is not a duration is refused naming where it came from; the cascade's was already checked by its schema.
+ */
+function resolveDelayMs(params: Readonly<ResolveLaunchFlagsParams>): number {
+  const fromEnv = params.env.AGENT_SHIM_DELAY === "" ? undefined : params.env.AGENT_SHIM_DELAY;
+  const [literal, source] =
+    params.flags?.delay !== undefined
+      ? ([params.flags.delay, "--delay"] as const)
+      : fromEnv !== undefined
+        ? ([fromEnv, "AGENT_SHIM_DELAY"] as const)
+        : ([params.cascade?.delay, "launch.delay"] as const);
+  if (literal === undefined) {
+    return 0;
+  }
+  try {
+    return parseDuration(literal);
+  } catch (error) {
+    throw new UsageError(`${source}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /**
@@ -68,7 +100,7 @@ export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLa
  *
  * `--remote-control=` always carries a literal trailing `=` with an empty value — never bare `--remote-control` — confirmed as a deliberate fix in the legacy script's own git history to stop the flag from consuming the next positional argument as its value.
  */
-export function buildFlagArgs(flags: ResolvedLaunchFlags): string[] {
+export function buildFlagArgs(flags: Readonly<Pick<ResolvedLaunchFlags, "skipPermissions" | "remoteControl">>): string[] {
   const args: string[] = [];
   if (flags.skipPermissions) {
     args.push("--dangerously-skip-permissions");

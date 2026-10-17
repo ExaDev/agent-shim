@@ -1,5 +1,6 @@
 import type { LaunchPlan } from "../launcher";
 import type { SupervisedLaunch } from "../launcher/claudeSession";
+import { LAUNCH_CANCELLED_EXIT } from "../launcher/hold";
 import type { LogPort, SpawnResult, SupervisedSpawnPort } from "../launcher/ports";
 import { childExitCode } from "../launcher/spawn";
 import type { CompactionDecision } from "./compaction";
@@ -287,6 +288,11 @@ export async function supervise(deps: Readonly<SupervisorDeps>, first: Supervise
       if (identity === undefined) {
         plan.release();
         throw new Error("a supervised launch resolved no identity to supervise");
+      }
+      // The launch's own pause or delay applies to the session's first child only: a relaunch under another member continues a session the person is already in.
+      if (!moved && plan.hold() === "cancelled") {
+        plan.release();
+        return LAUNCH_CANCELLED_EXIT;
       }
       // A relaunch was registered by the move that chose its member, inside the move lock, or is the same session on the same member; only the first launch registers itself.
       if (!moved) {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, type MockedFunction } from "vitest";
 
 import type { LaunchPlan } from "../launcher";
+import { LAUNCH_CANCELLED_EXIT, type HoldOutcome } from "../launcher/hold";
 import type { SupervisedLaunch } from "../launcher/claudeSession";
 import type { ChildProcess, SpawnResult } from "../launcher/ports";
 import { fakeLog } from "../test-helpers";
@@ -57,6 +58,9 @@ interface World {
   readonly children: FakeChild[];
   readonly launches: SupervisedLaunch[];
   readonly released: string[];
+  /** The members each plan's hold ran for, `first` for the session's first child, and what the first child's hold answers. */
+  readonly holds: string[];
+  held: HoldOutcome;
   readonly registered: SupervisedSession[];
   readonly unregistered: string[];
   readonly log: ReturnType<typeof fakeLog>;
@@ -74,6 +78,7 @@ function world(): World {
   const children: FakeChild[] = [];
   const launches: SupervisedLaunch[] = [];
   const released: string[] = [];
+  const holds: string[] = [];
   const registered: SupervisedSession[] = [];
   const unregistered: string[] = [];
   const log = fakeLog();
@@ -82,7 +87,7 @@ function world(): World {
   const timers = { fire: (): void => undefined, cancelled: 0 };
   const handlers = new Map<NodeJS.Signals, () => void>();
   const watchers = new Map<string, () => void>();
-  const state: { quotaHit: (identity: string) => QuotaHit | undefined; obeys: readonly NodeJS.Signals[] } = { quotaHit: () => undefined, obeys: ["SIGTERM"] };
+  const state: { quotaHit: (identity: string) => QuotaHit | undefined; obeys: readonly NodeJS.Signals[]; held: HoldOutcome } = { quotaHit: () => undefined, obeys: ["SIGTERM"], held: "go" };
   const deps: SupervisorDeps = {
     pool: "subs",
     cwd: "/repo",
@@ -100,6 +105,10 @@ function world(): World {
         },
         decision: { identity, identitySource: "argv", configDirEscapeHatch: false, configProfileSource: "none" },
         markChildStarted: () => undefined,
+        hold: () => {
+          holds.push(launch.member ?? "first");
+          return state.held;
+        },
       };
       return plan;
     },
@@ -159,6 +168,7 @@ function world(): World {
     children,
     launches,
     released,
+    holds,
     registered,
     unregistered,
     log,
@@ -179,10 +189,43 @@ function world(): World {
     set obeys(value) {
       state.obeys = value;
     },
+    get held() {
+      return state.held;
+    },
+    set held(value) {
+      state.held = value;
+    },
   };
 }
 
 describe("supervise", () => {
+  it("holds the session's first child once, after it is prepared and before it starts, and never holds a relaunch", async () => {
+    const w = world();
+    const done = supervise(w.deps, FIRST);
+    await settle();
+    expect(w.holds).toEqual(["first"]);
+
+    w.quotaHit = () => HIT;
+    w.watchers.get("work")?.();
+    await settle();
+    w.children[1]?.exitWith(0);
+    await done;
+
+    expect(w.children).toHaveLength(2);
+    expect(w.holds).toEqual(["first"]);
+  });
+
+  it("starts no child, registers nothing and releases the plan when the person cancels the first child's hold", async () => {
+    const w = world();
+    w.held = "cancelled";
+
+    await expect(supervise(w.deps, FIRST)).resolves.toBe(LAUNCH_CANCELLED_EXIT);
+
+    expect(w.children).toHaveLength(0);
+    expect(w.registered).toEqual([]);
+    expect(w.released).toEqual(["work"]);
+  });
+
   it("returns the child's own exit code when it exits by itself, releasing its plan and removing its registry entry", async () => {
     const w = world();
     const done = supervise(w.deps, FIRST);

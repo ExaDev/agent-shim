@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import type { ConfigProfile } from "./config/schema";
 import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
-import { collectBoolPair, collectRepeated } from "./cli/parsers";
+import { collectBoolPair, collectRepeated, parseDurationLiteral } from "./cli/parsers";
 import { PromptCancelledError, UsageError } from "./cliError";
 import { runProfileWizard } from "./configure";
 import { applyProfileChange, ProfileNotFoundError, profileExists, type ProfileChange, requireProfileExists, readProfile, createProfile, listProfiles, readGlobalConfig, setGlobalDefaultProfile, removeProfile } from "./configProfilesStore";
@@ -115,6 +115,10 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
       .option("--no-launch-provider", "Clear this profile's provider selection.")
       .option("--launch-claude-version <version>", "Launches under this profile run exactly this installed Claude Code version (such as 2.1.220); a version that is not installed fails the launch.")
       .option("--no-launch-claude-version", "Clear this profile's Claude Code version pin.")
+      .option("--launch-delay <duration>", "Launches under this profile wait this long (such as 5s) after the launcher's own output before starting claude, so the output can be read.", parseDurationLiteral)
+      .option("--no-launch-delay", "Clear this profile's launch delay.")
+      .option("--launch-pause", "Launches under this profile wait for a key press after the launcher's own output before starting claude.")
+      .option("--no-launch-pause", "Launches under this profile start claude without waiting for a key press.")
       .option("--json", "Print the result as JSON.")
       .action(async (name: string, allOptions: ProfileSetOptions) => {
         const { json, ...options } = allOptions;

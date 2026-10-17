@@ -98,6 +98,7 @@ agent-shim profile set <name> [--category <category>=<bool>]... [--entry <catego
 agent-shim profile set <name> [--extends <profile>]... [--no-extends] [--description <text> | --no-description] [--json]
 agent-shim profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage]
 agent-shim profile set <name> [--launch-claude-version <version> | --no-launch-claude-version] [--json] [--json]
+agent-shim profile set <name> [--launch-delay <duration> | --no-launch-delay] [--[no-]launch-pause] [--json]
 agent-shim profile set <name> [--launch-provider <provider> | --no-launch-provider] [--json]
 agent-shim profile list [--json]
 agent-shim profile show <name> [--json]
@@ -181,6 +182,7 @@ agent-shim run [@<identity>] [launch flags] [claude arguments]
   #   --category <category>=<bool>  --share <category>/<path>  --hide <category>/<path>   (each repeatable)
   #   --[no-]skip-permissions  --[no-]remote-control  --[no-]headroom  --[no-]track-usage  --[no-]wait
   #   --claude-version <version>   run exactly this installed Claude Code version
+  #   --delay <duration>   wait this long after the launcher's own output before starting claude; --[no-]pause waits for a key press instead
   #   --native   run the real claude with nothing from agent-shim applied; cannot be combined with the flags above
 claude @<identity> ...                      # the same, once `agent-shim shim enable` has run
 ```

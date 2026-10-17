@@ -14,6 +14,10 @@ export interface ParsedLauncherArgv {
   readonly trackUsage?: boolean;
   /** The last `--claude-version <version>` occurrence: the exact Claude Code version this launch runs. */
   readonly claudeVersion?: string;
+  /** The last `--delay <duration>` occurrence, as typed: how long the launcher waits after its own output before it starts claude. */
+  readonly delay?: string;
+  /** The last `--pause`/`--no-pause` occurrence, when either was given: whether the launcher waits for a key press after its own output before it starts claude. */
+  readonly pause?: boolean;
   /** The last `--wait`/`--no-wait` occurrence, when either was given: with a pool selected and every member refused, sleep until the earliest returns instead of refusing the launch. */
   readonly wait?: boolean;
   /** True when `--native` was given: run the real `claude` with nothing from agent-shim applied. It has no `--no-` form and cannot be combined with any other launch flag. */
@@ -40,7 +44,7 @@ export class ConflictingIdentityError extends UsageError {
   }
 }
 
-const VALUED_FLAGS = ["--identity", "--config-profile", "--provider", "--claude-version", "--category", "--share", "--hide"] as const;
+const VALUED_FLAGS = ["--identity", "--config-profile", "--provider", "--claude-version", "--delay", "--category", "--share", "--hide"] as const;
 type ValuedFlag = (typeof VALUED_FLAGS)[number];
 
 /** The boolean launch flags, each with a `--no-` form; the key names the field of `ParsedLauncherArgv` it sets. */
@@ -50,6 +54,7 @@ const BOOLEAN_FLAGS = [
   { flag: "--skip-permissions", key: "skipPermissions" },
   { flag: "--remote-control", key: "remoteControl" },
   { flag: "--wait", key: "wait" },
+  { flag: "--pause", key: "pause" },
 ] as const;
 type BooleanFlagKey = (typeof BOOLEAN_FLAGS)[number]["key"];
 
@@ -106,6 +111,7 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
   let configProfile: string | undefined;
   let provider: string | false | undefined;
   let claudeVersion: string | undefined;
+  let delay: string | undefined;
   const booleans: Partial<Record<BooleanFlagKey, boolean>> = {};
   const categoryFlags: string[] = [];
   const shareFlags: string[] = [];
@@ -168,6 +174,9 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
       case "--claude-version":
         claudeVersion = value;
         break;
+      case "--delay":
+        delay = value;
+        break;
       case "--category":
         categoryFlags.push(value);
         break;
@@ -192,6 +201,7 @@ export function parseLauncherArgv(argv: readonly string[]): ParsedLauncherArgv {
     ...(configProfile === undefined ? {} : { configProfile }),
     ...(provider === undefined ? {} : { provider }),
     ...(claudeVersion === undefined ? {} : { claudeVersion }),
+    ...(delay === undefined ? {} : { delay }),
     ...(native ? { native: true as const } : {}),
     ...booleans,
     categoryFlags,

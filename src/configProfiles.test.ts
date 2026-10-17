@@ -188,6 +188,17 @@ describe("configProfiles", () => {
       expect(setProfileLaunchFlags(paths, "base", { trackUsage: true }).launch).toEqual({ headroom: true, trackUsage: true });
     });
 
+    it("stores a delay and a pause beside the other launch flags", () => {
+      createProfile(paths, "base");
+      setProfileLaunchFlags(paths, "base", { headroom: true });
+      expect(setProfileLaunchFlags(paths, "base", { delay: "5s", pause: false }).launch).toEqual({ headroom: true, delay: "5s", pause: false });
+    });
+
+    it("refuses a delay that is not a duration", () => {
+      createProfile(paths, "base");
+      expect(() => setProfileLaunchFlags(paths, "base", { delay: "soon" })).toThrow();
+    });
+
     it("throws ProfileNotFoundError for a profile that does not exist", () => {
       expect(() => setProfileLaunchFlags(paths, "ghost", { skipPermissions: true })).toThrow(ProfileNotFoundError);
     });

@@ -3,6 +3,20 @@ import { describe, expect, it } from "vitest";
 import { ConflictingIdentityError, parseLauncherArgv } from "./argv";
 
 describe("parseLauncherArgv", () => {
+  it("reads --delay's value, in both spellings, and --pause and --no-pause, taking the last of each", () => {
+    expect(parseLauncherArgv(["--delay", "5s", "--print"])).toMatchObject({ delay: "5s", rest: ["--print"] });
+    expect(parseLauncherArgv(["--delay=500ms"])).toMatchObject({ delay: "500ms" });
+    expect(parseLauncherArgv(["--delay", "5s", "--delay", "2s"]).delay).toBe("2s");
+    expect(parseLauncherArgv(["--pause"]).pause).toBe(true);
+    expect(parseLauncherArgv(["--pause", "--no-pause"]).pause).toBe(false);
+    expect(parseLauncherArgv(["--print"]).pause).toBeUndefined();
+    expect(parseLauncherArgv(["--print"]).delay).toBeUndefined();
+  });
+
+  it("leaves --delay and --pause after the terminator for claude", () => {
+    expect(parseLauncherArgv(["--", "--delay", "5s", "--pause"])).toMatchObject({ rest: ["--", "--delay", "5s", "--pause"] });
+  });
+
   it("consumes a leading @name and strips it from rest", () => {
     const result = parseLauncherArgv(["@work", "--print", "hello"]);
     expect(result.identity).toBe("work");

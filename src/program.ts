@@ -57,11 +57,13 @@ Launching:
     --[no-]skip-permissions, --[no-]remote-control, --[no-]headroom, --[no-]track-usage
     --claude-version <version>   run exactly this installed Claude Code version (not the highest)
     --[no-]wait                  with @pool:<name>, sleep until the earliest member returns when all are refused
+    --delay <duration>           wait this long (5s, 500ms) after the launcher's own output before starting claude
+    --[no-]pause                 wait for a key press after the launcher's own output before starting claude
     --native                     run the real claude with nothing from agent-shim applied (no other launch flag allowed)
 
 Environment:
   AGENT_SHIM_IDENTITY, AGENT_SHIM_CONFIG_PROFILE, AGENT_SHIM_SKIP_PERMISSIONS,
-  AGENT_SHIM_REMOTE_CONTROL, AGENT_SHIM_HEADROOM, AGENT_SHIM_TRACK_USAGE, AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL,
+  AGENT_SHIM_REMOTE_CONTROL, AGENT_SHIM_HEADROOM, AGENT_SHIM_TRACK_USAGE, AGENT_SHIM_DELAY, AGENT_SHIM_PAUSE, AGENT_SHIM_ALLOW_AMBIENT_CREDENTIAL,
   AGENT_SHIM_CATEGORY_OVERRIDE, AGENT_SHIM_ENTRY_OVERRIDE, AGENT_SHIM_HOME,
   AGENT_SHIM_DEBUG (print stack traces), NO_COLOR. Booleans are true, false, 1 or 0.
 

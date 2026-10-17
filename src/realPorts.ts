@@ -17,6 +17,7 @@ import type { HeadroomSocketTrustPorts } from "./headroom/socket";
 import { removeSession } from "./headroom/state";
 import type { LayoutPaths } from "./paths";
 import type { FarmFs, FsPort, HeadroomPort, LogPort, ProcPort, RunPort, SpawnPort } from "./launcher/ports";
+import type { HoldPort } from "./launcher/hold";
 import { createLogPort, styleTextFor } from "./logStyle";
 
 function isEnoent(error: unknown): boolean {
@@ -189,6 +190,39 @@ export function realSleepSync(ms: number): void {
   refuseToBlockInRole("a synchronous sleep");
   Atomics.wait(new Int32Array(new SharedArrayBuffer(INT32_BYTE_LENGTH)), 0, 0, ms);
 }
+
+/** How long to wait before asking a terminal that had nothing to read again. */
+const KEY_POLL_MS = 25;
+
+/** The byte a terminal in raw mode delivers for Ctrl-C, which it then does not turn into a signal. */
+const CTRL_C_BYTE = 0x03;
+
+/**
+ * The real `HoldPort`: a person is watching when standard input and output are both terminals; a delay blocks in place, as the launcher is synchronous right up to its spawn; and a pause reads one byte from the terminal in raw mode, so no Enter is needed. A terminal that has nothing to read yet reports `EAGAIN`, which is waited out rather than treated as a failure, and an end of input counts as a key so a closed terminal never hangs the launch.
+ */
+export const realHoldPort: HoldPort = {
+  attended: () => process.stdin.isTTY && process.stdout.isTTY,
+  sleep: realSleepSync,
+  waitForKey: () => {
+    process.stdin.setRawMode(true);
+    try {
+      const buffer = Buffer.alloc(1);
+      for (;;) {
+        try {
+          const read = fs.readSync(process.stdin.fd, buffer, 0, buffer.length, null);
+          return read > 0 && buffer[0] === CTRL_C_BYTE ? "interrupt" : "key";
+        } catch (error) {
+          if (!(error instanceof Error && "code" in error && error.code === "EAGAIN")) {
+            throw error;
+          }
+          realSleepSync(KEY_POLL_MS);
+        }
+      }
+    } finally {
+      process.stdin.setRawMode(false);
+    }
+  },
+};
 
 /** Whether a process is still running. Signal 0 performs the permission and existence checks without delivering anything; `EPERM` means the process exists but belongs to another user. */
 function realIsProcessAlive(pid: number): boolean {
