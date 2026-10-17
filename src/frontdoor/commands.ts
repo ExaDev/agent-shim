@@ -97,9 +97,9 @@ function appendLog(paths: LayoutPaths, line: string): void {
 }
 
 /**
- * Wraps the door's route resolver so every route it resolves observes its served exchanges through the Remote Control tracker: the bare `/v1/` pass-through an OAuth session's Remote Control calls ride is where the tracker sees the create, the heartbeats and the presence, and the wrapper is a no-op for any path the tracker does not take (it hands the response through untouched). The client stream attachment is re-poked once an observed exchange's response has settled, so a session becomes attached the moment its create completes, without any polling of the tracker's own.
+ * Wraps the door's route resolver so every route it resolves observes its served exchanges through the Remote Control tracker: the bare `/v1/` pass-through an OAuth session's Remote Control calls ride is where the tracker sees the create, the heartbeats and the presence, and the wrapper is a no-op for any path the tracker does not take (it hands the response through untouched). The client stream attachment is re-poked once an observed exchange's response has settled, so a session becomes attached the moment its create completes, without any polling of the tracker's own. Only the route is wrapped: the rest of an ok resolution (above all the `request` a routing scan replayed, which is the only readable copy of a body the scan consumed) passes through untouched.
  */
-function rcObservingResolver(
+export function rcObservingResolver(
   resolve: (request: RoutedRequest) => Promise<RouteResolution>,
   tracker: ReturnType<typeof createRcSessionTracker>,
   hub?: RcStreamHub,
@@ -107,7 +107,7 @@ function rcObservingResolver(
   return async (request) => {
     const resolution = await resolve(request);
     return resolution.ok
-      ? { ok: true, route: observingRoutedRoute(resolution.route, tracker, hub === undefined ? undefined : { onExchangeSettled: () => { hub.reconcile(); } }) }
+      ? { ...resolution, route: observingRoutedRoute(resolution.route, tracker, hub === undefined ? undefined : { onExchangeSettled: () => { hub.reconcile(); } }) }
       : resolution;
   };
 }

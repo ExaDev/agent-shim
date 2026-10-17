@@ -7,9 +7,10 @@ import path from "node:path";
 import { writeHeadroomState } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
-import { RC_PENDING_SUMMARY_EXCERPT_CHARS } from "./rcSessions";
+import { RC_IDLE_EXPIRY_MS, RC_PENDING_SUMMARY_EXCERPT_CHARS, createRcSessionTracker } from "./rcSessions";
+import type { FrontDoorRoute, RoutedRequest } from "./route";
 import { formatRcPendingList, formatRcRateLimitInfo, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./rcCommands";
-import { realStatOwnExecutable } from "./commands";
+import { rcObservingResolver, realStatOwnExecutable } from "./commands";
 import { collectFrontDoorStatus, formatFrontDoorStatus } from "./status";
 import { writeFrontDoorSession, writeFrontDoorState } from "./state";
 
@@ -275,5 +276,27 @@ describe("realStatOwnExecutable", () => {
     } finally {
       realFs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the Remote Control observing resolver", () => {
+  const route: FrontDoorRoute = { name: "http:z", headroomEligible: true, headroomUpstream: undefined, serve: async () => { await Promise.resolve(); } };
+  const original = { method: "POST", url: "/v1/messages", headers: {}, body: undefined, signal: new AbortController().signal, session: { identity: undefined, sessionId: "s-1", provider: "z", headroom: true, routeByName: true, projectId: undefined } } as unknown as RoutedRequest;
+
+  it("hands on the request a routing scan replayed, because the original's body was consumed by the scan and only the replay can still be read", async () => {
+    const replayed = { ...original, url: "/providers/z/v1/messages" };
+    const resolve = rcObservingResolver(async () => await Promise.resolve({ ok: true as const, route, request: replayed }), createRcSessionTracker({ now: () => 0, idleMs: RC_IDLE_EXPIRY_MS }));
+    const resolution = await resolve(original);
+    expect(resolution.ok).toBe(true);
+    if (resolution.ok) {
+      expect(resolution.request).toBe(replayed);
+      expect(resolution.route).not.toBe(route);
+    }
+  });
+
+  it("passes a refusal through untouched", async () => {
+    const refusal = { ok: false, status: 400, message: "no" } as const;
+    const resolve = rcObservingResolver(async () => await Promise.resolve(refusal), createRcSessionTracker({ now: () => 0, idleMs: RC_IDLE_EXPIRY_MS }));
+    expect(await resolve(original)).toBe(refusal);
   });
 });
