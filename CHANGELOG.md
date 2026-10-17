@@ -1,3 +1,9 @@
+## [11.34.0](https://github.com/ExaDev/agent-shim/compare/v11.33.0...v11.34.0) (2026-10-17)
+
+### Features
+
+* **frontdoor:** add a router provider that resolves model names to target providers ([ab1f5b5](https://github.com/ExaDev/agent-shim/commit/ab1f5b50da59199b951636a0beef8fd57eff2a45))
+
 ## [11.33.0](https://github.com/ExaDev/agent-shim/compare/v11.32.0...v11.33.0) (2026-10-17)
 
 ### Features
