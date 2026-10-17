@@ -1,3 +1,9 @@
+## [11.40.2](https://github.com/ExaDev/agent-shim/compare/v11.40.1...v11.40.2) (2026-10-17)
+
+### Bug Fixes
+
+* **frontdoor:** write a routed target's wire model name without its context marker ([d05b065](https://github.com/ExaDev/agent-shim/commit/d05b0653bad80d9ac9867743195451d22754a2b4))
+
 ## [11.40.1](https://github.com/ExaDev/agent-shim/compare/v11.40.0...v11.40.1) (2026-10-17)
 
 ### Bug Fixes
