@@ -1,3 +1,9 @@
+## [11.43.0](https://github.com/ExaDev/agent-shim/compare/v11.42.0...v11.43.0) (2026-10-17)
+
+### Features
+
+* **selection:** project a window's own pace and weigh a switch by the conversation it re-sends ([2215a23](https://github.com/ExaDev/agent-shim/commit/2215a239afca1356e227e6154423bffe4f531c11))
+
 ## [11.42.0](https://github.com/ExaDev/agent-shim/compare/v11.41.0...v11.42.0) (2026-10-17)
 
 ### Features
