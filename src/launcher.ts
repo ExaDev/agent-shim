@@ -26,10 +26,12 @@ import { resumedContextTokens } from "./usage/resumeContext";
 import { IdentityLockBusyError } from "./launcher/lock";
 import type { FarmFs, FsPort, FrontDoorPort, HeadroomPort, HeadroomUp, LogPort, ProcPort, ReportRow, SpawnPort } from "./launcher/ports";
 import { childExitCode } from "./launcher/spawn";
-import { resolveProvider, selectProvider, type SelectedProvider } from "./providersStore";
+import { resolveProvider, resolveRoutedProviderCredentials, selectProvider, type SelectedProvider } from "./providersStore";
+import { loadConfigFile } from "./config/load";
 import { flattenLayers } from "./resolve/flatten";
 import { assembleCascade } from "./resolve/walk";
 import { CREDENTIAL_TARGET_VARS, type CategoryClassification, type CategoryClassificationOverlay, type Credential, type LaunchFlags, type Pool, type UpdateMode, isRouterProvider } from "./config/schema";
+import { GlobalConfigSchema } from "./config/schema";
 import { CREDENTIAL_UNAVAILABLE_EXIT, credentialVariables, describeSource, resolveCredential, summariseCredential, type CredentialPort, type CredentialSummary, type ResolvedCredential } from "./credential";
 import type { CascadeInput } from "./resolve/walk";
 import { ANTHROPIC_PROVIDER } from "./usage/middleware";
@@ -619,6 +621,16 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     rows.push(pinnedVersionRow(decided.pinnedVersion.version, decided.pinnedVersion.source));
   }
 
+  // A router or routeByName session sends provider-qualified model names the door resolves through the models block, so every provider a definition names is about to carry this session's requests: its credential is resolved now, so a missing one fails the launch naming the provider instead of surfacing as a bare 502 on the first request that names it. Family and account members stay the door's to resolve (a family's providers depend on live catalogues; an account member relaunches rather than dialling out). A read-only resolution never reaches this code, so it still resolves no credential.
+  const routesByName = resolvedFlags.routeByName || (resolvedProvider !== undefined && isRouterProvider(resolvedProvider.definition));
+  if (routesByName) {
+    const check = resolveRoutedProviderCredentials({ paths, port: params.fs, env, ...(params.credentials === undefined ? {} : { credentials: params.credentials }), models: loadConfigFile(paths.globalConfigFile, GlobalConfigSchema, params.fs.readConfigFile)?.config.models });
+    if (!check.ok) {
+      log.error(check.message);
+      proc.exit(check.status);
+    }
+  }
+
   // The front door comes up first, before headroom: every routed session (a provider's, or headroom's) enters through it, and headroom's allowlist must hold the door's direct origin, which is what every provider session routed through headroom (a codex session's included) is forwarded back to, and the headroom supervisor lists the origin of a door that has served. `ensure` authenticates the door's listener over TLS before returning anything, so the address the child is handed below (and sends its credential to) belongs to a listener holding a leaf from agent-shim's CA.
   const frontDoorPort = params.frontdoor;
   const frontDoorEngaged = resolvedProvider !== undefined || resolvedFlags.headroom || resolvedFlags.trackUsage;
@@ -654,7 +666,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     ...(headroom === undefined ? {} : { headroom }),
     sessionId,
     remoteControl: resolvedFlags.remoteControl,
-    routeByName: resolvedFlags.routeByName || (resolvedProvider !== undefined && isRouterProvider(resolvedProvider.definition)),
+    routeByName: routesByName,
   });
 
   // Every daemon session registration this launch holds, released when the child exits.

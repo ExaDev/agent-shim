@@ -7,7 +7,7 @@ import { ConfigValidationError } from "./config/load";
 import { isRouterProvider, type Provider } from "./config/schema";
 import type { FsPort } from "./launcher/ports";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import { addProvider, InvalidProviderNameError, LEGACY_LITERAL_PLACEHOLDER, legacyProviderConversion, LegacyProviderFileError, listProviders, loadProvider, ProviderAlreadyExistsError, providerExists, ProviderKindMismatchError, ProviderNotFoundError, readProvider, removeProvider, resolveProvider, updateProvider } from "./providersStore";
+import { addProvider, InvalidProviderNameError, LEGACY_LITERAL_PLACEHOLDER, legacyProviderConversion, LegacyProviderFileError, listProviders, loadProvider, ProviderAlreadyExistsError, providerExists, ProviderKindMismatchError, ProviderNotFoundError, readProvider, removeProvider, resolveProvider, resolveRoutedProviderCredentials, updateProvider } from "./providersStore";
 import { fakeCredentials } from "./test-helpers";
 
 /** A minimal real-filesystem `FsPort` over the temp root, so `resolveProvider` is exercised against files `addProvider` actually wrote, the same way the real launcher reads them. */
@@ -424,6 +424,50 @@ describe("providers", () => {
       addProvider(paths, "z", zInput);
       const result = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, cliProvider: "z" });
       expect(result).toMatchObject({ ok: false, status: 1 });
+    });
+  });
+
+  describe("resolveRoutedProviderCredentials", () => {
+    it("checks nothing when no models block is defined", () => {
+      expect(resolveRoutedProviderCredentials({ paths, port: tempFsPort(), env: {}, credentials: fakeCredentials(), models: undefined })).toEqual({ ok: true, checked: [] });
+    });
+
+    it("resolves every provider named by a member or tier pointer, once each, skipping virtual, family and account members", () => {
+      addProvider(paths, "z", zInput);
+      addProvider(paths, "m", { displayName: "MiniMax", baseUrl: "https://api.minimax.example", sources: [{ env: "M_API_TOKEN" }] });
+      const models = {
+        virtual: {
+          outer: { mode: "ordered" as const, members: ["inner", "family:glm-5.1", "acct:work/opus"] },
+          inner: { mode: "ordered" as const, members: ["z/glm-5.3", "m/MiniMax-M3"] },
+        },
+        tiers: { opus: "z/glm-5.3" },
+      };
+      const result = resolveRoutedProviderCredentials({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z", M_API_TOKEN: "tok-m" }, credentials: fakeCredentials(), models });
+      expect(result).toEqual({ ok: true, checked: ["m", "z"] });
+    });
+
+    it("names every failure at once: an unknown provider and a credential that yields no token", () => {
+      addProvider(paths, "z", zInput);
+      const models = { virtual: { a: { mode: "ordered" as const, members: ["z/glm-5.3", "ghost/x"] } } };
+      const result = resolveRoutedProviderCredentials({ paths, port: tempFsPort(), env: {}, credentials: fakeCredentials(), models });
+      expect(result).toEqual({
+        ok: false,
+        status: 64,
+        message: 'agent-shim: this launch routes model names through the models block, but: no provider named "ghost"; provider z has no usable credential: env Z_API_TOKEN is unset or empty',
+      });
+    });
+
+    it("refuses without resolving anything when no credential port is wired", () => {
+      addProvider(paths, "z", zInput);
+      const models = { virtual: { a: { mode: "ordered" as const, members: ["z/glm-5.3"] } } };
+      const result = resolveRoutedProviderCredentials({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, models });
+      expect(result).toEqual({ ok: false, status: 1, message: "agent-shim: the models block routes to providers z, which need their credentials resolved, but this launcher has no credential port wired" });
+    });
+
+    it("skips a router member, which carries no credential of its own", () => {
+      addProvider(paths, "r", { kind: "router", displayName: "Router", sources: [] });
+      const models = { virtual: { a: { mode: "ordered" as const, members: ["r/x"] } } };
+      expect(resolveRoutedProviderCredentials({ paths, port: tempFsPort(), env: {}, credentials: fakeCredentials(), models })).toEqual({ ok: true, checked: ["r"] });
     });
   });
 });

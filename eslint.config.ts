@@ -27,6 +27,13 @@ export default defineConfig([
     },
   },
   {
+    files: ["src/launcher.test.ts"],
+    rules: {
+      // This file walks the whole launch pipeline end to end (guard, decision, daemons, environment) over one shared set of fakes; each launch facet is a test against the same rig, so splitting it would copy the rig. Its size limit is lifted rather than the rig copied.
+      "max-lines": ["error", { max: 1000, skipComments: true }],
+    },
+  },
+  {
     rules: {
       // exadev's own consistent-type-imports leaves fixStyle at the rule's default (separate-type-imports); this repo prefers the type keyword inline on the same import statement instead.
       "@typescript-eslint/consistent-type-imports": ["error", { fixStyle: "inline-type-imports" }],
