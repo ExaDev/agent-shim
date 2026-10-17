@@ -211,6 +211,26 @@ describe("buildArgv", () => {
 describe("buildEnv", () => {
   const baseEnv = { PATH: "/usr/bin", HOME: "/home/testuser" };
 
+  it("points the tier model settings at the models block's tier pointers for a session that routes by name, and leaves a tier without a pointer on the provider's own table", () => {
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: true, tierModels: { opus: "fast", haiku: "family:glm-5-1" },
+      baseEnv: { ...baseEnv, ANTHROPIC_DEFAULT_SONNET_MODEL: "kept", ANTHROPIC_DEFAULT_OPUS_MODEL: "replaced" },
+      configDirEscapeHatch: true,
+      identitiesDir: "/home/testuser/.agent-shim/identities",
+    });
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("fast");
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe("family:glm-5-1");
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("kept");
+  });
+
+  it("ignores the tier pointers for a session that does not route by name, since only the door's name resolution can serve a ref", () => {
+    const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false, tierModels: { opus: "fast" },
+      baseEnv: { ...baseEnv, ANTHROPIC_DEFAULT_OPUS_MODEL: "kept" },
+      configDirEscapeHatch: true,
+      identitiesDir: "/home/testuser/.agent-shim/identities",
+    });
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("kept");
+  });
+
   it("leaves the environment unchanged when the CLAUDE_CONFIG_DIR escape hatch applied", () => {
     const env = buildEnv({ sessionId: "session-test", remoteControl: false, routeByName: false,
       baseEnv: { ...baseEnv, CLAUDE_CONFIG_DIR: "/somewhere/else" },

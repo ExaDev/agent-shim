@@ -65,6 +65,7 @@ import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
 import { readRcSelfHostRecord } from "./rcSelfHostMint";
 import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
 import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, observingRoutedRoute } from "./rcSessions";
+import { targetRefs } from "../models/targets";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
@@ -72,7 +73,7 @@ import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_MIN_SERVING_MS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
-import { liveSessionTokens, writeFrontDoorSession } from "./state";
+import { liveSessionTokens, writeFrontDoorSession, readFrontDoorSessionModels } from "./state";
 import { declareThisProcessTheFrontDoor } from "./selfIdentity";
 import { awaitPidExit, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 import { createAccountReader } from "../usage/account";
@@ -212,7 +213,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
   const resolveRoute = rcObservingResolver(
     createProviderRouteResolver({
       // Read live so a models-block edit reaches the next request without a door restart.
-      models: () => readModels(paths),
+      // The block this session launched with when its directory, profile or committed file added definitions of its own; otherwise the global block, read live so an edit applies to the next request with no relaunch.
+      models: (session) => (session.sessionId === undefined ? undefined : readFrontDoorSessionModels(realFarmFs, paths.frontdoorSessionsDir, session.sessionId)) ?? readModels(paths),
+      targets: () => targetRefs(paths),
       fs: realFsPort,
       providersDir: paths.providersDir,
       codexPorts,

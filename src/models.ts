@@ -2,10 +2,10 @@ import type { Command } from "commander";
 
 import { printJson, reportMutation, withExamples, confirmRemoval, type CommandDeps } from "./cli/commandDeps";
 import { collectRepeated } from "./cli/parsers";
-import { providerModels, type ProviderModel } from "./models/targets";
+import { providerModels, targetRefs, type ProviderModel } from "./models/targets";
 import { CLAUDE_TIERS, SELECTION_MODES, type ModelsConfig, type SelectionModeName } from "./config/schema";
 import { UsageError } from "./cliError";
-import { buildFamilies } from "./models/families";
+import { FAMILY_PREFIX, buildFamilies, expandFamilyMembers, familyCapabilities, familyMode, familyNamed, familyOfRef, type Family } from "./models/families";
 import { relateModels } from "./models/identity";
 import { addDistinctPair, addSameGroup, expandMembers, readModels, removeAssertionsNaming, removeVirtualModel, setFamily, setPrice, setTier, setVirtualModel, VirtualModelNotFoundError } from "./modelsStore";
 import { realFarmFs } from "./realPorts";
@@ -42,37 +42,40 @@ function providerQuotaOf(paths: LayoutPaths): (provider: string) => Readonly<Par
   };
 }
 
-/** What `explain` says of the members the door does not choose by quota: an account member is served by relaunching the session under its identity, so no signal ranks it, and a family member is resolved from the live catalogues, which the door does not read yet. A member is listed with how it is served so an account-only model never reads as spent. */
-export function describeUnroutedMembers(members: readonly string[]): readonly string[] {
+/** What `explain` says of the members the door does not choose by quota: an account member is served by relaunching the session under its identity, so no signal ranks it, and a family member that no offered target belongs to has nothing to choose among. A member is listed with how it is served so an account-only model never reads as spent. */
+export function describeUnroutedMembers(members: readonly string[], families: readonly Family[]): readonly string[] {
   return members.flatMap((member) => {
     if (member.startsWith("acct:")) {
       const [identity] = member.slice("acct:".length).split("/");
       return [`${member} is served by relaunching the session under identity "${identity ?? ""}", so no quota signal ranks it`];
     }
-    return member.startsWith("family:") ? [`${member} is resolved from the live catalogues, which the door does not read yet, so it is not a candidate`] : [];
+    return member.startsWith(FAMILY_PREFIX) && familyNamed(families, member) === undefined ? [`no target the providers offer belongs to ${member}, so it has nothing to choose among`] : [];
   });
 }
 
-/** Explains one virtual model's choice: the member its mode picks over the live signals, and why each candidate stands where it does. */
+/** Explains one virtual model's (or family row's) choice: the member its mode picks over the live signals, and why each candidate stands where it does. */
 function explainVirtualModel(paths: LayoutPaths, name: string): void {
   const models = readModels(paths);
-  const definition = models?.virtual?.[name];
-  if (definition === undefined) {
+  const virtual = models?.virtual?.[name];
+  const families = buildFamilies(targetRefs(paths), models);
+  const isFamily = name.startsWith(FAMILY_PREFIX);
+  if (virtual === undefined && !isFamily) {
     throw new UsageError(`No virtual model named "${name}".`);
   }
+  const mode = virtual?.mode ?? familyMode(familyNamed(families, name)?.settings ?? {});
   const quotaOf = providerQuotaOf(paths);
   const observations = createTargetObservationStore(realFarmFs, paths);
-  const members = expandMembers(name, models);
-  const candidates = members
-    .filter((member) => !member.startsWith("acct:") && !member.startsWith("family:"))
+  const members = isFamily ? [name] : expandMembers(name, models);
+  const candidates = expandFamilyMembers(members, families)
+    .filter((member) => !member.startsWith("acct:"))
     .map((ref, order) => {
       const [provider] = ref.split("/");
       return candidateOf(ref, order, { quota: quotaOf(provider ?? ""), ...(observations.observation(ref) === undefined ? {} : { observation: observations.observation(ref) }), ...(models?.prices?.[ref] === undefined ? {} : { price: models.prices[ref] }) }, false);
     });
-  const evaluated = candidates.map((candidate) => ({ candidate, capabilities: { vision: true, tools: true, thinking: true } }));
-  const selection = selectMember(definition.mode, evaluated, {});
-  const unrouted = describeUnroutedMembers(members);
-  console.log(`${name} (${definition.mode}) chooses ${selection.ref ?? (candidates.length === 0 ? "nothing by quota" : "nothing")}:`);
+  const evaluated = candidates.map((candidate) => ({ candidate, capabilities: familyCapabilities(familyOfRef(families, candidate.ref)?.settings ?? {}) }));
+  const selection = selectMember(mode, evaluated, {});
+  const unrouted = describeUnroutedMembers(members, families);
+  console.log(`${name} (${mode}) chooses ${selection.ref ?? (candidates.length === 0 ? "nothing by quota" : "nothing")}:`);
   // With no routable candidate the engine's own reasons describe an empty set (it reads as every member being spent), so only what the members are is said.
   for (const line of candidates.length === 0 ? unrouted : [...selection.reasons, ...unrouted]) {
     console.log(`  ${line}`);
@@ -115,7 +118,7 @@ export function registerModelsCommand(program: Command, deps: CommandDeps): void
   withExamples(
     modelsCommand
       .command("explain <name>")
-      .description("Show which member a virtual model's mode picks over the live signals, and why each candidate stands where it does.")
+      .description("Show which member a virtual model's (or a family row's) mode picks over the live signals, and why each candidate stands where it does.")
       .action((name: string) => {
         explainVirtualModel(paths, name);
       }),

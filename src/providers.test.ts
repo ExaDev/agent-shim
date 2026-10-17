@@ -446,6 +446,19 @@ describe("providers", () => {
       expect(result).toEqual({ ok: true, checked: ["m", "z"] });
     });
 
+    it("checks a family member through every provider offering a target of the family, and skips one no target belongs to", () => {
+      addProvider(paths, "z", zInput);
+      addProvider(paths, "m", { displayName: "MiniMax", baseUrl: "https://api.minimax.example", sources: [{ env: "M_API_TOKEN" }] });
+      const models = { virtual: { across: { mode: "ordered" as const, members: ["family:glm-5-1", "family:ghost-9"] } } };
+      const targets = (): readonly string[] => ["z/glm-5.1", "m/hf:zai-org/GLM-5.1", "m/MiniMax-M3"];
+      expect(resolveRoutedProviderCredentials({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z", M_API_TOKEN: "tok-m" }, credentials: fakeCredentials(), models, targets })).toEqual({ ok: true, checked: ["m", "z"] });
+      const missing = resolveRoutedProviderCredentials({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, credentials: fakeCredentials(), models, targets });
+      expect(missing.ok).toBe(false);
+      if (!missing.ok) {
+        expect(missing.message).toContain("provider m has no usable credential");
+      }
+    });
+
     it("names every failure at once: an unknown provider and a credential that yields no token", () => {
       addProvider(paths, "z", zInput);
       const models = { virtual: { a: { mode: "ordered" as const, members: ["z/glm-5.3", "ghost/x"] } } };

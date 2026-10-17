@@ -115,6 +115,7 @@ export function assembleCascade(input: CascadeInput): AssembledCascade {
       ...(config.entries === undefined ? {} : { entries: config.entries }),
       ...(entryOrder === undefined ? {} : { entryOrder }),
       ...(config.launch === undefined ? {} : { launch: config.launch }),
+      ...(config.models === undefined ? {} : { models: config.models }),
     });
     nextId += 1;
   }

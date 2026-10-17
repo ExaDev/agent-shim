@@ -759,3 +759,56 @@ describe("routing by name from a provider session", () => {
     }
   });
 });
+
+describe("a family and the capabilities it carries", () => {
+  const files: Record<string, unknown> = {
+    [`${PROVIDERS_DIR}/z.json`]: { displayName: "Z", baseUrl: "https://z.example/api", credential: { sources: [{ literal: "z-token" }] } },
+    [`${PROVIDERS_DIR}/s.json`]: { displayName: "S", baseUrl: "https://s.example/api", credential: { sources: [{ literal: "s-token" }] } },
+    [`${PROVIDERS_DIR}/m.json`]: { displayName: "M", baseUrl: "https://m.example/api", credential: { sources: [{ literal: "m-token" }] } },
+  };
+  const targets = ["z/glm-5.1", "s/hf:zai-org/GLM-5.1", "m/MiniMax-M3"];
+  const spentZ: UsageSnapshot = { schemaVersion: 1, identity: "work", updatedAt: new Date(0).toISOString(), providers: { z: { lastRequestAt: new Date(0).toISOString(), lastStatus: 200, rateLimit: { observedAt: new Date(0).toISOString(), headers: {}, unified: { sevenDay: { utilization: 1, resetsAt: new Date(DAY_RESET_MS).toISOString(), status: "rejected" } } } } } };
+
+  const resolverOf = (models: ModelsConfig, snapshot?: UsageSnapshot): ReturnType<typeof createProviderRouteResolver> =>
+    createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeCredentials(), models: () => models, targets: () => targets, ...(snapshot === undefined ? {} : { usageSnapshotOf: () => snapshot }) });
+
+  /** A routing session's request for `model`, its body optionally carrying an image block. */
+  const asked = (model: string, withImage = false): RoutedRequest => ({
+    ...request("/providers/z/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: withImage ? [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AA==" } }] : "hi" }] })),
+    session: { identity: "work", sessionId: "s-1", provider: "z", headroom: false, routeByName: true, projectId: undefined },
+  });
+
+  /** The provider and model name the resolution handed on, read from the replayed body. */
+  const servedBy = async (resolution: Awaited<ReturnType<ReturnType<typeof createProviderRouteResolver>>>): Promise<{ readonly route: string; readonly model: string }> => {
+    if (!resolution.ok) {
+      throw new Error(`refused: ${resolution.message}`);
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of resolution.request?.body ?? []) {
+      chunks.push(Buffer.from(chunk as Uint8Array));
+    }
+    return { route: resolution.route.name, model: (JSON.parse(Buffer.concat(chunks).toString("utf8")) as { model: string }).model };
+  };
+
+  it("serves a request naming a family from the first of its targets that stands, under that target's own model name", async () => {
+    expect(await servedBy(await resolverOf({})(asked("family:glm-5-1")))).toEqual({ route: "http:z", model: "glm-5.1" });
+    expect(await servedBy(await resolverOf({}, spentZ)(asked("family:glm-5-1")))).toEqual({ route: "http:s", model: "hf:zai-org/GLM-5.1" });
+  });
+
+  it("expands a family member of a virtual model to the family's targets", async () => {
+    const models: ModelsConfig = { virtual: { across: { mode: "ordered", members: ["family:glm-5-1", "m/MiniMax-M3"] } } };
+    expect(await servedBy(await resolverOf(models, spentZ)(asked("across")))).toEqual({ route: "http:s", model: "hf:zai-org/GLM-5.1" });
+  });
+
+  it("chooses a family row's target by the mode the family's settings name", async () => {
+    const models: ModelsConfig = { families: { "glm-5-1": { mode: "most-allowance" } } };
+    expect((await servedBy(await resolverOf(models, spentZ)(asked("family:glm-5-1")))).route).toBe("http:s");
+  });
+
+  it("rules out, for a request carrying an image, a target whose family says it takes none", async () => {
+    const models: ModelsConfig = { virtual: { smart: { mode: "adaptive", members: ["z/glm-5.1", "m/MiniMax-M3"] } }, families: { "glm-5-1": { vision: false } } };
+    expect((await servedBy(await resolverOf(models)(asked("smart", true)))).route).toBe("http:m");
+    expect((await servedBy(await resolverOf(models)(asked("smart", false)))).route).toBe("http:z");
+  });
+});
+

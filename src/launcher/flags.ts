@@ -3,7 +3,7 @@ import path from "node:path";
 import { parseEnvBool } from "../cli/envBool";
 import { UsageError } from "../cliError";
 import { parseDuration } from "../resolve/conditions";
-import type { LaunchFlags, Provider } from "../config/schema";
+import { CLAUDE_TIERS, type ClaudeTier, type LaunchFlags, type Provider } from "../config/schema";
 import { credentialVariables, type ResolvedCredential } from "../credential";
 import { mergeAnthropicCustomHeaders } from "../headroom/headers";
 import { connectProxyUrl } from "../frontdoor/capability";
@@ -176,6 +176,8 @@ export interface BuildEnvParams {
   readonly remoteControl: boolean;
   /** Whether the session routes provider-qualified model names through the models block: rides the session headers so the door's routing layer sees it. */
   readonly routeByName: boolean;
+  /** The models block's tier pointers: each names the model ref the Claude tier stands for. They take effect only for a session that routes by name, since only the door's name resolution can serve a ref (`fast`, `z/glm-5.3`, `family:glm-5-1`) a tier's model setting would otherwise send to a provider that does not know it. */
+  readonly tierModels?: Readonly<Partial<Record<ClaudeTier, string>>>;
 }
 
 /**
@@ -207,6 +209,16 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
     env.AGENT_SHIM_PROVIDER = params.provider.definition.displayName;
     for (const [key, value] of Object.entries(providerEnv)) {
       env[key] = value;
+    }
+  }
+
+  if (params.routeByName) {
+    // Each tier's model setting is the pointer's ref, so choosing that tier (or letting Claude Code pick it) sends the name the door resolves; the provider's own tier table, applied above, is what a tier without a pointer keeps.
+    for (const tier of CLAUDE_TIERS) {
+      const ref = params.tierModels?.[tier];
+      if (ref !== undefined) {
+        env[`ANTHROPIC_DEFAULT_${tier.toUpperCase()}_MODEL`] = ref;
+      }
     }
   }
 

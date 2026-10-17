@@ -189,6 +189,30 @@ describe("routedModelRows", () => {
     expect(rows[1]).toMatchObject({ label: "z / glm-5.3", description: "z: Serves the opus tier" });
   });
 
+  it("lists one row per family offered by more than one target between the virtual models and the qualified rows, naming every target in its description", () => {
+    const two: readonly (readonly [string, Provider])[] = [
+      ["z", http({ ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.1" })],
+      ["s", http({ ANTHROPIC_DEFAULT_SONNET_MODEL: "hf:zai-org/GLM-5.1" })],
+    ];
+    const rows = routedModelRows({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.1"] } }, families: { "glm-5-1": { mode: "cheapest" } } }, two);
+    expect(rows.map((row) => row.model)).toEqual(["fast", "family:glm-5-1", "z/glm-5.1", "s/hf:zai-org/GLM-5.1"]);
+    expect(rows[1]).toMatchObject({ label: "glm-5-1", description: "Family (cheapest): z/glm-5.1, s/hf:zai-org/GLM-5.1", behavesAs: "claude-haiku-5-5" });
+  });
+
+  it("lists no row for a family one target offers, and honours hide for a family row", () => {
+    const one: readonly (readonly [string, Provider])[] = [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3" })]];
+    expect(routedModelRows({}, one).map((row) => row.model)).toEqual(["z/glm-5.3"]);
+    const two: readonly (readonly [string, Provider])[] = [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.1" })], ["s", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "hf:zai-org/GLM-5.1" })]];
+    expect(routedModelRows({ hide: ["family:glm-5-1"] }, two).map((row) => row.model)).not.toContain("family:glm-5-1");
+  });
+
+  it("keeps a virtual model's row when no member names a tier, handled as a sonnet, and one over a family takes its targets' handling", () => {
+    const offered: readonly (readonly [string, Provider])[] = [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.1" })], ["s", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "hf:zai-org/GLM-5.1" })]];
+    const rows = routedModelRows({ virtual: { unknown: { mode: "ordered", members: ["ghost/x"] }, across: { mode: "ordered", members: ["family:glm-5-1"] } } }, offered);
+    expect(rows.find((row) => row.model === "unknown")?.behavesAs).toBe("claude-sonnet-5-5");
+    expect(rows.find((row) => row.model === "across")?.behavesAs).toBe("claude-opus-5-5");
+  });
+
   it("hides what the block hides and, when show is set, lists only what it names", () => {
     expect(routedModelRows({ hide: ["z/glm-5.3"] }, providers).map((row) => row.model)).not.toContain("z/glm-5.3");
     expect(routedModelRows({ show: ["fast"] , virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } }, providers).map((row) => row.model)).toEqual(["fast"]);

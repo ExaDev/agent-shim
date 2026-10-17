@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 
 import packageJson from "../package.json";
@@ -18,9 +19,8 @@ import type { Candidate } from "./usage/pick";
 import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows } from "./launcher/launchReport";
 import { modelPickerSettings, modelPickerSettingsFromRows, routedModelRows } from "./launcher/modelPicker";
 import { catalogueCachePath, parseCatalogueCache } from "./providerCatalogue";
-import { readModels } from "./modelsStore";
 import { listProviders } from "./providersStore";
-import type { Provider } from "./config/schema";
+import type { ModelsConfig, Provider } from "./config/schema";
 import { resolvePoolLaunch } from "./launcher/pool";
 import { resumedContextTokens } from "./usage/resumeContext";
 import { IdentityLockBusyError } from "./launcher/lock";
@@ -40,6 +40,7 @@ import { readUsageSnapshot, UsageSnapshotError } from "./usage/read";
 import type { ClaudeBinaryResolver } from "./versionDiscovery";
 import { resolveClaudeVersion, type PinnedClaudeVersion } from "./launcher/claudeVersion";
 import { runLaunchUpdateCheck, type UpdateLaunchPort } from "./update/launchHook";
+import { targetRefs } from "./models/targets";
 
 /**
  * Everything the farm resync needs that the launcher itself has no way to produce: a real filesystem, a real clock, the working directory, and a way to load the cascade for it.
@@ -262,6 +263,10 @@ interface DecidedLaunch {
   /** What a person should know about this launch that is not one of its decisions: a setting that did not apply, and why. */
   readonly notes: readonly string[];
   readonly flags: ResolvedLaunchFlags;
+  /** The models block this launch resolves: the global block with every deeper layer (profile, directory rule, committed file) applied, which is what the picker rows, the credential check and the door's resolution for this session are taken from. */
+  readonly models: ModelsConfig | undefined;
+  /** The global models block alone, which a session that adds no definitions of its own leaves the door to follow live. */
+  readonly globalModels: ModelsConfig | undefined;
   readonly bin: string;
   readonly args: readonly string[];
   readonly decision: LaunchDecision;
@@ -451,10 +456,12 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   // Launch flags come from the cascade's `launch` block: the same flattening of the same assembled cascade the farm resync computes, so a decision made before the resync reports what the resync will carry. Escape-hatch and bare launches have no farm to resync, but launch flags are agent-shim's own behaviour, not the farm's: a global `launch.headroom` (or any other launch setting) must still apply when CLAUDE_CONFIG_DIR was already set or no identity resolved. This reads and flattens the cascade and writes nothing.
   const launchCascade = farmContext?.cascade ?? (params.farm === undefined ? undefined : params.farm.loadCascade(configProfileDecision.name, cliOverride));
   let cascadeLaunch: LaunchFlags | undefined;
+  let cascadeModels: ModelsConfig | undefined;
   if (launchCascade !== undefined && params.farm !== undefined) {
     const assembled = assembleCascade(launchCascade);
     const flattened = flattenLayers(assembled.layers, { home: params.farm.home });
     cascadeLaunch = flattened.launch;
+    cascadeModels = flattened.models;
     // A launch that resyncs a farm reports these through the resync. One with no farm (the escape hatch, or no identity resolved) and a read-only decision resync nothing, so they are reported here rather than leaving a layer partly ignored without a word. A read-only decision has no way to refuse, so it reports an error as a warning.
     if (readOnly || farmContext === undefined) {
       reportDiagnostics(log, [...assembled.diagnostics, ...flattened.diagnostics], { errorsAsWarnings: readOnly });
@@ -492,8 +499,11 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   const catalogue = selectedProvider === undefined ? undefined : parseCatalogueCache(params.fs.readFileUtf8(catalogueCachePath(paths, selectedProvider.name)));
   // A session that routes by model name (the flag, or a router provider) lists the whole catalogue instead: its virtual models first, then every provider's models qualified.
   const routesByName = flags.routeByName || (selectedProvider !== undefined && isRouterProvider(selectedProvider.definition));
+  // The cascade's block when a cascade was read (a launch with a farm), else the global block alone; read through the launcher's own config port so a test sees its own filesystem.
+  const globalModels = loadConfigFile(paths.globalConfigFile, GlobalConfigSchema, params.fs.readConfigFile)?.config.models;
+  const models = launchCascade !== undefined && params.farm !== undefined ? cascadeModels : globalModels;
   const pickerSettings = routesByName
-    ? modelPickerSettingsFromRows(routedModelRows(readModels(paths) ?? {}, listProviders(paths).map((entry): readonly [string, Provider] => [entry.name, entry.provider])), selectedProvider !== undefined)
+    ? modelPickerSettingsFromRows(routedModelRows(models ?? {}, listProviders(paths).map((entry): readonly [string, Provider] => [entry.name, entry.provider])), selectedProvider !== undefined)
     : selectedProvider === undefined
       ? undefined
       : modelPickerSettings(selectedProvider.definition, catalogue?.models);
@@ -537,6 +547,8 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
     identityCredential,
     pinnedVersion,
     flags,
+    models,
+    globalModels,
     bin: discovered.path,
     args,
     decision,
@@ -621,10 +633,10 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     rows.push(pinnedVersionRow(decided.pinnedVersion.version, decided.pinnedVersion.source));
   }
 
-  // A router or routeByName session sends provider-qualified model names the door resolves through the models block, so every provider a definition names is about to carry this session's requests: its credential is resolved now, so a missing one fails the launch naming the provider instead of surfacing as a bare 502 on the first request that names it. Family and account members stay the door's to resolve (a family's providers depend on live catalogues; an account member relaunches rather than dialling out). A read-only resolution never reaches this code, so it still resolves no credential.
+  // A router or routeByName session sends provider-qualified model names the door resolves through the models block, so every provider a definition names is about to carry this session's requests: its credential is resolved now, so a missing one fails the launch naming the provider instead of surfacing as a bare 502 on the first request that names it. A family member is checked through every provider that offers a target of the family, and an account member is the door's to resolve (it relaunches rather than dialling out). A read-only resolution never reaches this code, so it still resolves no credential.
   const routesByName = resolvedFlags.routeByName || (resolvedProvider !== undefined && isRouterProvider(resolvedProvider.definition));
   if (routesByName) {
-    const check = resolveRoutedProviderCredentials({ paths, port: params.fs, env, ...(params.credentials === undefined ? {} : { credentials: params.credentials }), models: loadConfigFile(paths.globalConfigFile, GlobalConfigSchema, params.fs.readConfigFile)?.config.models });
+    const check = resolveRoutedProviderCredentials({ paths, port: params.fs, env, ...(params.credentials === undefined ? {} : { credentials: params.credentials }), models: decided.models, targets: () => targetRefs(paths) });
     if (!check.ok) {
       log.error(check.message);
       proc.exit(check.status);
@@ -638,7 +650,11 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     log.error("agent-shim: this launch routes through the front-door daemon, but this launcher has no front-door port wired; refusing to launch without it.");
     proc.exit(1);
   }
-  const frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS) : undefined;
+  // The id this launch's requests carry in their session header, and the models block the door resolves them against: the global block live when this launch adds nothing to it, else the block this launch resolved (a deeper layer's definitions the door cannot read from the global file). An absent resolved block against a present global one means a deeper layer removed everything, which the door is told as an empty block.
+  const sessionId = params.supervised?.sessionId ?? randomUUID();
+  const resolvedModels = decided.models ?? (decided.globalModels === undefined ? undefined : {});
+  const sessionModels = isDeepStrictEqual(resolvedModels, decided.globalModels) ? undefined : resolvedModels;
+  const frontDoor = frontDoorEngaged && frontDoorPort !== undefined ? frontDoorPort.ensure(env.NODE_EXTRA_CA_CERTS, { sessionId, ...(sessionModels === undefined ? {} : { models: sessionModels }) }) : undefined;
   if (frontDoor?.trustWarning !== undefined) {
     log.warn(frontDoor.trustWarning);
   }
@@ -654,7 +670,6 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
   rows.push(...routingRows({ frontDoor, headroom, provider: resolvedProvider !== undefined }));
   const frontDoorRelease = frontDoor === undefined ? undefined : frontDoorPort?.release;
 
-  const sessionId = params.supervised?.sessionId ?? randomUUID();
   const finalEnv = buildEnv({
     baseEnv: env,
     configDirEscapeHatch: configDirEscapeHatchApplies,
@@ -667,6 +682,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     sessionId,
     remoteControl: resolvedFlags.remoteControl,
     routeByName: routesByName,
+    ...(decided.models?.tiers === undefined ? {} : { tierModels: decided.models.tiers }),
   });
 
   // Every daemon session registration this launch holds, released when the child exits.

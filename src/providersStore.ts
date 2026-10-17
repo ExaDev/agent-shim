@@ -27,6 +27,7 @@ import type { ResolvedProvider } from "./launcher/flags";
 import type { FsPort } from "./launcher/ports";
 import { assembleCascade, type CascadeInput } from "./resolve/walk";
 import type { LayoutPaths } from "./paths";
+import { FAMILY_PREFIX, buildFamilies, expandFamilyMembers, type Family } from "./models/families";
 
 /** Raised by any operation that requires a provider to already exist, when it does not. */
 export class ProviderNotFoundError extends CliError {
@@ -566,10 +567,12 @@ export interface ResolveRoutedProviderCredentialsParams {
   readonly credentials?: CredentialPort;
   /** The models block whose provider targets to check. Absent when none is defined, which checks nothing. */
   readonly models: ModelsConfig | undefined;
+  /** Every target the providers offer, as `<provider>/<model>` refs: what a `family:` member expands to. Read only when a member names a family. */
+  readonly targets?: () => readonly string[];
 }
 
 /**
- * Checks that every provider the models block can route a request to is usable now, by resolving each named provider's credential the same way `resolveProvider` resolves a selected one. Only provider members are checked: a `family:` member's providers depend on live catalogues the door holds, an `acct:` member relaunches under its identity rather than dialling out, and a nested virtual model's own members are already in the set this walk collects. Pure over its injected ports, so the launcher's tests exercise refusals without touching a real providers directory or secret store.
+ * Checks that every provider the models block can route a request to is usable now, by resolving each named provider's credential the same way `resolveProvider` resolves a selected one. Provider members are checked, and a `family:` member is checked through every provider that offers a target of the family; an `acct:` member relaunches under its identity rather than dialling out, and a nested virtual model's own members are already in the set this walk collects. Pure over its injected ports, so the launcher's tests exercise refusals without touching a real providers directory or secret store.
  */
 export function resolveRoutedProviderCredentials(params: ResolveRoutedProviderCredentialsParams): RoutedProviderCredentials {
   const { models } = params;
@@ -578,8 +581,15 @@ export function resolveRoutedProviderCredentials(params: ResolveRoutedProviderCr
   }
   const virtualNames = new Set(Object.keys(models.virtual ?? {}));
   const providerNames = new Set<string>();
+  const families = (): readonly Family[] => buildFamilies(params.targets?.() ?? [], models);
   const collect = (ref: string): void => {
-    if (ref.startsWith("acct:") || ref.startsWith("family:") || virtualNames.has(ref)) {
+    if (ref.startsWith(FAMILY_PREFIX)) {
+      for (const target of expandFamilyMembers([ref], families())) {
+        collect(target);
+      }
+      return;
+    }
+    if (ref.startsWith("acct:") || virtualNames.has(ref)) {
       return;
     }
     const [provider] = ref.split("/", 1);

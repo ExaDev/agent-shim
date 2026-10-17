@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildFamilies, familyCapabilities, familyKeyOf, familyMode, familyNamed, sharedFamilies } from "./families";
+import { buildFamilies, expandFamilyMembers, familyCapabilities, familyKeyOf, familyMode, familyNamed, familyOfRef, sharedFamilies } from "./families";
 
 describe("familyKeyOf", () => {
   it("gives equal keys to one model under different spellings, and the variant a separate suffix", () => {
@@ -58,5 +58,22 @@ describe("the family helpers", () => {
     expect(familyCapabilities(glm?.settings ?? {})).toEqual({ vision: false, tools: true, thinking: true });
     expect(familyMode(glm?.settings ?? {})).toBe("cheapest");
     expect(familyMode({})).toBe("ordered");
+  });
+});
+
+describe("expandFamilyMembers", () => {
+  const families = buildFamilies(["z/glm-5.1", "s/hf:zai-org/GLM-5.1", "m/MiniMax-M3"], undefined);
+
+  it("replaces a family member with its targets in place, without repeating one the list already holds", () => {
+    expect(expandFamilyMembers(["m/MiniMax-M3", "family:glm-5-1", "z/glm-5.1"], families)).toEqual(["m/MiniMax-M3", "z/glm-5.1", "s/hf:zai-org/GLM-5.1"]);
+  });
+
+  it("expands a family no target belongs to to nothing, and leaves plain members alone", () => {
+    expect(expandFamilyMembers(["family:ghost-9", "m/MiniMax-M3"], families)).toEqual(["m/MiniMax-M3"]);
+  });
+
+  it("finds the family a target belongs to", () => {
+    expect(familyOfRef(families, "s/hf:zai-org/GLM-5.1")?.key).toBe("glm-5-1");
+    expect(familyOfRef(families, "nowhere/x")).toBeUndefined();
   });
 });

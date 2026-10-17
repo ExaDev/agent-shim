@@ -4,7 +4,7 @@ import { CliError } from "../cliError";
 import type { LayoutPaths } from "../paths";
 import { readStartLock, type HeadroomFs, type HeadroomLock } from "../headroom/state";
 import type { ListenerVerdict } from "./probe";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, recordOf, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorSessionDetails } from "./state";
 
 /** How long one launch waits for the front door. The listener is this same binary binding one loopback port, so a cold start takes a second or two; the bound only bites when something is genuinely broken. */
 const FRONTDOOR_START_TIMEOUT_MS = 30_000;
@@ -56,6 +56,8 @@ export function ensureFrontDoor(params: {
   readonly ports: EnsureFrontDoorPorts;
   /** Replaces a serving door whatever its protocol, once: the restart a binary update asks for, so the new generation serves the sessions already running without waiting for the registry to empty. */
   readonly replace?: boolean;
+  /** What this launch tells the door about itself beyond its token: the id its requests carry in their session header, and the models block it resolved when it added definitions of its own to the global one. Recorded in the launch's registry entry, so it lives and is pruned with the launch. */
+  readonly session?: FrontDoorSessionDetails;
 }): { readonly port: number; readonly connectPort: number; readonly token: string } {
   const { paths, ports } = params;
   const deadline = ports.now() + FRONTDOOR_START_TIMEOUT_MS;
@@ -107,7 +109,7 @@ export function ensureFrontDoor(params: {
         if (supervisorPid === params.launcherPid && params.replace !== true && ports.isFrontDoorSupervisor(supervisorPid)) {
           // This process is the serving door, which the process's own command line confirms: an equal pid alone proves nothing, since a pid recorded by a door that exited uncleanly can be reused by an ordinary launcher while another user holds the recorded port. A launch planned inside it (the usage probe, the window opener, a job) has nothing to authenticate, and probing itself would block the very event loop that has to answer the probe, stalling every session on the door for the whole wait. It registers the launch like any other and returns its own addresses.
           const token = randomUUID();
-          writeFrontDoorSession(ports.fs, paths.frontdoorSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), token, supervisorPid });
+          writeFrontDoorSession(ports.fs, paths.frontdoorSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), token, supervisorPid, ...recordOf(params.session) });
           return { port: state.port, connectPort: state.connectPort, token };
         }
         const verdict = verifyWithRetry(state.port);
@@ -123,7 +125,7 @@ export function ensureFrontDoor(params: {
         if (verdict.ok) {
           // The token is generated here, per launch: the registry entry is what the door's listeners check requests against, and a fresh launch invalidates nothing (its entry is added alongside the live ones).
           const token = randomUUID();
-          writeFrontDoorSession(ports.fs, paths.frontdoorSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), token, supervisorPid });
+          writeFrontDoorSession(ports.fs, paths.frontdoorSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), token, supervisorPid, ...recordOf(params.session) });
           return { port: state.port, connectPort: state.connectPort, token };
         }
         lastRejection = `the listener on 127.0.0.1:${String(state.port)} (recorded for pid ${String(supervisorPid)}) failed authentication: ${verdict.reason}`;
