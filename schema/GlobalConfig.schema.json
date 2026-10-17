@@ -315,6 +315,111 @@
         "additionalProperties": false
       }
     },
+    "models": {
+      "type": "object",
+      "properties": {
+        "virtual": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "ordered",
+                  "most-allowance",
+                  "soonest-reset",
+                  "spread",
+                  "adaptive",
+                  "lowest-latency",
+                  "highest-success",
+                  "cheapest"
+                ]
+              },
+              "members": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "mode",
+              "members"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "tiers": {
+          "type": "object",
+          "properties": {
+            "fable": {
+              "type": "string",
+              "minLength": 1
+            },
+            "opus": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sonnet": {
+              "type": "string",
+              "minLength": 1
+            },
+            "haiku": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "prices": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "output": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "input",
+              "output"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "hide": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "show": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "jobs": {
       "type": "object",
       "propertyNames": {

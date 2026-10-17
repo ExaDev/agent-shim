@@ -13,6 +13,13 @@ export default defineConfig([
   },
   ...exadev,
   {
+    files: ["src/doctorReport.ts"],
+    rules: {
+      // This file is the whole-config audit: one section per noun the tool owns, over shared validate-and-report helpers. Splitting it would duplicate those helpers across a file per noun.
+      "max-lines": ["error", { max: 1000, skipComments: true }],
+    },
+  },
+  {
     files: ["src/frontdoor/headroomHop.test.ts"],
     rules: {
       // This file is the whole-door integration harness (a fake headroom daemon, a TLS door over the production pipelines) plus one test per hop behaviour; every helper is shared by those tests and splitting it would duplicate the harness. Its size limit is lifted rather than the harness copied.

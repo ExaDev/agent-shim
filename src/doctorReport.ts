@@ -12,11 +12,13 @@ import { parseSiwcFile } from "./codex/siwcStore";
 import { SIWC_PLAN_SCOPE } from "./codex/siwc";
 import { ConfigValidationError } from "./config/load";
 import { describeIgnoredKeys, parseIgnoringUnrecognisedKeys } from "./config/unrecognisedKeys";
-import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, isCodexProvider, poolMemberIdentity, ProviderSchema, type Credential } from "./config/schema";
+import { CategoryClassificationOverlaySchema, ConfigProfileSchema, DirectoryRulesSchema, GlobalConfigSchema, IdentitySchema, isCodexProvider, poolMemberIdentity, ProviderSchema, type Credential, type ModelsConfig } from "./config/schema";
 import { describeCredential, type CredentialCacheEnv } from "./credential";
 import { describeCachedCredential, formatCachedCredentialState } from "./credentialCache";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { isMovingGitSource } from "./headroom/source";
+import { modelsFindings } from "./models/doctor";
+import { readGlobalConfig } from "./configProfilesStore";
 import { diagnoseAllowlistDrift } from "./headroom/allowlistDrift";
 import { earlierReleaseDaemon } from "./headroom/earlierRelease";
 import { reportableAllowlistFileProblem } from "./headroom/socket";
@@ -57,6 +59,7 @@ export const DOCTOR_SECTIONS = [
   "active-identity",
   "headroom",
   "frontdoor",
+  "models",
 ] as const;
 export type DoctorSection = (typeof DOCTOR_SECTIONS)[number];
 
@@ -151,6 +154,8 @@ export interface RunDoctorParams {
   readonly providers: readonly DoctorProviderInput[];
   readonly directoryRules: DoctorFileInput;
   readonly globalConfig: DoctorFileInput;
+  /** The parsed `models` block of the global config, when one is defined. Omit to skip the models checks. */
+  readonly models?: ModelsConfig;
   readonly categoriesLocal: DoctorFileInput;
   readonly activeIdentity: DoctorFileInput;
   readonly binaryDiscovery: DoctorBinaryDiscovery;
@@ -376,6 +381,11 @@ function pushLegacyName(
  *
  * Every check aggregates rather than throws: a malformed file becomes one `fail` finding for that file, not an aborted report. This is the one place in the codebase that deliberately breaks the "throw a validation error and let it propagate" convention every other command relies on — `doctor`'s whole purpose is to survive a broken file and keep auditing everything else.
  */
+/** The global config's `models` block, parsed for the doctor's checks; undefined when the file has none. */
+function parsedModelsOf(paths: LayoutPaths): ModelsConfig | undefined {
+  return readGlobalConfig(paths)?.models;
+}
+
 export function runDoctor(params: RunDoctorParams): DoctorReport {
   const findings: DoctorFinding[] = [];
   const push = (section: DoctorSection, severity: DoctorSeverity, message: string, subject?: string): void => {
@@ -599,6 +609,18 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
     }
   }
 
+  {
+    const models = params.models;
+    if (models === undefined) {
+      push("models", "pass", "No models block configured.");
+    } else {
+      for (const finding of modelsFindings({ models, providers: params.providers.map((entry) => entry.name), identities: params.identities.map((entry) => entry.name) })) {
+        push("models", finding.severity, finding.message);
+      }
+      push("models", "pass", "The models block is consistent.");
+    }
+  }
+
   if (params.categoriesLocal.raw === undefined) {
     push("categories-local", "pass", "No categories.local.json configured.");
   } else {
@@ -701,6 +723,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
 }
 
 const SECTION_TITLES: Readonly<Record<DoctorSection, string>> = {
+  models: "Virtual models",
   "ambient-credential": "Ambient-credential exposure",
   "binary-discovery": "Claude Code binary discovery",
   "claude-shim": "`claude` command shim",
@@ -881,6 +904,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     providers,
     directoryRules: { path: paths.directoryRulesFile, raw: realFsPort.readFileUtf8(paths.directoryRulesFile) },
     globalConfig: { path: paths.globalConfigFile, raw: realFsPort.readFileUtf8(paths.globalConfigFile) },
+    models: parsedModelsOf(paths),
     categoriesLocal: { path: paths.categoriesLocalFile, raw: realFsPort.readFileUtf8(paths.categoriesLocalFile) },
     activeIdentity: { path: paths.activeIdentityFile, raw: realFsPort.readFileUtf8(paths.activeIdentityFile) },
     binaryDiscovery,

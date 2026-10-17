@@ -125,6 +125,13 @@ agent-shim provider add|set <name> [--catalogue-tier <tier>] [--catalogue-includ
 agent-shim provider models <name> [--refresh] [--json]   # the catalogue last fetched, and which of its models /model lists
 agent-shim provider list [--json]
 agent-shim provider show <name> [--json]
+agent-shim model match [--json]   # which model names are the same model across providers
+agent-shim model add <name> --mode <mode> --member <ref>...   # define a virtual model
+agent-shim model set <name> [--mode <mode>] [--member <ref>]...
+agent-shim model remove <name> [--yes]
+agent-shim model tier <tier> --ref <ref> | --clear
+agent-shim model price <ref> --input <usd> --output <usd> | --clear
+agent-shim model list [--json]
 agent-shim provider remove <name> [--yes] [--json]
 
 agent-shim rule add <path> [--config-profile <profile>] [--identity <identity>] [--json]
