@@ -1,3 +1,9 @@
+## [11.40.5](https://github.com/ExaDev/agent-shim/compare/v11.40.4...v11.40.5) (2026-10-17)
+
+### Bug Fixes
+
+* **frontdoor:** bump the door protocol so a route-by-name launch replaces an older door ([e829ee7](https://github.com/ExaDev/agent-shim/commit/e829ee7faa7ffed78392b463a4acb2b6aa386177))
+
 ## [11.40.4](https://github.com/ExaDev/agent-shim/compare/v11.40.3...v11.40.4) (2026-10-17)
 
 ### Bug Fixes
