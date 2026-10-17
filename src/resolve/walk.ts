@@ -75,6 +75,7 @@ export interface CascadeInput {
     readonly entries?: Layer["entries"];
     readonly entryOrder?: readonly string[];
     readonly launch?: Layer["launch"];
+    readonly models?: Layer["models"];
   };
 }
 
@@ -156,6 +157,7 @@ export function assembleCascade(input: CascadeInput): AssembledCascade {
         ...(source.config.entries === undefined ? {} : { entries: source.config.entries }),
         ...(source.entryOrder === undefined ? {} : { entryOrder: source.entryOrder }),
         ...(source.config.launch === undefined ? {} : { launch: source.config.launch }),
+        ...(source.config.models === undefined ? {} : { models: source.config.models }),
       });
       nextId += 1;
     }

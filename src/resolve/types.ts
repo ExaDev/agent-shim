@@ -5,6 +5,8 @@ import type {
   LaunchFlags,
   OverridableCategory,
   WhenCondition,
+  ModelsLayer,
+  ModelsConfig,
 } from "../config/schema";
 
 /** A layer's index in the assembled cascade. Strictly ascending in composition order: a higher id was composed later and therefore wins on the comparator's first rank. */
@@ -32,6 +34,8 @@ export interface Layer {
   /** The entries object's own key insertion order, from `src/config/load.ts`. Falls back to `Object.keys(entries)` when absent. */
   readonly entryOrder?: readonly string[];
   readonly launch?: LaunchFlags;
+  /** The models this layer contributes: definitions merge per name with the shallower layers, and a `null` removes what they set. */
+  readonly models?: ModelsLayer;
 }
 
 /** Facts about one entry under `~/.claude`, relative to `~/.claude` itself. */
@@ -187,5 +191,7 @@ export interface FlattenedCascade {
   readonly rules: ReadonlyMap<string, CompiledRule>;
   /** Launch flags, last layer wins per field. */
   readonly launch: LaunchFlags;
+  /** The models block, merged across every layer that carries one: each definition (a virtual model, a tier pointer, a price) is set by the deepest layer that names it, a `null` in a deeper layer removes it, and `hide`/`show` replace wholesale. Absent when no layer carries models at all. */
+  readonly models?: ModelsConfig;
   readonly diagnostics: readonly Diagnostic[];
 }

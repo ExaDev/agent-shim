@@ -457,6 +457,63 @@ export function isAntigravityProvider(provider: Provider): provider is Antigravi
  *
  * `extends` is a flat array of other profiles' *names*, deliberately not a self-referential `z.lazy()` schema: nothing in this shape points back at a profile object, so each file validates in isolation and the extends graph is walked at resolve time. That also means Zod cannot detect a circular `extends` definition — the walker in `src/resolve/extends.ts` carries its own cycle guard.
  */
+export const SELECTION_MODES = ["ordered", "most-allowance", "soonest-reset", "spread", "adaptive", "lowest-latency", "highest-success", "cheapest"] as const;
+export type SelectionModeName = (typeof SELECTION_MODES)[number];
+
+/** A virtual model: a named choice over members (provider models, account models, other virtual models, or whole model families), taken by its mode. */
+const VirtualModelSchema = z.strictObject({
+  /** How the virtual model chooses its member for a request. */
+  mode: z.enum(SELECTION_MODES),
+  /** The members to choose among, in preference order where the mode reads order. Each names a target (`z/glm-5.3`), an account model (`acct:work/opus`), another virtual model, or a family (`family:<canonical>`). */
+  members: z.array(z.string().min(1)).min(1),
+});
+export type VirtualModel = z.infer<typeof VirtualModelSchema>;
+
+/** Per-model prices, in USD per million tokens, for the `cheapest` mode. */
+const ModelPricesSchema = z.strictObject({
+  input: z.number().positive(),
+  output: z.number().positive(),
+});
+
+/** The global `models` block: the virtual models, the tier pointers, the prices and the visibility filter. */
+const ModelsConfigSchema = z.strictObject({
+  /** Virtual models, by name. */
+  virtual: z.record(z.string().min(1), VirtualModelSchema).optional(),
+  /** Which model ref each Claude tier (`fable`, `opus`, `sonnet`, `haiku`) points at: a concrete target, an account model, a virtual model, or a family. */
+  tiers: z.strictObject({
+    fable: z.string().min(1).optional(),
+    opus: z.string().min(1).optional(),
+    sonnet: z.string().min(1).optional(),
+    haiku: z.string().min(1).optional(),
+  }).optional(),
+  /** Prices per model ref, for the `cheapest` mode. */
+  prices: z.record(z.string().min(1), ModelPricesSchema).optional(),
+  /** Model refs hidden from the picker and from routing, whatever else names them. */
+  hide: z.array(z.string().min(1)).optional(),
+  /** When set, the only model refs visible; everything else is hidden. */
+  show: z.array(z.string().min(1)).optional(),
+});
+export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
+
+/**
+ * The `models` block as a cascade layer writes it: identical to the global block except that any definition may be `null`, which removes what the shallower layers set rather than replacing it. A profile, directory rule or committed `.agent-shim.json` carries this form.
+ */
+const ModelsLayerSchema = z.strictObject({
+  virtual: z.record(z.string().min(1), z.union([VirtualModelSchema, z.null()])).optional(),
+  tiers: z
+    .strictObject({
+      fable: z.union([z.string().min(1), z.null()]).optional(),
+      opus: z.union([z.string().min(1), z.null()]).optional(),
+      sonnet: z.union([z.string().min(1), z.null()]).optional(),
+      haiku: z.union([z.string().min(1), z.null()]).optional(),
+    })
+    .optional(),
+  prices: z.record(z.string().min(1), z.union([ModelPricesSchema, z.null()])).optional(),
+  hide: z.array(z.string().min(1)).optional(),
+  show: z.array(z.string().min(1)).optional(),
+});
+export type ModelsLayer = z.infer<typeof ModelsLayerSchema>;
+
 export const ConfigProfileSchema = z.strictObject({
   $schema: z.string().optional(),
   description: z.string().optional(),
@@ -464,6 +521,7 @@ export const ConfigProfileSchema = z.strictObject({
   categories: CategoryMapSchema.optional(),
   entries: EntriesSchema.optional(),
   launch: LaunchSchema.optional(),
+  models: ModelsLayerSchema.optional(),
 });
 export type ConfigProfile = z.infer<typeof ConfigProfileSchema>;
 
@@ -691,43 +749,7 @@ const UpdateGlobalConfigSchema = z.strictObject({
 
 /** The user-global `~/.agent-shim/config.json`. */
 /** The selection modes a virtual model can choose its member by; the engine in `src/selection/engine.ts` implements each one. */
-export const SELECTION_MODES = ["ordered", "most-allowance", "soonest-reset", "spread", "adaptive", "lowest-latency", "highest-success", "cheapest"] as const;
-export type SelectionModeName = (typeof SELECTION_MODES)[number];
 
-/** A virtual model: a named choice over members (provider models, account models, other virtual models, or whole model families), taken by its mode. */
-const VirtualModelSchema = z.strictObject({
-  /** How the virtual model chooses its member for a request. */
-  mode: z.enum(SELECTION_MODES),
-  /** The members to choose among, in preference order where the mode reads order. Each names a target (`z/glm-5.3`), an account model (`acct:work/opus`), another virtual model, or a family (`family:<canonical>`). */
-  members: z.array(z.string().min(1)).min(1),
-});
-export type VirtualModel = z.infer<typeof VirtualModelSchema>;
-
-/** Per-model prices, in USD per million tokens, for the `cheapest` mode. */
-const ModelPricesSchema = z.strictObject({
-  input: z.number().positive(),
-  output: z.number().positive(),
-});
-
-/** The global `models` block: the virtual models, the tier pointers, the prices and the visibility filter. */
-const ModelsConfigSchema = z.strictObject({
-  /** Virtual models, by name. */
-  virtual: z.record(z.string().min(1), VirtualModelSchema).optional(),
-  /** Which model ref each Claude tier (`fable`, `opus`, `sonnet`, `haiku`) points at: a concrete target, an account model, a virtual model, or a family. */
-  tiers: z.strictObject({
-    fable: z.string().min(1).optional(),
-    opus: z.string().min(1).optional(),
-    sonnet: z.string().min(1).optional(),
-    haiku: z.string().min(1).optional(),
-  }).optional(),
-  /** Prices per model ref, for the `cheapest` mode. */
-  prices: z.record(z.string().min(1), ModelPricesSchema).optional(),
-  /** Model refs hidden from the picker and from routing, whatever else names them. */
-  hide: z.array(z.string().min(1)).optional(),
-  /** When set, the only model refs visible; everything else is hidden. */
-  show: z.array(z.string().min(1)).optional(),
-});
-export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
 
 export const GlobalConfigSchema = z.strictObject({
   $schema: z.string().optional(),
