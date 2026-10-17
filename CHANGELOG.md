@@ -1,3 +1,9 @@
+## [11.27.0](https://github.com/ExaDev/agent-shim/compare/v11.26.0...v11.27.0) (2026-10-17)
+
+### Features
+
+* **launcher:** collapse unclassified-entry warnings, drop the no-op farm line, colour the log ([bb90231](https://github.com/ExaDev/agent-shim/commit/bb902313ed3a428ca21ebbf9614e0b75e094ba3a))
+
 ## [11.26.0](https://github.com/ExaDev/agent-shim/compare/v11.25.0...v11.26.0) (2026-10-17)
 
 ### Features
