@@ -1,3 +1,9 @@
+## [11.29.0](https://github.com/ExaDev/agent-shim/compare/v11.28.0...v11.29.0) (2026-10-17)
+
+### Features
+
+* **launcher:** print a launch's facts as one aligned report ([0123259](https://github.com/ExaDev/agent-shim/commit/01232596f3671e5d54f6b931138e6cefe3704e32))
+
 ## [11.28.0](https://github.com/ExaDev/agent-shim/compare/v11.27.0...v11.28.0) (2026-10-17)
 
 ### Features
