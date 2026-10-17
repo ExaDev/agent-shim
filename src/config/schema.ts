@@ -690,6 +690,45 @@ const UpdateGlobalConfigSchema = z.strictObject({
 });
 
 /** The user-global `~/.agent-shim/config.json`. */
+/** The selection modes a virtual model can choose its member by; the engine in `src/selection/engine.ts` implements each one. */
+export const SELECTION_MODES = ["ordered", "most-allowance", "soonest-reset", "spread", "adaptive", "lowest-latency", "highest-success", "cheapest"] as const;
+export type SelectionModeName = (typeof SELECTION_MODES)[number];
+
+/** A virtual model: a named choice over members (provider models, account models, other virtual models, or whole model families), taken by its mode. */
+const VirtualModelSchema = z.strictObject({
+  /** How the virtual model chooses its member for a request. */
+  mode: z.enum(SELECTION_MODES),
+  /** The members to choose among, in preference order where the mode reads order. Each names a target (`z/glm-5.3`), an account model (`acct:work/opus`), another virtual model, or a family (`family:<canonical>`). */
+  members: z.array(z.string().min(1)).min(1),
+});
+export type VirtualModel = z.infer<typeof VirtualModelSchema>;
+
+/** Per-model prices, in USD per million tokens, for the `cheapest` mode. */
+const ModelPricesSchema = z.strictObject({
+  input: z.number().positive(),
+  output: z.number().positive(),
+});
+
+/** The global `models` block: the virtual models, the tier pointers, the prices and the visibility filter. */
+const ModelsConfigSchema = z.strictObject({
+  /** Virtual models, by name. */
+  virtual: z.record(z.string().min(1), VirtualModelSchema).optional(),
+  /** Which model ref each Claude tier (`fable`, `opus`, `sonnet`, `haiku`) points at: a concrete target, an account model, a virtual model, or a family. */
+  tiers: z.strictObject({
+    fable: z.string().min(1).optional(),
+    opus: z.string().min(1).optional(),
+    sonnet: z.string().min(1).optional(),
+    haiku: z.string().min(1).optional(),
+  }).optional(),
+  /** Prices per model ref, for the `cheapest` mode. */
+  prices: z.record(z.string().min(1), ModelPricesSchema).optional(),
+  /** Model refs hidden from the picker and from routing, whatever else names them. */
+  hide: z.array(z.string().min(1)).optional(),
+  /** When set, the only model refs visible; everything else is hidden. */
+  show: z.array(z.string().min(1)).optional(),
+});
+export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
+
 export const GlobalConfigSchema = z.strictObject({
   $schema: z.string().optional(),
   defaultConfigProfile: z.string().min(1).optional(),
@@ -701,6 +740,7 @@ export const GlobalConfigSchema = z.strictObject({
   frontdoor: FrontDoorGlobalConfigSchema.optional(),
   update: UpdateGlobalConfigSchema.optional(),
   pools: z.record(PoolNameSchema, PoolSchema).optional(),
+  models: ModelsConfigSchema.optional(),
   jobs: z.record(PoolNameSchema, JobSchema).optional(),
 });
 export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;

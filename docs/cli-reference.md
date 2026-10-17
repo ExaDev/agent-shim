@@ -94,6 +94,13 @@ agent-shim provider add|set <name> [--catalogue-tier <tier>] [--catalogue-includ
 agent-shim provider models <name> [--refresh] [--json]   # the catalogue last fetched, and which of its models /model lists
 agent-shim provider list [--json]
 agent-shim provider show <name> [--json]
+agent-shim model match [--json]
+agent-shim model add <name> --mode <ordered|most-allowance|soonest-reset|spread|adaptive|lowest-latency|highest-success|cheapest> --member <ref>...
+agent-shim model set <name> [--mode <mode>] [--member <ref>]...
+agent-shim model remove <name> [--yes] [--json]
+agent-shim model tier <fable|opus|sonnet|haiku> --ref <ref> | --clear
+agent-shim model price <ref> --input <usd> --output <usd> | --clear
+agent-shim model list [--json]
 agent-shim provider remove <name> [--yes]
 
 agent-shim rule add <path> [--config-profile <profile>] [--identity <identity>]
