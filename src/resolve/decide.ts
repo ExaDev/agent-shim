@@ -22,6 +22,17 @@ export interface RuleSelection {
  *
  * Candidates are ranked by `compareSpecificity` and taken in order. A candidate whose `when` condition **fails is eliminated** and resolution continues to the next-most-specific matching rule — it never falls straight through to the category default, and a failed condition never inverts the rule's boolean value, which would not have a coherent meaning anyway. Only when no candidate survives does the caller fall back to the category.
  */
+
+/**
+ * The warning for entries the category map does not name: one entry names itself, several are counted and listed once, and the fix is said once either way.
+ */
+export function unclassifiedEntryMessage(names: readonly string[]): string {
+  const quoted = names.map((name) => `"${name}"`).join(", ");
+  const subject = names.length === 1 ? `${quoted} is not` : `${String(names.length)} entries are not`;
+  const excluded = names.length === 1 ? "it is excluded" : `they are excluded: ${quoted}`;
+  return `${subject} in the category map, so ${excluded}. Run \`agent-shim configure\` to classify ${names.length === 1 ? "it" : "them"}, which records the answer in the local overlay without touching the shipped default map.`;
+}
+
 export function selectRule(
   relPath: string,
   flattened: FlattenedCascade,
@@ -83,9 +94,7 @@ export function resolveEntry(relPath: string, params: DecideParams): { decision:
     diagnostics.push({
       code: "UNCLASSIFIED_ENTRY",
       severity: "warning",
-      message:
-        `"${head}" is not in the category map, so it is excluded. Run \`agent-shim configure\` to classify it, ` +
-        `which records the answer in the local overlay without touching the shipped default map.`,
+      message: unclassifiedEntryMessage([head]),
       subject: head,
     });
     return { decision: { relPath, shared: false, via: "unclassified", category }, diagnostics };

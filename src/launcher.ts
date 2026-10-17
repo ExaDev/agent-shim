@@ -12,6 +12,7 @@ import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDe
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { hasSettingsArgument, mergeSettings, withLauncherSettings, withSupervision, type SupervisedLaunch } from "./launcher/claudeSession";
+import { reportDiagnostics } from "./launcher/diagnostics";
 import { modelPickerSettings } from "./launcher/modelPicker";
 import { catalogueCachePath, parseCatalogueCache } from "./providerCatalogue";
 import { resolvePoolLaunch } from "./launcher/pool";
@@ -441,17 +442,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
     cascadeLaunch = flattened.launch;
     // A launch that resyncs a farm reports these through the resync. One with no farm (the escape hatch, or no identity resolved) and a read-only decision resync nothing, so they are reported here rather than leaving a layer partly ignored without a word. A read-only decision has no way to refuse, so it reports an error as a warning.
     if (readOnly || farmContext === undefined) {
-      for (const diagnostic of [...assembled.diagnostics, ...flattened.diagnostics]) {
-        if (diagnostic.severity === "info") {
-          continue;
-        }
-        const message = `agent-shim: ${diagnostic.code}: ${diagnostic.message}`;
-        if (diagnostic.severity === "error" && !readOnly) {
-          log.error(message);
-        } else {
-          log.warn(message);
-        }
-      }
+      reportDiagnostics(log, [...assembled.diagnostics, ...flattened.diagnostics], { errorsAsWarnings: readOnly });
     }
   }
 
@@ -589,19 +580,14 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
       throw error;
     }
 
-    for (const diagnostic of result.diagnostics) {
-      if (diagnostic.severity === "error") {
-        log.error(`agent-shim: ${diagnostic.code}: ${diagnostic.message}`);
-      } else if (diagnostic.severity === "warning") {
-        log.warn(`agent-shim: ${diagnostic.code}: ${diagnostic.message}`);
-      }
-    }
-    log.info(
-      result.noOp
-        ? `agent-shim: farm at ${result.farmRoot} already matches the resolved cascade`
-        : `agent-shim: farm at ${result.farmRoot} resynced (${String(result.manifest.links.length)} link(s), ` +
+    reportDiagnostics(log, result.diagnostics, { errorsAsWarnings: false });
+    // A farm that already matched has nothing to report: the line would say the same on every launch.
+    if (!result.noOp) {
+      log.info(
+        `agent-shim: farm at ${result.farmRoot} resynced (${String(result.manifest.links.length)} link(s), ` +
           `${String(result.manifest.materialised.length)} built director(ies)${result.adopted.length === 0 ? "" : `, ${String(result.adopted.length)} adopted into ${resyncFarmRuntime.claudeHome}`})`,
-    );
+      );
+    }
   }
 
   if (decided.pinnedVersion !== undefined) {
