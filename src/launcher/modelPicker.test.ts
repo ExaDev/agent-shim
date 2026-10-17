@@ -9,6 +9,8 @@ const codex = (config?: Extract<Provider, { kind: "codex" }>["codex"]): Provider
 const antigravity = (config?: Extract<Provider, { kind: "antigravity" }>["antigravity"]): Provider => ({ kind: "antigravity", displayName: "Antigravity", credential: CREDENTIAL, ...(config === undefined ? {} : { antigravity: config }) });
 const http = (env?: Record<string, string>): Provider => ({ displayName: "Z", baseUrl: "https://z.example/api", credential: CREDENTIAL, ...(env === undefined ? {} : { env }) });
 
+const AUTO_DESCRIPTION = "Routes each request to a backend model with quota left, best first (4 models)";
+
 describe("providerModelRows", () => {
   it("lists a codex provider's distinct models once each, naming the tiers that reach them", () => {
     const rows = providerModelRows(codex({ models: { fable: "big", opus: "big", sonnet: "mid", haiku: "small" } }));
@@ -30,8 +32,25 @@ describe("providerModelRows", () => {
 
   it("lists every backend model across an antigravity provider's tiers, marking a fallback as one", () => {
     const rows = providerModelRows(antigravity({ models: { fable: ["a", "b"], opus: ["b", "c"], sonnet: "c", haiku: "d" } }));
-    expect(rows.map((row) => row.model)).toEqual(["a", "b", "c", "d"]);
-    expect(rows.map((row) => row.description)).toEqual(["Serves the fable tier", "Serves the opus tier; fallback for fable", "Serves the sonnet tier; fallback for opus", "Serves the haiku tier"]);
+    expect(rows.map((row) => row.model)).toEqual(["auto", "a", "b", "c", "d"]);
+    expect(rows.map((row) => row.description)).toEqual([
+      AUTO_DESCRIPTION,
+      "Serves the fable tier",
+      "Serves the opus tier; fallback for fable",
+      "Serves the sonnet tier; fallback for opus",
+      "Serves the haiku tier",
+    ]);
+  });
+
+  it("leads an antigravity provider's rows with the virtual auto model, which borrows the handling of its first candidate's tier", () => {
+    const [first] = providerModelRows(antigravity({ models: { fable: "a", opus: "b", sonnet: "c", haiku: "d" } }));
+    expect(first).toEqual({ model: "auto", label: "auto", description: AUTO_DESCRIPTION, behavesAs: "claude-fable-5-1" });
+  });
+
+  it("lists a configured alias under auto's own name once, first", () => {
+    const rows = providerModelRows(antigravity({ models: { fable: "a", opus: "b", sonnet: "c", haiku: "d", auto: ["c", "d"] } }));
+    expect(rows.filter((row) => row.model === "auto")).toHaveLength(1);
+    expect(rows[0]?.model).toBe("auto");
   });
 
   it("takes the highest tier a model is the first choice of for its handling, and the highest reaching tier when it is only a fallback", () => {

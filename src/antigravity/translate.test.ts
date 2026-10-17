@@ -11,6 +11,7 @@ import {
 } from "../config/schema";
 import { MessagesRequestSchema, type MessagesRequest } from "../codex/anthropic";
 import {
+  AUTO_ALIAS,
   mapEffort,
   mapModel,
   resolveAntigravityConfig,
@@ -20,6 +21,7 @@ import {
 } from "./translate";
 
 const defaults = resolveAntigravityConfig(undefined);
+const SPENT_RESET_SECONDS = 600;
 const BUDGET_LOW = 1024;
 const BUDGET_MEDIUM = 4096;
 const BUDGET_HIGH = 8192;
@@ -38,7 +40,7 @@ describe("resolveAntigravityConfig", () => {
       mode: ANTIGRAVITY_DEFAULT_MODE,
       defaultModel: ANTIGRAVITY_DEFAULT_MODEL,
       models: ANTIGRAVITY_DEFAULT_TIER_MODELS,
-      aliases: new Map(),
+      aliases: new Map([[AUTO_ALIAS, [...new Set(Object.values(ANTIGRAVITY_DEFAULT_TIER_MODELS).flat())]]]),
       degradeDownTiers: false,
       effort: ANTIGRAVITY_DEFAULT_EFFORT,
       cloud: { endpoint: undefined, projectId: undefined, location: undefined },
@@ -68,6 +70,35 @@ describe("resolveAntigravityConfig", () => {
     expect(config.mode).toBe("local");
     expect(config.local.command).toEqual(["my-acp", "--server"]);
     expect(config.local.socketPath).toBe("/tmp/acp.sock");
+  });
+});
+
+describe("the virtual auto model", () => {
+  it("lists every tier's candidates, strongest tier first and each once", () => {
+    const config = resolveAntigravityConfig({ models: { fable: ["a", "b"], opus: ["b", "c"], sonnet: "d", haiku: ["a", "e"] } });
+    expect(mapModel("auto", config)).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("follows the tier overrides, so a changed tier changes where auto goes", () => {
+    expect(mapModel("auto", resolveAntigravityConfig({ models: { fable: "only-fable" } }))[0]).toBe("only-fable");
+  });
+
+  it("is matched whole and case-insensitively, and never as a tier or a backend name", () => {
+    expect(mapModel("AUTO", defaults)).toEqual(mapModel("auto", defaults));
+    expect(mapModel("automatic", defaults)).toEqual([ANTIGRAVITY_DEFAULT_MODEL]);
+  });
+
+  it("is replaced by an alias configured under the same name", () => {
+    expect(mapModel("auto", resolveAntigravityConfig({ models: { auto: ["mine", "theirs"] } }))).toEqual(["mine", "theirs"]);
+  });
+
+  it("is routed by available quota like any alias: the first unspent candidate, then the best-valued fallback", () => {
+    const NOW = 1_000_000;
+    const spent = { remaining_fraction: 0, reset_in_seconds: SPENT_RESET_SECONDS };
+    const modelFor = (quota: AntigravityQuotaMap): string => translateRequest(request({ model: "auto", messages: [{ role: "user", content: "Hi" }] }), defaults, { quota, nowMs: NOW }).model;
+
+    expect(modelFor({})).toBe("gemini-4-argon-high");
+    expect(modelFor({ "gemini-argon-wtu-weekly": spent })).not.toBe("gemini-4-argon-high");
   });
 });
 

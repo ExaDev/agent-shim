@@ -1,4 +1,4 @@
-import { resolveAntigravityConfig } from "../antigravity/translate";
+import { AUTO_ALIAS, resolveAntigravityConfig } from "../antigravity/translate";
 import { resolveCodexConfig } from "../codex/translate";
 import { filterCatalogue, type CatalogueModel } from "../providerCatalogue";
 import { CLAUDE_TIERS, type ClaudeTier, type PickerModel, type Provider } from "../config/schema";
@@ -87,7 +87,7 @@ function rowsOfTable(table: readonly (readonly [Tier, readonly string[]])[]): re
   return [...reachesByModel].map(([model, reaches]) => rowOf(model, reaches));
 }
 
-/** The rows an `antigravity` provider offers: its backend models across every tier's candidates, then each alias a person can select by name. */
+/** The rows an `antigravity` provider offers: the virtual `auto` model, its backend models across every tier's candidates, then each other alias a person can select by name. */
 function antigravityRows(provider: Extract<Provider, { kind: "antigravity" }>): readonly ModelPickerRow[] {
   const config = resolveAntigravityConfig(provider.antigravity);
   const tiers = rowsOfTable(CLAUDE_TIERS.map((tier) => [tier, config.models[tier]] as const));
@@ -95,9 +95,11 @@ function antigravityRows(provider: Extract<Provider, { kind: "antigravity" }>): 
   const aliases = [...config.aliases].flatMap(([alias, candidates]): readonly ModelPickerRow[] => {
     const [first] = candidates;
     const behavesAs = first === undefined ? undefined : behavesAsOf.get(first);
-    return behavesAs === undefined ? [] : [{ model: alias, label: labelOf(alias), description: `Alias for ${candidates.join(", then ")}`, behavesAs }];
+    const description = alias === AUTO_ALIAS ? `Routes each request to a backend model with quota left, best first (${String(candidates.length)} models)` : `Alias for ${candidates.join(", then ")}`;
+    return behavesAs === undefined ? [] : [{ model: alias, label: labelOf(alias), description, behavesAs }];
   });
-  return [...tiers, ...aliases];
+  // The virtual `auto` model leads, since it is the one a person who does not want to choose a model picks.
+  return [...aliases.filter((row) => row.model === AUTO_ALIAS), ...tiers, ...aliases.filter((row) => row.model !== AUTO_ALIAS)];
 }
 
 /** The rows a `codex` provider offers: the distinct codex models its tiers map to. */
