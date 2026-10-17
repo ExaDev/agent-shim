@@ -1,3 +1,9 @@
+## [11.41.0](https://github.com/ExaDev/agent-shim/compare/v11.40.5...v11.41.0) (2026-10-17)
+
+### Features
+
+* **models:** group targets into families with identity assertions and family settings ([6a66ac5](https://github.com/ExaDev/agent-shim/commit/6a66ac589601235c6cc10a56a8ccf6966fd72dbf))
+
 ## [11.40.5](https://github.com/ExaDev/agent-shim/compare/v11.40.4...v11.40.5) (2026-10-17)
 
 ### Bug Fixes
