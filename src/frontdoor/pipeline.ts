@@ -4,7 +4,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomDecision } from "./headroomDecision";
 import { applyHeadroomHop, headroomReady, type HeadroomHopDeps } from "./headroomHop";
 import type { Lineage } from "./lineage";
-import { identifyRequest, MODEL_CHOICE_HEADER, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
+import { identifyRequest, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 
 /** What one routed response looked like as it started back to the client: the typed event response middleware observes. */
 export interface RoutedResponseEvent {
@@ -25,6 +25,8 @@ export interface RoutedResponseEvent {
   readonly lineage: Lineage | undefined;
   /** The model choice this response answers, when a routing layer chose among alternatives for the request's model name (a virtual model's or a tier alias's selection): the name the session asked for and the providers it could have landed on. Filled before the head is written, by the resolution or by the serving route, so middleware reading it at the head always sees it. */
   readonly modelChoice: ModelChoice | undefined;
+  /** The model name the request's own body carried, when it crossed the headroom hop (whose reading of the body is the only client-facing look at it) and named a model. The record builder pairs it with the model the response body was served under to recognise a choice the serving translator made behind the hop, whose own noting cannot reach this pipeline through the daemon. */
+  readonly requestedModel: string | undefined;
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
 }
@@ -71,10 +73,6 @@ export interface PipelineDeps {
    * The listener's admission step, run after identification and before anything is routed: it decides whether the request may be routed at all and with which headers. A client-facing listener admits a request carrying the per-launch capability of a live registered session, unchanged; the direct listener admits only what this process's own headroom hop sent back (the generation's hop secret plus a live custody id for the provider the path names) and swaps the hop's placeholder credentials for the real ones. A refused request is answered 401 without ever reaching a route, so a loopback process that never launched through agent-shim cannot spend a session's credentials or quota.
    */
   readonly admit: (request: AdmissionRequest) => Admission;
-  /**
-   * Whether a noted model choice is exposed on the response head as `MODEL_CHOICE_HEADER`. Only the direct pipeline sets it: its responses are consumed by the door's own headroom hop rather than by a client, and the hop is the one place that can carry a choice a route noted while serving behind the hop back to the pipeline whose observers record it. A client-facing pipeline never sets it, so the header never reaches a client.
-   */
-  readonly exposeModelChoiceOnHead?: boolean;
 }
 
 /** What the admission step sees of one request. */
@@ -136,6 +134,8 @@ interface ObservedRequest {
   readonly thread: { lineage: Lineage | undefined };
   /** The model choice a routing layer made for this request, when it made one: filled by the resolution or by the serving route before the head is written, and read by the observers the head invokes. */
   readonly modelChoice: { value: ModelChoice | undefined };
+  /** The model name the request body carried, filled by the hop when it reads the body, and read by the observers the head invokes alongside the choice. */
+  readonly requestedModel: { value: string | undefined };
 }
 
 /** The request target's path without its query string: the query is the client's business, and middleware has no use for it. */
@@ -203,11 +203,9 @@ export function createRoutedResponse(
       return headersSent;
     },
     start: (status, headers) => {
-      // The direct pipeline's private channel home (see `exposeModelChoiceOnHead`): the choice rides the response head because the direct pipeline has no observers of its own, and the hop strips it before any client sees the head.
-      const head = deps.exposeModelChoiceOnHead === true && request.modelChoice.value !== undefined ? { ...headers, [MODEL_CHOICE_HEADER]: JSON.stringify(request.modelChoice.value) } : headers;
       for (const observe of deps.responseObservers) {
         try {
-          const body = observe({ session, route, method: request.method, path: request.path, servedPath: context.servedPath, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, lineage: request.thread.lineage, modelChoice: request.modelChoice.value, status, headers });
+          const body = observe({ session, route, method: request.method, path: request.path, servedPath: context.servedPath, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, lineage: request.thread.lineage, modelChoice: request.modelChoice.value, requestedModel: request.requestedModel.value, status, headers });
           if (body !== undefined) {
             bodyObservers.push(body);
           }
@@ -216,7 +214,7 @@ export function createRoutedResponse(
           deps.log(`front door: response observer threw for ${route}: ${describeThrown(error)}`);
         }
       }
-      response.writeHead(status, head);
+      response.writeHead(status, headers);
       headersSent = true;
     },
     noteModelChoice: (choice) => {
@@ -258,7 +256,7 @@ export function createRoutedResponse(
  * The ordered pipeline every routed session's request runs through: identify the session (splitting the launcher-injected headers out of what may leave the machine), then route, with the response middleware running at each response head. A route that cannot be resolved is answered as an Anthropic-shaped error, and the observers see that error like any other response, since quota and rate-limit state lives in exactly those.
  */
 export async function serveRouted(request: PipelineRequest, deps: PipelineDeps): Promise<void> {
-  const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined } };
+  const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } };
   const identified = identifyRequest(request.headers);
   const admission = deps.admit({ url: request.url, headers: request.headers, forwardable: identified.forwardableHeaders });
   if (!admission.ok) {
@@ -298,8 +296,9 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
   try {
     if (viaHeadroom) {
       // The ordering the whole design turns on: headroom first, on the Anthropic-shaped request, then the route (a translator receives what headroom compressed). A route that opts out, or a listener that serves routes directly, falls through to serving.
-      await applyHeadroomHop(resolution.request ?? routed, response, resolution.route.headroomUpstream, deps.headroom, (lineage) => {
-        observed.thread.lineage = lineage;
+      await applyHeadroomHop(resolution.request ?? routed, response, resolution.route.headroomUpstream, deps.headroom, (facts) => {
+        observed.thread.lineage = facts.lineage;
+        observed.requestedModel.value = facts.requestedModel;
       });
     } else {
       await resolution.route.serve(routed, response);

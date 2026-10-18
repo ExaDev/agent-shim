@@ -7,7 +7,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomSocketTarget } from "../headroom/socket";
 import { forwardableHeaders } from "./connect";
 import type { CredentialCustody } from "./custody";
-import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, CLIENT_SESSION_HEADER, MODEL_CHOICE_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, parseProviderPath, type ModelChoice, type RoutedRequest, type RoutedResponse } from "./route";
+import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, CLIENT_SESSION_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, parseProviderPath, type RoutedRequest, type RoutedResponse } from "./route";
 import { lineageOf, type Lineage } from "./lineage";
 import { upstreamChunks } from "./server";
 
@@ -48,7 +48,13 @@ function responseHeaders(headers: Readonly<IncomingHttpHeaders>): Record<string,
  *
  * `upstream` is what headroom is told to forward to once it has done its work (its per-request base URL header). When it is set it is always this door's direct listener (every provider route declares exactly that), and the provider credential is then taken into custody for the hop: headroom receives placeholders and a hop id, and the direct listener restores the real headers when headroom forwards the request back. Neither headroom nor anything that binds a port on that plain-HTTP round trip ever holds the credential. Undefined leaves headroom's default upstream (Claude Code's API) in charge, which is exactly what an OAuth session wants, and the OAuth bearer then passes through untouched: headroom forwards it straight to that API, never back here, and uses it for its subscription tracking. The session's project identity, provider name and attribution id are re-set here, and only here: the identity step stripped them from everything that leaves the machine, and headroom is the one consumer that needs them.
  */
-export async function applyHeadroomHop(request: RoutedRequest, response: RoutedResponse, upstream: string | undefined, deps: HeadroomHopDeps, onThread: (lineage: Lineage | undefined) => void): Promise<void> {
+/** What the hop learns from a request's own body as it reads it to forward: the conversation thread it belongs to, and the model name the request carried when it carried one. Both reach the client-facing pipeline before its response head is written, so its observers can use them. */
+export interface HopFacts {
+  readonly lineage: Lineage | undefined;
+  readonly requestedModel: string | undefined;
+}
+
+export async function applyHeadroomHop(request: RoutedRequest, response: RoutedResponse, upstream: string | undefined, deps: HeadroomHopDeps, onFacts: (facts: HopFacts) => void): Promise<void> {
   const target = deps.headroomSocket();
   if (target === undefined) {
     await answerBadGateway(response, "agent-shim front door: the headroom daemon is restarting");
@@ -88,7 +94,7 @@ export async function applyHeadroomHop(request: RoutedRequest, response: RoutedR
   }
   headers[HOP_SECRET_HEADER] = deps.hopSecret;
   try {
-    await forwardThroughHeadroom(request, response, { socketPath, headers, log: deps.log, onThread });
+    await forwardThroughHeadroom(request, response, { socketPath, headers, log: deps.log, onFacts });
   } finally {
     // The hop is over (answered, failed, or abandoned by the client): its custody id stops redeeming, so a copy of it seen anywhere along the way is worthless from here on.
     if (hopId !== undefined) {
@@ -200,31 +206,29 @@ export async function collectBody(body: Readable): Promise<CollectedBody> {
   });
 }
 
-/**
- * Streams one request to headroom and its response back to the client, resolving once the response has ended, failed, or been abandoned. A hop the daemon resets before any response byte is replayed on a fresh connection (the request produced no output, so replaying it is what the client's own retry would do, minus the visible error); a reset after the response started cannot be replayed and ends the response.
- */
-/** Reads the model choice the direct pipeline exposes on a response head, narrowed from whatever the relay actually carried: a value that is not the exact shape this door writes is not a choice. */
-function parseModelChoiceHeader(value: string | undefined): ModelChoice | undefined {
-  if (value === undefined) return undefined;
-  let parsed: unknown;
+/** The model name a request body carries, when it carries a string one: the whole JSON is already parsed by the lineage reader beside this, and a body that is not JSON or names no model simply has no name to pair with the served one. */
+function requestedModelOf(body: Buffer): string | undefined {
   try {
-    parsed = JSON.parse(value);
+    const parsed: unknown = JSON.parse(body.toString("utf8"));
+    if (typeof parsed !== "object" || parsed === null || !("model" in parsed) || typeof parsed.model !== "string") return undefined;
+    return parsed.model;
   } catch {
     return undefined;
   }
-  if (typeof parsed !== "object" || parsed === null || !("requested" in parsed) || !("providers" in parsed) || typeof parsed.requested !== "string" || !Array.isArray(parsed.providers)) return undefined;
-  const providers: string[] = [];
-  for (const name of parsed.providers) {
-    if (typeof name !== "string") return undefined;
-    providers.push(name);
-  }
-  return { requested: parsed.requested, providers };
 }
 
+/** Reads a request body the hop is about to forward and returns what the client-facing pipeline learns from it: the thread it belongs to and the model name it asked for (the name a serving translator resolves to a concrete model, which is the fact the record builder pairs with the served model to recognise a choice). */
+function hopFactsOf(body: Buffer): HopFacts {
+  return { lineage: lineageOf(body), requestedModel: requestedModelOf(body) };
+}
+
+/**
+ * Streams one request to headroom and its response back to the client, resolving once the response has ended, failed, or been abandoned. A hop the daemon resets before any response byte is replayed on a fresh connection (the request produced no output, so replaying it is what the client's own retry would do, minus the visible error); a reset after the response started cannot be replayed and ends the response.
+ */
 async function forwardThroughHeadroom(
   request: RoutedRequest,
   response: RoutedResponse,
-  target: { readonly socketPath: string; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void; readonly onThread: (lineage: Lineage | undefined) => void },
+  target: { readonly socketPath: string; readonly headers: Readonly<Record<string, string | string[] | undefined>>; readonly log: (line: string) => void; readonly onFacts: (facts: HopFacts) => void },
 ): Promise<void> {
   const collected = await collectBody(request.body);
   if (collected.kind === "failed") {
@@ -239,7 +243,7 @@ async function forwardThroughHeadroom(
   }
   const { body } = collected;
   // The thread this request belongs to, told from its own history, so a response can later be matched with the previous response of its own thread even while subagents and forks answer under the same session id.
-  target.onThread(lineageOf(body));
+  target.onFacts(hopFactsOf(body));
   for (let retriesLeft = HOP_RESET_RETRIES; ; retriesLeft -= 1) {
     const outcome = await hopOnce(request, response, target, body, retriesLeft > 0);
     if (outcome === "settled") {
@@ -259,13 +263,7 @@ async function hopOnce(
   const { socketPath, headers } = target;
   return await new Promise<"settled" | "retry">((resolve) => {
     const onUpstreamResponse = (upstreamResponse: IncomingMessage): void => {
-      // The direct pipeline's model choice rides home on this header (see MODEL_CHOICE_HEADER): destructured out of the relayed head here, noted on this response before its head is written so the observers the head invokes record it, and left out of what the client receives. A value that does not parse as a choice is dropped rather than trusted: the daemon is the only writer this header has, but a corrupted or forged relay still cannot inject a choice.
-      const { [MODEL_CHOICE_HEADER]: choiceHeader, ...head } = responseHeaders(upstreamResponse.headers);
-      const choice = parseModelChoiceHeader(choiceHeader);
-      if (choice !== undefined) {
-        response.noteModelChoice?.(choice);
-      }
-      response.start(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, head);
+      response.start(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, responseHeaders(upstreamResponse.headers));
       // Headers go out before the first body byte: a streaming (SSE) response must reach the client as its chunks arrive, not when it completes.
       response.flush();
       const stream = async (): Promise<void> => {

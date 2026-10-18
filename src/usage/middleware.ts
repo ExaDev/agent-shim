@@ -1,6 +1,7 @@
 import * as zlib from "node:zlib";
 
 import type { ResponseBodyObserver, ResponseObserver, RoutedResponseEvent } from "../frontdoor/pipeline";
+import type { ModelChoice } from "../frontdoor/route";
 import { parseProviderPath } from "../frontdoor/route";
 import { classifyLimit, rateLimitHeadersOf } from "./rateLimit";
 import { createJsonScanner, createSseScanner, type BodyScanner, type ScanResult } from "./scan";
@@ -74,9 +75,18 @@ function destinationOf(path: string, sessionProvider: string | undefined): { rea
 }
 
 /** Builds one finished request's record from its head, what the body scan found, and how it ended. */
+/** The model choice a response answers, from the event's own noting when one exists and otherwise from the request's carried name paired with the model the response body was served under. */
+function modelChoiceOf(event: RoutedResponseEvent, servedModel: string | undefined, provider: string): ModelChoice | undefined {
+  if (event.modelChoice !== undefined) return event.modelChoice;
+  if (event.requestedModel === undefined || servedModel === undefined || event.requestedModel === servedModel) return undefined;
+  return { requested: event.requestedModel, providers: [provider] };
+}
+
 function buildRecord(event: RoutedResponseEvent, context: { readonly headAt: number; readonly endedAt: number; readonly outcome: "completed" | "aborted"; readonly scan: ScanResult | undefined }): UsageRecord {
   const { scan } = context;
   const { provider, endpoint } = destinationOf(event.servedPath, event.session.provider);
+  // The choice this response answers: the one a routing layer noted outright, or the one reconstructed here when the request crossed the headroom hop and the serving translator behind it resolved the name the body carried into a different model (the hop carries the request's own name home because the daemon's relay never brings the translator's noting back, and the body scan names what served it). A single-provider reconstruction names the provider the record itself already does.
+  const choice = modelChoiceOf(event, scan?.model, provider);
   const rateLimitHeaders = rateLimitHeadersOf(event.headers);
   const limit = classifyLimit({ status: event.status, headers: rateLimitHeaders ?? {}, error: scan?.error, nowMs: context.endedAt });
   const requestId = headerValue(event.headers, "request-id");
@@ -93,8 +103,8 @@ function buildRecord(event: RoutedResponseEvent, context: { readonly headAt: num
     method: event.method,
     endpoint,
     ...(scan?.model === undefined ? {} : { model: scan.model }),
-    ...(event.modelChoice === undefined ? {} : { requestedModel: event.modelChoice.requested }),
-    ...(event.modelChoice !== undefined && event.modelChoice.providers.length > 1 ? { candidateProviders: [...event.modelChoice.providers] } : {}),
+    ...(choice === undefined ? {} : { requestedModel: choice.requested }),
+    ...(choice !== undefined && choice.providers.length > 1 ? { candidateProviders: [...choice.providers] } : {}),
     status: event.status,
     latencyMs: Math.max(0, Math.round(context.headAt - event.receivedAt)),
     durationMs: Math.max(0, Math.round(context.endedAt - event.receivedAt)),

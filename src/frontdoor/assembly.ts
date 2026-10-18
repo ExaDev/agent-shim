@@ -74,8 +74,6 @@ export function createDoorPipelines(deps: DoorPipelineDeps): { readonly clientFa
     direct: {
       resolveRoute: deps.resolveRoute,
       responseObservers: [],
-      // The direct pipeline's responses are consumed by this door's own headroom hop, never by a client, so the noted model choice rides the head home as MODEL_CHOICE_HEADER (see `exposeModelChoiceOnHead`) instead of dying with the observers this pipeline deliberately runs none of.
-      exposeModelChoiceOnHead: true,
       admit: admitHop(deps.hopSecret, deps.custody),
       headroomDecision: deps.headroomDecision,
       now: deps.now,

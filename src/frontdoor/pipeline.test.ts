@@ -8,7 +8,7 @@ import { createCredentialCustody } from "./custody";
 import { NO_ROUTING_SETTING } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
 import { createRoutedResponse, serveRouted, type PipelineDeps, type PipelineRequest, type ResponseBodyObserver, type ResponseObserver, type RouteResolution, type RoutedResponseEvent } from "./pipeline";
-import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, MODEL_CHOICE_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse } from "./route";
+import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse  } from "./route";
 
 /**
  * A stand-in ServerResponse with the only behaviour `createRoutedResponse` reads: writeHead, write returning false on demand, drain and close events, and destruction. A new one per use keeps each test's socket semantics independent.
@@ -100,7 +100,7 @@ function deps(resolution: RouteResolution, observers: readonly ResponseObserver[
 describe("createRoutedResponse", () => {
   it("applies backpressure: a write that the socket refuses waits for its drain", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined } } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -116,7 +116,7 @@ describe("createRoutedResponse", () => {
 
   it("settles a backpressured write when the client goes away, so a route is never left waiting on a dead socket", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined } } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -338,7 +338,7 @@ function routedWith(response: FakeServerResponse, observers: readonly ResponseOb
     deps: d,
     session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined },
     route: "test",
-    request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined } },
+    request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } },
     servedPath: "/v1/messages",
   });
   return { routed, logs };
@@ -427,40 +427,6 @@ describe("a model choice reaching the response observers", () => {
     }]).deps);
     expect(response.writtenHead?.status).toBe(HTTP_STATUS.ok);
     expect(choices).toEqual([{ requested: "auto", providers: ["z", "antigravity"] }]);
-  });
-
-  it("exposes a noted choice on the response head when the pipeline asks for it, as the direct pipeline does for the hop to carry home", async () => {
-    const notingRoute: FrontDoorRoute = {
-      name: "noting",
-      headroomEligible: false,
-      headroomUpstream: undefined,
-      serve: async (_request, response) => {
-        response.noteModelChoice?.({ requested: "auto", providers: ["antigravity"] });
-        response.start(HTTP_STATUS.ok, {});
-        await Promise.resolve();
-        response.end();
-      },
-    };
-    const { request, response } = pipelineRequest();
-    await serveRouted(request, deps({ ok: true, route: notingRoute }, [], { exposeModelChoiceOnHead: true }).deps);
-    expect(response.writtenHead?.headers[MODEL_CHOICE_HEADER]).toBe(JSON.stringify({ requested: "auto", providers: ["antigravity"] }));
-  });
-
-  it("never puts the model-choice header on a client-facing head, which no client may see", async () => {
-    const notingRoute: FrontDoorRoute = {
-      name: "noting",
-      headroomEligible: false,
-      headroomUpstream: undefined,
-      serve: async (_request, response) => {
-        response.noteModelChoice?.({ requested: "auto", providers: ["antigravity"] });
-        response.start(HTTP_STATUS.ok, {});
-        await Promise.resolve();
-        response.end();
-      },
-    };
-    const { request, response } = pipelineRequest();
-    await serveRouted(request, deps({ ok: true, route: notingRoute }).deps);
-    expect(response.writtenHead?.headers[MODEL_CHOICE_HEADER]).toBeUndefined();
   });
 
   it("carries a choice the route notes before its head, as the tier translator does", async () => {
