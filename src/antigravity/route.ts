@@ -123,7 +123,8 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
       }
     }
     const relay = createAntigravityRelay({
-      requestedModel,
+      // The frame carries the model that actually served the request, as the real API echoes the concrete model behind an alias: a usage record read from the response then attributes quota to the backend model, not the tier alias the session typed.
+      servedModel: translated.model,
       toolNames: translated.toolNames,
       fallbackId,
     });
@@ -238,6 +239,8 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
         ...quotaHeaders,
       },
       body: stream(),
+      // The tier alias the session asked for, whenever the translation resolved it to a different model: the front door's mount turns it into the model choice the usage record keeps.
+      ...(requestedModel !== translated.model ? { requestedModel } : {}),
     };
   };
 }

@@ -18,7 +18,8 @@ interface AnthropicUsage {
 }
 
 export interface RelayParams {
-  readonly requestedModel: string;
+  /** The model that actually serves the request (a tier alias already translated to its concrete backend model), echoed in `message_start` exactly as the real API echoes the concrete model behind an alias, so a usage record read from the stream attributes quota to the backend model. */
+  readonly servedModel: string;
   readonly toolNames: ReadonlyMap<string, string>;
   readonly fallbackId: () => string;
 }
@@ -63,7 +64,7 @@ export function createAntigravityRelay(params: RelayParams): {
             id: messageId,
             type: "message",
             role: "assistant",
-            model: params.requestedModel,
+            model: params.servedModel,
             content: [],
             stop_reason: null,
             stop_sequence: null,

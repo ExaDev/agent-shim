@@ -73,6 +73,10 @@ export function createAntigravityRouteMount(ports: AntigravityRoutePorts, upstre
       if (request.signal.aborted) {
         return;
       }
+      // A tier alias the translator resolved to a concrete model is a choice among this provider's lineup: recorded before the head is written so the usage middleware sees it. The candidates never leave this provider, so the provider list is exactly it.
+      if (routed.requestedModel !== undefined) {
+        response.noteModelChoice?.({ requested: routed.requestedModel, providers: [provider] });
+      }
       await writeRouteResponse(routed, response, request.signal);
     },
   };

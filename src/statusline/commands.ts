@@ -112,20 +112,26 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
       const target = headroomTargetOf(process.env, socketTarget === undefined || socketTarget.refused !== undefined ? undefined : socketTarget.socketPath);
       const sessionId = headroomSessionIdOf(payload, process.env);
       const headroom = target === undefined || sessionId === undefined ? undefined : await fetchHeadroomSessionStats(realHeadroomGet, target, sessionId);
-      // The target this session's last request was served by, from the usage log's recent records for its session id: what shows a routing session's virtual-model choice where the person is looking. A record only names something other than the launch's own provider when routing sent it there.
+      // The target this session's last request was served by, from the usage log's recent records for its session id: what shows a routing session's virtual-model choice where the person is looking. A record only names something other than the launch's own provider when routing sent it there. A record that also names the model the session asked for was served by a choice among alternatives (a virtual model's or a tier alias's selection), which the statusline draws beside the name the session typed.
       const sessionHeader = /x-agent-shim-session:\s*([A-Za-z0-9@._-]+)/i.exec(process.env.ANTHROPIC_CUSTOM_HEADERS ?? "")?.[1];
       let routedTarget: string | undefined;
+      let modelChoice: { readonly requested: string; readonly served: string; readonly provider: string; readonly providers: readonly string[] } | undefined;
       if (sessionHeader !== undefined) {
         try {
           const last = readUsageLog(realFarmFs, deps.paths.usageLogDir, { sinceMs: nowMs - ROUTED_TARGET_LOOKBACK_MS }).records.filter((record) => record.sessionId === sessionHeader).at(-1);
-          if (last?.model !== undefined && last.provider !== providerName) {
-            routedTarget = `${last.provider}/${last.model}`;
+          if (last?.model !== undefined) {
+            if (last.provider !== providerName) {
+              routedTarget = `${last.provider}/${last.model}`;
+            }
+            if (last.requestedModel !== undefined && last.requestedModel !== last.model) {
+              modelChoice = { requested: last.requestedModel, served: last.model, provider: last.provider, providers: last.candidateProviders ?? [] };
+            }
           }
         } catch {
           routedTarget = undefined;
         }
       }
-      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot, account, providerName, nowMs, headroom, routedTarget });
+      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot, account, providerName, nowMs, headroom, routedTarget, ...(modelChoice === undefined ? {} : { modelChoice }) });
       const renderer = process.env.AGENT_SHIM_STATUSLINE_CMD;
       if (renderer !== undefined && renderer !== "") {
         const child = spawn("/bin/sh", ["-c", renderer], { stdio: ["pipe", "inherit", "inherit"] });

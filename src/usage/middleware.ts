@@ -93,6 +93,8 @@ function buildRecord(event: RoutedResponseEvent, context: { readonly headAt: num
     method: event.method,
     endpoint,
     ...(scan?.model === undefined ? {} : { model: scan.model }),
+    ...(event.modelChoice === undefined ? {} : { requestedModel: event.modelChoice.requested }),
+    ...(event.modelChoice !== undefined && event.modelChoice.providers.length > 1 ? { candidateProviders: [...event.modelChoice.providers] } : {}),
     status: event.status,
     latencyMs: Math.max(0, Math.round(context.headAt - event.receivedAt)),
     durationMs: Math.max(0, Math.round(context.endedAt - event.receivedAt)),

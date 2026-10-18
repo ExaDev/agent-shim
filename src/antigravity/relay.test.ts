@@ -10,7 +10,7 @@ describe("createAntigravityRelay", () => {
   it("relays text streaming chunks to Anthropic SSE frames", () => {
     let idCounter = 1;
     const relay = createAntigravityRelay({
-      requestedModel: "claude-sonnet-4-5",
+      servedModel: "claude-sonnet-4-5",
       toolNames: new Map(),
       fallbackId: () => `msg_${String(idCounter++)}`,
     });
@@ -95,7 +95,7 @@ describe("createAntigravityRelay", () => {
     let idCounter = 1;
     const toolNames = new Map<string, string>([["bash_exec", "bash-exec"]]);
     const relay = createAntigravityRelay({
-      requestedModel: "claude-sonnet-4-5",
+      servedModel: "claude-sonnet-4-5",
       toolNames,
       fallbackId: () => `id_${String(idCounter++)}`,
     });

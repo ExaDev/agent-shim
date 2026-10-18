@@ -4,7 +4,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomDecision } from "./headroomDecision";
 import { applyHeadroomHop, headroomReady, type HeadroomHopDeps } from "./headroomHop";
 import type { Lineage } from "./lineage";
-import { identifyRequest, type FrontDoorRoute, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
+import { identifyRequest, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 
 /** What one routed response looked like as it started back to the client: the typed event response middleware observes. */
 export interface RoutedResponseEvent {
@@ -23,6 +23,8 @@ export interface RoutedResponseEvent {
   readonly viaHeadroom: boolean;
   /** Where the request sits in its conversation thread, known once the hop has read the body. Undefined for a request that did not cross the hop or was not a messages request. */
   readonly lineage: Lineage | undefined;
+  /** The model choice this response answers, when a routing layer chose among alternatives for the request's model name (a virtual model's or a tier alias's selection): the name the session asked for and the providers it could have landed on. Filled before the head is written, by the resolution or by the serving route, so middleware reading it at the head always sees it. */
+  readonly modelChoice: ModelChoice | undefined;
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
 }
@@ -47,7 +49,7 @@ export type ResponseObserver = (event: RoutedResponseEvent) => ResponseBodyObser
 
 /** The outcome of resolving a request's target to a route. */
 export type RouteResolution =
-  | { readonly ok: true; readonly route: FrontDoorRoute; /** The request this resolution serves, when resolving it rewrote the original (a routed request carries a body the route's own scan replayed): consumers that read the body again, the headroom hop above all, must read this one, because the original's remainder is teed into the replay and stalls once the replay's buffer fills. Absent when the resolution serves the original request as received. */ readonly request?: RoutedRequest }
+  | { readonly ok: true; readonly route: FrontDoorRoute; /** The request this resolution serves, when resolving it rewrote the original (a routed request carries a body the route's own scan replayed): consumers that read the body again, the headroom hop above all, must read this one, because the original's remainder is teed into the replay and stalls once the replay's buffer fills. Absent when the resolution serves the original request as received. */ readonly request?: RoutedRequest; /** The model choice this resolution made, when resolving the request's model name chose among alternatives (a virtual model's or a family's selection through its mode) and served it under a member's own name. */ readonly modelChoice?: ModelChoice }
   | { readonly ok: false; readonly status: number; readonly message: string };
 
 /** Everything the ordered pipeline depends on, injected so it runs against fakes in tests. */
@@ -128,6 +130,8 @@ interface ObservedRequest {
   readonly viaHeadroom: boolean;
   /** Filled by the hop once it has read the body; read when the response head is written, which is after. */
   readonly thread: { lineage: Lineage | undefined };
+  /** The model choice a routing layer made for this request, when it made one: filled by the resolution or by the serving route before the head is written, and read by the observers the head invokes. */
+  readonly modelChoice: { value: ModelChoice | undefined };
 }
 
 /** The request target's path without its query string: the query is the client's business, and middleware has no use for it. */
@@ -197,7 +201,7 @@ export function createRoutedResponse(
     start: (status, headers) => {
       for (const observe of deps.responseObservers) {
         try {
-          const body = observe({ session, route, method: request.method, path: request.path, servedPath: context.servedPath, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, lineage: request.thread.lineage, status, headers });
+          const body = observe({ session, route, method: request.method, path: request.path, servedPath: context.servedPath, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, lineage: request.thread.lineage, modelChoice: request.modelChoice.value, status, headers });
           if (body !== undefined) {
             bodyObservers.push(body);
           }
@@ -208,6 +212,9 @@ export function createRoutedResponse(
       }
       response.writeHead(status, headers);
       headersSent = true;
+    },
+    noteModelChoice: (choice) => {
+      request.modelChoice.value = choice;
     },
     flush: () => {
       response.flushHeaders();
@@ -245,7 +252,7 @@ export function createRoutedResponse(
  * The ordered pipeline every routed session's request runs through: identify the session (splitting the launcher-injected headers out of what may leave the machine), then route, with the response middleware running at each response head. A route that cannot be resolved is answered as an Anthropic-shaped error, and the observers see that error like any other response, since quota and rate-limit state lives in exactly those.
  */
 export async function serveRouted(request: PipelineRequest, deps: PipelineDeps): Promise<void> {
-  const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false, thread: { lineage: undefined } };
+  const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined } };
   const identified = identifyRequest(request.headers);
   const admission = deps.admit({ url: request.url, headers: request.headers, forwardable: identified.forwardableHeaders });
   if (!admission.ok) {
@@ -272,6 +279,10 @@ export async function serveRouted(request: PipelineRequest, deps: PipelineDeps):
     return;
   }
   const { headroom } = deps;
+  // The resolution's model choice reaches the observers the same way a serving route's does: stashed on the observed request before any head is written.
+  if (resolution.modelChoice !== undefined) {
+    observed.modelChoice.value = resolution.modelChoice;
+  }
   // Only the client-facing pipeline decides: a request coming back on the direct listener has already been through that decision, and asking again from there would let a daemon-less pipeline overwrite the session's choice.
   const wantsHeadroom =
     headroom !== undefined &&

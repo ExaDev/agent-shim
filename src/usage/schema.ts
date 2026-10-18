@@ -65,6 +65,10 @@ export const UsageRecordSchema = z.strictObject({
   endpoint: z.string(),
   /** The model the response named. */
   model: z.string().optional(),
+  /** The model name the session asked for, when a routing layer chose among alternatives for it (a virtual model's or a tier alias's selection) and served the request under a different name. Absent when the session's own name reached the provider unchanged. */
+  requestedModel: z.string().optional(),
+  /** The distinct providers the choice could have landed on, present only when there was more than one, so a reader can tell a choice that crossed providers from one that stayed inside a single provider's lineup. */
+  candidateProviders: z.array(z.string()).optional(),
   status: z.number().int(),
   /** Milliseconds from the request's arrival to its response head. */
   latencyMs: z.number().int().nonnegative(),

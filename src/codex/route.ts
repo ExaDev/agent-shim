@@ -25,6 +25,8 @@ export interface RouteResponse {
   readonly status: number;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string | AsyncIterable<string>;
+  /** The model name the session asked for, when this response answers a request whose model a translation layer chose among alternatives for (a tier alias that resolved to a concrete model) and served under a different name. Read by the front door's mount, never sent to the client. */
+  readonly requestedModel?: string;
 }
 
 /** The outcome of looking up the codex provider a request's path names. */

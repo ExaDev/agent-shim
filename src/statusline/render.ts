@@ -254,15 +254,21 @@ function layoutHeader(texts: readonly string[], maxWidth: number, separator: str
  */
 export function renderStatuslineBlock(summary: StatuslineSummary, view: StatuslinePayloadView, terminalWidth: number, nowMs: number): string {
   const header: string[] = [];
-  if (view.modelDisplayName !== undefined && view.modelDisplayName !== "") {
-    header.push(view.modelDisplayName);
+  // A dynamic mode's selection draws the model that answered beside the name the session typed (`auto -> glm-5.3`), because the client's own model name alone says nothing about what is actually serving. The provider joins the arrow when the choice could have landed on more than one, or when it left the launch's provider: exactly the cases where the provider is part of the answer.
+  const choiceNamesProvider = summary.modelChoice !== undefined && (summary.modelChoice.providers.length > 1 || summary.routedTarget !== undefined);
+  const modelSegment =
+    summary.modelChoice !== undefined && view.modelDisplayName !== undefined && view.modelDisplayName !== ""
+      ? `${view.modelDisplayName} -> ${choiceNamesProvider ? `${summary.modelChoice.provider}/${summary.modelChoice.served}` : summary.modelChoice.served}`
+      : view.modelDisplayName;
+  if (modelSegment !== undefined && modelSegment !== "") {
+    header.push(modelSegment);
   }
   if (summary.provider !== undefined) {
     const account = [summary.providerAccountEmail, summary.providerPlan].filter((part) => part !== undefined);
     header.push(account.length > 0 ? `${summary.provider} · ${account.join(" · ")}` : summary.provider);
   }
-  // The target the last request was served by, when routing by name sent it off the launch's provider: a virtual model's or a qualified name's choice, shown where the person is looking rather than only in the usage log.
-  if (summary.routedTarget !== undefined) {
+  // The target the last request was served by, when routing by name sent it off the launch's provider: a qualified name's choice, shown where the person is looking rather than only in the usage log. A dynamic mode's arrow already names the provider in this case, so the two never repeat each other.
+  if (summary.routedTarget !== undefined && !choiceNamesProvider) {
     header.push(`via ${summary.routedTarget}`);
   }
   // An account in an organisation is on the organisation's plan with its seat's tier naming the variant, and the seat's rate-limit tier names limits, not the plan; a personal account's plan is the tier itself. A personal plan's organizationName is only the account holder's own name, redundant beside the email, so an organisation's name shows only for the organisation types. Beside a provider the login's plan names quota the session is not drawing from, so there the login names its organisation, or just its account when it has none.

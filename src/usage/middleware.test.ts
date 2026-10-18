@@ -31,6 +31,7 @@ function event(overrides: Partial<RoutedResponseEvent> = {}): RoutedResponseEven
     receivedAt: RECEIVED_AT,
     viaHeadroom: false,
     lineage: undefined,
+    modelChoice: undefined,
     status: OK_STATUS,
     headers: SSE_HEADERS,
     ...overrides,
@@ -492,5 +493,44 @@ describe("createUsageMiddleware", () => {
       h.flush();
       expect(record).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("a model choice among alternatives", () => {
+  it("records the name the session asked for, with the candidate providers when the choice could cross providers", () => {
+    const h = harness();
+    const body = begin(h, event({ modelChoice: { requested: "auto", providers: ["z", "antigravity"] } }));
+
+    body.chunk(bytes(STREAM_BODY));
+    finishBody(h, body);
+    h.flush();
+
+    const record = singleRecord(h);
+    expect(record.requestedModel).toBe("auto");
+    expect(record.candidateProviders).toEqual(["z", "antigravity"]);
+  });
+
+  it("records a choice that never left one provider without candidate providers", () => {
+    const h = harness();
+    const body = begin(h, event({ modelChoice: { requested: "sonnet", providers: ["antigravity"] } }));
+
+    body.chunk(bytes(STREAM_BODY));
+    finishBody(h, body);
+    h.flush();
+
+    const record = singleRecord(h);
+    expect(record.requestedModel).toBe("sonnet");
+    expect(record.candidateProviders).toBeUndefined();
+  });
+
+  it("records no choice for a request whose model name reached the provider unchanged", () => {
+    const h = harness();
+    const body = begin(h, event());
+
+    body.chunk(bytes(STREAM_BODY));
+    finishBody(h, body);
+    h.flush();
+
+    expect(singleRecord(h).requestedModel).toBeUndefined();
   });
 });
