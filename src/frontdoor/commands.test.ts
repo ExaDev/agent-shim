@@ -281,7 +281,7 @@ describe("realStatOwnExecutable", () => {
 
 describe("the Remote Control observing resolver", () => {
   const route: FrontDoorRoute = { name: "http:z", headroomEligible: true, headroomUpstream: undefined, serve: async () => { await Promise.resolve(); } };
-  const original = { method: "POST", url: "/v1/messages", headers: {}, body: undefined, signal: new AbortController().signal, session: { identity: undefined, sessionId: "s-1", provider: "z", headroom: true, routeByName: true, projectId: undefined } } as unknown as RoutedRequest;
+  const original = { method: "POST", url: "/v1/messages", headers: {}, body: undefined, signal: new AbortController().signal, session: { identity: undefined, sessionId: "s-1", provider: "z", headroom: true, projectId: undefined } } as unknown as RoutedRequest;
 
   it("hands on the request a routing scan replayed, because the original's body was consumed by the scan and only the replay can still be read", async () => {
     const replayed = { ...original, url: "/providers/z/v1/messages" };

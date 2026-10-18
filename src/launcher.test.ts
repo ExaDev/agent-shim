@@ -393,7 +393,7 @@ describe("runLauncher headroom routing", () => {
       proc: fakeProc({}, ["@work"]),
       log,
       resolveClaudeBinary: () => discovered,
-      farm: fakeFarm(fs, { launch: { headroom: true, routeByName: false } }),
+      farm: fakeFarm(fs, { launch: { headroom: true } }),
       frontdoor: fakeFrontDoorPort(),
       headroom,
     });
@@ -415,7 +415,7 @@ describe("runLauncher headroom routing", () => {
       proc: fakeProc({ CLAUDE_CONFIG_DIR: "/somewhere/explicit" }, ["--print"]),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
-      farm: fakeFarm(fs, { launch: { headroom: true, routeByName: false } }),
+      farm: fakeFarm(fs, { launch: { headroom: true } }),
       frontdoor: fakeFrontDoorPort(),
       headroom,
     });
@@ -526,7 +526,7 @@ describe("runLauncher headroom routing", () => {
     expect(log.errors[0]).toContain("provider z has no usable credential");
   });
 
-  it("launches a route-by-name session whose routed providers all resolve, stripping the route flag into the session headers", () => {
+  it("launches with a models block whose providers all resolve, injecting no routing header: every session resolves names and none opts in", () => {
     const spawn = fakeSpawn();
 
     runAndCaptureExit({
@@ -542,7 +542,7 @@ describe("runLauncher headroom routing", () => {
         },
       }),
       spawn,
-      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, ["--route-by-name"]),
+      proc: fakeProc({ Z_API_TOKEN: "tok-z" }, []),
       log: fakeLog(),
       resolveClaudeBinary: () => discovered,
       frontdoor: fakeFrontDoorPort(),
@@ -550,7 +550,7 @@ describe("runLauncher headroom routing", () => {
     });
 
     const env = spawnedEnv(spawn);
-    expect(injectedSessionHeaders(env)).toContain("x-agent-shim-route-by-name: 1");
+    expect(injectedSessionHeaders(env).some((line) => line.startsWith("x-agent-shim-route-by-name"))).toBe(false);
   });
 
   it("refuses loudly when headroom resolved on but no front-door port was wired", () => {

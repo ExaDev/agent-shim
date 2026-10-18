@@ -205,7 +205,6 @@ export interface ProfileChange {
   readonly launchDelay?: string | false;
   readonly launchPause?: boolean;
   readonly launchExplain?: boolean;
-  readonly launchRouteByName?: boolean;
 }
 
 /** Applies every field `change` names to profile `name`, returning whether any was given. The one implementation `profile set` and the typed API's `config.profile.set` share. */
@@ -253,9 +252,6 @@ export function applyProfileChange(paths: LayoutPaths, name: string, change: Pro
   }
   if (change.launchExplain !== undefined) {
     launchPatch.explain = change.launchExplain;
-  }
-  if (change.launchRouteByName !== undefined) {
-    launchPatch.routeByName = change.launchRouteByName;
   }
   if (Object.keys(launchPatch).length > 0) {
     setProfileLaunchFlags(paths, name, launchPatch);

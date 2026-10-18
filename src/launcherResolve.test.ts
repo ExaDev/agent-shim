@@ -59,10 +59,10 @@ describe("resolveLaunch", () => {
     const prepared = prepareLaunch({ ...ports({ argv: ["@pool:main", "--headroom", "--print"] }).params, headroom: { ensure: () => ({ socketPath: "/s", projectId: "p" }), release: () => undefined } });
     expect(resolved.decision).toEqual(prepared.decision);
     expect(resolved.decision).toMatchObject({ identity: "work", identitySource: "argv", pool: { name: "main" } });
-    expect(resolved.flags).toMatchObject({ headroom: true, routeByName: false });
+    expect(resolved.flags).toMatchObject({ headroom: true });
     expect(resolved.args).toEqual(prepared.args);
     expect(resolved.bin).toBe(discovered.path);
-    expect(resolved.routing).toEqual({ frontDoor: true, headroom: true, routeByName: false });
+    expect(resolved.routing).toEqual({ frontDoor: true, headroom: true });
   });
 
   it("writes nothing: no farm resync, no recorded pool pick", () => {

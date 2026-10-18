@@ -141,9 +141,9 @@ describe("config API: configuration profiles", () => {
       name: "client",
       extends: ["base"],
       category: { history: false },
-      launch: { headroom: true, routeByName: false, provider: "z", claudeVersion: "2.1.220" },
+      launch: { headroom: true, provider: "z", claudeVersion: "2.1.220" },
     });
-    expect(updated.value).toMatchObject({ extends: ["base"], categories: { history: false }, launch: { headroom: true, routeByName: false, provider: "z", claudeVersion: "2.1.220" } });
+    expect(updated.value).toMatchObject({ extends: ["base"], categories: { history: false }, launch: { headroom: true, provider: "z", claudeVersion: "2.1.220" } });
 
     const cleared = await api.profile.set({ name: "client", extends: false, description: false, launch: { provider: false } });
     expect(cleared.value.extends).toBeUndefined();

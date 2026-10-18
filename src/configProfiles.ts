@@ -121,8 +121,6 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
       .option("--no-launch-pause", "Launches under this profile start claude without waiting for a key press.")
       .option("--launch-explain", "Launches under this profile that pick from a pool list every member the pick ranked and why, in the launcher's report.")
       .option("--no-launch-explain", "Launches under this profile name only the member a pool pick chose.")
-      .option("--launch-route-by-name", "Launches under this profile route provider-qualified model names through the models block to the provider that serves them.")
-      .option("--no-launch-route-by-name", "Launches under this profile send every request to the launch provider.")
       .option("--json", "Print the result as JSON.")
       .action(async (name: string, allOptions: ProfileSetOptions) => {
         const { json, ...options } = allOptions;

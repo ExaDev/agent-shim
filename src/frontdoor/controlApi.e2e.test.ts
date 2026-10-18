@@ -211,7 +211,7 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
 
     // The launch resolution rides the same mount: the launcher's decision for a directory, without a spawn.
     const resolved = await api.launch.resolve({ path: `${FAKE_HOME}/work`, argv: ["@work", "--headroom", "--print"] });
-    expect(resolved).toMatchObject({ decision: { identity: "work", identitySource: "argv" }, flags: { headroom: true, routeByName: false }, bin: discovered.path, routing: { frontDoor: true, headroom: true, routeByName: false }, warnings: [] });
+    expect(resolved).toMatchObject({ decision: { identity: "work", identitySource: "argv" }, flags: { headroom: true }, bin: discovered.path, routing: { frontDoor: true, headroom: true }, warnings: [] });
     expect(resolved.args).toEqual(["--print"]);
 
     // A caller without this generation's control token is refused by the control plane exactly as the Remote Control surface refuses it.

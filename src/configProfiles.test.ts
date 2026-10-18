@@ -176,22 +176,22 @@ describe("configProfiles", () => {
     it("merges headroom with the other launch flags", () => {
       createProfile(paths, "base");
       setProfileLaunchFlags(paths, "base", { skipPermissions: true });
-      expect(setProfileLaunchFlags(paths, "base", { headroom: true, routeByName: false }).launch).toEqual({
+      expect(setProfileLaunchFlags(paths, "base", { headroom: true }).launch).toEqual({
         skipPermissions: true,
-        headroom: true, routeByName: false,
+        headroom: true,
       });
     });
 
     it("stores trackUsage beside the other launch flags", () => {
       createProfile(paths, "base");
-      setProfileLaunchFlags(paths, "base", { headroom: true, routeByName: false });
-      expect(setProfileLaunchFlags(paths, "base", { trackUsage: true }).launch).toEqual({ headroom: true, routeByName: false, trackUsage: true });
+      setProfileLaunchFlags(paths, "base", { headroom: true });
+      expect(setProfileLaunchFlags(paths, "base", { trackUsage: true }).launch).toEqual({ headroom: true, trackUsage: true });
     });
 
     it("stores a delay and a pause beside the other launch flags", () => {
       createProfile(paths, "base");
-      setProfileLaunchFlags(paths, "base", { headroom: true, routeByName: false });
-      expect(setProfileLaunchFlags(paths, "base", { delay: "5s", pause: false }).launch).toEqual({ headroom: true, routeByName: false, delay: "5s", pause: false });
+      setProfileLaunchFlags(paths, "base", { headroom: true });
+      expect(setProfileLaunchFlags(paths, "base", { delay: "5s", pause: false }).launch).toEqual({ headroom: true, delay: "5s", pause: false });
     });
 
     it("stores explain beside the other launch flags", () => {

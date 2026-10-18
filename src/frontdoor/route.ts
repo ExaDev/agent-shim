@@ -13,8 +13,7 @@ export const INTERNAL_HEADER_NAMES = [
   "x-agent-shim-identity",
   "x-agent-shim-session",
   "x-agent-shim-headroom",
-  "x-agent-shim-route-by-name",
-  "x-agent-shim-auth",
+    "x-agent-shim-auth",
   "x-agent-shim-provider",
   "x-agent-shim-hop",
   "x-agent-shim-hop-id",
@@ -34,9 +33,6 @@ export const PROVIDER_HEADER = "x-agent-shim-provider";
 
 /** Set to `1` when the launch resolved headroom on, so the front door knows this session's requests must take the headroom hop; stripped at the door. */
 export const HEADROOM_FLAG_HEADER = "x-agent-shim-headroom";
-
-/** The launcher-injected header that says this session routes provider-qualified model names through the models block, whatever provider it launched on. */
-export const ROUTE_BY_NAME_HEADER = "x-agent-shim-route-by-name";
 
 /**
  * Carries the project identity headroom scopes its memory state to (the git repository root of the launch directory). Also injected by the launcher and stripped at the door: the headroom hop re-sets it on its own request, so it reaches headroom and nowhere else.
@@ -80,7 +76,6 @@ export interface SessionIdentity {
   /** Whether this launch resolved headroom on, so its requests must pass through the headroom hop before their route. */
   readonly headroom: boolean;
   /** Whether this launch routes provider-qualified model names through the models block, whatever provider it selected. */
-  readonly routeByName: boolean;
   /** The project identity headroom scopes memory to, re-set on the headroom hop and sent nowhere else. */
   readonly projectId: string | undefined;
 }
@@ -132,7 +127,6 @@ export function identifyRequest(headers: Readonly<IncomingHttpHeaders>): Identif
       sessionId: internalHeaderValue(headers, SESSION_HEADER),
       provider: internalHeaderValue(headers, PROVIDER_HEADER),
       headroom: internalHeaderValue(headers, HEADROOM_FLAG_HEADER) === "1",
-      routeByName: internalHeaderValue(headers, ROUTE_BY_NAME_HEADER) === "1",
       projectId: internalHeaderValue(headers, PROJECT_ID_HEADER),
     },
     forwardableHeaders: forwardable,
