@@ -1,3 +1,9 @@
+## [11.44.4](https://github.com/ExaDev/agent-shim/compare/v11.44.3...v11.44.4) (2026-10-18)
+
+### Bug Fixes
+
+* **frontdoor:** retry preferred port on bind and check log existence with stat ([7f27a9b](https://github.com/ExaDev/agent-shim/commit/7f27a9b82fe94ea7fd5c4e07f12aa44d3d1aa5e2))
+
 ## [11.44.3](https://github.com/ExaDev/agent-shim/compare/v11.44.2...v11.44.3) (2026-10-18)
 
 ### Bug Fixes
