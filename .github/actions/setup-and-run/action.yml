@@ -12,6 +12,14 @@ inputs:
     description: GitHub token for commands that need it.
     required: false
     default: ""
+  install:
+    description: Whether to install dependencies from the lockfile. False for tasks that read only the lockfile or the sources (pnpm audit needs neither node_modules nor a bundle), skipping the install and its store-cache save.
+    required: false
+    default: "true"
+  cache-turbo:
+    description: Whether to persist and restore Turbo's task cache directory. False for the build jobs, whose cache entry is the whole dist tree; moving that entry costs more than the build it would skip, and every build-job cache write evicts pnpm-store entries the other tasks depend on.
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -23,11 +31,14 @@ runs:
         node-version-file: .tool-versions
         cache: pnpm
 
-    - run: pnpm install --frozen-lockfile
+    # --ignore-scripts skips the package's own prepare script (husky plus an esbuild bundle of the CLI). No CI task consumes that bundle: lint, typecheck, test and knip all read the sources, and the build and publish jobs bundle explicitly before anything runs the result. Husky hooks are meaningless on a runner.
+    - run: pnpm install --frozen-lockfile --ignore-scripts
+      if: inputs.install == 'true'
       shell: bash
 
     # Turbo owns the actual cache-or-run decision per task (via each task's declared inputs/outputs in turbo.json) -- this step only needs to persist its local cache directory across runs. Keyed per-task because lint/typecheck/test/audit/knip/build are separate parallel jobs in the same workflow run, all writing to this same path. runner.arch is included alongside runner.os deliberately: build-linux-x64 (ubuntu-latest) and build-linux-arm64 (ubuntu-24.04-arm) both report runner.os as "Linux", and the _build task's turbo.json inputs are pure source content with no architecture marker, so without runner.arch here the two jobs would share one Turbo cache namespace -- confirmed to actually happen (a stale cross-architecture binary served from cache broke the Linux x64 release, caught only because the verify jobs actually execute the installed binary rather than just checking install exit codes). github.run_id makes the primary key unique to this run, so actions/cache always saves a fresh entry at the end -- without it, the primary key would stay identical across every run on the same branch/lockfile, and actions/cache treats a key as immutable: once written, a later run restores it but silently skips re-saving, so nothing computed after the very first run under that key would ever actually persist. restore-keys still falls back by prefix (ignoring run_id) to find the most recent prior entry to seed from.
     - uses: actions/cache@v5
+      if: inputs.cache-turbo == 'true'
       with:
         path: .turbo
         key: turbo-${{ runner.os }}-${{ runner.arch }}-${{ inputs.task }}-${{ github.ref_name }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.run_id }}
