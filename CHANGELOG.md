@@ -1,3 +1,9 @@
+## [11.44.2](https://github.com/ExaDev/agent-shim/compare/v11.44.1...v11.44.2) (2026-10-18)
+
+### Bug Fixes
+
+* **frontdoor:** carry a route's model choice back through the headroom hop ([f530087](https://github.com/ExaDev/agent-shim/commit/f5300875076c957057ee2c00d8ffd911040ccf2f))
+
 ## [11.44.1](https://github.com/ExaDev/agent-shim/compare/v11.44.0...v11.44.1) (2026-10-18)
 
 ### Bug Fixes
