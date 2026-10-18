@@ -75,10 +75,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # install: false because pnpm audit reads the lockfile alone; an install here would be pure overhead plus a store-cache entry saved for a job that never runs anything else.
       - uses: ./.github/actions/setup-and-run
         with:
           task: audit
           command: pnpm audit --audit-level moderate
+          install: false
 
   # Unused-file/export/dependency detection, scoped to a single-package CLI (not exadex's Next.js monorepo shape) — src/cli.ts is the only declared entry; every resolve/* submodule is imported directly by its own consumers now (no facade), and everything else knip flags as unused is either genuinely dead or a same-file-only export that should never have carried the `export` keyword in the first place.
   knip:
@@ -153,6 +155,7 @@ jobs:
         with:
           task: build
           command: pnpm build
+          cache-turbo: false
 
       - run: mv dist/agent-shim-sea dist/agent-shim-macos-arm64
       - run: shasum -a 256 dist/agent-shim-macos-arm64 | awk '{print $1}' > dist/agent-shim-macos-arm64.sha256
@@ -183,6 +186,7 @@ jobs:
         with:
           task: build
           command: pnpm build
+          cache-turbo: false
 
       - run: mv dist/agent-shim-sea dist/agent-shim-macos-x64-unverified
       - run: shasum -a 256 dist/agent-shim-macos-x64-unverified | awk '{print $1}' > dist/agent-shim-macos-x64-unverified.sha256
@@ -209,6 +213,7 @@ jobs:
         with:
           task: build
           command: pnpm build
+          cache-turbo: false
 
       - run: mv dist/agent-shim-sea dist/agent-shim-linux-x64
       - run: shasum -a 256 dist/agent-shim-linux-x64 | awk '{print $1}' > dist/agent-shim-linux-x64.sha256
@@ -234,6 +239,7 @@ jobs:
         with:
           task: build
           command: pnpm build
+          cache-turbo: false
 
       - run: mv dist/agent-shim-sea dist/agent-shim-linux-arm64
       - run: shasum -a 256 dist/agent-shim-linux-arm64 | awk '{print $1}' > dist/agent-shim-linux-arm64.sha256
@@ -260,6 +266,7 @@ jobs:
         with:
           task: build
           command: pnpm build
+          cache-turbo: false
 
       - name: Package archive
         shell: pwsh
@@ -292,6 +299,7 @@ jobs:
         with:
           task: build
           command: pnpm build
+          cache-turbo: false
 
       - name: Package archive
         shell: pwsh
