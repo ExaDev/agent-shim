@@ -1,3 +1,9 @@
+## [11.44.3](https://github.com/ExaDev/agent-shim/compare/v11.44.2...v11.44.3) (2026-10-18)
+
+### Bug Fixes
+
+* **frontdoor:** recognise a translator's model choice from the request and response bodies ([1849879](https://github.com/ExaDev/agent-shim/commit/1849879e34949c4060bd5978733368b3c9addbc9))
+
 ## [11.44.2](https://github.com/ExaDev/agent-shim/compare/v11.44.1...v11.44.2) (2026-10-18)
 
 ### Bug Fixes
