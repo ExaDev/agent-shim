@@ -168,7 +168,7 @@ export function collectCodexStatus(fsPort: HeadroomFs, paths: LayoutPaths, isRun
     usageSnapshotPath: codexUsageSnapshotPath(),
     usageSnapshotExists: fsPort.readFileUtf8(codexUsageSnapshotPath()) !== undefined,
     logPath: paths.frontdoorLogPath,
-    logExists: fsPort.readFileUtf8(paths.frontdoorLogPath) !== undefined,
+    logExists: fsPort.lstat(paths.frontdoorLogPath) !== undefined,
   };
 }
 

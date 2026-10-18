@@ -45,7 +45,7 @@ export type HeadroomState = z.infer<typeof HeadroomStateSchema>;
 /** The filesystem operations headroom coordination needs: the same shape as `FarmFs`, injected so every decision over state, sessions, and the start lock runs against an in-memory fake in tests. */
 export type HeadroomFs = Pick<
   FarmFs,
-  "mkdirp" | "mkdirPrivate" | "readFileUtf8" | "writeFileUtf8" | "writeFilePrivate" | "writeFileExclusive" | "readdir" | "removeRecursive"
+  "lstat" | "mkdirp" | "mkdirPrivate" | "readFileUtf8" | "writeFileUtf8" | "writeFilePrivate" | "writeFileExclusive" | "readdir" | "removeRecursive"
 >;
 
 /**
