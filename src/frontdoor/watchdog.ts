@@ -46,7 +46,7 @@ const { workerData, parentPort } = require("node:worker_threads");
 const fs = require("node:fs");
 const os = require("node:os");
 const inspector = require("node:inspector");
-const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnGeneration, respawnMaxGeneration, awaitPidEnv, respawnGenerationEnv } = workerData;
+const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnGeneration, respawnMaxGeneration, startLockFile, awaitPidEnv, respawnGenerationEnv } = workerData;
 const counter = new Int32Array(shared);
 let lastValue = Atomics.load(counter, 0);
 let lastChangeAt = Date.now();
@@ -110,10 +110,46 @@ const describeMainThread = (waitMs, resume) => new Promise((resolve) => {
     finish("the main thread could not be inspected: " + (error instanceof Error ? error.message : String(error)));
   }
 });
+// Whether a process is alive: signal 0 only tests, and EPERM means it exists under another user.
+const isRunning = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+};
+// The pid holding the start lock when that holder is alive, which means a door is already being started and another must not be: the launcher's ensure and this respawn are the two things that start a door, and the lock is the one protocol that keeps them from starting two. A dead holder's lock is litter and is cleared, exactly as the launcher's ensure clears it.
+const liveLockHolder = () => {
+  let holder;
+  try {
+    holder = JSON.parse(fs.readFileSync(startLockFile, "utf8")).pid;
+  } catch (error) {
+    return undefined;
+  }
+  if (typeof holder === "number" && isRunning(holder)) return holder;
+  fs.rmSync(startLockFile, { force: true });
+  return undefined;
+};
+// Creates the lock naming the replacement as its holder, atomically (the wx flag), so the launcher's ensure sees a live holder while the replacement boots and waits for it instead of starting a door of its own; the replacement removes the lock once it is serving, as every door does.
+const claimStartLock = (holder) => {
+  try {
+    fs.writeFileSync(startLockFile, JSON.stringify({ pid: holder, at: Date.now() }) + "\\n", { flag: "wx" });
+    return true;
+  } catch (error) {
+    if (error.code === "EEXIST") return false;
+    throw error;
+  }
+};
 const spawnReplacement = () => {
   if (respawn === undefined || logFile === undefined) return;
   if (respawnGeneration >= respawnMaxGeneration) {
     log("not starting another replacement: this door was replacement generation " + String(respawnGeneration) + " of " + String(respawnMaxGeneration) + ", so the stall has recurred through consecutive doors and the machine, not the door, is the one refusing to serve; leaving the next launch's ensure to start one");
+    return;
+  }
+  const startingBy = liveLockHolder();
+  if (startingBy !== undefined) {
+    log("not starting a replacement: process " + String(startingBy) + " holds the start lock, so a door is already being started and a second one would race it for the sticky ports");
     return;
   }
   try {
@@ -121,6 +157,12 @@ const spawnReplacement = () => {
     const child = require("node:child_process").spawn(respawn.command, respawn.args, { detached: true, stdio: ["ignore", out, out], env: Object.assign({}, respawn.env, { [awaitPidEnv]: String(ownPid), [respawnGenerationEnv]: String(respawnGeneration + 1) }) });
     child.unref();
     fs.closeSync(out);
+    if (!claimStartLock(child.pid)) {
+      // A launcher took the lock between the check and the spawn, so its door is the one that is starting: this one must not also bind.
+      process.kill(child.pid, "SIGKILL");
+      log("withdrew replacement door " + String(child.pid) + ": a launcher took the start lock first and its door is the one starting");
+      return;
+    }
     log("started replacement door " + String(child.pid) + " of generation " + String(respawnGeneration + 1) + ", which binds once this process is gone");
   } catch (error) {
     log("could not start a replacement door: " + (error instanceof Error ? error.message : String(error)));
@@ -180,6 +222,8 @@ export interface ThreadWatchdogParams {
   readonly respawnGeneration: number;
   /** The highest replacement generation this door's watchdog may start (`DOOR_RESPAWN_MAX_GENERATIONS` in production). */
   readonly respawnMaxGeneration: number;
+  /** The start lock a launcher's ensure takes before it spawns a door and the door removes once it is serving: the respawn takes the same lock, naming the replacement as holder, so a launch that finds the stalled door's pid dead waits for the replacement instead of starting a second door that would find the sticky ports held and move off them. */
+  readonly startLockFile: string;
   /** How to start a replacement door on a stall: the invocation and environment of a door, to which the thread adds `DOOR_AWAIT_PID_ENV` and `DOOR_RESPAWN_GENERATION_ENV`. Omitted by a host that does not respawn. */
   readonly respawn?: { readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> };
   /** Called on the main thread with the recorded message when `action` is `report` and the stall was seen. */
@@ -192,7 +236,7 @@ export function startThreadWatchdog(params: Readonly<ThreadWatchdogParams>): Doo
   const counter = new Int32Array(shared);
   const worker = new Worker(WATCHDOG_SOURCE, {
     eval: true,
-    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, awaitPidEnv: DOOR_AWAIT_PID_ENV, respawnGenerationEnv: DOOR_RESPAWN_GENERATION_ENV },
+    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, startLockFile: params.startLockFile, awaitPidEnv: DOOR_AWAIT_PID_ENV, respawnGenerationEnv: DOOR_RESPAWN_GENERATION_ENV },
   });
   worker.unref();
   worker.on("message", (message: unknown) => {

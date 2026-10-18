@@ -601,6 +601,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         respawn: respawnInvocation(paths),
         respawnGeneration,
         respawnMaxGeneration: DOOR_RESPAWN_MAX_GENERATIONS,
+        startLockFile: paths.frontdoorLockFile,
       }),
     // The launch lifecycle publisher over the same backbone the typed API serves: the tick's registry facts go in here, and the door's own register, prune and end moments come out as source-tagged events.
     observeLaunchRegistry: createLaunchEventPublisher(doorEvents, () => Date.now()).observe,
