@@ -1,3 +1,9 @@
+## [11.45.0](https://github.com/ExaDev/agent-shim/compare/v11.44.5...v11.45.0) (2026-10-18)
+
+### Features
+
+* **frontdoor:** route provider-qualified model names on every session ([f70ba38](https://github.com/ExaDev/agent-shim/commit/f70ba38dd9cc5912d792991cc5f316028e4f7547))
+
 ## [11.44.5](https://github.com/ExaDev/agent-shim/compare/v11.44.4...v11.44.5) (2026-10-18)
 
 ### Bug Fixes
