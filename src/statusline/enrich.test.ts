@@ -294,3 +294,13 @@ describe("enrichStatuslinePayload", () => {
     expect(summary.loginSeatTier).toBe("team_tier_1");
   });
 });
+
+describe("a model choice among alternatives", () => {
+  it("threads the choice through to the summary and the enriched payload", () => {
+    const modelChoice = { requested: "auto", served: "glm-5.3", provider: "z", providers: ["z", "antigravity"] };
+    const { payload, summary } = enrichStatuslinePayload({ payload: {}, env: {}, snapshot: undefined, account: undefined, providerName: undefined, nowMs: NOW_MS, headroom: undefined, modelChoice });
+    expect(summary.modelChoice).toEqual(modelChoice);
+    const enriched = payload as { agent_shim?: { modelChoice?: unknown } };
+    expect(enriched.agent_shim?.modelChoice).toEqual(modelChoice);
+  });
+});

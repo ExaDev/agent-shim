@@ -838,3 +838,31 @@ describe("a family and the capabilities it carries", () => {
   });
 });
 
+
+describe("a virtual model's choice on the resolution", () => {
+  const sessionRequest = (model: string): RoutedRequest => ({
+    ...request("/providers/z/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),
+    session: { identity: undefined, sessionId: "s-1", provider: "z", headroom: false, routeByName: true, projectId: undefined },
+  });
+  const files: Record<string, unknown> = {
+    [`${PROVIDERS_DIR}/z.json`]: httpProvider,
+    [`${PROVIDERS_DIR}/ag.json`]: antigravityProvider,
+  };
+
+  it("carries the name the session asked for and every provider its members span", async () => {
+    const models: ModelsConfig = { virtual: { pick: { mode: "ordered", members: ["z/glm-5.3", "ag/gemini-2.5-pro"] } } };
+    const resolution = await resolver(files, OWN_PORT, models)(sessionRequest("pick"));
+    expect(resolution.ok).toBe(true);
+    if (resolution.ok) {
+      expect(resolution.modelChoice).toEqual({ requested: "pick", providers: ["z", "ag"] });
+    }
+  });
+
+  it("is absent for a qualified name the session picked itself", async () => {
+    const resolution = await resolver(files)(sessionRequest("ag/gemini-2.5-pro"));
+    expect(resolution.ok).toBe(true);
+    if (resolution.ok) {
+      expect(resolution.modelChoice).toBeUndefined();
+    }
+  });
+});

@@ -23,7 +23,7 @@ import { FAMILY_PREFIX, buildFamilies, expandFamilyMembers, familyCapabilities, 
 import { withoutContextMarker } from "../models/identity";
 import type { TargetObservation } from "../selection/signals";
 import type { UsageSnapshot } from "../usage/schema";
-import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type RoutedRequest } from "./route";
+import { PROVIDER_PATH_PREFIX, directOrigin, parseProviderPath, type FrontDoorRoute, type ModelChoice, type RoutedRequest } from "./route";
 import { Readable } from "node:stream";
 import { scanRequestHead } from "./requestScan";
 
@@ -47,11 +47,13 @@ function scopeSessionProviderPath(request: RoutedRequest): RoutedRequest {
   return { ...request, url: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(request.session.provider)}${request.url}` };
 }
 
-/** What a request's model name resolves to when it routes by name: the provider that serves it, the model name that provider serves it under (a qualified name loses its qualifier, a virtual model resolves to the member its mode chose), and the member ref the choice landed on, for the stickiness the next request of the same session reads. */
+/** What a request's model name resolves to when it routes by name: the provider that serves it, the model name that provider serves it under (a qualified name loses its qualifier, a virtual model resolves to the member its mode chose), and the member ref the choice landed on, for the stickiness the next request of the same session reads. A virtual model or family selection also carries the name the session asked for and the distinct providers its members span, so the response can tell the middleware a choice among alternatives happened. */
 interface RoutedModel {
   readonly provider: string;
   readonly model: string;
   readonly ref: string;
+  readonly requested?: string;
+  readonly providers?: readonly string[];
 }
 
 /** What `resolveRoutedModel` reads from the door: the session's models block, the quota snapshot of its identity, what each target's recent requests observed, and the targets the providers offer (which families are formed from). */
@@ -122,7 +124,9 @@ function resolveRoutedModel(
   }
   const [provider, ...rest] = selection.ref.split("/");
   const chosen = rest.join("/");
-  return provider === undefined || chosen === "" ? undefined : { provider, model: withoutContextMarker(chosen), ref: selection.ref };
+  // The choice itself is part of the answer: the virtual or family name the session asked for, and the distinct providers its members span (one entry when they never leave a single provider), for the response middleware to record.
+  const providers = [...new Set(members.map((ref) => ref.split("/")[0] ?? ""))].filter((name) => name !== "");
+  return provider === undefined || chosen === "" ? undefined : { provider, model: withoutContextMarker(chosen), ref: selection.ref, requested: model, providers };
 }
 
 /** The identity and model an `acct:` member names, when the model a session asked for is one (`acct:work/opus` directly, or a virtual model whose first member is). One login per process, so no route can serve it: only a relaunch under the identity can. */
@@ -340,6 +344,8 @@ export function createProviderRouteResolver(deps: {
     let replay: RoutedRequest | undefined;
     // Set once a model name has been resolved to its target: the name the target now carries is its own (a provider may serve a model named like `hf:zai-org/GLM-5.1`, which would read as a qualified ref), so the target's turn of the loop serves it as it is and never resolves it by name again.
     let nameResolved = false;
+    // The model choice a virtual model or family made, carried to the resolution so the response middleware can record it; the loop's later turns (the target's own resolution) serve the chosen name as it is and leave this untouched.
+    let modelChoice: ModelChoice | undefined;
     const visited = new Set<string>();
     for (;;) {
       const path = new URL(current.url, "http://127.0.0.1").pathname;
@@ -394,10 +400,14 @@ export function createProviderRouteResolver(deps: {
         const requested = scan.model;
         if (routed !== undefined) {
           routingMemory.set(current.session.sessionId ?? "", routed.ref);
+          // A virtual model's or family's selection is a choice among alternatives, unlike a qualified name the session picked itself: only that choice is recorded for the response middleware.
+          if (routed.requested !== undefined) {
+            modelChoice = { requested: routed.requested, providers: routed.providers ?? [routed.provider] };
+          }
           if (requested !== undefined && routed.provider === providerName && routed.model === requested) {
             // The name points back at the provider the session is already on under the name it serves: nothing to rewrite, serve it here.
             const resolution = resolve(current);
-            return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } } : resolution;
+            return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url }, ...(modelChoice === undefined ? {} : { modelChoice }) } : resolution;
           }
           if (requested !== undefined && routed.model !== requested) {
             // The rewrite replaces the model field's value in the one copy of the body the whole-body scan already holds, so the target receives exactly the request that matched with exactly one field changed; the framing header is dropped because the new name is a different length.
@@ -416,13 +426,13 @@ export function createProviderRouteResolver(deps: {
           }
           // Same provider, renamed model: serve the rewritten body here, on the provider the session is already on.
           const resolution = resolve(current);
-          return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } } : resolution;
+          return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url }, ...(modelChoice === undefined ? {} : { modelChoice }) } : resolution;
         }
       }
       if (routes === undefined || routes.length === 0) {
         const resolution = resolve(current);
         return resolution.ok && replay !== undefined
-          ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } }
+          ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url }, ...(modelChoice === undefined ? {} : { modelChoice }) }
           : resolution.ok
             ? serveScoped(resolution)
             : resolution;
@@ -466,7 +476,7 @@ export function createProviderRouteResolver(deps: {
       }
       if (matched === undefined) {
         const resolution = resolve(current);
-        return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url } } : resolution;
+        return resolution.ok ? { ok: true, route: servingRewritten(resolution.route, { ...replay, url: current.url }), request: { ...replay, url: current.url }, ...(modelChoice === undefined ? {} : { modelChoice }) } : resolution;
       }
       if (matched.model !== undefined && scan.text !== undefined && scan.model !== undefined) {
         // The rewrite replaces the model field's value in the one copy of the body the whole-body scan already holds, so the target receives exactly the request that matched with exactly one field changed.

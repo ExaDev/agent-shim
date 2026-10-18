@@ -31,6 +31,8 @@ export interface StatuslineSummary {
   readonly headroom: HeadroomStats | undefined;
   /** The target the session's last request was served by, `provider/model`, when routing by name sent it somewhere other than the launch's own provider or under another name; what makes a virtual model's choice visible where the person is looking. Absent when the caller cannot read the usage log. */
   readonly routedTarget?: string | undefined;
+  /** The model choice the session's last request was served by, when a routing layer chose among alternatives for its model name (a virtual model's or a tier alias's selection): the name the session asked for, the model and provider that answered, and the distinct providers the choice could have landed on. Absent when the last request named its model explicitly. */
+  readonly modelChoice?: { readonly requested: string; readonly served: string; readonly provider: string; readonly providers: readonly string[] };
 }
 
 /** One of a provider's quota windows, in the form the statusline draws. */
@@ -184,6 +186,8 @@ export interface EnrichParams {
   readonly headroom: HeadroomStats | undefined;
   /** The target the session's last request was served by, `provider/model`, when routing by name sent it somewhere other than the launch's own provider or under another name; what makes a virtual model's choice visible where the person is looking. Absent when the caller cannot read the usage log. */
   readonly routedTarget?: string | undefined;
+  /** The model choice the session's last request was served by, when a routing layer chose among alternatives for its model name: see `StatuslineSummary.modelChoice`. */
+  readonly modelChoice?: { readonly requested: string; readonly served: string; readonly provider: string; readonly providers: readonly string[] };
 }
 
 /**
@@ -215,6 +219,7 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     quotaFamilies: [],
     headroom: params.headroom,
     routedTarget: params.routedTarget,
+    ...(params.modelChoice === undefined ? {} : { modelChoice: params.modelChoice }),
   };
   if (params.snapshot !== undefined) {
     const scopedName = providerScopedState(params.snapshot, params.providerName, params.env.AGENT_SHIM_PROVIDER);

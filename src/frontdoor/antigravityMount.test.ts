@@ -18,10 +18,12 @@ function createMockResponse(): {
   getHeaders: () => Record<string, string> | undefined;
   getChunks: () => string[];
   isEnded: () => boolean;
+  getNotedModelChoices: () => { requested: string; providers: string[] }[];
 } {
   let status: number | undefined;
   let headers: Record<string, string> | undefined;
   const chunks: string[] = [];
+  const notedChoices: { requested: string; providers: string[] }[] = [];
   let ended = false;
   let headersSent = false;
 
@@ -33,6 +35,9 @@ function createMockResponse(): {
       status = s;
       headers = h;
       headersSent = true;
+    },
+    noteModelChoice: (choice) => {
+      notedChoices.push({ requested: choice.requested, providers: [...choice.providers] });
     },
     flush: () => undefined,
     write: async (chunk) => {
@@ -51,6 +56,7 @@ function createMockResponse(): {
     getHeaders: () => headers,
     getChunks: () => chunks,
     isEnded: () => ended,
+    getNotedModelChoices: () => notedChoices,
   };
 }
 
@@ -161,5 +167,71 @@ describe("createAntigravityRouteMount", () => {
     expect(mockRes.getStatus()).toBe(HTTP_STATUS.badRequest);
     expect(mockRes.isEnded()).toBe(true);
     expect(mockRes.getChunks().join("")).toContain("request body chunk was not a Buffer");
+  });
+});
+
+describe("a tier alias the translator resolved", () => {
+  it("is noted as a choice among this provider's models, and the frame names the model that served", async () => {
+    const geminiSse = [
+      'data: {"candidates":[{"content":{"parts":[{"text":"Greetings!"}]}}]}\n\n',
+      'data: {"candidates":[{"finishReason":"STOP"}]}\n\n',
+    ].join("");
+
+    const mockFetch: typeof fetch = async () => {
+      return await Promise.resolve(
+        new Response(geminiSse, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+      );
+    };
+
+    const mount = createAntigravityRouteMount(
+      {
+        loadProvider: () => ({
+          ok: true,
+          config: DEFAULT_CONFIG,
+          token: "dummy-key",
+          credentialTarget: "apiKey",
+        }),
+        fetchFn: mockFetch,
+      },
+      "http://127.0.0.1:4100",
+      "my-ag",
+    );
+
+    const mockRes = createMockResponse();
+    const reqBody = JSON.stringify({
+      model: "auto",
+      max_tokens: 100,
+      messages: [{ role: "user", content: "Hi" }],
+    });
+
+    const request: RoutedRequest = {
+      method: "POST",
+      url: "/providers/my-ag/v1/messages",
+      headers: {},
+      body: Readable.from([Buffer.from(reqBody)]),
+      signal: new AbortController().signal,
+      session: {
+        identity: undefined,
+        sessionId: undefined,
+        provider: undefined,
+        headroom: false, routeByName: false,
+        projectId: undefined,
+      },
+    };
+
+    await mount.serve(request, mockRes.response);
+
+    expect(mockRes.getStatus()).toBe(HTTP_STATUS.ok);
+    // The alias the session typed, marked as a choice that never left this provider.
+    expect(mockRes.getNotedModelChoices()).toEqual([{ requested: "auto", providers: ["my-ag"] }]);
+    // The frame names the model that actually served, not the alias, so a usage record read from the stream attributes quota to the backend model.
+    const output = mockRes.getChunks().join("");
+    const start = output.indexOf("event: message_start");
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(output.slice(start, output.indexOf("event:", start + 1))).not.toContain('"model": "auto"');
+    expect(output).toContain("Greetings!");
   });
 });

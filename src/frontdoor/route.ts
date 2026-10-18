@@ -189,6 +189,16 @@ export interface RoutedResponse {
   readonly end: () => void;
   /** Drops the connection: an upstream failure after the head went out, where no status can be sent any more. */
   readonly destroy: () => void;
+  /**
+   * Records that this response answers a request whose model name a routing layer chose among alternatives for: the name the session asked for and the distinct providers the choice could have landed on. Must be called before `start`, so the response observers the head invokes see it. Optional because only a route that translates a dynamic model name itself (the Antigravity tier translator) knows the pairing at serve time; a resolver-level choice reaches the observers through the resolution instead.
+   */
+  readonly noteModelChoice?: (choice: ModelChoice) => void;
+}
+
+/** What a routing layer that chose a model among alternatives tells the response middleware: the name the session asked for, and the distinct providers the choice could have landed on (one entry when it never left a single provider). */
+export interface ModelChoice {
+  readonly requested: string;
+  readonly providers: readonly string[];
 }
 
 /** One pluggable destination the front door routes a request to. */

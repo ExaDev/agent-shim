@@ -39,6 +39,15 @@
     "model": {
       "type": "string"
     },
+    "requestedModel": {
+      "type": "string"
+    },
+    "candidateProviders": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "status": {
       "type": "integer",
       "minimum": -9007199254740991,

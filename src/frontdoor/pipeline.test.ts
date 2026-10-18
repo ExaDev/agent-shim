@@ -100,7 +100,7 @@ function deps(resolution: RouteResolution, observers: readonly ResponseObserver[
 describe("createRoutedResponse", () => {
   it("applies backpressure: a write that the socket refuses waits for its drain", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined } } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined } } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -116,7 +116,7 @@ describe("createRoutedResponse", () => {
 
   it("settles a backpressured write when the client goes away, so a route is never left waiting on a dead socket", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined } } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined } } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -338,7 +338,7 @@ function routedWith(response: FakeServerResponse, observers: readonly ResponseOb
     deps: d,
     session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined },
     route: "test",
-    request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined } },
+    request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined } },
     servedPath: "/v1/messages",
   });
   return { routed, logs };
@@ -414,5 +414,40 @@ describe("response body observers", () => {
     expect(response.chunks).toEqual(["one", "two"]);
     expect(healthy.seen).toEqual(["chunk:one", "chunk:two", "end:completed"]);
     expect(logs.join("\n")).toContain("scanner bug");
+  });
+});
+
+describe("a model choice reaching the response observers", () => {
+  it("carries the resolution's choice on the event the observers see at the head", async () => {
+    const choices: (RoutedResponseEvent["modelChoice"])[] = [];
+    const { request, response } = pipelineRequest();
+    await serveRouted(request, deps({ ok: true, route: recordingRoute(), modelChoice: { requested: "auto", providers: ["z", "antigravity"] } }, [(event) => {
+      choices.push(event.modelChoice);
+      return undefined;
+    }]).deps);
+    expect(response.writtenHead?.status).toBe(HTTP_STATUS.ok);
+    expect(choices).toEqual([{ requested: "auto", providers: ["z", "antigravity"] }]);
+  });
+
+  it("carries a choice the route notes before its head, as the tier translator does", async () => {
+    const choices: (RoutedResponseEvent["modelChoice"])[] = [];
+    const notingRoute: FrontDoorRoute = {
+      name: "noting",
+      headroomEligible: false,
+      headroomUpstream: undefined,
+      serve: async (_request, response) => {
+        response.noteModelChoice?.({ requested: "sonnet", providers: ["antigravity"] });
+        response.start(HTTP_STATUS.ok, {});
+        await Promise.resolve();
+        response.end();
+      },
+    };
+    const { request, response } = pipelineRequest();
+    await serveRouted(request, deps({ ok: true, route: notingRoute }, [(event) => {
+      choices.push(event.modelChoice);
+      return undefined;
+    }]).deps);
+    expect(response.writtenHead?.status).toBe(HTTP_STATUS.ok);
+    expect(choices).toEqual([{ requested: "sonnet", providers: ["antigravity"] }]);
   });
 });

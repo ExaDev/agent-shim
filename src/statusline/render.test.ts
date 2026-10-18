@@ -289,3 +289,25 @@ describe("renderStatuslineBlock", () => {
     ).toBe("");
   });
 });
+
+describe("a dynamic mode's choice beside the model name", () => {
+  it("draws the served model beside the name the session typed, naming the provider when the choice could cross providers", () => {
+    const summary: StatuslineSummary = { ...SUMMARY, modelChoice: { requested: "auto", served: "glm-5.3", provider: "z", providers: ["z", "antigravity"] } };
+    const text = stripAnsi(renderStatuslineBlock(summary, VIEW, WIDE_TERMINAL, NOW_MS));
+    expect(text).toContain("Sonnet 5.5 -> z/glm-5.3");
+  });
+
+  it("draws the served model alone when the choice never left one provider", () => {
+    const summary: StatuslineSummary = { ...SUMMARY, modelChoice: { requested: "auto", served: "gemini-4-argon-medium", provider: "antigravity", providers: [] } };
+    const text = stripAnsi(renderStatuslineBlock(summary, VIEW, WIDE_TERMINAL, NOW_MS));
+    expect(text).toContain("Sonnet 5.5 -> gemini-4-argon-medium");
+    expect(text).not.toContain("z/glm");
+  });
+
+  it("folds the served provider into the arrow instead of a separate via segment when routing left the launch provider", () => {
+    const summary: StatuslineSummary = { ...SUMMARY, routedTarget: "z/glm-5.3", modelChoice: { requested: "auto", served: "glm-5.3", provider: "z", providers: ["z"] } };
+    const text = stripAnsi(renderStatuslineBlock(summary, VIEW, WIDE_TERMINAL, NOW_MS));
+    expect(text).toContain("Sonnet 5.5 -> z/glm-5.3");
+    expect(text).not.toContain("via ");
+  });
+});
