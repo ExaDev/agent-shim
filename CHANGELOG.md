@@ -1,3 +1,9 @@
+## [11.44.0](https://github.com/ExaDev/agent-shim/compare/v11.43.1...v11.44.0) (2026-10-18)
+
+### Features
+
+* **statusline:** name the model a routing choice served beside the session's own ([44eaa47](https://github.com/ExaDev/agent-shim/commit/44eaa47da8315e117df138271cf0eaa0c4425e8f))
+
 ## [11.43.1](https://github.com/ExaDev/agent-shim/compare/v11.43.0...v11.43.1) (2026-10-17)
 
 ### Bug Fixes
