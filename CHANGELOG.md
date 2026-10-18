@@ -1,3 +1,13 @@
+## [11.44.1](https://github.com/ExaDev/agent-shim/compare/v11.44.0...v11.44.1) (2026-10-18)
+
+### Bug Fixes
+
+* **frontdoor:** always leave a replacement door behind a watchdog kill ([403f924](https://github.com/ExaDev/agent-shim/commit/403f924b598231609c7978cf4a0a38a656f1744f))
+
+### Continuous Integration
+
+* drop install and cache work the CI tasks never use ([e935b65](https://github.com/ExaDev/agent-shim/commit/e935b6510a24d4177d76e256fe3c8dcfd9ec2044))
+
 ## [11.44.0](https://github.com/ExaDev/agent-shim/compare/v11.43.1...v11.44.0) (2026-10-18)
 
 ### Features
