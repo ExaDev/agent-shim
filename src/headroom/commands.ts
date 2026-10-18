@@ -101,7 +101,7 @@ export function collectHeadroomStatus(fsPort: HeadroomFs, paths: LayoutPaths, pr
     settings,
     settingsDrifted: state.settingsHash !== undefined && state.settingsHash !== hashSettings(settings),
     logPath: paths.headroomLogPath,
-    logExists: fsPort.readFileUtf8(paths.headroomLogPath) !== undefined,
+    logExists: fsPort.lstat(paths.headroomLogPath) !== undefined,
   };
 }
 

@@ -42,7 +42,7 @@ export function collectFrontDoorStatus(fsPort: HeadroomFs, socketTrust: Headroom
     sessions: listFrontDoorSessions(fsPort, paths.frontdoorSessionsDir).map((session) => ({ ...session, alive: isRunning(session.pid) })),
     headroomSocket: headroomSocketTarget(fsPort, socketTrust, paths),
     logPath: paths.frontdoorLogPath,
-    logExists: fsPort.readFileUtf8(paths.frontdoorLogPath) !== undefined,
+    logExists: fsPort.lstat(paths.frontdoorLogPath) !== undefined,
   };
 }
 

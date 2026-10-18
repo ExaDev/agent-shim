@@ -15,6 +15,10 @@ const HEALTH_TIMEOUT_MS = 2_000;
 const HEALTH_START_BUDGET_MS = 5_000;
 const HEALTH_RETRY_MS = 50;
 
+/** How many attempts listenFrontDoor makes to bind preferredPort before falling back to an ephemeral port. */
+const PREFERRED_PORT_MAX_ATTEMPTS = 6;
+const PREFERRED_PORT_RETRY_MS = 50;
+
 /** A front-door listener: plain HTTP for the direct listener only headroom reaches, HTTPS for the provider listener every provider session's child connects to. */
 export type FrontDoorServer = http.Server | https.Server;
 
@@ -166,17 +170,26 @@ export async function listenFrontDoor(server: FrontDoorServer, options: Readonly
         resolve(bound);
       });
     });
-  let bound: number;
-  if (preferredPort !== undefined) {
-    try {
-      bound = await tryListen(preferredPort);
-    } catch {
-      // The sticky port was taken between generations; any free port will do, and the supervisor logs the move.
-      bound = await tryListen(0);
+  const bindListener = async (): Promise<number> => {
+    if (preferredPort === undefined) {
+      return await tryListen(0);
     }
-  } else {
-    bound = await tryListen(0);
-  }
+    for (let attempt = 1; attempt <= PREFERRED_PORT_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        return await tryListen(preferredPort);
+      } catch {
+        if (attempt === PREFERRED_PORT_MAX_ATTEMPTS) {
+          // The sticky port was taken between generations; any free port will do, and the supervisor logs the move.
+          return await tryListen(0);
+        }
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, PREFERRED_PORT_RETRY_MS);
+        });
+      }
+    }
+    return await tryListen(0);
+  };
+  const bound = await bindListener();
   options.onBound?.(bound);
   if (options.onError !== undefined) {
     server.on("error", options.onError);
