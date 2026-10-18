@@ -1,3 +1,9 @@
+## [11.44.5](https://github.com/ExaDev/agent-shim/compare/v11.44.4...v11.44.5) (2026-10-18)
+
+### Bug Fixes
+
+* **frontdoor:** start a watchdog replacement under the launcher's start lock ([23752cd](https://github.com/ExaDev/agent-shim/commit/23752cda7c0de24213621f219386b57590c2dcae))
+
 ## [11.44.4](https://github.com/ExaDev/agent-shim/compare/v11.44.3...v11.44.4) (2026-10-18)
 
 ### Bug Fixes
