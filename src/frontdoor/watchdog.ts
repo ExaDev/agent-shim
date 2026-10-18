@@ -1,6 +1,5 @@
 import { Worker } from "node:worker_threads";
 
-import { FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES } from "../config/schema";
 import { FRONTDOOR_PROBE_ATTEMPTS } from "./ensure";
 import { PROBE_TIMEOUT_MS } from "./probe";
 
@@ -9,15 +8,18 @@ import { PROBE_TIMEOUT_MS } from "./probe";
  */
 export const DOOR_STALL_BOUND_MS = 2 * FRONTDOOR_PROBE_ATTEMPTS * PROBE_TIMEOUT_MS;
 
-const MS_PER_MINUTE = 60_000;
-
-/**
- * How long a door must have served before its watchdog replaces it on a stall: the idle shutdown window a door already stays up through. A door that stalled sooner than that after binding has not shown it can serve, so a stall that recurs at once is treated as deterministic and left to the next launch's ensure rather than respawned in a loop.
- */
-export const DOOR_RESPAWN_MIN_SERVING_MS = FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES * MS_PER_MINUTE;
-
 /** The environment variable naming the pid a respawned door waits to see gone before it binds, so the sticky ports are free when it asks for them. */
 export const DOOR_AWAIT_PID_ENV = "AGENT_SHIM_FRONTDOOR_AWAIT_PID";
+
+/**
+ * The environment variable naming how many doors the watchdog's respawns have gone through before this one: a door started by `frontdoor restart` or a launch carries nothing here and counts as generation 0, and each watchdog respawn adds one. A door reads it once at startup and passes the number to its own watchdog, which refuses to respawn past `DOOR_RESPAWN_MAX_GENERATIONS`.
+ */
+export const DOOR_RESPAWN_GENERATION_ENV = "AGENT_SHIM_FRONTDOOR_RESPAWN_GENERATION";
+
+/**
+ * The highest replacement generation the watchdog will start. Every stall gets a replacement as long as a further generation is left, because a young door killed by a stall the machine caused (observed in production: an overloaded host stalling the loop before the door had served a minute) left every live session with connection refused until some later launch happened to start a door. What must not happen is an endless chain of doors each killed at once, so after this many consecutive replacements the chain stops and the next launch's ensure takes over: each link already costs at least one stall bound, so a stall that has recurred this many times with no door serving in between is the machine's, and respawning faster than a launch cannot fix it.
+ */
+export const DOOR_RESPAWN_MAX_GENERATIONS = 3;
 
 /** How many times the thread looks at the beat counter within one probe deadline, so a stall is noticed within a small fraction of the bound. */
 const CHECKS_PER_PROBE_DEADLINE = 2;
@@ -37,15 +39,14 @@ export interface DoorWatchdog {
 type StallAction = "kill-process" | "report";
 
 /**
- * The watchdog thread: its own event loop, which a blocked main loop cannot stall. It compares a shared beat counter against its previous reading on a fixed cadence, and when the counter has not moved for `boundMs` it records the stall in the state file (the existing `lastError` field, so no reader of the file sees a new key) and in the door's log (the next generation's first state write replaces `lastError`, and a SIGKILL runs no handler, so the log line is the only record that outlives the replacement), logs the machine's load and where the main thread was (see `describeMainThread`, so a stall that was the door's own code is told apart from one the machine caused), starts a replacement door when the door had served long enough to have proved it can, and ends the process. A thread that was itself descheduled for longer than its cadence (the machine was suspended or starved) restarts its clock instead of judging, since the main loop stalled by the same pause is not a hung one.
+ * The watchdog thread: its own event loop, which a blocked main loop cannot stall. It compares a shared beat counter against its previous reading on a fixed cadence, and when the counter has not moved for `boundMs` it records the stall in the state file (the existing `lastError` field, so no reader of the file sees a new key) and in the door's log (the next generation's first state write replaces `lastError`, and a SIGKILL runs no handler, so the log line is the only record that outlives the replacement), logs the machine's load and where the main thread was (see `describeMainThread`, so a stall that was the door's own code is told apart from one the machine caused), starts a replacement door (as long as this door's own generation has not reached the respawn ceiling, so a stall that recurs through consecutive doors ends the chain rather than looping) and ends the process. A thread that was itself descheduled for longer than its cadence (the machine was suspended or starved) restarts its clock instead of judging, since the main loop stalled by the same pause is not a hung one.
  */
 const WATCHDOG_SOURCE = `
 const { workerData, parentPort } = require("node:worker_threads");
 const fs = require("node:fs");
 const os = require("node:os");
 const inspector = require("node:inspector");
-const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnAfterServingMs, awaitPidEnv } = workerData;
-const startedAt = Date.now();
+const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnGeneration, respawnMaxGeneration, awaitPidEnv, respawnGenerationEnv } = workerData;
 const counter = new Int32Array(shared);
 let lastValue = Atomics.load(counter, 0);
 let lastChangeAt = Date.now();
@@ -111,17 +112,16 @@ const describeMainThread = (waitMs, resume) => new Promise((resolve) => {
 });
 const spawnReplacement = () => {
   if (respawn === undefined || logFile === undefined) return;
-  const servedMs = Date.now() - startedAt;
-  if (servedMs < respawnAfterServingMs) {
-    log("the door served for " + String(servedMs) + "ms before stalling, less than the " + String(respawnAfterServingMs) + "ms it must have served to be replaced; leaving the next launch to start one");
+  if (respawnGeneration >= respawnMaxGeneration) {
+    log("not starting another replacement: this door was replacement generation " + String(respawnGeneration) + " of " + String(respawnMaxGeneration) + ", so the stall has recurred through consecutive doors and the machine, not the door, is the one refusing to serve; leaving the next launch's ensure to start one");
     return;
   }
   try {
     const out = fs.openSync(logFile, "a");
-    const child = require("node:child_process").spawn(respawn.command, respawn.args, { detached: true, stdio: ["ignore", out, out], env: Object.assign({}, respawn.env, { [awaitPidEnv]: String(ownPid) }) });
+    const child = require("node:child_process").spawn(respawn.command, respawn.args, { detached: true, stdio: ["ignore", out, out], env: Object.assign({}, respawn.env, { [awaitPidEnv]: String(ownPid), [respawnGenerationEnv]: String(respawnGeneration + 1) }) });
     child.unref();
     fs.closeSync(out);
-    log("started replacement door " + String(child.pid) + ", which binds once this process is gone");
+    log("started replacement door " + String(child.pid) + " of generation " + String(respawnGeneration + 1) + ", which binds once this process is gone");
   } catch (error) {
     log("could not start a replacement door: " + (error instanceof Error ? error.message : String(error)));
   }
@@ -176,9 +176,11 @@ export interface ThreadWatchdogParams {
   readonly action: StallAction;
   /** The door's log file, which the thread appends the stall to before ending the process. Omitted by a host with no log of its own. */
   readonly logFile?: string;
-  /** How long the door must have served before a stall is answered with a replacement (`DOOR_RESPAWN_MIN_SERVING_MS` in production). */
-  readonly respawnAfterServingMs: number;
-  /** See `respawnAfterServingMs`: how to start a replacement door on a stall: the invocation and environment of a door, to which the thread adds `DOOR_AWAIT_PID_ENV`. Omitted by a host that does not respawn. */
+  /** How many watchdog respawns produced this door (`0` for a door no watchdog started), from `DOOR_RESPAWN_GENERATION_ENV` in production. */
+  readonly respawnGeneration: number;
+  /** The highest replacement generation this door's watchdog may start (`DOOR_RESPAWN_MAX_GENERATIONS` in production). */
+  readonly respawnMaxGeneration: number;
+  /** How to start a replacement door on a stall: the invocation and environment of a door, to which the thread adds `DOOR_AWAIT_PID_ENV` and `DOOR_RESPAWN_GENERATION_ENV`. Omitted by a host that does not respawn. */
   readonly respawn?: { readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> };
   /** Called on the main thread with the recorded message when `action` is `report` and the stall was seen. */
   readonly onReport?: (message: string) => void;
@@ -190,7 +192,7 @@ export function startThreadWatchdog(params: Readonly<ThreadWatchdogParams>): Doo
   const counter = new Int32Array(shared);
   const worker = new Worker(WATCHDOG_SOURCE, {
     eval: true,
-    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnAfterServingMs: params.respawnAfterServingMs, awaitPidEnv: DOOR_AWAIT_PID_ENV },
+    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, awaitPidEnv: DOOR_AWAIT_PID_ENV, respawnGenerationEnv: DOOR_RESPAWN_GENERATION_ENV },
   });
   worker.unref();
   worker.on("message", (message: unknown) => {

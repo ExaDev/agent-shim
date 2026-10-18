@@ -70,7 +70,7 @@ import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, g
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_MIN_SERVING_MS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
+import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_MAX_GENERATIONS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
 import { liveSessionTokens, writeFrontDoorSession, readFrontDoorSessionModels } from "./state";
@@ -84,6 +84,12 @@ import { createUsageStore } from "../usage/store";
 import type { UsageRecord } from "../usage/schema";
 
 /** How a door's watchdog starts a replacement: this very executable running the supervisor subcommand, pinned to this door's state root exactly as `spawnDetachedSupervisor` pins it. Every environment value is a string, as the watchdog thread's `spawn` requires. */
+/** The respawn generation this door was started as (`DOOR_RESPAWN_GENERATION_ENV`), or 0 for a door no watchdog started. Read once at startup so the env can be scrubbed before anything is served and the value handed to the supervisor ports explicitly. */
+function readRespawnGeneration(): number {
+  const generation = Number(process.env[DOOR_RESPAWN_GENERATION_ENV]);
+  return Number.isInteger(generation) && generation > 0 ? generation : 0;
+}
+
 function respawnInvocation(paths: LayoutPaths): { readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> } {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries({ ...process.env, AGENT_SHIM_HOME: paths.root })) {
@@ -127,7 +133,8 @@ export function realStatOwnExecutable(watchPath: string): () => OwnExecutableSta
 /**
  * The real supervisor ports. The three listener starts are where the whole routing assembly is built: the codex translation's real ports, the provider route resolver over them, both pipelines (see `createDoorPipelines`), the three listeners that feed them, and the CA that signs both TLS-serving listeners' leaves.
  */
-function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPorts {
+/** `respawnGeneration` is the generation this door was started as (see `readRespawnGeneration`), threaded in because the env it came from is scrubbed before the supervisor's lazy `startWatchdog` closure would read it. */
+function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: number): FrontDoorSupervisorPorts {
   const log = (line: string): void => {
     appendLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
   };
@@ -592,7 +599,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths): FrontDoorSupervisorPo
         action: "kill-process",
         logFile: paths.frontdoorLogPath,
         respawn: respawnInvocation(paths),
-        respawnAfterServingMs: DOOR_RESPAWN_MIN_SERVING_MS,
+        respawnGeneration,
+        respawnMaxGeneration: DOOR_RESPAWN_MAX_GENERATIONS,
       }),
     // The launch lifecycle publisher over the same backbone the typed API serves: the tick's registry facts go in here, and the door's own register, prune and end moments come out as source-tagged events.
     observeLaunchRegistry: createLaunchEventPublisher(doorEvents, () => Date.now()).observe,
@@ -659,7 +667,13 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
     .allowUnknownOption()
     .action(async () => {
       const idleShutdownMinutes = readGlobalConfig(paths)?.frontdoor?.idleShutdownMinutes ?? FRONTDOOR_DEFAULT_IDLE_SHUTDOWN_MINUTES;
-      const supervisorPorts = realFrontDoorSupervisorPorts(paths);
+      // A door started by its watchdog's stall handling names the stalled door's pid and waits for it to be gone before binding (see `awaitPidExit`), and carries the respawn generation it was started as, so its own watchdog knows how much of the chain is left. Both are read here, before the ports are built, so the supervisor's lazy watchdog wiring never has to see the env again.
+      const awaited = Number(process.env[DOOR_AWAIT_PID_ENV]);
+      const respawnGeneration = readRespawnGeneration();
+      // Not inherited by anything this door starts.
+      Reflect.deleteProperty(process.env, DOOR_AWAIT_PID_ENV);
+      Reflect.deleteProperty(process.env, DOOR_RESPAWN_GENERATION_ENV);
+      const supervisorPorts = realFrontDoorSupervisorPorts(paths, respawnGeneration);
       const ownPid = process.pid;
       // Every way this process can end writes its reason to the log first, because the log is the only record that outlives it: a door that exits silently looks, from outside, like one that was never there.
       process.on("exit", (code) => {
@@ -672,10 +686,7 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
           deps.exit(0);
         });
       }
-      // A door started by its watchdog's stall handling names the stalled door's pid and waits for it to be gone before binding (see `awaitPidExit`).
-      const awaited = Number(process.env[DOOR_AWAIT_PID_ENV]);
-      // Not inherited by anything this door starts.
-      Reflect.deleteProperty(process.env, DOOR_AWAIT_PID_ENV);
+      // A door started by its watchdog's stall handling names the stalled door's pid and waits for it to be gone before binding (see `awaitPidExit`), and carries the respawn generation it was started as, so its own watchdog knows how much of the chain is left.
       if (Number.isInteger(awaited) && awaited > 0) {
         const waitedMs = await awaitPidExit(awaited, supervisorPorts);
         supervisorPorts.log(`frontdoor ${String(ownPid)}: stalled door ${String(awaited)} released the sticky ports after ${String(waitedMs)}ms`);

@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FRONTDOOR_PROBE_ATTEMPTS } from "./ensure";
 import { PROBE_TIMEOUT_MS } from "./probe";
-import { DOOR_AWAIT_PID_ENV, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog, type DoorWatchdog, type ThreadWatchdogParams } from "./watchdog";
+import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog, type DoorWatchdog, type ThreadWatchdogParams } from "./watchdog";
+
+/** The respawn ceiling the tests run at: small so the chain-end case needs no real doors, and one above the middle generation so the stepping case can observe a spawn that is not the last. */
+const TEST_RESPAWN_MAX_GENERATION = 3;
 
 /** The check cadence the thread tests run at: far shorter than the production one so a stall is seen in a few checks. */
 const TEST_CHECK_MS = 20;
@@ -60,7 +63,8 @@ describe("startThreadWatchdog", () => {
         boundMs: TEST_BOUND_MS,
         checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS,
         action: "report",
-        respawnAfterServingMs: 0,
+        respawnGeneration: 0,
+        respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION,
         onReport: (message) => {
           if (timer !== undefined) clearInterval(timer);
           resolve(message);
@@ -91,7 +95,7 @@ describe("startThreadWatchdog", () => {
 
   it("acts while the main thread is blocked, which is the case it exists for", async () => {
     const reported = new Promise<string>((resolve) => {
-      watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnAfterServingMs: 0, onReport: (message) => {
+      watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, onReport: (message) => {
           resolve(message);
         } });
     });
@@ -104,7 +108,7 @@ describe("startThreadWatchdog", () => {
 
   it("does nothing once stopped, so a slow orderly retirement is never taken for a stall", async () => {
     const reported: string[] = [];
-    watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnAfterServingMs: 0, onReport: (message) => {
+    watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, onReport: (message) => {
         reported.push(message);
       } });
     watchdog.stop();
@@ -118,11 +122,11 @@ describe("startThreadWatchdog", () => {
   describe("on a stall", () => {
     const MARKER = "respawned";
 
-    /** Waits for the thread's report, then for the log to hold `needle`, which the thread writes before it reports. */
-    async function stallWith(extra: { readonly respawnAfterServingMs: number; readonly respawn?: ThreadWatchdogParams["respawn"] }): Promise<string> {
+    /** Waits for the thread's report, then for the log, which the thread writes before it reports. */
+    async function stallWith(extra: { readonly respawnGeneration?: number; readonly respawnMaxGeneration?: number; readonly respawn?: ThreadWatchdogParams["respawn"] }): Promise<string> {
       const logFile = path.join(directory, "frontdoor.log");
       await new Promise<void>((resolve) => {
-        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", logFile, ...extra, onReport: () => {
+        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", logFile, respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, ...extra, onReport: () => {
             resolve();
           } });
       });
@@ -130,24 +134,24 @@ describe("startThreadWatchdog", () => {
     }
 
     it("writes the stall to the door's log, the one record that outlives the process", async () => {
-      const log = await stallWith({ respawnAfterServingMs: 0 });
+      const log = await stallWith({});
       expect(log).toMatch(new RegExp(`frontdoor ${String(process.pid)}: the front door's event loop did not run`));
     });
 
     it("records the machine's load, so a stall the machine caused is told apart from the door's own", async () => {
-      const log = await stallWith({ respawnAfterServingMs: 0 });
+      const log = await stallWith({});
       expect(log).toMatch(/machine load at the stall: \d+\.\d \(1m\), \d+\.\d \(5m\), \d+\.\d \(15m\) across \d+ cpus/);
     });
 
     it("says the main thread could not be paused when the wait is over before it was, rather than naming a frame", async () => {
-      const log = await stallWith({ respawnAfterServingMs: 0 });
+      const log = await stallWith({});
       expect(log).toMatch(/the main thread could not be paused within 0ms/);
     });
 
     it("names the function a blocked main thread was held in", async () => {
       const logFile = path.join(directory, "frontdoor.log");
       const reported = new Promise<void>((resolve) => {
-        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: PAUSE_WAIT_GUARD_MS, action: "report", logFile, respawnAfterServingMs: 0, onReport: () => {
+        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: PAUSE_WAIT_GUARD_MS, action: "report", logFile, respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, onReport: () => {
             resolve();
           } });
       });
@@ -164,21 +168,31 @@ describe("startThreadWatchdog", () => {
       expect(fs.readFileSync(logFile, "utf8")).toMatch(/the main thread was in .*holdTheLoopHere/);
     });
 
-    it("starts a replacement naming the stalled pid when the door had served long enough", async () => {
+    it("starts a replacement naming the stalled pid and the next generation, however young the stalled door was", async () => {
       const markerFile = path.join(directory, MARKER);
-      const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_AWAIT_PID_ENV})`], env: { PATH: process.env.PATH ?? "" } };
-      const log = await stallWith({ respawnAfterServingMs: 0, respawn });
-      expect(log).toMatch(/started replacement door \d+/);
+      const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_AWAIT_PID_ENV} + " gen " + process.env.${DOOR_RESPAWN_GENERATION_ENV})`], env: { PATH: process.env.PATH ?? "" } };
+      const log = await stallWith({ respawn });
+      expect(log).toMatch(/started replacement door \d+ of generation 1/);
       await vi.waitFor(() => {
-        expect(fs.readFileSync(markerFile, "utf8")).toBe(String(process.pid));
+        expect(fs.readFileSync(markerFile, "utf8")).toBe(`${String(process.pid)} gen 1`);
       });
     });
 
-    it("leaves the next launch to start one when the door stalled before it had served long enough", async () => {
+    it("steps the generation a replacement is started as", async () => {
+      const markerFile = path.join(directory, MARKER);
+      const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_RESPAWN_GENERATION_ENV})`], env: { PATH: process.env.PATH ?? "" } };
+      const log = await stallWith({ respawnGeneration: 1, respawn });
+      expect(log).toMatch(/started replacement door \d+ of generation 2/);
+      await vi.waitFor(() => {
+        expect(fs.readFileSync(markerFile, "utf8")).toBe("2");
+      });
+    });
+
+    it("leaves the next launch's ensure to start one when the stall has already recurred through every replacement generation", async () => {
       const markerFile = path.join(directory, MARKER);
       const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, "x")`], env: { PATH: process.env.PATH ?? "" } };
-      const log = await stallWith({ respawnAfterServingMs: Number.MAX_SAFE_INTEGER, respawn });
-      expect(log).toMatch(/less than the \d+ms it must have served to be replaced/);
+      const log = await stallWith({ respawnGeneration: TEST_RESPAWN_MAX_GENERATION, respawn });
+      expect(log).toMatch(new RegExp(`not starting another replacement: this door was replacement generation ${String(TEST_RESPAWN_MAX_GENERATION)} of ${String(TEST_RESPAWN_MAX_GENERATION)}`));
       expect(fs.existsSync(markerFile)).toBe(false);
     });
   });
