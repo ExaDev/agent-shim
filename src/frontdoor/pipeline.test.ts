@@ -8,7 +8,7 @@ import { createCredentialCustody } from "./custody";
 import { NO_ROUTING_SETTING } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
 import { createRoutedResponse, serveRouted, type PipelineDeps, type PipelineRequest, type ResponseBodyObserver, type ResponseObserver, type RouteResolution, type RoutedResponseEvent } from "./pipeline";
-import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse } from "./route";
+import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, MODEL_CHOICE_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse } from "./route";
 
 /**
  * A stand-in ServerResponse with the only behaviour `createRoutedResponse` reads: writeHead, write returning false on demand, drain and close events, and destruction. A new one per use keeps each test's socket semantics independent.
@@ -81,13 +81,13 @@ function recordingRoute(overrides: Partial<FrontDoorRoute> = {}): FrontDoorRoute
   };
 }
 
-function deps(resolution: RouteResolution, observers: readonly ResponseObserver[] = []): { readonly deps: PipelineDeps; readonly logs: string[] } {
+function deps(resolution: RouteResolution, observers: readonly ResponseObserver[] = [], extra: Partial<PipelineDeps> = {}): { readonly deps: PipelineDeps; readonly logs: string[] } {
   const logs: string[] = [];
   return {
     logs,
     deps: {
       resolveRoute: async () => await Promise.resolve(resolution),
-      headroomDecision: followsLaunchFlag, responseObservers: observers,
+      headroomDecision: followsLaunchFlag, responseObservers: observers, ...extra,
       admit: admitEverything,
       now: () => 0,
       log: (line) => {
@@ -427,6 +427,40 @@ describe("a model choice reaching the response observers", () => {
     }]).deps);
     expect(response.writtenHead?.status).toBe(HTTP_STATUS.ok);
     expect(choices).toEqual([{ requested: "auto", providers: ["z", "antigravity"] }]);
+  });
+
+  it("exposes a noted choice on the response head when the pipeline asks for it, as the direct pipeline does for the hop to carry home", async () => {
+    const notingRoute: FrontDoorRoute = {
+      name: "noting",
+      headroomEligible: false,
+      headroomUpstream: undefined,
+      serve: async (_request, response) => {
+        response.noteModelChoice?.({ requested: "auto", providers: ["antigravity"] });
+        response.start(HTTP_STATUS.ok, {});
+        await Promise.resolve();
+        response.end();
+      },
+    };
+    const { request, response } = pipelineRequest();
+    await serveRouted(request, deps({ ok: true, route: notingRoute }, [], { exposeModelChoiceOnHead: true }).deps);
+    expect(response.writtenHead?.headers[MODEL_CHOICE_HEADER]).toBe(JSON.stringify({ requested: "auto", providers: ["antigravity"] }));
+  });
+
+  it("never puts the model-choice header on a client-facing head, which no client may see", async () => {
+    const notingRoute: FrontDoorRoute = {
+      name: "noting",
+      headroomEligible: false,
+      headroomUpstream: undefined,
+      serve: async (_request, response) => {
+        response.noteModelChoice?.({ requested: "auto", providers: ["antigravity"] });
+        response.start(HTTP_STATUS.ok, {});
+        await Promise.resolve();
+        response.end();
+      },
+    };
+    const { request, response } = pipelineRequest();
+    await serveRouted(request, deps({ ok: true, route: notingRoute }).deps);
+    expect(response.writtenHead?.headers[MODEL_CHOICE_HEADER]).toBeUndefined();
   });
 
   it("carries a choice the route notes before its head, as the tier translator does", async () => {

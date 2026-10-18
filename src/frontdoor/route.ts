@@ -68,6 +68,11 @@ export const HOP_SECRET_HEADER = "x-agent-shim-hop";
  */
 export const HOP_ID_HEADER = "x-agent-shim-hop-id";
 
+/**
+ * Carries a routing layer's model choice from the direct listener's response back to the hop that forwarded the request there. The direct pipeline runs no response observers (its responses are consumed by the door's own hop, not by the client, and observing both would record every hopped request twice), so a choice a route notes there has no observer to read it; this header is the private channel it rides home on. The hop reads it, notes the choice on the client-facing response before that response's head is written, and strips it, so no client ever receives it. Only the direct pipeline writes it (see `exposeModelChoiceOnHead` on `PipelineDeps`).
+ */
+export const MODEL_CHOICE_HEADER = "x-agent-shim-model-choice";
+
 /** What the identity step learned about one request from the launcher-injected headers. */
 export interface SessionIdentity {
   /** The identity name the launch resolved, when it resolved one. */
