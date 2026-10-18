@@ -7,7 +7,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomSocketTarget } from "../headroom/socket";
 import { forwardableHeaders } from "./connect";
 import type { CredentialCustody } from "./custody";
-import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, CLIENT_SESSION_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, parseProviderPath, type RoutedRequest, type RoutedResponse } from "./route";
+import { HEADROOM_BASE_URL_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, CLIENT_SESSION_HEADER, MODEL_CHOICE_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, parseProviderPath, type ModelChoice, type RoutedRequest, type RoutedResponse } from "./route";
 import { lineageOf, type Lineage } from "./lineage";
 import { upstreamChunks } from "./server";
 
@@ -203,6 +203,24 @@ export async function collectBody(body: Readable): Promise<CollectedBody> {
 /**
  * Streams one request to headroom and its response back to the client, resolving once the response has ended, failed, or been abandoned. A hop the daemon resets before any response byte is replayed on a fresh connection (the request produced no output, so replaying it is what the client's own retry would do, minus the visible error); a reset after the response started cannot be replayed and ends the response.
  */
+/** Reads the model choice the direct pipeline exposes on a response head, narrowed from whatever the relay actually carried: a value that is not the exact shape this door writes is not a choice. */
+function parseModelChoiceHeader(value: string | undefined): ModelChoice | undefined {
+  if (value === undefined) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || !("requested" in parsed) || !("providers" in parsed) || typeof parsed.requested !== "string" || !Array.isArray(parsed.providers)) return undefined;
+  const providers: string[] = [];
+  for (const name of parsed.providers) {
+    if (typeof name !== "string") return undefined;
+    providers.push(name);
+  }
+  return { requested: parsed.requested, providers };
+}
+
 async function forwardThroughHeadroom(
   request: RoutedRequest,
   response: RoutedResponse,
@@ -241,7 +259,13 @@ async function hopOnce(
   const { socketPath, headers } = target;
   return await new Promise<"settled" | "retry">((resolve) => {
     const onUpstreamResponse = (upstreamResponse: IncomingMessage): void => {
-      response.start(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, responseHeaders(upstreamResponse.headers));
+      // The direct pipeline's model choice rides home on this header (see MODEL_CHOICE_HEADER): destructured out of the relayed head here, noted on this response before its head is written so the observers the head invokes record it, and left out of what the client receives. A value that does not parse as a choice is dropped rather than trusted: the daemon is the only writer this header has, but a corrupted or forged relay still cannot inject a choice.
+      const { [MODEL_CHOICE_HEADER]: choiceHeader, ...head } = responseHeaders(upstreamResponse.headers);
+      const choice = parseModelChoiceHeader(choiceHeader);
+      if (choice !== undefined) {
+        response.noteModelChoice?.(choice);
+      }
+      response.start(upstreamResponse.statusCode ?? HTTP_BAD_GATEWAY, head);
       // Headers go out before the first body byte: a streaming (SSE) response must reach the client as its chunks arrive, not when it completes.
       response.flush();
       const stream = async (): Promise<void> => {

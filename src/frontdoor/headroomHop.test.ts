@@ -21,7 +21,8 @@ import { createDoorPipelines } from "./assembly";
 import { headroomSocketTarget } from "./status";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
 import { SEQUESTERED_CREDENTIAL, createCredentialCustody } from "./custody";
-import { AUTH_HEADER, HEADROOM_FLAG_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, IDENTITY_HEADER, SESSION_HEADER } from "./route";
+import { AUTH_HEADER, HEADROOM_FLAG_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, IDENTITY_HEADER, MODEL_CHOICE_HEADER, SESSION_HEADER } from "./route";
+import type { ResponseObserver } from "./pipeline";
 import { serveRouted } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
@@ -69,7 +70,7 @@ interface HopSeen {
 /**
  * The fake headroom: records each request it is handed, optionally holds it (so a test can act while the hop is live), then forwards it the way the real daemon does. Standing in for the real daemon is exactly this much: a forwarding hop keyed by the per-request base URL.
  */
-async function fakeHeadroom(options: { readonly hold?: () => Promise<void> } = {}): Promise<{ readonly seen: () => readonly HopSeen[]; readonly closedRequests: () => number; readonly close: () => Promise<void> }> {
+async function fakeHeadroom(options: { readonly hold?: () => Promise<void>; readonly responseHeaders?: http.OutgoingHttpHeaders } = {}): Promise<{ readonly seen: () => readonly HopSeen[]; readonly closedRequests: () => number; readonly close: () => Promise<void> }> {
   const requests: HopSeen[] = [];
   let closedRequests = 0;
   const server = http.createServer((request, response) => {
@@ -89,7 +90,12 @@ async function fakeHeadroom(options: { readonly hold?: () => Promise<void> } = {
     request.on("end", () => {
       requests.push({ method: request.method ?? "", url: request.url ?? "", headers: { ...request.headers }, body });
       void (options.hold?.() ?? Promise.resolve()).then(() => {
-        forwardLikeHeadroom(request, response, body);
+        if (options.responseHeaders !== undefined) {
+      // Stands in for the direct pipeline's own head (which the real relay forwards verbatim): a test can put the door's internal model-choice header on it exactly as the direct pipeline would.
+      forwardLikeHeadroom(request, response, body, options.responseHeaders);
+    } else {
+      forwardLikeHeadroom(request, response, body);
+    }
       });
     });
   });
@@ -104,11 +110,11 @@ async function fakeHeadroom(options: { readonly hold?: () => Promise<void> } = {
 }
 
 /** What the real daemon does with a request once its work is done: strip its own x-headroom-* controls and forward to the per-request base URL, or answer from its default upstream when none was named. Every other header, credentials included, goes on verbatim, which is what the custody design relies on. */
-function forwardLikeHeadroom(request: http.IncomingMessage, response: http.ServerResponse, body: string): void {
+function forwardLikeHeadroom(request: http.IncomingMessage, response: http.ServerResponse, body: string, extraResponseHeaders: http.OutgoingHttpHeaders = {}): void {
   const base = request.headers["x-headroom-base-url"];
   if (base === undefined) {
     // No per-request upstream: the real daemon's default is Claude Code's API, which the test stands in for directly.
-    response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
+    response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json", ...extraResponseHeaders });
     response.end(JSON.stringify({ via: "default-upstream", body }));
     return;
   }
@@ -119,7 +125,7 @@ function forwardLikeHeadroom(request: http.IncomingMessage, response: http.Serve
     }
   }
   const forward = http.request(`${String(base)}${request.url ?? ""}`, { method: request.method, headers: { ...headers, host: new URL(String(base)).host } }, (upstream) => {
-    response.writeHead(upstream.statusCode ?? HTTP_STATUS.badGateway, upstream.headers);
+    response.writeHead(upstream.statusCode ?? HTTP_STATUS.badGateway, { ...upstream.headers, ...extraResponseHeaders });
     upstream.pipe(response);
   });
   forward.on("error", () => {
@@ -229,7 +235,7 @@ beforeAll(() => {
 /**
  * The whole door assembly over a fake headroom, built from the production `createDoorPipelines`: the TLS provider listener (with the hop and launch admission) and the plain-HTTP direct listener (without the hop, admitting only the hop's own requests), sharing one resolver whose in-process routes name the direct address and one credential custody.
  */
-async function startDoor(options: { readonly files: Record<string, unknown>; readonly log?: (line: string) => void; readonly headroomDecision?: HeadroomDecision }): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly directPort: () => number }> {
+async function startDoor(options: { readonly files: Record<string, unknown>; readonly log?: (line: string) => void; readonly headroomDecision?: HeadroomDecision; readonly responseObservers?: readonly ResponseObserver[] }): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly directPort: () => number }> {
   const upstream = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const ports: Omit<CodexRoutePorts, "loadProvider"> = {
     upstreams: sameUpstreamForEveryLogin({ fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }),
@@ -246,7 +252,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
     headroomSocket: home.target,
     hopSecret: HOP_SECRET,
     custody: createCredentialCustody(() => randomUUID()),
-    headroomDecision: options.headroomDecision ?? followsLaunchFlag, responseObservers: [],
+    headroomDecision: options.headroomDecision ?? followsLaunchFlag, responseObservers: options.responseObservers ?? [],
     now: () => 0,
     log,
   });
@@ -307,6 +313,14 @@ async function settle(): Promise<void> {
   });
 }
 
+describe("the two pipelines the door assembles", () => {
+  it("exposes a noted model choice on the direct pipeline's head only, the private channel home through the hop", () => {
+    const pipelines = createDoorPipelines({ resolveRoute: async () => await Promise.resolve({ ok: false, status: 500, message: "unused" }), isLiveToken: () => false, headroomSocket: () => undefined, hopSecret: HOP_SECRET, custody: createCredentialCustody(() => randomUUID()), headroomDecision: followsLaunchFlag, responseObservers: [], now: () => 0, log: () => undefined });
+    expect(pipelines.direct.exposeModelChoiceOnHead).toBe(true);
+    expect(pipelines.clientFacing.exposeModelChoiceOnHead).toBeUndefined();
+  });
+});
+
 describe("the headroom hop", () => {
   it("sits before the translator: headroom receives the Anthropic-shaped request, and the translator serves what headroom forwards back through the direct listener", async () => {
     const headroom = await fakeHeadroom();
@@ -329,6 +343,48 @@ describe("the headroom hop", () => {
       expect(seen?.url).toBe("/providers/codex/v1/messages");
       expect(JSON.parse(seen?.body ?? "{}")).toMatchObject({ model: "claude-sonnet-4-5" });
       expect(seen?.headers["x-headroom-base-url"]).toBe(`http://127.0.0.1:${String(door.directPort())}`);
+    } finally {
+      await door.close();
+      await headroom.close();
+    }
+  });
+
+  it("notes a model choice the direct pipeline's head carries home, and strips the header before the client sees it", async () => {
+    const headroom = await fakeHeadroom({ responseHeaders: { [MODEL_CHOICE_HEADER]: JSON.stringify({ requested: "auto", providers: ["antigravity"] }) } });
+    const choices: { requested: string; providers: readonly string[] }[] = [];
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, responseObservers: [(event) => { if (event.modelChoice !== undefined) choices.push(event.modelChoice); return undefined; }] });
+    try {
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting,
+        method: "POST",
+        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN },
+        body: MESSAGES_BODY,
+      });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      // The choice the direct side exposed reached the client-facing pipeline's observer, which is where usage recording reads it.
+      expect(choices).toEqual([{ requested: "auto", providers: ["antigravity"] }]);
+      // And the internal header never reached the client.
+      expect(response.headers.get(MODEL_CHOICE_HEADER)).toBeNull();
+    } finally {
+      await door.close();
+      await headroom.close();
+    }
+  });
+
+  it("drops a model-choice header that is not the shape this door writes, still stripping it from the client's head", async () => {
+    const headroom = await fakeHeadroom({ responseHeaders: { [MODEL_CHOICE_HEADER]: JSON.stringify({ requested: "auto", providers: "antigravity" }) } });
+    const choices: unknown[] = [];
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, responseObservers: [(event) => { if (event.modelChoice !== undefined) choices.push(event.modelChoice); return undefined; }] });
+    try {
+      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
+        dispatcher: trusting,
+        method: "POST",
+        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN },
+        body: MESSAGES_BODY,
+      });
+      expect(response.status).toBe(HTTP_STATUS.ok);
+      expect(choices).toEqual([]);
+      expect(response.headers.get(MODEL_CHOICE_HEADER)).toBeNull();
     } finally {
       await door.close();
       await headroom.close();

@@ -4,7 +4,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomDecision } from "./headroomDecision";
 import { applyHeadroomHop, headroomReady, type HeadroomHopDeps } from "./headroomHop";
 import type { Lineage } from "./lineage";
-import { identifyRequest, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
+import { identifyRequest, MODEL_CHOICE_HEADER, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 
 /** What one routed response looked like as it started back to the client: the typed event response middleware observes. */
 export interface RoutedResponseEvent {
@@ -71,6 +71,10 @@ export interface PipelineDeps {
    * The listener's admission step, run after identification and before anything is routed: it decides whether the request may be routed at all and with which headers. A client-facing listener admits a request carrying the per-launch capability of a live registered session, unchanged; the direct listener admits only what this process's own headroom hop sent back (the generation's hop secret plus a live custody id for the provider the path names) and swaps the hop's placeholder credentials for the real ones. A refused request is answered 401 without ever reaching a route, so a loopback process that never launched through agent-shim cannot spend a session's credentials or quota.
    */
   readonly admit: (request: AdmissionRequest) => Admission;
+  /**
+   * Whether a noted model choice is exposed on the response head as `MODEL_CHOICE_HEADER`. Only the direct pipeline sets it: its responses are consumed by the door's own headroom hop rather than by a client, and the hop is the one place that can carry a choice a route noted while serving behind the hop back to the pipeline whose observers record it. A client-facing pipeline never sets it, so the header never reaches a client.
+   */
+  readonly exposeModelChoiceOnHead?: boolean;
 }
 
 /** What the admission step sees of one request. */
@@ -199,6 +203,8 @@ export function createRoutedResponse(
       return headersSent;
     },
     start: (status, headers) => {
+      // The direct pipeline's private channel home (see `exposeModelChoiceOnHead`): the choice rides the response head because the direct pipeline has no observers of its own, and the hop strips it before any client sees the head.
+      const head = deps.exposeModelChoiceOnHead === true && request.modelChoice.value !== undefined ? { ...headers, [MODEL_CHOICE_HEADER]: JSON.stringify(request.modelChoice.value) } : headers;
       for (const observe of deps.responseObservers) {
         try {
           const body = observe({ session, route, method: request.method, path: request.path, servedPath: context.servedPath, receivedAt: request.receivedAt, viaHeadroom: request.viaHeadroom, lineage: request.thread.lineage, modelChoice: request.modelChoice.value, status, headers });
@@ -210,7 +216,7 @@ export function createRoutedResponse(
           deps.log(`front door: response observer threw for ${route}: ${describeThrown(error)}`);
         }
       }
-      response.writeHead(status, headers);
+      response.writeHead(status, head);
       headersSent = true;
     },
     noteModelChoice: (choice) => {
