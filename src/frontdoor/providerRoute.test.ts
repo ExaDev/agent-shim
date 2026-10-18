@@ -130,6 +130,24 @@ describe("createProviderRouteResolver", () => {
     }
   });
 
+  it("routes a provider-qualified model name on every session, whatever it launched on, with no flag asked or given", async () => {
+    const plain = (model: string, provider: string | undefined): RoutedRequest => ({ ...request("/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })), session: { identity: undefined, sessionId: undefined, provider, headroom: false, routeByName: false, projectId: undefined } });
+    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider, [`${PROVIDERS_DIR}/s.json`]: { displayName: "S", baseUrl: "https://api.synthetic.new/anthropic", credential: { sources: [{ literal: "s-token" }] } } });
+    const withBlock = createProviderRouteResolver({ fs: fakeFs({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: { Z: "tok-from-z" }, credentials: fakeCredentials(), models: () => ({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } }), targets: () => ["z/glm-5.3"] });
+    // z naming s's model leaves z for s; a qualified name for the session's own provider is served right there under the bare name.
+    const cross = await resolve(plain("s/glm-5.2", "z"));
+    expect(cross.ok && cross.route.name).toBe("http:s");
+    const own = await resolve(plain("z/glm-5.3", "z"));
+    expect(own.ok && own.route.name).toBe("http:z");
+    // A slash alone is not a provider ref: a first segment no provider defines (an aggregator's `vendor/model`) stays the session's own provider's business.
+    const slashed = await resolve(plain("hf:zai-org/GLM-5.1", "z"));
+    expect(slashed.ok && slashed.route.name).toBe("http:z");
+    // A bare name is never resolved without the session's opt-in, even one the block defines.
+    const bare = await withBlock(plain("fast", "z"));
+    expect(bare.ok && bare.route.name).toBe("http:z");
+    if (bare.ok) expect(bare.modelChoice).toBeUndefined();
+  });
+
   it("routes a provider-qualified model name from a provider-less (OAuth) session that asked to route by name onto that provider's route", async () => {
     const byName = (model: string, url = "/v1/messages"): RoutedRequest => ({
       ...request(url, JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),

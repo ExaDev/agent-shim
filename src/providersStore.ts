@@ -211,7 +211,7 @@ export function listProviders(paths: LayoutPaths, onInvalid: (name: string, mess
 /**
  * The names of every provider definition under `providersDir`, sorted. `readdir` is injected so the launcher's unknown-provider error can name the known providers through its own `FsPort` in tests rather than a real directory listing.
  */
-function listProviderNames(readdir: (dir: string) => readonly string[], providersDir: string): readonly string[] {
+export function listProviderNames(readdir: (dir: string) => readonly string[], providersDir: string): readonly string[] {
   let entries: readonly string[];
   try {
     entries = readdir(providersDir);

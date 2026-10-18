@@ -491,7 +491,7 @@ describe("runLauncher /model picker", () => {
     const { args } = spawnedWith(codexProvider, ["--print"]);
 
     expect(args?.filter((token) => token === "--settings")).toHaveLength(1);
-    expect(settingsIn(args)).toMatchObject({ modelPicker: { replaceBuiltInOptions: true, options: [{ model: "big" }, { model: "mid" }, { model: "small" }] } });
+    expect(settingsIn(args)).toMatchObject({ modelPicker: { replaceBuiltInOptions: true, options: [{ model: "p/big" }, { model: "p/mid" }, { model: "p/small" }] } });
   });
 
   it("carries a supervised launch's hooks and the picker in the same --settings value", () => {
@@ -509,7 +509,7 @@ describe("runLauncher /model picker", () => {
     it("lists the models the door last fetched, after the provider's own filters", () => {
       const { args } = spawnedWith(catalogued, ["--print"], undefined, { [cacheFile]: cache });
 
-      expect(settingsIn(args)).toMatchObject({ modelPicker: { replaceBuiltInOptions: true, options: [{ model: "glm-4" }, { model: "glm-5" }] } });
+      expect(settingsIn(args)).toMatchObject({ modelPicker: { replaceBuiltInOptions: true, options: [{ model: "p/glm-4" }, { model: "p/glm-5" }] } });
     });
 
     it("keeps Claude Code's own picker until a catalogue has been fetched", () => {

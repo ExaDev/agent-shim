@@ -59,6 +59,8 @@ interface RoutedModel {
 /** What `resolveRoutedModel` reads from the door: the session's models block, the quota snapshot of its identity, what each target's recent requests observed, and the targets the providers offer (which families are formed from). */
 interface RoutedModelDeps {
   readonly models?: (session: Readonly<{ readonly sessionId?: string }>) => ModelsConfig | undefined;
+  /** Whether a provider file defines this name: the qualification test for a slash in a model name, so a provider's own slashed model ids (an aggregator's `vendor/model`) are only ever treated as a cross-provider ref when the first segment really names a provider. */
+  readonly definesProvider?: (name: string) => boolean;
   readonly usageSnapshotOf?: (identity: string | undefined) => UsageSnapshot | undefined;
   readonly observations?: (target: string) => TargetObservation | undefined;
   readonly targets?: () => readonly string[];
@@ -78,6 +80,7 @@ function resolveRoutedModel(
   providerName: string | undefined,
   session: Readonly<{ readonly identity?: string; readonly sessionId?: string }>,
   deps: Readonly<RoutedModelDeps>,
+  byName: boolean,
   memory: Readonly<Map<string, string>>,
   rotations: Readonly<Map<string, number>>,
   needs: RequestNeeds | undefined,
@@ -88,12 +91,12 @@ function resolveRoutedModel(
   if (qualified !== undefined) {
     const [provider, ...rest] = qualified.split("/");
     const named = rest.join("/");
-    return provider === undefined || named === "" ? undefined : { provider, model: withoutContextMarker(named), ref: qualified };
+    return provider === undefined || named === "" || (deps.definesProvider !== undefined && !deps.definesProvider(provider)) ? undefined : { provider, model: withoutContextMarker(named), ref: qualified };
   }
   const isFamily = model.startsWith(FAMILY_PREFIX);
   const virtual = isFamily ? undefined : models?.virtual?.[model];
-  // A name the models block defines is the user's own, so it is routed on any session that asked to route by name, a provider-less (OAuth) one included; a bare name the block does not define stays Claude Code's own and is never resolved here.
-  if (virtual === undefined && !isFamily) {
+  // A bare name is only the models block's to resolve on a session that asked to route by name (a router's sessions included): every other session's bare names are its own provider's or Claude Code's own, and are never hijacked. A name the block does not define stays Claude Code's own even for those sessions.
+  if (!byName || (virtual === undefined && !isFamily)) {
     return undefined;
   }
   const declared = isFamily ? [model] : expandMembers(model, models);
@@ -184,6 +187,14 @@ export function createProviderRouteResolver(deps: {
   const antigravityQuotaSources = new Map<string, () => AntigravityQuotaMap | undefined>();
   // The routing memory an antigravity provider's sessions keep their last model in: one per provider, held by the resolver, because the route is mounted afresh for every request and a memory inside the mount would forget between requests.
   const antigravityRoutingMemory = new Map<string, Map<string, string>>();
+  /** Whether a provider file defines this name: an absent file and an unparseable one both answer no, exactly as the loop above treats an unparseable file as no routes rather than a fault. */
+  const definesProvider = (name: string): boolean => {
+    try {
+      return loadProvider(deps.providersDir, name, deps.fs) !== undefined;
+    } catch {
+      return false;
+    }
+  };
   // The routing memory a by-name session keeps its last chosen member in, and the rotation counter that keeps `spread` turning, both held by the resolver for the same reason: the route is mounted afresh for every request.
   const routingMemory = new Map<string, string>();
   const rotations = new Map<string, number>();
@@ -368,9 +379,9 @@ export function createProviderRouteResolver(deps: {
         routes = undefined;
         isRouter = false;
       }
-      // A router resolves each request's model name through the models block to a target provider, whose own kind handling and credential then serve it: the same one-scan, one-rewrite shape the `routes` list below uses. A session that asked to route by name gets the same resolution on the provider it launched on: a qualified model name leaves that provider for the one that serves it. A provider-less (OAuth) session gets it too, but qualified names only: its bare names are Claude Code's own and still go to Anthropic, and the Remote Control family of paths is never a provider's to serve.
-      const routesByName = !nameResolved && (isRouter || current.session.routeByName) && !isRcSelfHostPath(path);
-      if (routesByName) {
+      // A router resolves each request's model name through the models block to a target provider, whose own kind handling and credential then serve it: the same one-scan, one-rewrite shape the `routes` list below uses. A qualified model name (a slash whose first segment names a defined provider) is resolved on every session, whatever it launched on: the picker offers every provider's models qualified, and a session that selects one is routed to the provider that serves it. Bare names are resolved only on a session that asked to route by name (a router's included): every other session's bare names are its own provider's business. The Remote Control family of paths is never a provider's to serve.
+      const resolvesNames = !nameResolved && !isRcSelfHostPath(path);
+      if (resolvesNames) {
         // Whole-body, because a resolved name is served under its target's own model name: the qualified or virtual name the session sent is rewritten in the one copy of the body this scan holds, exactly as a `routes` entry that names a model is.
         const scan = await scanRequestHead(current, true);
         if (scan.replayed === undefined) {
@@ -396,8 +407,12 @@ export function createProviderRouteResolver(deps: {
               : `model "${account.model}" runs under identity "${account.identity}", which needs a relaunch this session cannot make; start it there with: claude @${account.identity} --resume`,
           };
         }
-        const routed = scan.model === undefined ? undefined : resolveRoutedModel(scan.model, providerName, current.session, deps, routingMemory, rotations, needsOf(scan));
+        const routed = scan.model === undefined ? undefined : resolveRoutedModel(scan.model, providerName, current.session, { ...deps, definesProvider }, isRouter || current.session.routeByName, routingMemory, rotations, needsOf(scan));
         const requested = scan.model;
+        if (routed === undefined) {
+          // Nothing to resolve by name, and this scan consumed the original body: the request the `routes` matching below (or the serving at the end) reads is the replay, which carries the whole body. Reading the original again would see only its remainder, and leaving both scans attached to one stream is a hang.
+          current = scan.replayed;
+        }
         if (routed !== undefined) {
           routingMemory.set(current.session.sessionId ?? "", routed.ref);
           // A virtual model's or family's selection is a choice among alternatives, unlike a qualified name the session picked itself: only that choice is recorded for the response middleware.
