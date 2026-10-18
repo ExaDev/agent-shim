@@ -1,3 +1,9 @@
+## [11.46.0](https://github.com/ExaDev/agent-shim/compare/v11.45.0...v11.46.0) (2026-10-18)
+
+### Features
+
+* **frontdoor:** resolve every model name through the models block, and drop route-by-name ([a6769db](https://github.com/ExaDev/agent-shim/commit/a6769db08a4cb95581abff505bc0dd0a4c699a10))
+
 ## [11.45.0](https://github.com/ExaDev/agent-shim/compare/v11.44.5...v11.45.0) (2026-10-18)
 
 ### Features
