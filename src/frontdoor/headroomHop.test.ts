@@ -21,7 +21,7 @@ import { createDoorPipelines } from "./assembly";
 import { headroomSocketTarget } from "./status";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
 import { SEQUESTERED_CREDENTIAL, createCredentialCustody } from "./custody";
-import { AUTH_HEADER, HEADROOM_FLAG_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, IDENTITY_HEADER, MODEL_CHOICE_HEADER, SESSION_HEADER } from "./route";
+import { AUTH_HEADER, HEADROOM_FLAG_HEADER, HOP_ID_HEADER, HOP_SECRET_HEADER, IDENTITY_HEADER, SESSION_HEADER } from "./route";
 import type { ResponseObserver } from "./pipeline";
 import { serveRouted } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
@@ -313,14 +313,6 @@ async function settle(): Promise<void> {
   });
 }
 
-describe("the two pipelines the door assembles", () => {
-  it("exposes a noted model choice on the direct pipeline's head only, the private channel home through the hop", () => {
-    const pipelines = createDoorPipelines({ resolveRoute: async () => await Promise.resolve({ ok: false, status: 500, message: "unused" }), isLiveToken: () => false, headroomSocket: () => undefined, hopSecret: HOP_SECRET, custody: createCredentialCustody(() => randomUUID()), headroomDecision: followsLaunchFlag, responseObservers: [], now: () => 0, log: () => undefined });
-    expect(pipelines.direct.exposeModelChoiceOnHead).toBe(true);
-    expect(pipelines.clientFacing.exposeModelChoiceOnHead).toBeUndefined();
-  });
-});
-
 describe("the headroom hop", () => {
   it("sits before the translator: headroom receives the Anthropic-shaped request, and the translator serves what headroom forwards back through the direct listener", async () => {
     const headroom = await fakeHeadroom();
@@ -349,10 +341,13 @@ describe("the headroom hop", () => {
     }
   });
 
-  it("notes a model choice the direct pipeline's head carries home, and strips the header before the client sees it", async () => {
-    const headroom = await fakeHeadroom({ responseHeaders: { [MODEL_CHOICE_HEADER]: JSON.stringify({ requested: "auto", providers: ["antigravity"] }) } });
-    const choices: { requested: string; providers: readonly string[] }[] = [];
-    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, responseObservers: [(event) => { if (event.modelChoice !== undefined) choices.push(event.modelChoice); return undefined; }] });
+  it("carries the model name the request's own body carried to the client-facing observers, so a choice a translator made behind the hop can still be recognised", async () => {
+    const headroom = await fakeHeadroom();
+    const requested: (string | undefined)[] = [];
+    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, responseObservers: [(event) => {
+      requested.push(event.requestedModel);
+      return undefined;
+    }] });
     try {
       const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
         dispatcher: trusting,
@@ -361,30 +356,7 @@ describe("the headroom hop", () => {
         body: MESSAGES_BODY,
       });
       expect(response.status).toBe(HTTP_STATUS.ok);
-      // The choice the direct side exposed reached the client-facing pipeline's observer, which is where usage recording reads it.
-      expect(choices).toEqual([{ requested: "auto", providers: ["antigravity"] }]);
-      // And the internal header never reached the client.
-      expect(response.headers.get(MODEL_CHOICE_HEADER)).toBeNull();
-    } finally {
-      await door.close();
-      await headroom.close();
-    }
-  });
-
-  it("drops a model-choice header that is not the shape this door writes, still stripping it from the client's head", async () => {
-    const headroom = await fakeHeadroom({ responseHeaders: { [MODEL_CHOICE_HEADER]: JSON.stringify({ requested: "auto", providers: "antigravity" }) } });
-    const choices: unknown[] = [];
-    const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider }, responseObservers: [(event) => { if (event.modelChoice !== undefined) choices.push(event.modelChoice); return undefined; }] });
-    try {
-      const response = await fetch(`${door.url}/providers/codex/v1/messages`, {
-        dispatcher: trusting,
-        method: "POST",
-        headers: { "content-type": "application/json", [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-1", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN },
-        body: MESSAGES_BODY,
-      });
-      expect(response.status).toBe(HTTP_STATUS.ok);
-      expect(choices).toEqual([]);
-      expect(response.headers.get(MODEL_CHOICE_HEADER)).toBeNull();
+      expect(requested).toEqual(["claude-sonnet-4-5"]);
     } finally {
       await door.close();
       await headroom.close();

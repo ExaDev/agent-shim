@@ -32,6 +32,7 @@ function event(overrides: Partial<RoutedResponseEvent> = {}): RoutedResponseEven
     viaHeadroom: false,
     lineage: undefined,
     modelChoice: undefined,
+    requestedModel: undefined,
     status: OK_STATUS,
     headers: SSE_HEADERS,
     ...overrides,
@@ -532,5 +533,38 @@ describe("a model choice among alternatives", () => {
     h.flush();
 
     expect(singleRecord(h).requestedModel).toBeUndefined();
+  });
+
+  it("reconstructs a choice behind the headroom hop from the request's own model name paired with the model the body was served under", () => {
+    const h = harness();
+    const body = begin(h, event({ requestedModel: "auto" }));
+    body.chunk(bytes(sse("message_start", { type: "message_start", message: { id: "msg_1", model: "gemini-4-argon-high", content: [], usage: { input_tokens: 5, output_tokens: 1 } } })));
+    finishBody(h, body);
+    h.flush();
+    const record = singleRecord(h);
+    expect(record.requestedModel).toBe("auto");
+    expect(record.model).toBe("gemini-4-argon-high");
+    // One provider served it, so no candidate list.
+    expect(record).not.toHaveProperty("candidateProviders");
+  });
+
+  it("records no reconstructed choice when the served model is the name the request carried, however the request travelled", () => {
+    const h = harness();
+    const body = begin(h, event({ requestedModel: "claude-sonnet-4-5" }));
+    body.chunk(bytes(sse("message_start", { type: "message_start", message: { id: "msg_1", model: "claude-sonnet-4-5", content: [], usage: { input_tokens: 5, output_tokens: 1 } } })));
+    finishBody(h, body);
+    h.flush();
+    expect(singleRecord(h)).not.toHaveProperty("requestedModel");
+  });
+
+  it("keeps an explicitly noted choice over a reconstructed one, and records its providers when there were several", () => {
+    const h = harness();
+    const body = begin(h, event({ requestedModel: "auto", modelChoice: { requested: "auto", providers: ["z", "antigravity"] } }));
+    body.chunk(bytes(sse("message_start", { type: "message_start", message: { id: "msg_1", model: "glm-5.3", content: [], usage: { input_tokens: 5, output_tokens: 1 } } })));
+    finishBody(h, body);
+    h.flush();
+    const record = singleRecord(h);
+    expect(record.requestedModel).toBe("auto");
+    expect(record.candidateProviders).toEqual(["z", "antigravity"]);
   });
 });
