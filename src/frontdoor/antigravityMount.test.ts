@@ -121,7 +121,7 @@ describe("createAntigravityRouteMount", () => {
         identity: undefined,
         sessionId: undefined,
         provider: undefined,
-        headroom: false, routeByName: false,
+        headroom: false,
         projectId: undefined,
       },
     };
@@ -157,7 +157,7 @@ describe("createAntigravityRouteMount", () => {
         identity: undefined,
         sessionId: undefined,
         provider: undefined,
-        headroom: false, routeByName: false,
+        headroom: false,
         projectId: undefined,
       },
     };
@@ -217,7 +217,7 @@ describe("a tier alias the translator resolved", () => {
         identity: undefined,
         sessionId: undefined,
         provider: undefined,
-        headroom: false, routeByName: false,
+        headroom: false,
         projectId: undefined,
       },
     };

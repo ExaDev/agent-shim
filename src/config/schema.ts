@@ -107,7 +107,6 @@ const LaunchSchema = z.strictObject({
   /** Whether the launcher waits for a key press after its own output before it starts claude. Takes the place of `delay` when both are set. Applies only when a terminal is watching. */
   pause: z.boolean().optional(),
   /** Whether a provider session routes provider-qualified model names (`z/glm-5.3`, `auto`) through the `models` block to the provider that serves them, instead of sending every request to the launch provider. */
-  routeByName: z.boolean().optional(),
   /** Whether the launcher's report, for a launch that picks from a pool, lists every member the pick ranked with why each stands where it does, and not only the member it picked. */
   explain: z.boolean().optional(),
 });

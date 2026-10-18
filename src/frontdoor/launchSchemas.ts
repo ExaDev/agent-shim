@@ -48,7 +48,6 @@ const LaunchFlagsSchema = z.strictObject({
   trackUsage: z.boolean(),
   pause: z.boolean(),
   explain: z.boolean(),
-  routeByName: z.boolean(),
   /** How long the launch waits after its own output before it starts claude, in milliseconds. */
   delayMs: z.number(),
 });
@@ -64,7 +63,7 @@ export const LaunchResolveOutputSchema = z.strictObject({
   args: z.readonly(z.array(z.string())),
   /** The credential the launch would authenticate with, by target and source kinds. Absent when none applies. */
   credential: z.strictObject({ subject: z.enum(["provider", "identity"]), name: z.string(), summary: CredentialSummarySchema }).optional(),
-  routing: z.strictObject({ frontDoor: z.boolean(), headroom: z.boolean(), routeByName: z.boolean() }),
+  routing: z.strictObject({ frontDoor: z.boolean(), headroom: z.boolean() }),
   /** The names of the environment variables the launch would set or unset, sorted. Values are not reported. */
   environment: z.readonly(z.array(z.string())),
   warnings: z.readonly(z.array(z.string())),

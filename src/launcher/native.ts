@@ -22,7 +22,6 @@ function otherLaunchFlags(parsed: ParsedLauncherArgv): string[] {
     ...(parsed.delay === undefined ? [] : ["--delay"]),
     ...(parsed.pause === undefined ? [] : ["--[no-]pause"]),
     ...(parsed.explain === undefined ? [] : ["--[no-]explain"]),
-    ...(parsed.routeByName === undefined ? [] : ["--[no-]route-by-name"]),
     ...(parsed.headroom === undefined ? [] : ["--[no-]headroom"]),
     ...(parsed.trackUsage === undefined ? [] : ["--[no-]track-usage"]),
     ...(parsed.skipPermissions === undefined ? [] : ["--[no-]skip-permissions"]),

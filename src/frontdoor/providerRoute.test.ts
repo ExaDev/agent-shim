@@ -13,7 +13,7 @@ import type { UsageSnapshot } from "../usage/schema";
 import { createProviderRouteResolver} from "./providerRoute";
 import { serveRouted } from "./pipeline";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { AUTH_HEADER, ROUTE_BY_NAME_HEADER, type RoutedRequest, type RoutedResponse } from "./route";
+import { AUTH_HEADER, type RoutedRequest, type RoutedResponse } from "./route";
 
 const PROVIDERS_DIR = `${FAKE_HOME}/.agent-shim/providers`;
 
@@ -59,7 +59,7 @@ function resolver(files: Record<string, unknown>, directPort = OWN_PORT, models?
 }
 
 function request(url: string, body = "{}"): RoutedRequest {
-  return { method: "POST", url, headers: {}, body: Readable.from([Buffer.from(body)]), signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, routeByName: false, projectId: undefined } };
+  return { method: "POST", url, headers: {}, body: Readable.from([Buffer.from(body)]), signal: new AbortController().signal, session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined } };
 }
 
 describe("createProviderRouteResolver", () => {
@@ -130,10 +130,26 @@ describe("createProviderRouteResolver", () => {
     }
   });
 
+  it("resolves a bare name only the models block defines on every session, and keeps a name the session's own provider serves itself", async () => {
+    const plain = (model: string): RoutedRequest => ({
+      ...request("/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),
+      session: { identity: undefined, sessionId: undefined, provider: "z", headroom: false, projectId: undefined },
+    });
+    // `fast` is only the block's to serve; `glm-5.3` z serves itself, so it stays z's own.
+    const models: ModelsConfig = { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] }, "glm-5.3": { mode: "ordered", members: ["z/glm-5.3", "s/glm-5.3"] } } };
+    const resolve = createProviderRouteResolver({ fs: fakeFs({ [`${PROVIDERS_DIR}/z.json`]: httpProvider, [`${PROVIDERS_DIR}/s.json`]: { displayName: "S", baseUrl: "https://api.synthetic.new/anthropic", credential: { sources: [{ literal: "s-token" }] } } }), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: { Z: "tok-from-z" }, credentials: fakeCredentials(), models: () => models, targets: () => ["z/glm-5.3", "s/glm-5.3"] });
+    const fast = await resolve(plain("fast"));
+    if (!fast.ok) throw new Error(fast.message);
+    expect(fast.route.name).toBe("http:z");
+    expect(fast.modelChoice).toEqual({ requested: "fast", providers: ["z"] });
+    const own = await resolve(plain("glm-5.3"));
+    if (!own.ok) throw new Error(own.message);
+    expect(own.route.name).toBe("http:z");
+    expect(own.modelChoice).toBeUndefined(); });
+
   it("routes a provider-qualified model name on every session, whatever it launched on, with no flag asked or given", async () => {
-    const plain = (model: string, provider: string | undefined): RoutedRequest => ({ ...request("/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })), session: { identity: undefined, sessionId: undefined, provider, headroom: false, routeByName: false, projectId: undefined } });
+    const plain = (model: string, provider: string | undefined): RoutedRequest => ({ ...request("/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })), session: { identity: undefined, sessionId: undefined, provider, headroom: false, projectId: undefined } });
     const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider, [`${PROVIDERS_DIR}/s.json`]: { displayName: "S", baseUrl: "https://api.synthetic.new/anthropic", credential: { sources: [{ literal: "s-token" }] } } });
-    const withBlock = createProviderRouteResolver({ fs: fakeFs({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: { Z: "tok-from-z" }, credentials: fakeCredentials(), models: () => ({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } }), targets: () => ["z/glm-5.3"] });
     // z naming s's model leaves z for s; a qualified name for the session's own provider is served right there under the bare name.
     const cross = await resolve(plain("s/glm-5.2", "z"));
     expect(cross.ok && cross.route.name).toBe("http:s");
@@ -142,16 +158,12 @@ describe("createProviderRouteResolver", () => {
     // A slash alone is not a provider ref: a first segment no provider defines (an aggregator's `vendor/model`) stays the session's own provider's business.
     const slashed = await resolve(plain("hf:zai-org/GLM-5.1", "z"));
     expect(slashed.ok && slashed.route.name).toBe("http:z");
-    // A bare name is never resolved without the session's opt-in, even one the block defines.
-    const bare = await withBlock(plain("fast", "z"));
-    expect(bare.ok && bare.route.name).toBe("http:z");
-    if (bare.ok) expect(bare.modelChoice).toBeUndefined();
   });
 
   it("routes a provider-qualified model name from a provider-less (OAuth) session that asked to route by name onto that provider's route", async () => {
     const byName = (model: string, url = "/v1/messages"): RoutedRequest => ({
       ...request(url, JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),
-      session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, routeByName: true, projectId: undefined },
+      session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined },
     });
     const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider });
 
@@ -180,7 +192,7 @@ describe("createProviderRouteResolver", () => {
   it("routes a name the models block defines, a virtual model's or a family's, from a provider-less (OAuth) session that asked to route by name", async () => {
     const byName = (model: string): RoutedRequest => ({
       ...request("/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),
-      session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, routeByName: true, projectId: undefined },
+      session: { identity: undefined, sessionId: undefined, provider: undefined, headroom: false, projectId: undefined },
     });
     const models: ModelsConfig = { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } };
     const resolve = createProviderRouteResolver({ fs: fakeFs({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: { Z: "tok-from-z" }, credentials: fakeCredentials(), models: () => models, targets: () => ["z/glm-5.3"] });
@@ -206,7 +218,7 @@ describe("createProviderRouteResolver", () => {
   it("serves a provider session's bare /v1/ target through its provider's route, the request rewritten under the scoped path the route parses", async () => {
     // An antigravity provider whose credential never resolves: the route must get as far as its credential (a 401 naming the provider), which a bare unrewritten path never reaches because the route cannot parse a provider out of it.
     const resolve = resolver({ [`${PROVIDERS_DIR}/ag.json`]: { kind: "antigravity", displayName: "AG", credential: { sources: [{ env: "NOT_SET_ANYWHERE" }] }, antigravity: { mode: "cloud" } } });
-    const sessionRequest = (url: string): RoutedRequest => ({ ...request(url, JSON.stringify({ model: "claude-haiku-5-5", messages: [{ role: "user", content: "Reply OK" }] })), session: { identity: undefined, sessionId: undefined, provider: "ag", headroom: false, routeByName: false, projectId: undefined } });
+    const sessionRequest = (url: string): RoutedRequest => ({ ...request(url, JSON.stringify({ model: "claude-haiku-5-5", messages: [{ role: "user", content: "Reply OK" }] })), session: { identity: undefined, sessionId: undefined, provider: "ag", headroom: false, projectId: undefined } });
     const resolution = await resolve(sessionRequest("/v1/messages?beta=true"));
     expect(resolution.ok).toBe(true);
     if (!resolution.ok) {
@@ -739,7 +751,7 @@ describe("a router provider", () => {
 describe("an account model member", () => {
   const sessionRequest = (model: string): RoutedRequest => ({
     ...request("/providers/z/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),
-    session: { identity: undefined, sessionId: "s-1", provider: "z", headroom: false, routeByName: true, projectId: undefined },
+    session: { identity: undefined, sessionId: "s-1", provider: "z", headroom: false, projectId: undefined },
   });
 
   it("is answered with a clear refusal naming the identity, and a move request is left for the session's supervisor", async () => {
@@ -792,7 +804,7 @@ describe("routing by name from a provider session", () => {
     try {
       const response = await fetch(`${door.url}/providers/z/v1/messages`, {
         method: "POST",
-        headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests", [ROUTE_BY_NAME_HEADER]: "1" },
+        headers: { "content-type": "application/json", [AUTH_HEADER]: "launch-token-for-tests" },
         body: JSON.stringify({ model: "m/glm-5.3", max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
       });
       expect(response.status).toBe(HTTP_STATUS.ok);
@@ -819,7 +831,7 @@ describe("a family and the capabilities it carries", () => {
   /** A routing session's request for `model`, its body optionally carrying an image block. */
   const asked = (model: string, withImage = false): RoutedRequest => ({
     ...request("/providers/z/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: withImage ? [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AA==" } }] : "hi" }] })),
-    session: { identity: "work", sessionId: "s-1", provider: "z", headroom: false, routeByName: true, projectId: undefined },
+    session: { identity: "work", sessionId: "s-1", provider: "z", headroom: false, projectId: undefined },
   });
 
   /** The provider and model name the resolution handed on, read from the replayed body. */
@@ -860,7 +872,7 @@ describe("a family and the capabilities it carries", () => {
 describe("a virtual model's choice on the resolution", () => {
   const sessionRequest = (model: string): RoutedRequest => ({
     ...request("/providers/z/v1/messages", JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] })),
-    session: { identity: undefined, sessionId: "s-1", provider: "z", headroom: false, routeByName: true, projectId: undefined },
+    session: { identity: undefined, sessionId: "s-1", provider: "z", headroom: false, projectId: undefined },
   });
   const files: Record<string, unknown> = {
     [`${PROVIDERS_DIR}/z.json`]: httpProvider,

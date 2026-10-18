@@ -100,7 +100,7 @@ function deps(resolution: RouteResolution, observers: readonly ResponseObserver[
 describe("createRoutedResponse", () => {
   it("applies backpressure: a write that the socket refuses waits for its drain", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -116,7 +116,7 @@ describe("createRoutedResponse", () => {
 
   it("settles a backpressured write when the client goes away, so a route is never left waiting on a dead socket", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -135,7 +135,7 @@ describe("serveRouted", () => {
     const route = recordingRoute();
     const { request } = pipelineRequest({ [IDENTITY_HEADER]: "work", [SESSION_HEADER]: "session-9", [HEADROOM_FLAG_HEADER]: "1", authorization: "Bearer tok" });
     await serveRouted(request, deps({ ok: true, route }).deps);
-    expect(route.seen[0]?.session).toEqual({ identity: "work", sessionId: "session-9", headroom: true, routeByName: false });
+    expect(route.seen[0]?.session).toEqual({ identity: "work", sessionId: "session-9", headroom: true });
     expect(route.seen[0]?.headers).toEqual({ authorization: "Bearer tok" });
   });
 
@@ -336,7 +336,7 @@ function routedWith(response: FakeServerResponse, observers: readonly ResponseOb
   const { deps: d, logs } = deps({ ok: true, route: recordingRoute() }, observers);
   const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], {
     deps: d,
-    session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, routeByName: false, projectId: undefined },
+    session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined },
     route: "test",
     request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } },
     servedPath: "/v1/messages",

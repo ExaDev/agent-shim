@@ -26,12 +26,12 @@ const RESOLUTION: LaunchResolution = {
     configDir: "/home/testuser/.agent-shim/identities/work",
     configProfileSource: "none",
   },
-  flags: { skipPermissions: false, remoteControl: false, headroom: true, trackUsage: false, pause: false, explain: false, routeByName: false, delayMs: 0 },
+  flags: { skipPermissions: false, remoteControl: false, headroom: true, trackUsage: false, pause: false, explain: false, delayMs: 0 },
   claudeVersion: { version: "2.1.0", source: "flag" },
   bin: "/home/testuser/.local/share/claude/versions/2.1.0",
   args: ["--print"],
   credential: { subject: "identity", name: "work", summary: { target: "oauthToken", sources: [{ kind: "env", variable: "WORK_TOKEN" }] } },
-  routing: { frontDoor: true, headroom: true, routeByName: false },
+  routing: { frontDoor: true, headroom: true },
   environment: ["ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "HTTPS_PROXY"],
 };
 

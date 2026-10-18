@@ -482,7 +482,6 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
       ...(parsedArgv.trackUsage === undefined ? {} : { trackUsage: parsedArgv.trackUsage }),
       ...(parsedArgv.pause === undefined ? {} : { pause: parsedArgv.pause }),
       ...(parsedArgv.explain === undefined ? {} : { explain: parsedArgv.explain }),
-      ...(parsedArgv.routeByName === undefined ? {} : { routeByName: parsedArgv.routeByName }),
       ...(parsedArgv.delay === undefined ? {} : { delay: parsedArgv.delay }),
     },
   });
@@ -497,7 +496,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
 
   // `/model` lists every provider's models qualified, which needs claude's `--settings`; a launch that passes its own keeps claude's names, since claude takes one value and a second replaces the first.
   // A session that routes by model name (the flag, or a router provider) lists the whole catalogue: its virtual models first, then every provider's models qualified. Every other session lists the same qualified rows without the virtual and family ones (a bare name it has not opted in to route by name cannot serve), so a session can always select another provider's model by its qualified name, which the door resolves whatever the session launched on. A provider session's rows replace the built-in Claude names; a provider-less (OAuth) session keeps them and appends.
-  const routesByName = flags.routeByName || (selectedProvider !== undefined && isRouterProvider(selectedProvider.definition));
+
   // The cascade's block when a cascade was read (a launch with a farm), else the global block alone; read through the launcher's own config port so a test sees its own filesystem.
   const globalModels = loadConfigFile(paths.globalConfigFile, GlobalConfigSchema, params.fs.readConfigFile)?.config.models;
   const models = launchCascade !== undefined && params.farm !== undefined ? cascadeModels : globalModels;
@@ -510,7 +509,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
       return [];
     }
   });
-  const pickerSettings = modelPickerSettingsFromRows(routedModelRows(models ?? {}, listedProviders, routesByName), selectedProvider !== undefined);
+  const pickerSettings = modelPickerSettingsFromRows(routedModelRows(models ?? {}, listedProviders), selectedProvider !== undefined);
   const callerSettings = hasSettingsArgument(parsedArgv.rest);
   if (pickerSettings !== undefined && callerSettings) {
     notes.push("--settings was passed, so /model keeps Claude Code's own model names");
@@ -637,9 +636,9 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     rows.push(pinnedVersionRow(decided.pinnedVersion.version, decided.pinnedVersion.source));
   }
 
-  // A router or routeByName session sends provider-qualified model names the door resolves through the models block, so every provider a definition names is about to carry this session's requests: its credential is resolved now, so a missing one fails the launch naming the provider instead of surfacing as a bare 502 on the first request that names it. A family member is checked through every provider that offers a target of the family, and an account member is the door's to resolve (it relaunches rather than dialling out). A read-only resolution never reaches this code, so it still resolves no credential.
-  const routesByName = resolvedFlags.routeByName || (resolvedProvider !== undefined && isRouterProvider(resolvedProvider.definition));
-  if (routesByName) {
+  // Every session resolves model names through the models block when one exists, so every provider a definition names can carry this session's requests: its credential is resolved now, so a missing one fails the launch naming the provider instead of surfacing as a bare 502 on the first request that names it. A family member is checked through every provider that offers a target of the family, and an account member is the door's to resolve (it relaunches rather than dialling out). A read-only resolution never reaches this code, so it still resolves no credential.
+  const namesResolved = decided.models !== undefined;
+  if (namesResolved) {
     const check = resolveRoutedProviderCredentials({ paths, port: params.fs, env, ...(params.credentials === undefined ? {} : { credentials: params.credentials }), models: decided.models, targets: () => targetRefs(paths) });
     if (!check.ok) {
       log.error(check.message);
@@ -685,7 +684,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     ...(headroom === undefined ? {} : { headroom }),
     sessionId,
     remoteControl: resolvedFlags.remoteControl,
-    routeByName: routesByName,
+   
     ...(decided.models?.tiers === undefined ? {} : { tierModels: decided.models.tiers }),
   });
 
@@ -720,7 +719,7 @@ export interface LaunchResolution {
   /** The credential the launch would authenticate with, summarised by target and source kinds. Absent when none applies. */
   readonly credential?: { readonly subject: "provider" | "identity"; readonly name: string; readonly summary: CredentialSummary };
   /** Which daemons the launch would route through, and whether it routes provider-qualified model names through the models block. */
-  readonly routing: { readonly frontDoor: boolean; readonly headroom: boolean; readonly routeByName: boolean };
+  readonly routing: { readonly frontDoor: boolean; readonly headroom: boolean };
   /** The names of the environment variables the launch would set or unset, sorted. Values are never reported: the launcher's environment carries tokens and per-launch capabilities that mean nothing outside it. */
   readonly environment: readonly string[];
 }
@@ -745,7 +744,7 @@ export function resolveLaunch(params: PrepareLaunchParams): LaunchResolution {
     ...(decided.flags.headroom ? { headroom: { socketPath: "", projectId: "" } } : {}),
     sessionId: "",
     remoteControl: decided.flags.remoteControl,
-    routeByName: decided.flags.routeByName,
+   
   });
   const credentialNames = decided.identityCredentialBlock === undefined ? [] : Object.keys(credentialVariables(decided.identityCredentialBlock.target ?? "bearer", ""));
   const environment = [...new Set([...Object.keys(built).filter((name) => built[name] !== env[name]), ...credentialNames])].sort();
@@ -764,7 +763,7 @@ export function resolveLaunch(params: PrepareLaunchParams): LaunchResolution {
     bin: decided.bin,
     args: decided.args,
     ...(credential === undefined ? {} : { credential }),
-    routing: { frontDoor, headroom: decided.flags.headroom, routeByName: decided.flags.routeByName },
+    routing: { frontDoor, headroom: decided.flags.headroom },
     environment,
   };
 }

@@ -207,9 +207,9 @@ describe("routedModelRows", () => {
     expect(routedModelRows({ hide: ["family:glm-5-1"] }, two).map((row) => row.model)).not.toContain("family:glm-5-1");
   });
 
-  it("omits the bare virtual and family rows for a session that has not asked to route by name, keeping the qualified rows every session can serve", () => {
-    const rows = routedModelRows({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.1"] } }, families: { "glm-5-1": { mode: "cheapest" } } }, [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.1" }), []], ["s", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "hf:zai-org/GLM-5.1" }), []]], false);
-    expect(rows.map((row) => row.model)).toEqual(["z/glm-5.1", "s/hf:zai-org/GLM-5.1"]);
+  it("lists the bare virtual and family rows beside the qualified ones, which every session serves", () => {
+    const rows = routedModelRows({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.1"] } }, families: { "glm-5-1": { mode: "cheapest" } } }, [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.1" }), []], ["s", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "hf:zai-org/GLM-5.1" }), []]]);
+    expect(rows.map((row) => row.model)).toEqual(["fast", "family:glm-5-1", "z/glm-5.1", "s/hf:zai-org/GLM-5.1"]);
   });
 
   it("keeps a virtual model's row when no member names a tier, handled as a sonnet, and one over a family takes its targets' handling", () => {

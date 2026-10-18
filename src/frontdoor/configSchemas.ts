@@ -126,7 +126,6 @@ export const ConfigProfileSetInputSchema = z.strictObject({
       delay: z.union([z.string().regex(DURATION_RE), z.literal(false)]).optional(),
       pause: z.boolean().optional(),
       explain: z.boolean().optional(),
-      routeByName: z.boolean().optional(),
     })
     .optional(),
 });
