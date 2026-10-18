@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { CatalogueModel } from "../providerCatalogue";
 
 import type { Provider, ProviderCatalogue } from "../config/schema";
 import { modelPickerSettings, modelPickerSettingsFromRows, providerModelRows, routedModelRows } from "./modelPicker";
@@ -171,15 +172,15 @@ describe("modelPickerSettings", () => {
   });
 
   it("appends the rows after Claude Code's own for a provider-less session that routes by name, whose bare names still reach Anthropic", () => {
-    const rows = routedModelRows({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } }, [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3" })] as const]);
+    const rows = routedModelRows({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } }, [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3" }), []] as const]);
     expect(JSON.parse(modelPickerSettingsFromRows(rows, false) ?? "")).toMatchObject({ modelPicker: { replaceBuiltInOptions: false } });
   });
 });
 
 describe("routedModelRows", () => {
-  const providers: readonly (readonly [string, Provider])[] = [
-    ["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3" })],
-    ["m", http({ ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2.7" })],
+  const providers: readonly (readonly [string, Provider, readonly CatalogueModel[]])[] = [
+    ["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3" }), []],
+    ["m", http({ ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M2.7" }), []],
   ];
 
   it("lists the virtual models first, then every provider's models qualified with the provider's name", () => {
@@ -190,9 +191,9 @@ describe("routedModelRows", () => {
   });
 
   it("lists one row per family offered by more than one target between the virtual models and the qualified rows, naming every target in its description", () => {
-    const two: readonly (readonly [string, Provider])[] = [
-      ["z", http({ ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.1" })],
-      ["s", http({ ANTHROPIC_DEFAULT_SONNET_MODEL: "hf:zai-org/GLM-5.1" })],
+    const two: readonly (readonly [string, Provider, readonly CatalogueModel[]])[] = [
+      ["z", http({ ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.1" }), []],
+      ["s", http({ ANTHROPIC_DEFAULT_SONNET_MODEL: "hf:zai-org/GLM-5.1" }), []],
     ];
     const rows = routedModelRows({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.1"] } }, families: { "glm-5-1": { mode: "cheapest" } } }, two);
     expect(rows.map((row) => row.model)).toEqual(["fast", "family:glm-5-1", "z/glm-5.1", "s/hf:zai-org/GLM-5.1"]);
@@ -200,14 +201,19 @@ describe("routedModelRows", () => {
   });
 
   it("lists no row for a family one target offers, and honours hide for a family row", () => {
-    const one: readonly (readonly [string, Provider])[] = [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3" })]];
+    const one: readonly (readonly [string, Provider, readonly CatalogueModel[]])[] = [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3" }), []]];
     expect(routedModelRows({}, one).map((row) => row.model)).toEqual(["z/glm-5.3"]);
-    const two: readonly (readonly [string, Provider])[] = [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.1" })], ["s", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "hf:zai-org/GLM-5.1" })]];
+    const two: readonly (readonly [string, Provider, readonly CatalogueModel[]])[] = [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.1" }), []], ["s", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "hf:zai-org/GLM-5.1" }), []]];
     expect(routedModelRows({ hide: ["family:glm-5-1"] }, two).map((row) => row.model)).not.toContain("family:glm-5-1");
   });
 
+  it("omits the bare virtual and family rows for a session that has not asked to route by name, keeping the qualified rows every session can serve", () => {
+    const rows = routedModelRows({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.1"] } }, families: { "glm-5-1": { mode: "cheapest" } } }, [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.1" }), []], ["s", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "hf:zai-org/GLM-5.1" }), []]], false);
+    expect(rows.map((row) => row.model)).toEqual(["z/glm-5.1", "s/hf:zai-org/GLM-5.1"]);
+  });
+
   it("keeps a virtual model's row when no member names a tier, handled as a sonnet, and one over a family takes its targets' handling", () => {
-    const offered: readonly (readonly [string, Provider])[] = [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.1" })], ["s", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "hf:zai-org/GLM-5.1" })]];
+    const offered: readonly (readonly [string, Provider, readonly CatalogueModel[]])[] = [["z", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.1" }), []], ["s", http({ ANTHROPIC_DEFAULT_OPUS_MODEL: "hf:zai-org/GLM-5.1" }), []]];
     const rows = routedModelRows({ virtual: { unknown: { mode: "ordered", members: ["ghost/x"] }, across: { mode: "ordered", members: ["family:glm-5-1"] } } }, offered);
     expect(rows.find((row) => row.model === "unknown")?.behavesAs).toBe("claude-sonnet-5-5");
     expect(rows.find((row) => row.model === "across")?.behavesAs).toBe("claude-opus-5-5");
@@ -219,7 +225,7 @@ describe("routedModelRows", () => {
   });
 
   it("keeps a virtual model's row when the provider's default-model env holds the same value as its tier default", () => {
-    const rows = routedModelRows({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } }, [["z", http({ ANTHROPIC_MODEL: "glm-5.3", ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3" })] as const]);
+    const rows = routedModelRows({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } }, [["z", http({ ANTHROPIC_MODEL: "glm-5.3", ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3" }), []] as const]);
     expect(rows.map((row) => row.model)).toContain("fast");
   });
 });

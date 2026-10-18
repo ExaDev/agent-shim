@@ -17,9 +17,9 @@ import { diagnosticLines, printDiagnosticLines, reportDiagnostics, type Diagnost
 import { holdBeforeLaunch, LAUNCH_CANCELLED_EXIT, type HoldOutcome, type HoldPort } from "./launcher/hold";
 import type { Candidate } from "./usage/pick";
 import { decisionRows, farmRow, noteRow, pinnedVersionRow, routingRows } from "./launcher/launchReport";
-import { modelPickerSettings, modelPickerSettingsFromRows, routedModelRows } from "./launcher/modelPicker";
-import { catalogueCachePath, parseCatalogueCache } from "./providerCatalogue";
-import { listProviders } from "./providersStore";
+import { modelPickerSettingsFromRows, routedModelRows } from "./launcher/modelPicker";
+import { catalogueCachePath, parseCatalogueCache, type CatalogueModel } from "./providerCatalogue";
+import { listProviderNames, loadProvider } from "./providersStore";
 import type { ModelsConfig, Provider } from "./config/schema";
 import { resolvePoolLaunch } from "./launcher/pool";
 import { resumedContextTokens } from "./usage/resumeContext";
@@ -495,18 +495,22 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   }
   const flags = loginlessProvider === undefined ? requestedFlags : { ...requestedFlags, remoteControl: false };
 
-  // `/model` lists the provider's real models, which needs claude's `--settings`; a launch that passes its own keeps claude's names, since claude takes one value and a second replaces the first.
-  const catalogue = selectedProvider === undefined ? undefined : parseCatalogueCache(params.fs.readFileUtf8(catalogueCachePath(paths, selectedProvider.name)));
-  // A session that routes by model name (the flag, or a router provider) lists the whole catalogue instead: its virtual models first, then every provider's models qualified.
+  // `/model` lists every provider's models qualified, which needs claude's `--settings`; a launch that passes its own keeps claude's names, since claude takes one value and a second replaces the first.
+  // A session that routes by model name (the flag, or a router provider) lists the whole catalogue: its virtual models first, then every provider's models qualified. Every other session lists the same qualified rows without the virtual and family ones (a bare name it has not opted in to route by name cannot serve), so a session can always select another provider's model by its qualified name, which the door resolves whatever the session launched on. A provider session's rows replace the built-in Claude names; a provider-less (OAuth) session keeps them and appends.
   const routesByName = flags.routeByName || (selectedProvider !== undefined && isRouterProvider(selectedProvider.definition));
   // The cascade's block when a cascade was read (a launch with a farm), else the global block alone; read through the launcher's own config port so a test sees its own filesystem.
   const globalModels = loadConfigFile(paths.globalConfigFile, GlobalConfigSchema, params.fs.readConfigFile)?.config.models;
   const models = launchCascade !== undefined && params.farm !== undefined ? cascadeModels : globalModels;
-  const pickerSettings = routesByName
-    ? modelPickerSettingsFromRows(routedModelRows(models ?? {}, listProviders(paths).map((entry): readonly [string, Provider] => [entry.name, entry.provider])), selectedProvider !== undefined)
-    : selectedProvider === undefined
-      ? undefined
-      : modelPickerSettings(selectedProvider.definition, catalogue?.models);
+  // The provider list is read through the launch's own filesystem port (a broken file lists no rows rather than failing the launch; `doctor` is where a broken file is reported), never the process's real one, so a test's fake filesystem is what decides.
+  const listedProviders = listProviderNames(fs.readdir, paths.providersDir).flatMap((name): readonly [string, Provider, readonly CatalogueModel[]][] => {
+    try {
+      const definition = loadProvider(paths.providersDir, name, fs);
+      return definition === undefined ? [] : [[name, definition, parseCatalogueCache(params.fs.readFileUtf8(catalogueCachePath(paths, name)))?.models ?? []]];
+    } catch {
+      return [];
+    }
+  });
+  const pickerSettings = modelPickerSettingsFromRows(routedModelRows(models ?? {}, listedProviders, routesByName), selectedProvider !== undefined);
   const callerSettings = hasSettingsArgument(parsedArgv.rest);
   if (pickerSettings !== undefined && callerSettings) {
     notes.push("--settings was passed, so /model keeps Claude Code's own model names");

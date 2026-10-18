@@ -155,25 +155,26 @@ export function providerModelRows(provider: Provider, catalogue: readonly Catalo
 /**
  * The rows a session that routes by model name offers: its virtual models first (the mode in the description), then one row per model family offered by more than one target (every provider and account offering it in the description; selecting it lets the family's mode choose among them), then every provider's models grouped under the provider's name, honouring the block's `hide` and `show` lists. A virtual or family row borrows the handling of the first target it can serve from that has a row of its own, since the provider's own tier table says how that model is handled; one with no such target is handled as a sonnet.
  */
-export function routedModelRows(models: ModelsConfig, providers: readonly (readonly [string, Provider])[]): readonly ModelPickerRow[] {
+export function routedModelRows(models: ModelsConfig, providers: readonly (readonly [string, Provider, readonly CatalogueModel[]])[], bare = true): readonly ModelPickerRow[] {
   const hidden = new Set(models.hide ?? []);
   const shown = models.show === undefined ? undefined : new Set(models.show);
   const visible = (model: string): boolean => (shown === undefined ? !hidden.has(model) : shown.has(model));
-  const concrete = providers.flatMap(([name, provider]) => providerModelRows(provider).map((row) => ({ ...row, model: `${name}/${row.model}`, label: `${name} / ${row.label}`, description: `${name}: ${row.description}` })));
+  const concrete = providers.flatMap(([name, provider, catalogue]) => providerModelRows(provider, catalogue).map((row) => ({ ...row, model: `${name}/${row.model}`, label: `${name} / ${row.label}`, description: `${name}: ${row.description}` })));
   const concreteByRef = new Map(concrete.map((row) => [row.model, row]));
   const families = buildFamilies([...concrete.map((row) => row.model), ...accountRefsOf(models)], models);
   const handlingOf = (refs: readonly string[]): string => refs.map((ref) => concreteByRef.get(ref)?.behavesAs).find((behavesAs) => behavesAs !== undefined) ?? TIER_BEHAVES_AS.sonnet;
-  const virtual = Object.entries(models.virtual ?? {}).flatMap(([name, definition]) => {
+  // A session that has not asked to route by name cannot serve a bare virtual or family name (its bare names are its own provider's or Claude Code's own), so only a session that asked lists those rows; the qualified concrete rows are routable everywhere.
+  const virtual = bare ? Object.entries(models.virtual ?? {}).flatMap(([name, definition]) => {
     if (!visible(name)) {
       return [];
     }
     const targets = expandFamilyMembers(safeExpand(name, models), families);
     return [{ model: name, label: name, description: `Virtual (${definition.mode})`, behavesAs: handlingOf(targets) }];
-  });
-  const familyRows = sharedFamilies(families).flatMap((family) => {
+  }) : [];
+  const familyRows = bare ? sharedFamilies(families).flatMap((family) => {
     const member = `${FAMILY_PREFIX}${family.key}`;
     return visible(member) ? [{ model: member, label: family.key, description: `Family (${familyMode(family.settings)}): ${family.refs.join(", ")}`, behavesAs: handlingOf(family.refs) }] : [];
-  });
+  }) : [];
   return [...virtual, ...familyRows, ...concrete.filter((row) => visible(row.model))];
 }
 

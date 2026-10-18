@@ -196,7 +196,7 @@ agent-shim run [@<identity>] [launch flags] [claude arguments]
   #   --claude-version <version>   run exactly this installed Claude Code version
   #   --delay <duration>   wait this long after the launcher's own output before starting claude; --[no-]pause waits for a key press instead
   #   --[no-]explain   with @pool:<name>, list every member the pick ranked and why, not only the one picked
-  #   --[no-]route-by-name   route provider-qualified model names through the models block to the provider that serves them
+  #   --[no-]route-by-name   also route bare virtual-model names through the models block (qualified names route on every session)
   #   --native   run the real claude with nothing from agent-shim applied; cannot be combined with the flags above
 claude @<identity> ...                      # the same, once `agent-shim shim enable` has run
 ```
