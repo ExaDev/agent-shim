@@ -1,11 +1,12 @@
 import type { StatuslinePorts } from "./ports";
 
-/** Ports for a test: an empty environment, a home directory that exists nowhere, no readable file, no program that runs and nothing on the file system, each replaceable. */
+/** Ports for a test: an empty environment, a home directory that exists nowhere, no readable file or file tail, no program that runs and nothing on the file system, each replaceable. */
 export function fakeStatuslinePorts(overrides: Readonly<Partial<StatuslinePorts>> = {}): StatuslinePorts {
   return {
     env: {},
     homeDirectory: "/home/test",
     readText: () => undefined,
+    readTail: () => undefined,
     run: () => undefined,
     entryKind: () => undefined,
     realPath: () => undefined,

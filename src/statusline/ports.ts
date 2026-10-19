@@ -10,6 +10,8 @@ export interface StatuslinePorts {
   readonly homeDirectory: string;
   /** The text of a file, or undefined when it cannot be read. */
   readonly readText: (path: string) => string | undefined;
+  /** The last `maxBytes` bytes of a file as text, or undefined when it cannot be read. Cutting a file short drops the partial line the cut lands in, so the text begins at a line boundary; a file that fits whole is returned whole. For a file that grows without bound, such as a session transcript, where reading all of it on every refresh is the cost to avoid. */
+  readonly readTail: (path: string, maxBytes: number) => string | undefined;
   /** The standard output of a program run without a shell in `cwd`, or undefined when it fails or outruns the time the statusline allows a program. */
   readonly run: (file: string, args: readonly string[], cwd: string) => string | undefined;
   /** What lies at `path`, without following a final symbolic link (a link is `other`), or undefined when nothing does. */
@@ -34,6 +36,28 @@ export function realStatuslinePorts(env: Readonly<Record<string, string | undefi
     readText: (path) => {
       try {
         return fs.readFileSync(path, "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+    readTail: (path, maxBytes) => {
+      try {
+        const descriptor = fs.openSync(path, "r");
+        try {
+          const { size } = fs.fstatSync(descriptor);
+          const start = Math.max(0, size - maxBytes);
+          const buffer = Buffer.alloc(size - start);
+          const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, start);
+          const text = buffer.toString("utf8", 0, bytesRead);
+          if (start === 0) {
+            return text;
+          }
+          // The cut may land inside a line, or inside a multi-byte character at the start of one; either way the first line is partial.
+          const firstBreak = text.indexOf("\n");
+          return firstBreak === -1 ? "" : text.slice(firstBreak + 1);
+        } finally {
+          fs.closeSync(descriptor);
+        }
       } catch {
         return undefined;
       }
