@@ -1,3 +1,9 @@
+## [11.50.2](https://github.com/ExaDev/agent-shim/compare/v11.50.1...v11.50.2) (2026-10-19)
+
+### Bug Fixes
+
+* **ci:** apply the GitHub Packages scope only after the alias job's install ([a7d2134](https://github.com/ExaDev/agent-shim/commit/a7d21340ef66e4ec5cd6957e20007027acab29c8))
+
 ## [11.50.1](https://github.com/ExaDev/agent-shim/compare/v11.50.0...v11.50.1) (2026-10-19)
 
 ### Bug Fixes
