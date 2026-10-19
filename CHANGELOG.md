@@ -1,3 +1,10 @@
+## [11.53.0](https://github.com/ExaDev/agent-shim/compare/v11.52.1...v11.53.0) (2026-10-19)
+
+### Features
+
+* **statusline:** draw the project path, version control status and changed files ([8e7f5ee](https://github.com/ExaDev/agent-shim/commit/8e7f5ee4f3a7aee1e631eb2c6b4eae6b1a9cfc9b))
+* **statusline:** let elements inspect the file system and clean untrusted text ([ae04835](https://github.com/ExaDev/agent-shim/commit/ae04835b5072d9bcb1cda4546b8eaec08fc905b5))
+
 ## [11.52.1](https://github.com/ExaDev/agent-shim/compare/v11.52.0...v11.52.1) (2026-10-19)
 
 ### Code Refactoring
