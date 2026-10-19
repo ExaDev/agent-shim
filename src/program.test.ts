@@ -393,6 +393,25 @@ describe("profile commands", () => {
     expect(readProfile(paths, "acme")?.launch).toBeUndefined();
   });
 
+  it("sets, merges and clears statusline settings key by key, and refuses a value the schema refuses", async () => {
+    createProfile(paths, "acme");
+    await cli(["profile", "set", "acme", "--statusline-header", "identity", "--statusline-header", "model", "--statusline-bar-width", "6", "--statusline-five-hour-label", "Session"]);
+    expect(readProfile(paths, "acme")?.launch).toEqual({ statusline: { header: ["identity", "model"], barWidth: 6, fiveHourLabel: "Session" } });
+
+    await cli(["profile", "set", "acme", "--statusline-warn-at", "50", "--statusline-critical-at", "80", "--no-statusline-bar-width"]);
+    expect(readProfile(paths, "acme")?.launch).toEqual({ statusline: { header: ["identity", "model"], fiveHourLabel: "Session", warnAt: 50, criticalAt: 80 } });
+
+    await cli(["profile", "set", "acme", "--statusline-bars", "none"]);
+    expect(readProfile(paths, "acme")?.launch?.statusline?.bars).toEqual([]);
+
+    for (const bad of [["--statusline-header", "colour"], ["--statusline-warn-at", "0"], ["--statusline-bar-width", "wide"], ["--statusline-five-hour-label", ""]]) {
+      expect((await cli(["profile", "set", "acme", ...bad])).code, bad.join(" ")).toBe(EXIT_USAGE);
+    }
+
+    await cli(["profile", "set", "acme", "--no-statusline-header", "--no-statusline-bars", "--no-statusline-warn-at", "--no-statusline-critical-at", "--no-statusline-five-hour-label"]);
+    expect(readProfile(paths, "acme")?.launch).toBeUndefined();
+  });
+
   it("sets and clears a Claude Code version pin, and refuses one that is not an exact version", async () => {
     createProfile(paths, "acme");
     await cli(["profile", "set", "acme", "--launch-claude-version", "2.1.220"]);

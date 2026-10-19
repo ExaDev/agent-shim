@@ -15,6 +15,7 @@ import {
   PROVIDER_KINDS,
   RemoteCredentialSourceSchema,
 } from "../config/schema";
+import { StatuslineChangeSchema } from "../config/statusline";
 
 /**
  * The Zod schemas of the door's configuration-management procedures: the inputs `config.identity.*`, `config.profile.*`, `config.pool.*`, `config.provider.*` and `config.rule.*` accept and the stored objects they answer with, one shape each so the API's contract and the stores it writes through validate against the same definitions.
@@ -127,6 +128,7 @@ export const ConfigProfileSetInputSchema = z.strictObject({
       pause: z.boolean().optional(),
       explain: z.boolean().optional(),
       proxyBypass: z.union([z.array(z.string().min(1)), z.literal(false)]).optional(),
+      statusline: StatuslineChangeSchema.optional(),
     })
     .optional(),
 });

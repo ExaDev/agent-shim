@@ -3,9 +3,10 @@ import type { ConfigProfile } from "./config/schema";
 import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDeps } from "./cli/commandDeps";
 import { collectBoolPair, collectRepeated, parseDurationLiteral } from "./cli/parsers";
 import { PromptCancelledError, UsageError } from "./cliError";
+import { STATUSLINE_BAR_GROUPS, STATUSLINE_HEADER_SEGMENTS, StatuslineSchema } from "./config/statusline";
 import { runProfileWizard } from "./configure";
 import { checkedProxyBypass } from "./launcher/proxyBypass";
-import { applyProfileChange, ProfileNotFoundError, profileExists, type ProfileChange, requireProfileExists, readProfile, createProfile, listProfiles, readGlobalConfig, setGlobalDefaultProfile, removeProfile } from "./configProfilesStore";
+import { applyProfileChange, ProfileNotFoundError, profileExists, type ProfileChange, type StatuslineChange, requireProfileExists, readProfile, createProfile, listProfiles, readGlobalConfig, setGlobalDefaultProfile, removeProfile } from "./configProfilesStore";
 
 /**
  * Makes sure configuration profile `name` exists before something is pointed at it (`identity set --default-profile`, `rule add --config-profile`, `profile use`). An existing profile passes straight through. A missing one is offered for creation, via `runProfileWizard` under that exact name, when standard input is a terminal; declining raises `PromptCancelledError`. With no terminal it raises `ProfileNotFoundError`, since there is nothing to prompt on and pointing at a missing profile would only fail later.
@@ -45,8 +46,42 @@ interface ProfileAddOptions {
 }
 
 /** Options `profile set` accepts: the shared change plus the output switch. */
-interface ProfileSetOptions extends ProfileChange {
+interface ProfileSetOptions extends Omit<ProfileChange, "launchStatusline"> {
   readonly json?: boolean;
+  readonly statuslineHeader?: readonly string[] | false;
+  readonly statuslineBars?: readonly string[] | false;
+  readonly statuslineWarnAt?: string | false;
+  readonly statuslineCriticalAt?: string | false;
+  readonly statuslineFiveHourLabel?: string | false;
+  readonly statuslineSevenDayLabel?: string | false;
+  readonly statuslineBarWidth?: string | false;
+}
+
+/** A segment list as the settings hold it: `none` alone is the empty list, which hides every segment of the group. */
+function segmentList(values: readonly string[]): readonly string[] {
+  return values.length === 1 && values[0] === "none" ? [] : values;
+}
+
+/** The statusline settings a `profile set` names, key by key (`false` clears one), checked against the schema every other route to the same settings goes through; undefined when no `--statusline-*` option was given. */
+function statuslineChangeOf(options: Readonly<ProfileSetOptions>): StatuslineChange | undefined {
+  const raw = {
+    header: options.statuslineHeader === undefined || options.statuslineHeader === false ? options.statuslineHeader : segmentList(options.statuslineHeader),
+    bars: options.statuslineBars === undefined || options.statuslineBars === false ? options.statuslineBars : segmentList(options.statuslineBars),
+    warnAt: options.statuslineWarnAt === undefined || options.statuslineWarnAt === false ? options.statuslineWarnAt : Number(options.statuslineWarnAt),
+    criticalAt: options.statuslineCriticalAt === undefined || options.statuslineCriticalAt === false ? options.statuslineCriticalAt : Number(options.statuslineCriticalAt),
+    fiveHourLabel: options.statuslineFiveHourLabel,
+    sevenDayLabel: options.statuslineSevenDayLabel,
+    barWidth: options.statuslineBarWidth === undefined || options.statuslineBarWidth === false ? options.statuslineBarWidth : Number(options.statuslineBarWidth),
+  };
+  const given = Object.entries(raw).filter(([, value]) => value !== undefined);
+  if (given.length === 0) {
+    return undefined;
+  }
+  const result = StatuslineSchema.safeParse(Object.fromEntries(given.filter(([, value]) => value !== false)));
+  if (!result.success) {
+    throw new UsageError(`--statusline-*: ${result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}.`);
+  }
+  return Object.fromEntries(given);
 }
 
 /** Registers the `agent-shim profile` subcommand tree onto `program`. */
@@ -124,6 +159,20 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
       .option("--no-launch-explain", "Launches under this profile name only the member a pool pick chose.")
       .option("--launch-proxy-bypass <host>", "Launches under this profile keep this host off the front door by adding it to NO_PROXY, so its traffic goes direct (repeatable; replaces the profile's list).", collectRepeated)
       .option("--no-launch-proxy-bypass", "Clear this profile's list of hosts kept off the front door.")
+      .option("--statusline-header <segment>", `The statusline header segments to draw, in drawing order (repeatable; one of ${STATUSLINE_HEADER_SEGMENTS.join(", ")}, or "none" to hide the header).`, collectRepeated)
+      .option("--no-statusline-header", "Clear this profile's header segment list, restoring the default.")
+      .option("--statusline-bars <group>", `The statusline bar groups to draw, in drawing order (repeatable; one of ${STATUSLINE_BAR_GROUPS.join(", ")}, or "none" to hide the bars).`, collectRepeated)
+      .option("--no-statusline-bars", "Clear this profile's bar group list, restoring the default.")
+      .option("--statusline-warn-at <percent>", "The whole percentage of use at which a statusline bar turns yellow.")
+      .option("--no-statusline-warn-at", "Clear this profile's warning threshold.")
+      .option("--statusline-critical-at <percent>", "The whole percentage of use at which a statusline bar turns red.")
+      .option("--no-statusline-critical-at", "Clear this profile's critical threshold.")
+      .option("--statusline-five-hour-label <text>", "The statusline's name for the five-hour window.")
+      .option("--no-statusline-five-hour-label", "Clear this profile's five-hour window label.")
+      .option("--statusline-seven-day-label <text>", "The statusline's name for the weekly window.")
+      .option("--no-statusline-seven-day-label", "Clear this profile's weekly window label.")
+      .option("--statusline-bar-width <cells>", "The width of a statusline bar in cells, before the line's spare width is shared out among the bars.")
+      .option("--no-statusline-bar-width", "Clear this profile's bar width.")
       .option("--json", "Print the result as JSON.")
       .action(async (name: string, allOptions: ProfileSetOptions) => {
         const { json, ...options } = allOptions;
@@ -138,8 +187,10 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
             throw new PromptCancelledError();
           }
         } else {
+          const launchStatusline = statuslineChangeOf(options);
           applyProfileChange(paths, name, {
             ...options,
+            ...(launchStatusline === undefined ? {} : { launchStatusline }),
             ...(options.launchProxyBypass === undefined || options.launchProxyBypass === false ? {} : { launchProxyBypass: checkedProxyBypass(options.launchProxyBypass, "--launch-proxy-bypass") }),
           });
         }
