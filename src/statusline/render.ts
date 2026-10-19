@@ -1,4 +1,5 @@
 import { ESCAPE, visibleLength } from "./ansi";
+import { STATUSLINE_DEFAULTS, type ResolvedStatusline, type StatuslineHeaderSegment } from "../config/statusline";
 import { layoutBarGrid, type BarCell } from "./barGrid";
 import type { StatuslineSummary } from "./enrich";
 
@@ -13,7 +14,6 @@ export interface StatuslinePayloadView {
   readonly freshInputTokens: number | undefined;
 }
 
-const BAR_WIDTH = 10;
 const SECONDS_PER_MINUTE = 60;
 const MINUTES_PER_HOUR = 60;
 const SECONDS_PER_DAY = 86_400;
@@ -26,9 +26,11 @@ export const RESERVED_COLUMNS = 4;
 const SEPARATOR = " | ";
 const FULL_PERCENT = 100;
 const ONE_PERCENT = 1;
-/** The Antigravity statusline's colour bands on a used fraction: red from 90%, yellow from 70%, green under it. */
-const USED_RED_AT = 0.9;
-const USED_YELLOW_AT = 0.7;
+/** The colour bands on a used fraction: red from `criticalAt`, yellow from `warnAt` (whole percentages), green under it. The defaults are the Antigravity statusline's own (red from 90%, yellow from 70%). */
+interface ColourBands {
+  readonly warnAt: number;
+  readonly criticalAt: number;
+}
 
 const RESET = `${ESCAPE}[0m`;
 const DIM = `${ESCAPE}[90m`;
@@ -40,20 +42,22 @@ function colorize(): boolean {
   return process.env.NO_COLOR === undefined;
 }
 
-function statusColor(fraction: number, isUsedMetric: boolean): string {
+function statusColor(fraction: number, isUsedMetric: boolean, bands: ColourBands): string {
   if (!colorize()) {
     return "";
   }
+  const yellowAt = bands.warnAt / FULL_PERCENT;
+  const redAt = bands.criticalAt / FULL_PERCENT;
   if (isUsedMetric) {
-    if (fraction >= USED_RED_AT) {
+    if (fraction >= redAt) {
       return RED;
     }
-    return fraction >= USED_YELLOW_AT ? YELLOW : GREEN;
+    return fraction >= yellowAt ? YELLOW : GREEN;
   }
-  if (fraction <= 1 - USED_RED_AT) {
+  if (fraction <= 1 - redAt) {
     return RED;
   }
-  return fraction <= 1 - USED_YELLOW_AT ? YELLOW : GREEN;
+  return fraction <= 1 - yellowAt ? YELLOW : GREEN;
 }
 
 function formatTokens(num: number): string {
@@ -101,20 +105,20 @@ function headroomText(stats: StatuslineSummary["headroom"]): string | undefined 
 }
 
 /** The cache hit fraction drawn as a percentage in the colour of its band: a hit ratio is better the higher it is, so the bands are the remaining-style ones, red when nearly nothing is served from cache and green when most is. */
-function cacheHitText(hitFraction: number): string {
+function cacheHitText(hitFraction: number, bands: ColourBands): string {
   const clamped = Math.max(0, Math.min(1, hitFraction));
-  return ` (Cache: ${statusColor(clamped, false)}${(clamped * FULL_PERCENT).toFixed(0)}%${RESET})`;
+  return ` (Cache: ${statusColor(clamped, false, bands)}${(clamped * FULL_PERCENT).toFixed(0)}%${RESET})`;
 }
 
 /** The prompt cache's hit percentage, preferring the client's own request-level hit ratio, which survives a cold turn, over the last request's share of prompt tokens read from cache, which a single cold turn zeroes. */
-function cacheShareText(view: StatuslinePayloadView): string {
+function cacheShareText(view: StatuslinePayloadView, bands: ColourBands): string {
   const hitRatio = view.cacheHitRatio;
   if (hitRatio !== undefined && Number.isFinite(hitRatio)) {
-    return cacheHitText(hitRatio);
+    return cacheHitText(hitRatio, bands);
   }
   const promptTotal = (view.cacheReadTokens ?? 0) + (view.freshInputTokens ?? 0);
   if (promptTotal > 0 && (view.cacheReadTokens ?? 0) > 0) {
-    return cacheHitText((view.cacheReadTokens ?? 0) / promptTotal);
+    return cacheHitText((view.cacheReadTokens ?? 0) / promptTotal, bands);
   }
   return "";
 }
@@ -185,15 +189,15 @@ function secondsUntil(resetAt: string | undefined, nowMs: number): number | unde
 }
 
 /** A bar that fills with `fraction`, coloured by its band, `cells` fill positions wide between its brackets. */
-function drawBar(fraction: number, cells: number): string {
+function drawBar(fraction: number, cells: number, bands: ColourBands): string {
   const clamped = Math.max(0, Math.min(1, fraction));
   const filled = Math.round(clamped * cells);
-  const color = statusColor(clamped, true);
+  const color = statusColor(clamped, true, bands);
   return color === "" ? `[${"█".repeat(filled)}${"░".repeat(cells - filled)}]` : `[${color}${"█".repeat(filled)}${DIM}${"░".repeat(cells - filled)}${RESET}]`;
 }
 
-function barCell(prefix: string, suffix: string, fraction: number): BarCell {
-  return { prefix, suffix, draw: (cells) => drawBar(fraction, cells) };
+function barCell(prefix: string, suffix: string, fraction: number, bands: ColourBands): BarCell {
+  return { prefix, suffix, draw: (cells) => drawBar(fraction, cells, bands) };
 }
 
 /** Justifies texts across the line's width: the first flush left, the last flush right, and each separator sharing the spare space evenly around its pipe. A line with no spare width, or a single text, joins plainly. */
@@ -252,8 +256,8 @@ function layoutHeader(texts: readonly string[], maxWidth: number, separator: str
 /**
  * The built-in statusline, laid out and coloured the way the Antigravity CLI's own statusline is: the model, the provider's account (email and subscription plan) and the identity when it is not that account, on the first line; then the context window's use (tokens against the window, the prompt cache's hit percentage) and the quota windows the door reports, each a bar that fills with use and turns yellow then red, one line when they fit and two when they do not.
  */
-export function renderStatuslineBlock(summary: StatuslineSummary, view: StatuslinePayloadView, terminalWidth: number, nowMs: number): string {
-  const header: string[] = [];
+export function renderStatuslineBlock(summary: StatuslineSummary, view: StatuslinePayloadView, terminalWidth: number, nowMs: number, settings: ResolvedStatusline = STATUSLINE_DEFAULTS): string {
+  const segments: Partial<Record<StatuslineHeaderSegment, string>> = {};
   // A dynamic mode's selection draws the model that answered beside the name the session typed (`auto -> glm-5.3`), because the client's own model name alone says nothing about what is actually serving. The provider joins the arrow when the choice could have landed on more than one, or when it left the launch's provider: exactly the cases where the provider is part of the answer.
   const choiceNamesProvider = summary.modelChoice !== undefined && (summary.modelChoice.providers.length > 1 || summary.routedTarget !== undefined);
   const modelSegment =
@@ -261,49 +265,52 @@ export function renderStatuslineBlock(summary: StatuslineSummary, view: Statusli
       ? `${view.modelDisplayName} -> ${choiceNamesProvider ? `${summary.modelChoice.provider}/${summary.modelChoice.served}` : summary.modelChoice.served}`
       : view.modelDisplayName;
   if (modelSegment !== undefined && modelSegment !== "") {
-    header.push(modelSegment);
+    segments.model = modelSegment;
   }
   if (summary.provider !== undefined) {
     const account = [summary.providerAccountEmail, summary.providerPlan].filter((part) => part !== undefined);
-    header.push(account.length > 0 ? `${summary.provider} · ${account.join(" · ")}` : summary.provider);
+    segments.provider = account.length > 0 ? `${summary.provider} · ${account.join(" · ")}` : summary.provider;
   }
   // The target the last request was served by, when routing by name sent it off the launch's provider: a qualified name's choice, shown where the person is looking rather than only in the usage log. A dynamic mode's arrow already names the provider in this case, so the two never repeat each other.
   if (summary.routedTarget !== undefined && !choiceNamesProvider) {
-    header.push(`via ${summary.routedTarget}`);
+    segments.route = `via ${summary.routedTarget}`;
   }
   // An account in an organisation is on the organisation's plan with its seat's tier naming the variant, and the seat's rate-limit tier names limits, not the plan; a personal account's plan is the tier itself. A personal plan's organizationName is only the account holder's own name, redundant beside the email, so an organisation's name shows only for the organisation types. Beside a provider the login's plan names quota the session is not drawing from, so there the login names its organisation, or just its account when it has none.
   const loginPlan = summary.provider === undefined ? (summary.loginPlan ?? accountPlanLabel(summary)) : undefined;
   const loginOrgName = summary.loginOrganizationType === "claude_team" || summary.loginOrganizationType === "claude_enterprise" ? summary.loginOrganizationName : undefined;
   const loginParts = [summary.loginAccountEmail, loginOrgName, loginPlan].filter((part) => part !== undefined);
   if (summary.loginAccountEmail !== undefined && summary.loginAccountEmail !== summary.providerAccountEmail) {
-    header.push(loginParts.join(" · "));
+    segments.account = loginParts.join(" · ");
   } else if (summary.provider === undefined && loginParts.length > 0) {
-    header.push(loginParts.join(" · "));
+    segments.account = loginParts.join(" · ");
   }
   // The identity names which login launched the session, worth its own segment only beside a provider, where it is not the account already named; a plain anthropic session is its login account, so the identity name would repeat it.
   if (summary.identity !== undefined && summary.provider !== undefined && summary.identity !== summary.providerAccountEmail && summary.identity !== summary.loginAccountEmail) {
-    header.push(summary.identity);
+    segments.identity = summary.identity;
   }
   const savings = headroomText(summary.headroom);
   if (savings !== undefined) {
-    header.push(savings);
+    segments.headroom = savings;
   }
+  // The segments drawn are the ones the settings list, in the order they list them.
+  const header = settings.header.flatMap((name) => segments[name] ?? []);
+  const bands: ColourBands = { warnAt: settings.warnAt, criticalAt: settings.criticalAt };
 
   const contextGroup: BarCell[] = [];
   if (view.contextUsedPercentage !== undefined) {
     const fraction = Math.max(0, Math.min(1, view.contextUsedPercentage / FULL_PERCENT));
-    const color = statusColor(fraction, true);
+    const color = statusColor(fraction, true, bands);
     const percent = `${color}${view.contextUsedPercentage.toFixed(1)}%${RESET}`;
     const tokens = view.contextTotalTokens !== undefined && view.contextWindowTokens !== undefined ? `${formatTokens(view.contextTotalTokens)}/${formatTokens(view.contextWindowTokens)} ` : "";
-    const cache = cacheShareText(view);
-    contextGroup.push(barCell(`Ctx ${tokens}`, ` ${percent}${cache}`, fraction));
+    const cache = cacheShareText(view, bands);
+    contextGroup.push(barCell(`Ctx ${tokens}`, ` ${percent}${cache}`, fraction, bands));
   }
 
   const quotaGroup: BarCell[] = [];
   const drawWindow = (label: string, fraction: number, resetsAt: string | undefined): void => {
     const clamped = Math.max(0, Math.min(1, fraction));
-    const color = statusColor(clamped, true);
-    quotaGroup.push(barCell(`${label} `, ` ${color}${(fraction * FULL_PERCENT).toFixed(1)}%${RESET} (${formatDuration(secondsUntil(resetsAt, nowMs))})`, clamped));
+    const color = statusColor(clamped, true, bands);
+    quotaGroup.push(barCell(`${label} `, ` ${color}${(fraction * FULL_PERCENT).toFixed(1)}%${RESET} (${formatDuration(secondsUntil(resetsAt, nowMs))})`, clamped, bands));
   };
   if (summary.quotaFamilies.length > 0) {
     // An Antigravity account's limits are per model family, so every family's window is drawn whichever model is in use.
@@ -312,10 +319,10 @@ export function renderStatuslineBlock(summary: StatuslineSummary, view: Statusli
     }
   } else {
     if (summary.fiveHourUsed !== undefined) {
-      drawWindow("5h", summary.fiveHourUsed / FULL_PERCENT, summary.fiveHourResetAt);
+      drawWindow(settings.fiveHourLabel, summary.fiveHourUsed / FULL_PERCENT, summary.fiveHourResetAt);
     }
     if (summary.sevenDayUsed !== undefined) {
-      drawWindow("Wk", summary.sevenDayUsed / FULL_PERCENT, summary.sevenDayResetAt);
+      drawWindow(settings.sevenDayLabel, summary.sevenDayUsed / FULL_PERCENT, summary.sevenDayResetAt);
     }
     // A provider outside Anthropic's unified rate-limit family (z.ai) reports its usage only through its own quota windows, which are drawn when no unified window is.
     if (summary.fiveHourUsed === undefined && summary.sevenDayUsed === undefined) {
@@ -330,6 +337,7 @@ export function renderStatuslineBlock(summary: StatuslineSummary, view: Statusli
   if (header.length > 0) {
     lines.push(layoutHeader(header, width, SEPARATOR));
   }
-  lines.push(...layoutBarGrid([contextGroup, quotaGroup], width, SEPARATOR, BAR_WIDTH));
+  const groups = { context: contextGroup, quota: quotaGroup };
+  lines.push(...layoutBarGrid(settings.bars.map((name) => groups[name]), width, SEPARATOR, settings.barWidth));
   return lines.join("\n");
 }

@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Command } from "commander";
 
 import { withExamples } from "../cli/commandDeps";
+import { resolveStatusline, STATUSLINE_ENV } from "../config/statusline";
 import type { LayoutPaths } from "../paths";
 import { listProviders } from "../providersStore";
 import { realFarmFs, realHeadroomSocketTrust } from "../realPorts";
@@ -15,6 +16,7 @@ import { fetchHeadroomSessionStats, headroomSessionIdOf, headroomTargetOf, realH
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import { readUsageLog } from "../usage/read";
 import { renderStatuslineBlock } from "./render";
+import { statuslineSettingsFromEnv } from "./settings";
 import { terminalWidthOf } from "./width";
 
 /** The payload fields the built-in statusline shows, in the Antigravity statusline's own selection: the model, the context window's use, its size, and the prompt cache's effectiveness. */
@@ -151,7 +153,9 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
         }
       }
       const view = { ...payloadViewOf(payload), ...(stackedUnderDefault ? { modelDisplayName: undefined } : {}) };
-      console.log(renderStatuslineBlock(summary, view, terminalWidthOf(payload, process.env), nowMs));
+      const rawSettings = process.env[STATUSLINE_ENV];
+      const settings = resolveStatusline(rawSettings === undefined || rawSettings === "" ? undefined : statuslineSettingsFromEnv(rawSettings, STATUSLINE_ENV));
+      console.log(renderStatuslineBlock(summary, view, terminalWidthOf(payload, process.env), nowMs, settings));
       }),
     ["$ agent-shim statusline  # a client's statusline setting names this; it renders or delegates"],
   );

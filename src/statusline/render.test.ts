@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { STATUSLINE_DEFAULTS } from "../config/statusline";
 import { renderStatuslineBlock, RESERVED_COLUMNS } from "./render";
 import type { StatuslineSummary } from "./enrich";
 
@@ -25,6 +26,11 @@ const ONE_PER_LINE_TERMINAL = 46;
 const PACKING_TERMINAL = 60;
 /** Wide enough for the context bar to span two columns of family windows, and too narrow for every bar to share one row. */
 const ALIGNED_TERMINAL = 104;
+/** Too narrow for the identity and the model to share a line, so the order they are listed in shows as the order of the lines. */
+const TWO_SEGMENT_LINE_TERMINAL = 24;
+/** A base bar width small enough for the context bar and both quota bars to share a row at `ALIGNED_TERMINAL`, and one too wide for them to. */
+const NARROW_BAR_CELLS = 4;
+const WIDE_BAR_CELLS = 30;
 
 const SUMMARY: StatuslineSummary = {
   identity: "antigravity",
@@ -309,5 +315,57 @@ describe("a dynamic mode's choice beside the model name", () => {
     const text = stripAnsi(renderStatuslineBlock(summary, VIEW, WIDE_TERMINAL, NOW_MS));
     expect(text).toContain("Sonnet 5.5 -> z/glm-5.3");
     expect(text).not.toContain("via ");
+  });
+});
+
+describe("statusline settings", () => {
+  const render = (settings: Partial<typeof STATUSLINE_DEFAULTS>, summary: StatuslineSummary = SUMMARY, terminalWidth = WIDE_TERMINAL): string =>
+    renderStatuslineBlock(summary, VIEW, terminalWidth, NOW_MS, { ...STATUSLINE_DEFAULTS, ...settings });
+
+  it("draws exactly what it drew before settings existed when every setting is the default", () => {
+    expect(render({})).toBe(renderStatuslineBlock(SUMMARY, VIEW, WIDE_TERMINAL, NOW_MS));
+  });
+
+  it("draws the header segments in the order listed and hides the ones left out", () => {
+    const header = stripAnsi(render({ header: ["identity", "model"] }, SUMMARY, TWO_SEGMENT_LINE_TERMINAL)).split("\n");
+    expect(header.slice(0, 2)).toEqual(["antigravity", "Sonnet 5.5"]);
+    expect(header.join("\n")).not.toContain("ada@example.com");
+  });
+
+  it("hides the whole header when the list is empty", () => {
+    const lines = stripAnsi(render({ header: [] })).split("\n");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("Ctx");
+  });
+
+  it("draws the bar groups in the order listed, and none when the list is empty", () => {
+    const quotaFirst = stripAnsi(render({ header: [], bars: ["quota", "context"] }, SUMMARY, ALIGNED_TERMINAL)).split("\n");
+    expect(quotaFirst.findIndex((line) => line.includes("5h"))).toBeLessThan(quotaFirst.findIndex((line) => line.includes("Ctx")));
+    expect(render({ header: [], bars: [] })).toBe("");
+    const quotaOnly = stripAnsi(render({ bars: ["quota"] }));
+    expect(quotaOnly).toContain("5h");
+    expect(quotaOnly).not.toContain("Ctx");
+  });
+
+  it("names the two subscription windows as set", () => {
+    const text = stripAnsi(render({ fiveHourLabel: "Session", sevenDayLabel: "Week" }));
+    expect(text).toContain("Session ");
+    expect(text).toContain("Week ");
+    expect(text).not.toContain("5h ");
+  });
+
+  it("moves the colour bands with the thresholds", () => {
+    const at = (used: number) => ({ ...SUMMARY, fiveHourUsed: used, sevenDayUsed: undefined });
+    const quota = (settings: Partial<typeof STATUSLINE_DEFAULTS>, used: number): string => render({ bars: ["quota"], ...settings }, at(used));
+    const usedBetweenWarnAndCritical = 60;
+    const text = `${String(usedBetweenWarnAndCritical)}.0%`;
+    expect(quota({}, usedBetweenWarnAndCritical)).toContain(`[${GREEN_CODE}m${text}`);
+    expect(quota({ warnAt: 50, criticalAt: 80 }, usedBetweenWarnAndCritical)).toContain(`[${YELLOW_CODE}m${text}`);
+    expect(quota({ warnAt: 50, criticalAt: 55 }, usedBetweenWarnAndCritical)).toContain(`[${RED_CODE}m${text}`);
+  });
+
+  it("sets the base width of a bar, which decides how many bars share a row", () => {
+    const rows = (barWidth: number): number => stripAnsi(render({ header: [], barWidth }, SUMMARY, ALIGNED_TERMINAL)).split("\n").length;
+    expect(rows(NARROW_BAR_CELLS)).toBeLessThan(rows(WIDE_BAR_CELLS));
   });
 });

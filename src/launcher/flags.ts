@@ -9,6 +9,8 @@ import { mergeAnthropicCustomHeaders } from "../headroom/headers";
 import { connectProxyUrl } from "../frontdoor/capability";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, SESSION_HEADER } from "../frontdoor/route";
 import type { FrontDoorUp, HeadroomUp } from "./ports";
+import { STATUSLINE_ENV, type StatuslineSettings } from "../config/statusline";
+import { checkedStatusline, statuslineSettingsFromEnv } from "../statusline/settings";
 import { checkedProxyBypass, withBypassHosts } from "./proxyBypass";
 
 /** The fully resolved launch flags for one launch. */
@@ -26,6 +28,8 @@ export interface ResolvedLaunchFlags {
   readonly delayMs: number;
   /** Hosts kept off the front door by adding them to the child's `NO_PROXY`, checked and without duplicates. */
   readonly proxyBypass: readonly string[];
+  /** How the session's built-in statusline looks, checked; absent when neither the environment nor the cascade sets any of it, in which case the statusline keeps its defaults. */
+  readonly statusline?: StatuslineSettings;
 }
 
 /** The one-off command-line forms of the four boolean launch flags, each undefined when neither its positive nor its `--no-` form was given. */
@@ -57,6 +61,7 @@ export interface ResolveLaunchFlagsParams {
  * This default-off posture is a deliberate change from the legacy bash tool, which passed `--dangerously-skip-permissions` unconditionally on every launch.
  */
 export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLaunchFlags {
+  const statusline = resolveStatuslineSettings(params);
   return {
     skipPermissions:
       params.flags?.skipPermissions ??
@@ -79,7 +84,17 @@ export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLa
     explain: params.flags?.explain ?? parseEnvBool("AGENT_SHIM_EXPLAIN", params.env.AGENT_SHIM_EXPLAIN) ?? params.cascade?.explain ?? false,
     delayMs: resolveDelayMs(params),
     proxyBypass: resolveProxyBypass(params),
+    ...(statusline === undefined ? {} : { statusline }),
   };
+}
+
+/** The statusline's settings: `AGENT_SHIM_STATUSLINE` (a JSON object; an empty one counts as unset) when set, else the cascade's `launch.statusline`, and undefined when neither is. */
+function resolveStatuslineSettings(params: Readonly<ResolveLaunchFlagsParams>): StatuslineSettings | undefined {
+  const fromEnv = params.env[STATUSLINE_ENV] === "" ? undefined : params.env[STATUSLINE_ENV];
+  if (fromEnv !== undefined) {
+    return statuslineSettingsFromEnv(fromEnv, STATUSLINE_ENV);
+  }
+  return params.cascade?.statusline === undefined ? undefined : checkedStatusline(params.cascade.statusline, "launch.statusline");
 }
 
 /** The hosts to keep off the door: `AGENT_SHIM_PROXY_BYPASS` (a comma-separated list; an empty one counts as unset) when set, else the cascade's `launch.proxyBypass`. The command line has no form of its own: the environment variable is the one-off. */
@@ -180,6 +195,8 @@ export interface BuildEnvParams {
   readonly tierModels?: Readonly<Partial<Record<ClaudeTier, string>>>;
   /** Hosts to keep off the front door, merged into the child's `NO_PROXY` and `no_proxy` beside loopback. Only a launch that rides the door has a proxy to bypass. */
   readonly proxyBypass?: readonly string[];
+  /** The statusline settings to export to the session as `AGENT_SHIM_STATUSLINE`, when the launch configures any. */
+  readonly statusline?: StatuslineSettings;
 }
 
 /**
@@ -262,6 +279,10 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
     const bypassed = [...LOOPBACK_HOSTS, ...(params.proxyBypass ?? [])];
     env.NO_PROXY = withBypassHosts(env.NO_PROXY, bypassed);
     env.no_proxy = withBypassHosts(env.no_proxy, bypassed);
+  }
+
+  if (params.statusline !== undefined) {
+    env[STATUSLINE_ENV] = JSON.stringify(params.statusline);
   }
 
   return env;

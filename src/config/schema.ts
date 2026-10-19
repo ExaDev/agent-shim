@@ -1,4 +1,5 @@
 import { proxyBypassSyntaxProblem } from "./proxyBypass";
+import { StatuslineSchema } from "./statusline";
 import path from "node:path";
 
 import { z } from "zod";
@@ -120,6 +121,8 @@ const LaunchSchema = z.strictObject({
       }),
     )
     .optional(),
+  /** How the launched session's built-in statusline looks, exported to it as `AGENT_SHIM_STATUSLINE`. Merged key by key across layers, unlike the flags above, which are single values. */
+  statusline: StatuslineSchema.optional(),
 });
 export type LaunchFlags = z.infer<typeof LaunchSchema>;
 
