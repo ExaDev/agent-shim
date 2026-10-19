@@ -1,5 +1,5 @@
-import { ESCAPE } from "./ansi";
 import type { BarCell } from "./barGrid";
+import { RESET, type Palette } from "./palette";
 
 const SECONDS_PER_MINUTE = 60;
 const MINUTES_PER_HOUR = 60;
@@ -11,37 +11,43 @@ export const TWENTY = 20;
 export const FULL_PERCENT = 100;
 export const ONE_PERCENT = 1;
 /** The colour bands on a used fraction: red from `criticalAt`, yellow from `warnAt` (whole percentages), green under it. The defaults are the Antigravity statusline's own (red from 90%, yellow from 70%). */
-export interface ColourBands {
+interface ColourBands {
   readonly warnAt: number;
   readonly criticalAt: number;
 }
 
-export const RESET = `${ESCAPE}[0m`;
-const DIM = `${ESCAPE}[90m`;
-const GREEN = `${ESCAPE}[32m`;
-const YELLOW = `${ESCAPE}[33m`;
-const RED = `${ESCAPE}[31m`;
 
-function colorize(): boolean {
-  return process.env.NO_COLOR === undefined;
+/** `text` in the escape sequence `color`, ended with a reset; unchanged when `color` is empty, because a reset with no colour before it would put an escape in text that has none. */
+export function withColor(color: string, text: string): string {
+  return color === "" ? text : `${color}${text}${RESET}`;
 }
 
-export function statusColor(fraction: number, isUsedMetric: boolean, bands: ColourBands): string {
-  if (!colorize()) {
-    return "";
-  }
-  const yellowAt = bands.warnAt / FULL_PERCENT;
-  const redAt = bands.criticalAt / FULL_PERCENT;
+/** How a bar and its figures are coloured: the band thresholds, the palette, which role colours the bar below the warning threshold, and the characters that draw it. */
+export interface BarStyle {
+  readonly bands: ColourBands;
+  readonly palette: Palette;
+  /** The role of a bar below its warning threshold: the context bar and the quota bars have their own. */
+  readonly okRole: "context" | "usage";
+  readonly filled: string;
+  readonly empty: string;
+}
+
+/** The escape sequence that colours a fraction of use by its band: critical from `criticalAt`, the warning colour from `warnAt`, and the style's own colour under it. For a measure that is better the higher it is (`isUsedMetric` false) the bands are mirrored. */
+export function statusColor(fraction: number, isUsedMetric: boolean, style: BarStyle): string {
+  const yellowAt = style.bands.warnAt / FULL_PERCENT;
+  const redAt = style.bands.criticalAt / FULL_PERCENT;
+  const warningRole = style.okRole === "usage" ? "usageWarning" : "warning";
+  const { ansi } = style.palette;
   if (isUsedMetric) {
     if (fraction >= redAt) {
-      return RED;
+      return ansi("critical");
     }
-    return fraction >= yellowAt ? YELLOW : GREEN;
+    return fraction >= yellowAt ? ansi(warningRole) : ansi(style.okRole);
   }
   if (fraction <= 1 - redAt) {
-    return RED;
+    return ansi("critical");
   }
-  return fraction <= 1 - yellowAt ? YELLOW : GREEN;
+  return fraction <= 1 - yellowAt ? ansi(warningRole) : ansi(style.okRole);
 }
 
 export function formatTokens(num: number): string {
@@ -82,14 +88,18 @@ export function secondsUntil(resetAt: string | undefined, nowMs: number): number
 }
 
 /** A bar that fills with `fraction`, coloured by its band, `cells` fill positions wide between its brackets. */
-function drawBar(fraction: number, cells: number, bands: ColourBands): string {
+function drawBar(fraction: number, cells: number, style: BarStyle): string {
   const clamped = Math.max(0, Math.min(1, fraction));
   const filled = Math.round(clamped * cells);
-  const color = statusColor(clamped, true, bands);
-  return color === "" ? `[${"█".repeat(filled)}${"░".repeat(cells - filled)}]` : `[${color}${"█".repeat(filled)}${DIM}${"░".repeat(cells - filled)}${RESET}]`;
+  const color = statusColor(clamped, true, style);
+  const emptyColor = style.palette.ansi("empty");
+  const body = `${style.filled.repeat(filled)}${style.empty.repeat(cells - filled)}`;
+  if (color === "" && emptyColor === "") {
+    return `[${body}]`;
+  }
+  return `[${color}${style.filled.repeat(filled)}${emptyColor}${style.empty.repeat(cells - filled)}${RESET}]`;
 }
 
-export function barCell(prefix: string, suffix: string, fraction: number, bands: ColourBands): BarCell {
-  return { prefix, suffix, draw: (cells) => drawBar(fraction, cells, bands) };
+export function barCell(prefix: string, suffix: string, fraction: number, style: BarStyle): BarCell {
+  return { prefix, suffix, draw: (cells) => drawBar(fraction, cells, style) };
 }
-

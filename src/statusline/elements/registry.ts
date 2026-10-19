@@ -1,4 +1,5 @@
 import type { STATUSLINE_HEADER_SEGMENTS, STATUSLINE_ROWS } from "../../config/statusline";
+import type { ColourRole } from "../palette";
 import type { RenderContext, RowOutput } from "./context";
 import { accountSegment } from "./header/account";
 import { headroomSegment } from "./header/headroom";
@@ -15,6 +16,16 @@ export interface ElementRegistry {
   readonly header: Readonly<Record<(typeof STATUSLINE_HEADER_SEGMENTS)[number], (context: RenderContext) => string | undefined>>;
   readonly rows: Readonly<Record<(typeof STATUSLINE_ROWS)[number], (context: RenderContext) => RowOutput>>;
 }
+
+/** The colour role each header segment is painted in. */
+export const HEADER_ROLES: Readonly<Record<(typeof STATUSLINE_HEADER_SEGMENTS)[number], ColourRole>> = {
+  model: "model",
+  provider: "model",
+  route: "label",
+  account: "label",
+  identity: "label",
+  headroom: "label",
+};
 
 /** Every element the built-in statusline can draw. A setting can only name an element listed here, and the schema's lists of names are what keep the two in step. */
 export const ELEMENTS: ElementRegistry = {

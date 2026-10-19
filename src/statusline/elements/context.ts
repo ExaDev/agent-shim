@@ -1,7 +1,8 @@
 import type { ResolvedStatusline } from "../../config/statusline";
 import type { StatuslineSummary } from "../enrich";
 import type { BarCell } from "../barGrid";
-import type { ColourBands } from "../style";
+import type { Palette } from "../palette";
+import type { BarStyle } from "../style";
 
 /** The payload fields the built-in statusline shows: the model, the context window's use, and the prompt cache's effectiveness. */
 export interface StatuslinePayloadView {
@@ -14,13 +15,18 @@ export interface StatuslinePayloadView {
   readonly freshInputTokens: number | undefined;
 }
 
-/** Everything one element needs to draw itself: what the door knows about the session, the client's payload, the clock, and the settings (with the colour bands taken out of them). */
+/** Everything one element needs to draw itself: what the door knows about the session, the client's payload, the clock, the settings, and the palette they describe. */
 export interface RenderContext {
   readonly summary: StatuslineSummary;
   readonly view: StatuslinePayloadView;
   readonly nowMs: number;
   readonly settings: ResolvedStatusline;
-  readonly bands: ColourBands;
+  readonly palette: Palette;
+}
+
+/** How a bar is coloured and drawn under the settings, for the row whose bar is below its warning threshold in `okRole`'s colour. */
+export function barStyleOf({ settings, palette }: RenderContext, okRole: BarStyle["okRole"]): BarStyle {
+  return { bands: settings.bands, palette, okRole, filled: settings.bar.filled, empty: settings.bar.empty };
 }
 
 /** What a row draws: bars, which are laid out on one grid with the bars of the rows beside them, or lines of text, which are drawn as they are. A row with nothing to show returns no cells or no lines. */

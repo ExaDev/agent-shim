@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { resolveStatusline, type StatuslineSettings } from "../config/statusline";
 import { ELEMENTS, type ElementRegistry } from "./elements/registry";
+import { ESCAPE } from "./ansi";
+import { RESET } from "./palette";
 import { renderStatuslineBlock, RESERVED_COLUMNS } from "./render";
 import type { StatuslineSummary } from "./enrich";
 
@@ -31,6 +33,9 @@ const ALIGNED_TERMINAL = 104;
 const TWO_SEGMENT_LINE_TERMINAL = 24;
 /** A base bar width small enough for the context bar and both quota bars to share a row at `ALIGNED_TERMINAL`, and one too wide for them to. */
 const NARROW_BAR_CELLS = 4;
+/** A use between the default warning and critical thresholds, and one above the critical one. */
+const USED_AT_WARNING = 80;
+const USED_AT_CRITICAL = 95;
 const WIDE_BAR_CELLS = 30;
 
 const SUMMARY: StatuslineSummary = {
@@ -375,5 +380,38 @@ describe("statusline settings", () => {
     const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, WIDE_TERMINAL, NOW_MS, resolveStatusline({ layout: { header: [] } }), withNotes)).split("\n");
     expect(lines[0]).toContain("Ctx");
     expect(lines.slice(1)).toEqual(["first note", "second note"]);
+  });
+
+  it("paints each segment and label in its colour role, and leaves a default role as plain text", () => {
+    const painted = render({ colours: { model: "cyan", label: 208 } }, SUMMARY, WIDE_TERMINAL);
+    expect(painted).toContain(`${ESCAPE}[36mSonnet 5.5${RESET}`);
+    expect(painted).toContain(`${ESCAPE}[38;5;208mantigravity${RESET}`);
+    expect(painted).toContain(`${ESCAPE}[38;5;208m5h ${RESET}`);
+    expect(render({})).not.toContain(`${ESCAPE}[36m`);
+  });
+
+  it("colours a bar below its warning threshold in the role of its row", () => {
+    const below = { ...SUMMARY, fiveHourUsed: 10, sevenDayUsed: undefined };
+    expect(render({ layout: { rows: ["quota"] }, colours: { usage: "blue" } }, below)).toContain(`${ESCAPE}[34m`);
+    expect(render({ layout: { rows: ["context"] }, colours: { usage: "blue" } }, below)).not.toContain(`${ESCAPE}[34m`);
+    expect(render({ layout: { rows: ["context"] }, colours: { context: "magenta" } }, below)).toContain(`${ESCAPE}[35m`);
+  });
+
+  it("colours a bar at its warning and critical thresholds in their own roles", () => {
+    const at = (used: number) => ({ ...SUMMARY, fiveHourUsed: used, sevenDayUsed: undefined });
+    const colours = { usage: "blue", usageWarning: "magenta", critical: "cyan" } as const;
+    expect(render({ layout: { rows: ["quota"] }, colours }, at(USED_AT_WARNING))).toContain(`${ESCAPE}[35m${String(USED_AT_WARNING)}.0%`);
+    expect(render({ layout: { rows: ["quota"] }, colours }, at(USED_AT_CRITICAL))).toContain(`${ESCAPE}[36m${String(USED_AT_CRITICAL)}.0%`);
+  });
+
+  it("draws a bar with the characters set and colours its unused part in the empty role", () => {
+    const text = render({ layout: { header: [], rows: ["quota"] }, bar: { filled: "#", empty: "-" }, colours: { empty: "red" } });
+    expect(text).toContain(`${ESCAPE}[31m-`);
+    expect(stripAnsi(text)).toMatch(/\[#+-+\]/);
+  });
+
+  it("draws plain text with colour off, whatever the colour settings are", () => {
+    const text = renderStatuslineBlock(SUMMARY, VIEW, WIDE_TERMINAL, NOW_MS, resolveStatusline({ colours: { model: "red", label: "#ff0000" } }), ELEMENTS, { NO_COLOR: "1" });
+    expect(text).not.toContain(`${ESCAPE}[`);
   });
 });
