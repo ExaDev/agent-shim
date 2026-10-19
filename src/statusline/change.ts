@@ -16,7 +16,7 @@ function keyNamed(path: string): StatuslineKey {
   return found;
 }
 
-/** The value a `<setting>=<value>` option names, written the way the setting's kind is written: a whole number, text, one choice, a colour (a name, a palette index or #rrggbb), or a comma-separated list of choices (an empty value is the empty list). The value's own validity is the schema's to judge. */
+/** The value a `<setting>=<value>` option names, written the way the setting's kind is written: a whole number, `true` or `false`, text, one choice, a colour (a name, a palette index or #rrggbb), or a comma-separated list of choices (an empty value is the empty list). The value's own validity is the schema's to judge. */
 export function parseStatuslineAssignment(text: string): { readonly path: string; readonly value: unknown } {
   const split = text.indexOf("=");
   if (split < 1) {
@@ -33,6 +33,11 @@ export function parseStatuslineAssignment(text: string): { readonly path: string
       }
       return { path, value: number };
     }
+    case "boolean":
+      if (raw !== "true" && raw !== "false") {
+        throw new UsageError(`${path}: "${raw}" is not true or false.`);
+      }
+      return { path, value: raw === "true" };
     case "text":
     case "choice":
       return { path, value: raw };

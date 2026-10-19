@@ -159,7 +159,9 @@
                       "route",
                       "account",
                       "identity",
-                      "headroom"
+                      "headroom",
+                      "project",
+                      "vcs"
                     ]
                   },
                   "description": "The header segments to draw, in drawing order; a segment left out is hidden, and an empty list hides the header."
@@ -170,7 +172,9 @@
                     "type": "string",
                     "enum": [
                       "context",
-                      "quota"
+                      "quota",
+                      "addedDirs",
+                      "gitFiles"
                     ]
                   },
                   "description": "The rows to draw below the header, in drawing order; a row left out is hidden, and an empty list hides every row."
@@ -532,6 +536,201 @@
                     }
                   ],
                   "description": "The colour of the unused part of a bar."
+                },
+                "project": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "dim",
+                        "black",
+                        "red",
+                        "green",
+                        "yellow",
+                        "blue",
+                        "magenta",
+                        "cyan",
+                        "white",
+                        "brightBlack",
+                        "brightRed",
+                        "brightGreen",
+                        "brightYellow",
+                        "brightBlue",
+                        "brightMagenta",
+                        "brightCyan",
+                        "brightWhite"
+                      ]
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^#[0-9a-fA-F]{6}$"
+                    }
+                  ],
+                  "description": "The colour of the project path segment."
+                },
+                "git": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "dim",
+                        "black",
+                        "red",
+                        "green",
+                        "yellow",
+                        "blue",
+                        "magenta",
+                        "cyan",
+                        "white",
+                        "brightBlack",
+                        "brightRed",
+                        "brightGreen",
+                        "brightYellow",
+                        "brightBlue",
+                        "brightMagenta",
+                        "brightCyan",
+                        "brightWhite"
+                      ]
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^#[0-9a-fA-F]{6}$"
+                    }
+                  ],
+                  "description": "The colour of the version control segment's wrapper text (`git:(` and `)`)."
+                },
+                "gitBranch": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "dim",
+                        "black",
+                        "red",
+                        "green",
+                        "yellow",
+                        "blue",
+                        "magenta",
+                        "cyan",
+                        "white",
+                        "brightBlack",
+                        "brightRed",
+                        "brightGreen",
+                        "brightYellow",
+                        "brightBlue",
+                        "brightMagenta",
+                        "brightCyan",
+                        "brightWhite"
+                      ]
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^#[0-9a-fA-F]{6}$"
+                    }
+                  ],
+                  "description": "The colour of the branch or bookmark and its ahead, behind and dirty markers."
+                }
+              },
+              "additionalProperties": false
+            },
+            "project": {
+              "type": "object",
+              "properties": {
+                "pathLevels": {
+                  "type": "string",
+                  "enum": [
+                    "1",
+                    "2",
+                    "3",
+                    "full"
+                  ],
+                  "description": "How many trailing directories of the working directory the project segment shows: 1, 2 or 3, or full for the whole absolute path."
+                },
+                "addedDirsLayout": {
+                  "type": "string",
+                  "enum": [
+                    "inline",
+                    "row"
+                  ],
+                  "description": "Where the directories added to the session are drawn: inline, as +name after the project path in the project segment, or row, as an Added dirs line when layout.rows lists addedDirs."
+                }
+              },
+              "additionalProperties": false
+            },
+            "git": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Whether the vcs segment and the gitFiles row read the working directory's git status."
+                },
+                "showDirty": {
+                  "type": "boolean",
+                  "description": "Whether the branch is followed by * when the working tree has uncommitted changes."
+                },
+                "showAheadBehind": {
+                  "type": "boolean",
+                  "description": "Whether the branch is followed by the commits ahead of (up-arrow) and behind (down-arrow) its upstream."
+                },
+                "showLineDiff": {
+                  "type": "boolean",
+                  "description": "Whether the segment shows the total lines added and removed against HEAD, as [+a -d]."
+                },
+                "branchOverflow": {
+                  "type": "string",
+                  "enum": [
+                    "truncate",
+                    "wrap"
+                  ],
+                  "description": "How the vcs segment sits beside the project segment when they are listed next to each other: truncate keeps them as one unit the client cuts off at the terminal's edge, and wrap lets the line break between them."
+                },
+                "pushWarnAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "The count of unpushed commits at which the ahead marker takes colours.warning; 0 turns it off."
+                },
+                "pushCriticalAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "The count of unpushed commits at which the ahead marker takes colours.critical; 0 turns it off."
+                }
+              },
+              "additionalProperties": false
+            },
+            "jj": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Whether the vcs segment reads a Jujutsu repository's status, instead of git's, when the working directory is inside one."
+                },
+                "showDirty": {
+                  "type": "boolean",
+                  "description": "Whether the bookmark or change id is followed by * when the working-copy commit differs from its parent."
+                },
+                "showConflicts": {
+                  "type": "boolean",
+                  "description": "Whether the segment shows !conflict when the working-copy commit has an unresolved conflict."
                 }
               },
               "additionalProperties": false

@@ -71,6 +71,40 @@ describe("StatuslineSchema colours and bar characters", () => {
   });
 });
 
+describe("StatuslineSchema project and version control settings", () => {
+  it("accepts each project, git and jj key with a value of its kind", () => {
+    const settings = {
+      project: { pathLevels: "full", addedDirsLayout: "row" },
+      git: { enabled: false, showDirty: false, showAheadBehind: true, showLineDiff: true, branchOverflow: "wrap", pushWarnAt: 2, pushCriticalAt: 5 },
+      jj: { enabled: true, showDirty: false, showConflicts: false },
+      colours: { project: "cyan", git: 5, gitBranch: "#00ff7f" },
+      layout: { header: ["project", "vcs"], rows: ["addedDirs", "gitFiles"] },
+    };
+    expect(StatuslineSchema.parse(settings)).toEqual(settings);
+  });
+
+  it("refuses a path depth, a layout and an overflow mode outside their choices", () => {
+    for (const bad of [{ project: { pathLevels: "4" } }, { project: { pathLevels: 2 } }, { project: { addedDirsLayout: "line" } }, { git: { branchOverflow: "clip" } }]) {
+      expect(StatuslineSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it("refuses a flag that is not a boolean and a push threshold that is negative or fractional", () => {
+    for (const bad of [{ git: { enabled: "yes" } }, { jj: { showDirty: 1 } }, { git: { pushWarnAt: -1 } }, { git: { pushCriticalAt: 1.5 } }]) {
+      expect(StatuslineSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it("keeps the segments and rows drawn by default to the ones drawn before the project and version control elements existed", () => {
+    expect(STATUSLINE_DEFAULTS.layout).toEqual({ header: ["model", "provider", "route", "account", "identity", "headroom"], rows: ["context", "quota"] });
+  });
+
+  it("defaults git on and jj off, as claude-hud does", () => {
+    expect(STATUSLINE_DEFAULTS.git.enabled).toBe(true);
+    expect(STATUSLINE_DEFAULTS.jj.enabled).toBe(false);
+  });
+});
+
 describe("mergeStatuslineSettings", () => {
   it("merges groups key by key and lets a list replace the list beneath it", () => {
     const merged = mergeStatuslineSettings({ bands: { warnAt: 60, criticalAt: 85 }, layout: { header: ["model", "provider"] } }, { bands: { criticalAt: 95 }, layout: { header: ["identity"] } });

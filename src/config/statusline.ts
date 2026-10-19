@@ -1,10 +1,10 @@
 import { z } from "zod";
 
 /** The segments of the statusline's header, in the order they are drawn unless a setting reorders them. */
-export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom"] as const;
+export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs"] as const;
 
-/** The rows below the header, in the order they are drawn unless a setting reorders them: the context window's bar, and the quota windows' bars. */
-export const STATUSLINE_ROWS = ["context", "quota"] as const;
+/** The rows below the header, in the order they are drawn unless a setting reorders them: the context window's bar, the quota windows' bars, the added directories and the files the working tree has changed. */
+export const STATUSLINE_ROWS = ["context", "quota", "addedDirs", "gitFiles"] as const;
 
 /** The named colours, as the terminal's own palette: `default` leaves the text in the terminal's colour, and `dim` is the faint attribute rather than a colour. */
 export const STATUSLINE_COLOUR_NAMES = [
@@ -27,6 +27,13 @@ export const STATUSLINE_COLOUR_NAMES = [
   "brightCyan",
   "brightWhite",
 ] as const;
+
+/** The segments and rows drawn when no layer sets `layout`: the ones the statusline has always drawn, so a segment or row added later stays hidden until a layer lists it. */
+const DEFAULT_HEADER_SEGMENTS: readonly (typeof STATUSLINE_HEADER_SEGMENTS)[number][] = ["model", "provider", "route", "account", "identity", "headroom"];
+const DEFAULT_ROWS: readonly (typeof STATUSLINE_ROWS)[number][] = ["context", "quota"];
+
+/** How many directory levels the project path shows: one to three, or the whole path. Written as text so that every value of a setting is one of a closed set of choices. */
+export const STATUSLINE_PATH_LEVELS = ["1", "2", "3", "full"] as const;
 
 const MAX_PERCENT = 100;
 /** The highest index of the 256-colour palette. */
@@ -91,6 +98,27 @@ const SHAPES = {
     model: colourValue.describe("The colour of the model and provider segments."),
     label: colourValue.describe("The colour of labels and secondary text: row labels, and the route, account, identity and headroom segments."),
     empty: colourValue.describe("The colour of the unused part of a bar."),
+    project: colourValue.describe("The colour of the project path segment."),
+    git: colourValue.describe("The colour of the version control segment's wrapper text (`git:(` and `)`)."),
+    gitBranch: colourValue.describe("The colour of the branch or bookmark and its ahead, behind and dirty markers."),
+  },
+  project: {
+    pathLevels: z.enum(STATUSLINE_PATH_LEVELS).describe("How many trailing directories of the working directory the project segment shows: 1, 2 or 3, or full for the whole absolute path."),
+    addedDirsLayout: z.enum(["inline", "row"]).describe("Where the directories added to the session are drawn: inline, as +name after the project path in the project segment, or row, as an Added dirs line when layout.rows lists addedDirs."),
+  },
+  git: {
+    enabled: z.boolean().describe("Whether the vcs segment and the gitFiles row read the working directory's git status."),
+    showDirty: z.boolean().describe("Whether the branch is followed by * when the working tree has uncommitted changes."),
+    showAheadBehind: z.boolean().describe("Whether the branch is followed by the commits ahead of (up-arrow) and behind (down-arrow) its upstream."),
+    showLineDiff: z.boolean().describe("Whether the segment shows the total lines added and removed against HEAD, as [+a -d]."),
+    branchOverflow: z.enum(["truncate", "wrap"]).describe("How the vcs segment sits beside the project segment when they are listed next to each other: truncate keeps them as one unit the client cuts off at the terminal's edge, and wrap lets the line break between them."),
+    pushWarnAt: z.number().int().min(0).describe("The count of unpushed commits at which the ahead marker takes colours.warning; 0 turns it off."),
+    pushCriticalAt: z.number().int().min(0).describe("The count of unpushed commits at which the ahead marker takes colours.critical; 0 turns it off."),
+  },
+  jj: {
+    enabled: z.boolean().describe("Whether the vcs segment reads a Jujutsu repository's status, instead of git's, when the working directory is inside one."),
+    showDirty: z.boolean().describe("Whether the bookmark or change id is followed by * when the working-copy commit differs from its parent."),
+    showConflicts: z.boolean().describe("Whether the segment shows !conflict when the working-copy commit has an unresolved conflict."),
   },
 };
 
@@ -101,6 +129,9 @@ export const StatuslineSchema = z.strictObject({
   labels: z.strictObject(SHAPES.labels).partial().optional(),
   bar: z.strictObject(SHAPES.bar).partial().optional(),
   colours: z.strictObject(SHAPES.colours).partial().optional(),
+  project: z.strictObject(SHAPES.project).partial().optional(),
+  git: z.strictObject(SHAPES.git).partial().optional(),
+  jj: z.strictObject(SHAPES.jj).partial().optional(),
 });
 export type StatuslineSettings = z.infer<typeof StatuslineSchema>;
 
@@ -111,12 +142,15 @@ export const ResolvedStatuslineSchema = z.strictObject({
   labels: z.strictObject(SHAPES.labels),
   bar: z.strictObject(SHAPES.bar),
   colours: z.strictObject(SHAPES.colours),
+  project: z.strictObject(SHAPES.project),
+  git: z.strictObject(SHAPES.git),
+  jj: z.strictObject(SHAPES.jj),
 });
 export type ResolvedStatusline = z.infer<typeof ResolvedStatuslineSchema>;
 
 /** What the statusline draws when no layer sets a key. */
 export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
-  layout: { header: [...STATUSLINE_HEADER_SEGMENTS], rows: [...STATUSLINE_ROWS] },
+  layout: { header: [...DEFAULT_HEADER_SEGMENTS], rows: [...DEFAULT_ROWS] },
   bands: { warnAt: 70, criticalAt: 90 },
   labels: { fiveHour: "5h", sevenDay: "Wk" },
   bar: { width: 10, filled: "█", empty: "░" },
@@ -129,7 +163,13 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
     model: "default",
     label: "default",
     empty: "brightBlack",
+    project: "yellow",
+    git: "magenta",
+    gitBranch: "cyan",
   },
+  project: { pathLevels: "1", addedDirsLayout: "inline" },
+  git: { enabled: true, showDirty: true, showAheadBehind: false, showLineDiff: false, branchOverflow: "truncate", pushWarnAt: 0, pushCriticalAt: 0 },
+  jj: { enabled: false, showDirty: true, showConflicts: true },
 };
 
 /** A plain JSON object, narrowed so its keys can be read without an assertion. */

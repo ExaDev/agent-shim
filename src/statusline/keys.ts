@@ -2,8 +2,8 @@ import { z } from "zod";
 
 import { isPlainObject, ResolvedStatuslineSchema, STATUSLINE_COLOUR_NAMES, STATUSLINE_DEFAULTS } from "../config/statusline";
 
-/** How a setting's value is written: `choice` is one of a closed set, `list` an ordered list of such choices, and `colour` a colour name, a palette index from 0 to 255 or `#rrggbb`. */
-type StatuslineKeyKind = "integer" | "text" | "choice" | "list" | "colour";
+/** How a setting's value is written: `boolean` is `true` or `false`, `choice` is one of a closed set, `list` an ordered list of such choices, and `colour` a colour name, a palette index from 0 to 255 or `#rrggbb`. */
+type StatuslineKeyKind = "integer" | "boolean" | "text" | "choice" | "list" | "colour";
 
 /** One statusline setting, as the schema declares it. */
 export interface StatuslineKey {
@@ -32,6 +32,9 @@ function keyOf(path: readonly string[], leaf: z.ZodType): StatuslineKey {
   const common = { path: path.join("."), description: leaf.description ?? "", defaultValue: valueAt(STATUSLINE_DEFAULTS, path) };
   if (leaf instanceof z.ZodNumber) {
     return { ...common, kind: "integer", choices: [] };
+  }
+  if (leaf instanceof z.ZodBoolean) {
+    return { ...common, kind: "boolean", choices: [] };
   }
   if (leaf instanceof z.ZodString) {
     return { ...common, kind: "text", choices: [] };
