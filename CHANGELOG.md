@@ -1,3 +1,9 @@
+## [11.52.0](https://github.com/ExaDev/agent-shim/compare/v11.51.0...v11.52.0) (2026-10-19)
+
+### Features
+
+* **statusline:** colour the statusline by role and choose the bar characters ([fe5746c](https://github.com/ExaDev/agent-shim/commit/fe5746c768670756612635fcd75ef8d755063f71)), references [#rrggbb](https://github.com/ExaDev/agent-shim/issues/rrggbb)
+
 ## [11.51.0](https://github.com/ExaDev/agent-shim/compare/v11.50.2...v11.51.0) (2026-10-19)
 
 ### Features
