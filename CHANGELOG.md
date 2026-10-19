@@ -1,3 +1,9 @@
+## [11.48.0](https://github.com/ExaDev/agent-shim/compare/v11.47.0...v11.48.0) (2026-10-19)
+
+### Features
+
+* **launcher:** keep configured hosts off the front door ([4dcfcc9](https://github.com/ExaDev/agent-shim/commit/4dcfcc957fa65efb7d5d8b858946d1943513ba27))
+
 ## [11.47.0](https://github.com/ExaDev/agent-shim/compare/v11.46.0...v11.47.0) (2026-10-19)
 
 ### Features
