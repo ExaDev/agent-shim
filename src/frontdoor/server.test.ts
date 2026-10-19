@@ -48,7 +48,7 @@ function refuses(status: number, message: string): PipelineDeps["resolveRoute"] 
 }
 
 /** Starts a front door on a free port (or the sticky one, for restart tests) with the given route resolution. */
-async function startDoor(resolveRoute: PipelineDeps["resolveRoute"], preferredPort?: number): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly port: number }> {
+async function startDoor(resolveRoute: PipelineDeps["resolveRoute"], preferredPort?: number): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly drain: () => Promise<void>; readonly port: number }> {
   const logs: string[] = [];
   const server = createFrontDoorServer(
     async (request) => {
@@ -59,11 +59,11 @@ async function startDoor(resolveRoute: PipelineDeps["resolveRoute"], preferredPo
     },
   );
   const handle = await listenFrontDoor(server, preferredPort === undefined ? {} : { preferredPort });
-  return { url: `http://127.0.0.1:${String(handle.port)}`, port: handle.port, close: handle.close };
+  return { url: `http://127.0.0.1:${String(handle.port)}`, port: handle.port, close: handle.close, drain: handle.drain };
 }
 
 /** Starts a front door whose routes come from the provider files in `files`, with a recording fake upstream for the codex translation. */
-async function startProviderDoor(files: Record<string, unknown>, preferredPort?: number): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly port: number; readonly calls: readonly RecordedCall[] }> {
+async function startProviderDoor(files: Record<string, unknown>, preferredPort?: number): Promise<{ readonly url: string; readonly close: () => Promise<void>; readonly drain: () => Promise<void>; readonly port: number; readonly calls: readonly RecordedCall[] }> {
   const upstream = recordingFetch(() => fakeResponse({ events: TEXT_TURN }));
   const ports: Omit<CodexRoutePorts, "loadProvider"> = {
     upstreams: sameUpstreamForEveryLogin({ fetch: upstream.fetch, auth: fakeAuth(), timers: { after: () => () => undefined }, randomId: () => "random" }),
@@ -400,6 +400,94 @@ async function requestTrusting(port: number, ca: string, headers: Readonly<Recor
     request.end(MESSAGES_BODY);
   });
 }
+
+describe("draining the listener", () => {
+  /** A route that writes its first chunk, holds until released, then writes the rest: a response in flight when the drain begins. */
+  function holdingRoute(gate: Readonly<Promise<void>>): FrontDoorRoute {
+    return {
+      name: "hold",
+      headroomEligible: false,
+      headroomUpstream: undefined,
+      serve: async (_request, response) => {
+        response.start(HTTP_STATUS.ok, { "Content-Type": "text/plain" });
+        await response.write("first");
+        await gate;
+        await response.write("second");
+        response.end();
+      },
+    };
+  }
+
+  const refusedConnection = async (port: number): Promise<string> =>
+    await new Promise<string>((resolve) => {
+      const probe = net.connect(port, "127.0.0.1");
+      probe.once("error", (error: NodeJS.ErrnoException) => {
+        resolve(error.code ?? "error");
+      });
+      probe.once("connect", () => {
+        probe.destroy();
+        resolve("accepted");
+      });
+    });
+
+  it("releases the port at once, lets a response already being written finish, and resolves only after it has", async () => {
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const door = await startDoor(resolves(holdingRoute(gate)));
+    try {
+      const response = await fetch(`${door.url}/providers/x/v1/messages`, { method: "POST", body: "{}", headers: { [AUTH_HEADER]: LAUNCH_TOKEN } });
+      const reader: ReadableStreamDefaultReader<Uint8Array> | undefined = response.body?.getReader();
+      if (reader === undefined) {
+        throw new Error("no response body");
+      }
+      const decoder = new TextDecoder();
+      const nextChunk = async (): Promise<string> => decoder.decode((await reader.read()).value);
+      expect(await nextChunk()).toBe("first");
+
+      let drained = false;
+      const draining = door.drain().then(() => {
+        drained = true;
+      });
+      expect(await refusedConnection(door.port)).toBe("ECONNREFUSED");
+      await new Promise((resolve) => {
+        setTimeout(resolve, SETTLE_MS);
+      });
+      expect(drained).toBe(false);
+
+      open();
+      expect(await nextChunk()).toBe("second");
+      await draining;
+      expect(drained).toBe(true);
+    } finally {
+      open();
+      await door.close();
+    }
+  });
+
+  it("closes a keep-alive connection that is idle, so its client reconnects to whatever now holds the port", async () => {
+    const door = await startDoor(refuses(HTTP_STATUS.notFound, "unrouted"));
+    try {
+      const socket = net.connect(door.port, "127.0.0.1");
+      const closed = new Promise<void>((resolve) => {
+        socket.once("close", () => {
+          resolve();
+        });
+      });
+      socket.write("GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n\r\n");
+      await new Promise<void>((resolve) => {
+        socket.once("data", () => {
+          resolve();
+        });
+      });
+      await door.drain();
+      await closed;
+    } finally {
+      await door.close();
+    }
+  });
+});
 
 describe("the TLS provider listener", () => {
   let ca: CaMaterial;

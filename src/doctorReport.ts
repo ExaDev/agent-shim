@@ -26,7 +26,7 @@ import { reportableAllowlistFileProblem } from "./headroom/socket";
 import { pushHeadroomAllowlist, pushRefusedAllowlistFile, type DoctorHeadroomAllowlist } from "./doctorHeadroomAllowlist";
 import { HeadroomStateSchema, resolveServingHeadroomState } from "./headroom/state";
 import { currentHeadroomAllowlistInputs, undeterminedFrontDoors } from "./headroom/supervisor";
-import { FrontDoorStateSchema, listFrontDoorSessions, readFrontDoorState, type FrontDoorSessionSummary } from "./frontdoor/state";
+import { FrontDoorStateSchema, listDrainingFrontDoors, listFrontDoorSessions, readFrontDoorState, type FrontDoorSessionSummary } from "./frontdoor/state";
 import { pushFrontDoor, pushFrontDoorListeners } from "./doctorFrontDoor";
 import { readFrontDoorListeners, realFrontDoorListenerProbes, type FrontDoorListenerReading } from "./frontdoor/listenerReadings";
 import { listFrontDoorSupervisors, type FrontDoorSupervisorListing } from "./frontdoor/supervisorProcesses";
@@ -188,6 +188,8 @@ export interface RunDoctorParams {
     readonly supervisors: FrontDoorSupervisorListing;
     /** The launches registered with the front door whose launcher is still running, each naming the door it was sent to: what tells a superseded door still serving its launches from one serving nothing. */
     readonly liveSessions: readonly FrontDoorSessionSummary[];
+    /** The supervisors that released their addresses and are finishing the connections they carried: running by design, not duplicates. Omit when the platform cannot say. */
+    readonly draining?: readonly number[];
     /** What probing the serving door's listeners found: empty when no door serves or the platform cannot say. Omit to skip the listener checks. */
     readonly listeners?: readonly FrontDoorListenerReading[];
   };
@@ -712,7 +714,7 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
 
   if (params.frontDoor !== undefined) {
     const validated = params.frontDoor.state.raw === undefined ? undefined : validateJson(FrontDoorStateSchema, params.frontDoor.state);
-    pushFrontDoor(push, params.frontDoor.supervisors, validated?.ok === true ? validated.data.supervisorPid : undefined, params.frontDoor.liveSessions);
+    pushFrontDoor(push, params.frontDoor.supervisors, validated?.ok === true ? validated.data.supervisorPid : undefined, params.frontDoor.liveSessions, params.frontDoor.draining ?? []);
     if (params.frontDoor.listeners !== undefined) {
       pushFrontDoorListeners(push, params.frontDoor.listeners);
     }
@@ -964,7 +966,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     },
     ...(uid === undefined
       ? {}
-      : { frontDoor: { state: { path: paths.frontdoorStateFile, raw: realFsPort.readFileUtf8(paths.frontdoorStateFile) }, supervisors: listFrontDoorSupervisors(realRunPort, uid), liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => realIsProcessRunning(session.pid)), listeners: servingDoorListeners(paths) } }),
+      : { frontDoor: { state: { path: paths.frontdoorStateFile, raw: realFsPort.readFileUtf8(paths.frontdoorStateFile) }, supervisors: listFrontDoorSupervisors(realRunPort, uid), liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => realIsProcessRunning(session.pid)), draining: listDrainingFrontDoors(realFarmFs, paths.frontdoorDrainingDir, realIsProcessRunning), listeners: servingDoorListeners(paths) } }),
   });
   return report;
 }

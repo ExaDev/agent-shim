@@ -13,14 +13,20 @@ export function pushFrontDoor(
   supervisors: FrontDoorSupervisorListing,
   registeredPid: number | undefined,
   liveSessions: readonly FrontDoorSessionSummary[],
+  draining: readonly number[],
 ): void {
   if (!supervisors.ok) {
     push("frontdoor", "warn", `Could not list processes to look for duplicate front door supervisors: ${supervisors.message}.`);
     return;
   }
-  const { pids } = supervisors;
+  // A draining door has released its addresses and serves nothing new: it is neither the serving door nor a duplicate of it, so it is reported on its own and left out of the duplicate count.
+  const drainingPids = supervisors.pids.filter((pid) => draining.includes(pid));
+  for (const pid of drainingPids) {
+    push("frontdoor", "warn", `Front door supervisor pid ${String(pid)} is draining: it has released its addresses and exits once the connections it carried have ended.`, String(pid));
+  }
+  const pids = supervisors.pids.filter((pid) => !draining.includes(pid));
   if (pids.length === 0) {
-    push("frontdoor", "pass", "No front door supervisor is running.");
+    push("frontdoor", "pass", drainingPids.length === 0 ? "No front door supervisor is running." : "No front door supervisor is serving.");
     return;
   }
   const [only, ...rest] = pids;

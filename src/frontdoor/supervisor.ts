@@ -5,7 +5,7 @@ import path from "node:path";
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
 import type { DoorHealthPublisher } from "./doorHealthEvents";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorDirectRecord, writeFrontDoorDirectRecord, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorDirectRecord, writeFrontDoorDirectRecord, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState, markFrontDoorDraining, unmarkFrontDoorDraining } from "./state";
 
 /** A bound front-door listener in this process, and how to stop it. */
 interface FrontDoorListenerHandle {
@@ -61,7 +61,7 @@ export interface FrontDoorSupervisorPorts {
    */
   readonly startDirectListener: (preferredPort: number | undefined) => Promise<FrontDoorListenerHandle>;
   /**
-   * Stops the Remote Control stream hub: persists every live attachment's sequence cursor synchronously, then frees the dials. Called exactly once on every exit the supervisor owns, after every listener it started is down (a live listener could still settle an observed Remote Control exchange, and the reconcile that follows would re-attach a stream the close had just ended) and before the final state write and the process's exit.
+   * Stops the Remote Control stream hub: persists every live attachment's sequence cursor synchronously, then frees the dials. Called exactly once on every exit the supervisor owns, after every listener has stopped accepting. A closing exit has every listener down by then; a drain still has responses settling, which is safe because the hub refuses to attach once it is closed (otherwise the reconcile after an observed exchange would re-attach a stream the close had just ended).
    */
   readonly closeRcStreamHub: () => void;
   /**
@@ -72,6 +72,8 @@ export interface FrontDoorSupervisorPorts {
    * Aborted when the process is asked to exit (the CLI's `__frontdoor-supervisor` aborts it on its first SIGTERM or SIGINT). The door then retires by draining: it releases its listening addresses at once, so a successor can bind the same sticky ports, ends what holds its own routing state, and stays up only as long as the connections it still carries (blind tunnels, a response being streamed) take to end. Optional for a host that decides when the door stops by other means.
    */
   readonly retire?: AbortSignal;
+  /** Stops the work the door runs on its own account rather than for a request (the usage, window, job and catalogue keepers), called once when a drain begins so the successor's are the only ones acting. Optional because a host without such work has nothing to stop. */
+  readonly stopBackgroundWork?: () => void;
   /**
    * Reports one tick's session-registry facts to the door's event backbone: the sessions the tick's listing saw (taken before the prune, so a pruned launch's record is still there to name its start time) and the pids the tick's prune removed. The launch lifecycle publisher turns the diff between ticks into source-tagged events; the listing is also this loop's own idle input, so the two read one fact instead of two.
    */
@@ -232,25 +234,33 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     // A present-but-different stat is the turnover signal; an absent one (a deleted binary, or a remove-then-link install between its removal and its relink) is not, and a stat returning to the exact captured identity after such a window is equally not, so a half-applied install never flaps the door.
     return current !== undefined && servingBinary !== undefined && (current.dev !== servingBinary.dev || current.ino !== servingBinary.ino || current.size !== servingBinary.size || current.mtimeMs !== servingBinary.mtimeMs);
   };
-  const retired = new Promise<void>((resolve) => {
-    ports.retire?.addEventListener("abort", () => {
-      resolve();
-    });
-  });
-  /** The tick's wait, cut short by a request to retire so the listeners are released straight away rather than at the next tick. */
+  /** The tick's wait, cut short by a request to retire so the listeners are released straight away rather than at the next tick. The abort listener lives only as long as the wait: one shared promise raced against every tick's sleep would keep a reaction per tick for as long as the door serves. */
   const pause = async (): Promise<void> => {
-    await Promise.race([ports.sleep(FRONTDOOR_POLL_MS), retired]);
+    await new Promise<void>((resolve) => {
+      const wake = (): void => {
+        resolve();
+      };
+      ports.retire?.addEventListener("abort", wake, { once: true });
+      void ports.sleep(FRONTDOOR_POLL_MS).then(() => {
+        ports.retire?.removeEventListener("abort", wake);
+        resolve();
+      });
+    });
   };
   // The retirement a request to exit asks for, in place of `closeServing`: every address is released first, before anything slow, then the state file stops naming this door as the owner so a launch starts a successor on those addresses instead of joining a door that no longer accepts, and the process lives on only for what its listeners still carry. The stream hub is closed once the listeners stop accepting; it refuses to attach again, so a response that settles during the drain cannot start a stream that the successor also attaches.
   const retireByDrain = async (): Promise<number> => {
     ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: asked to exit; releasing the front door's addresses and finishing the connections it carries`);
     watchdog?.stop();
+    // The successor's keepers take over: a draining door that kept running its own would act on the same usage stamps, windows and jobs beside them.
+    ports.stopBackgroundWork?.();
     const drained = [direct.drain(), connect.drain(), http.drain()];
     if (supersedingOwner() === undefined) {
       writeFrontDoorState(fs, paths.frontdoorStateFile, sticky());
     }
+    markFrontDoorDraining(fs, paths.frontdoorDrainingDir, ports.ownPid);
     ports.closeRcStreamHub();
     await Promise.all(drained);
+    unmarkFrontDoorDraining(fs, paths.frontdoorDrainingDir, ports.ownPid);
     removeFrontDoorDirectRecord(fs, paths.frontdoorDirectRecordsDir, ports.ownPid);
     ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: the connections this door carried have ended; exiting`);
     return 0;
