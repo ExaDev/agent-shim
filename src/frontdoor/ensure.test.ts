@@ -48,6 +48,8 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
   const events: string[] = [];
   /** Pids that ignore a stop request, the way a door whose event loop is blocked never runs its signal handler. */
   const ignoresStop = new Set<number>();
+  /** Pids that answer a stop request by draining: they release their addresses and stop naming themselves as the owner at once, and stay running. */
+  const drainsOnStop = new Set<number>();
   /** Ports whose listener authenticates; every other port fails the probe, the way a listener without a leaf from agent-shim's CA does. */
   const authentic = new Set<number>([PORT]);
   const probed: number[] = [];
@@ -66,6 +68,7 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
     kills,
     events,
     ignoresStop,
+    drainsOnStop,
     authentic,
     probed,
     ownSupervisors,
@@ -117,7 +120,9 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
       stopSupervisor: (pid: number) => {
         events.push(`SIGTERM ${String(pid)}`);
         stops.push(pid);
-        if (!ignoresStop.has(pid)) {
+        if (drainsOnStop.has(pid)) {
+          writeFrontDoorState(fs, paths.frontdoorStateFile, { lastPort: PORT, lastConnectPort: CONNECT_PORT });
+        } else if (!ignoresStop.has(pid)) {
           alive.delete(pid);
         }
       },
@@ -621,5 +626,26 @@ describe("naming the cause of a door's exit in the door's own log", () => {
     world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
     ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
     expect(world.events).toEqual([]);
+  });
+});
+
+describe("replacing a door that drains", () => {
+  it("proceeds as soon as the door has released its addresses, and neither waits for it to exit nor kills it", () => {
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT });
+    world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+    world.drainsOnStop.add(SUPERVISOR_PID);
+    const result = restartFrontDoor({ paths, pid: LAUNCHER_PID, reason: "restart-command", ports: world.ports });
+    expect(result).toEqual({ action: "restarted", previousPid: SUPERVISOR_PID, pid: REPLACEMENT_PID });
+    expect(world.spawns).toEqual([REPLACEMENT_PID]);
+    expect(world.kills).toEqual([]);
+    expect(world.alive.has(SUPERVISOR_PID)).toBe(true);
+  });
+
+  it("still kills a door that neither exits nor releases its addresses within the grace period", () => {
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT });
+    world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+    world.ignoresStop.add(SUPERVISOR_PID);
+    restartFrontDoor({ paths, pid: LAUNCHER_PID, reason: "restart-command", ports: world.ports });
+    expect(world.kills).toEqual([SUPERVISOR_PID]);
   });
 });

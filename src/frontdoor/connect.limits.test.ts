@@ -1,3 +1,5 @@
+import net from "node:net";
+
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { buildLayoutPaths } from "../paths";
@@ -205,6 +207,93 @@ describe("CONNECT authentication and limits over real sockets", () => {
     },
     KEYGEN_TIMEOUT_MS,
   );
+
+  describe("draining the surface for a successor", () => {
+    it(
+      "releases the port at once, ends the sessions the surface terminates, and keeps a blind tunnel running until it ends by itself",
+      async () => {
+        const world = makeTlsWorld(ca, upstreamCa);
+        const { connectPort, drain, close } = await world.start();
+        try {
+          const tunnel = rawAttempt(connectPort, connectHead("mcp-proxy.anthropic.com", [proxyAuthorizationFor(TEST_CAPABILITY)]));
+          expect(await tunnel.answer).toContain(String(HTTP_OK));
+          const terminated = rawAttempt(connectPort, connectHead(CONNECT_INTERCEPT_HOST, [proxyAuthorizationFor(TEST_CAPABILITY)]));
+          expect(await terminated.answer).toContain(String(HTTP_OK));
+          expect(await echoThrough(tunnel.socket, "before")).toContain("before");
+
+          let drained = false;
+          const draining = drain().then(() => {
+            drained = true;
+          });
+          await terminated.closed;
+          await settle();
+
+          // The tunnel is untouched, the surface still waits on it, and the port no longer accepts.
+          expect(await echoThrough(tunnel.socket, "during")).toContain("during");
+          expect(drained).toBe(false);
+          const late = rawAttempt(connectPort, connectHead("mcp-proxy.anthropic.com", [proxyAuthorizationFor(TEST_CAPABILITY)]));
+          await late.closed;
+          expect(world.dials).toHaveLength(1);
+
+          tunnel.socket.destroy();
+          await draining;
+          expect(drained).toBe(true);
+        } finally {
+          await close();
+          await world.stop();
+        }
+      },
+      KEYGEN_TIMEOUT_MS,
+    );
+
+    it(
+      "resolves at once when no blind tunnel is open, and frees the port for a successor",
+      async () => {
+        const world = makeTlsWorld(ca, upstreamCa);
+        const { connectPort, drain, close } = await world.start();
+        try {
+          await drain();
+          const successor = await new Promise<boolean>((resolve) => {
+            const server = net.createServer();
+            server.once("error", () => {
+              resolve(false);
+            });
+            server.listen(connectPort, "127.0.0.1", () => {
+              server.close(() => {
+                resolve(true);
+              });
+            });
+          });
+          expect(successor).toBe(true);
+        } finally {
+          await close();
+          await world.stop();
+        }
+      },
+      KEYGEN_TIMEOUT_MS,
+    );
+
+    it(
+      "still ends a tunnel whose launch has ended while it drains",
+      async () => {
+        let live = true;
+        const world = makeTlsWorld(ca, upstreamCa, { limits: { revalidateMs: TEST_REVALIDATE_MS }, isLiveCapability: () => live });
+        const { connectPort, drain, close } = await world.start();
+        try {
+          const tunnel = rawAttempt(connectPort, connectHead("mcp-proxy.anthropic.com", [proxyAuthorizationFor(TEST_CAPABILITY)]));
+          expect(await tunnel.answer).toContain(String(HTTP_OK));
+          const draining = drain();
+          live = false;
+          await tunnel.closed;
+          await draining;
+        } finally {
+          await close();
+          await world.stop();
+        }
+      },
+      KEYGEN_TIMEOUT_MS,
+    );
+  });
 
   it(
     "closes a launch's tunnels once its registry entry is pruned, and refuses its capability 407 afterwards",

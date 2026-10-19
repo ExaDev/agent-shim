@@ -375,6 +375,19 @@ describe("the client read stream attachment", () => {
     hub.close();
   });
 
+  it("attaches nothing once it is closed, so an exchange that settles during a drain starts no stream", async () => {
+    const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: IDLE_MS });
+    birthSession(tracker);
+    const scripted = scriptedDial();
+    scripted.answerNextStreamWith({ status: HTTP_STATUS.ok, chunks: controlledStream().chunks });
+    const { hub } = hubOver(scripted, tracker);
+    hub.close();
+    hub.reconcile();
+    await tick();
+    expect(scripted.streamCalls).toEqual([]);
+    expect(scripted.presenceCalls).toEqual([]);
+  });
+
   it("resumes a fresh generation's first attach from the persisted cursor, and from the tracker's own cursor once one exists", async () => {
     const tracker = createRcSessionTracker({ now: () => Date.now(), idleMs: IDLE_MS });
     birthSession(tracker);

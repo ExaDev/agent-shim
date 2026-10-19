@@ -50,6 +50,7 @@ const SNAPSHOT: UsageSnapshot = {
 const STATUS: FrontDoorStatus = {
   state: { supervisorPid: SUPERVISOR_PID, port: PROVIDER_PORT, lastPort: PROVIDER_PORT },
   supervisorAlive: true,
+  draining: [],
   sessions: [{ pid: LAUNCH_PID, startedAt: 0, alive: true }],
   headroomSocket: undefined,
   logPath: "/home/testuser/.agent-shim/logs/frontdoor.log",

@@ -94,13 +94,16 @@ export function ensureFrontDoor(params: {
     );
   };
 
-  /** Asks `supervisorPid` to exit and waits until it has, so the replacement that follows binds the sticky ports instead of moving off them. */
+  /**
+   * Asks `supervisorPid` to exit and waits until it has let go of its addresses, so the replacement that follows binds the sticky ports instead of moving off them. A door that drains (see `FrontDoorSupervisorPorts.retire`) releases its listening addresses and stops naming itself as the owner in the state file at once, then stays running while it carries the connections that were open; waiting for that process to exit would hold the launch for as long as the longest tunnel and then kill the very connections the drain exists to keep. An older door, or a wedged one, only lets go by exiting or by being killed after the grace period.
+   */
   const stopAndAwaitExit = (supervisorPid: number, doorProtocol: number, reason: ReplacementReason, failure: string): void => {
     recordReplacement(supervisorPid, doorProtocol, reason, "SIGTERM");
     ports.stopSupervisor(supervisorPid);
     const graceEnds = ports.now() + FRONTDOOR_EXIT_GRACE_MS;
     let killed = false;
-    while (ports.isRunning(supervisorPid)) {
+    const holdsAddresses = (): boolean => ports.isRunning(supervisorPid) && readFrontDoorState(ports.fs, paths.frontdoorStateFile)?.supervisorPid === supervisorPid;
+    while (holdsAddresses()) {
       if (!killed && ports.now() >= graceEnds) {
         recordReplacement(supervisorPid, doorProtocol, reason, "SIGKILL");
         ports.killSupervisor(supervisorPid);

@@ -411,6 +411,10 @@ export function realConnectEffects(ports: SourcePortRange = DOOR_SOURCE_PORTS): 
         }
         resolve({
           port: bound,
+          // The listening socket is released by `close` at once; the connections already accepted are untouched and keep the server's `close` callback pending until they end.
+          stopAccepting: () => {
+            server.close();
+          },
           close: async () => {
             await new Promise<void>((closeResolve) => {
               // Stop accepting first (synchronous in the closing flag it sets, so no further connection callback can run and grow `accepted` afterwards), then end everything this listener handed out, which is what lets close's own callback fire.

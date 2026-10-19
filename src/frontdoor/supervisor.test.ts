@@ -26,6 +26,8 @@ const OCCUPIED_PORT = 4200;
 const FRESH_PORT = 5001;
 const IDLE_MINUTES = 1;
 const MS_PER_MINUTE = 60_000;
+/** Microtask turns that carry the supervisor through its awaits to the next point a test can observe. */
+const SETTLE_TURNS = 50;
 /** Ticks beyond the idle window itself, so an unwanted shutdown cannot hide behind the tick limit. */
 const SLACK_TICKS = 5;
 const FULL_IDLE_WINDOW_TICKS = Math.ceil((IDLE_MINUTES * MS_PER_MINUTE) / FRONTDOOR_POLL_MS) + SLACK_TICKS;
@@ -57,6 +59,11 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
   const timeline: string[] = [];
   let hubCloses = 0;
   const logs: string[] = [];
+  /** Aborted by a test to model the process being asked to exit. */
+  const retireController = new AbortController();
+  /** What a listener's drain waits on: open by default, held by a test that wants to observe the door while its connections are still being carried. */
+  let drainGate: Promise<void> = Promise.resolve();
+  let openDrainGate: () => void = () => undefined;
   let failListener = false;
   let failConnect = false;
   let failDirect = false;
@@ -97,6 +104,11 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
           timeline.push("provider");
           await Promise.resolve();
         },
+        drain: async () => {
+          stopOrder.push("drain-provider");
+          timeline.push("drain-provider");
+          await drainGate;
+        },
       });
     },
     startConnectListener: async (preferred) => {
@@ -113,6 +125,11 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
           timeline.push("connect");
           await Promise.resolve();
         },
+        drain: async () => {
+          stopOrder.push("drain-connect");
+          timeline.push("drain-connect");
+          await drainGate;
+        },
       });
     },
     startDirectListener: async (preferred) => {
@@ -128,6 +145,11 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
           stopOrder.push("direct");
           timeline.push("direct");
           await Promise.resolve();
+        },
+        drain: async () => {
+          stopOrder.push("drain-direct");
+          timeline.push("drain-direct");
+          await drainGate;
         },
       });
     },
@@ -150,6 +172,7 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
     observeLaunchRegistry: launchEvents.observe,
     // The door health publisher and the expiring-quota checker, the same pairing the real ports wire: the publisher over the same backbone the launch events ride, and the checker a recorder the tick calls.
     doorHealth: createDoorHealthPublisher(doorEvents, () => clock, ownPid),
+    retire: retireController.signal,
     checkQuotaExpiry: () => {
       quotaChecks += 1;
     },
@@ -169,6 +192,19 @@ function makeWorld(options: { readonly ownPid?: number; readonly fs?: HeadroomFs
     stopOrder,
     timeline,
     hubCloses: () => hubCloses,
+    /** Models the process being asked to exit. */
+    retire: () => {
+      retireController.abort();
+    },
+    /** Makes every listener's drain wait until `releaseDrains`, as a drain does while a tunnel is still open. */
+    holdDrains: () => {
+      drainGate = new Promise<void>((resolve) => {
+        openDrainGate = resolve;
+      });
+    },
+    releaseDrains: () => {
+      openDrainGate();
+    },
     doorEvents,
     quotaChecks: () => quotaChecks,
     logs,
@@ -746,3 +782,81 @@ describe("runFrontDoorSupervisor", () => {
     expect(world.quotaChecks()).toBe(SLACK_TICKS);
   });
 });
+
+describe("retiring by draining", () => {
+  const OTHER_PID = 5555;
+
+  /** Runs the supervisor to its second tick, where the test asks it to exit, and returns its pending result. */
+  async function runUntilRetired(world: ReturnType<typeof makeWorld>): Promise<number> {
+    let ticks = 0;
+    world.onSleep = () => {
+      ticks += 1;
+      if (ticks === 2) {
+        world.retire();
+      }
+    };
+    return runFrontDoorSupervisor(IDLE_MINUTES, world.ports);
+  }
+
+  it("releases every listener's address before it does anything slow, stops naming itself the owner, and stays up until what the listeners carry has ended", async () => {
+    const world = makeWorld();
+    world.holdDrains();
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0, token: SESSION_TOKEN, supervisorPid: OWN_PID });
+    world.alive.add(LIVE_SESSION);
+    let result: number | undefined;
+    const running = runUntilRetired(world).then((code) => {
+      result = code;
+    });
+    await settleMicrotasks();
+
+    expect(world.stopOrder).toEqual(["drain-direct", "drain-connect", "drain-provider", "hub"]);
+    // Nothing was closed outright, and the state names no owner but keeps the sticky addresses for the successor.
+    expect(world.closes).toEqual([]);
+    const state = readFrontDoorState(world.fs, paths.frontdoorStateFile);
+    expect(state?.supervisorPid).toBeUndefined();
+    expect(state).toMatchObject({ lastPort: FRESH_PORT, lastConnectPort: FRESH_PORT, lastDirectPort: FRESH_PORT });
+    // Still carrying its connections: the process has not returned, and its direct record still admits its origin to headroom.
+    expect(result).toBeUndefined();
+    expect(listFrontDoorDirectRecords(world.fs, paths.frontdoorDirectRecordsDir).map((record) => record.pid)).toEqual([OWN_PID]);
+
+    world.releaseDrains();
+    await running;
+    expect(result).toBe(0);
+    expect(listFrontDoorDirectRecords(world.fs, paths.frontdoorDirectRecordsDir)).toEqual([]);
+    expect(world.hubCloses()).toBe(1);
+  });
+
+  it("wakes from its tick wait at once instead of serving until the next tick", async () => {
+    const world = makeWorld();
+    const running = runFrontDoorSupervisor(IDLE_MINUTES, { ...world.ports, sleep: async () => { await new Promise<void>(() => undefined); } });
+    await settleMicrotasks();
+    expect(world.stopOrder).toEqual([]);
+    world.retire();
+    expect(await running).toBe(0);
+    expect(world.stopOrder).toEqual(["drain-direct", "drain-connect", "drain-provider", "hub"]);
+  });
+
+  it("leaves the state file alone when another supervisor has already claimed it", async () => {
+    const world = makeWorld();
+    world.alive.add(OTHER_PID);
+    let ticks = 0;
+    world.onSleep = () => {
+      ticks += 1;
+      if (ticks === 1) {
+        writeFrontDoorState(world.fs, paths.frontdoorStateFile, { ...SUCCESSOR_STATE, supervisorPid: OTHER_PID });
+      }
+      if (ticks === 2) {
+        world.retire();
+      }
+    };
+    await runFrontDoorSupervisor(IDLE_MINUTES, world.ports);
+    expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)?.supervisorPid).toBe(OTHER_PID);
+  });
+});
+
+/** Lets the supervisor's pending microtasks run, so a test can observe it between awaits. */
+async function settleMicrotasks(): Promise<void> {
+  for (let turn = 0; turn < SETTLE_TURNS; turn += 1) {
+    await Promise.resolve();
+  }
+}

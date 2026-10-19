@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 
-import { REPLACEMENT_REASONS, exitLine, exitLoggingOnSignals, replacementLine, type DoorExitFacts } from "./replacement";
+import { REPLACEMENT_REASONS, exitNowLine, replacementLine, retireLine, retireOnSignals, type DoorExitFacts } from "./replacement";
 
 const FACTS: DoorExitFacts = { tunnels: 7, liveSessions: 3, protocol: 5, uptimeSeconds: 120 };
 const DOOR_PID = 22;
@@ -22,45 +22,54 @@ describe("replacementLine", () => {
   });
 });
 
-describe("exitLine", () => {
-  it("names the signal, the tunnels the exit drops, the sessions registered, the protocol and the uptime", () => {
-    expect(exitLine(DOOR_PID, "SIGTERM", FACTS)).toBe("frontdoor 22: received SIGTERM; exiting; tunnelsDropped=7 liveSessions=3 protocol=5 uptimeSeconds=120");
+describe("the door's signal lines", () => {
+  it("names the signal, the tunnels the door will keep running, the sessions registered, the protocol and the uptime", () => {
+    expect(retireLine(DOOR_PID, "SIGTERM", FACTS)).toBe("frontdoor 22: received SIGTERM; retiring; tunnelsOpen=7 liveSessions=3 protocol=5 uptimeSeconds=120");
+  });
+
+  it("names the tunnels a second signal drops", () => {
+    expect(exitNowLine(DOOR_PID, "SIGTERM", FACTS)).toBe("frontdoor 22: received SIGTERM again; exiting now; tunnelsDropped=7 liveSessions=3");
   });
 });
 
-describe("exitLoggingOnSignals", () => {
-  it("logs the door's state and only then exits, for SIGTERM and for SIGINT", () => {
+describe("retireOnSignals", () => {
+  function harness(facts: () => DoorExitFacts = () => FACTS) {
     const source = new EventEmitter();
     const events: string[] = [];
-    exitLoggingOnSignals(source, {
+    retireOnSignals(source, {
       doorPid: DOOR_PID,
-      facts: () => FACTS,
+      facts,
       log: (line) => {
         events.push(`log ${line}`);
+      },
+      retire: () => {
+        events.push("retire");
       },
       exit: (code) => {
         events.push(`exit ${String(code)}`);
       },
     });
+    return { source, events };
+  }
+
+  it("logs and starts the retirement on the first signal, without exiting", () => {
+    const { source, events } = harness();
+    source.emit("SIGTERM");
+    expect(events).toEqual([`log ${retireLine(DOOR_PID, "SIGTERM", FACTS)}`, "retire"]);
+  });
+
+  it("logs and exits at once on any further signal, whichever of the two it is", () => {
+    const { source, events } = harness();
     source.emit("SIGTERM");
     source.emit("SIGINT");
-    expect(events).toEqual([`log ${exitLine(DOOR_PID, "SIGTERM", FACTS)}`, "exit 0", `log ${exitLine(DOOR_PID, "SIGINT", FACTS)}`, "exit 0"]);
+    expect(events).toEqual([`log ${retireLine(DOOR_PID, "SIGTERM", FACTS)}`, "retire", `log ${exitNowLine(DOOR_PID, "SIGINT", FACTS)}`, "exit 0"]);
   });
 
   it("reads the facts when the signal arrives, not when the handler is installed", () => {
-    const source = new EventEmitter();
-    const lines: string[] = [];
     let tunnels = 0;
-    exitLoggingOnSignals(source, {
-      doorPid: 1,
-      facts: () => ({ ...FACTS, tunnels }),
-      log: (line) => {
-        lines.push(line);
-      },
-      exit: () => undefined,
-    });
+    const { source, events } = harness(() => ({ ...FACTS, tunnels }));
     tunnels = TUNNELS_AT_SIGNAL;
     source.emit("SIGTERM");
-    expect(lines[0]).toContain(`tunnelsDropped=${String(TUNNELS_AT_SIGNAL)}`);
+    expect(events[0]).toContain(`tunnelsOpen=${String(TUNNELS_AT_SIGNAL)}`);
   });
 });

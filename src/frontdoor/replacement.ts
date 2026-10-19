@@ -38,9 +38,14 @@ export interface DoorExitFacts {
   readonly uptimeSeconds: number;
 }
 
-/** The line a door appends when it receives a signal and exits, in the same `key=value` form as `replacementLine`. */
-export function exitLine(doorPid: number, signal: string, facts: DoorExitFacts): string {
-  return `frontdoor ${String(doorPid)}: received ${signal}; exiting; tunnelsDropped=${String(facts.tunnels)} liveSessions=${String(facts.liveSessions)} protocol=${String(facts.protocol)} uptimeSeconds=${String(facts.uptimeSeconds)}`;
+/** The line a door appends when it receives its first signal and begins to retire, in the same `key=value` form as `replacementLine`. `tunnelsOpen` is what the door will keep running until it ends. */
+export function retireLine(doorPid: number, signal: string, facts: DoorExitFacts): string {
+  return `frontdoor ${String(doorPid)}: received ${signal}; retiring; tunnelsOpen=${String(facts.tunnels)} liveSessions=${String(facts.liveSessions)} protocol=${String(facts.protocol)} uptimeSeconds=${String(facts.uptimeSeconds)}`;
+}
+
+/** The line a door appends when a further signal arrives while it is retiring and it exits at once, dropping what it was still carrying. */
+export function exitNowLine(doorPid: number, signal: string, facts: DoorExitFacts): string {
+  return `frontdoor ${String(doorPid)}: received ${signal} again; exiting now; tunnelsDropped=${String(facts.tunnels)} liveSessions=${String(facts.liveSessions)}`;
 }
 
 /** The part of a process this needs: a way to subscribe to a signal. */
@@ -48,12 +53,21 @@ interface SignalSource {
   readonly on: (signal: "SIGTERM" | "SIGINT", listener: () => void) => unknown;
 }
 
-/** Makes the door log what it is dropping, then exit, on `SIGTERM` and `SIGINT`. The log line is written before the exit, because the line is the only record that outlives the process. */
-export function exitLoggingOnSignals(source: SignalSource, params: { readonly doorPid: number; readonly facts: () => DoorExitFacts; readonly log: (line: string) => void; readonly exit: (code: number) => void }): void {
+/**
+ * Makes the door retire on its first `SIGTERM` or `SIGINT` and exit at once on any further one. Both log first, because the log is the only record that outlives the process. `retire` starts the drain (see `FrontDoorSupervisorPorts.retire`); the second signal is the explicit "now" that a launcher sends when a draining door has not released its addresses, or that a person sends to drop what the door is still carrying.
+ */
+export function retireOnSignals(source: SignalSource, params: { readonly doorPid: number; readonly facts: () => DoorExitFacts; readonly log: (line: string) => void; readonly retire: () => void; readonly exit: (code: number) => void }): void {
+  let retiring = false;
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     source.on(signal, () => {
-      params.log(exitLine(params.doorPid, signal, params.facts()));
-      params.exit(0);
+      if (retiring) {
+        params.log(exitNowLine(params.doorPid, signal, params.facts()));
+        params.exit(0);
+        return;
+      }
+      retiring = true;
+      params.log(retireLine(params.doorPid, signal, params.facts()));
+      params.retire();
     });
   }
 }
