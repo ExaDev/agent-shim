@@ -2,9 +2,10 @@ import { STATUSLINE_DEFAULTS, type ResolvedStatusline } from "../config/statusli
 import type { BarCell } from "./barGrid";
 import { layoutBarGrid } from "./barGrid";
 import type { RenderContext, StatuslinePayloadView } from "./elements/context";
-import { ELEMENTS, type ElementRegistry } from "./elements/registry";
+import { ELEMENTS, HEADER_ROLES, type ElementRegistry } from "./elements/registry";
 import type { StatuslineSummary } from "./enrich";
 import { layoutHeader } from "./headerLayout";
+import { colourEnabled, createPalette } from "./palette";
 import { TWENTY } from "./style";
 
 /** Claude Code indents the status line one column from the terminal edge and truncates at its own usable width, replacing the final column with an ellipsis. COLUMNS is correct in the child environment, but the usable width is four columns short of it, so a line as wide as COLUMNS minus two still loses its tail. */
@@ -21,10 +22,14 @@ export function renderStatuslineBlock(
   nowMs: number,
   settings: ResolvedStatusline = STATUSLINE_DEFAULTS,
   elements: ElementRegistry = ELEMENTS,
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
-  const context: RenderContext = { summary, view, nowMs, settings, bands: settings.bands };
+  const context: RenderContext = { summary, view, nowMs, settings, palette: createPalette(settings.colours, colourEnabled(env)) };
   // The segments drawn are the ones the settings list, in the order they list them.
-  const header = settings.layout.header.flatMap((name) => elements.header[name](context) ?? []);
+  const header = settings.layout.header.flatMap((name) => {
+    const text = elements.header[name](context);
+    return text === undefined ? [] : context.palette.paint(HEADER_ROLES[name], text);
+  });
 
   const width = Math.max(TWENTY, terminalWidth - RESERVED_COLUMNS);
   const lines: string[] = [];

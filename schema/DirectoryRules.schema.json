@@ -227,6 +227,316 @@
                         "minimum": 1,
                         "maximum": 40,
                         "description": "A bar's width in cells before the line's spare width is shared out among the bars."
+                      },
+                      "filled": {
+                        "type": "string",
+                        "description": "The character that draws the used part of a bar."
+                      },
+                      "empty": {
+                        "type": "string",
+                        "description": "The character that draws the unused part of a bar."
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "colours": {
+                    "type": "object",
+                    "properties": {
+                      "context": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "default",
+                              "dim",
+                              "black",
+                              "red",
+                              "green",
+                              "yellow",
+                              "blue",
+                              "magenta",
+                              "cyan",
+                              "white",
+                              "brightBlack",
+                              "brightRed",
+                              "brightGreen",
+                              "brightYellow",
+                              "brightBlue",
+                              "brightMagenta",
+                              "brightCyan",
+                              "brightWhite"
+                            ]
+                          },
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 255
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          }
+                        ],
+                        "description": "The colour of the context bar and its figures below the warning threshold."
+                      },
+                      "usage": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "default",
+                              "dim",
+                              "black",
+                              "red",
+                              "green",
+                              "yellow",
+                              "blue",
+                              "magenta",
+                              "cyan",
+                              "white",
+                              "brightBlack",
+                              "brightRed",
+                              "brightGreen",
+                              "brightYellow",
+                              "brightBlue",
+                              "brightMagenta",
+                              "brightCyan",
+                              "brightWhite"
+                            ]
+                          },
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 255
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          }
+                        ],
+                        "description": "The colour of the quota bars and their figures below the warning threshold."
+                      },
+                      "warning": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "default",
+                              "dim",
+                              "black",
+                              "red",
+                              "green",
+                              "yellow",
+                              "blue",
+                              "magenta",
+                              "cyan",
+                              "white",
+                              "brightBlack",
+                              "brightRed",
+                              "brightGreen",
+                              "brightYellow",
+                              "brightBlue",
+                              "brightMagenta",
+                              "brightCyan",
+                              "brightWhite"
+                            ]
+                          },
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 255
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          }
+                        ],
+                        "description": "The colour of the context bar at or above bands.warnAt, and of a cache hit share that is middling."
+                      },
+                      "usageWarning": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "default",
+                              "dim",
+                              "black",
+                              "red",
+                              "green",
+                              "yellow",
+                              "blue",
+                              "magenta",
+                              "cyan",
+                              "white",
+                              "brightBlack",
+                              "brightRed",
+                              "brightGreen",
+                              "brightYellow",
+                              "brightBlue",
+                              "brightMagenta",
+                              "brightCyan",
+                              "brightWhite"
+                            ]
+                          },
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 255
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          }
+                        ],
+                        "description": "The colour of a quota bar at or above bands.warnAt."
+                      },
+                      "critical": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "default",
+                              "dim",
+                              "black",
+                              "red",
+                              "green",
+                              "yellow",
+                              "blue",
+                              "magenta",
+                              "cyan",
+                              "white",
+                              "brightBlack",
+                              "brightRed",
+                              "brightGreen",
+                              "brightYellow",
+                              "brightBlue",
+                              "brightMagenta",
+                              "brightCyan",
+                              "brightWhite"
+                            ]
+                          },
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 255
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          }
+                        ],
+                        "description": "The colour of a bar at or above bands.criticalAt, and of a cache hit share that is nearly nothing."
+                      },
+                      "model": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "default",
+                              "dim",
+                              "black",
+                              "red",
+                              "green",
+                              "yellow",
+                              "blue",
+                              "magenta",
+                              "cyan",
+                              "white",
+                              "brightBlack",
+                              "brightRed",
+                              "brightGreen",
+                              "brightYellow",
+                              "brightBlue",
+                              "brightMagenta",
+                              "brightCyan",
+                              "brightWhite"
+                            ]
+                          },
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 255
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          }
+                        ],
+                        "description": "The colour of the model and provider segments."
+                      },
+                      "label": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "default",
+                              "dim",
+                              "black",
+                              "red",
+                              "green",
+                              "yellow",
+                              "blue",
+                              "magenta",
+                              "cyan",
+                              "white",
+                              "brightBlack",
+                              "brightRed",
+                              "brightGreen",
+                              "brightYellow",
+                              "brightBlue",
+                              "brightMagenta",
+                              "brightCyan",
+                              "brightWhite"
+                            ]
+                          },
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 255
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          }
+                        ],
+                        "description": "The colour of labels and secondary text: row labels, and the route, account, identity and headroom segments."
+                      },
+                      "empty": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "default",
+                              "dim",
+                              "black",
+                              "red",
+                              "green",
+                              "yellow",
+                              "blue",
+                              "magenta",
+                              "cyan",
+                              "white",
+                              "brightBlack",
+                              "brightRed",
+                              "brightGreen",
+                              "brightYellow",
+                              "brightBlue",
+                              "brightMagenta",
+                              "brightCyan",
+                              "brightWhite"
+                            ]
+                          },
+                          {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 255
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          }
+                        ],
+                        "description": "The colour of the unused part of a bar."
                       }
                     },
                     "additionalProperties": false

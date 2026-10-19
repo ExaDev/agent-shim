@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_STATUSLINE_LABEL_CHARS, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
+import { MAX_STATUSLINE_LABEL_CHARS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
 
 const OVER_LONG_LABEL = "x".repeat(MAX_STATUSLINE_LABEL_CHARS + 1);
 const WARN_ABOVE_DEFAULT_CRITICAL = 95;
@@ -48,6 +48,29 @@ describe("StatuslineSchema", () => {
   });
 });
 
+describe("StatuslineSchema colours and bar characters", () => {
+  it("accepts a colour as a name, a palette index or a hex value", () => {
+    for (const value of ["cyan", "default", 0, MAX_STATUSLINE_PALETTE_INDEX, "#00ff7f", "#00FF7F"]) {
+      expect(StatuslineSchema.safeParse({ colours: { model: value } }).success, String(value)).toBe(true);
+    }
+  });
+
+  it("refuses a colour outside those forms", () => {
+    for (const value of ["purple", MAX_STATUSLINE_PALETTE_INDEX + 1, -1, MAX_STATUSLINE_PALETTE_INDEX / 2, "#fff", "#gg0000", "00ff7f"]) {
+      expect(StatuslineSchema.safeParse({ colours: { model: value } }).success, String(value)).toBe(false);
+    }
+  });
+
+  it("accepts one visible character for a bar, and refuses none, several and invisible ones", () => {
+    for (const value of ["#", "=", "█", "▰"]) {
+      expect(StatuslineSchema.safeParse({ bar: { filled: value } }).success, value).toBe(true);
+    }
+    for (const value of ["", "ab", " ", "\n", "\u200b", "\u001b", "\u2028"]) {
+      expect(StatuslineSchema.safeParse({ bar: { empty: value } }).success, JSON.stringify(value)).toBe(false);
+    }
+  });
+});
+
 describe("mergeStatuslineSettings", () => {
   it("merges groups key by key and lets a list replace the list beneath it", () => {
     const merged = mergeStatuslineSettings({ bands: { warnAt: 60, criticalAt: 85 }, layout: { header: ["model", "provider"] } }, { bands: { criticalAt: 95 }, layout: { header: ["identity"] } });
@@ -68,7 +91,7 @@ describe("mergeStatuslineSettings", () => {
 describe("resolveStatusline", () => {
   it("fills every absent key from the defaults", () => {
     expect(resolveStatusline(undefined)).toEqual(STATUSLINE_DEFAULTS);
-    expect(resolveStatusline({ bar: { width: 6 } })).toEqual({ ...STATUSLINE_DEFAULTS, bar: { width: 6 } });
+    expect(resolveStatusline({ bar: { width: 6 } })).toEqual({ ...STATUSLINE_DEFAULTS, bar: { ...STATUSLINE_DEFAULTS.bar, width: 6 } });
   });
 
   it("refuses a warning threshold at or above the critical one, whichever side the setting came from", () => {

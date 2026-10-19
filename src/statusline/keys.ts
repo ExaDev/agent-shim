@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import { isPlainObject, ResolvedStatuslineSchema, STATUSLINE_DEFAULTS } from "../config/statusline";
+import { isPlainObject, ResolvedStatuslineSchema, STATUSLINE_COLOUR_NAMES, STATUSLINE_DEFAULTS } from "../config/statusline";
 
-/** How a setting's value is written: `choice` is one of a closed set, `list` an ordered list of such choices. */
-type StatuslineKeyKind = "integer" | "text" | "choice" | "list";
+/** How a setting's value is written: `choice` is one of a closed set, `list` an ordered list of such choices, and `colour` a colour name, a palette index from 0 to 255 or `#rrggbb`. */
+type StatuslineKeyKind = "integer" | "text" | "choice" | "list" | "colour";
 
 /** One statusline setting, as the schema declares it. */
 export interface StatuslineKey {
@@ -36,6 +36,9 @@ function keyOf(path: readonly string[], leaf: z.ZodType): StatuslineKey {
   if (leaf instanceof z.ZodString) {
     return { ...common, kind: "text", choices: [] };
   }
+  if (leaf instanceof z.ZodUnion) {
+    return { ...common, kind: "colour", choices: [...STATUSLINE_COLOUR_NAMES] };
+  }
   if (leaf instanceof z.ZodEnum) {
     return { ...common, kind: "choice", choices: Object.values(leaf.enum).map(String) };
   }
@@ -58,7 +61,7 @@ export function statuslineKeys(): readonly StatuslineKey[] {
 export function formatStatuslineKeys(keys: readonly StatuslineKey[]): string {
   return keys
     .map((key) => {
-      const takes = key.kind === "choice" || key.kind === "list" ? `${key.kind} of ${key.choices.join(", ")}` : key.kind;
+      const takes = key.kind === "choice" || key.kind === "list" || key.kind === "colour" ? `${key.kind} of ${key.choices.join(", ")}` : key.kind;
       return `${key.path}  (${takes}; default ${JSON.stringify(key.defaultValue)})\n    ${key.description}`;
     })
     .join("\n");
