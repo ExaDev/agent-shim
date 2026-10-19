@@ -99,6 +99,8 @@ agent-shim profile set <name> [--extends <profile>]... [--no-extends] [--descrip
 agent-shim profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage]
 agent-shim profile set <name> [--launch-claude-version <version> | --no-launch-claude-version] [--json] [--json]
 agent-shim profile set <name> [--launch-delay <duration> | --no-launch-delay] [--[no-]launch-pause] [--[no-]launch-explain] [--launch-proxy-bypass <host>... | --no-launch-proxy-bypass] [--json]
+agent-shim profile set <name> [--statusline-header <segment>... | --no-statusline-header] [--statusline-bars <group>... | --no-statusline-bars] [--statusline-warn-at <percent> | --no-statusline-warn-at] [--statusline-critical-at <percent> | --no-statusline-critical-at]
+agent-shim profile set <name> [--statusline-five-hour-label <text> | --no-statusline-five-hour-label] [--statusline-seven-day-label <text> | --no-statusline-seven-day-label] [--statusline-bar-width <cells> | --no-statusline-bar-width]
 agent-shim profile set <name> [--launch-provider <provider> | --no-launch-provider] [--json]
 agent-shim profile list [--json]
 agent-shim profile show <name> [--json]
