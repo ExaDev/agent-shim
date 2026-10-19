@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import { realStatuslinePorts } from "./ports";
 
+/** More bytes than any file these tests write, so a read of that size returns a file whole. */
+const MORE_THAN_THE_FILE = 1_000;
+
 describe("realStatuslinePorts", () => {
   const ports = realStatuslinePorts({ HOME: "/h" });
 
@@ -20,6 +23,24 @@ describe("realStatuslinePorts", () => {
       fs.writeFileSync(file, "hello");
       expect(ports.readText(file)).toBe("hello");
       expect(ports.readText(path.join(dir, "missing.txt"))).toBeUndefined();
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("reads the end of a file from a line boundary, the whole file when it fits, and undefined when it cannot be read", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+    try {
+      const file = path.join(dir, "log.jsonl");
+      fs.writeFileSync(file, "first line\nsecond line\nthird line\n");
+      expect(ports.readTail(file, MORE_THAN_THE_FILE)).toBe("first line\nsecond line\nthird line\n");
+      // A cut inside the second line drops its partial remainder, leaving only the whole line after it.
+      expect(ports.readTail(file, "d line\nthird line\n".length)).toBe("third line\n");
+      expect(ports.readTail(file, "third line\n".length)).toBe("");
+      expect(ports.readTail(path.join(dir, "missing.jsonl"), MORE_THAN_THE_FILE)).toBeUndefined();
+      // A multi-byte character cut in half sits in the partial first line, so it never reaches the text.
+      fs.writeFileSync(file, "caf\u00e9 au lait\nnext\n");
+      expect(ports.readTail(file, "\u00a9 au lait\nnext\n".length - 1)).toBe("next\n");
     } finally {
       fs.rmSync(dir, { recursive: true });
     }
