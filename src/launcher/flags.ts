@@ -21,7 +21,6 @@ export interface ResolvedLaunchFlags {
   readonly pause: boolean;
   /** Whether the launch's report lists every pool member the pick ranked and why, and not only the one picked. */
   readonly explain: boolean;
-  /** Whether a provider session routes provider-qualified model names through the models block to the provider that serves them. */
   /** How long the launcher waits after its own output before it starts claude, in milliseconds; zero for no wait. */
   readonly delayMs: number;
 }
@@ -171,8 +170,7 @@ export interface BuildEnvParams {
   readonly sessionId: string;
   /** Whether Remote Control is on for this launch. It needs Claude Code in OAuth mode, so a provider launch with it on carries no credential variable; one with it off carries a placeholder, which lets the session run on an identity with no usable login. */
   readonly remoteControl: boolean;
-  /** Whether the session routes provider-qualified model names through the models block: rides the session headers so the door's routing layer sees it. */
-  /** The models block's tier pointers: each names the model ref the Claude tier stands for. They take effect only for a session that routes by name, since only the door's name resolution can serve a ref (`fast`, `z/glm-5.3`, `family:glm-5-1`) a tier's model setting would otherwise send to a provider that does not know it. */
+  /** The models block's tier pointers: each names the model ref the Claude tier stands for. They are applied to every session that rides the front door, because only the door's name resolution can serve a ref (`fast`, `z/glm-5.3`, `family:glm-5-1`) that a tier's model setting would otherwise send to a provider that does not know it. */
   readonly tierModels?: Readonly<Partial<Record<ClaudeTier, string>>>;
 }
 
