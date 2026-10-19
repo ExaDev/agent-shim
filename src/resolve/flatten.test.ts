@@ -249,3 +249,12 @@ describe("matchingRules", () => {
     expect(matchingRules(flattened, "agents/foo")).toEqual([]);
   });
 });
+
+describe("phase one: launch proxyBypass", () => {
+  it("takes the deepest layer's list whole, and an empty list clears the shallower ones", () => {
+    const hosts = flattenLayers([layer(0, { launch: { proxyBypass: ["a.example.com"] } }), layer(1, { launch: { proxyBypass: ["b.example.com", "c.example.com"] } })], { home: FAKE_HOME });
+    expect(hosts.launch).toEqual({ proxyBypass: ["b.example.com", "c.example.com"] });
+    const cleared = flattenLayers([layer(0, { launch: { proxyBypass: ["a.example.com"] } }), layer(1, { launch: { proxyBypass: [] } })], { home: FAKE_HOME });
+    expect(cleared.launch).toEqual({ proxyBypass: [] });
+  });
+});

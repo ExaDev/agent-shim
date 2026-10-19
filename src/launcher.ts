@@ -686,6 +686,7 @@ export function prepareLaunch(params: PrepareLaunchParams): LaunchPlan {
     remoteControl: resolvedFlags.remoteControl,
    
     ...(decided.models?.tiers === undefined ? {} : { tierModels: decided.models.tiers }),
+    proxyBypass: resolvedFlags.proxyBypass,
   });
 
   // Every daemon session registration this launch holds, released when the child exits.
@@ -744,7 +745,7 @@ export function resolveLaunch(params: PrepareLaunchParams): LaunchResolution {
     ...(decided.flags.headroom ? { headroom: { socketPath: "", projectId: "" } } : {}),
     sessionId: "",
     remoteControl: decided.flags.remoteControl,
-   
+    proxyBypass: decided.flags.proxyBypass,
   });
   const credentialNames = decided.identityCredentialBlock === undefined ? [] : Object.keys(credentialVariables(decided.identityCredentialBlock.target ?? "bearer", ""));
   const environment = [...new Set([...Object.keys(built).filter((name) => built[name] !== env[name]), ...credentialNames])].sort();

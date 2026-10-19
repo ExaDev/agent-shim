@@ -9,6 +9,7 @@ import { mergeAnthropicCustomHeaders } from "../headroom/headers";
 import { connectProxyUrl } from "../frontdoor/capability";
 import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROJECT_ID_HEADER, PROVIDER_HEADER, SESSION_HEADER } from "../frontdoor/route";
 import type { FrontDoorUp, HeadroomUp } from "./ports";
+import { checkedProxyBypass, withBypassHosts } from "./proxyBypass";
 
 /** The fully resolved launch flags for one launch. */
 export interface ResolvedLaunchFlags {
@@ -23,6 +24,8 @@ export interface ResolvedLaunchFlags {
   readonly explain: boolean;
   /** How long the launcher waits after its own output before it starts claude, in milliseconds; zero for no wait. */
   readonly delayMs: number;
+  /** Hosts kept off the front door by adding them to the child's `NO_PROXY`, checked and without duplicates. */
+  readonly proxyBypass: readonly string[];
 }
 
 /** The one-off command-line forms of the four boolean launch flags, each undefined when neither its positive nor its `--no-` form was given. */
@@ -75,7 +78,16 @@ export function resolveLaunchFlags(params: ResolveLaunchFlagsParams): ResolvedLa
     pause: params.flags?.pause ?? parseEnvBool("AGENT_SHIM_PAUSE", params.env.AGENT_SHIM_PAUSE) ?? params.cascade?.pause ?? false,
     explain: params.flags?.explain ?? parseEnvBool("AGENT_SHIM_EXPLAIN", params.env.AGENT_SHIM_EXPLAIN) ?? params.cascade?.explain ?? false,
     delayMs: resolveDelayMs(params),
+    proxyBypass: resolveProxyBypass(params),
   };
+}
+
+/** The hosts to keep off the door: `AGENT_SHIM_PROXY_BYPASS` (a comma-separated list; an empty one counts as unset) when set, else the cascade's `launch.proxyBypass`. The command line has no form of its own: the environment variable is the one-off. */
+function resolveProxyBypass(params: Readonly<ResolveLaunchFlagsParams>): readonly string[] {
+  const fromEnv = params.env.AGENT_SHIM_PROXY_BYPASS === "" ? undefined : params.env.AGENT_SHIM_PROXY_BYPASS;
+  return fromEnv !== undefined
+    ? checkedProxyBypass(fromEnv.split(",").map((entry) => entry.trim()), "AGENT_SHIM_PROXY_BYPASS")
+    : checkedProxyBypass(params.cascade?.proxyBypass ?? [], "launch.proxyBypass");
 }
 
 /**
@@ -141,12 +153,6 @@ export interface ResolvedProvider {
 /** The loopback names a request can address this machine by, which the door's CONNECT surface must never be asked to reach. */
 const LOOPBACK_HOSTS = ["127.0.0.1", "localhost", "::1"] as const;
 
-/** `existing` (a comma-separated `NO_PROXY` value) with every loopback host appended that it does not already list, keeping what was there. */
-function withLoopbackHosts(existing: string | undefined): string {
-  const listed = (existing ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
-  return [...listed, ...LOOPBACK_HOSTS.filter((host) => !listed.includes(host))].join(",");
-}
-
 /** Inputs to `buildEnv`. */
 /** What a provider child presents as its credential when the launch does not need Claude Code's OAuth mode: a value that authenticates nothing anywhere, since the front door attaches the provider's own credential at its route and ignores whatever the child sent. */
 const PROVIDER_SESSION_PLACEHOLDER = "agent-shim-provider-session";
@@ -172,6 +178,8 @@ export interface BuildEnvParams {
   readonly remoteControl: boolean;
   /** The models block's tier pointers: each names the model ref the Claude tier stands for. They are applied to every session that rides the front door, because only the door's name resolution can serve a ref (`fast`, `z/glm-5.3`, `family:glm-5-1`) that a tier's model setting would otherwise send to a provider that does not know it. */
   readonly tierModels?: Readonly<Partial<Record<ClaudeTier, string>>>;
+  /** Hosts to keep off the front door, merged into the child's `NO_PROXY` and `no_proxy` beside loopback. Only a launch that rides the door has a proxy to bypass. */
+  readonly proxyBypass?: readonly string[];
 }
 
 /**
@@ -250,8 +258,10 @@ export function buildEnv(params: BuildEnvParams): Record<string, string | undefi
     // The capability rides in the proxy URL too, because the CONNECT request that opens each tunnel is sent before any of the child's own headers: clients turn the URL's credential into Proxy-Authorization on every CONNECT, which is what the surface authenticates before it tunnels anything. A provider session rides the same surface: the door decides where its traffic goes from there (by the provider header above), so the child's belief that it is talking to api.anthropic.com survives intact, which is what its Remote Control gate demands.
     env.HTTPS_PROXY = connectProxyUrl(params.frontdoor.connectPort, params.frontdoor.sessionToken);
     // Loopback cannot be an upstream host the door fronts, so routing plain-http loopback traffic through the CONNECT surface is never correct: a proxy-aware plain-http client (an HTTP-transport MCP server on 127.0.0.1) sends such a request to the surface in absolute form, which the surface, speaking only CONNECT, answers with an empty 400 so the target server is never reached. Every process in the child's tree is exempted in both variable spellings clients read, each keeping whatever the parent environment or the provider's own env already listed there (an inherited exclusion must survive; a repeat entry folds away) rather than replacing it.
-    env.NO_PROXY = withLoopbackHosts(env.NO_PROXY);
-    env.no_proxy = withLoopbackHosts(env.no_proxy);
+    // The configured bypass hosts ride beside loopback, under both spellings because clients read one or the other: what the parent already set stays, and nothing is listed twice.
+    const bypassed = [...LOOPBACK_HOSTS, ...(params.proxyBypass ?? [])];
+    env.NO_PROXY = withBypassHosts(env.NO_PROXY, bypassed);
+    env.no_proxy = withBypassHosts(env.no_proxy, bypassed);
   }
 
   return env;

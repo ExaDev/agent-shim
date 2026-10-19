@@ -376,6 +376,23 @@ describe("profile commands", () => {
     expect(readProfile(paths, "acme")?.launch).toEqual({ headroom: true, skipPermissions: false });
   });
 
+  it("sets, replaces and clears the hosts kept off the front door, and refuses an entry the runtime would ignore", async () => {
+    createProfile(paths, "acme");
+    await cli(["profile", "set", "acme", "--launch-proxy-bypass", "mcp.example.com", "--launch-proxy-bypass", "Other.Example.com"]);
+    expect(readProfile(paths, "acme")?.launch).toEqual({ proxyBypass: ["mcp.example.com", "other.example.com"] });
+
+    await cli(["profile", "set", "acme", "--launch-proxy-bypass", ".example.org"]);
+    expect(readProfile(paths, "acme")?.launch).toEqual({ proxyBypass: [".example.org"] });
+
+    for (const bad of ["*.example.com", "mcp.example.com:443", "https://mcp.example.com", "*", "api.anthropic.com"]) {
+      expect((await cli(["profile", "set", "acme", "--launch-proxy-bypass", bad])).code, bad).toBe(EXIT_USAGE);
+    }
+    expect(readProfile(paths, "acme")?.launch).toEqual({ proxyBypass: [".example.org"] });
+
+    await cli(["profile", "set", "acme", "--no-launch-proxy-bypass"]);
+    expect(readProfile(paths, "acme")?.launch).toBeUndefined();
+  });
+
   it("sets and clears a Claude Code version pin, and refuses one that is not an exact version", async () => {
     createProfile(paths, "acme");
     await cli(["profile", "set", "acme", "--launch-claude-version", "2.1.220"]);
