@@ -1,3 +1,9 @@
+## [11.52.1](https://github.com/ExaDev/agent-shim/compare/v11.52.0...v11.52.1) (2026-10-19)
+
+### Code Refactoring
+
+* **statusline:** give elements the client's payload and ports to the machine ([6380b51](https://github.com/ExaDev/agent-shim/commit/6380b51e10b2e14a136202bfbb2a8faefb2bbcf2))
+
 ## [11.52.0](https://github.com/ExaDev/agent-shim/compare/v11.51.0...v11.52.0) (2026-10-19)
 
 ### Features
