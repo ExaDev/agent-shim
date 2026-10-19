@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** The segments of the statusline's header, in the order they are drawn unless a setting reorders them. */
-export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs"] as const;
+export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs", "effort", "advisor", "version", "outputStyle"] as const;
 
 /** The rows below the header, in the order they are drawn unless a setting reorders them: the context window's bar, the quota windows' bars, the added directories and the files the working tree has changed. */
 export const STATUSLINE_ROWS = ["context", "quota", "addedDirs", "gitFiles"] as const;
@@ -45,12 +45,21 @@ export const MAX_STATUSLINE_LABEL_CHARS = 12;
 /** The widest a bar's base size may be: bars grow to fill the line's spare width anyway, so a base beyond a wide terminal's usable columns only forces the layout to wrap. */
 const MAX_BAR_CELLS = 40;
 
+/** The longest an email address may be (RFC 5321's path limit less its angle brackets), so a cut at or beyond it never shortens an account. */
+export const MAX_ACCOUNT_USER_CHARS = 254;
+
+/** The most characters of text that comes from outside the statusline (a model name, an output style, an advisor) or that a setting replaces one with: longer than any real identifier of those kinds, and short enough to leave the header line room for its other segments. */
+export const MAX_DISPLAY_TEXT_CHARS = 80;
+
 /** Printable text with no control, format or separator characters, so a label cannot move the cursor or split the line. */
 const LABEL_RE = /^[^\p{C}\p{Z}]+(?: [^\p{C}\p{Z}]+)*$/u;
 
+/** `LABEL_RE`, or nothing at all: the text of a setting whose empty value means "leave it to the statusline". */
+const OPTIONAL_LABEL_RE = /^(?:[^\p{C}\p{Z}]+(?: [^\p{C}\p{Z}]+)*)?$/u;
+
 /** A list that names each member once: the order is the drawing order, and a repeated member would draw twice. */
 function distinctList<T extends z.ZodType<string>>(member: T): z.ZodArray<T> {
-  return z.array(member).refine((items) => new Set(items).size === items.length, "must not repeat a segment");
+  return z.array(member).refine((items) => new Set(items).size === items.length, "must not repeat an entry");
 }
 
 /** A colour: a named one, an index into the 256-colour palette, or a `#rrggbb` hex value. */
@@ -66,6 +75,8 @@ function isSingleVisibleGrapheme(text: string): boolean {
 const barCharacter = z.string().refine(isSingleVisibleGrapheme, "must be a single visible character");
 
 const labelText = z.string().max(MAX_STATUSLINE_LABEL_CHARS).regex(LABEL_RE, "must be visible text without control characters");
+/** Text that replaces something the statusline would otherwise work out; empty leaves the statusline to work it out. */
+const overrideText = z.string().max(MAX_DISPLAY_TEXT_CHARS).regex(OPTIONAL_LABEL_RE, "must be visible text without control characters");
 const wholePercent = z.number().int().min(1).max(MAX_PERCENT);
 
 /**
@@ -75,6 +86,24 @@ const SHAPES = {
   layout: {
     header: distinctList(z.enum(STATUSLINE_HEADER_SEGMENTS)).describe("The header segments to draw, in drawing order; a segment left out is hidden, and an empty list hides the header."),
     rows: distinctList(z.enum(STATUSLINE_ROWS)).describe("The rows to draw below the header, in drawing order; a row left out is hidden, and an empty list hides every row."),
+  },
+  model: {
+    format: z.enum(["full", "compact", "short"]).describe("How the model's name is written: full is the name as the client gives it, compact drops a context-window suffix such as (1M context), and short also drops a leading Claude."),
+    override: overrideText.describe("A name to show in place of the client's own model name, whatever model is running; empty shows the model's own name. A dynamic mode's served model still follows it."),
+    source: z.enum(["client", "transcript", "auto"]).describe("Where the model's name comes from: client is the name the client reports, transcript is the model the session's last reply came from (what a proxy actually served), and auto uses the transcript's model only when it is not a Claude model, which is what a proxy redirect looks like."),
+  },
+  provider: {
+    name: overrideText.describe("A label to show in place of the launch's provider name, or on its own when the launch has no provider; empty shows the provider's own name."),
+  },
+  account: {
+    parts: distinctList(z.enum(["user", "organisation", "plan"])).describe("What the account segment says about the login account, in drawing order: the account's email address, its organisation (shown for team and enterprise accounts) and its plan. A part left out is hidden, and an empty list hides the segment."),
+    userLength: z.number().int().min(0).max(MAX_ACCOUNT_USER_CHARS).describe("The most characters of the account's email address to show, with an ellipsis after a cut one; 0 shows all of it."),
+  },
+  effort: {
+    format: z.enum(["full", "symbol", "text"]).describe("How the reasoning effort is written: full is a symbol and the level (a filled circle that grows with the level, then the name), symbol is the symbol alone, and text is the level's name alone. A level with no symbol is always written as its name."),
+  },
+  advisor: {
+    override: overrideText.describe("A name to show for the advisor model in place of the one the session's transcript records; empty shows the transcript's, prettified."),
   },
   bands: {
     warnAt: wholePercent.describe("The whole percentage of use at which a bar turns yellow; it must be below criticalAt."),
@@ -125,6 +154,11 @@ const SHAPES = {
 /** What a configuration layer may set: every group and every key optional, so a layer names only what it changes. */
 export const StatuslineSchema = z.strictObject({
   layout: z.strictObject(SHAPES.layout).partial().optional(),
+  model: z.strictObject(SHAPES.model).partial().optional(),
+  provider: z.strictObject(SHAPES.provider).partial().optional(),
+  account: z.strictObject(SHAPES.account).partial().optional(),
+  effort: z.strictObject(SHAPES.effort).partial().optional(),
+  advisor: z.strictObject(SHAPES.advisor).partial().optional(),
   bands: z.strictObject(SHAPES.bands).partial().optional(),
   labels: z.strictObject(SHAPES.labels).partial().optional(),
   bar: z.strictObject(SHAPES.bar).partial().optional(),
@@ -138,6 +172,11 @@ export type StatuslineSettings = z.infer<typeof StatuslineSchema>;
 /** The statusline with every setting decided. */
 export const ResolvedStatuslineSchema = z.strictObject({
   layout: z.strictObject(SHAPES.layout),
+  model: z.strictObject(SHAPES.model),
+  provider: z.strictObject(SHAPES.provider),
+  account: z.strictObject(SHAPES.account),
+  effort: z.strictObject(SHAPES.effort),
+  advisor: z.strictObject(SHAPES.advisor),
   bands: z.strictObject(SHAPES.bands),
   labels: z.strictObject(SHAPES.labels),
   bar: z.strictObject(SHAPES.bar),
@@ -151,6 +190,11 @@ export type ResolvedStatusline = z.infer<typeof ResolvedStatuslineSchema>;
 /** What the statusline draws when no layer sets a key. */
 export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   layout: { header: [...DEFAULT_HEADER_SEGMENTS], rows: [...DEFAULT_ROWS] },
+  model: { format: "full", override: "", source: "client" },
+  provider: { name: "" },
+  account: { parts: ["user", "organisation", "plan"], userLength: 0 },
+  effort: { format: "full" },
+  advisor: { override: "" },
   bands: { warnAt: 70, criticalAt: 90 },
   labels: { fiveHour: "5h", sevenDay: "Wk" },
   bar: { width: 10, filled: "█", empty: "░" },

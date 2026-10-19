@@ -158,7 +158,11 @@
                       "identity",
                       "headroom",
                       "project",
-                      "vcs"
+                      "vcs",
+                      "effort",
+                      "advisor",
+                      "version",
+                      "outputStyle"
                     ]
                   },
                   "description": "The header segments to draw, in drawing order; a segment left out is hidden, and an empty list hides the header."
@@ -175,6 +179,99 @@
                     ]
                   },
                   "description": "The rows to draw below the header, in drawing order; a row left out is hidden, and an empty list hides every row."
+                }
+              },
+              "additionalProperties": false
+            },
+            "model": {
+              "type": "object",
+              "properties": {
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "full",
+                    "compact",
+                    "short"
+                  ],
+                  "description": "How the model's name is written: full is the name as the client gives it, compact drops a context-window suffix such as (1M context), and short also drops a leading Claude."
+                },
+                "override": {
+                  "type": "string",
+                  "maxLength": 80,
+                  "pattern": "^(?:[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*)?$",
+                  "description": "A name to show in place of the client's own model name, whatever model is running; empty shows the model's own name. A dynamic mode's served model still follows it."
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "client",
+                    "transcript",
+                    "auto"
+                  ],
+                  "description": "Where the model's name comes from: client is the name the client reports, transcript is the model the session's last reply came from (what a proxy actually served), and auto uses the transcript's model only when it is not a Claude model, which is what a proxy redirect looks like."
+                }
+              },
+              "additionalProperties": false
+            },
+            "provider": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "maxLength": 80,
+                  "pattern": "^(?:[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*)?$",
+                  "description": "A label to show in place of the launch's provider name, or on its own when the launch has no provider; empty shows the provider's own name."
+                }
+              },
+              "additionalProperties": false
+            },
+            "account": {
+              "type": "object",
+              "properties": {
+                "parts": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "organisation",
+                      "plan"
+                    ]
+                  },
+                  "description": "What the account segment says about the login account, in drawing order: the account's email address, its organisation (shown for team and enterprise accounts) and its plan. A part left out is hidden, and an empty list hides the segment."
+                },
+                "userLength": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 254,
+                  "description": "The most characters of the account's email address to show, with an ellipsis after a cut one; 0 shows all of it."
+                }
+              },
+              "additionalProperties": false
+            },
+            "effort": {
+              "type": "object",
+              "properties": {
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "full",
+                    "symbol",
+                    "text"
+                  ],
+                  "description": "How the reasoning effort is written: full is a symbol and the level (a filled circle that grows with the level, then the name), symbol is the symbol alone, and text is the level's name alone. A level with no symbol is always written as its name."
+                }
+              },
+              "additionalProperties": false
+            },
+            "advisor": {
+              "type": "object",
+              "properties": {
+                "override": {
+                  "type": "string",
+                  "maxLength": 80,
+                  "pattern": "^(?:[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*)?$",
+                  "description": "A name to show for the advisor model in place of the one the session's transcript records; empty shows the transcript's, prettified."
                 }
               },
               "additionalProperties": false

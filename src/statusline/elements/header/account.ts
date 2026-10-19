@@ -1,7 +1,7 @@
 import type { StatuslineSummary } from "../../enrich";
+import { graphemesOf } from "../../graphemes";
 import type { RenderContext } from "../context";
 
-/** An organisation type as the plan name a person knows it by; undefined for a personal account or a type with no known name, where the rate-limit tier labels the plan instead. */
 /** The multiplier suffix of a rate-limit tier: `default_claude_max_20x` carries `20x`. */
 function tierSuffixOf(tier: string | undefined): string | undefined {
   const match = /_(\d+x)$/i.exec(tier ?? "");
@@ -59,14 +59,24 @@ function planLabelOf(tier: string | undefined): string | undefined {
 }
 
 
+/** The account's email address cut to `length` characters with an ellipsis after a cut one; `0` keeps it whole. */
+function truncatedUser(email: string, length: number): string {
+  const characters = graphemesOf(email);
+  return length === 0 || characters.length <= length ? email : `${characters.slice(0, length).join("")}…`;
+}
+
 /** The login account the session runs as, with its organisation and plan, or undefined when it adds nothing beside the provider's own account. */
-export function accountSegment({ summary }: RenderContext): string | undefined {
+export function accountSegment({ summary, settings }: RenderContext): string | undefined {
   // An account in an organisation is on the organisation's plan with its seat's tier naming the variant, and the seat's rate-limit tier names limits, not the plan; a personal account's plan is the tier itself. A personal plan's organizationName is only the account holder's own name, redundant beside the email, so an organisation's name shows only for the organisation types. Beside a provider the login's plan names quota the session is not drawing from, so there the login names its organisation, or just its account when it has none.
   const loginPlan = summary.provider === undefined ? (summary.loginPlan ?? accountPlanLabel(summary)) : undefined;
   const loginOrgName = summary.loginOrganizationType === "claude_team" || summary.loginOrganizationType === "claude_enterprise" ? summary.loginOrganizationName : undefined;
-  const loginParts = [summary.loginAccountEmail, loginOrgName, loginPlan].filter((part) => part !== undefined);
-  if (summary.loginAccountEmail !== undefined && summary.loginAccountEmail !== summary.providerAccountEmail) {
-    return loginParts.join(" · ");
-  }
-  return summary.provider === undefined && loginParts.length > 0 ? loginParts.join(" · ") : undefined;
+  const available = {
+    user: summary.loginAccountEmail === undefined ? undefined : truncatedUser(summary.loginAccountEmail, settings.account.userLength),
+    organisation: loginOrgName,
+    plan: loginPlan,
+  };
+  // Whether the segment names the login at all is decided from what the door knows; the settings then choose which of its parts are written.
+  const namesLogin = (summary.loginAccountEmail !== undefined && summary.loginAccountEmail !== summary.providerAccountEmail) || summary.provider === undefined;
+  const shown = settings.account.parts.map((part) => available[part]).filter((part) => part !== undefined);
+  return namesLogin && shown.length > 0 ? shown.join(" · ") : undefined;
 }

@@ -418,6 +418,8 @@ describe("profile commands", () => {
     const listing = await cli(["statusline", "keys"]);
     expect(listing.stdout).toContain("bands.warnAt  (integer; default 70)");
     expect(listing.stdout).toContain(`layout.header  (list of ${STATUSLINE_HEADER_SEGMENTS.join(", ")};`);
+    expect(listing.stdout).toContain("account.parts  (list of user, organisation, plan; default");
+    expect(listing.stdout).toContain("model.source  (choice of client, transcript, auto; default \"client\")");
     const json = JSON.parse((await cli(["statusline", "keys", "--json"])).stdout) as { path: string }[];
     expect(json.map((key) => key.path)).toContain("labels.sevenDay");
   });

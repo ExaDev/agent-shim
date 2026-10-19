@@ -23,6 +23,12 @@ describe("parseClientPayload", () => {
     expect(payload).toHaveProperty("somethingElse", 1);
   });
 
+  it("reads the version and the effort, whether the effort is a level name or an object carrying one", () => {
+    expect(parseClientPayload({ version: "2.1.81", effort: "high" })).toMatchObject({ version: "2.1.81", effort: "high" });
+    expect(parseClientPayload({ effort: { level: "max", budget: 1 } }).effort).toEqual({ level: "max", budget: 1 });
+    expect(parseClientPayload({ version: 2, effort: 3 })).toEqual({ version: undefined, effort: undefined });
+  });
+
   it("reads a field of the wrong type, or null, as absent without discarding its neighbours", () => {
     const payload = parseClientPayload({ session_id: 7, model: { id: "m", display_name: null }, context_window: { used_percentage: "10", context_window_size: WINDOW_TOKENS, total_input_tokens: null } });
     expect(payload.session_id).toBeUndefined();

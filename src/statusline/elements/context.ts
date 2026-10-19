@@ -30,6 +30,8 @@ export interface RenderContext {
   readonly palette: Palette;
   /** What the statusline may read from the machine. */
   readonly ports: StatuslinePorts;
+  /** The end of the session's transcript (`TRANSCRIPT_TAIL_BYTES` of it), or undefined when the payload names none or it cannot be read. Read on first use and the same text on every later call in the render, so elements that each need it cost one read between them. */
+  readonly transcriptTail: () => string | undefined;
 }
 
 /** How a bar is coloured and drawn under the settings, for the row whose bar is below its warning threshold in `okRole`'s colour. */
