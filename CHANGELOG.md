@@ -1,3 +1,9 @@
+## [11.47.0](https://github.com/ExaDev/agent-shim/compare/v11.46.0...v11.47.0) (2026-10-19)
+
+### Features
+
+* **providers:** rename a provider without stranding running sessions ([5667f2a](https://github.com/ExaDev/agent-shim/commit/5667f2ae3d62d86047dd900b47898159841858f1))
+
 ## [11.46.0](https://github.com/ExaDev/agent-shim/compare/v11.45.0...v11.46.0) (2026-10-18)
 
 ### Features
