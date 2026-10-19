@@ -150,12 +150,13 @@ describe("config API: configuration profiles", () => {
     expect(await codeOf(api.profile.set({ name: "client", launch: { proxyBypass: ["api.anthropic.com"] } }))).toBe("BAD_REQUEST");
     expect((await api.profile.set({ name: "client", launch: { proxyBypass: false } })).value.launch?.proxyBypass).toBeUndefined();
 
-    const styled = await api.profile.set({ name: "client", launch: { statusline: { header: ["model"], barWidth: 6 } } });
-    expect(styled.value.launch?.statusline).toEqual({ header: ["model"], barWidth: 6 });
-    const merged = await api.profile.set({ name: "client", launch: { statusline: { barWidth: false, warnAt: 50 } } });
-    expect(merged.value.launch?.statusline).toEqual({ header: ["model"], warnAt: 50 });
-    expect(await codeOf(api.profile.set({ name: "client", launch: { statusline: { barWidth: 0 } } }))).toBe("BAD_REQUEST");
-    expect((await api.profile.set({ name: "client", launch: { statusline: { header: false, warnAt: false } } })).value.launch?.statusline).toBeUndefined();
+    const styled = await api.profile.set({ name: "client", launch: { statusline: { set: { "layout.header": ["model"], "bar.width": 6 } } } });
+    expect(styled.value.launch?.statusline).toEqual({ layout: { header: ["model"] }, bar: { width: 6 } });
+    const merged = await api.profile.set({ name: "client", launch: { statusline: { set: { "bands.warnAt": 50 }, unset: ["bar.width"] } } });
+    expect(merged.value.launch?.statusline).toEqual({ layout: { header: ["model"] }, bands: { warnAt: 50 } });
+    expect(await codeOf(api.profile.set({ name: "client", launch: { statusline: { set: { "bar.width": 0 } } } }))).toBe("BAD_REQUEST");
+    expect(await codeOf(api.profile.set({ name: "client", launch: { statusline: { set: { "bar.colour": 1 } } } }))).toBe("BAD_REQUEST");
+    expect((await api.profile.set({ name: "client", launch: { statusline: { unset: ["layout.header", "bands.warnAt"] } } })).value.launch?.statusline).toBeUndefined();
 
     const cleared = await api.profile.set({ name: "client", extends: false, description: false, launch: { provider: false } });
     expect(cleared.value.extends).toBeUndefined();

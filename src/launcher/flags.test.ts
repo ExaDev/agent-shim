@@ -567,13 +567,13 @@ describe("resolveLaunchFlags statusline", () => {
   });
 
   it("takes the cascade's settings, and the environment's whole object ahead of them", () => {
-    expect(resolveLaunchFlags({ env: {}, cascade: { statusline: { barWidth: 6 } } }).statusline).toEqual({ barWidth: 6 });
-    expect(resolveLaunchFlags({ env: { AGENT_SHIM_STATUSLINE: '{"warnAt":50}' }, cascade: { statusline: { barWidth: 6 } } }).statusline).toEqual({ warnAt: 50 });
-    expect(resolveLaunchFlags({ env: { AGENT_SHIM_STATUSLINE: "" }, cascade: { statusline: { barWidth: 6 } } }).statusline).toEqual({ barWidth: 6 });
+    expect(resolveLaunchFlags({ env: {}, cascade: { statusline: { bar: { width: 6 } } } }).statusline).toEqual({ bar: { width: 6 } });
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_STATUSLINE: '{"bands":{"warnAt":50}}' }, cascade: { statusline: { bar: { width: 6 } } } }).statusline).toEqual({ bands: { warnAt: 50 } });
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_STATUSLINE: "" }, cascade: { statusline: { bar: { width: 6 } } } }).statusline).toEqual({ bar: { width: 6 } });
   });
 
   it("fails loudly on thresholds the cascade's layers combine into an undrawable pair, and on a malformed environment value", () => {
-    expect(() => resolveLaunchFlags({ env: {}, cascade: { statusline: { warnAt: 95 } } })).toThrow(/launch\.statusline: statusline warnAt \(95\)/);
+    expect(() => resolveLaunchFlags({ env: {}, cascade: { statusline: { bands: { warnAt: 95 } } } })).toThrow(/launch\.statusline: statusline bands\.warnAt \(95\)/);
     expect(() => resolveLaunchFlags({ env: { AGENT_SHIM_STATUSLINE: "[1]" } })).toThrow(/AGENT_SHIM_STATUSLINE:/);
   });
 });
@@ -582,12 +582,12 @@ describe("buildEnv statusline", () => {
   const params = { sessionId: "session-test", remoteControl: false, configDirEscapeHatch: false, identitiesDir: "/home/testuser/.agent-shim/identities" } as const;
 
   it("exports the settings as one JSON object, with or without the front door", () => {
-    const env = buildEnv({ ...params, baseEnv: {}, statusline: { barWidth: 6, header: ["model"] } });
-    expect(JSON.parse(env.AGENT_SHIM_STATUSLINE ?? "")).toEqual({ barWidth: 6, header: ["model"] });
+    const env = buildEnv({ ...params, baseEnv: {}, statusline: { bar: { width: 6 }, layout: { header: ["model"] } } });
+    expect(JSON.parse(env.AGENT_SHIM_STATUSLINE ?? "")).toEqual({ bar: { width: 6 }, layout: { header: ["model"] } });
   });
 
   it("leaves the variable alone when the launch configures nothing", () => {
     expect(buildEnv({ ...params, baseEnv: {} }).AGENT_SHIM_STATUSLINE).toBeUndefined();
-    expect(buildEnv({ ...params, baseEnv: { AGENT_SHIM_STATUSLINE: '{"warnAt":50}' } }).AGENT_SHIM_STATUSLINE).toBe('{"warnAt":50}');
+    expect(buildEnv({ ...params, baseEnv: { AGENT_SHIM_STATUSLINE: '{"bands":{"warnAt":50}}' } }).AGENT_SHIM_STATUSLINE).toBe('{"bands":{"warnAt":50}}');
   });
 });

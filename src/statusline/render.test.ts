@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { STATUSLINE_DEFAULTS } from "../config/statusline";
+import { resolveStatusline, type StatuslineSettings } from "../config/statusline";
+import { ELEMENTS, type ElementRegistry } from "./elements/registry";
 import { renderStatuslineBlock, RESERVED_COLUMNS } from "./render";
 import type { StatuslineSummary } from "./enrich";
 
@@ -319,36 +320,36 @@ describe("a dynamic mode's choice beside the model name", () => {
 });
 
 describe("statusline settings", () => {
-  const render = (settings: Partial<typeof STATUSLINE_DEFAULTS>, summary: StatuslineSummary = SUMMARY, terminalWidth = WIDE_TERMINAL): string =>
-    renderStatuslineBlock(summary, VIEW, terminalWidth, NOW_MS, { ...STATUSLINE_DEFAULTS, ...settings });
+  const render = (settings: StatuslineSettings, summary: StatuslineSummary = SUMMARY, terminalWidth = WIDE_TERMINAL): string =>
+    renderStatuslineBlock(summary, VIEW, terminalWidth, NOW_MS, resolveStatusline(settings));
 
   it("draws exactly what it drew before settings existed when every setting is the default", () => {
     expect(render({})).toBe(renderStatuslineBlock(SUMMARY, VIEW, WIDE_TERMINAL, NOW_MS));
   });
 
   it("draws the header segments in the order listed and hides the ones left out", () => {
-    const header = stripAnsi(render({ header: ["identity", "model"] }, SUMMARY, TWO_SEGMENT_LINE_TERMINAL)).split("\n");
+    const header = stripAnsi(render({ layout: { header: ["identity", "model"] } }, SUMMARY, TWO_SEGMENT_LINE_TERMINAL)).split("\n");
     expect(header.slice(0, 2)).toEqual(["antigravity", "Sonnet 5.5"]);
     expect(header.join("\n")).not.toContain("ada@example.com");
   });
 
   it("hides the whole header when the list is empty", () => {
-    const lines = stripAnsi(render({ header: [] })).split("\n");
+    const lines = stripAnsi(render({ layout: { header: [] } })).split("\n");
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("Ctx");
   });
 
-  it("draws the bar groups in the order listed, and none when the list is empty", () => {
-    const quotaFirst = stripAnsi(render({ header: [], bars: ["quota", "context"] }, SUMMARY, ALIGNED_TERMINAL)).split("\n");
+  it("draws the rows in the order listed, and none when the list is empty", () => {
+    const quotaFirst = stripAnsi(render({ layout: { header: [], rows: ["quota", "context"] } }, SUMMARY, ALIGNED_TERMINAL)).split("\n");
     expect(quotaFirst.findIndex((line) => line.includes("5h"))).toBeLessThan(quotaFirst.findIndex((line) => line.includes("Ctx")));
-    expect(render({ header: [], bars: [] })).toBe("");
-    const quotaOnly = stripAnsi(render({ bars: ["quota"] }));
+    expect(render({ layout: { header: [], rows: [] } })).toBe("");
+    const quotaOnly = stripAnsi(render({ layout: { rows: ["quota"] } }));
     expect(quotaOnly).toContain("5h");
     expect(quotaOnly).not.toContain("Ctx");
   });
 
   it("names the two subscription windows as set", () => {
-    const text = stripAnsi(render({ fiveHourLabel: "Session", sevenDayLabel: "Week" }));
+    const text = stripAnsi(render({ labels: { fiveHour: "Session", sevenDay: "Week" } }));
     expect(text).toContain("Session ");
     expect(text).toContain("Week ");
     expect(text).not.toContain("5h ");
@@ -356,16 +357,23 @@ describe("statusline settings", () => {
 
   it("moves the colour bands with the thresholds", () => {
     const at = (used: number) => ({ ...SUMMARY, fiveHourUsed: used, sevenDayUsed: undefined });
-    const quota = (settings: Partial<typeof STATUSLINE_DEFAULTS>, used: number): string => render({ bars: ["quota"], ...settings }, at(used));
+    const quota = (settings: StatuslineSettings, used: number): string => render({ layout: { rows: ["quota"] }, ...settings }, at(used));
     const usedBetweenWarnAndCritical = 60;
     const text = `${String(usedBetweenWarnAndCritical)}.0%`;
     expect(quota({}, usedBetweenWarnAndCritical)).toContain(`[${GREEN_CODE}m${text}`);
-    expect(quota({ warnAt: 50, criticalAt: 80 }, usedBetweenWarnAndCritical)).toContain(`[${YELLOW_CODE}m${text}`);
-    expect(quota({ warnAt: 50, criticalAt: 55 }, usedBetweenWarnAndCritical)).toContain(`[${RED_CODE}m${text}`);
+    expect(quota({ bands: { warnAt: 50, criticalAt: 80 } }, usedBetweenWarnAndCritical)).toContain(`[${YELLOW_CODE}m${text}`);
+    expect(quota({ bands: { warnAt: 50, criticalAt: 55 } }, usedBetweenWarnAndCritical)).toContain(`[${RED_CODE}m${text}`);
   });
 
   it("sets the base width of a bar, which decides how many bars share a row", () => {
-    const rows = (barWidth: number): number => stripAnsi(render({ header: [], barWidth }, SUMMARY, ALIGNED_TERMINAL)).split("\n").length;
+    const rows = (width: number): number => stripAnsi(render({ layout: { header: [] }, bar: { width } }, SUMMARY, ALIGNED_TERMINAL)).split("\n").length;
     expect(rows(NARROW_BAR_CELLS)).toBeLessThan(rows(WIDE_BAR_CELLS));
+  });
+
+  it("draws a text row as its own lines, ending the run of bars before it", () => {
+    const withNotes: ElementRegistry = { ...ELEMENTS, rows: { ...ELEMENTS.rows, quota: () => ({ kind: "text", lines: ["first note", "second note"] }) } };
+    const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, WIDE_TERMINAL, NOW_MS, resolveStatusline({ layout: { header: [] } }), withNotes)).split("\n");
+    expect(lines[0]).toContain("Ctx");
+    expect(lines.slice(1)).toEqual(["first note", "second note"]);
   });
 });

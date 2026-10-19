@@ -393,23 +393,32 @@ describe("profile commands", () => {
     expect(readProfile(paths, "acme")?.launch).toBeUndefined();
   });
 
-  it("sets, merges and clears statusline settings key by key, and refuses a value the schema refuses", async () => {
+  it("sets, merges and removes statusline settings key by key, and refuses a setting or value the schema refuses", async () => {
     createProfile(paths, "acme");
-    await cli(["profile", "set", "acme", "--statusline-header", "identity", "--statusline-header", "model", "--statusline-bar-width", "6", "--statusline-five-hour-label", "Session"]);
-    expect(readProfile(paths, "acme")?.launch).toEqual({ statusline: { header: ["identity", "model"], barWidth: 6, fiveHourLabel: "Session" } });
+    await cli(["profile", "set", "acme", "--statusline", "layout.header=identity,model", "--statusline", "bar.width=6", "--statusline", "labels.fiveHour=Session"]);
+    expect(readProfile(paths, "acme")?.launch).toEqual({ statusline: { layout: { header: ["identity", "model"] }, bar: { width: 6 }, labels: { fiveHour: "Session" } } });
 
-    await cli(["profile", "set", "acme", "--statusline-warn-at", "50", "--statusline-critical-at", "80", "--no-statusline-bar-width"]);
-    expect(readProfile(paths, "acme")?.launch).toEqual({ statusline: { header: ["identity", "model"], fiveHourLabel: "Session", warnAt: 50, criticalAt: 80 } });
+    await cli(["profile", "set", "acme", "--statusline", "bands.warnAt=50", "--statusline", "bands.criticalAt=80", "--unset-statusline", "bar.width"]);
+    expect(readProfile(paths, "acme")?.launch).toEqual({ statusline: { layout: { header: ["identity", "model"] }, labels: { fiveHour: "Session" }, bands: { warnAt: 50, criticalAt: 80 } } });
 
-    await cli(["profile", "set", "acme", "--statusline-bars", "none"]);
-    expect(readProfile(paths, "acme")?.launch?.statusline?.bars).toEqual([]);
+    await cli(["profile", "set", "acme", "--statusline", "layout.rows="]);
+    expect(readProfile(paths, "acme")?.launch?.statusline?.layout?.rows).toEqual([]);
 
-    for (const bad of [["--statusline-header", "colour"], ["--statusline-warn-at", "0"], ["--statusline-bar-width", "wide"], ["--statusline-five-hour-label", ""]]) {
-      expect((await cli(["profile", "set", "acme", ...bad])).code, bad.join(" ")).toBe(EXIT_USAGE);
+    for (const bad of ["layout.header=colour", "bands.warnAt=0", "bar.width=wide", "labels.fiveHour=", "bar.colour=1", "nonsense"]) {
+      expect((await cli(["profile", "set", "acme", "--statusline", bad])).code, bad).toBe(EXIT_USAGE);
     }
+    expect((await cli(["profile", "set", "acme", "--unset-statusline", "bar.colour"])).code).toBe(EXIT_USAGE);
 
-    await cli(["profile", "set", "acme", "--no-statusline-header", "--no-statusline-bars", "--no-statusline-warn-at", "--no-statusline-critical-at", "--no-statusline-five-hour-label"]);
+    await cli(["profile", "set", "acme", "--unset-statusline", "layout.header", "--unset-statusline", "layout.rows", "--unset-statusline", "labels.fiveHour", "--unset-statusline", "bands.warnAt", "--unset-statusline", "bands.criticalAt"]);
     expect(readProfile(paths, "acme")?.launch).toBeUndefined();
+  });
+
+  it("lists every statusline setting with its default and description", async () => {
+    const listing = await cli(["statusline", "keys"]);
+    expect(listing.stdout).toContain("bands.warnAt  (integer; default 70)");
+    expect(listing.stdout).toContain("layout.header  (list of model, provider, route, account, identity, headroom;");
+    const json = JSON.parse((await cli(["statusline", "keys", "--json"])).stdout) as { path: string }[];
+    expect(json.map((key) => key.path)).toContain("labels.sevenDay");
   });
 
   it("sets and clears a Claude Code version pin, and refuses one that is not an exact version", async () => {

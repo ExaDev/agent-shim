@@ -1,5 +1,5 @@
 import { isOverridableCategory, type EntryValue, type ModelsConfig, type ModelsLayer, type OverridableCategory } from "../config/schema";
-import type { StatuslineSettings } from "../config/statusline";
+import { mergeStatuslineSettings, StatuslineSchema, type StatuslineSettings } from "../config/statusline";
 import { isVacuousWhen } from "./conditions";
 import { canonicaliseEntryKey, compareSpecificity, compileMatcher, EntryKeyError, isExactPattern, literalPrefixOf } from "./match";
 import type { CompiledRule, Diagnostic, FlattenedCascade, Layer } from "./types";
@@ -67,8 +67,8 @@ export function flattenLayers(layers: readonly Layer[], options: Readonly<{ home
         launch.proxyBypass = layer.launch.proxyBypass;
       }
       if (layer.launch.statusline !== undefined) {
-        // Each key is its own setting: a layer that sets only the labels leaves a shallower layer's thresholds alone.
-        launch.statusline = { ...launch.statusline, ...layer.launch.statusline };
+        // Each key is its own setting: a layer that sets only the labels leaves a shallower layer's thresholds alone, in every group.
+        launch.statusline = StatuslineSchema.parse(mergeStatuslineSettings(launch.statusline, layer.launch.statusline));
       }
     }
 

@@ -3,7 +3,7 @@ import path from "node:path";
 import { applyPatch, readJson, writeJsonAtomic } from "./config/store";
 import { ConfigProfileSchema, expandAllCategoryKey, GlobalConfigSchema, isOverridableCategory, type CategoryMap, type ConfigProfile, type Entries, type GlobalConfig, type LaunchFlags } from "./config/schema";
 import { CliError } from "./cliError";
-import { StatuslineSchema, type StatuslineSettings } from "./config/statusline";
+import { applyStatuslineChange, type StatuslineChange } from "./statusline/change";
 import { ConfigValidationError } from "./config/load";
 import type { LayoutPaths } from "./paths";
 
@@ -208,24 +208,8 @@ export interface ProfileChange {
   readonly launchDelay?: string | false;
   readonly launchPause?: boolean;
   readonly launchExplain?: boolean;
-  /** Key-by-key changes to the profile's `launch.statusline`: a value sets that key, `false` clears it, and a key left out is untouched. */
+  /** Settings to set and to remove in the profile's `launch.statusline`; a setting left out is untouched. */
   readonly launchStatusline?: StatuslineChange;
-}
-
-/** One `profile set` change to the statusline settings, key by key. */
-export type StatuslineChange = { readonly [Key in keyof StatuslineSettings]?: StatuslineSettings[Key] | false };
-
-/** `existing` with `change` applied key by key, or undefined once no key is left. */
-function withStatuslineChange(existing: Readonly<StatuslineSettings> | undefined, change: StatuslineChange): StatuslineSettings | undefined {
-  const merged = new Map<string, unknown>(Object.entries({ ...existing }));
-  for (const [key, value] of Object.entries(change)) {
-    if (value === false) {
-      merged.delete(key);
-    } else {
-      merged.set(key, value);
-    }
-  }
-  return merged.size === 0 ? undefined : StatuslineSchema.parse(Object.fromEntries(merged));
 }
 
 /** Applies every field `change` names to profile `name`, returning whether any was given. The one implementation `profile set` and the typed API's `config.profile.set` share. */
@@ -278,7 +262,7 @@ export function applyProfileChange(paths: LayoutPaths, name: string, change: Pro
     launchPatch.explain = change.launchExplain;
   }
   if (change.launchStatusline !== undefined) {
-    launchPatch.statusline = withStatuslineChange(readProfile(paths, name)?.launch?.statusline, change.launchStatusline);
+    launchPatch.statusline = applyStatuslineChange(readProfile(paths, name)?.launch?.statusline, change.launchStatusline);
   }
   if (Object.keys(launchPatch).length > 0) {
     setProfileLaunchFlags(paths, name, launchPatch);

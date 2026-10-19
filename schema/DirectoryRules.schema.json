@@ -151,54 +151,85 @@
               "statusline": {
                 "type": "object",
                 "properties": {
-                  "header": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "enum": [
-                        "model",
-                        "provider",
-                        "route",
-                        "account",
-                        "identity",
-                        "headroom"
-                      ]
-                    }
+                  "layout": {
+                    "type": "object",
+                    "properties": {
+                      "header": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "model",
+                            "provider",
+                            "route",
+                            "account",
+                            "identity",
+                            "headroom"
+                          ]
+                        },
+                        "description": "The header segments to draw, in drawing order; a segment left out is hidden, and an empty list hides the header."
+                      },
+                      "rows": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "context",
+                            "quota"
+                          ]
+                        },
+                        "description": "The rows to draw below the header, in drawing order; a row left out is hidden, and an empty list hides every row."
+                      }
+                    },
+                    "additionalProperties": false
                   },
-                  "bars": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "enum": [
-                        "context",
-                        "quota"
-                      ]
-                    }
+                  "bands": {
+                    "type": "object",
+                    "properties": {
+                      "warnAt": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "description": "The whole percentage of use at which a bar turns yellow; it must be below criticalAt."
+                      },
+                      "criticalAt": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "description": "The whole percentage of use at which a bar turns red."
+                      }
+                    },
+                    "additionalProperties": false
                   },
-                  "warnAt": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 100
+                  "labels": {
+                    "type": "object",
+                    "properties": {
+                      "fiveHour": {
+                        "type": "string",
+                        "maxLength": 12,
+                        "pattern": "^[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*$",
+                        "description": "The name of the five-hour subscription window."
+                      },
+                      "sevenDay": {
+                        "type": "string",
+                        "maxLength": 12,
+                        "pattern": "^[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*$",
+                        "description": "The name of the weekly subscription window."
+                      }
+                    },
+                    "additionalProperties": false
                   },
-                  "criticalAt": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 100
-                  },
-                  "fiveHourLabel": {
-                    "type": "string",
-                    "maxLength": 12,
-                    "pattern": "^[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*$"
-                  },
-                  "sevenDayLabel": {
-                    "type": "string",
-                    "maxLength": 12,
-                    "pattern": "^[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*$"
-                  },
-                  "barWidth": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 40
+                  "bar": {
+                    "type": "object",
+                    "properties": {
+                      "width": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 40,
+                        "description": "A bar's width in cells before the line's spare width is shared out among the bars."
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false

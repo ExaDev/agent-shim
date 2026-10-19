@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Command } from "commander";
 
-import { withExamples } from "../cli/commandDeps";
+import { printJson, withExamples } from "../cli/commandDeps";
 import { resolveStatusline, STATUSLINE_ENV } from "../config/statusline";
 import type { LayoutPaths } from "../paths";
 import { listProviders } from "../providersStore";
@@ -16,6 +16,7 @@ import { fetchHeadroomSessionStats, headroomSessionIdOf, headroomTargetOf, realH
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import { readUsageLog } from "../usage/read";
 import { renderStatuslineBlock } from "./render";
+import { formatStatuslineKeys, statuslineKeys } from "./keys";
 import { statuslineSettingsFromEnv } from "./settings";
 import { terminalWidthOf } from "./width";
 
@@ -63,9 +64,9 @@ const ROUTED_TARGET_LOOKBACK_MS = 3_600_000;
 
 /** The command a client's statusline setting names: it reads the client's payload on stdin, adds what the door knows under one `agent_shim` key, and either hands the enriched payload to the renderer named in `AGENT_SHIM_STATUSLINE_CMD` or renders the built-in line itself. */
 export function registerStatuslineCommand(program: Command, deps: { readonly paths: LayoutPaths }): void {
+  const statusline = program.command("statusline");
   withExamples(
-    program
-      .command("statusline")
+    statusline
       .description("Serve as a statusline entrypoint: read the client's stdin payload, add the identity's live provider, account and usage windows under an agent_shim key, then run the renderer named in AGENT_SHIM_STATUSLINE_CMD or print the built-in line.")
       .action(async () => {
       const stdin = await readAllStdin();
@@ -159,4 +160,19 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
       }),
     ["$ agent-shim statusline  # a client's statusline setting names this; it renders or delegates"],
   );
+  registerStatuslineKeys(statusline);
+}
+
+/** `agent-shim statusline keys`: every setting of the built-in statusline, from the schema the configuration files are checked against. Created from its parent so it shares the program's output and exit handling. */
+function registerStatuslineKeys(statusline: Command): void {
+  withExamples(
+    statusline.command("keys").description("List every setting of the built-in statusline with its kind, its default and what it does.").option("--json", "Print the settings as JSON."),
+    ["agent-shim statusline keys", "agent-shim statusline keys --json"],
+  ).action((options: { readonly json?: boolean }) => {
+    if (options.json === true) {
+      printJson(statuslineKeys());
+      return;
+    }
+    console.log(formatStatuslineKeys(statuslineKeys()));
+  });
 }
