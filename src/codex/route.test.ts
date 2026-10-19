@@ -264,7 +264,14 @@ describe("codex route: refusals and quota", () => {
     const { route, snapshots } = harness(() =>
       fakeResponse({
         status: HTTP_STATUS.tooManyRequests,
-        headers: { "x-codex-primary-reset-at": String(resetAt), "x-codex-secondary-window-minutes": "300", "x-codex-secondary-used-percent": "80", "x-codex-secondary-reset-at": String(resetAt - 1) },
+        headers: {
+          "x-codex-primary-window-minutes": "10080",
+          "x-codex-primary-used-percent": "100",
+          "x-codex-primary-reset-at": String(resetAt),
+          "x-codex-secondary-window-minutes": "300",
+          "x-codex-secondary-used-percent": "80",
+          "x-codex-secondary-reset-at": String(resetAt - 1),
+        },
         text: JSON.stringify({ error: { message: "usage limit", resets_in_seconds: 12.5 } }),
       }),
     );
@@ -272,9 +279,9 @@ describe("codex route: refusals and quota", () => {
     expect(response.status).toBe(HTTP_STATUS.tooManyRequests);
     expect(response.headers).toMatchObject({
       "anthropic-ratelimit-unified-status": "rejected",
-      "anthropic-ratelimit-unified-7d-utilization": "100",
+      "anthropic-ratelimit-unified-7d-utilization": "1",
       "anthropic-ratelimit-unified-7d-reset": String(resetAt),
-      "anthropic-ratelimit-unified-5h-utilization": "80",
+      "anthropic-ratelimit-unified-5h-utilization": "0.8",
       "anthropic-ratelimit-unified-reset": String(resetAt - 1),
       "retry-after": "13",
       "x-codex-primary-reset-at": String(resetAt),
