@@ -43,9 +43,14 @@ export function retireLine(doorPid: number, signal: string, facts: DoorExitFacts
   return `frontdoor ${String(doorPid)}: received ${signal}; retiring; tunnelsOpen=${String(facts.tunnels)} liveSessions=${String(facts.liveSessions)} protocol=${String(facts.protocol)} uptimeSeconds=${String(facts.uptimeSeconds)}`;
 }
 
-/** The line a door appends when a further signal arrives while it is retiring and it exits at once, dropping what it was still carrying. */
-export function exitNowLine(doorPid: number, signal: string, facts: DoorExitFacts): string {
-  return `frontdoor ${String(doorPid)}: received ${signal} again; exiting now; tunnelsDropped=${String(facts.tunnels)} liveSessions=${String(facts.liveSessions)}`;
+/** The line a door appends when an interrupt arrives while it is retiring and it exits at once, dropping what it was still carrying. */
+export function exitNowLine(doorPid: number, facts: DoorExitFacts): string {
+  return `frontdoor ${String(doorPid)}: received SIGINT again; exiting now; tunnelsDropped=${String(facts.tunnels)} liveSessions=${String(facts.liveSessions)}`;
+}
+
+/** The line a door appends when a further SIGTERM arrives while it is retiring and nothing changes. */
+export function alreadyRetiringLine(doorPid: number): string {
+  return `frontdoor ${String(doorPid)}: received SIGTERM again; already retiring`;
 }
 
 /** The part of a process this needs: a way to subscribe to a signal. */
@@ -54,14 +59,18 @@ interface SignalSource {
 }
 
 /**
- * Makes the door retire on its first `SIGTERM` or `SIGINT` and exit at once on any further one. Both log first, because the log is the only record that outlives the process. `retire` starts the drain (see `FrontDoorSupervisorPorts.retire`); the second signal is the explicit "now" that a launcher sends when a draining door has not released its addresses, or that a person sends to drop what the door is still carrying.
+ * Makes the door retire on its first `SIGTERM` or `SIGINT`, ignore a repeated `SIGTERM`, and exit at once on a repeated `SIGINT`. Every signal logs first, because the log is the only record that outlives the process. `retire` starts the drain (see `FrontDoorSupervisorPorts.retire`). A repeated `SIGTERM` is not a request to stop faster: two launchers that read the state file before it changed each send one, and the second must not drop the tunnels the first let live. The explicit "now" is `SIGINT` (a person's second interrupt) or, for a door that never releases its addresses, the launcher's `SIGKILL`.
  */
 export function retireOnSignals(source: SignalSource, params: { readonly doorPid: number; readonly facts: () => DoorExitFacts; readonly log: (line: string) => void; readonly retire: () => void; readonly exit: (code: number) => void }): void {
   let retiring = false;
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     source.on(signal, () => {
+      if (retiring && signal === "SIGTERM") {
+        params.log(alreadyRetiringLine(params.doorPid));
+        return;
+      }
       if (retiring) {
-        params.log(exitNowLine(params.doorPid, signal, params.facts()));
+        params.log(exitNowLine(params.doorPid, params.facts()));
         params.exit(0);
         return;
       }

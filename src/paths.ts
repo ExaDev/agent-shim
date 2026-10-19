@@ -74,6 +74,8 @@ export interface LayoutPaths {
   readonly frontdoorSessionsDir: string;
   /** Directory holding one `<supervisor-pid>.json` per live front door, recording that door's own direct port: every door still serving sessions forwards its headroom traffic back to its own direct origin, so headroom must admit each of them, not only the one `state.json` names. */
   readonly frontdoorDirectRecordsDir: string;
+  /** Directory holding one empty marker file per front door that has released its addresses and is finishing the connections it carried, named by its supervisor pid. */
+  readonly frontdoorDrainingDir: string;
   /**
    * Directory holding one `<cse-session-id>.json` Remote Control client credential per observed session, mode 0700 with 0600 files: the OAuth-kind bearer and protocol headers the door replays as the session's attached client, persisted so a door generation that starts after a session's create can still attach. The same secret the identity's own store holds, at the same owner-only protection.
    */
@@ -170,6 +172,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     frontdoorControlTokenFile: path.join(root, "frontdoor", "control-token"),
     frontdoorSessionsDir: path.join(root, "frontdoor", "sessions"),
     frontdoorDirectRecordsDir: path.join(root, "frontdoor", "direct"),
+    frontdoorDrainingDir: path.join(root, "frontdoor", "draining"),
     frontdoorRcCredentialsDir: path.join(root, "frontdoor", "rc-credentials"),
     frontdoorLogPath: path.join(root, "logs", "frontdoor.log"),
     usageDir: path.join(root, "usage"),

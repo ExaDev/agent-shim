@@ -247,6 +247,46 @@ describe("CONNECT authentication and limits over real sockets", () => {
     );
 
     it(
+      "ends the connections on the transparent surface, which never enter the ledger, and frees its port too",
+      async () => {
+        const world = makeTlsWorld(ca, upstreamCa, { transparent: { port: 0, capability: TEST_CAPABILITY } });
+        const { transparentPort, drain, close } = await world.start();
+        const redirected = net.connect(transparentPort ?? 0, "127.0.0.1");
+        redirected.on("error", () => undefined);
+        try {
+          await new Promise<void>((resolve) => {
+            redirected.once("connect", () => {
+              resolve();
+            });
+          });
+          const ended = new Promise<void>((resolve) => {
+            redirected.once("close", () => {
+              resolve();
+            });
+          });
+          await drain();
+          await ended;
+          const refused = await new Promise<string>((resolve) => {
+            const probe = net.connect(transparentPort ?? 0, "127.0.0.1");
+            probe.once("error", (error: NodeJS.ErrnoException) => {
+              resolve(error.code ?? "error");
+            });
+            probe.once("connect", () => {
+              probe.destroy();
+              resolve("accepted");
+            });
+          });
+          expect(refused).toBe("ECONNREFUSED");
+        } finally {
+          redirected.destroy();
+          await close();
+          await world.stop();
+        }
+      },
+      KEYGEN_TIMEOUT_MS,
+    );
+
+    it(
       "resolves at once when no blind tunnel is open, and frees the port for a successor",
       async () => {
         const world = makeTlsWorld(ca, upstreamCa);
