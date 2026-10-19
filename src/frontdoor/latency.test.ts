@@ -61,7 +61,7 @@ describe("the added hop's latency", () => {
     const route = createPassthroughRoute("http:z", { baseUrl: `http://127.0.0.1:${String(upstreamPort)}`, stripPrefix: "/providers/z", headroomUpstream: undefined });
     const door = createFrontDoorServer(
       async (request) => {
-        await serveRouted(request, { resolveRoute: async () => await Promise.resolve({ ok: true, route }), headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitEverything, now: () => 0, log: () => undefined });
+        await serveRouted(request, { resolveRoute: async () => await Promise.resolve({ ok: true, route }), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitEverything, now: () => 0, log: () => undefined });
       },
       () => undefined,
     );

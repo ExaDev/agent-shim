@@ -188,6 +188,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
     };
     const pipelines = createDoorPipelines({
       resolveRoute: observingResolver,
+      canonicalProvider: (name) => name,
       isLiveToken: (token) => token === TEST_CAPABILITY,
       headroomDecision: followsLaunchFlag, responseObservers: [],
       now: () => Date.now(),

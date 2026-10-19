@@ -35,9 +35,10 @@ src/
   configProfiles.ts       # the `profile` noun's commands: add/set/list/show/remove/use, and the interactive wizard
   configProfilesStore.ts  # the configuration profile and global config data layer, with no command-line dependencies, exported by the library
   pools.ts, poolStore.ts  # the `pool` noun (add/set/list/show/remove/use/pick) and the global-config `pools` map it edits, plus `collectPoolPick`, the read-only ranking `pool pick` and `check` print
-  providers.ts            # the `provider` noun's commands (add/set/list/show/remove)
+  providers.ts            # the `provider` noun's commands (add/set/list/show/remove/rename/unalias)
   providerCatalogue.ts    # an http provider's model catalogue: the candidate URLs, the response parsing, the include/exclude filter, the cache shape and its staleness, over an injected fetch
   catalogueRefresh.ts, catalogueKeeper.ts, realCatalogueRefresh.ts   # fetching and storing one provider's catalogue over injected ports, the front door's schedule of which catalogues are due, and the real ports behind `__refresh-catalogue` and `provider models --refresh`
+  providerAliases.ts, providerRename.ts   # the former names of renamed providers (the aliases file, and the one lookup the door and the launcher resolve a provider name through) and `provider rename`: the file move, the alias, the rewritten references and the state that moves with the name
   providersStore.ts       # the provider data layer: read/validate/add/update/remove, the launch-time provider resolution the launcher calls, and the old-format provider file conversion `doctor` reports; no command-line dependencies, exported by the library
   directoryRules.ts, directoryRulesStore.ts  # the `rule` noun's commands, and the directory-rules.json data layer (no command-line dependencies, exported by the library)
   credential.ts           # the shared credential block's resolver: sources tried in order behind an injected CredentialPort, presets compiled to argv, target variables, summaries that never carry a value

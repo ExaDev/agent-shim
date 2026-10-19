@@ -25,6 +25,7 @@ import { createRealAnthropicUsageRefresher } from "../usage/realAnthropicUsagePr
 import { runChild } from "../usage/childRun";
 import { createCatalogueKeeper } from "../catalogueKeeper";
 import { CATALOGUE_REFRESH_TIMEOUT_MS, catalogueCachePath } from "../providerCatalogue";
+import { createProviderCanonicaliser, loadProviderAliases } from "../providerAliases";
 import { listProviders } from "../providersStore";
 import { WINDOW_OPEN_TIMEOUT_MS } from "../usage/realWindowOpener";
 import { runJobs } from "../usage/jobKeeper";
@@ -371,9 +372,17 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     log,
   });
 
+  // The existence check is a stat, not a parse: it runs on every provider request.
+  const canonicalProvider = createProviderCanonicaliser({
+    defined: (name) => realFarmFs.lstat(path.join(paths.providersDir, `${name}.json`)) !== undefined,
+    aliases: () => loadProviderAliases(paths.providerAliasesFile, realFsPort),
+    log,
+  });
+
   const pipelines = createDoorPipelines({
     resolveRoute,
     isLiveToken,
+    canonicalProvider,
     responseObservers: [usageMiddleware],
     now: () => Date.now(),
     headroomSocket: () => headroomSocketTarget(realFarmFs, realHeadroomSocketTrust, paths),

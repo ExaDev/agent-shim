@@ -52,7 +52,7 @@ async function startDoor(resolveRoute: PipelineDeps["resolveRoute"], preferredPo
   const logs: string[] = [];
   const server = createFrontDoorServer(
     async (request) => {
-      await serveRouted(request, { resolveRoute, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: (line) => { logs.push(line); } });
+      await serveRouted(request, { resolveRoute, canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: (line) => { logs.push(line); } });
     },
     (line) => {
       logs.push(line);
@@ -415,7 +415,7 @@ describe("the TLS provider listener", () => {
     const server = createFrontDoorServer(
       async (request) => {
         onRequest(request.headers.authorization);
-        await serveRouted(request, { resolveRoute: refuses(HTTP_STATUS.notFound, "nothing here"), headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: () => undefined });
+        await serveRouted(request, { resolveRoute: refuses(HTTP_STATUS.notFound, "nothing here"), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken(LAUNCH_TOKEN), now: () => 0, log: () => undefined });
       },
       () => undefined,
       leaf,

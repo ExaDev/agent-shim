@@ -314,6 +314,14 @@ The ambient-credential guard (below) checks the parent environment and is unaffe
 
 **Provider files from before the credential block.** The separate `tokenEnv`, `tokenCommand` and `authScheme` fields, and a fixed `env.ANTHROPIC_AUTH_TOKEN`, were replaced by the `credential` block with no compatibility period. A file still using them is refused wherever it is read, and `agent-shim doctor` fails it with the old fields named and the whole file rewritten in the current format: `tokenEnv` becomes an `env` source, `tokenCommand` a `command` source, a fixed `env.ANTHROPIC_AUTH_TOKEN` a `literal` source (shown as a placeholder for you to copy the value into, never printed), `authScheme: "apiKey"` the `target`, and any credential variable leaves `env`.
 
+### Renaming a provider
+
+`agent-shim provider rename <old> <new>` renames a provider without cutting off anything that still uses the old name. A running session has its provider's name fixed at launch, and the front door resolves that name against the providers directory on every request, so renaming the file alone would strand every session launched before the rename. The command records the old name in `provider-aliases.json` (a map from former name to current name) before it moves the file; the door resolves a name no provider file defines through that map, once, at the start of each request, so everything downstream (routing, credentials, usage records) sees the current name. A launch that names the old name (`--provider`, a `launch.provider` in a committed `.agent-shim.json`) runs on the provider it became. A provider file with the same name as an alias always wins.
+
+The rename also rewrites what this installation's own configuration says about the provider: `launch.provider` and the `models` block (virtual model members, tier pointers, prices, the visibility lists, the `same` and `distinct` assertions and family names) in the global file, every configuration profile and every directory rule, and the `routes` of other providers. State kept under the old name moves with it: the provider's slice in each identity's usage snapshot, its fetched catalogue, and its cached credential. The usage log keeps its records under the name they were written with, and a `models` ref in a project's committed `.agent-shim.json` is that project's to update.
+
+An alias stays until `agent-shim provider unalias <alias>` forgets it; `provider list` and `provider show` name the former names a provider carries, and `doctor` lists each alias, failing one whose target is gone. The door logs the first request that used each alias, which is how to tell a session launched under the old name is still running.
+
 ### Caching a credential
 
 A source that needs a person (a desktop-unlocked `op`) prompts on every launch. A credential block can ask for its resolved token to be kept:

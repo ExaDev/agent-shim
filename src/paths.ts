@@ -18,6 +18,8 @@ export interface LayoutPaths {
   readonly configProfilesDir: string;
   /** Directory holding one `<name>.json` provider definition per API provider. */
   readonly providersDir: string;
+  /** Path to the file recording the former names of renamed providers, so a session launched under an old name keeps being served until it ends. Absent until a provider is first renamed. */
+  readonly providerAliasesFile: string;
   /** Path to the directory-rules.json file describing directory-scoped identity/profile pins. */
   readonly directoryRulesFile: string;
   /** Path to the persisted active-identity file (the identity `agent-shim identity use` selected). */
@@ -141,6 +143,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     identitiesDir: path.join(root, "identities"),
     configProfilesDir: path.join(root, "config-profiles"),
     providersDir: path.join(root, "providers"),
+    providerAliasesFile: path.join(root, "provider-aliases.json"),
     directoryRulesFile: path.join(root, "directory-rules.json"),
     activeIdentityFile: path.join(root, "active-identity"),
     globalConfigFile: path.join(root, "config.json"),

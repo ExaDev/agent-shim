@@ -22,6 +22,7 @@ import {
   type ModelsConfig,
 } from "./config/schema";
 import { CliError, UsageError } from "./cliError";
+import { canonicalProviderName, loadProviderAliases } from "./providerAliases";
 import { CREDENTIAL_UNAVAILABLE_EXIT, resolveCredential, type CredentialPort } from "./credential";
 import type { ResolvedProvider } from "./launcher/flags";
 import type { FsPort } from "./launcher/ports";
@@ -60,7 +61,14 @@ export class InvalidProviderNameError extends CliError {
 
 const PROVIDER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._@-]*$/;
 
-function providerJsonPath(paths: LayoutPaths, name: string): string {
+/** Throws `InvalidProviderNameError` unless `name` satisfies the provider naming rule. */
+export function requireValidProviderName(name: string): void {
+  if (!PROVIDER_NAME_RE.test(name)) {
+    throw new InvalidProviderNameError(name);
+  }
+}
+
+export function providerJsonPath(paths: LayoutPaths, name: string): string {
   return path.join(paths.providersDir, `${name}.json`);
 }
 
@@ -291,9 +299,7 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
   if (providerExists(paths, name)) {
     throw new ProviderAlreadyExistsError(name);
   }
-  if (!PROVIDER_NAME_RE.test(name)) {
-    throw new InvalidProviderNameError(name);
-  }
+  requireValidProviderName(name);
   const kind = input.kind ?? "http";
   if (kind === "codex" && input.baseUrl !== undefined) {
     throw new ProviderKindMismatchError("A codex provider has no base URL: the launcher points its sessions at the front-door daemon. Drop --base-url.");
@@ -499,16 +505,18 @@ export type ProviderSelection =
   | { readonly ok: false; readonly status: number; readonly message: string };
 
 /**
- * Selects which API provider this launch routes through, if any: the `--provider` flag first, then the cascade's `launch.provider` selection. Returns undefined when nothing selected a provider at all.
+ * Selects which API provider this launch routes through, if any: the `--provider` flag first, then the cascade's `launch.provider` selection, either of which may name a renamed provider by its former name. Returns undefined when nothing selected a provider at all.
  *
  * Reads the provider's definition only: its credential is neither resolved nor run, so a read-only caller can name the provider a launch would use without touching a secret store or a credential command.
  */
 export function selectProvider(params: Pick<ResolveProviderParams, "paths" | "port" | "cliProvider" | "cascade">): ProviderSelection | undefined {
   const cliName = params.cliProvider !== undefined && params.cliProvider !== "" ? params.cliProvider : undefined;
-  const name = cliName ?? (params.cascade === undefined ? undefined : cascadeProviderName(params.cascade));
-  if (name === undefined) {
+  const named = cliName ?? (params.cascade === undefined ? undefined : cascadeProviderName(params.cascade));
+  if (named === undefined) {
     return undefined;
   }
+  // A launch that names a renamed provider by its old name (a committed `.agent-shim.json`, a shell habit) runs on the provider it became.
+  const name = canonicalProviderName(named, (candidate) => loadProvider(params.paths.providersDir, candidate, params.port) !== undefined, () => loadProviderAliases(params.paths.providerAliasesFile, params.port));
 
   const definition = loadProvider(params.paths.providersDir, name, params.port);
   if (definition === undefined) {

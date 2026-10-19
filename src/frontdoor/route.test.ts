@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, INTERNAL_HEADER_NAMES, PROJECT_ID_HEADER, PROVIDER_HEADER, SESSION_HEADER, identifyRequest, parseProviderPath } from "./route";
+import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, INTERNAL_HEADER_NAMES, PROJECT_ID_HEADER, PROVIDER_HEADER, SESSION_HEADER, identifyRequest, parseProviderPath, withCanonicalProviderTarget } from "./route";
 
 describe("identifyRequest", () => {
   it("splits the session out of the headers and removes exactly the internal ones", () => {
@@ -42,6 +42,13 @@ describe("provider paths", () => {
   it("splits a provider-scoped path into its name and the rest", () => {
     expect(parseProviderPath("/providers/codex/v1/messages")).toEqual({ provider: "codex", rest: "/v1/messages" });
     expect(parseProviderPath("/providers/work%20codex/v1/messages/count_tokens")).toEqual({ provider: "work codex", rest: "/v1/messages/count_tokens" });
+  });
+
+  it("rewrites a provider-scoped target to the provider its name stands for, keeping the rest and the query", () => {
+    const canonical = (name: string): string => (name === "z" ? "zai" : name);
+    expect(withCanonicalProviderTarget("/providers/z/v1/messages?beta=true", canonical)).toBe("/providers/zai/v1/messages?beta=true");
+    expect(withCanonicalProviderTarget("/providers/zai/v1/messages", canonical)).toBe("/providers/zai/v1/messages");
+    expect(withCanonicalProviderTarget("/v1/messages?x=1", canonical)).toBe("/v1/messages?x=1");
   });
 
   it("refuses any path that names no provider", () => {

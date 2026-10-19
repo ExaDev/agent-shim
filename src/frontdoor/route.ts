@@ -75,7 +75,6 @@ export interface SessionIdentity {
   readonly provider: string | undefined;
   /** Whether this launch resolved headroom on, so its requests must pass through the headroom hop before their route. */
   readonly headroom: boolean;
-  /** Whether this launch routes provider-qualified model names through the models block, whatever provider it selected. */
   /** The project identity headroom scopes memory to, re-set on the headroom hop and sent nowhere else. */
   readonly projectId: string | undefined;
 }
@@ -152,6 +151,19 @@ export function parseProviderPath(path: string): { readonly provider: string; re
     return undefined;
   }
   return { provider: decodeURIComponent(tail.slice(0, slash)), rest: tail.slice(slash) };
+}
+
+/**
+ * The request target with its provider segment replaced by the provider that name stands for: `/providers/<alias>/<rest>?query` becomes `/providers/<current>/<rest>?query`. A target that names no provider, or whose provider is already current, is returned as it came.
+ */
+export function withCanonicalProviderTarget(target: string, canonical: (name: string) => string): string {
+  const { pathname, search } = new URL(target, "http://127.0.0.1");
+  const scoped = parseProviderPath(pathname);
+  if (scoped === undefined) {
+    return target;
+  }
+  const current = canonical(scoped.provider);
+  return current === scoped.provider ? target : `${PROVIDER_PATH_PREFIX}${encodeURIComponent(current)}${scoped.rest}${search}`;
 }
 
 /** One request as a route sees it: the transport's own request and abort signal, plus what the identity step resolved. */
