@@ -145,6 +145,11 @@ describe("config API: configuration profiles", () => {
     });
     expect(updated.value).toMatchObject({ extends: ["base"], categories: { history: false }, launch: { headroom: true, provider: "z", claudeVersion: "2.1.220" } });
 
+    const bypassed = await api.profile.set({ name: "client", launch: { proxyBypass: ["mcp.example.com"] } });
+    expect(bypassed.value.launch?.proxyBypass).toEqual(["mcp.example.com"]);
+    expect(await codeOf(api.profile.set({ name: "client", launch: { proxyBypass: ["api.anthropic.com"] } }))).toBe("BAD_REQUEST");
+    expect((await api.profile.set({ name: "client", launch: { proxyBypass: false } })).value.launch?.proxyBypass).toBeUndefined();
+
     const cleared = await api.profile.set({ name: "client", extends: false, description: false, launch: { provider: false } });
     expect(cleared.value.extends).toBeUndefined();
     expect(cleared.value.description).toBeUndefined();

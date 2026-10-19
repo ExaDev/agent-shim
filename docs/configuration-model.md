@@ -508,6 +508,20 @@ The environment variables read `true`/`1` and `false`/`0`, so `AGENT_SHIM_SKIP_P
 
 `$CLAUDE_EXTRA_FLAGS` is passed straight through to the underlying `claude` binary.
 
+### Keeping hosts off the front door
+
+A session that rides the front door sends its HTTPS traffic through the door's CONNECT surface, so a front door restart drops every connection that crossed it, including a long-lived HTTP MCP server or an OAuth refresh. `launch.proxyBypass` lists hosts to take off the door: the launch adds them to the child's `NO_PROXY` and `no_proxy` beside loopback, so their traffic goes direct. What the parent environment already listed stays, and nothing is listed twice.
+
+```json
+{ "launch": { "proxyBypass": ["mcp.example.com", ".example.org"] } }
+```
+
+An entry is a host name, a leading-dot domain covering its subdomains, or an IPv4 address. The list sits in `~/.agent-shim/config.json`, a configuration profile (`profile set <name> --launch-proxy-bypass <host>`, repeatable), a directory rule or a committed `.agent-shim.json`; a deeper layer's list replaces a shallower one's and an empty list clears it. `AGENT_SHIM_PROXY_BYPASS` (comma-separated) replaces the cascade's list for one launch.
+
+The forms are restricted to the ones Claude Code's runtime honours, because a client that does not understand an entry ignores it silently and the host stays on the door. The runtime matches an exact name, a bare parent domain and a leading-dot domain, but not `*.example.com`, a `:port`, or an entry in a different case than the request's lowercase host, so those are refused (a mixed-case entry is lowercased). A lone `*`, and any entry that covers a host the door must keep (`api.anthropic.com`, `platform.claude.com`, or a parent domain of either), are refused too, since a session cannot work without the door for them. A malformed entry fails the load of the file that holds it, or the launch for the environment variable.
+
+A host on this list is not seen by the door at all: it is not recorded, not captured and not subject to anything the door applies.
+
 ### Pinning the Claude Code version
 
 By default a launch runs the highest Claude Code version in `~/.local/share/claude/versions`. `launch.claudeVersion` pins an exact version instead, resolved like every launch setting: the one-off `--claude-version <version>` flag outright, then `AGENT_SHIM_CLAUDE_VERSION`, then the cascade (a configuration profile through `agent-shim profile set <name> --launch-claude-version <version>`, a directory rule's inline `launch`, a committed `.agent-shim.json`, or the global config), so a repository can pin the version its team uses. The value is an exact dotted-numeric version such as `2.1.220`; `latest`, `stable` and ranges are not accepted. A pin that is not installed fails the launch with the installed versions listed, and never falls back to the highest version or to a `claude` on PATH. Claude Code's own updater keeps only the last few versions in that directory, so a pin to an older one can vanish between launches; the failure then names it, and `doctor` warns about a profile, rule or global config that pins a version that is not installed. `check` reports the version a launch in a directory resolves to and where the pin came from. `--native` ignores the pin along with everything else. Installing a missing version is not something agent-shim does.

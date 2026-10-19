@@ -4,6 +4,7 @@ import { confirmRemoval, printJson, reportMutation, withExamples, type CommandDe
 import { collectBoolPair, collectRepeated, parseDurationLiteral } from "./cli/parsers";
 import { PromptCancelledError, UsageError } from "./cliError";
 import { runProfileWizard } from "./configure";
+import { checkedProxyBypass } from "./launcher/proxyBypass";
 import { applyProfileChange, ProfileNotFoundError, profileExists, type ProfileChange, requireProfileExists, readProfile, createProfile, listProfiles, readGlobalConfig, setGlobalDefaultProfile, removeProfile } from "./configProfilesStore";
 
 /**
@@ -121,6 +122,8 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
       .option("--no-launch-pause", "Launches under this profile start claude without waiting for a key press.")
       .option("--launch-explain", "Launches under this profile that pick from a pool list every member the pick ranked and why, in the launcher's report.")
       .option("--no-launch-explain", "Launches under this profile name only the member a pool pick chose.")
+      .option("--launch-proxy-bypass <host>", "Launches under this profile keep this host off the front door by adding it to NO_PROXY, so its traffic goes direct (repeatable; replaces the profile's list).", collectRepeated)
+      .option("--no-launch-proxy-bypass", "Clear this profile's list of hosts kept off the front door.")
       .option("--json", "Print the result as JSON.")
       .action(async (name: string, allOptions: ProfileSetOptions) => {
         const { json, ...options } = allOptions;
@@ -135,7 +138,10 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
             throw new PromptCancelledError();
           }
         } else {
-          applyProfileChange(paths, name, options);
+          applyProfileChange(paths, name, {
+            ...options,
+            ...(options.launchProxyBypass === undefined || options.launchProxyBypass === false ? {} : { launchProxyBypass: checkedProxyBypass(options.launchProxyBypass, "--launch-proxy-bypass") }),
+          });
         }
         reportMutation(json, { action: "updated", kind: "profile", name, value: readProfile(paths, name) }, () => {
           console.log(`Updated configuration profile "${name}".`);

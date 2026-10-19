@@ -141,6 +141,12 @@
               },
               "explain": {
                 "type": "boolean"
+              },
+              "proxyBypass": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "additionalProperties": false

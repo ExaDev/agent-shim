@@ -1,3 +1,4 @@
+import { checkedProxyBypass } from "../launcher/proxyBypass";
 import { ORPCError } from "@orpc/client";
 import { openapi } from "@orpc/openapi";
 
@@ -281,6 +282,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
                 ...(launch?.delay === undefined ? {} : { launchDelay: launch.delay }),
                 ...(launch?.pause === undefined ? {} : { launchPause: launch.pause }),
                 ...(launch?.explain === undefined ? {} : { launchExplain: launch.explain }),
+                ...(launch?.proxyBypass === undefined ? {} : { launchProxyBypass: launch.proxyBypass === false ? false : checkedProxyBypass(launch.proxyBypass, "launch.proxyBypass") }),
               });
               return { action: "updated" as const, kind: "profile" as const, name: input.name, value: profileValue(input.name, paths) };
             }),

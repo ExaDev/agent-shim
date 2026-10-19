@@ -98,7 +98,7 @@ agent-shim profile set <name> [--category <category>=<bool>]... [--entry <catego
 agent-shim profile set <name> [--extends <profile>]... [--no-extends] [--description <text> | --no-description] [--json]
 agent-shim profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage]
 agent-shim profile set <name> [--launch-claude-version <version> | --no-launch-claude-version] [--json] [--json]
-agent-shim profile set <name> [--launch-delay <duration> | --no-launch-delay] [--[no-]launch-pause] [--[no-]launch-explain] [--json]
+agent-shim profile set <name> [--launch-delay <duration> | --no-launch-delay] [--[no-]launch-pause] [--[no-]launch-explain] [--launch-proxy-bypass <host>... | --no-launch-proxy-bypass] [--json]
 agent-shim profile set <name> [--launch-provider <provider> | --no-launch-provider] [--json]
 agent-shim profile list [--json]
 agent-shim profile show <name> [--json]

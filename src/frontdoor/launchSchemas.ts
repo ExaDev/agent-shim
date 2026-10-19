@@ -50,6 +50,8 @@ const LaunchFlagsSchema = z.strictObject({
   explain: z.boolean(),
   /** How long the launch waits after its own output before it starts claude, in milliseconds. */
   delayMs: z.number(),
+  /** The hosts the launch keeps off the front door by adding them to the child's `NO_PROXY`. */
+  proxyBypass: z.array(z.string()).readonly(),
 });
 
 /** One launch resolved, with the warnings the resolution raised. Nothing was started, written or recorded to produce it. */

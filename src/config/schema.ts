@@ -1,3 +1,4 @@
+import { proxyBypassSyntaxProblem } from "./proxyBypass";
 import path from "node:path";
 
 import { z } from "zod";
@@ -108,6 +109,17 @@ const LaunchSchema = z.strictObject({
   pause: z.boolean().optional(),
   /** Whether the launcher's report, for a launch that picks from a pool, lists every member the pick ranked with why each stands where it does, and not only the member it picked. */
   explain: z.boolean().optional(),
+  /** Hosts a launch keeps off the front door by adding them to the child's `NO_PROXY`, so their traffic (an HTTP MCP server, say) goes direct and survives a door restart. Each entry is a host name (a leading `.` or `*.` covers its subdomains), an IPv4 address or a bracketed IPv6 address, with an optional `:port`; a malformed entry fails the load. A deeper layer's list replaces a shallower one's, and an empty list clears it. */
+  proxyBypass: z
+    .array(
+      z.string().superRefine((entry, context) => {
+        const problem = proxyBypassSyntaxProblem(entry);
+        if (problem !== undefined) {
+          context.addIssue({ code: "custom", message: `"${entry}" ${problem}` });
+        }
+      }),
+    )
+    .optional(),
 });
 export type LaunchFlags = z.infer<typeof LaunchSchema>;
 

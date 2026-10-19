@@ -5,7 +5,7 @@ import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedPr
 
 describe("resolveLaunchFlags", () => {
   it("defaults skipPermissions, remoteControl and headroom to off and trackUsage to on when nothing sets them", () => {
-    expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: true, pause: false, explain: false, delayMs: 0 });
+    expect(resolveLaunchFlags({ env: {} })).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: true, pause: false, explain: false, delayMs: 0, proxyBypass: [] });
   });
 
   it("turns skipPermissions on via the AGENT_SHIM_SKIP_PERMISSIONS=1 escape hatch", () => {
@@ -17,6 +17,7 @@ describe("resolveLaunchFlags", () => {
       pause: false,
       explain: false,
       delayMs: 0,
+      proxyBypass: [],
     });
   });
 
@@ -29,13 +30,14 @@ describe("resolveLaunchFlags", () => {
       pause: false,
       explain: false,
       delayMs: 0,
+      proxyBypass: [],
     });
   });
 
   it("treats an empty env value as unset", () => {
     expect(
       resolveLaunchFlags({ env: { AGENT_SHIM_SKIP_PERMISSIONS: "", AGENT_SHIM_REMOTE_CONTROL: "0" } }),
-    ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: true, pause: false, explain: false, delayMs: 0 });
+    ).toEqual({ skipPermissions: false, remoteControl: false, headroom: false, trackUsage: true, pause: false, explain: false, delayMs: 0, proxyBypass: [] });
   });
 
   it("honours a cascade value once one is supplied, independent of the env escape hatch", () => {
@@ -47,13 +49,14 @@ describe("resolveLaunchFlags", () => {
       pause: false,
       explain: false,
       delayMs: 0,
+      proxyBypass: [],
     });
   });
 
   it("combines settings from different sources independently, each setting decided on its own", () => {
     expect(
       resolveLaunchFlags({ env: { AGENT_SHIM_REMOTE_CONTROL: "1" }, cascade: { skipPermissions: true } }),
-    ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false, trackUsage: true, pause: false, explain: false, delayMs: 0 });
+    ).toEqual({ skipPermissions: true, remoteControl: true, headroom: false, trackUsage: true, pause: false, explain: false, delayMs: 0, proxyBypass: [] });
   });
 
   it.each(["skipPermissions", "remoteControl", "headroom", "trackUsage"] as const)(
@@ -97,6 +100,7 @@ describe("resolveLaunchFlags", () => {
       pause: false,
       explain: false,
       delayMs: 0,
+      proxyBypass: [],
     });
   });
 
@@ -136,7 +140,7 @@ describe("resolveLaunchFlags explain", () => {
 
 describe("resolveLaunchFlags pause and delay", () => {
   it("defaults to no pause and no delay", () => {
-    expect(resolveLaunchFlags({ env: {} })).toMatchObject({ pause: false, explain: false, delayMs: 0 });
+    expect(resolveLaunchFlags({ env: {} })).toMatchObject({ pause: false, explain: false, delayMs: 0, proxyBypass: [] });
   });
 
   it("resolves pause from the flag, then the environment, then the cascade", () => {
@@ -509,5 +513,50 @@ describe("buildEnv", () => {
     expect(env.NO_PROXY).toBeUndefined();
     expect(env.no_proxy).toBeUndefined();
     expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
+  });
+});
+
+describe("resolveLaunchFlags proxyBypass", () => {
+  it("defaults to none and resolves from the environment, then the cascade", () => {
+    expect(resolveLaunchFlags({ env: {} }).proxyBypass).toEqual([]);
+    expect(resolveLaunchFlags({ env: {}, cascade: { proxyBypass: ["mcp.example.com"] } }).proxyBypass).toEqual(["mcp.example.com"]);
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_PROXY_BYPASS: "a.example.com, .b.example.com" }, cascade: { proxyBypass: ["mcp.example.com"] } }).proxyBypass).toEqual(["a.example.com", ".b.example.com"]);
+  });
+
+  it("treats an empty environment variable as unset", () => {
+    expect(resolveLaunchFlags({ env: { AGENT_SHIM_PROXY_BYPASS: "" }, cascade: { proxyBypass: ["mcp.example.com"] } }).proxyBypass).toEqual(["mcp.example.com"]);
+  });
+
+  it("fails loudly on a malformed entry, naming where it came from", () => {
+    expect(() => resolveLaunchFlags({ env: { AGENT_SHIM_PROXY_BYPASS: "ok.example.com,https://bad.example.com" } })).toThrow(/AGENT_SHIM_PROXY_BYPASS: "https:\/\/bad.example.com"/);
+    expect(() => resolveLaunchFlags({ env: {}, cascade: { proxyBypass: ["*"] } })).toThrow(/launch.proxyBypass: "\*"/);
+  });
+
+  it("refuses a host the door must keep, however it is spelled", () => {
+    for (const entry of ["api.anthropic.com", "anthropic.com", ".anthropic.com", "platform.claude.com", "claude.com"]) {
+      expect(() => resolveLaunchFlags({ env: {}, cascade: { proxyBypass: [entry] } })).toThrow(/off the door/);
+    }
+  });
+});
+
+describe("buildEnv proxy bypass", () => {
+  const door = { port: 4100, connectPort: 4200, trustBundlePath: "/ca.pem", sessionToken: "launch-token-for-tests" };
+  const params = { sessionId: "session-test", remoteControl: false, configDirEscapeHatch: false, identitiesDir: "/home/testuser/.agent-shim/identities", frontdoor: door } as const;
+
+  it("adds the hosts to both spellings beside loopback", () => {
+    const env = buildEnv({ ...params, baseEnv: {}, proxyBypass: ["mcp.example.com", "10.0.0.7"] });
+    expect(env.NO_PROXY).toBe("127.0.0.1,localhost,::1,mcp.example.com,10.0.0.7");
+    expect(env.no_proxy).toBe(env.NO_PROXY);
+  });
+
+  it("keeps what the parent already excluded, in its order, and lists nothing twice without regard to case", () => {
+    const env = buildEnv({ ...params, baseEnv: { NO_PROXY: "corp.example,MCP.example.com", no_proxy: "other.example" }, proxyBypass: ["mcp.example.com", "mcp.example.com"] });
+    expect(env.NO_PROXY).toBe("corp.example,MCP.example.com,127.0.0.1,localhost,::1");
+    expect(env.no_proxy).toBe("other.example,127.0.0.1,localhost,::1,mcp.example.com");
+  });
+
+  it("sets nothing when the launch does not ride the door, since there is no proxy to bypass", () => {
+    const env = buildEnv({ ...params, frontdoor: undefined, baseEnv: {}, proxyBypass: ["mcp.example.com"] });
+    expect(env.NO_PROXY).toBeUndefined();
   });
 });

@@ -201,6 +201,8 @@ export interface ProfileChange {
   readonly launchHeadroom?: boolean;
   readonly launchTrackUsage?: boolean;
   readonly launchProvider?: string | false;
+  /** The hosts to keep off the front door, replacing the profile's list; `false` clears it. */
+  readonly launchProxyBypass?: readonly string[] | false;
   readonly launchClaudeVersion?: string | false;
   readonly launchDelay?: string | false;
   readonly launchPause?: boolean;
@@ -237,6 +239,9 @@ export function applyProfileChange(paths: LayoutPaths, name: string, change: Pro
   }
   if (change.launchTrackUsage !== undefined) {
     launchPatch.trackUsage = change.launchTrackUsage;
+  }
+  if (change.launchProxyBypass !== undefined) {
+    launchPatch.proxyBypass = change.launchProxyBypass === false ? undefined : [...change.launchProxyBypass];
   }
   if (change.launchProvider !== undefined) {
     launchPatch.provider = change.launchProvider === false ? undefined : change.launchProvider;
