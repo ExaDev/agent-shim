@@ -64,6 +64,8 @@ export const HeadroomSocketTargetSchema = z.union([z.strictObject({ socketPath: 
 export const FrontDoorStatusOutputSchema = z.strictObject({
   state: FrontDoorStateSchema,
   supervisorAlive: z.boolean(),
+  /** The pids of earlier doors that released their addresses and are finishing the connections they carried: running, but not serving anything new. */
+  draining: z.readonly(z.array(z.number().int().positive())),
   sessions: z.readonly(z.array(FrontDoorSessionStatusSchema)),
   headroomSocket: HeadroomSocketTargetSchema.optional(),
   logPath: z.string(),

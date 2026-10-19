@@ -18,6 +18,8 @@ const HEALTH_RETRY_MS = 50;
 /** How many attempts listenFrontDoor makes to bind preferredPort before falling back to an ephemeral port. */
 const PREFERRED_PORT_MAX_ATTEMPTS = 6;
 const PREFERRED_PORT_RETRY_MS = 50;
+/** How often a draining listener closes the keep-alive connections that have gone idle since the last sweep: a request in flight when the drain began leaves its connection idle when its response is done. */
+const IDLE_SWEEP_MS = 250;
 
 /** A front-door listener: plain HTTP for the direct listener only headroom reaches, HTTPS for the provider listener every provider session's child connects to. */
 export type FrontDoorServer = http.Server | https.Server;
@@ -149,7 +151,7 @@ interface ListenOptions {
 /**
  * Binds the listener on `preferredPort` when it is free and any free port otherwise (bind, do not probe: check-then-bind races), probing its own health endpoint before resolving.
  */
-export async function listenFrontDoor(server: FrontDoorServer, options: Readonly<ListenOptions> = {}): Promise<{ readonly port: number; readonly close: () => Promise<void> }> {
+export async function listenFrontDoor(server: FrontDoorServer, options: Readonly<ListenOptions> = {}): Promise<{ readonly port: number; readonly close: () => Promise<void>; readonly drain: () => Promise<void> }> {
   const { preferredPort, ca } = options;
   const tryListen = async (port: number): Promise<number> =>
     await new Promise<number>((resolve, reject) => {
@@ -205,6 +207,22 @@ export async function listenFrontDoor(server: FrontDoorServer, options: Readonly
               resolve(undefined);
             });
             server.closeAllConnections();
+          });
+        },
+        // The port is released as `server.close` runs, before the first await; a request already being served is left to finish, and a connection that is idle (or turns idle once its last response is written) is closed so its client reconnects to whatever now holds the port.
+        drain: async () => {
+          await new Promise<void>((resolve) => {
+            server.close(() => {
+              resolve(undefined);
+            });
+            server.closeIdleConnections();
+            const sweep = setInterval(() => {
+              server.closeIdleConnections();
+            }, IDLE_SWEEP_MS);
+            sweep.unref();
+            server.once("close", () => {
+              clearInterval(sweep);
+            });
           });
         },
       };

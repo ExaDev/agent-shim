@@ -276,6 +276,8 @@ type ConnectRequestHandler = (request: IncomingMessage, response: ServerResponse
 /** A bound loopback listener and how to stop it. */
 export interface ConnectListenerHandle {
   readonly port: number;
+  /** Stops accepting and releases the port at once, leaving every connection already accepted open: a successor can bind the same port while they finish. */
+  readonly stopAccepting: () => void;
   /** Stops accepting, ends every live connection, and resolves once the port is released. */
   readonly close: () => Promise<void>;
 }
@@ -367,6 +369,10 @@ export interface ConnectServerHandle {
   readonly transparentPort?: number;
   /** How many authenticated connections (blind tunnels and terminated sessions together) are open now: what closing this surface, or exiting its process, drops. */
   readonly openTunnels: () => number;
+  /**
+   * Retires the surface without cutting off the tunnels it carries: the port is released at once so a successor can bind it, every connection that is not a blind tunnel (the terminated sessions, which carry this door's own routing state, and connections still waiting for their head) is ended, and the blind tunnels, which are byte pumps to hosts the door never looks into, keep running until they end by themselves or their launch ends. Resolves when the last has, with the surface fully closed.
+   */
+  readonly drain: () => Promise<void>;
   /** Stops the listener, drops every live tunnel and terminated session, and resolves once the port is released. */
   readonly close: () => Promise<void>;
 }
@@ -470,20 +476,29 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
           sniAcceptor.accept(socket);
         });
 
+  /** Tears the whole surface down: timers, listeners (which end whatever they still hold) and the TLS machinery. */
+  const closeSurface = async (): Promise<void> => {
+    ledger.close();
+    await listener.close();
+    await transparent?.close();
+    sniAcceptor.close();
+    for (const { httpSession, tlsAcceptor } of sessions) {
+      tlsAcceptor.close();
+      httpSession?.close();
+    }
+  };
+
   return {
     port: listener.port,
     ...(transparent === undefined ? {} : { transparentPort: transparent.port }),
     openTunnels: ledger.openTunnels,
-    close: async () => {
-      ledger.close();
-      await listener.close();
-      await transparent?.close();
-      sniAcceptor.close();
-      for (const { httpSession, tlsAcceptor } of sessions) {
-        tlsAcceptor.close();
-        httpSession?.close();
-      }
+    drain: async () => {
+      listener.stopAccepting();
+      transparent?.stopAccepting();
+      await ledger.retire();
+      await closeSurface();
     },
+    close: closeSurface,
   };
 }
 
@@ -510,13 +525,18 @@ interface ConnectionLedger {
   readonly accept: (socket: net.Socket) => void;
   /** Marks a connection's head as received: it leaves the pending set and its deadline is disarmed. */
   readonly headReceived: (socket: net.Socket) => void;
-  /** Records an authenticated connection under the capability it presented. False, with nothing recorded, when the tunnel cap is already reached. */
-  readonly establish: (socket: net.Socket, capability: string) => boolean;
+  /** Records an authenticated connection under the capability it presented, and whether it is a blind tunnel or a terminated session. False, with nothing recorded, when the tunnel cap is already reached. */
+  readonly establish: (socket: net.Socket, capability: string, kind: ConnectionKind) => boolean;
   /** How many authenticated connections are open. */
   readonly openTunnels: () => number;
+  /** Ends every pending connection and every authenticated connection that is not a blind tunnel, and resolves once no blind tunnel is open. The revalidation timer keeps running, so a launch that ends still takes its tunnels with it. */
+  readonly retire: () => Promise<void>;
   /** Stops the revalidation timer and disarms every deadline; the listener's own close destroys the sockets. */
   readonly close: () => void;
 }
+
+/** What an authenticated connection carries: `blind` is a byte pump to a host the door never looks into, `terminated` is a TLS session this surface ends and routes, which holds the door's own state. */
+type ConnectionKind = "blind" | "terminated";
 
 function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token: string) => boolean): ConnectionLedger {
   /** Connections still waiting for their head, oldest first (a Map iterates in insertion order), each with its deadline timer. */
@@ -524,6 +544,10 @@ function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token:
   /** Authenticated connections grouped by the capability they presented, so a revalidation checks each launch once however many connections it holds. */
   const authenticated = new Map<string, Set<net.Socket>>();
   let tunnels = 0;
+  /** The authenticated connections that are blind tunnels, which a retirement lets run to their end. */
+  const blind = new Set<net.Socket>();
+  /** Resolves a retirement waiting on the last blind tunnel. */
+  let onNoBlindTunnels: (() => void) | undefined;
 
   const leavePending = (socket: net.Socket): void => {
     const deadline = pending.get(socket);
@@ -566,16 +590,44 @@ function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token:
     },
     headReceived: leavePending,
     openTunnels: () => tunnels,
-    establish: (socket, capability) => {
+    retire: async () => {
+      for (const socket of pending.keys()) {
+        socket.destroy();
+      }
+      for (const deadline of pending.values()) {
+        clearTimeout(deadline);
+      }
+      pending.clear();
+      for (const sockets of authenticated.values()) {
+        for (const socket of sockets) {
+          if (!blind.has(socket)) {
+            socket.destroy();
+          }
+        }
+      }
+      if (blind.size > 0) {
+        await new Promise<void>((resolve) => {
+          onNoBlindTunnels = resolve;
+        });
+      }
+    },
+    establish: (socket, capability, kind) => {
       if (tunnels >= limits.maxTunnels) {
         return false;
       }
       tunnels += 1;
+      if (kind === "blind") {
+        blind.add(socket);
+      }
       const sockets = authenticated.get(capability) ?? new Set<net.Socket>();
       sockets.add(socket);
       authenticated.set(capability, sockets);
       socket.once("close", () => {
         tunnels -= 1;
+        blind.delete(socket);
+        if (blind.size === 0) {
+          onNoBlindTunnels?.();
+        }
         sockets.delete(socket);
         if (sockets.size === 0 && authenticated.get(capability) === sockets) {
           authenticated.delete(capability);
@@ -670,11 +722,11 @@ function routeConnect(socket: net.Socket, head: string, context: ConnectionConte
     refuse(socket, REFUSAL.badRequest);
     return;
   }
-  if (!ledger.establish(socket, capability)) {
+  const session = sessions.find((entry) => entry.host === target.host);
+  if (!ledger.establish(socket, capability, session === undefined ? "blind" : "terminated")) {
     refuse(socket, REFUSAL.serviceUnavailable);
     return;
   }
-  const session = sessions.find((entry) => entry.host === target.host);
   config.capture?.connect(target, session !== undefined);
   socket.write(CONNECT_ESTABLISHED);
   if (session !== undefined) {

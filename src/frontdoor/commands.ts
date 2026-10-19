@@ -35,7 +35,7 @@ import { runWindowKeeper } from "../usage/windowKeeper";
 import { realCredentialCacheEnv } from "../realCredentialCache";
 import { createDoorPipelines } from "./assembly";
 import { appendDoorLog } from "./doorLog";
-import { exitLoggingOnSignals } from "./replacement";
+import { retireOnSignals } from "./replacement";
 import { createRoutingSettingReader } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
 import { isLiveCapability } from "./capability";
@@ -132,7 +132,7 @@ export function realStatOwnExecutable(watchPath: string): () => OwnExecutableSta
  * The real supervisor ports. The three listener starts are where the whole routing assembly is built: the codex translation's real ports, the provider route resolver over them, both pipelines (see `createDoorPipelines`), the three listeners that feed them, and the CA that signs both TLS-serving listeners' leaves.
  */
 /** `respawnGeneration` is the generation this door was started as (see `readRespawnGeneration`), threaded in because the env it came from is scrubbed before the supervisor's lazy `startWatchdog` closure would read it. */
-function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: number, trackTunnels: (count: () => number) => void): FrontDoorSupervisorPorts {
+function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: number, retire: AbortSignal, trackTunnels: (count: () => number) => void): FrontDoorSupervisorPorts {
   const log = (line: string): void => {
     appendDoorLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
   };
@@ -514,6 +514,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
           realFarmFs.removeRecursive(paths.frontdoorControlTokenFile);
           await handle.close();
         },
+        // The control token is left in place: a successor writes its own over it as it starts, and this door no longer serves the routes that check it.
+        drain: handle.drain,
       };
     },
     startConnectListener: async (preferredPort) => {
@@ -580,6 +582,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
           rcSelfHostSurface?.close();
           await server.close();
         },
+        drain: async () => {
+          await server.drain();
+          rcSelfHostSurface?.close();
+        },
       };
     },
     startDirectListener: async (preferredPort) => {
@@ -593,7 +599,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         },
         onError: onListenerError("direct"),
       });
-      return { port: handle.port, close: handle.close };
+      return { port: handle.port, close: handle.close, drain: handle.drain };
     },
     closeRcStreamHub: rcHub.close,
     startWatchdog: () =>
@@ -613,6 +619,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     // The launch lifecycle publisher over the same backbone the typed API serves: the tick's registry facts go in here, and the door's own register, prune and end moments come out as source-tagged events.
     observeLaunchRegistry: createLaunchEventPublisher(doorEvents, () => Date.now()).observe,
     doorHealth,
+    retire,
     checkQuotaExpiry: quotaExpiring.check,
     log: (line) => {
       appendDoorLog(paths, line);
@@ -681,9 +688,10 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       // Not inherited by anything this door starts.
       Reflect.deleteProperty(process.env, DOOR_AWAIT_PID_ENV);
       Reflect.deleteProperty(process.env, DOOR_RESPAWN_GENERATION_ENV);
-      // What the door can say about itself when it is told to exit: how many tunnels the exit drops, read from the connect surface once it is up (none before).
+      const retire = new AbortController();
+      // What the door can say about itself when it is told to exit: how many tunnels it carries, read from the connect surface once it is up (none before).
       let openTunnels = (): number => 0;
-      const supervisorPorts = realFrontDoorSupervisorPorts(paths, respawnGeneration, (count) => {
+      const supervisorPorts = realFrontDoorSupervisorPorts(paths, respawnGeneration, retire.signal, (count) => {
         openTunnels = count;
       });
       const ownPid = process.pid;
@@ -691,10 +699,13 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       process.on("exit", (code) => {
         supervisorPorts.log(`frontdoor ${String(ownPid)}: exiting with code ${String(code)}`);
       });
-      // The listeners are servers inside this process, so an orderly exit takes them with it: there is no child left behind to stop.
-      exitLoggingOnSignals(process, {
+      // The first signal starts a drain rather than an exit: the supervisor releases the listening addresses and stays up for what its listeners still carry (see `FrontDoorSupervisorPorts.retire`); a further signal exits at once.
+      retireOnSignals(process, {
         doorPid: ownPid,
         log: supervisorPorts.log,
+        retire: () => {
+          retire.abort();
+        },
         exit: deps.exit,
         facts: () => ({
           tunnels: openTunnels(),
