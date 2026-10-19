@@ -1,4 +1,25 @@
+import type { STATUSLINE_HEADER_SEGMENTS } from "../config/statusline";
 import { visibleLength } from "./ansi";
+
+/** A header segment drawn, with the name that says which it is. */
+export interface HeaderPart {
+  readonly name: (typeof STATUSLINE_HEADER_SEGMENTS)[number];
+  readonly text: string;
+}
+
+/** The header segments as the units the layout packs: each segment alone, except that under `truncate` a vcs segment drawn straight after the project segment joins it with a space into one unit, the way claude-hud draws `project git:(main)`, so the pair is never split across lines and the client cuts the line off at the terminal's edge. Under `wrap` the two stay separate units. */
+export function headerUnits(parts: readonly HeaderPart[], overflow: "truncate" | "wrap"): string[] {
+  const units: string[] = [];
+  parts.forEach((part, index) => {
+    const before = parts[index - 1];
+    if (overflow === "truncate" && part.name === "vcs" && before?.name === "project") {
+      units[units.length - 1] = `${units.at(-1) ?? ""} ${part.text}`;
+    } else {
+      units.push(part.text);
+    }
+  });
+  return units;
+}
 
 /** Justifies texts across the line's width: the first flush left, the last flush right, and each separator sharing the spare space evenly around its pipe. A line with no spare width, or a single text, joins plainly. */
 function justify(texts: readonly string[], maxWidth: number, separator: string): string {

@@ -25,6 +25,8 @@ describe("statuslineKeys", () => {
     expect(header?.choices).toContain("account");
     expect(statuslineKeys().find((key) => key.path === "bar.width")).toMatchObject({ kind: "integer", choices: [], defaultValue: 10 });
     expect(statuslineKeys().find((key) => key.path === "labels.fiveHour")).toMatchObject({ kind: "text", defaultValue: "5h" });
+    expect(statuslineKeys().find((key) => key.path === "git.showDirty")).toMatchObject({ kind: "boolean", choices: [], defaultValue: true });
+    expect(statuslineKeys().find((key) => key.path === "project.pathLevels")).toMatchObject({ kind: "choice", choices: ["1", "2", "3", "full"], defaultValue: "1" });
   });
 });
 

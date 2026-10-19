@@ -17,13 +17,15 @@ export interface StatuslinePayloadView {
   readonly freshInputTokens: number | undefined;
 }
 
-/** Everything one element needs to draw itself: what the door knows about the session, the client's payload, the clock, the settings, the palette they describe, and the ports to the machine. */
+/** Everything one element needs to draw itself: what the door knows about the session, the client's payload, the clock, the terminal's width, the settings, the palette they describe, and the ports to the machine. */
 export interface RenderContext {
   readonly summary: StatuslineSummary;
   readonly view: StatuslinePayloadView;
   /** The client's payload, read into the fields the statusline uses. */
   readonly payload: ClientPayload;
   readonly nowMs: number;
+  /** The terminal's width in columns, before the client's own reserve is taken off. */
+  readonly terminalWidth: number;
   readonly settings: ResolvedStatusline;
   readonly palette: Palette;
   /** What the statusline may read from the machine. */

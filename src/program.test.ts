@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { Help, type Command } from "commander";
 import { isRouterProvider, type Provider } from "./config/schema";
+import { STATUSLINE_HEADER_SEGMENTS } from "./config/statusline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EXIT_FAILURE, EXIT_USAGE } from "./cliError";
@@ -416,7 +417,7 @@ describe("profile commands", () => {
   it("lists every statusline setting with its default and description", async () => {
     const listing = await cli(["statusline", "keys"]);
     expect(listing.stdout).toContain("bands.warnAt  (integer; default 70)");
-    expect(listing.stdout).toContain("layout.header  (list of model, provider, route, account, identity, headroom;");
+    expect(listing.stdout).toContain(`layout.header  (list of ${STATUSLINE_HEADER_SEGMENTS.join(", ")};`);
     const json = JSON.parse((await cli(["statusline", "keys", "--json"])).stdout) as { path: string }[];
     expect(json.map((key) => key.path)).toContain("labels.sevenDay");
   });

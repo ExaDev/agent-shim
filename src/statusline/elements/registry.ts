@@ -5,9 +5,13 @@ import { accountSegment } from "./header/account";
 import { headroomSegment } from "./header/headroom";
 import { identitySegment } from "./header/identity";
 import { modelSegment } from "./header/model";
+import { projectSegment } from "./header/project";
 import { providerSegment } from "./header/provider";
 import { routeSegment } from "./header/route";
+import { vcsSegment } from "./header/vcs";
+import { addedDirsRow } from "./rows/addedDirs";
 import { contextRow } from "./rows/context";
+import { gitFilesRow } from "./rows/gitFiles";
 import { quotaRow } from "./rows/quota";
 
 /** How one element draws itself. */
@@ -25,10 +29,12 @@ export const HEADER_ROLES: Readonly<Record<(typeof STATUSLINE_HEADER_SEGMENTS)[n
   account: "label",
   identity: "label",
   headroom: "label",
+  project: "project",
+  vcs: "git",
 };
 
 /** Every element the built-in statusline can draw. A setting can only name an element listed here, and the schema's lists of names are what keep the two in step. */
 export const ELEMENTS: ElementRegistry = {
-  header: { model: modelSegment, provider: providerSegment, route: routeSegment, account: accountSegment, identity: identitySegment, headroom: headroomSegment },
-  rows: { context: contextRow, quota: quotaRow },
+  header: { model: modelSegment, provider: providerSegment, route: routeSegment, account: accountSegment, identity: identitySegment, headroom: headroomSegment, project: projectSegment, vcs: vcsSegment },
+  rows: { context: contextRow, quota: quotaRow, addedDirs: addedDirsRow, gitFiles: gitFilesRow },
 };

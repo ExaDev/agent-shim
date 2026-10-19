@@ -9,6 +9,9 @@ describe("parseStatuslineAssignment", () => {
     expect(parseStatuslineAssignment("labels.fiveHour=Session")).toEqual({ path: "labels.fiveHour", value: "Session" });
     expect(parseStatuslineAssignment("layout.header=model,account")).toEqual({ path: "layout.header", value: ["model", "account"] });
     expect(parseStatuslineAssignment("layout.rows=")).toEqual({ path: "layout.rows", value: [] });
+    expect(parseStatuslineAssignment("git.showDirty=false")).toEqual({ path: "git.showDirty", value: false });
+    expect(parseStatuslineAssignment("jj.enabled=true")).toEqual({ path: "jj.enabled", value: true });
+    expect(parseStatuslineAssignment("project.pathLevels=2")).toEqual({ path: "project.pathLevels", value: "2" });
   });
 
   it("keeps a value that itself contains an equals sign", () => {
@@ -20,6 +23,8 @@ describe("parseStatuslineAssignment", () => {
     expect(() => parseStatuslineAssignment("bar.colour=1")).toThrow(/is not a statusline setting/);
     expect(() => parseStatuslineAssignment("bar.width=wide")).toThrow(/is not a number/);
     expect(() => parseStatuslineAssignment("bar.width=")).toThrow(/is not a number/);
+    expect(() => parseStatuslineAssignment("git.enabled=yes")).toThrow(/is not true or false/);
+    expect(() => parseStatuslineAssignment("git.enabled=")).toThrow(/is not true or false/);
   });
 });
 

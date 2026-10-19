@@ -6,7 +6,7 @@ import type { ClientPayload } from "./payload";
 import type { StatuslinePorts } from "./ports";
 import { ELEMENTS, HEADER_ROLES, type ElementRegistry } from "./elements/registry";
 import type { StatuslineSummary } from "./enrich";
-import { layoutHeader } from "./headerLayout";
+import { headerUnits, layoutHeader } from "./headerLayout";
 import { colourEnabled, createPalette } from "./palette";
 import { TWENTY } from "./style";
 
@@ -36,15 +36,17 @@ export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
     view: input.view,
     payload: input.payload,
     nowMs: input.nowMs,
+    terminalWidth,
     settings,
     palette: createPalette(settings.colours, colourEnabled(input.ports.env)),
     ports: input.ports,
   };
   // The segments drawn are the ones the settings list, in the order they list them.
-  const header = settings.layout.header.flatMap((name) => {
+  const parts = settings.layout.header.flatMap((name) => {
     const text = elements.header[name](context);
-    return text === undefined ? [] : context.palette.paint(HEADER_ROLES[name], text);
+    return text === undefined ? [] : { name, text: context.palette.paint(HEADER_ROLES[name], text) };
   });
+  const header = headerUnits(parts, settings.git.branchOverflow);
 
   const width = Math.max(TWENTY, terminalWidth - RESERVED_COLUMNS);
   const lines: string[] = [];
