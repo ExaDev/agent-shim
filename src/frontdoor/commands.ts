@@ -76,7 +76,7 @@ import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_MAX_GENERATIONS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, liveSessionTokens, writeFrontDoorSession, readFrontDoorSessionModels } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, liveSessionTokens, removeFrontDoorSession, writeFrontDoorSession, readFrontDoorSessionModels } from "./state";
 import { declareThisProcessTheFrontDoor } from "./selfIdentity";
 import { awaitPidExit, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 import { createAccountReader } from "../usage/account";
@@ -267,7 +267,14 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   const quotaRefresher = createRealQuotaRefresher({ paths, store: usageStore, log });
   // A pool member that has made no request lately has no current quota for a launch to rank on, so the door asks the usage endpoint about stale members on the cadence at which a fresh answer could differ from the recorded one. The timer never keeps the process alive.
   const anthropicRefresher = createRealAnthropicUsageRefresher({ paths, store: usageStore, cwd: process.cwd(), spawnDaemon: spawnDetachedSupervisor, log });
-  setInterval(() => {
+  /** The timers of the work the door runs on its own account, so a drain can stop them. */
+  const keeperTimers: NodeJS.Timeout[] = [];
+  const everyFreshnessInterval = (tick: () => void): void => {
+    const timer = setInterval(tick, ANTHROPIC_USAGE_FRESHNESS_MS);
+    timer.unref();
+    keeperTimers.push(timer);
+  };
+  everyFreshnessInterval(() => {
     // A configuration this door cannot read (a key from a newer agent-shim sharing the file) is logged each tick and never ends the process: every session routed through this door depends on it.
     try {
       const pools = readPools(paths);
@@ -277,14 +284,14 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     } catch (error) {
       log(`pool usage refresh failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
+  });
   // The window keeper acts on each identity's anchors on the same cadence: a window opened up to one period late still resets at the hour the anchor names. One run at a time, so a slow opening never overlaps the next tick; the timer never keeps the process alive.
   // Each opening and each job runs in a child process of this executable, never in the door itself: a launch routed through the door probes it, and that probe cannot be answered by the process making it.
   const windowOpener = async (identity: string): Promise<void> => {
     await runChild({ paths, args: ["__open-window", identity], timeoutMs: WINDOW_OPEN_TIMEOUT_MS });
   };
   let keeperRunning = false;
-  setInterval(() => {
+  everyFreshnessInterval(() => {
     if (keeperRunning) {
       return;
     }
@@ -305,13 +312,13 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       .finally(() => {
         keeperRunning = false;
       });
-  }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
+  });
   // The job keeper starts each job whose trigger has fired on the same cadence. A run can last as long as the job's timeout, so the tick only starts it; the set of running jobs outlives the tick so a job is never started again while it is still going.
   const jobRunner = async (name: string, identity: string, job: Job): Promise<void> => {
     await runChild({ paths, args: ["__run-job", name, identity], timeoutMs: parseDuration(job.timeout) });
   };
   const runningJobs = new Set<string>();
-  setInterval(() => {
+  everyFreshnessInterval(() => {
     try {
       runJobs({
         fs: realFarmFs,
@@ -328,7 +335,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     } catch (error) {
       log(`job keeper failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
+  });
   // A provider that opted into a model catalogue is fetched in a child process, never in the door, for the same reason the window opener is: the door's event loop answers every session. The first tick runs at start, so a new catalogue does not wait a period, and a fresh cache costs no request.
   const catalogueKeeper = createCatalogueKeeper({
     providers: () => listProviders(paths, (name, message) => { log(`catalogue keeper skipped provider ${name}: ${message}`); }).map((entry) => [entry.name, entry.provider] as const),
@@ -340,7 +347,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     log,
   });
   catalogueKeeper.tick();
-  setInterval(catalogueKeeper.tick, ANTHROPIC_USAGE_FRESHNESS_MS).unref();
+  everyFreshnessInterval(catalogueKeeper.tick);
   const headroomDecision = createHeadroomDecision(createRoutingSettingReader(paths));
   // The door's per-target observations (latency, success, token mix), folded from every finished record: the selection engine's ranked and adaptive modes read them when a virtual model chooses a member. Seeded from the recent usage log so a restarted door does not start blind.
   const targetObservations = createTargetObservationStore(realFarmFs, paths);
@@ -583,6 +590,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
           await server.close();
         },
         drain: async () => {
+          // The session the transparent surface minted for this door is no longer anything this door serves: the successor mints its own, and this one would hold its idle clock open.
+          if (transparentCapability !== undefined) {
+            removeFrontDoorSession(realFarmFs, paths.frontdoorSessionsDir, process.pid);
+          }
           await server.drain();
           rcSelfHostSurface?.close();
         },
@@ -620,6 +631,11 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     observeLaunchRegistry: createLaunchEventPublisher(doorEvents, () => Date.now()).observe,
     doorHealth,
     retire,
+    stopBackgroundWork: () => {
+      for (const timer of keeperTimers) {
+        clearInterval(timer);
+      }
+    },
     checkQuotaExpiry: quotaExpiring.check,
     log: (line) => {
       appendDoorLog(paths, line);
@@ -658,7 +674,7 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
     frontdoor
       .command("restart")
       .description(
-        "Replace the serving front door with one started from the installed binary, in place: it binds the same ports, so running sessions reach it on their next request. A request in flight when the old door exits fails once. Does nothing when no door is serving.",
+        "Replace the serving front door with one started from the installed binary, in place: it binds the same ports, so running sessions reach it on their next request. The old door releases its addresses and keeps carrying the tunnels and responses already open until they end; the sessions it terminates reconnect to the new one. Does nothing when no door is serving.",
       )
       .option("--json", "Print the result as JSON.")
       .action((options: Readonly<{ json?: boolean }>) => {

@@ -12,7 +12,7 @@ import type { FrontDoorRoute, RoutedRequest } from "./route";
 import { formatRcPendingList, formatRcRateLimitInfo, formatRcSelfHostMint, formatRcSessionList, formatRcSessionStatus, formatRcStreamEvent, frontDoorRcApiFromState, frontDoorRcControlFromState } from "./rcCommands";
 import { rcObservingResolver, realStatOwnExecutable } from "./commands";
 import { collectFrontDoorStatus, formatFrontDoorStatus } from "./status";
-import { writeFrontDoorDirectRecord, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { markFrontDoorDraining, writeFrontDoorDirectRecord, writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 const SUPERVISOR = 10;
@@ -28,6 +28,7 @@ const DIRECT_PORT = 4300;
 /** An earlier door still carrying connections, and one that has exited. */
 const DRAINING_DOOR = 11;
 const DEAD_DOOR = 12;
+const SUPERSEDED_DOOR = 13;
 const HEADROOM_SOCKET = `${paths.headroomSocketDir}/30.sock`;
 /** An owner-only socket mode, as headroom creates it. */
 const SOCKET_MODE = 0o600;
@@ -57,13 +58,15 @@ describe("frontdoor status", () => {
     ]);
   });
 
-  it("lists an earlier door that is still running on its direct record but no longer serves, and nothing for a dead one or for the serving door", () => {
+  it("lists a door that marked itself draining and is still running, and nothing for a dead one or for the serving door", () => {
     const fs = createFakeFarmFs({});
     writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: SUPERVISOR, port: PORT, lastPort: PORT, connectPort: CONNECT_PORT, lastConnectPort: CONNECT_PORT });
-    for (const pid of [SUPERVISOR, DRAINING_DOOR, DEAD_DOOR]) {
-      writeFrontDoorDirectRecord(fs, paths.frontdoorDirectRecordsDir, { pid, directPort: DIRECT_PORT });
+    for (const pid of [DRAINING_DOOR, DEAD_DOOR]) {
+      markFrontDoorDraining(fs, paths.frontdoorDrainingDir, pid);
     }
-    const status = collectFrontDoorStatus(fs, fakeSocketTrust(fs), paths, (pid) => pid === SUPERVISOR || pid === DRAINING_DOOR);
+    // A superseded door still serving, and a door that is still starting, have direct records but no marker.
+    writeFrontDoorDirectRecord(fs, paths.frontdoorDirectRecordsDir, { pid: SUPERSEDED_DOOR, directPort: DIRECT_PORT });
+    const status = collectFrontDoorStatus(fs, fakeSocketTrust(fs), paths, (pid) => pid === SUPERVISOR || pid === DRAINING_DOOR || pid === SUPERSEDED_DOOR);
     expect(status.draining).toEqual([DRAINING_DOOR]);
     expect(formatFrontDoorStatus(status, paths.frontdoorCaCertFile)).toContain(`draining: ${String(DRAINING_DOOR)} (finishing connections opened before the last restart; each exits when they have ended)`);
   });

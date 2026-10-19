@@ -1,12 +1,14 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 
-import { REPLACEMENT_REASONS, exitNowLine, replacementLine, retireLine, retireOnSignals, type DoorExitFacts } from "./replacement";
+import { REPLACEMENT_REASONS, alreadyRetiringLine, exitNowLine, replacementLine, retireLine, retireOnSignals, type DoorExitFacts } from "./replacement";
 
 const FACTS: DoorExitFacts = { tunnels: 7, liveSessions: 3, protocol: 5, uptimeSeconds: 120 };
 const DOOR_PID = 22;
 const OLDER_PROTOCOL = 4;
 const TUNNELS_AT_SIGNAL = 4;
+/** The log line and the exit that a second interrupt produces. */
+const EXIT_NOW_EVENTS = 2;
 
 describe("replacementLine", () => {
   it("is one key=value line naming the reason, both pids, both protocols and the sessions cut off", () => {
@@ -27,8 +29,12 @@ describe("the door's signal lines", () => {
     expect(retireLine(DOOR_PID, "SIGTERM", FACTS)).toBe("frontdoor 22: received SIGTERM; retiring; tunnelsOpen=7 liveSessions=3 protocol=5 uptimeSeconds=120");
   });
 
-  it("names the tunnels a second signal drops", () => {
-    expect(exitNowLine(DOOR_PID, "SIGTERM", FACTS)).toBe("frontdoor 22: received SIGTERM again; exiting now; tunnelsDropped=7 liveSessions=3");
+  it("names the tunnels a second interrupt drops", () => {
+    expect(exitNowLine(DOOR_PID, FACTS)).toBe("frontdoor 22: received SIGINT again; exiting now; tunnelsDropped=7 liveSessions=3");
+  });
+
+  it("says a repeated SIGTERM changed nothing", () => {
+    expect(alreadyRetiringLine(DOOR_PID)).toBe("frontdoor 22: received SIGTERM again; already retiring");
   });
 });
 
@@ -58,11 +64,21 @@ describe("retireOnSignals", () => {
     expect(events).toEqual([`log ${retireLine(DOOR_PID, "SIGTERM", FACTS)}`, "retire"]);
   });
 
-  it("logs and exits at once on any further signal, whichever of the two it is", () => {
+  it("ignores a repeated SIGTERM, since two launchers that read the state before it changed each send one", () => {
     const { source, events } = harness();
     source.emit("SIGTERM");
-    source.emit("SIGINT");
-    expect(events).toEqual([`log ${retireLine(DOOR_PID, "SIGTERM", FACTS)}`, "retire", `log ${exitNowLine(DOOR_PID, "SIGINT", FACTS)}`, "exit 0"]);
+    source.emit("SIGTERM");
+    source.emit("SIGTERM");
+    expect(events).toEqual([`log ${retireLine(DOOR_PID, "SIGTERM", FACTS)}`, "retire", `log ${alreadyRetiringLine(DOOR_PID)}`, `log ${alreadyRetiringLine(DOOR_PID)}`]);
+  });
+
+  it("exits at once on an interrupt after the retirement began, whichever signal began it", () => {
+    for (const first of ["SIGTERM", "SIGINT"]) {
+      const { source, events } = harness();
+      source.emit(first);
+      source.emit("SIGINT");
+      expect(events.slice(events.length - EXIT_NOW_EVENTS)).toEqual([`log ${exitNowLine(DOOR_PID, FACTS)}`, "exit 0"]);
+    }
   });
 
   it("reads the facts when the signal arrives, not when the handler is installed", () => {

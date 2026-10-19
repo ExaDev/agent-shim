@@ -494,7 +494,8 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
     openTunnels: ledger.openTunnels,
     drain: async () => {
       listener.stopAccepting();
-      transparent?.stopAccepting();
+      // The transparent surface's connections are terminated sessions that never enter the ledger, so closing it is what ends them.
+      await transparent?.close();
       await ledger.retire();
       await closeSurface();
     },

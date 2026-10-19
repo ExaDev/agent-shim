@@ -121,6 +121,26 @@ export function removeFrontDoorDirectRecord(fs: HeadroomFs, recordsDir: string, 
   fs.removeRecursive(path.join(recordsDir, `${String(pid)}.json`));
 }
 
+/** Marks door `pid` as draining: it has released its addresses and is finishing the connections it carried. The marker is what tells `frontdoor status` and `doctor` this running door is retiring and not an extra serving one. */
+export function markFrontDoorDraining(fs: HeadroomFs, markersDir: string, pid: number): void {
+  fs.mkdirp(markersDir);
+  fs.writeFilePrivate(path.join(markersDir, String(pid)), "\n");
+}
+
+/** Removes a door's draining marker. Idempotent. */
+export function unmarkFrontDoorDraining(fs: HeadroomFs, markersDir: string, pid: number): void {
+  fs.removeRecursive(path.join(markersDir, String(pid)));
+}
+
+/** The pids of the doors marked as draining that are still running, sorted. A marker left by a door that died without removing it is not listed. */
+export function listDrainingFrontDoors(fs: HeadroomFs, markersDir: string, isRunning: (pid: number) => boolean): readonly number[] {
+  return fs
+    .readdir(markersDir)
+    .flatMap((file) => (/^[1-9]\d*$/.test(file) && Number.isSafeInteger(Number(file)) ? [Number(file)] : []))
+    .filter(isRunning)
+    .sort((a, b) => a - b);
+}
+
 /** What reading one entry of the records directory found: a record, an entry named like a record whose content is not one, or nothing this listing can judge (a name that is not a record's, or an entry that cannot be read, such as a directory or a file it may not open). */
 type DirectRecordEntry = { readonly record: FrontDoorDirectRecord; readonly malformed?: never } | { readonly malformed: true; readonly record?: never } | undefined;
 

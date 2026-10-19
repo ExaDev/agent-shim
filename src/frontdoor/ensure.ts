@@ -215,7 +215,7 @@ export function ensureFrontDoor(params: {
 export type RestartFrontDoorResult = { readonly action: "not-running" } | { readonly action: "restarted"; readonly previousPid: number; readonly pid: number };
 
 /**
- * Replaces the serving front door in place: the running supervisor is asked to exit and a fresh one from the installed binary binds the same sticky ports, and the session registry is on disk, so every session already running reaches the new door on its next request. Requests in flight when the old door exits fail once, and Remote Control attachments resume from their persisted cursors.
+ * Replaces the serving front door in place: the running supervisor is asked to exit and a fresh one from the installed binary binds the same sticky ports, and the session registry is on disk, so every session already running reaches the new door on its next request. The old door drains (see `FrontDoorSupervisorPorts.retire`): tunnels and responses already open finish on it, while the sessions it terminates, Remote Control attachments among them, reconnect to the new door and resume from their persisted cursors. A door from before the drain exits at once and drops everything it carried.
  *
  * Nothing is started when no door is serving. The restart's own registry entry is removed again before returning, so it never keeps the new door awake.
  */

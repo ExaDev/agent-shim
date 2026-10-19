@@ -17,8 +17,9 @@ function frontDoorParams(
   state: Record<string, unknown> | undefined,
   supervisors: NonNullable<RunDoctorParams["frontDoor"]>["supervisors"],
   liveSessions: NonNullable<RunDoctorParams["frontDoor"]>["liveSessions"] = [],
+  draining: readonly number[] = [],
 ): Partial<RunDoctorParams> {
-  return { frontDoor: { state: { path: FRONT_DOOR_STATE_PATH, raw: state === undefined ? undefined : JSON.stringify(state) }, supervisors, liveSessions } };
+  return { frontDoor: { state: { path: FRONT_DOOR_STATE_PATH, raw: state === undefined ? undefined : JSON.stringify(state) }, supervisors, liveSessions, draining } };
 }
 
 describe("runDoctor: front door", () => {
@@ -36,6 +37,25 @@ describe("runDoctor: front door", () => {
   it("passes when no supervisor is running", () => {
     const report = runDoctor(baseParams(frontDoorParams(undefined, { ok: true, pids: [] })));
     expect(findingsFor(report, "frontdoor").map((finding) => finding.severity)).toEqual(["pass"]);
+  });
+
+  it("warns for a draining supervisor instead of failing it as a duplicate, and leaves it out of the duplicate count", () => {
+    const report = runDoctor(baseParams(frontDoorParams({ supervisorPid: SERVING_DOOR_PID }, { ok: true, pids: [SERVING_DOOR_PID, SUPERSEDED_DOOR_PID] }, [], [SUPERSEDED_DOOR_PID])));
+    const findings = findingsFor(report, "frontdoor");
+    expect(findings.map((finding) => [finding.severity, finding.subject])).toEqual([
+      ["warn", String(SUPERSEDED_DOOR_PID)],
+      ["pass", undefined],
+    ]);
+    expect(findings[0]?.message).toContain("draining");
+    expect(findings[1]?.message).toContain(`pid ${String(SERVING_DOOR_PID)}`);
+    expect(report.ok).toBe(true);
+  });
+
+  it("says no supervisor is serving when the only one running is draining", () => {
+    const report = runDoctor(baseParams(frontDoorParams(undefined, { ok: true, pids: [SUPERSEDED_DOOR_PID] }, [], [SUPERSEDED_DOOR_PID])));
+    const findings = findingsFor(report, "frontdoor");
+    expect(findings.map((finding) => finding.severity)).toEqual(["warn", "pass"]);
+    expect(findings[1]?.message).toBe("No front door supervisor is serving.");
   });
 
   it("fails once per superseded supervisor, naming it and the command that stops it", () => {
