@@ -209,10 +209,15 @@ function underBrewPrefix(executableRealPath: string): boolean {
   return BREW_PREFIXES.some((prefix) => executableRealPath === prefix || executableRealPath.startsWith(`${prefix}/`));
 }
 
+/** A formula's keg: Homebrew installs every formula under `<prefix>/Cellar`, and a formula that installs the npm package keeps that package's `node_modules` inside the keg, so a `node_modules` path alone does not say npm owns the install. */
+function inHomebrewKeg(executableRealPath: string): boolean {
+  return underBrewPrefix(executableRealPath) && executableRealPath.split(/[\\/]/).includes("Cellar");
+}
+
 /**
  * Decides who owns updating this installation, from facts the caller resolves: the platform and architecture, the executable's real path (already resolved through symlinks, so a Homebrew or npm `.bin` entry is classified by where it actually leads) and the file's first two bytes.
  *
- * A script (`#!`) or `node_modules` installation belongs to npm; a Homebrew prefix to Homebrew; Windows to Scoop; macOS x64 to npm because the standalone binary is broken upstream there, mirroring install.sh's own case table. Everything else is a standalone binary this command may replace.
+ * A formula's keg belongs to Homebrew; a script (`#!`) or `node_modules` installation to npm, including an npm global under Homebrew's prefix; any other path under a Homebrew prefix to Homebrew; Windows to Scoop; macOS x64 to npm because the standalone binary is broken upstream there, mirroring install.sh's own case table. Everything else is a standalone binary this command may replace.
  */
 export function detectChannel(env: {
   readonly platform: string;
@@ -223,11 +228,15 @@ export function detectChannel(env: {
   if (env.platform === "win32") {
     return { kind: "scoop" };
   }
-  if (underBrewPrefix(env.executableRealPath)) {
+  if (inHomebrewKeg(env.executableRealPath)) {
     return { kind: "brew" };
   }
+  // Before the prefix test: Homebrew's own node puts npm's global packages under its prefix (`<prefix>/lib/node_modules`), and those belong to npm.
   if (env.executableRealPath.split(/[\\/]/).includes("node_modules")) {
     return { kind: "npm", reason: "node_modules" };
+  }
+  if (underBrewPrefix(env.executableRealPath)) {
+    return { kind: "brew" };
   }
   if ((env.fileHead ?? "").startsWith("#!")) {
     return { kind: "npm", reason: "script" };

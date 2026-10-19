@@ -271,6 +271,15 @@ describe("detectChannel", () => {
     expect(detect({ platform: "darwin", arch: "x64" })).toEqual({ kind: "npm", reason: "macos-x64" });
   });
 
+  it("classifies an npm global installed by Homebrew's node as npm, not Homebrew", () => {
+    expect(detect({ executableRealPath: "/opt/homebrew/lib/node_modules/agent-shim/dist/cli.cjs" })).toEqual({ kind: "npm", reason: "node_modules" });
+    expect(detect({ executableRealPath: "/home/linuxbrew/.linuxbrew/lib/node_modules/agent-shim/dist/cli.cjs", platform: "linux", arch: "x64" })).toEqual({ kind: "npm", reason: "node_modules" });
+  });
+
+  it("keeps a formula that installs the npm package inside its keg on the Homebrew channel", () => {
+    expect(detect({ executableRealPath: "/opt/homebrew/Cellar/agent-shim/8.21.0/libexec/lib/node_modules/agent-shim/dist/cli.cjs" })).toEqual({ kind: "brew" });
+  });
+
   it("keeps a Homebrew macOS x64 install on the Homebrew channel, since the formula owns it", () => {
     expect(detect({ platform: "darwin", arch: "x64", executableRealPath: "/opt/homebrew/Cellar/agent-shim/8.21.0/bin/agent-shim" })).toEqual({ kind: "brew" });
   });
