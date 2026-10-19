@@ -181,6 +181,32 @@ describe("CONNECT authentication and limits over real sockets", () => {
   );
 
   it(
+    "counts the authenticated connections open on the surface, so a door can say how many an exit drops",
+    async () => {
+      const world = makeTlsWorld(ca, upstreamCa);
+      const { connectPort, openTunnels, close } = await world.start();
+      try {
+        expect(openTunnels()).toBe(0);
+        const head = connectHead("mcp-proxy.anthropic.com", [proxyAuthorizationFor(TEST_CAPABILITY)]);
+        const first = rawAttempt(connectPort, head);
+        const second = rawAttempt(connectPort, head);
+        expect(await first.answer).toContain(String(HTTP_OK));
+        expect(await second.answer).toContain(String(HTTP_OK));
+        expect(openTunnels()).toBe(2);
+        first.socket.destroy();
+        await first.closed;
+        await settle();
+        expect(openTunnels()).toBe(1);
+        second.socket.destroy();
+      } finally {
+        await close();
+        await world.stop();
+      }
+    },
+    KEYGEN_TIMEOUT_MS,
+  );
+
+  it(
     "closes a launch's tunnels once its registry entry is pruned, and refuses its capability 407 afterwards",
     async () => {
       const paths = buildLayoutPaths("/home/testuser/.agent-shim");

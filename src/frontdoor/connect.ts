@@ -365,6 +365,8 @@ export interface ConnectServerHandle {
   readonly port: number;
   /** The transparent listener's port, when one was requested: what an operating-system redirect should point at. */
   readonly transparentPort?: number;
+  /** How many authenticated connections (blind tunnels and terminated sessions together) are open now: what closing this surface, or exiting its process, drops. */
+  readonly openTunnels: () => number;
   /** Stops the listener, drops every live tunnel and terminated session, and resolves once the port is released. */
   readonly close: () => Promise<void>;
 }
@@ -471,6 +473,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   return {
     port: listener.port,
     ...(transparent === undefined ? {} : { transparentPort: transparent.port }),
+    openTunnels: ledger.openTunnels,
     close: async () => {
       ledger.close();
       await listener.close();
@@ -509,6 +512,8 @@ interface ConnectionLedger {
   readonly headReceived: (socket: net.Socket) => void;
   /** Records an authenticated connection under the capability it presented. False, with nothing recorded, when the tunnel cap is already reached. */
   readonly establish: (socket: net.Socket, capability: string) => boolean;
+  /** How many authenticated connections are open. */
+  readonly openTunnels: () => number;
   /** Stops the revalidation timer and disarms every deadline; the listener's own close destroys the sockets. */
   readonly close: () => void;
 }
@@ -560,6 +565,7 @@ function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token:
       });
     },
     headReceived: leavePending,
+    openTunnels: () => tunnels,
     establish: (socket, capability) => {
       if (tunnels >= limits.maxTunnels) {
         return false;

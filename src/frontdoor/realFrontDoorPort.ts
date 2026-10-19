@@ -2,6 +2,8 @@ import fs from "node:fs";
 import type { FrontDoorPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
 import { realFarmFs, realIsFrontDoorSupervisor, realIsProcessRunning, realSleepSync, type DaemonSpawner } from "../realPorts";
+import { appendDoorLog } from "./doorLog";
+import type { RequestedReplacementReason } from "./replacement";
 import { ensureFrontDoor, restartFrontDoor, type EnsureFrontDoorPorts, type RestartFrontDoorResult } from "./ensure";
 import { removeFrontDoorSession } from "./state";
 import { probeFrontDoorSync } from "./probe";
@@ -30,6 +32,9 @@ function realEnsurePorts(paths: LayoutPaths, spawnDaemon: DaemonSpawner): Ensure
     sleep: realSleepSync,
     spawnSupervisor: (layout) => spawnDaemon(layout, "__frontdoor-supervisor", layout.frontdoorLogPath),
     isFrontDoorSupervisor: (pid) => isFrontDoorSupervisorPid(pid, realIsFrontDoorSupervisor),
+    recordReplacement: (line) => {
+      appendDoorLog(paths, line);
+    },
     stopSupervisor: (pid) => {
       process.kill(pid, "SIGTERM");
     },
@@ -42,8 +47,8 @@ function realEnsurePorts(paths: LayoutPaths, spawnDaemon: DaemonSpawner): Ensure
 }
 
 /** `restartFrontDoor` over the real effects, spawning the replacement through `spawnDaemon`. */
-export function realRestartFrontDoor(paths: LayoutPaths, spawnDaemon: DaemonSpawner): RestartFrontDoorResult {
-  return restartFrontDoor({ paths, pid: process.pid, ports: realEnsurePorts(paths, spawnDaemon) });
+export function realRestartFrontDoor(paths: LayoutPaths, spawnDaemon: DaemonSpawner, reason: RequestedReplacementReason): RestartFrontDoorResult {
+  return restartFrontDoor({ paths, pid: process.pid, reason, ports: realEnsurePorts(paths, spawnDaemon) });
 }
 
 /** The real `FrontDoorPort` for one launch: `ensure` runs the lock-and-poll coordination, authenticates the listener and registers this launcher; `release` removes its registration. */

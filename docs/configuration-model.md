@@ -493,6 +493,26 @@ Two things are read once, when the door's supervisor starts, and need the door r
 
 This is the door's side only. The identity, configuration profile and provider a launch selects are decided by that launch (`prepareClaudeLaunch` or `agent-shim run`), so a change to which of them applies reaches the launches made after it.
 
+## Why a front door exited
+
+A front door exit drops every connection that passes through it: provider requests, Remote Control streams, and any other tunnel a session routes through the proxy variable. The door's own log (`logs/frontdoor.log`) records the cause, so a drop can be traced to what asked for it.
+
+Before a launcher signals a door it appends one line to that log, then sends the signal:
+
+```
+launcher <pid>: replacing front door; reason=<reason> signal=<SIGTERM|SIGKILL> door=<pid> doorProtocol=<n> launcherProtocol=<n> liveSessions=<n>
+```
+
+`reason` is one of a closed set: `restart-command` (`agent-shim frontdoor restart`), `update-restart` (the restart `agent-shim update --restart-door` makes after installing a new binary), `protocol-older` (a launch found a door speaking an older protocol than its own), `probe-failed-restart` (a restart found the door not answering) and `probe-failed-idle` (a launch found the door not answering while no other session was registered against it). `liveSessions` counts the registered sessions, other than the launcher's own, that are running against that door: what the replacement cuts off. A second line with `signal=SIGKILL` follows when the door ignored the first signal for the whole grace period. The line carries pids, protocol numbers and the reason only.
+
+When the door receives `SIGTERM` or `SIGINT` it logs what it is about to drop, then exits:
+
+```
+frontdoor <pid>: received <signal>; exiting; tunnelsDropped=<n> liveSessions=<n> protocol=<n> uptimeSeconds=<n>
+```
+
+`tunnelsDropped` is the number of authenticated connections open on the CONNECT surface at that moment, blind tunnels and terminated sessions together. A `received SIGTERM` line with no `replacing front door` line just before it was sent by something other than a launcher of this tool.
+
 ## Launch flags
 
 `skipPermissions`, `remoteControl`, `headroom` and `trackUsage` resolve through the same cascade as everything else (shipped default: all off except `trackUsage`, which is on), and each also has a one-off command-line flag and environment variable. For each setting, the flag decides outright, then the environment variable, then the cascade:
