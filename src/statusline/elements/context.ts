@@ -2,6 +2,8 @@ import type { ResolvedStatusline } from "../../config/statusline";
 import type { StatuslineSummary } from "../enrich";
 import type { BarCell } from "../barGrid";
 import type { Palette } from "../palette";
+import type { ClientPayload } from "../payload";
+import type { StatuslinePorts } from "../ports";
 import type { BarStyle } from "../style";
 
 /** The payload fields the built-in statusline shows: the model, the context window's use, and the prompt cache's effectiveness. */
@@ -15,13 +17,17 @@ export interface StatuslinePayloadView {
   readonly freshInputTokens: number | undefined;
 }
 
-/** Everything one element needs to draw itself: what the door knows about the session, the client's payload, the clock, the settings, and the palette they describe. */
+/** Everything one element needs to draw itself: what the door knows about the session, the client's payload, the clock, the settings, the palette they describe, and the ports to the machine. */
 export interface RenderContext {
   readonly summary: StatuslineSummary;
   readonly view: StatuslinePayloadView;
+  /** The client's payload, read into the fields the statusline uses. */
+  readonly payload: ClientPayload;
   readonly nowMs: number;
   readonly settings: ResolvedStatusline;
   readonly palette: Palette;
+  /** What the statusline may read from the machine. */
+  readonly ports: StatuslinePorts;
 }
 
 /** How a bar is coloured and drawn under the settings, for the row whose bar is below its warning threshold in `okRole`'s colour. */
