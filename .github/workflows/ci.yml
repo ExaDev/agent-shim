@@ -534,6 +534,9 @@ jobs:
           scope: "@exadev"
 
       - run: pnpm install --frozen-lockfile
+        env:
+          # setup-node's .npmrc routes the @exadev scope to GitHub Packages and reads its token from this variable; without it, installing a dev dependency published to that registry (the shared lint config) is refused with a 403.
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: pnpm build:bundle
 
