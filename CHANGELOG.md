@@ -1,3 +1,17 @@
+## [11.51.0](https://github.com/ExaDev/agent-shim/compare/v11.50.2...v11.51.0) (2026-10-19)
+
+### Features
+
+* **statusline:** track parity with claude-hud setting by setting ([24ee711](https://github.com/ExaDev/agent-shim/commit/24ee7119622f5a75b7fd1b393a26e8ae34126a39))
+
+### Code Refactoring
+
+* **statusline:** group the settings and split the renderer into elements ([9896d1c](https://github.com/ExaDev/agent-shim/commit/9896d1cafaf2ef4dcff24ecb611dfd534dc3d229))
+
+### Documentation
+
+* describe the grouped statusline settings ([e2d8a9b](https://github.com/ExaDev/agent-shim/commit/e2d8a9bf2733f4360cb4b709f09d5d0a7d5ec6aa))
+
 ## [11.50.2](https://github.com/ExaDev/agent-shim/compare/v11.50.1...v11.50.2) (2026-10-19)
 
 ### Bug Fixes
