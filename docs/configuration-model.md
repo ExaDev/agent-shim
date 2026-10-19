@@ -530,6 +530,20 @@ The environment variables read `true`/`1` and `false`/`0`, so `AGENT_SHIM_SKIP_P
 
 `$CLAUDE_EXTRA_FLAGS` is passed straight through to the underlying `claude` binary.
 
+### The statusline's appearance
+
+`launch.statusline` sets how the built-in statusline (`agent-shim statusline`) looks in the sessions a launch starts. Every key is optional and an absent key keeps its default, so the setting changes nothing until a layer names a key.
+
+```json
+{ "launch": { "statusline": { "header": ["model", "account"], "bars": ["quota"], "warnAt": 60, "criticalAt": 85, "fiveHourLabel": "Session", "sevenDayLabel": "Week", "barWidth": 8 } } }
+```
+
+`header` lists the header segments to draw, in drawing order (`model`, `provider`, `route`, `account`, `identity`, `headroom`); a segment left out is hidden, and an empty list hides the header. `bars` does the same for the bar groups (`context`, `quota`). `warnAt` and `criticalAt` are the whole percentages of use at which a bar turns yellow and red, with `warnAt` the lower; the defaults are 70 and 90. `fiveHourLabel` and `sevenDayLabel` name the two subscription windows (`5h` and `Wk` by default), and `barWidth` is a bar's width in cells before the line's spare width is shared out among the bars.
+
+The settings sit in `~/.agent-shim/config.json`, a configuration profile (`profile set <name> --statusline-header <segment>`, and the sibling `--statusline-*` options), a directory rule or a committed `.agent-shim.json`. They merge key by key: a deeper layer that sets only the labels leaves a shallower layer's thresholds alone, while a list (`header`, `bars`) is replaced whole. A combination that cannot be drawn, such as a `warnAt` at or above the `criticalAt`, fails the launch, naming the key.
+
+The launch exports the merged settings to the session as `AGENT_SHIM_STATUSLINE`, a JSON object of the same keys, so a session reads the settings of the launch that started it and a change reaches sessions launched afterwards. Setting `AGENT_SHIM_STATUSLINE` in the launching shell replaces the cascade's settings for that launch. A session not started through agent-shim, and a renderer named in `AGENT_SHIM_STATUSLINE_CMD`, draw with the defaults and ignore the settings.
+
 ### Keeping hosts off the front door
 
 A session that rides the front door sends its HTTPS traffic through the door's CONNECT surface, so a front door restart drops every connection that crossed it, including a long-lived HTTP MCP server or an OAuth refresh. `launch.proxyBypass` lists hosts to take off the door: the launch adds them to the child's `NO_PROXY` and `no_proxy` beside loopback, so their traffic goes direct. What the parent environment already listed stays, and nothing is listed twice.
