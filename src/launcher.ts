@@ -718,7 +718,7 @@ export interface LaunchResolution {
   readonly args: readonly string[];
   /** The credential the launch would authenticate with, summarised by target and source kinds. Absent when none applies. */
   readonly credential?: { readonly subject: "provider" | "identity"; readonly name: string; readonly summary: CredentialSummary };
-  /** Which daemons the launch would route through, and whether it routes provider-qualified model names through the models block. */
+  /** Which daemons the launch would route through. */
   readonly routing: { readonly frontDoor: boolean; readonly headroom: boolean };
   /** The names of the environment variables the launch would set or unset, sorted. Values are never reported: the launcher's environment carries tokens and per-launch capabilities that mean nothing outside it. */
   readonly environment: readonly string[];
