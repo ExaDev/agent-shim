@@ -12,6 +12,12 @@ export interface StatuslinePorts {
   readonly readText: (path: string) => string | undefined;
   /** The standard output of a program run without a shell in `cwd`, or undefined when it fails or outruns the time the statusline allows a program. */
   readonly run: (file: string, args: readonly string[], cwd: string) => string | undefined;
+  /** What lies at `path`, without following a final symbolic link (a link is `other`), or undefined when nothing does. */
+  readonly entryKind: (path: string) => "directory" | "other" | undefined;
+  /** `path` with every symbolic link resolved, or undefined when it does not exist. */
+  readonly realPath: (path: string) => string | undefined;
+  /** When the file at `path` was last modified, in milliseconds since the epoch, or undefined when it cannot be read. */
+  readonly modifiedAtMs: (path: string) => number | undefined;
 }
 
 /** The longest a program the statusline starts may run: the statusline refreshes while a person is working, so a program that hangs must cost a bounded wait, and a few seconds is the most a refresh can wait without the line looking stuck. */
@@ -34,7 +40,28 @@ export function realStatuslinePorts(env: Readonly<Record<string, string | undefi
     },
     run: (file, args, cwd) => {
       try {
-        return execFileSync(file, [...args], { cwd, encoding: "utf8", timeout: RUN_TIMEOUT_MS, maxBuffer: RUN_MAX_BUFFER_BYTES, stdio: ["ignore", "pipe", "ignore"] });
+        return execFileSync(file, [...args], { cwd, encoding: "utf8", timeout: RUN_TIMEOUT_MS, maxBuffer: RUN_MAX_BUFFER_BYTES, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+      } catch {
+        return undefined;
+      }
+    },
+    entryKind: (path) => {
+      try {
+        return fs.lstatSync(path).isDirectory() ? "directory" : "other";
+      } catch {
+        return undefined;
+      }
+    },
+    realPath: (path) => {
+      try {
+        return fs.realpathSync(path);
+      } catch {
+        return undefined;
+      }
+    },
+    modifiedAtMs: (path) => {
+      try {
+        return fs.statSync(path).mtimeMs;
       } catch {
         return undefined;
       }
