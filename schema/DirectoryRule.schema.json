@@ -332,6 +332,80 @@
               },
               "additionalProperties": false
             },
+            "usage": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string",
+                  "enum": [
+                    "used",
+                    "remaining"
+                  ],
+                  "description": "Whether a quota window's figure is the share of it used or the share left; the bar and the colour always follow the share used."
+                },
+                "bar": {
+                  "type": "boolean",
+                  "description": "Whether each quota window is drawn as a bar, or as text alone."
+                },
+                "compact": {
+                  "type": "boolean",
+                  "description": "Whether the quota windows are drawn as one short line of text (`5h: 25.0% (1h 30m)`) in place of bars; it takes precedence over usage.bar."
+                },
+                "resetLabel": {
+                  "type": "boolean",
+                  "description": "Whether a window's reset time is introduced with `resets in` (`resets` for a wall-clock time), as in `(resets in 1h 30m)`, rather than the bare `(1h 30m)`."
+                },
+                "modelScoped": {
+                  "type": "boolean",
+                  "description": "Whether the per-model weekly windows the client reports (rate_limits.model_scoped) are drawn after the account's own windows; they describe the signed-in account, so a session that selected a provider never shows them."
+                },
+                "timeFormat": {
+                  "type": "string",
+                  "enum": [
+                    "relative",
+                    "absolute",
+                    "both",
+                    "elapsed",
+                    "elapsedAndAbsolute"
+                  ],
+                  "description": "How a window's reset is shown: the time left (`1h 30m`), the wall-clock time (`at 14:30`), both, the share of the window already gone (`53% elapsed`), or that share and the wall-clock time. A window whose length is not known shows no share."
+                },
+                "threshold": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100,
+                  "description": "The whole percentage of use that at least one quota window must reach for the quota row to be drawn at all; 0 always draws it."
+                },
+                "sevenDayThreshold": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100,
+                  "description": "The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden. A weekly window with no five-hour window beside it is always drawn, and 0 always draws it."
+                }
+              },
+              "additionalProperties": false
+            },
+            "clock": {
+              "type": "object",
+              "properties": {
+                "hourCycle": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "h11",
+                    "h12",
+                    "h23",
+                    "h24"
+                  ],
+                  "description": "The hour cycle of a wall-clock time: `auto` follows the system locale, `h23` forces 24-hour time and `h12` 12-hour time with am or pm."
+                },
+                "seconds": {
+                  "type": "boolean",
+                  "description": "Whether a wall-clock time includes seconds (`14:30:07`)."
+                }
+              },
+              "additionalProperties": false
+            },
             "colours": {
               "type": "object",
               "properties": {

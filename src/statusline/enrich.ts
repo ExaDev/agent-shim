@@ -40,6 +40,8 @@ interface ProviderQuotaWindowView {
   readonly measures: string;
   readonly utilization: number;
   readonly resetsAt: string | undefined;
+  /** The window's length in milliseconds, when the provider's unit is one this project knows. */
+  readonly periodMs?: number | undefined;
 }
 
 /** The identity name this tool's own launcher hands the session, inside its custom-header environment entry (`x-agent-shim-identity: <name>`), or derived from the config directory the launch pinned (`<root>/identities/<name>`). */
@@ -256,7 +258,7 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     // Shortest window first, as the five-hour window leads the weekly one; a window of unknown length sorts last.
     const providerQuotaWindows = [...(scopedState?.quota?.windows ?? [])]
       .sort((a, b) => (a.periodMs ?? Number.POSITIVE_INFINITY) - (b.periodMs ?? Number.POSITIVE_INFINITY))
-      .map((window) => ({ measures: window.measures, utilization: window.utilization, resetsAt: window.resetsAt }));
+      .map((window) => ({ measures: window.measures, utilization: window.utilization, resetsAt: window.resetsAt, periodMs: window.periodMs }));
     // An Antigravity account's windows are keyed by the bucket ids its quota endpoint names, and the session's own provider is the only source whose windows describe the account the session spends.
     const providerBuckets: AntigravityQuotaMap = Object.fromEntries(
       (scopedState?.quota?.windows ?? []).map((window) => [

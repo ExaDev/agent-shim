@@ -27,6 +27,9 @@ describe("statuslineKeys", () => {
     expect(statuslineKeys().find((key) => key.path === "labels.fiveHour")).toMatchObject({ kind: "text", defaultValue: "5h" });
     expect(statuslineKeys().find((key) => key.path === "git.showDirty")).toMatchObject({ kind: "boolean", choices: [], defaultValue: true });
     expect(statuslineKeys().find((key) => key.path === "project.pathLevels")).toMatchObject({ kind: "choice", choices: ["1", "2", "3", "full"], defaultValue: "1" });
+    expect(statuslineKeys().find((key) => key.path === "usage.bar")).toMatchObject({ kind: "boolean", choices: [], defaultValue: true });
+    expect(statuslineKeys().find((key) => key.path === "usage.timeFormat")).toMatchObject({ kind: "choice", choices: ["relative", "absolute", "both", "elapsed", "elapsedAndAbsolute"], defaultValue: "relative" });
+    expect(statuslineKeys().find((key) => key.path === "clock.hourCycle")).toMatchObject({ kind: "choice", choices: ["auto", "h11", "h12", "h23", "h24"], defaultValue: "auto" });
   });
 });
 
@@ -34,5 +37,6 @@ describe("formatStatuslineKeys", () => {
   it("prints each setting's path, kind and default, with its description beneath", () => {
     const text = formatStatuslineKeys(statuslineKeys());
     expect(text).toContain("bar.width  (integer; default 10)\n    A bar's width in cells");
+    expect(text).toContain("usage.compact  (boolean; default false)\n");
   });
 });

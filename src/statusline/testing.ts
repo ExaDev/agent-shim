@@ -30,11 +30,12 @@ export function fakeRangeReader(files: Readonly<Record<string, string>>, log: Re
   };
 }
 
-/** Ports for a test: an empty environment, a home directory that exists nowhere, no readable file or range of one, no program that runs and nothing on the file system, each replaceable. */
+/** Ports for a test: an empty environment, a home directory that exists nowhere, a 24-hour British clock in UTC, no readable file or range of one, no program that runs and nothing on the file system, each replaceable. */
 export function fakeStatuslinePorts(overrides: Readonly<Partial<StatuslinePorts>> = {}): StatuslinePorts {
   return {
     env: {},
     homeDirectory: "/home/test",
+    clock: { locale: "en-GB", timeZone: "UTC" },
     readText: () => undefined,
     readRange: () => undefined,
     run: () => undefined,

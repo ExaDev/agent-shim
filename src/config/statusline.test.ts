@@ -186,3 +186,30 @@ describe("resolveStatusline", () => {
     expect(resolveStatusline({ bands: { warnAt: WARN_ABOVE_DEFAULT_CRITICAL, criticalAt: CRITICAL_ABOVE_WARN } }).bands.warnAt).toBe(WARN_ABOVE_DEFAULT_CRITICAL);
   });
 });
+
+describe("the usage and clock settings", () => {
+  it("accept every documented choice and refuse any other", () => {
+    for (const timeFormat of ["relative", "absolute", "both", "elapsed", "elapsedAndAbsolute"]) {
+      expect(StatuslineSchema.safeParse({ usage: { timeFormat } }).success, timeFormat).toBe(true);
+    }
+    for (const hourCycle of ["auto", "h11", "h12", "h23", "h24"]) {
+      expect(StatuslineSchema.safeParse({ clock: { hourCycle } }).success, hourCycle).toBe(true);
+    }
+    expect(StatuslineSchema.safeParse({ usage: { timeFormat: "elapsedAndRelative" } }).success).toBe(false);
+    expect(StatuslineSchema.safeParse({ usage: { value: "percent" } }).success).toBe(false);
+    expect(StatuslineSchema.safeParse({ clock: { hourCycle: "h13" } }).success).toBe(false);
+  });
+
+  it("take thresholds from nothing to a whole hundred percent, and booleans only as booleans", () => {
+    expect(StatuslineSchema.safeParse({ usage: { threshold: 0, sevenDayThreshold: 100 } }).success).toBe(true);
+    expect(StatuslineSchema.safeParse({ usage: { threshold: -1 } }).success).toBe(false);
+    expect(StatuslineSchema.safeParse({ usage: { sevenDayThreshold: 101 } }).success).toBe(false);
+    expect(StatuslineSchema.safeParse({ usage: { sevenDayThreshold: 80.5 } }).success).toBe(false);
+    expect(StatuslineSchema.safeParse({ usage: { bar: "false" } }).success).toBe(false);
+    expect(StatuslineSchema.safeParse({ clock: { seconds: 1 } }).success).toBe(false);
+  });
+
+  it("merge key by key with the other groups", () => {
+    expect(mergeStatuslineSettings({ usage: { compact: true, threshold: 50 } }, { usage: { threshold: 10 } })).toEqual({ usage: { compact: true, threshold: 10 } });
+  });
+});

@@ -138,8 +138,8 @@ describe("enrichStatuslinePayload", () => {
     });
     expect(summary.providerPlan).toBe("max");
     expect(summary.providerQuotaWindows).toEqual([
-      { measures: "tokens", utilization: 0.5, resetsAt: "2026-10-16T11:25:48.119Z" },
-      { measures: "tool-calls", utilization: 0.04, resetsAt: "2026-10-21T16:29:09.983Z" },
+      { measures: "tokens", utilization: 0.5, resetsAt: "2026-10-16T11:25:48.119Z", periodMs: 18_000_000 },
+      { measures: "tool-calls", utilization: 0.04, resetsAt: "2026-10-21T16:29:09.983Z", periodMs: 2_592_000_000 },
     ]);
     // The anthropic login's exhausted week is not this session's usage.
     expect(summary.sevenDayUsed).toBeUndefined();
