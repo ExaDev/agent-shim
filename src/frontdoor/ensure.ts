@@ -71,10 +71,15 @@ export function ensureFrontDoor(params: {
   /** The door this launch is waiting on because it failed its probe while holding live sessions, for the deadline message. */
   let busyDoor: { readonly pid: number; readonly sessions: number } | undefined;
 
-  /** How many registered launches other than this one are running against the door `doorPid`. A record from a release before `supervisorPid` was recorded cannot say which door it uses, so it counts for every door. */
+  /**
+   * How many registered launches other than this one are running against the door `doorPid`. A launch records the door it was sent to, but a replacement binds the same sticky ports, so a launch recorded against a door that has since exited is still served by the door now holding those addresses: it counts. A record from a release before `supervisorPid` was recorded cannot say which door it uses, so it counts for every door. Only a launch recorded against another door that is still running is not this door's.
+   *
+   * Counting the earlier generation matters because this number decides whether a door that misses its probes is retired: under load a healthy door misses probes, and a door replaced once would otherwise look empty and be signalled while it still carries every session that predates the replacement.
+   */
   const liveSessionsOn = (doorPid: number): number =>
     listFrontDoorSessions(ports.fs, paths.frontdoorSessionsDir).filter(
-      (session) => session.pid !== params.launcherPid && ports.isRunning(session.pid) && (session.supervisorPid === undefined || session.supervisorPid === doorPid),
+      (session) =>
+        session.pid !== params.launcherPid && ports.isRunning(session.pid) && (session.supervisorPid === undefined || session.supervisorPid === doorPid || !ports.isRunning(session.supervisorPid)),
     ).length;
 
   /** Probes the listener until it authenticates or `FRONTDOOR_PROBE_ATTEMPTS` consecutive probes have failed, returning the last verdict. */

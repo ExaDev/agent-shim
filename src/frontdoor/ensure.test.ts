@@ -19,6 +19,8 @@ const PORT = 4100;
 const CONNECT_PORT = 4200;
 /** A supervisor pid that is dead in every test that names it, distinct from the live fake's SUPERVISOR_PID. */
 const DEAD_SUPERVISOR_PID = 999;
+/** A second door that is alive in the test that names it, serving launches of its own. */
+const OTHER_DOOR_PID = 888;
 /** Polls before a lazily-written ready state appears, so the waiting path is exercised rather than the first-poll hit. */
 const SLEEPS_BEFORE_READY = 2;
 /** A launcher pid holding a start lock in the dead-holder test, distinct from every live fake. */
@@ -311,11 +313,19 @@ describe("ensureFrontDoor", () => {
       expect(world.spawns).toEqual([]);
     });
 
-    it("is retired when the only sessions registered belong to another door or to launches that have ended", () => {
+    it("is left alone when the only live launch was recorded against an earlier door that has since exited, since the replacement serves it on the same addresses", () => {
+      const world = busyDoorWorld({ supervisorPid: DEAD_SUPERVISOR_PID });
+      expect(() => ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports })).toThrow(/1 live session\(s\) are using it/);
+      expect(world.stops).toEqual([]);
+      expect(world.spawns).toEqual([]);
+    });
+
+    it("is retired when the only sessions registered belong to another door that is still running or to launches that have ended", () => {
       const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT, transientProbeFailures: Number.MAX_SAFE_INTEGER });
       world.ownSupervisors.add(SUPERVISOR_PID);
+      world.alive.add(OTHER_DOOR_PID);
       world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
-      writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: OTHER_LAUNCHER_PID, startedAt: 0, token: SESSION_TOKEN, supervisorPid: DEAD_SUPERVISOR_PID });
+      writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: OTHER_LAUNCHER_PID, startedAt: 0, token: SESSION_TOKEN, supervisorPid: OTHER_DOOR_PID });
       writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: DEAD_LOCK_HOLDER, startedAt: 0, token: SESSION_TOKEN, supervisorPid: SUPERVISOR_PID });
       world.ports.spawnSupervisor = () => {
         world.spawns.push(REPLACEMENT_PID);
