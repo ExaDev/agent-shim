@@ -1,3 +1,10 @@
+## [11.49.1](https://github.com/ExaDev/agent-shim/compare/v11.49.0...v11.49.1) (2026-10-19)
+
+### Bug Fixes
+
+* **codex:** classify quota windows by length and report utilisation as a fraction ([3b2105b](https://github.com/ExaDev/agent-shim/commit/3b2105bfe9048726413eee52c50c74accc5090e9))
+* **statusline:** ignore quota windows whose reset has passed ([42dc36e](https://github.com/ExaDev/agent-shim/commit/42dc36e053ae4cbfa8860be1db4849e45c2e4e47))
+
 ## [11.49.0](https://github.com/ExaDev/agent-shim/compare/v11.48.0...v11.49.0) (2026-10-19)
 
 ### Features
