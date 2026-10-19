@@ -187,8 +187,8 @@ importers:
         specifier: 2.0.0-beta.41
         version: 2.0.0-beta.41
       '@orpc/server':
-        specifier: 2.0.0-beta.41
-        version: 2.0.0-beta.41
+        specifier: 2.0.0-beta.43
+        version: 2.0.0-beta.43
       commander:
         specifier: ^15.0.0
         version: 15.0.0
@@ -879,8 +879,14 @@ packages:
   '@orpc/client@2.0.0-beta.41':
     resolution: {integrity: sha512-0P6UxBpL6+0+lNu/gct5d9OibW94xp97UReblQVjqsWks7g8GOjzNRvP6b8MIGz1qpCKaNMOFAUdMJVF+BflJw==}
 
+  '@orpc/client@2.0.0-beta.43':
+    resolution: {integrity: sha512-176u4pmmoXGyjHRTuJFSQVN4Ucuau5mfn3LkxBs+kyTcNHOZD9XmDW8DAr0NJwhfUBDT/E62q1y9aEgiKUcJsA==}
+
   '@orpc/contract@2.0.0-beta.41':
     resolution: {integrity: sha512-zcRzv6N2SGHBXKEDA6n3nsZvtsPCde1kjhO5ZEH6TQw7BNIgq2v4bGM9GEsbczTptSr5B6ehEwE2/+aTlxEglw==}
+
+  '@orpc/contract@2.0.0-beta.43':
+    resolution: {integrity: sha512-8IyzPrpdvGhi51G6QHEkoPOvs4AyV0YjhV6OP57W9rUAS9YnPyc/ScKwpsTZsm6dOjPcNBk8R2n+iN2s7m4t4w==}
 
   '@orpc/json-schema@2.0.0-beta.41':
     resolution: {integrity: sha512-rcGsviub56BHA2AhN30iuOuCqqgcN5VeC03FC1lG5+yQsYGZbqaHpIYnpZDkkVkknW0gSkpcFxKW3vcGYjW39A==}
@@ -910,8 +916,22 @@ packages:
       fastify:
         optional: true
 
+  '@orpc/server@2.0.0-beta.43':
+    resolution: {integrity: sha512-4G6xYiPQtu5iefsnEZzxa9rcl+P0IJCPkzQu+Mv45QJd/S3Qp6MQwDJAV90WBAjQay6dd0662awGrh4JXfIXhQ==}
+    peerDependencies:
+      crossws: '>=0.3.4'
+      fastify: '>=5.6.1'
+    peerDependenciesMeta:
+      crossws:
+        optional: true
+      fastify:
+        optional: true
+
   '@orpc/shared@2.0.0-beta.41':
     resolution: {integrity: sha512-bXqVa8wivVpMkdb8X0HnYI1CUA2hVuV1GSsjs2NIJ2oU/H6wRQi/R7XY/PPICYz0qFjwM2x2tUm1EH395fVd3A==}
+
+  '@orpc/shared@2.0.0-beta.43':
+    resolution: {integrity: sha512-2DP1wex6Aja6dcmudQAiMdZlXcuJXN7/k0dtFAj2Sy0TwQ6Jcr+t7aJk5lmZrosPpEAQTbY/f9kJJW+Cxr35Cw==}
 
   '@oxc-parser/binding-android-arm-eabi@0.150.0':
     resolution: {integrity: sha512-oQef2Zu4Prz1KLKznz3HqZzU9uVoA5PMoDZuuLmqms7hKmKSAPzlaMnLllJq3t+rgKmfJJ2siPrpZfFrW06btw==}
@@ -4386,10 +4406,23 @@ snapshots:
       '@standard-server/fetch': 0.10.2
       '@standard-server/peer': 0.10.2
 
+  '@orpc/client@2.0.0-beta.43':
+    dependencies:
+      '@orpc/shared': 2.0.0-beta.43
+      '@standard-server/core': 0.10.2
+      '@standard-server/fetch': 0.10.2
+      '@standard-server/peer': 0.10.2
+
   '@orpc/contract@2.0.0-beta.41':
     dependencies:
       '@orpc/client': 2.0.0-beta.41
       '@orpc/shared': 2.0.0-beta.41
+      '@standard-schema/spec': 1.1.0
+
+  '@orpc/contract@2.0.0-beta.43':
+    dependencies:
+      '@orpc/client': 2.0.0-beta.43
+      '@orpc/shared': 2.0.0-beta.43
       '@standard-schema/spec': 1.1.0
 
   '@orpc/json-schema@2.0.0-beta.41':
@@ -4433,7 +4466,26 @@ snapshots:
       '@standard-server/peer': 0.10.2
       cookie: 2.0.1
 
+  '@orpc/server@2.0.0-beta.43':
+    dependencies:
+      '@orpc/client': 2.0.0-beta.43
+      '@orpc/contract': 2.0.0-beta.43
+      '@orpc/shared': 2.0.0-beta.43
+      '@standard-server/aws-lambda': 0.10.2
+      '@standard-server/core': 0.10.2
+      '@standard-server/fastify': 0.10.2
+      '@standard-server/fetch': 0.10.2
+      '@standard-server/node': 0.10.2
+      '@standard-server/peer': 0.10.2
+      cookie: 2.0.1
+
   '@orpc/shared@2.0.0-beta.41':
+    dependencies:
+      '@standard-server/shared': 0.10.2
+      radash: 12.1.1
+      type-fest: 5.9.0
+
+  '@orpc/shared@2.0.0-beta.43':
     dependencies:
       '@standard-server/shared': 0.10.2
       radash: 12.1.1
