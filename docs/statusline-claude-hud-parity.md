@@ -11,6 +11,17 @@ Checked against claude-hud at commit `939eb66`.
 | `display.showModel` | `layout.header`: the model segment is drawn when the list names `model` |
 | `display.showProvider` | `layout.header`: the provider segment is drawn when the list names `provider` |
 | `display.showUsage` | `layout.rows`: the quota row is drawn when the list names `quota` |
+| `display.usageValue` | `usage.value`: `used` and `remaining` where claude-hud's are `percent` and `remaining`; the bar and the colour follow the share used either way, as in claude-hud |
+| `display.usageBarEnabled` | `usage.bar`: text alone is one line with the windows joined by a separator, as in claude-hud |
+| `display.showResetLabel` | `usage.resetLabel`: off by default, where claude-hud's is on, so the default row is unchanged; a window with nothing still to reset is never introduced with `resets in`, and an elapsed share is never introduced either |
+| `display.usageCompact` | `usage.compact`: takes precedence over `usage.bar`; the windows are named by `labels.fiveHour` and `labels.sevenDay` where claude-hud's are a fixed `5h` and `7d`, and the reset label is never drawn, as in claude-hud |
+| `display.showModelScopedUsage` | `usage.modelScoped`: off by default, where claude-hud's is on, so the default row is unchanged; the windows come from the client's `rate_limits.model_scoped` and describe the signed-in account, so a session that selected a provider never draws them, and each is named by the client's own display name |
+| `display.timeFormat` | `usage.timeFormat`: the same five forms; `relative` is agent-shim's own duration form (`1h 30m`, `4d 1h`, `available`) and the default, and an elapsed share is drawn only for a window whose length is known (the five-hour and weekly windows and a provider's own windows, not a model family's) |
+| `display.hourCycle` | `clock.hourCycle`: a group of its own, since claude-hud applies it to every wall-clock time its display draws, not only the usage windows'; written as `Intl.DateTimeFormat`'s hour cycles, `auto` following the system locale |
+| `display.showClockSeconds` | `clock.seconds`: a group of its own for the same reason as `clock.hourCycle` |
+| `display.sevenDayThreshold` | `usage.sevenDayThreshold`: 0 by default, which always draws the weekly window, where claude-hud's default is 80; a weekly window with no five-hour window beside it is always drawn, as in claude-hud, and the hidden window still counts towards `usage.threshold` |
+| `display.usageThreshold` | `usage.threshold`: hides the whole row until a window has reached it, counting the weekly window and the per-model windows; the colour bands (`bands.warnAt`, `bands.criticalAt`) are a separate setting that only colours what is drawn, where claude-hud's usage colours are fixed at 75% and 90% |
+| `element:usage` | `layout.rows`: the quota row is drawn when the list names `quota`; claude-hud's `limit reached` notice is not drawn: a window at its limit is a full bar, or a figure of 100% in the critical colour |
 | `colors.context` | `colours.context`: the colour below the warning threshold |
 | `colors.usage` | `colours.usage`: the colour below the warning threshold; the default is green, as the bands have always drawn it |
 | `colors.warning` | `colours.warning` |

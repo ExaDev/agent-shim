@@ -12,6 +12,9 @@ describe("parseStatuslineAssignment", () => {
     expect(parseStatuslineAssignment("git.showDirty=false")).toEqual({ path: "git.showDirty", value: false });
     expect(parseStatuslineAssignment("jj.enabled=true")).toEqual({ path: "jj.enabled", value: true });
     expect(parseStatuslineAssignment("project.pathLevels=2")).toEqual({ path: "project.pathLevels", value: "2" });
+    expect(parseStatuslineAssignment("usage.bar=false")).toEqual({ path: "usage.bar", value: false });
+    expect(parseStatuslineAssignment("usage.compact=true")).toEqual({ path: "usage.compact", value: true });
+    expect(parseStatuslineAssignment("usage.timeFormat=elapsedAndAbsolute")).toEqual({ path: "usage.timeFormat", value: "elapsedAndAbsolute" });
   });
 
   it("keeps a value that itself contains an equals sign", () => {
@@ -25,6 +28,8 @@ describe("parseStatuslineAssignment", () => {
     expect(() => parseStatuslineAssignment("bar.width=")).toThrow(/is not a number/);
     expect(() => parseStatuslineAssignment("git.enabled=yes")).toThrow(/is not true or false/);
     expect(() => parseStatuslineAssignment("git.enabled=")).toThrow(/is not true or false/);
+    expect(() => parseStatuslineAssignment("usage.bar=yes")).toThrow(/is not true or false/);
+    expect(() => parseStatuslineAssignment("usage.bar=")).toThrow(/is not true or false/);
   });
 });
 

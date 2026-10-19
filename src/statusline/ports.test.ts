@@ -20,6 +20,11 @@ describe("realStatuslinePorts", () => {
     expect(ports.homeDirectory).toBe(os.homedir());
   });
 
+  it("tells the time in the machine's own locale and time zone", () => {
+    const resolved = Intl.DateTimeFormat().resolvedOptions();
+    expect(ports.clock).toEqual({ locale: resolved.locale, timeZone: resolved.timeZone });
+  });
+
   it("reads a file's text, and reports a file it cannot read as undefined", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
     try {

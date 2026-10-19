@@ -8,6 +8,8 @@ import os from "node:os";
 export interface StatuslinePorts {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly homeDirectory: string;
+  /** Where and how the machine tells the time: the BCP 47 locale its wall-clock times are written in and the IANA time zone they are told in. */
+  readonly clock: { readonly locale: string; readonly timeZone: string };
   /** The text of a file, or undefined when it cannot be read. */
   readonly readText: (path: string) => string | undefined;
   /** Up to `length` bytes of a file from byte `start`, with the file's whole size, or undefined when it cannot be read. A `start` at or past the end reads no bytes, and reading never loads more than `length` bytes however large the file is. */
@@ -36,9 +38,11 @@ const RUN_MAX_BUFFER_BYTES = 1_048_576;
 
 /** The statusline's ports on the real machine. */
 export function realStatuslinePorts(env: Readonly<Record<string, string | undefined>>): StatuslinePorts {
+  const { locale, timeZone } = Intl.DateTimeFormat().resolvedOptions();
   return {
     env,
     homeDirectory: os.homedir(),
+    clock: { locale, timeZone },
     readText: (path) => {
       try {
         return fs.readFileSync(path, "utf8");

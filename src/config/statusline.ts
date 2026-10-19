@@ -35,6 +35,15 @@ const DEFAULT_ROWS: readonly (typeof STATUSLINE_ROWS)[number][] = ["context", "q
 /** How many directory levels the project path shows: one to three, or the whole path. Written as text so that every value of a setting is one of a closed set of choices. */
 export const STATUSLINE_PATH_LEVELS = ["1", "2", "3", "full"] as const;
 
+/** How the quota row writes a window's figure: the share of the window used, or the share still left. */
+const STATUSLINE_USAGE_VALUES = ["used", "remaining"] as const;
+
+/** How the quota row tells when a window resets: the time left, the wall-clock time, both, the share of the window already gone, or that share and the wall-clock time. */
+const STATUSLINE_TIME_FORMATS = ["relative", "absolute", "both", "elapsed", "elapsedAndAbsolute"] as const;
+
+/** The hour cycles a wall-clock time can be written in, as `Intl.DateTimeFormat` names them; `auto` leaves it to the locale. */
+const STATUSLINE_HOUR_CYCLES = ["auto", "h11", "h12", "h23", "h24"] as const;
+
 const MAX_PERCENT = 100;
 /** The highest index of the 256-colour palette. */
 export const MAX_STATUSLINE_PALETTE_INDEX = 255;
@@ -78,6 +87,8 @@ const labelText = z.string().max(MAX_STATUSLINE_LABEL_CHARS).regex(LABEL_RE, "mu
 /** Text that replaces something the statusline would otherwise work out; empty leaves the statusline to work it out. */
 const overrideText = z.string().max(MAX_DISPLAY_TEXT_CHARS).regex(OPTIONAL_LABEL_RE, "must be visible text without control characters");
 const wholePercent = z.number().int().min(1).max(MAX_PERCENT);
+/** A whole percentage that may be nothing, for a threshold where zero means "always". */
+const thresholdPercent = z.number().int().min(0).max(MAX_PERCENT);
 
 /**
  * Every statusline setting, grouped, with each leaf's meaning attached as its description. The groups are declared once as plain shapes and used twice: whole, for the resolved settings (every key present), and `partial`, for what a configuration layer may set (every key optional). The description of a key is what `agent-shim statusline keys` prints, so a key without one is a defect, and a test refuses it.
@@ -117,6 +128,20 @@ const SHAPES = {
     width: z.number().int().min(1).max(MAX_BAR_CELLS).describe("A bar's width in cells before the line's spare width is shared out among the bars."),
     filled: barCharacter.describe("The character that draws the used part of a bar."),
     empty: barCharacter.describe("The character that draws the unused part of a bar."),
+  },
+  usage: {
+    value: z.enum(STATUSLINE_USAGE_VALUES).describe("Whether a quota window's figure is the share of it used or the share left; the bar and the colour always follow the share used."),
+    bar: z.boolean().describe("Whether each quota window is drawn as a bar, or as text alone."),
+    compact: z.boolean().describe("Whether the quota windows are drawn as one short line of text (`5h: 25.0% (1h 30m)`) in place of bars; it takes precedence over usage.bar."),
+    resetLabel: z.boolean().describe("Whether a window's reset time is introduced with `resets in` (`resets` for a wall-clock time), as in `(resets in 1h 30m)`, rather than the bare `(1h 30m)`."),
+    modelScoped: z.boolean().describe("Whether the per-model weekly windows the client reports (rate_limits.model_scoped) are drawn after the account's own windows; they describe the signed-in account, so a session that selected a provider never shows them."),
+    timeFormat: z.enum(STATUSLINE_TIME_FORMATS).describe("How a window's reset is shown: the time left (`1h 30m`), the wall-clock time (`at 14:30`), both, the share of the window already gone (`53% elapsed`), or that share and the wall-clock time. A window whose length is not known shows no share."),
+    threshold: thresholdPercent.describe("The whole percentage of use that at least one quota window must reach for the quota row to be drawn at all; 0 always draws it."),
+    sevenDayThreshold: thresholdPercent.describe("The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden. A weekly window with no five-hour window beside it is always drawn, and 0 always draws it."),
+  },
+  clock: {
+    hourCycle: z.enum(STATUSLINE_HOUR_CYCLES).describe("The hour cycle of a wall-clock time: `auto` follows the system locale, `h23` forces 24-hour time and `h12` 12-hour time with am or pm."),
+    seconds: z.boolean().describe("Whether a wall-clock time includes seconds (`14:30:07`)."),
   },
   colours: {
     context: colourValue.describe("The colour of the context bar and its figures below the warning threshold."),
@@ -162,6 +187,8 @@ export const StatuslineSchema = z.strictObject({
   bands: z.strictObject(SHAPES.bands).partial().optional(),
   labels: z.strictObject(SHAPES.labels).partial().optional(),
   bar: z.strictObject(SHAPES.bar).partial().optional(),
+  usage: z.strictObject(SHAPES.usage).partial().optional(),
+  clock: z.strictObject(SHAPES.clock).partial().optional(),
   colours: z.strictObject(SHAPES.colours).partial().optional(),
   project: z.strictObject(SHAPES.project).partial().optional(),
   git: z.strictObject(SHAPES.git).partial().optional(),
@@ -180,6 +207,8 @@ export const ResolvedStatuslineSchema = z.strictObject({
   bands: z.strictObject(SHAPES.bands),
   labels: z.strictObject(SHAPES.labels),
   bar: z.strictObject(SHAPES.bar),
+  usage: z.strictObject(SHAPES.usage),
+  clock: z.strictObject(SHAPES.clock),
   colours: z.strictObject(SHAPES.colours),
   project: z.strictObject(SHAPES.project),
   git: z.strictObject(SHAPES.git),
@@ -198,6 +227,8 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   bands: { warnAt: 70, criticalAt: 90 },
   labels: { fiveHour: "5h", sevenDay: "Wk" },
   bar: { width: 10, filled: "█", empty: "░" },
+  usage: { value: "used", bar: true, compact: false, resetLabel: false, modelScoped: false, timeFormat: "relative", threshold: 0, sevenDayThreshold: 0 },
+  clock: { hourCycle: "auto", seconds: false },
   colours: {
     context: "green",
     usage: "green",
