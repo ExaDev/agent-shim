@@ -2,6 +2,8 @@ import { STATUSLINE_DEFAULTS, type ResolvedStatusline } from "../config/statusli
 import type { BarCell } from "./barGrid";
 import { layoutBarGrid } from "./barGrid";
 import type { RenderContext, StatuslinePayloadView } from "./elements/context";
+import type { ClientPayload } from "./payload";
+import type { StatuslinePorts } from "./ports";
 import { ELEMENTS, HEADER_ROLES, type ElementRegistry } from "./elements/registry";
 import type { StatuslineSummary } from "./enrich";
 import { layoutHeader } from "./headerLayout";
@@ -12,19 +14,32 @@ import { TWENTY } from "./style";
 export const RESERVED_COLUMNS = 4;
 const SEPARATOR = " | ";
 
+/** What one render takes: what the door knows about the session, the client's payload, the terminal's width, the clock, the settings, and the ports to the machine. The registry of elements is the built-in one unless a test brings its own. */
+export interface RenderInput {
+  readonly summary: StatuslineSummary;
+  readonly view: StatuslinePayloadView;
+  readonly payload: ClientPayload;
+  readonly terminalWidth: number;
+  readonly nowMs: number;
+  readonly settings?: ResolvedStatusline;
+  readonly ports: StatuslinePorts;
+  readonly elements?: ElementRegistry;
+}
+
 /**
  * The built-in statusline, laid out and coloured the way the Antigravity CLI's own statusline is: the model, the provider's account (email and subscription plan) and the identity when it is not that account, on the first line; then the context window's use (tokens against the window, the prompt cache's hit percentage) and the quota windows the door reports, each a bar that fills with use and turns yellow then red, one line when they fit and two when they do not.
  */
-export function renderStatuslineBlock(
-  summary: StatuslineSummary,
-  view: StatuslinePayloadView,
-  terminalWidth: number,
-  nowMs: number,
-  settings: ResolvedStatusline = STATUSLINE_DEFAULTS,
-  elements: ElementRegistry = ELEMENTS,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): string {
-  const context: RenderContext = { summary, view, nowMs, settings, palette: createPalette(settings.colours, colourEnabled(env)) };
+export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
+  const { terminalWidth, settings = STATUSLINE_DEFAULTS, elements = ELEMENTS } = input;
+  const context: RenderContext = {
+    summary: input.summary,
+    view: input.view,
+    payload: input.payload,
+    nowMs: input.nowMs,
+    settings,
+    palette: createPalette(settings.colours, colourEnabled(input.ports.env)),
+    ports: input.ports,
+  };
   // The segments drawn are the ones the settings list, in the order they list them.
   const header = settings.layout.header.flatMap((name) => {
     const text = elements.header[name](context);

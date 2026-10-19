@@ -15,36 +15,12 @@ import { antigravityStacksWithDefault, isAntigravityPayload } from "./client";
 import { fetchHeadroomSessionStats, headroomSessionIdOf, headroomTargetOf, realHeadroomGet } from "./headroom";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import { readUsageLog } from "../usage/read";
+import { parseClientPayload, viewOf } from "./payload";
+import { realStatuslinePorts } from "./ports";
 import { renderStatuslineBlock } from "./render";
 import { formatStatuslineKeys, statuslineKeys } from "./keys";
 import { statuslineSettingsFromEnv } from "./settings";
 import { terminalWidthOf } from "./width";
-
-/** The payload fields the built-in statusline shows, in the Antigravity statusline's own selection: the model, the context window's use, its size, and the prompt cache's effectiveness. */
-function payloadViewOf(payload: unknown): { modelDisplayName: string | undefined; contextUsedPercentage: number | undefined; contextTotalTokens: number | undefined; contextWindowTokens: number | undefined; cacheHitRatio: number | undefined; cacheReadTokens: number | undefined; freshInputTokens: number | undefined } {
-  const empty = { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined };
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    return empty;
-  }
-  const record: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(payload)) {
-    record[key] = value;
-  }
-  const model = record.model;
-  const displayName = typeof model === "object" && model !== null && !Array.isArray(model) && "display_name" in model && typeof model.display_name === "string" ? model.display_name : undefined;
-  const context = record.context_window;
-  const ctx = typeof context === "object" && context !== null && !Array.isArray(context) ? context : undefined;
-  const used = ctx !== undefined && "used_percentage" in ctx && typeof ctx.used_percentage === "number" ? ctx.used_percentage : undefined;
-  const totalIn = ctx !== undefined && "total_input_tokens" in ctx && typeof ctx.total_input_tokens === "number" ? ctx.total_input_tokens : undefined;
-  const size = ctx !== undefined && "context_window_size" in ctx && typeof ctx.context_window_size === "number" ? ctx.context_window_size : undefined;
-  const current = ctx !== undefined && "current_usage" in ctx && typeof ctx.current_usage === "object" && ctx.current_usage !== null && !Array.isArray(ctx.current_usage) ? ctx.current_usage : undefined;
-  const cacheRead = current !== undefined && "cache_read_input_tokens" in current && typeof current.cache_read_input_tokens === "number" ? current.cache_read_input_tokens : undefined;
-  const fresh = current !== undefined && "input_tokens" in current && typeof current.input_tokens === "number" ? current.input_tokens : undefined;
-  const promptCache = record.prompt_cache;
-  const cache = typeof promptCache === "object" && promptCache !== null && !Array.isArray(promptCache) ? promptCache : undefined;
-  const hitRatio = cache !== undefined && "hit_ratio" in cache && typeof cache.hit_ratio === "number" ? cache.hit_ratio : undefined;
-  return { modelDisplayName: displayName, contextUsedPercentage: used, contextTotalTokens: totalIn, contextWindowTokens: size, cacheHitRatio: hitRatio, cacheReadTokens: cacheRead, freshInputTokens: fresh };
-}
 
 async function readAllStdin(): Promise<string> {
   return await new Promise((resolve) => {
@@ -153,10 +129,11 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
           stackedUnderDefault = false;
         }
       }
-      const view = { ...payloadViewOf(payload), ...(stackedUnderDefault ? { modelDisplayName: undefined } : {}) };
+      const clientPayload = parseClientPayload(payload);
+      const view = { ...viewOf(clientPayload), ...(stackedUnderDefault ? { modelDisplayName: undefined } : {}) };
       const rawSettings = process.env[STATUSLINE_ENV];
       const settings = resolveStatusline(rawSettings === undefined || rawSettings === "" ? undefined : statuslineSettingsFromEnv(rawSettings, STATUSLINE_ENV));
-      console.log(renderStatuslineBlock(summary, view, terminalWidthOf(payload, process.env), nowMs, settings));
+      console.log(renderStatuslineBlock({ summary, view, payload: clientPayload, terminalWidth: terminalWidthOf(payload, process.env), nowMs, settings, ports: realStatuslinePorts(process.env) }));
       }),
     ["$ agent-shim statusline  # a client's statusline setting names this; it renders or delegates"],
   );

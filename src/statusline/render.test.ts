@@ -4,7 +4,9 @@ import { resolveStatusline, type StatuslineSettings } from "../config/statusline
 import { ELEMENTS, type ElementRegistry } from "./elements/registry";
 import { ESCAPE } from "./ansi";
 import { RESET } from "./palette";
-import { renderStatuslineBlock, RESERVED_COLUMNS } from "./render";
+import { parseClientPayload } from "./payload";
+import { renderStatuslineBlock as renderBlock, RESERVED_COLUMNS, type RenderInput } from "./render";
+import { fakeStatuslinePorts } from "./testing";
 import type { StatuslineSummary } from "./enrich";
 
 const NOW_MS = Date.parse("2026-10-16T00:00:00.000Z");
@@ -37,6 +39,20 @@ const NARROW_BAR_CELLS = 4;
 const USED_AT_WARNING = 80;
 const USED_AT_CRITICAL = 95;
 const WIDE_BAR_CELLS = 30;
+
+/** The renderer with the arguments these tests vary, and an empty payload, an environment with no `NO_COLOR` and ports that read nothing. */
+function renderStatuslineBlock(summary: StatuslineSummary, view: RenderInput["view"], terminalWidth: number, nowMs: number, settings?: RenderInput["settings"], elements?: RenderInput["elements"], env: Readonly<Record<string, string | undefined>> = {}): string {
+  return renderBlock({
+    summary,
+    view,
+    payload: parseClientPayload({}),
+    terminalWidth,
+    nowMs,
+    ports: fakeStatuslinePorts({ env }),
+    ...(settings === undefined ? {} : { settings }),
+    ...(elements === undefined ? {} : { elements }),
+  });
+}
 
 const SUMMARY: StatuslineSummary = {
   identity: "antigravity",
