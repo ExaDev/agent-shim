@@ -1,3 +1,9 @@
+## [11.49.2](https://github.com/ExaDev/agent-shim/compare/v11.49.1...v11.49.2) (2026-10-19)
+
+### Bug Fixes
+
+* **update:** classify an npm global under Homebrew's prefix as npm ([4d32400](https://github.com/ExaDev/agent-shim/commit/4d32400e4139c230e303195e3d56c78b70cb8364))
+
 ## [11.49.1](https://github.com/ExaDev/agent-shim/compare/v11.49.0...v11.49.1) (2026-10-19)
 
 ### Bug Fixes
