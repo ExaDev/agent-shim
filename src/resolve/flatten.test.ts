@@ -260,20 +260,20 @@ describe("phase one: launch proxyBypass", () => {
 });
 
 describe("phase one: launch statusline", () => {
-  it("merges key by key, so a deeper layer that sets the labels leaves a shallower layer's thresholds alone", () => {
+  it("merges key by key in every group, so a deeper layer that sets one label leaves a shallower layer's thresholds and the other label alone", () => {
     const flattened = flattenLayers(
       [
-        layer(0, { launch: { statusline: { warnAt: 60, criticalAt: 85, barWidth: 8 } } }),
-        layer(1, { launch: { statusline: { barWidth: 6, fiveHourLabel: "Session" } } }),
+        layer(0, { launch: { statusline: { bands: { warnAt: 60, criticalAt: 85 }, bar: { width: 8 } } } }),
+        layer(1, { launch: { statusline: { bar: { width: 6 }, labels: { fiveHour: "Session" } } } }),
       ],
       { home: FAKE_HOME },
     );
-    expect(flattened.launch.statusline).toEqual({ warnAt: 60, criticalAt: 85, barWidth: 6, fiveHourLabel: "Session" });
+    expect(flattened.launch.statusline).toEqual({ bands: { warnAt: 60, criticalAt: 85 }, bar: { width: 6 }, labels: { fiveHour: "Session" } });
   });
 
   it("takes the deepest layer's list whole", () => {
-    const flattened = flattenLayers([layer(0, { launch: { statusline: { header: ["model", "provider"] } } }), layer(1, { launch: { statusline: { header: ["identity"] } } })], { home: FAKE_HOME });
-    expect(flattened.launch.statusline).toEqual({ header: ["identity"] });
+    const flattened = flattenLayers([layer(0, { launch: { statusline: { layout: { header: ["model", "provider"] } } } }), layer(1, { launch: { statusline: { layout: { header: ["identity"] } } } })], { home: FAKE_HOME });
+    expect(flattened.launch.statusline).toEqual({ layout: { header: ["identity"] } });
   });
 
   it("leaves the setting absent when no layer sets it", () => {

@@ -1,0 +1,23 @@
+import type { STATUSLINE_HEADER_SEGMENTS, STATUSLINE_ROWS } from "../../config/statusline";
+import type { RenderContext, RowOutput } from "./context";
+import { accountSegment } from "./header/account";
+import { headroomSegment } from "./header/headroom";
+import { identitySegment } from "./header/identity";
+import { modelSegment } from "./header/model";
+import { providerSegment } from "./header/provider";
+import { routeSegment } from "./header/route";
+import { contextRow } from "./rows/context";
+import { quotaRow } from "./rows/quota";
+
+/** How one element draws itself. */
+export interface ElementRegistry {
+  /** The text of each header segment, or undefined when it has nothing to show. */
+  readonly header: Readonly<Record<(typeof STATUSLINE_HEADER_SEGMENTS)[number], (context: RenderContext) => string | undefined>>;
+  readonly rows: Readonly<Record<(typeof STATUSLINE_ROWS)[number], (context: RenderContext) => RowOutput>>;
+}
+
+/** Every element the built-in statusline can draw. A setting can only name an element listed here, and the schema's lists of names are what keep the two in step. */
+export const ELEMENTS: ElementRegistry = {
+  header: { model: modelSegment, provider: providerSegment, route: routeSegment, account: accountSegment, identity: identitySegment, headroom: headroomSegment },
+  rows: { context: contextRow, quota: quotaRow },
+};
