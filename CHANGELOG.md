@@ -1,3 +1,14 @@
+## [11.50.0](https://github.com/ExaDev/agent-shim/compare/v11.49.2...v11.50.0) (2026-10-19)
+
+### Features
+
+* **statusline:** configure the built-in statusline through the launch cascade ([7c2035a](https://github.com/ExaDev/agent-shim/commit/7c2035aba29ae97e9840a745e53a44a741953bd5))
+* **statusline:** set the statusline's appearance on a profile ([ff2428d](https://github.com/ExaDev/agent-shim/commit/ff2428d7801a4cc6176102e81a9a6126ec5b0403))
+
+### Documentation
+
+* describe the statusline settings ([3fbb69a](https://github.com/ExaDev/agent-shim/commit/3fbb69ae1e5bc97a9adfa27e2e6b31e53dd72677))
+
 ## [11.49.2](https://github.com/ExaDev/agent-shim/compare/v11.49.1...v11.49.2) (2026-10-19)
 
 ### Bug Fixes
