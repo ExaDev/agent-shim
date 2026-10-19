@@ -7,6 +7,7 @@ import type { StatuslinePorts } from "./ports";
 import { ELEMENTS, HEADER_ROLES, type ElementRegistry } from "./elements/registry";
 import type { StatuslineSummary } from "./enrich";
 import { headerUnits, layoutHeader } from "./headerLayout";
+import { TRANSCRIPT_TAIL_BYTES } from "./identityTranscript";
 import { colourEnabled, createPalette } from "./palette";
 import { TWENTY } from "./style";
 
@@ -26,6 +27,15 @@ export interface RenderInput {
   readonly elements?: ElementRegistry;
 }
 
+/** `read`, run on first call and its result kept, so every later call in the render is free. */
+function once<T>(read: () => T): () => T {
+  let kept: { readonly value: T } | undefined;
+  return () => {
+    kept ??= { value: read() };
+    return kept.value;
+  };
+}
+
 /**
  * The built-in statusline, laid out and coloured the way the Antigravity CLI's own statusline is: the model, the provider's account (email and subscription plan) and the identity when it is not that account, on the first line; then the context window's use (tokens against the window, the prompt cache's hit percentage) and the quota windows the door reports, each a bar that fills with use and turns yellow then red, one line when they fit and two when they do not.
  */
@@ -40,6 +50,7 @@ export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
     settings,
     palette: createPalette(settings.colours, colourEnabled(input.ports.env)),
     ports: input.ports,
+    transcriptTail: once(() => (input.payload.transcript_path === undefined ? undefined : input.ports.readTail(input.payload.transcript_path, TRANSCRIPT_TAIL_BYTES))),
   };
   // The segments drawn are the ones the settings list, in the order they list them.
   const parts = settings.layout.header.flatMap((name) => {

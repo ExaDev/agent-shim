@@ -14,6 +14,10 @@ const ClientPayloadSchema = z
     session_id: text,
     transcript_path: text,
     cwd: text,
+    /** The Claude Code release the session runs. */
+    version: text,
+    /** The reasoning effort: a level name, or an object carrying one in `level` (Claude Code 2.1.115 and later). */
+    effort: z.union([z.string(), z.looseObject({ level: text })]).optional().catch(undefined),
     workspace: z
       .looseObject({
         current_dir: text,

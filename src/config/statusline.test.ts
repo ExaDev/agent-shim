@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_STATUSLINE_LABEL_CHARS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
+import { MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_LABEL_CHARS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
 
 const OVER_LONG_LABEL = "x".repeat(MAX_STATUSLINE_LABEL_CHARS + 1);
 const WARN_ABOVE_DEFAULT_CRITICAL = 95;
@@ -45,6 +45,57 @@ describe("StatuslineSchema", () => {
       expect(StatuslineSchema.safeParse({ labels: { fiveHour: bad } }).success, JSON.stringify(bad)).toBe(false);
     }
     expect(StatuslineSchema.safeParse({ labels: { fiveHour: "5 hour" } }).success).toBe(true);
+  });
+});
+
+describe("StatuslineSchema model and identity settings", () => {
+  const accepts = (settings: unknown): boolean => StatuslineSchema.safeParse(settings).success;
+
+  it("accepts each format and source, and refuses one that is not offered", () => {
+    for (const format of ["full", "compact", "short"]) {
+      expect(accepts({ model: { format } }), format).toBe(true);
+    }
+    for (const source of ["client", "transcript", "auto"]) {
+      expect(accepts({ model: { source } }), source).toBe(true);
+    }
+    for (const format of ["symbol", "text"]) {
+      expect(accepts({ effort: { format } }), format).toBe(true);
+    }
+    expect(accepts({ model: { format: "long" } })).toBe(false);
+    expect(accepts({ model: { source: "stdin" } })).toBe(false);
+    expect(accepts({ effort: { format: "short" } })).toBe(false);
+  });
+
+  it("accepts an override that is empty, or visible text up to the limit, and refuses control characters, edge whitespace and an over-long one", () => {
+    for (const group of ["model", "provider", "advisor"] as const) {
+      const key = group === "provider" ? "name" : "override";
+      expect(accepts({ [group]: { [key]: "" } }), `${group} empty`).toBe(true);
+      expect(accepts({ [group]: { [key]: "My model 2" } }), `${group} text`).toBe(true);
+      expect(accepts({ [group]: { [key]: "x".repeat(MAX_DISPLAY_TEXT_CHARS) } }), `${group} at the limit`).toBe(true);
+      expect(accepts({ [group]: { [key]: "x".repeat(MAX_DISPLAY_TEXT_CHARS + 1) } }), `${group} over the limit`).toBe(false);
+      expect(accepts({ [group]: { [key]: "bad\u001B[31m" } }), `${group} escape`).toBe(false);
+      expect(accepts({ [group]: { [key]: " padded" } }), `${group} edge whitespace`).toBe(false);
+    }
+  });
+
+  it("accepts the account's parts in any order, none of them, and refuses a repeat or an unknown part", () => {
+    expect(accepts({ account: { parts: ["plan", "user", "organisation"] } })).toBe(true);
+    expect(accepts({ account: { parts: [] } })).toBe(true);
+    expect(accepts({ account: { parts: ["user", "user"] } })).toBe(false);
+    expect(accepts({ account: { parts: ["email"] } })).toBe(false);
+  });
+
+  it("accepts an account length from none to the longest email address, and refuses one outside that", () => {
+    expect(accepts({ account: { userLength: 0 } })).toBe(true);
+    expect(accepts({ account: { userLength: MAX_ACCOUNT_USER_CHARS } })).toBe(true);
+    expect(accepts({ account: { userLength: MAX_ACCOUNT_USER_CHARS + 1 } })).toBe(false);
+    expect(accepts({ account: { userLength: -1 } })).toBe(false);
+    expect(accepts({ account: { userLength: 1.5 } })).toBe(false);
+  });
+
+  it("accepts the added header segments, which nothing draws until a layer lists them", () => {
+    expect(accepts({ layout: { header: ["effort", "advisor", "version", "outputStyle"] } })).toBe(true);
+    expect(STATUSLINE_DEFAULTS.layout.header).not.toContain("effort");
   });
 });
 

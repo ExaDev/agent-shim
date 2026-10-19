@@ -40,6 +40,23 @@ Checked against claude-hud at commit `939eb66`.
 | `element:project` | `layout.header`: claude-hud's project line is the `project` segment (the path and, inline, the added directories) and the `vcs` segment (git or jj), listed in the order the line should draw them |
 | `element:addedDirs` | `layout.rows`: the `addedDirs` row, drawn when `project.addedDirsLayout` is `row` |
 | `segment:project` | `layout.header`: claude-hud's first-line project segment holds the path, the added directories and the branch; here that is the `project` and `vcs` segments, positioned by `layout.header` |
+| `display.modelFormat` | `model.format`: the same three formats: full, compact and short |
+| `display.modelOverride` | `model.override`: replaces the client's name only: a dynamic mode's served model still follows it, since that says what is answering |
+| `display.modelSource` | `model.source`: `client` is claude-hud's `stdin`; the transcript is read through a bounded window of its end, not parsed whole, which holds the latest answering model however long the session has run |
+| `display.providerName` | `provider.name`: a label shown in place of the launch's provider name, or alone for a launch with no provider; agent-shim does not detect Bedrock, Vertex, MiniMax or enterprise model aliases from the environment, because the provider segment names the provider the launch selected |
+| `display.showAuth` | `account.parts`: the account segment already draws the login's plan, so the plan is the `plan` part of that segment, drawn when the list names it and the segment is in `layout.header`; there is no separate auth segment, and an ambient `ANTHROPIC_API_KEY` is not reported as `API Key`, since a launch with one is refused unless the person opts in |
+| `display.showAuthUser` | `account.parts`: the `user` part of the account segment, which is the login's whole email address where claude-hud shows its local part |
+| `display.authUserLength` | `account.userLength`: cuts the whole email address, not its local part, and `0` is no limit as in claude-hud; the default shows the address whole, as the account segment always has |
+| `display.showEffortLevel` | `layout.header`: the effort segment is drawn when the list names `effort`, as its own segment where claude-hud writes it inside the model badge; claude-hud's `ultracode(<level>)`, which it infers from `/effort` wording in the transcript, is not drawn, because a bounded read of the transcript's end cannot say whether ultracode is still on |
+| `display.effortFormat` | `effort.format`: the same three formats: full, symbol and text |
+| `display.showAdvisor` | `layout.header`: the advisor segment is drawn when the list names `advisor` |
+| `display.advisorOverride` | `advisor.override` |
+| `display.showClaudeCodeVersion` | `layout.header`: the version segment is drawn when the list names `version`; it reads the version the client puts in its payload, where claude-hud runs `claude --version` |
+| `display.showOutputStyle` | `layout.header`: the outputStyle segment is drawn when the list names `outputStyle`, in the header where claude-hud puts it in its environment line; the style is read from the same four settings files in the same order |
+| `segment:model` | `layout.header`: claude-hud's model badge holds the provider, the model and the effort; the `provider`, `model` and `effort` segments are listed in the order they should draw, and the context bar is its own row |
+| `segment:advisor` | `layout.header`: the `advisor` segment, placed in the list |
+| `segment:version` | `layout.header`: the `version` segment, placed in the list |
+| `segment:auth` | `layout.header`: the `account` segment, placed in the list; `account.parts` chooses what it says |
 | `display.externalUsagePath` | Not applicable: claude-hud reads a usage snapshot a separate tool writes; agent-shim computes the usage windows itself and draws them |
 | `display.externalUsageWritePath` | Not applicable: claude-hud writes a snapshot for other tools to read; the built-in statusline is the consumer of agent-shim's usage data, not a producer for others |
 | `display.externalUsageFreshnessMs` | Not applicable: it bounds the age of the snapshot claude-hud reads, and agent-shim reads none |
