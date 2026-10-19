@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import type { UsageSnapshot } from "../usage/schema";
 
-const NOW_MS = Date.parse("2026-10-16T00:00:00.000Z");
+const NOW_MS = Date.parse("2026-10-15T18:00:00.000Z");
 const GEMINI_WEEKLY_USED_PERCENT = 28;
 const GEMINI_FIVE_HOUR_USED_PERCENT = 9;
 const ANTIGRAVITY_FIVE_HOUR_USED_PERCENT = 20;
@@ -12,6 +12,11 @@ const FLOAT_PRECISION_DIGITS = 10;
 const THIRD_PARTY_WEEKLY_REMAINING = 0.985;
 const THIRD_PARTY_WEEKLY_USED = 1 - THIRD_PARTY_WEEKLY_REMAINING;
 const ARGON_RESET_SECONDS = 7200;
+const LIVE_FIVE_HOUR_USED_PERCENT = 5;
+const LIVE_SEVEN_DAY_USED_PERCENT = 34;
+const NO_RESET_FIVE_HOUR_USED_PERCENT = 40;
+const GEMINI_FIVE_HOUR_RESET_SECONDS = 9000;
+const GEMINI_WEEKLY_RESET_SECONDS = 500_000;
 const MS_PER_SECOND = 1000;
 const PAYLOAD_FIVE_HOUR_USED_PERCENT = 23.5;
 const PAYLOAD_SEVEN_DAY_USED_PERCENT = 41.2;
@@ -157,6 +162,45 @@ describe("enrichStatuslinePayload", () => {
     expect(summary.providerQuotaWindows).toEqual([]);
   });
 
+  it("ignores a window whose reset has passed, so a stale reading from another provider cannot outrank the live one", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: {},
+      env: { ANTHROPIC_CUSTOM_HEADERS: "x-agent-shim-identity: zai" },
+      snapshot: {
+        ...SNAPSHOT,
+        providers: {
+          anthropic: { rateLimit: { unified: { fiveHour: { utilization: 0.05, resetsAt: "2026-10-15T22:00:00.000Z" }, sevenDay: { utilization: 0.34, resetsAt: "2026-10-20T00:00:00.000Z" } } } },
+          other: { rateLimit: { unified: { fiveHour: { utilization: 0.9, resetsAt: "2026-10-15T17:00:00.000Z" }, sevenDay: { utilization: 0.95, resetsAt: "2026-10-15T17:30:00.000Z" } } } },
+        },
+      } as unknown as UsageSnapshot,
+      account: undefined,
+      providerName: undefined,
+      nowMs: NOW_MS,
+      headroom: undefined,
+    });
+    expect(summary.fiveHourUsed).toBe(LIVE_FIVE_HOUR_USED_PERCENT);
+    expect(summary.fiveHourResetAt).toBe("2026-10-15T22:00:00.000Z");
+    expect(summary.sevenDayUsed).toBe(LIVE_SEVEN_DAY_USED_PERCENT);
+    expect(summary.sevenDayResetAt).toBe("2026-10-20T00:00:00.000Z");
+  });
+
+  it("keeps a window that reports no reset, and shows none when every reading has expired", () => {
+    const summaryOf = (providers: unknown) =>
+      enrichStatuslinePayload({
+        payload: {},
+        env: {},
+        snapshot: { ...SNAPSHOT, providers } as unknown as UsageSnapshot,
+        account: undefined,
+        providerName: undefined,
+        nowMs: NOW_MS,
+        headroom: undefined,
+      }).summary;
+    expect(summaryOf({ anthropic: { rateLimit: { unified: { fiveHour: { utilization: 0.4 } } } } }).fiveHourUsed).toBe(NO_RESET_FIVE_HOUR_USED_PERCENT);
+    const expired = summaryOf({ anthropic: { rateLimit: { unified: { fiveHour: { utilization: 1, resetsAt: "2026-10-15T17:59:59.000Z" } } } } });
+    expect(expired.fiveHourUsed).toBeUndefined();
+    expect(expired.fiveHourResetAt).toBeUndefined();
+  });
+
   it("scopes a provider session's windows to that provider, leaving the login account's out of the main line", () => {
     const { summary } = enrichStatuslinePayload({
       payload: {},
@@ -227,8 +271,8 @@ describe("enrichStatuslinePayload", () => {
       payload: {
         model: { id: "gemini-3.8-flash-high", display_name: "Gemini 3.8 Flash" },
         quota: {
-          "gemini-5h": { remaining_fraction: 0.8, reset_in_seconds: 9000 },
-          "gemini-weekly": { remaining_fraction: 0.95, reset_in_seconds: 500_000 },
+          "gemini-5h": { remaining_fraction: 0.8, reset_in_seconds: GEMINI_FIVE_HOUR_RESET_SECONDS },
+          "gemini-weekly": { remaining_fraction: 0.95, reset_in_seconds: GEMINI_WEEKLY_RESET_SECONDS },
           "3p-5h": { remaining_fraction: 0.1, reset_in_seconds: 100 },
         },
       },
@@ -240,9 +284,9 @@ describe("enrichStatuslinePayload", () => {
       headroom: undefined,
     });
     expect(summary.fiveHourUsed).toBeCloseTo(ANTIGRAVITY_FIVE_HOUR_USED_PERCENT, FLOAT_PRECISION_DIGITS);
-    expect(summary.fiveHourResetAt).toBe("2026-10-16T02:30:00.000Z");
+    expect(summary.fiveHourResetAt).toBe(new Date(NOW_MS + GEMINI_FIVE_HOUR_RESET_SECONDS * MS_PER_SECOND).toISOString());
     expect(summary.sevenDayUsed).toBeCloseTo(ANTIGRAVITY_WEEKLY_USED_PERCENT, FLOAT_PRECISION_DIGITS);
-    expect(summary.sevenDayResetAt).toBe("2026-10-21T18:53:20.000Z");
+    expect(summary.sevenDayResetAt).toBe(new Date(NOW_MS + GEMINI_WEEKLY_RESET_SECONDS * MS_PER_SECOND).toISOString());
   });
 
   it("shows the account a client states for itself, never the Claude profile file read for a session outside agent-shim", () => {

@@ -1,5 +1,5 @@
 import { antigravityFamilyBuckets, selectAntigravityBuckets, type AntigravityQuotaBucket, type AntigravityQuotaMap } from "../antigravity/quota";
-import type { AccountMetadata, UsageSnapshot } from "../usage/schema";
+import type { AccountMetadata, QuotaWindow, UsageSnapshot } from "../usage/schema";
 import type { HeadroomStats } from "./headroom";
 
 /** What the door knows about the session whose statusline this is: the one source a renderer can trust for whose quota the windows describe. The `Used` fields are whole percentages (0 to 100); the door's own records carry fractions, the form the real API's headers use. */
@@ -64,10 +64,21 @@ export function identityOf(env: Readonly<Record<string, string | undefined>>): s
   return undefined;
 }
 
+/** A window's whole percentage used, or undefined when it reports no figure or has already reset: a window past its reset describes a period that is over, so its figure no longer says anything about what the account has left. */
+function livePercentOf(window: QuotaWindow | undefined, nowMs: number): number | undefined {
+  if (window?.utilization === undefined || !Number.isFinite(window.utilization)) {
+    return undefined;
+  }
+  if (window.resetsAt !== undefined && Date.parse(window.resetsAt) <= nowMs) {
+    return undefined;
+  }
+  return Math.round(Math.min(1, Math.max(0, window.utilization)) * FULL_PERCENT);
+}
+
 /** The binding windows across the states given: the window furthest spent is the one that bites first, which is what a statusline should show. */
 type ProviderState = UsageSnapshot["providers"][string];
 
-function windowsOf(states: readonly ProviderState[]): Pick<StatuslineSummary, "fiveHourUsed" | "fiveHourResetAt" | "sevenDayUsed" | "sevenDayResetAt"> {
+function windowsOf(states: readonly ProviderState[], nowMs: number): Pick<StatuslineSummary, "fiveHourUsed" | "fiveHourResetAt" | "sevenDayUsed" | "sevenDayResetAt"> {
   let fiveHourUsed: number | undefined;
   let fiveHourResetAt: string | undefined;
   let sevenDayUsed: number | undefined;
@@ -77,14 +88,12 @@ function windowsOf(states: readonly ProviderState[]): Pick<StatuslineSummary, "f
     if (unified === undefined) {
       continue;
     }
-    const fiveWindow = unified.fiveHour === undefined ? undefined : unified.fiveHour.utilization;
-    const five = typeof fiveWindow === "number" && Number.isFinite(fiveWindow) ? Math.round(Math.min(1, Math.max(0, fiveWindow)) * FULL_PERCENT) : undefined;
+    const five = livePercentOf(unified.fiveHour, nowMs);
     if (five !== undefined && (fiveHourUsed === undefined || five > fiveHourUsed)) {
       fiveHourUsed = five;
       fiveHourResetAt = unified.fiveHour?.resetsAt;
     }
-    const sevenWindow = unified.sevenDay === undefined ? undefined : unified.sevenDay.utilization;
-    const seven = typeof sevenWindow === "number" && Number.isFinite(sevenWindow) ? Math.round(Math.min(1, Math.max(0, sevenWindow)) * FULL_PERCENT) : undefined;
+    const seven = livePercentOf(unified.sevenDay, nowMs);
     if (seven !== undefined && (sevenDayUsed === undefined || seven > sevenDayUsed)) {
       sevenDayUsed = seven;
       sevenDayResetAt = unified.sevenDay?.resetsAt;
@@ -258,7 +267,7 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
         },
       ]),
     );
-    summary = { ...summary, ...windowsOf(states), providerAccountEmail: email, providerAccountSub: sub, providerPlan: plan, providerQuotaWindows, quotaFamilies: quotaFamiliesOf(providerBuckets, params.nowMs) };
+    summary = { ...summary, ...windowsOf(states, params.nowMs), providerAccountEmail: email, providerAccountSub: sub, providerPlan: plan, providerQuotaWindows, quotaFamilies: quotaFamiliesOf(providerBuckets, params.nowMs) };
   }
   if (summary.provider === undefined) {
     // The client's own windows (Claude Code's rate_limits, the Antigravity CLI's quota map) describe exactly the account a providerless session spends, so each present one replaces the snapshot's binding window; a window the payload lacks keeps the snapshot's.
