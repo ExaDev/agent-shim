@@ -99,8 +99,7 @@ agent-shim profile set <name> [--extends <profile>]... [--no-extends] [--descrip
 agent-shim profile set <name> [--[no-]launch-skip-permissions] [--[no-]launch-remote-control] [--[no-]launch-headroom] [--[no-]launch-track-usage]
 agent-shim profile set <name> [--launch-claude-version <version> | --no-launch-claude-version] [--json] [--json]
 agent-shim profile set <name> [--launch-delay <duration> | --no-launch-delay] [--[no-]launch-pause] [--[no-]launch-explain] [--launch-proxy-bypass <host>... | --no-launch-proxy-bypass] [--json]
-agent-shim profile set <name> [--statusline-header <segment>... | --no-statusline-header] [--statusline-bars <group>... | --no-statusline-bars] [--statusline-warn-at <percent> | --no-statusline-warn-at] [--statusline-critical-at <percent> | --no-statusline-critical-at]
-agent-shim profile set <name> [--statusline-five-hour-label <text> | --no-statusline-five-hour-label] [--statusline-seven-day-label <text> | --no-statusline-seven-day-label] [--statusline-bar-width <cells> | --no-statusline-bar-width]
+agent-shim profile set <name> [--statusline <setting>=<value>]... [--unset-statusline <setting>]...
 agent-shim profile set <name> [--launch-provider <provider> | --no-launch-provider] [--json]
 agent-shim profile list [--json]
 agent-shim profile show <name> [--json]
@@ -179,6 +178,7 @@ agent-shim frontdoor rc mcp-authenticate --session <cse_id> --server <name> --re
 agent-shim frontdoor rc mcp-oauth-callback-url --session <cse_id> --server <name> --callback-url <url> [--json]
 agent-shim frontdoor rc watch [<cse_id>] [--json]
 agent-shim frontdoor rc selfhost mint <identity> [--force] [--json]
+agent-shim statusline keys [--json]          # every statusline setting with its kind, default and meaning
 agent-shim statusline                          # serve as a statusline entrypoint: enrich the client's stdin payload with the identity's live provider, account and usage windows, then delegate to $AGENT_SHIM_STATUSLINE_CMD or render the built-in line
 agent-shim usage [--identity <name>] [--provider <name>] [--since <duration>] [--refresh] [--json]
 agent-shim session list [--identity <name>] [--all] [--json]   # sessions that spawned agents or ran workflows, from the transcripts on disk
