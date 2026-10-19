@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_LABEL_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
+import { contextBands, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_LABEL_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
 
 const OVER_LONG_LABEL = "x".repeat(MAX_STATUSLINE_LABEL_COLUMNS + 1);
 const WARN_ABOVE_DEFAULT_CRITICAL = 95;
 const CRITICAL_ABOVE_WARN = 99;
+
+const OWN_PAIR = { warnAt: 40, criticalAt: 50 };
 
 describe("StatuslineSchema", () => {
   it("accepts every group and none", () => {
@@ -261,5 +263,28 @@ describe("the usage and clock settings", () => {
 
   it("merge key by key with the other groups", () => {
     expect(mergeStatuslineSettings({ usage: { compact: true, threshold: 50 } }, { usage: { threshold: 10 } })).toEqual({ usage: { compact: true, threshold: 10 } });
+  });
+});
+
+describe("the context group", () => {
+  it("accepts each key with its values and refuses a value outside them", () => {
+    const good = { context: { bar: "hidden", value: "remaining", warnAt: 60, criticalAt: 85, autoCompactWindow: 160_000, estimate: "buffered", breakdown: "critical" } };
+    expect(StatuslineSchema.parse(good)).toEqual(good);
+    const bad = [{ bar: "off" }, { value: "ratio" }, { warnAt: -1 }, { criticalAt: 101 }, { warnAt: 50.5 }, { autoCompactWindow: -1 }, { autoCompactWindow: 1.5 }, { estimate: "always" }, { breakdown: "always" }];
+    for (const context of bad) {
+      expect(StatuslineSchema.safeParse({ context }).success, JSON.stringify(context)).toBe(false);
+    }
+  });
+
+  it("follows the bands for a threshold left at 0, and uses its own where one is set", () => {
+    expect(contextBands(resolveStatusline({ bands: { warnAt: 60, criticalAt: 80 } }))).toEqual({ warnAt: 60, criticalAt: 80 });
+    expect(contextBands(resolveStatusline({ context: { warnAt: 50 } }))).toEqual({ warnAt: 50, criticalAt: STATUSLINE_DEFAULTS.bands.criticalAt });
+    expect(contextBands(resolveStatusline({ bands: { warnAt: 60, criticalAt: 80 }, context: { warnAt: 70, criticalAt: 85 } }))).toEqual({ warnAt: 70, criticalAt: 85 });
+  });
+
+  it("refuses a context warning threshold at or above the critical one, whichever of the two comes from the bands", () => {
+    expect(() => resolveStatusline({ context: { warnAt: 95 } })).toThrow(/context\.warnAt \(95\) must be below context\.criticalAt \(90\)/);
+    expect(() => resolveStatusline({ context: { criticalAt: 60 } })).toThrow(/context\.warnAt \(70\) must be below context\.criticalAt \(60\)/);
+    expect(resolveStatusline({ context: OWN_PAIR }).context.criticalAt).toBe(OWN_PAIR.criticalAt);
   });
 });

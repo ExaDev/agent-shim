@@ -91,6 +91,21 @@ function isSingleVisibleGrapheme(text: string): boolean {
 
 const barCharacter = z.string().refine(isSingleVisibleGrapheme, "must be a single visible character that takes one terminal column");
 
+/** How the context figure is written: the tokens held against the window and the percentage together, either alone, or the percentage left. */
+const STATUSLINE_CONTEXT_VALUES = ["both", "percent", "tokens", "remaining"] as const;
+
+/** What the context row draws when the client reports no percentage of the window in use: nothing, an estimate from the tokens held, or that estimate with the autocompact reserve added. */
+const STATUSLINE_CONTEXT_ESTIMATES = ["never", "raw", "buffered"] as const;
+
+/** The share of the context window Claude Code reserves for compaction, as `/context` reports it. It is measured from Claude Code's output, not documented by Anthropic, and is a share of whatever window the client reports. */
+export const AUTOCOMPACT_RESERVE_FRACTION = 0.165;
+
+/** The share of the window held below which no reserve is added: compaction does not start early in a session, so the reserve would overstate a window that was just cleared. */
+export const AUTOCOMPACT_RESERVE_RAMP_START = 0.05;
+
+/** The share of the window held from which the whole reserve is added; between the ramp's start and this the reserve rises in a straight line. */
+export const AUTOCOMPACT_RESERVE_RAMP_END = 0.5;
+
 const labelText = z
   .string()
   .refine((text) => stringWidth(text) <= MAX_STATUSLINE_LABEL_COLUMNS, `must take no more than ${String(MAX_STATUSLINE_LABEL_COLUMNS)} terminal columns`)
@@ -101,6 +116,8 @@ const overrideText = z.string().max(MAX_DISPLAY_TEXT_CHARS).regex(OPTIONAL_LABEL
 const wholePercent = z.number().int().min(1).max(MAX_PERCENT);
 /** A whole percentage that may be nothing, for a threshold where zero means "always". */
 const thresholdPercent = z.number().int().min(0).max(MAX_PERCENT);
+/** A whole percentage, or 0 to leave the choice to the setting it falls back on. */
+const percentOrFollowBands = z.number().int().min(0).max(MAX_PERCENT);
 
 /**
  * Every statusline setting, grouped, with each leaf's meaning attached as its description. The groups are declared once as plain shapes and used twice: whole, for the resolved settings (every key present), and `partial`, for what a configuration layer may set (every key optional). The description of a key is what `agent-shim statusline keys` prints, so a key without one is a defect, and a test refuses it.
@@ -127,6 +144,15 @@ const SHAPES = {
   },
   advisor: {
     override: overrideText.describe("A name to show for the advisor model in place of the one the session's transcript records; empty shows the transcript's, prettified."),
+  },
+  context: {
+    bar: z.enum(["shown", "hidden"]).describe("Whether the context row draws its bar, or only its figures on one line of text."),
+    value: z.enum(STATUSLINE_CONTEXT_VALUES).describe("The context figure: both (the tokens held against the window, then the percentage), percent, tokens, or remaining (the percentage of the window left)."),
+    warnAt: percentOrFollowBands.describe("The whole percentage of the context window at which the context bar turns yellow; 0 follows bands.warnAt."),
+    criticalAt: percentOrFollowBands.describe("The whole percentage of the context window at which the context bar turns red and, with context.breakdown set to critical, the token breakdown appears; 0 follows bands.criticalAt."),
+    autoCompactWindow: z.number().int().min(0).describe("A window in tokens to measure the context against instead of the model's, matching the figure /context gives once Claude Code compacts before the window is full; 0 measures against the model's window."),
+    estimate: z.enum(STATUSLINE_CONTEXT_ESTIMATES).describe(`What to draw when the client reports no percentage of the window in use: never (nothing), raw (the tokens held over the window), or buffered (that, plus the ${String(AUTOCOMPACT_RESERVE_FRACTION * MAX_PERCENT)}% of the window Claude Code reserves for compaction, rising from nothing at ${String(AUTOCOMPACT_RESERVE_RAMP_START * MAX_PERCENT)}% of the window held to the whole reserve at ${String(AUTOCOMPACT_RESERVE_RAMP_END * MAX_PERCENT)}%).`),
+    breakdown: z.enum(["never", "critical"]).describe("Whether to add the input and cache tokens of the last request to the context row once its use reaches context.criticalAt."),
   },
   bands: {
     warnAt: wholePercent.describe("The whole percentage of use at which a bar turns yellow; it must be below criticalAt."),
@@ -212,6 +238,7 @@ export const StatuslineSchema = z.strictObject({
   account: z.strictObject(SHAPES.account).partial().optional(),
   effort: z.strictObject(SHAPES.effort).partial().optional(),
   advisor: z.strictObject(SHAPES.advisor).partial().optional(),
+  context: z.strictObject(SHAPES.context).partial().optional(),
   bands: z.strictObject(SHAPES.bands).partial().optional(),
   labels: z.strictObject(SHAPES.labels).partial().optional(),
   bar: z.strictObject(SHAPES.bar).partial().optional(),
@@ -236,6 +263,7 @@ export const ResolvedStatuslineSchema = z.strictObject({
   account: z.strictObject(SHAPES.account),
   effort: z.strictObject(SHAPES.effort),
   advisor: z.strictObject(SHAPES.advisor),
+  context: z.strictObject(SHAPES.context),
   bands: z.strictObject(SHAPES.bands),
   labels: z.strictObject(SHAPES.labels),
   bar: z.strictObject(SHAPES.bar),
@@ -260,6 +288,7 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   account: { parts: ["user", "organisation", "plan"], userLength: 0 },
   effort: { format: "full" },
   advisor: { override: "" },
+  context: { bar: "shown", value: "both", warnAt: 0, criticalAt: 0, autoCompactWindow: 0, estimate: "never", breakdown: "never" },
   bands: { warnAt: 70, criticalAt: 90 },
   labels: { fiveHour: "5h", sevenDay: "Wk" },
   bar: { width: 10, filled: "\u2588", empty: "\u2591" },
@@ -304,11 +333,20 @@ export function mergeStatuslineSettings(base: unknown, over: unknown): unknown {
   return merged;
 }
 
-/** The statusline's settings with the defaults filled in, or a message naming what is wrong when the combination is not drawable (the warning threshold must sit below the critical one, which a per-key cascade cannot check layer by layer). */
+/** The colour bands of the context bar: its own thresholds where the settings give them, `bands` where they leave one at 0. */
+export function contextBands({ bands, context }: Readonly<ResolvedStatusline>): { readonly warnAt: number; readonly criticalAt: number } {
+  return { warnAt: context.warnAt === 0 ? bands.warnAt : context.warnAt, criticalAt: context.criticalAt === 0 ? bands.criticalAt : context.criticalAt };
+}
+
+/** The statusline's settings with the defaults filled in, or a message naming what is wrong when the combination is not drawable (a warning threshold must sit below its critical one, which a per-key cascade cannot check layer by layer). */
 export function resolveStatusline(settings: Readonly<StatuslineSettings> | undefined): ResolvedStatusline {
   const resolved = ResolvedStatuslineSchema.parse(mergeStatuslineSettings(STATUSLINE_DEFAULTS, settings));
   if (resolved.bands.warnAt >= resolved.bands.criticalAt) {
     throw new RangeError(`statusline bands.warnAt (${String(resolved.bands.warnAt)}) must be below bands.criticalAt (${String(resolved.bands.criticalAt)})`);
+  }
+  const forContext = contextBands(resolved);
+  if (forContext.warnAt >= forContext.criticalAt) {
+    throw new RangeError(`statusline context.warnAt (${String(forContext.warnAt)}) must be below context.criticalAt (${String(forContext.criticalAt)}), each falling back to bands when it is 0`);
   }
   return resolved;
 }

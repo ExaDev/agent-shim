@@ -1,4 +1,4 @@
-import type { BarCell } from "../../barGrid";
+import { AUTOCOMPACT_RESERVE_FRACTION, AUTOCOMPACT_RESERVE_RAMP_END, AUTOCOMPACT_RESERVE_RAMP_START, contextBands } from "../../../config/statusline";
 import { barCell, formatTokens, FULL_PERCENT, statusColor, withColor, type BarStyle } from "../../style";
 import { barStyleOf, type RenderContext, type RowOutput, type StatuslinePayloadView } from "../context";
 
@@ -22,19 +22,95 @@ function cacheShareText(view: StatuslinePayloadView, style: BarStyle): string {
 }
 
 
-/** The context window's bar, with its tokens and the prompt cache's hit share. */
-export function contextRow(context: RenderContext): RowOutput {
-  const { view, palette } = context;
-  const style = barStyleOf(context, "context");
-  const cells: BarCell[] = [];
-  if (view.contextUsedPercentage !== undefined) {
-    const fraction = Math.max(0, Math.min(1, view.contextUsedPercentage / FULL_PERCENT));
-    const color = statusColor(fraction, true, style);
-    const percent = withColor(color, `${view.contextUsedPercentage.toFixed(1)}%`);
-    const tokens = view.contextTotalTokens !== undefined && view.contextWindowTokens !== undefined ? `${formatTokens(view.contextTotalTokens)}/${formatTokens(view.contextWindowTokens)} ` : "";
-    const cache = cacheShareText(view, style);
-    cells.push(barCell(palette.paint("label", `Ctx ${tokens}`), ` ${percent}${cache}`, fraction, style));
-  }
+/** The context window the figures are measured against: the setting's window where it gives one, the model's where it does not. */
+function windowTokensOf({ settings, view }: RenderContext): number | undefined {
+  return settings.context.autoCompactWindow > 0 ? settings.context.autoCompactWindow : view.contextWindowTokens;
+}
 
-  return { kind: "bars", cells };
+/** The tokens held against a window, with the reserve Claude Code keeps for compaction added in proportion: none while the window is nearly empty, all of it once half full, and a straight line between. */
+function bufferedPercent(tokens: number, windowTokens: number): number {
+  const held = tokens / windowTokens;
+  const ramp = Math.max(0, Math.min(1, (held - AUTOCOMPACT_RESERVE_RAMP_START) / (AUTOCOMPACT_RESERVE_RAMP_END - AUTOCOMPACT_RESERVE_RAMP_START)));
+  return Math.min(FULL_PERCENT, (held + AUTOCOMPACT_RESERVE_FRACTION * ramp) * FULL_PERCENT);
+}
+
+/** The percentage of the window in use. A window set in the settings is measured against the tokens held; otherwise it is the percentage the client reports, and where the client reports none (or reports 0 beside tokens already held, which is how a client says it has not worked it out yet) it is the estimate the settings ask for, if any. */
+function usedPercentOf(context: RenderContext): number | undefined {
+  const { settings, view } = context;
+  const tokens = view.contextTotalTokens;
+  const windowTokens = windowTokensOf(context);
+  if (settings.context.autoCompactWindow > 0 && tokens !== undefined && windowTokens !== undefined) {
+    return Math.min(FULL_PERCENT, (tokens / windowTokens) * FULL_PERCENT);
+  }
+  const estimating = settings.context.estimate !== "never";
+  const reported = view.contextUsedPercentage;
+  const reportedUnworked = reported === 0 && tokens !== undefined && tokens > 0;
+  if (reported !== undefined && !(estimating && reportedUnworked)) {
+    return reported;
+  }
+  if (!estimating || tokens === undefined || windowTokens === undefined || windowTokens <= 0) {
+    return undefined;
+  }
+  return settings.context.estimate === "buffered" ? bufferedPercent(tokens, windowTokens) : Math.min(FULL_PERCENT, (tokens / windowTokens) * FULL_PERCENT);
+}
+
+/** The tokens the last request held, over the input and the cache, as the breakdown at high use writes them, or nothing when the client did not report the last request. */
+function breakdownText({ payload }: RenderContext): string | undefined {
+  const usage = payload.context_window?.current_usage;
+  if (usage === undefined) {
+    return undefined;
+  }
+  const cached = (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+  return ` (in: ${formatTokens(usage.input_tokens ?? 0)}, cache: ${formatTokens(cached)})`;
+}
+
+/** The context window's bar, or its figures alone, written as the settings ask: the tokens held and the percentage in use, the prompt cache's hit share, and at high use the breakdown of the last request. */
+export function contextRow(context: RenderContext): RowOutput {
+  const { view, palette, settings } = context;
+  const percent = usedPercentOf(context);
+  if (percent === undefined) {
+    return settings.context.bar === "shown" ? { kind: "bars", cells: [] } : { kind: "text", lines: [] };
+  }
+  const style = barStyleOf(context, "context");
+  const bands = contextBands(settings);
+  const fraction = Math.max(0, Math.min(1, percent / FULL_PERCENT));
+  const color = statusColor(fraction, true, { ...style, bands });
+  const windowTokens = windowTokensOf(context);
+  const tokens = view.contextTotalTokens;
+  const heldAgainstWindow = tokens === undefined || windowTokens === undefined ? undefined : `${formatTokens(tokens)}/${formatTokens(windowTokens)}`;
+  const percentText = withColor(color, `${percent.toFixed(1)}%`);
+  const beforeBar: string[] = [];
+  const afterBar: string[] = [];
+  switch (settings.context.value) {
+    case "both":
+      if (heldAgainstWindow !== undefined) {
+        beforeBar.push(heldAgainstWindow);
+      }
+      afterBar.push(percentText);
+      break;
+    case "percent":
+      afterBar.push(percentText);
+      break;
+    case "tokens": {
+      // Without the window the tokens held stand alone, which is still the figure asked for.
+      const held = heldAgainstWindow ?? (tokens === undefined ? undefined : formatTokens(tokens));
+      if (held !== undefined) {
+        afterBar.push(withColor(color, held));
+      }
+      break;
+    }
+    case "remaining":
+      afterBar.push(withColor(color, `${Math.max(0, FULL_PERCENT - percent).toFixed(1)}%`));
+      break;
+    default:
+      return settings.context.value satisfies never;
+  }
+  const high = settings.context.breakdown === "critical" && percent >= bands.criticalAt ? breakdownText(context) : undefined;
+  const trailer = `${cacheShareText(view, style)}${high === undefined ? "" : palette.paint("label", high)}`;
+  const label = ["Ctx", ...beforeBar].join(" ");
+  if (settings.context.bar === "shown") {
+    const suffix = afterBar.length === 0 ? trailer : ` ${afterBar.join(" ")}${trailer}`;
+    return { kind: "bars", cells: [barCell(palette.paint("label", `${label} `), suffix, fraction, { ...style, bands })] };
+  }
+  return { kind: "text", lines: [`${[palette.paint("label", label), ...afterBar].join(" ")}${trailer}`] };
 }
