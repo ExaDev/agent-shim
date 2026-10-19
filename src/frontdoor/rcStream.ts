@@ -244,7 +244,7 @@ export interface RcStreamHubDeps {
 export interface RcStreamHub {
   /** Reconciles the attachments against the tracker: attaches a stream to every tracked session whose OAuth credential is known, and drops an attachment whose session has expired or lost its credential. Idempotent, synchronous and total (never throws): the door calls it after every observed Remote Control exchange, so an attachment follows the session it belongs to without any polling of its own. */
   readonly reconcile: () => void;
-  /** Stops every attachment and frees their dials. */
+  /** Stops every attachment and frees their dials. The hub then refuses to attach again: a later `reconcile` is a no-op, so an exchange that settles after the close cannot start a stream. */
   readonly close: () => void;
 }
 
@@ -262,6 +262,7 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
     readonly stop: () => void;
   }
   const attachments = new Map<string, Attachment>();
+  let closed = false;
   /** The last cursor this hub persisted per session, so a boundary that moved nothing writes nothing: one write per boundary that advanced the cursor, not one per boundary. */
   const lastSavedSequenceNums = new Map<string, number>();
 
@@ -448,6 +449,9 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
 
   return {
     reconcile: () => {
+      if (closed) {
+        return;
+      }
       const live = new Set(deps.trackedSessions());
       for (const [sessionId, attachment] of attachments) {
         if (!live.has(sessionId)) {
@@ -470,6 +474,7 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
       }
     },
     close: () => {
+      closed = true;
       for (const attachment of attachments.values()) {
         // Persisted before the stop, synchronously: this is the one boundary the hub itself owns outright, so it never depends on a dial's teardown racing the process's exit.
         persistCursor(attachment.sessionId);

@@ -29,6 +29,7 @@ const WRITE_SEQUENCE_NUMS = [WRITE_SEQUENCE_NUM] as const;
 const FRONTDOOR_STATUS: FrontDoorStatus = {
   state: { supervisorPid: 10, port: 4100, lastPort: 4100 },
   supervisorAlive: true,
+  draining: [],
   sessions: [],
   headroomSocket: undefined,
   logPath: "/home/testuser/.agent-shim/logs/frontdoor.log",

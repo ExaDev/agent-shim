@@ -2,7 +2,7 @@ import { verifyHeadroomSocket, type HeadroomSocketTarget, type HeadroomSocketTru
 import { readHeadroomState, type HeadroomFs } from "../headroom/state";
 import type { FrontDoorListenerReading } from "./listenerReadings";
 import type { LayoutPaths } from "../paths";
-import { listFrontDoorSessions, readFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
+import { listFrontDoorDirectRecords, listFrontDoorSessions, readFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState } from "./state";
 
 /**
  * The front door's read-only status: the data `agent-shim frontdoor status` prints and the door's own typed `frontdoor.status` procedure returns, collected without starting or stopping anything. Kept here, beside the state file and session registry it reads, so both the command layer and the typed API's schema layer share one shape and one collector with no dependency on the CLI's command wiring.
@@ -26,6 +26,8 @@ export interface FrontDoorSessionStatus extends FrontDoorSessionSummary {
 export interface FrontDoorStatus {
   readonly state: FrontDoorState;
   readonly supervisorAlive: boolean;
+  /** The pids of earlier doors that released their addresses and are finishing the connections they carried, found from the direct record each door keeps while it can still carry traffic: running, but not the serving door. */
+  readonly draining: readonly number[];
   readonly sessions: readonly FrontDoorSessionStatus[];
   /** The headroom daemon's socket as the door's hop reads and authenticates it live: undefined when no socket is recorded, a refusal when the recorded one fails the owner-only check. */
   readonly headroomSocket: HeadroomSocketTarget | undefined;
@@ -39,6 +41,9 @@ export function collectFrontDoorStatus(fsPort: HeadroomFs, socketTrust: Headroom
   return {
     state,
     supervisorAlive: state.supervisorPid !== undefined && isRunning(state.supervisorPid),
+    draining: listFrontDoorDirectRecords(fsPort, paths.frontdoorDirectRecordsDir)
+      .map((record) => record.pid)
+      .filter((pid) => pid !== state.supervisorPid && isRunning(pid)),
     sessions: listFrontDoorSessions(fsPort, paths.frontdoorSessionsDir).map((session) => ({ ...session, alive: isRunning(session.pid) })),
     headroomSocket: headroomSocketTarget(fsPort, socketTrust, paths),
     logPath: paths.frontdoorLogPath,
@@ -63,6 +68,9 @@ export function formatFrontDoorStatus(status: FrontDoorStatus, caCertPath: strin
     lines.push(`connect surface: not listening${status.state.lastConnectPort === undefined ? "" : ` (next start on 127.0.0.1:${String(status.state.lastConnectPort)})`}`);
   } else {
     lines.push(`connect surface: listening on 127.0.0.1:${String(status.state.connectPort)}, CA ${caCertPath}`);
+  }
+  if (status.draining.length > 0) {
+    lines.push(`draining: ${status.draining.map(String).join(", ")} (finishing connections opened before the last restart; each exits when they have ended)`);
   }
   if (status.headroomSocket === undefined) {
     lines.push("headroom hop: the daemon is not serving (sessions asking for headroom fail until it is up)");

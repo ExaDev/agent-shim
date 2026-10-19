@@ -90,6 +90,7 @@ const SNAPSHOTS: readonly UsageSnapshot[] = [snapshotOf("personal"), snapshotOf(
 const STATUS: FrontDoorStatus = {
   state: { supervisorPid: SUPERVISOR_PID, port: PROVIDER_PORT, lastPort: PROVIDER_PORT, connectPort: CONNECT_PORT, lastConnectPort: CONNECT_PORT },
   supervisorAlive: true,
+  draining: [],
   sessions: [
     { pid: LIVE_LAUNCH_PID, startedAt: 0, alive: true },
     { pid: DEAD_LAUNCH_PID, startedAt: 0, alive: false },

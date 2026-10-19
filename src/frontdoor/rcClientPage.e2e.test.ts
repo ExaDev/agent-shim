@@ -142,7 +142,7 @@ describe("the door's web client page and its API calls over the door's own TLS",
       usageSnapshots: () => [],
       usageSnapshotOf: () => undefined,
       now: () => 0,
-      frontDoorStatus: () => ({ state: { supervisorPid: SUPERVISOR_PID, port: STATUS_PORT, lastPort: STATUS_PORT }, supervisorAlive: true, sessions: [], headroomSocket: undefined, logPath: "/home/testuser/.agent-shim/logs/frontdoor.log", logExists: false }),
+      frontDoorStatus: () => ({ state: { supervisorPid: SUPERVISOR_PID, port: STATUS_PORT, lastPort: STATUS_PORT }, supervisorAlive: true, draining: [], sessions: [], headroomSocket: undefined, logPath: "/home/testuser/.agent-shim/logs/frontdoor.log", logExists: false }),
       checkReport: () => {
         throw new Error("the e2e page drives no check");
       },

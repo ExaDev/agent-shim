@@ -495,7 +495,7 @@ This is the door's side only. The identity, configuration profile and provider a
 
 ## Why a front door exited
 
-A front door exit drops every connection that passes through it: provider requests, Remote Control streams, and any other tunnel a session routes through the proxy variable. The door's own log (`logs/frontdoor.log`) records the cause, so a drop can be traced to what asked for it.
+A front door exit drops the connections that pass through it unless it drains (below). The door's own log (`logs/frontdoor.log`) records the cause, so a drop can be traced to what asked for it.
 
 Before a launcher signals a door it appends one line to that log, then sends the signal:
 
@@ -505,13 +505,15 @@ launcher <pid>: replacing front door; reason=<reason> signal=<SIGTERM|SIGKILL> d
 
 `reason` is one of a closed set: `restart-command` (`agent-shim frontdoor restart`), `update-restart` (the restart `agent-shim update --restart-door` makes after installing a new binary), `protocol-older` (a launch found a door speaking an older protocol than its own), `probe-failed-restart` (a restart found the door not answering) and `probe-failed-idle` (a launch found the door not answering while no other session was registered against it). `liveSessions` counts the registered sessions, other than the launcher's own, that are running against that door: what the replacement cuts off. A second line with `signal=SIGKILL` follows when the door ignored the first signal for the whole grace period. The line carries pids, protocol numbers and the reason only.
 
-When the door receives `SIGTERM` or `SIGINT` it logs what it is about to drop, then exits:
+When the door receives its first `SIGTERM` or `SIGINT` it logs what it is carrying, then retires by draining rather than exiting:
 
 ```
-frontdoor <pid>: received <signal>; exiting; tunnelsDropped=<n> liveSessions=<n> protocol=<n> uptimeSeconds=<n>
+frontdoor <pid>: received <signal>; retiring; tunnelsOpen=<n> liveSessions=<n> protocol=<n> uptimeSeconds=<n>
 ```
 
-`tunnelsDropped` is the number of authenticated connections open on the CONNECT surface at that moment, blind tunnels and terminated sessions together. A `received SIGTERM` line with no `replacing front door` line just before it was sent by something other than a launcher of this tool.
+A retiring door releases its three listening addresses at once, so the successor a launcher starts binds the same sticky ports with no overlap, and stops naming itself as the owner in the state file, so a launch starts that successor instead of joining a door that no longer accepts. It then stays up only for what it still carries. Blind tunnels (the byte pumps to hosts the door never looks into, which includes an HTTP MCP server a session reaches through the proxy variable and any other tool that honours it) keep running until they end by themselves or their launch ends, and a response already being served finishes. What holds the door's own routing state ends at once: the connections it terminates (the API host's and the Remote Control control plane's TLS sessions) and connections still waiting for their head, whose clients reconnect to the successor. When the last tunnel and the last in-flight response have ended the door exits. A further signal while it is draining logs `received <signal> again; exiting now; tunnelsDropped=<n>` and exits immediately, which is what a launcher sends when a door does not release its addresses within a grace period.
+
+`agent-shim frontdoor status` lists a retiring door on its `draining:` line while it is still running. A `received SIGTERM` line with no `replacing front door` line just before it was sent by something other than a launcher of this tool. On Windows a signal ends the process outright, so a replacement there still drops every open connection.
 
 ## Launch flags
 

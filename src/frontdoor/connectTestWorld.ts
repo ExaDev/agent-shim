@@ -317,7 +317,7 @@ export function makeTlsWorld(
         stream.end();
       }
     },
-    async start(): Promise<{ readonly connectPort: number; readonly transparentPort?: number; readonly upstreamPort: number; readonly rcDial: RcEventDial; readonly rcStreamDial: RcStreamDial; readonly openTunnels: () => number; readonly close: () => Promise<void> }> {
+    async start(): Promise<{ readonly connectPort: number; readonly transparentPort?: number; readonly upstreamPort: number; readonly rcDial: RcEventDial; readonly rcStreamDial: RcStreamDial; readonly openTunnels: () => number; readonly drain: () => Promise<void>; readonly close: () => Promise<void> }> {
       await listen(fakeRouted);
       await listen(fakeUpstream);
       await listen(echoServer);
@@ -376,7 +376,7 @@ export function makeTlsWorld(
         effects,
         undefined,
       );
-      return { connectPort: server.port, ...(server.transparentPort === undefined ? {} : { transparentPort: server.transparentPort }), upstreamPort: portOf(fakeUpstream), rcDial, rcStreamDial, openTunnels: server.openTunnels, close: async () => { await server.close(); } };
+      return { connectPort: server.port, ...(server.transparentPort === undefined ? {} : { transparentPort: server.transparentPort }), upstreamPort: portOf(fakeUpstream), rcDial, rcStreamDial, openTunnels: server.openTunnels, drain: server.drain, close: async () => { await server.close(); } };
     },
     async stop(): Promise<void> {
       for (const stream of [...rcSseStreams]) {
