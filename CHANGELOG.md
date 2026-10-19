@@ -1,3 +1,15 @@
+## [11.49.0](https://github.com/ExaDev/agent-shim/compare/v11.48.0...v11.49.0) (2026-10-19)
+
+### Features
+
+* **frontdoor:** name the cause of a door's exit in its own log ([0ff81f9](https://github.com/ExaDev/agent-shim/commit/0ff81f9791552a2da91c7ee06f6a53c8a56d064d))
+* **frontdoor:** retire by draining, so open tunnels survive a replacement ([abe1ae4](https://github.com/ExaDev/agent-shim/commit/abe1ae45749e86bd44fb79937e733c15e604e89e))
+
+### Bug Fixes
+
+* **frontdoor:** count launches of an earlier door generation as the current door's ([62462d8](https://github.com/ExaDev/agent-shim/commit/62462d86aecd12ef1a2f3af0779a40a0770f48c8))
+* **frontdoor:** finish the drain's lifecycle: one door's work, one SIGTERM, one mark ([5c5aa7b](https://github.com/ExaDev/agent-shim/commit/5c5aa7b21178266d4bd588d957b572a59e14c357))
+
 ## [11.48.0](https://github.com/ExaDev/agent-shim/compare/v11.47.0...v11.48.0) (2026-10-19)
 
 ### Features
