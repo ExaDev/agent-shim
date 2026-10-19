@@ -107,6 +107,8 @@ agent-shim model unassert <ref>
 agent-shim model family <key> [--mode <mode>] [--name <ref>]... [--context <tokens>] [--[no-]vision|tools|thinking] | --clear
 agent-shim model list [--json]
 agent-shim provider remove <name> [--yes]
+agent-shim provider rename <old> <new> [--json]
+agent-shim provider unalias <alias> [--json]
 
 agent-shim rule add <path> [--config-profile <profile>] [--identity <identity>]
 agent-shim rule set <path> [--config-profile <profile> | --no-config-profile] [--identity <identity> | --no-identity]

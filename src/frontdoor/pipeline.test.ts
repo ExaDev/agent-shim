@@ -8,7 +8,7 @@ import { createCredentialCustody } from "./custody";
 import { NO_ROUTING_SETTING } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
 import { createRoutedResponse, serveRouted, type PipelineDeps, type PipelineRequest, type ResponseBodyObserver, type ResponseObserver, type RouteResolution, type RoutedResponseEvent } from "./pipeline";
-import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse  } from "./route";
+import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROVIDER_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse  } from "./route";
 
 /**
  * A stand-in ServerResponse with the only behaviour `createRoutedResponse` reads: writeHead, write returning false on demand, drain and close events, and destruction. A new one per use keeps each test's socket semantics independent.
@@ -87,7 +87,7 @@ function deps(resolution: RouteResolution, observers: readonly ResponseObserver[
     logs,
     deps: {
       resolveRoute: async () => await Promise.resolve(resolution),
-      headroomDecision: followsLaunchFlag, responseObservers: observers, ...extra,
+      canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: observers, ...extra,
       admit: admitEverything,
       now: () => 0,
       log: (line) => {
@@ -137,6 +137,42 @@ describe("serveRouted", () => {
     await serveRouted(request, deps({ ok: true, route }).deps);
     expect(route.seen[0]?.session).toEqual({ identity: "work", sessionId: "session-9", headroom: true });
     expect(route.seen[0]?.headers).toEqual({ authorization: "Bearer tok" });
+  });
+
+  it("routes a session launched under a renamed provider's old name, on its header and on a provider-scoped path, as the provider it became", async () => {
+    const seen: RoutedRequest[] = [];
+    const rename = (name: string): string => (name === "z" ? "zai" : name);
+    const { deps: pipeline } = deps({ ok: true, route: recordingRoute() }, [], {
+      canonicalProvider: rename,
+      resolveRoute: async (routed) => {
+        seen.push(routed);
+        return await Promise.resolve({ ok: true, route: recordingRoute() });
+      },
+    });
+    const { request } = pipelineRequest({ [PROVIDER_HEADER]: "z" });
+    await serveRouted({ ...request, url: "/providers/z/v1/messages?beta=true" }, pipeline);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.session.provider).toBe("zai");
+    expect(seen[0]?.url).toBe("/providers/zai/v1/messages?beta=true");
+  });
+
+  it("leaves a request that names no provider, or a current one, untouched", async () => {
+    const seen: RoutedRequest[] = [];
+    const { deps: pipeline } = deps({ ok: true, route: recordingRoute() }, [], {
+      canonicalProvider: (name) => (name === "z" ? "zai" : name),
+      resolveRoute: async (routed) => {
+        seen.push(routed);
+        return await Promise.resolve({ ok: true, route: recordingRoute() });
+      },
+    });
+    const { request } = pipelineRequest();
+    await serveRouted({ ...request, url: "/v1/messages" }, pipeline);
+    const current = pipelineRequest({ [PROVIDER_HEADER]: "zai" });
+    await serveRouted({ ...current.request, url: "/providers/zai/v1/messages" }, pipeline);
+    expect(seen.map((routed) => [routed.session.provider, routed.url])).toEqual([
+      [undefined, "/v1/messages"],
+      ["zai", "/providers/zai/v1/messages"],
+    ]);
   });
 
   it("runs every response observer, in order, at the response head and before the body", async () => {
@@ -220,7 +256,7 @@ describe("serveRouted", () => {
       request,
       {
         resolveRoute: async () => await Promise.resolve({ ok: true, route: recordingRoute() }),
-        headroomDecision: followsLaunchFlag, responseObservers: [(event) => { statuses.push(event.status); return undefined; }],
+        canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [(event) => { statuses.push(event.status); return undefined; }],
         admit: () => ({ ok: false, message: "agent-shim front door: this request carries no capability from a live agent-shim launch" }),
         now: () => 0,
         log: () => undefined,
@@ -251,7 +287,7 @@ describe("serveRouted", () => {
       request,
       {
         resolveRoute: async () => await Promise.resolve({ ok: true, route: recordingRoute() }),
-        headroomDecision: followsLaunchFlag, responseObservers: [
+        canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [
           (): undefined => {
             throw new Error("observer bug");
           },

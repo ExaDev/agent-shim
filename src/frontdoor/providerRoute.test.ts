@@ -309,7 +309,7 @@ async function fakeUpstream(): Promise<{ readonly port: number; readonly seen: (
 async function startDoor(resolve: ReturnType<typeof createProviderRouteResolver>): Promise<{ readonly url: string; readonly close: () => Promise<void> }> {
   const server = createFrontDoorServer(
     async (pipelineRequest) => {
-      await serveRouted(pipelineRequest, { resolveRoute: resolve, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
+      await serveRouted(pipelineRequest, { resolveRoute: resolve, canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
     },
     () => undefined,
   );
@@ -540,7 +540,7 @@ describe("per-request routing by model", () => {
     const resolve = createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeCredentials(), usageSnapshotOf: (identity) => (identity === "work" ? snapshot : undefined) });
     const server = createFrontDoorServer(
       async (pipelineRequest) => {
-        await serveRouted(pipelineRequest, { resolveRoute: resolve, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
+        await serveRouted(pipelineRequest, { resolveRoute: resolve, canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
       },
       () => undefined,
     );
@@ -681,7 +681,7 @@ describe("a router provider", () => {
     const resolve = createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => OWN_PORT, env: {}, credentials: fakeCredentials(), models: () => models, usageSnapshotOf: (identity) => (identity === "work" ? snapshot : undefined) });
     const server = createFrontDoorServer(
       async (pipelineRequest) => {
-        await serveRouted(pipelineRequest, { resolveRoute: resolve, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
+        await serveRouted(pipelineRequest, { resolveRoute: resolve, canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: admitLaunchToken("launch-token-for-tests"), now: () => 0, log: () => undefined });
       },
       () => undefined,
     );

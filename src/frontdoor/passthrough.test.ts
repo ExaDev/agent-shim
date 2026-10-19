@@ -70,7 +70,7 @@ async function startDoor(target: { readonly baseUrl: string; readonly stripPrefi
     async (request) => {
       await serveRouted(request, {
         resolveRoute: async () => await Promise.resolve({ ok: true, route }),
-        headroomDecision: followsLaunchFlag, responseObservers: [],
+        canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [],
         admit: admitLaunchToken("launch-token-for-tests"),
         now: () => 0,
         log: () => undefined,

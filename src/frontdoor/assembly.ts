@@ -19,6 +19,8 @@ export interface DoorPipelineDeps {
   readonly custody: CredentialCustody;
   /** The response middleware the client-facing pipeline runs at every response head: usage tracking registers here. */
   readonly responseObservers: readonly ResponseObserver[];
+  /** The provider a name stands for; see `PipelineDeps.canonicalProvider`. */
+  readonly canonicalProvider: (name: string) => string;
   readonly now: () => number;
   readonly log: (line: string) => void;
 }
@@ -68,6 +70,7 @@ export function createDoorPipelines(deps: DoorPipelineDeps): { readonly clientFa
       admit: admitLaunch(deps.isLiveToken),
       headroom: { headroomSocket: deps.headroomSocket, hopSecret: deps.hopSecret, custody: deps.custody, log: deps.log },
       headroomDecision: deps.headroomDecision,
+      canonicalProvider: deps.canonicalProvider,
       now: deps.now,
       log: deps.log,
     },
@@ -76,6 +79,7 @@ export function createDoorPipelines(deps: DoorPipelineDeps): { readonly clientFa
       responseObservers: [],
       admit: admitHop(deps.hopSecret, deps.custody),
       headroomDecision: deps.headroomDecision,
+      canonicalProvider: deps.canonicalProvider,
       now: deps.now,
       log: deps.log,
     },

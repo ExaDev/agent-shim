@@ -116,7 +116,7 @@ describe("buildProgram", () => {
     expect(subcommandNames(built, "pool")).toEqual(["add", "list", "pick", "remove", "set", "show", "use"]);
     expect(subcommandNames(built, "job")).toEqual(["add", "list", "remove", "run", "show"]);
     expect(subcommandNames(built, "profile")).toEqual(["add", "list", "remove", "set", "show", "use"]);
-    expect(subcommandNames(built, "provider")).toEqual(["add", "list", "models", "remove", "set", "show"]);
+    expect(subcommandNames(built, "provider")).toEqual(["add", "list", "models", "remove", "rename", "set", "show", "unalias"]);
     expect(subcommandNames(built, "rule")).toEqual(["add", "list", "remove", "set", "show"]);
     expect(subcommandNames(built, "credential")).toEqual(["forget", "push", "store", "warm"]);
   });
@@ -435,6 +435,24 @@ describe("provider commands", () => {
       credential: { target: "bearer", sources: [{ kind: "env", variable: "Z_API_TOKEN" }] },
     });
     expect(parseJson((await cli(["provider", "list", "--json"])).stdout)).toEqual([expect.objectContaining({ name: "z" })]);
+  });
+
+  it("renames a provider, keeps the old name as an alias shown in list and show, and forgets it on unalias", async () => {
+    expect((await cli(addZ)).code).toBe(0);
+    const renamed = await cli(["provider", "rename", "z", "zai"]);
+    expect(renamed.code).toBe(0);
+    expect(renamed.stdout).toContain('Renamed provider "z" to "zai".');
+    expect(readProvider(paths, "z")).toBeUndefined();
+    expect(readProvider(paths, "zai")?.displayName).toBe("z.ai");
+
+    expect((await cli(["provider", "list"])).stdout).toContain("zai (z.ai, https://api.z.ai/api/anthropic), formerly z");
+    expect((await cli(["provider", "show", "zai"])).stdout).toContain("Former names: z");
+    expect(parseJson((await cli(["provider", "list", "--json"])).stdout)).toEqual([expect.objectContaining({ name: "zai", formerNames: ["z"] })]);
+    expect((await cli(["provider", "rename", "z", "again"])).code).toBe(EXIT_FAILURE);
+
+    expect((await cli(["provider", "unalias", "z"])).code).toBe(0);
+    expect((await cli(["provider", "show", "zai"])).stdout).not.toContain("Former names");
+    expect((await cli(["provider", "unalias", "z"])).code).toBe(EXIT_FAILURE);
   });
 
   it("adds a codex provider with translation settings, merges tier updates, and refuses options that do not fit a kind", async () => {

@@ -115,7 +115,7 @@ async function makeWorld(record: RcSelfHostCredentialRecord | null = RECORD, opt
     });
     void serveRouted(
       { method: request.method ?? "GET", url: request.url ?? "/", headers: request.headers, body: request, signal: abort.signal, response },
-      { resolveRoute: async () => await Promise.resolve({ ok: true, route: surface.route } as const), headroomDecision: followsLaunchFlag, responseObservers: [], admit: () => ({ ok: true, headers: { ...request.headers } }), now: clock.now, log: () => undefined },
+      { resolveRoute: async () => await Promise.resolve({ ok: true, route: surface.route } as const), canonicalProvider: (name) => name, headroomDecision: followsLaunchFlag, responseObservers: [], admit: () => ({ ok: true, headers: { ...request.headers } }), now: clock.now, log: () => undefined },
     ).catch(() => {
       if (!response.headersSent) {
         response.writeHead(HTTP_STATUS.internalServerError);

@@ -4,7 +4,7 @@ import { HTTP_STATUS } from "../codex/http";
 import type { HeadroomDecision } from "./headroomDecision";
 import { applyHeadroomHop, headroomReady, type HeadroomHopDeps } from "./headroomHop";
 import type { Lineage } from "./lineage";
-import { identifyRequest, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
+import { identifyRequest, withCanonicalProviderTarget, type FrontDoorRoute, type ModelChoice, type RoutedRequest, type RoutedResponse, type SessionIdentity } from "./route";
 
 /** What one routed response looked like as it started back to the client: the typed event response middleware observes. */
 export interface RoutedResponseEvent {
@@ -66,6 +66,8 @@ export interface PipelineDeps {
   readonly headroom?: HeadroomHopDeps;
   /** Decides per session whether a request crosses the hop, keeping a session's choice while its prompt cache could be warm. The session's launch flag is only the choice it asks for. */
   readonly headroomDecision: HeadroomDecision;
+  /** The provider a name stands for, so a session launched under a provider's former name is served by the provider now called something else: applied to the session's provider and to a provider-scoped target before anything is routed, so every later step, the usage records included, sees the current name. */
+  readonly canonicalProvider: (name: string) => string;
   /** The clock response middleware times requests by, in epoch milliseconds. */
   readonly now: () => number;
   readonly log: (line: string) => void;
@@ -255,9 +257,11 @@ export function createRoutedResponse(
 /**
  * The ordered pipeline every routed session's request runs through: identify the session (splitting the launcher-injected headers out of what may leave the machine), then route, with the response middleware running at each response head. A route that cannot be resolved is answered as an Anthropic-shaped error, and the observers see that error like any other response, since quota and rate-limit state lives in exactly those.
  */
-export async function serveRouted(request: PipelineRequest, deps: PipelineDeps): Promise<void> {
+export async function serveRouted(incoming: PipelineRequest, deps: PipelineDeps): Promise<void> {
+  const request: PipelineRequest = { ...incoming, url: withCanonicalProviderTarget(incoming.url, deps.canonicalProvider) };
   const observed: ObservedRequest = { method: request.method, path: pathOf(request.url), receivedAt: deps.now(), viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } };
-  const identified = identifyRequest(request.headers);
+  const identity = identifyRequest(request.headers);
+  const identified = { ...identity, session: { ...identity.session, provider: identity.session.provider === undefined ? undefined : deps.canonicalProvider(identity.session.provider) } };
   const admission = deps.admit({ url: request.url, headers: request.headers, forwardable: identified.forwardableHeaders });
   if (!admission.ok) {
     const response = createRoutedResponse(request.response, { deps, session: identified.session, route: "(unauthorized)", request: observed, servedPath: observed.path });

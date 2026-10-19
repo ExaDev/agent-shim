@@ -138,6 +138,8 @@ agent-shim model family <key> [--mode <mode>] [--name <ref>]... [--context <toke
 agent-shim model list [--json]
 agent-shim model explain <name>   # which member the virtual model's mode picks now, and why
 agent-shim provider remove <name> [--yes] [--json]
+agent-shim provider rename <old> <new> [--json]   # the old name stays an alias, so sessions already running under it keep being served
+agent-shim provider unalias <alias> [--json]   # forget a former name once no session launched under it is running
 
 agent-shim rule add <path> [--config-profile <profile>] [--identity <identity>] [--json]
 agent-shim rule set <path> [--config-profile <profile> | --no-config-profile] [--identity <identity> | --no-identity] [--json]

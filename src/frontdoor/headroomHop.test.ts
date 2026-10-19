@@ -248,6 +248,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
   const log = options.log ?? ((): void => undefined);
   const pipelines = createDoorPipelines({
     resolveRoute,
+    canonicalProvider: (name) => name,
     isLiveToken: (token) => token === LAUNCH_TOKEN,
     headroomSocket: home.target,
     hopSecret: HOP_SECRET,

@@ -35,12 +35,17 @@ import { catalogueCachePath, filterCatalogue, parseCatalogueCache } from "./prov
 import { refreshCatalogueForReal } from "./realCatalogueRefresh";
 import fs from "node:fs";
 import { describeCredential, summariseCredential } from "./credential";
+import { aliasesOf, readProviderAliases, removeProviderAlias } from "./providerAliases";
+import { renameProvider } from "./providerRename";
+import { realCredentialCacheEnv } from "./realCredentialCache";
+import { realFarmFs } from "./realPorts";
 import { ProviderNotFoundError, providerExists, readProvider, listProviders, type ProviderCredentialTarget, type ProviderKind, describeProviderEndpoint, addProvider, updateProvider, removeProvider } from "./providersStore";
 
 /** One provider as `provider show --json` and `provider list --json` print it: its name, the file's own fields (less its editor-only `$schema` pointer), and its credential block summarised, so no `literal` source's value is printed. */
-function toProviderView(name: string, provider: Provider): Record<string, unknown> {
+function toProviderView(name: string, provider: Provider, formerNames: readonly string[]): Record<string, unknown> {
   return {
     name,
+    ...(formerNames.length === 0 ? {} : { formerNames }),
     kind: provider.kind ?? "http",
     displayName: provider.displayName,
     ...(isCodexProvider(provider)
@@ -389,8 +394,9 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
       .option("--json", "Print the providers as JSON.")
       .action((options: Readonly<{ json?: boolean }>) => {
         const entries = listProviders(paths);
+        const aliases = readProviderAliases(paths);
         if (options.json === true) {
-          printJson(entries.map((entry) => toProviderView(entry.name, entry.provider)));
+          printJson(entries.map((entry) => toProviderView(entry.name, entry.provider, aliasesOf(aliases, entry.name))));
           return;
         }
         if (entries.length === 0) {
@@ -398,7 +404,8 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
           return;
         }
         for (const entry of entries) {
-          console.log(`  ${entry.name} (${entry.provider.displayName}, ${describeProviderEndpoint(entry.provider)})`);
+          const formerly = aliasesOf(aliases, entry.name);
+          console.log(`  ${entry.name} (${entry.provider.displayName}, ${describeProviderEndpoint(entry.provider)})${formerly.length === 0 ? "" : `, formerly ${formerly.join(", ")}`}`);
         }
       }),
     ["agent-shim provider list", "agent-shim provider list --json"],
@@ -414,11 +421,15 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         if (found === undefined) {
           throw new ProviderNotFoundError(name);
         }
+        const formerNames = aliasesOf(readProviderAliases(paths), name);
         if (options.json === true) {
-          printJson(toProviderView(name, found));
+          printJson(toProviderView(name, found, formerNames));
           return;
         }
         console.log(`Provider: ${name}`);
+        if (formerNames.length > 0) {
+          console.log(`Former names: ${formerNames.join(", ")}`);
+        }
         console.log(`Display name: ${found.displayName}`);
         console.log(`Kind: ${found.kind ?? "http"}`);
         if (isCodexProvider(found)) {
@@ -505,5 +516,37 @@ export function registerProviderCommand(program: Command, deps: CommandDeps): vo
         });
       }),
     ["agent-shim provider remove z --yes"],
+  );
+
+  withExamples(
+    provider
+      .command("rename <old> <new>")
+      .description("Rename a provider. Sessions already running under the old name keep being served through an alias, and configuration, usage state and the cached credential move to the new name.")
+      .option("--json", "Print the result as JSON.")
+      .action((from: string, to: string, options: Readonly<{ json?: boolean }>) => {
+        const report = renameProvider(paths, from, to, { fs: realFarmFs, credentialCache: realCredentialCacheEnv(paths) });
+        reportMutation(options.json, { action: "renamed", kind: "provider", name: to, value: report }, () => {
+          console.log(`Renamed provider "${from}" to "${to}".`);
+          for (const place of report.updated) {
+            console.log(`  updated ${place}`);
+          }
+          console.log(`"${from}" still resolves to "${to}" for sessions launched under it. Once none is running, \`agent-shim provider unalias ${from}\` forgets it.`);
+        });
+      }),
+    ["agent-shim provider rename z zai"],
+  );
+
+  withExamples(
+    provider
+      .command("unalias <alias>")
+      .description("Forget a former provider name. A session still launched under it stops being served.")
+      .option("--json", "Print the result as JSON.")
+      .action((alias: string, options: Readonly<{ json?: boolean }>) => {
+        removeProviderAlias(paths, alias);
+        reportMutation(options.json, { action: "removed", kind: "provider alias", name: alias }, () => {
+          console.log(`Forgot the former provider name "${alias}".`);
+        });
+      }),
+    ["agent-shim provider unalias z"],
   );
 }

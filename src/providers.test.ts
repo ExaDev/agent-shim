@@ -8,6 +8,9 @@ import { isRouterProvider, type Provider } from "./config/schema";
 import type { FsPort } from "./launcher/ports";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { addProvider, InvalidProviderNameError, LEGACY_LITERAL_PLACEHOLDER, legacyProviderConversion, LegacyProviderFileError, listProviders, loadProvider, ProviderAlreadyExistsError, providerExists, ProviderKindMismatchError, ProviderNotFoundError, readProvider, removeProvider, resolveProvider, resolveRoutedProviderCredentials, updateProvider } from "./providersStore";
+import { renameProvider } from "./providerRename";
+import { realCredentialCacheEnv } from "./realCredentialCache";
+import { realFarmFs } from "./realPorts";
 import { fakeCredentials } from "./test-helpers";
 
 /** A minimal real-filesystem `FsPort` over the temp root, so `resolveProvider` is exercised against files `addProvider` actually wrote, the same way the real launcher reads them. */
@@ -386,6 +389,16 @@ describe("providers", () => {
       addProvider(paths, "codex", { displayName: "Codex", baseUrl: "http://127.0.0.1:18789", sources: [{ literal: "codex-local" }] });
       const result = resolveProvider({ paths, port: tempFsPort(), env: {}, credentials: fakeCredentials(), cliProvider: "codex" });
       expect(result).toMatchObject({ ok: true, provider: { credential: { token: "codex-local" } } });
+    });
+
+    it("resolves a renamed provider's old name to the provider it became, from the flag and from the cascade", () => {
+      addProvider(paths, "z", zInput);
+      renameProvider(paths, "z", "zai", { fs: realFarmFs, credentialCache: realCredentialCacheEnv(paths) });
+      const fromFlag = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, credentials: fakeCredentials(), cliProvider: "z" });
+      expect(fromFlag).toMatchObject({ ok: true, provider: { name: "zai", credential: { token: "tok-z" } } });
+      const cascade = { home: root, loadProfile: () => undefined, cliOverride: { launch: { provider: "z" } } };
+      const fromCascade = resolveProvider({ paths, port: tempFsPort(), env: { Z_API_TOKEN: "tok-z" }, credentials: fakeCredentials(), cascade });
+      expect(fromCascade).toMatchObject({ ok: true, provider: { name: "zai" } });
     });
 
     it("falls back to the cascade's launch.provider selection when no flag was given", () => {

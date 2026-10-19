@@ -31,6 +31,7 @@ import { pushFrontDoor, pushFrontDoorListeners } from "./doctorFrontDoor";
 import { readFrontDoorListeners, realFrontDoorListenerProbes, type FrontDoorListenerReading } from "./frontdoor/listenerReadings";
 import { listFrontDoorSupervisors, type FrontDoorSupervisorListing } from "./frontdoor/supervisorProcesses";
 import { ENV_PREFIX, LEGACY_ENV_PREFIX, LEGACY_HOME_DIRNAME } from "./legacy";
+import { aliasFindings, readProviderAliases, type ProviderAliases } from "./providerAliases";
 import { describeProviderEndpoint, legacyProviderConversion, LegacyProviderFileError } from "./providersStore";
 import { detectAmbientCredential, formatAmbientCredentialGuardMessage } from "./launcher/guard";
 import { poolNameOf } from "./launcher/identity";
@@ -153,6 +154,8 @@ export interface RunDoctorParams {
   readonly identities: readonly DoctorIdentityInput[];
   readonly configProfiles: readonly DoctorConfigProfileInput[];
   readonly providers: readonly DoctorProviderInput[];
+  /** The recorded former names of renamed providers. Omit to leave them out of the findings. */
+  readonly providerAliases?: ProviderAliases;
   readonly directoryRules: DoctorFileInput;
   readonly globalConfig: DoctorFileInput;
   /** The parsed `models` block of the global config, when one is defined. Omit to skip the models checks. */
@@ -556,6 +559,10 @@ export function runDoctor(params: RunDoctorParams): DoctorReport {
   for (const entry of params.providers) {
     pushProvider(push, entry, params.credentialCache, params.chatgptSignIn);
   }
+  const providerNames = new Set(params.providers.map((entry) => entry.name));
+  for (const finding of aliasFindings(params.providerAliases ?? {}, providerNames)) {
+    push("provider", finding.level, finding.message, finding.alias);
+  }
 
   if (params.platform !== "darwin" || params.run === undefined) {
     push("keychain", "pass", "Skipped (not macOS).");
@@ -907,6 +914,7 @@ export function collectDoctorReport(params: CollectDoctorReportParams): DoctorRe
     identities,
     configProfiles,
     providers,
+    providerAliases: readProviderAliases(paths),
     directoryRules: { path: paths.directoryRulesFile, raw: realFsPort.readFileUtf8(paths.directoryRulesFile) },
     globalConfig: { path: paths.globalConfigFile, raw: realFsPort.readFileUtf8(paths.globalConfigFile) },
     models: parsedModelsOf(paths),
