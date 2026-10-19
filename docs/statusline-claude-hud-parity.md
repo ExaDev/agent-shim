@@ -90,6 +90,14 @@ Checked against claude-hud at commit `939eb66`.
 | `element:memory` | `layout.rows`: the memory row, a bar of the memory in use with its figures |
 | `element:environment` | `layout.rows`: the environment row, the counts of CLAUDE.md files, rules, MCP servers and hook events |
 | `segment:cost` | `layout.header`: the cost segment, `Cost` for the client's own figure and `Est.` for a priced estimate |
+| `display.showContextBar` | `context.bar`: claude-hud's boolean is `shown` or `hidden` here; hidden draws the figures as one line of text, so the row stays and only its bar goes |
+| `display.contextValue` | `context.value`: the same four values; the default `both` writes the tokens held over the window before the bar and the percentage after it, where claude-hud writes `45% (45k/200k)` after it, and the percentage keeps one decimal |
+| `display.autoCompactWindow` | `context.autoCompactWindow`: a window in tokens to measure against, with 0 where claude-hud has `null` for the model's own window; the percentage keeps one decimal and the tokens shown are over that window, as in claude-hud |
+| `display.autocompactBuffer` | `context.estimate`: claude-hud estimates the percentage, with its autocompact reserve added when `enabled` and without when `disabled`, whenever the client reports none; agent-shim draws nothing then unless `estimate` is `raw` (claude-hud's `disabled`) or `buffered` (its `enabled`), so the default leaves what the line has always drawn alone |
+| `display.contextWarningThreshold` | `context.warnAt`: the whole percentage at which the context bar turns yellow, with 0, the default, following `bands.warnAt` where claude-hud's default is 70 |
+| `display.contextCriticalThreshold` | `context.criticalAt`: the whole percentage at which the context bar turns red and the breakdown appears, with 0, the default, following `bands.criticalAt` where claude-hud's default is 85 |
+| `display.showTokenBreakdown` | `context.breakdown`: `critical` adds the input and cache tokens of the last request to the context row from `context.criticalAt`, as claude-hud does at its critical threshold; the default is `never`, where claude-hud's is on |
+| `element:context` | `layout.rows`: the context row is drawn when the list names `context`, and the list sets where it sits among the other rows |
 | `display.externalUsagePath` | Not applicable: claude-hud reads a usage snapshot a separate tool writes; agent-shim computes the usage windows itself and draws them |
 | `display.externalUsageWritePath` | Not applicable: claude-hud writes a snapshot for other tools to read; the built-in statusline is the consumer of agent-shim's usage data, not a producer for others |
 | `display.externalUsageFreshnessMs` | Not applicable: it bounds the age of the snapshot claude-hud reads, and agent-shim reads none |
