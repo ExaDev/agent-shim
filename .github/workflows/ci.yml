@@ -529,16 +529,17 @@ jobs:
         with:
           node-version-file: .tool-versions
           cache: pnpm
-          registry-url: "https://npm.pkg.github.com"
-          # Explicit, not inferred: setup-node's scope default only matches the scoped package.json name if package.json is already scoped by the time this step runs, and the rewrite below happens after it.
-          scope: "@exadev"
 
       - run: pnpm install --frozen-lockfile
-        env:
-          # setup-node's .npmrc routes the @exadev scope to GitHub Packages and reads its token from this variable; without it, installing a dev dependency published to that registry (the shared lint config) is refused with a 403.
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: pnpm build:bundle
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .tool-versions
+          registry-url: "https://npm.pkg.github.com"
+          # Explicit, not inferred: setup-node's scope default only matches the scoped package.json name if package.json is already scoped by the time this step runs, and the rewrite below happens after it. Configured after the install and build on purpose: the scope sends every @exadev package to GitHub Packages, and the install has to fetch the shared lint config from npmjs.com, as every other job's install does.
+          scope: "@exadev"
 
       - name: Rewrite package name and registry for the GitHub Packages scope
         # GitHub Packages requires the npm package name to be scoped to the repo owner. Rewriting the fields rather than maintaining a second package.json keeps this alias from drifting away from the real package's metadata. publishConfig.registry has to be overridden too: it takes precedence over the .npmrc registry-url set by setup-node above, so without it the publish would silently target registry.npmjs.org instead, which GITHUB_TOKEN can't authenticate against.
