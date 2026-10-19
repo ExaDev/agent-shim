@@ -258,3 +258,25 @@ describe("phase one: launch proxyBypass", () => {
     expect(cleared.launch).toEqual({ proxyBypass: [] });
   });
 });
+
+describe("phase one: launch statusline", () => {
+  it("merges key by key, so a deeper layer that sets the labels leaves a shallower layer's thresholds alone", () => {
+    const flattened = flattenLayers(
+      [
+        layer(0, { launch: { statusline: { warnAt: 60, criticalAt: 85, barWidth: 8 } } }),
+        layer(1, { launch: { statusline: { barWidth: 6, fiveHourLabel: "Session" } } }),
+      ],
+      { home: FAKE_HOME },
+    );
+    expect(flattened.launch.statusline).toEqual({ warnAt: 60, criticalAt: 85, barWidth: 6, fiveHourLabel: "Session" });
+  });
+
+  it("takes the deepest layer's list whole", () => {
+    const flattened = flattenLayers([layer(0, { launch: { statusline: { header: ["model", "provider"] } } }), layer(1, { launch: { statusline: { header: ["identity"] } } })], { home: FAKE_HOME });
+    expect(flattened.launch.statusline).toEqual({ header: ["identity"] });
+  });
+
+  it("leaves the setting absent when no layer sets it", () => {
+    expect(flattenLayers([layer(0, { launch: { headroom: true } })], { home: FAKE_HOME }).launch).not.toHaveProperty("statusline");
+  });
+});

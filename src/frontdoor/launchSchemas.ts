@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import { CredentialSummarySchema } from "../checkReportSchema";
+import { StatuslineSchema } from "../config/statusline";
 import { CLAUDE_VERSION_SOURCES } from "../launcher/claudeVersion";
 import { CONFIG_PROFILE_DECISION_SOURCES, IDENTITY_DECISION_SOURCES } from "../launcher/identity";
 
@@ -52,6 +53,8 @@ const LaunchFlagsSchema = z.strictObject({
   delayMs: z.number(),
   /** The hosts the launch keeps off the front door by adding them to the child's `NO_PROXY`. */
   proxyBypass: z.array(z.string()).readonly(),
+  /** How the session's built-in statusline looks, when the launch configures any of it. */
+  statusline: StatuslineSchema.optional(),
 });
 
 /** One launch resolved, with the warnings the resolution raised. Nothing was started, written or recorded to produce it. */

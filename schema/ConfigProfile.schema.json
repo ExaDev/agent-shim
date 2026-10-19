@@ -142,6 +142,61 @@
           "items": {
             "type": "string"
           }
+        },
+        "statusline": {
+          "type": "object",
+          "properties": {
+            "header": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "model",
+                  "provider",
+                  "route",
+                  "account",
+                  "identity",
+                  "headroom"
+                ]
+              }
+            },
+            "bars": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "context",
+                  "quota"
+                ]
+              }
+            },
+            "warnAt": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "criticalAt": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "fiveHourLabel": {
+              "type": "string",
+              "maxLength": 12,
+              "pattern": "^[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*$"
+            },
+            "sevenDayLabel": {
+              "type": "string",
+              "maxLength": 12,
+              "pattern": "^[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*$"
+            },
+            "barWidth": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 40
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

@@ -1,4 +1,5 @@
 import { isOverridableCategory, type EntryValue, type ModelsConfig, type ModelsLayer, type OverridableCategory } from "../config/schema";
+import type { StatuslineSettings } from "../config/statusline";
 import { isVacuousWhen } from "./conditions";
 import { canonicaliseEntryKey, compareSpecificity, compileMatcher, EntryKeyError, isExactPattern, literalPrefixOf } from "./match";
 import type { CompiledRule, Diagnostic, FlattenedCascade, Layer } from "./types";
@@ -20,7 +21,7 @@ function unpackEntryValue(value: EntryValue): { value: boolean; when?: CompiledR
 export function flattenLayers(layers: readonly Layer[], options: Readonly<{ home: string }>): FlattenedCascade {
   const categories = new Map<OverridableCategory, boolean>();
   const rules = new Map<string, CompiledRule>();
-  const launch: { skipPermissions?: boolean; remoteControl?: boolean; provider?: string; headroom?: boolean; trackUsage?: boolean; claudeVersion?: string; delay?: string; pause?: boolean; explain?: boolean; proxyBypass?: string[] } = {};
+  const launch: { skipPermissions?: boolean; remoteControl?: boolean; provider?: string; headroom?: boolean; trackUsage?: boolean; claudeVersion?: string; delay?: string; pause?: boolean; explain?: boolean; proxyBypass?: string[]; statusline?: StatuslineSettings } = {};
   const diagnostics: Diagnostic[] = [];
   let models: ModelsConfig | undefined;
 
@@ -64,6 +65,10 @@ export function flattenLayers(layers: readonly Layer[], options: Readonly<{ home
       }
       if (layer.launch.proxyBypass !== undefined) {
         launch.proxyBypass = layer.launch.proxyBypass;
+      }
+      if (layer.launch.statusline !== undefined) {
+        // Each key is its own setting: a layer that sets only the labels leaves a shallower layer's thresholds alone.
+        launch.statusline = { ...launch.statusline, ...layer.launch.statusline };
       }
     }
 
