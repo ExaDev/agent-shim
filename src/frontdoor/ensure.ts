@@ -4,6 +4,7 @@ import { CliError } from "../cliError";
 import type { LayoutPaths } from "../paths";
 import { readStartLock, type HeadroomFs, type HeadroomLock } from "../headroom/state";
 import type { ListenerVerdict } from "./probe";
+import { replacementLine, type ReplacementReason, type RequestedReplacementReason } from "./replacement";
 import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, recordOf, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorSessionDetails } from "./state";
 
 /** How long one launch waits for the front door. The listener is this same binary binding one loopback port, so a cold start takes a second or two; the bound only bites when something is genuinely broken. */
@@ -39,6 +40,8 @@ export interface EnsureFrontDoorPorts {
   readonly verifyListener: (port: number) => ListenerVerdict;
   /** Asks a running front-door supervisor to exit, without waiting for it to: the caller polls `isRunning`. Only ever called for a pid whose recorded listener has just authenticated as agent-shim's own, or whose process is agent-shim's front-door supervisor (`isFrontDoorSupervisor`). */
   readonly stopSupervisor: (pid: number) => void;
+  /** Appends one line to the front door's own log. Called before every signal sent to a door, so the door's log names the cause of its own exit. */
+  readonly recordReplacement: (line: string) => void;
   /** Ends a supervisor that did not exit when asked to, without giving it the chance to refuse: a door whose event loop is blocked never runs its signal handler. Called only for a pid `isFrontDoorSupervisor` has just confirmed, after `stopSupervisor` and a grace period. */
   readonly killSupervisor: (pid: number) => void;
   /** Whether `pid` is a live agent-shim front-door supervisor process, read from the process's own command line. This is what separates a wedged door of this tool, which a replacement must retire so the two never coexist, from an unrelated process that reuses the recorded pid, which must never be signalled. */
@@ -54,8 +57,8 @@ export function ensureFrontDoor(params: {
   readonly paths: LayoutPaths;
   readonly launcherPid: number;
   readonly ports: EnsureFrontDoorPorts;
-  /** Replaces a serving door whatever its protocol, once: the restart a binary update asks for, so the new generation serves the sessions already running without waiting for the registry to empty. */
-  readonly replace?: boolean;
+  /** Replaces a serving door whatever its protocol, once, and names why: `update-restart` is the restart a binary update asks for, so the new generation serves the sessions already running without waiting for the registry to empty, and `restart-command` is the deliberate `frontdoor restart`. */
+  readonly replace?: RequestedReplacementReason;
   /** What this launch tells the door about itself beyond its token: the id its requests carry in their session header, and the models block it resolved when it added definitions of its own to the global one. Recorded in the launch's registry entry, so it lives and is pruned with the launch. */
   readonly session?: FrontDoorSessionDetails;
 }): { readonly port: number; readonly connectPort: number; readonly token: string } {
@@ -84,13 +87,22 @@ export function ensureFrontDoor(params: {
     return verdict;
   };
 
+  /** Appends the line that names why `doorPid` is about to be signalled, to the door's own log and before the signal, so the door's last words are never the only record of its cause. */
+  const recordReplacement = (doorPid: number, doorProtocol: number, reason: ReplacementReason, signal: "SIGTERM" | "SIGKILL"): void => {
+    ports.recordReplacement(
+      replacementLine({ reason, signal, launcherPid: params.launcherPid, launcherProtocol: FRONT_DOOR_PROTOCOL, doorPid, doorProtocol, liveSessions: liveSessionsOn(doorPid) }),
+    );
+  };
+
   /** Asks `supervisorPid` to exit and waits until it has, so the replacement that follows binds the sticky ports instead of moving off them. */
-  const stopAndAwaitExit = (supervisorPid: number, failure: string): void => {
+  const stopAndAwaitExit = (supervisorPid: number, doorProtocol: number, reason: ReplacementReason, failure: string): void => {
+    recordReplacement(supervisorPid, doorProtocol, reason, "SIGTERM");
     ports.stopSupervisor(supervisorPid);
     const graceEnds = ports.now() + FRONTDOOR_EXIT_GRACE_MS;
     let killed = false;
     while (ports.isRunning(supervisorPid)) {
       if (!killed && ports.now() >= graceEnds) {
+        recordReplacement(supervisorPid, doorProtocol, reason, "SIGKILL");
         ports.killSupervisor(supervisorPid);
         killed = true;
       }
@@ -106,18 +118,21 @@ export function ensureFrontDoor(params: {
     const supervisorPid = state?.supervisorPid;
     if (supervisorPid !== undefined && !distrusted.has(supervisorPid) && ports.isRunning(supervisorPid)) {
       if (state?.port !== undefined && state.connectPort !== undefined) {
-        if (supervisorPid === params.launcherPid && params.replace !== true && ports.isFrontDoorSupervisor(supervisorPid)) {
+        if (supervisorPid === params.launcherPid && params.replace === undefined && ports.isFrontDoorSupervisor(supervisorPid)) {
           // This process is the serving door, which the process's own command line confirms: an equal pid alone proves nothing, since a pid recorded by a door that exited uncleanly can be reused by an ordinary launcher while another user holds the recorded port. A launch planned inside it (the usage probe, the window opener, a job) has nothing to authenticate, and probing itself would block the very event loop that has to answer the probe, stalling every session on the door for the whole wait. It registers the launch like any other and returns its own addresses.
           const token = randomUUID();
           writeFrontDoorSession(ports.fs, paths.frontdoorSessionsDir, { pid: params.launcherPid, startedAt: ports.now(), token, supervisorPid, ...recordOf(params.session) });
           return { port: state.port, connectPort: state.connectPort, token };
         }
         const verdict = verifyWithRetry(state.port);
-        if (verdict.ok && !replaced && !spawned && (params.replace === true || (state.protocol ?? 0) < FRONT_DOOR_PROTOCOL)) {
+        const doorProtocol = state.protocol ?? 0;
+        if (verdict.ok && !replaced && !spawned && (params.replace !== undefined || doorProtocol < FRONT_DOOR_PROTOCOL)) {
           // A door older than this launcher speaks a protocol this launcher's sessions cannot use (a door from before the protocol field is protocol 0). It is replaced, never joined: the registry is on disk and the replacement binds the same sticky ports, so sessions already running reach it on the addresses they froze. The listener has authenticated as this tool's own, which is what makes the recorded pid safe to stop.
           stopAndAwaitExit(
             supervisorPid,
-            `the front door (pid ${String(supervisorPid)}, protocol ${String(state.protocol ?? 0)}; this launcher speaks protocol ${String(FRONT_DOOR_PROTOCOL)}) was asked to be replaced and did not exit`,
+            doorProtocol,
+            params.replace ?? "protocol-older",
+            `the front door (pid ${String(supervisorPid)}, protocol ${String(doorProtocol)}; this launcher speaks protocol ${String(FRONT_DOOR_PROTOCOL)}) was asked to be replaced and did not exit`,
           );
           replaced = true;
           continue;
@@ -134,9 +149,9 @@ export function ensureFrontDoor(params: {
         }
         if (ports.isFrontDoorSupervisor(supervisorPid)) {
           const stranded = liveSessionsOn(supervisorPid);
-          if (params.replace === true && !replaced) {
+          if (params.replace !== undefined && !replaced) {
             // An explicit replace is the deliberate way to retire a door that is not answering, which is what a busy-door refusal tells the user to run: it must not be refused for the same reason.
-            stopAndAwaitExit(supervisorPid, `the front door (pid ${String(supervisorPid)}) stopped answering and did not exit when asked to`);
+            stopAndAwaitExit(supervisorPid, doorProtocol, "probe-failed-restart", `the front door (pid ${String(supervisorPid)}) stopped answering and did not exit when asked to`);
             replaced = true;
             continue;
           }
@@ -145,7 +160,7 @@ export function ensureFrontDoor(params: {
             busyDoor = { pid: supervisorPid, sessions: stranded };
           } else {
             // This tool's own door that no longer answers and holds no live session: leaving it running makes the replacement move every sticky port (the headroom allowlist then has to be rewritten for the moved direct origin before a provider launch through headroom can proceed) and strands whatever sessions still point at it. It is retired first, so the replacement binds the same ports. A pid that is not a front-door supervisor is only distrusted, never signalled.
-            stopAndAwaitExit(supervisorPid, `the front door (pid ${String(supervisorPid)}) stopped answering and did not exit when asked to`);
+            stopAndAwaitExit(supervisorPid, doorProtocol, "probe-failed-idle", `the front door (pid ${String(supervisorPid)}) stopped answering and did not exit when asked to`);
             continue;
           }
         } else {
@@ -196,14 +211,14 @@ export type RestartFrontDoorResult = { readonly action: "not-running" } | { read
  *
  * Nothing is started when no door is serving. The restart's own registry entry is removed again before returning, so it never keeps the new door awake.
  */
-export function restartFrontDoor(params: { readonly paths: LayoutPaths; readonly pid: number; readonly ports: EnsureFrontDoorPorts }): RestartFrontDoorResult {
+export function restartFrontDoor(params: { readonly paths: LayoutPaths; readonly pid: number; readonly reason: RequestedReplacementReason; readonly ports: EnsureFrontDoorPorts }): RestartFrontDoorResult {
   const { paths, ports } = params;
   const previousPid = readFrontDoorState(ports.fs, paths.frontdoorStateFile)?.supervisorPid;
   if (previousPid === undefined || !ports.isRunning(previousPid)) {
     return { action: "not-running" };
   }
   try {
-    ensureFrontDoor({ paths, launcherPid: params.pid, replace: true, ports });
+    ensureFrontDoor({ paths, launcherPid: params.pid, replace: params.reason, ports });
   } finally {
     removeFrontDoorSession(ports.fs, paths.frontdoorSessionsDir, params.pid);
   }

@@ -212,7 +212,7 @@ export function registerUpdateCommand(program: Command, deps: CommandDeps, ports
         }
         const report = await runSelfUpdate(ports, selfUpdateOptions(deps.paths, options.check === true));
         // Only an applied update has a newer binary for the door to restart into; every other outcome (current, check-only, a channel refusal) leaves the door as it is.
-        const doorRestart = options.restartDoor === true && report.action === "updated" ? realRestartFrontDoor(deps.paths, spawnDetachedSupervisor) : undefined;
+        const doorRestart = options.restartDoor === true && report.action === "updated" ? realRestartFrontDoor(deps.paths, spawnDetachedSupervisor, "update-restart") : undefined;
         if (options.json === true) {
           printJson(doorRestart === undefined ? report : { ...report, frontdoor: doorRestart });
           return;

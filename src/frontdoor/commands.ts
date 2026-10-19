@@ -34,6 +34,8 @@ import { machineTimeZone } from "../usage/anchor";
 import { runWindowKeeper } from "../usage/windowKeeper";
 import { realCredentialCacheEnv } from "../realCredentialCache";
 import { createDoorPipelines } from "./assembly";
+import { appendDoorLog } from "./doorLog";
+import { exitLoggingOnSignals } from "./replacement";
 import { createRoutingSettingReader } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
 import { isLiveCapability } from "./capability";
@@ -74,7 +76,7 @@ import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_MAX_GENERATIONS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
-import { liveSessionTokens, writeFrontDoorSession, readFrontDoorSessionModels } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, liveSessionTokens, writeFrontDoorSession, readFrontDoorSessionModels } from "./state";
 import { declareThisProcessTheFrontDoor } from "./selfIdentity";
 import { awaitPidExit, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 import { createAccountReader } from "../usage/account";
@@ -97,11 +99,6 @@ function respawnInvocation(paths: LayoutPaths): { readonly command: string; read
     env[name] = value;
   }
   return { ...selfInvocation(["__frontdoor-supervisor"]), env };
-}
-
-function appendLog(paths: LayoutPaths, line: string): void {
-  fs.mkdirSync(paths.logsDir, { recursive: true });
-  fs.appendFileSync(paths.frontdoorLogPath, `${new Date().toISOString()} ${line}\n`);
 }
 
 /**
@@ -135,9 +132,9 @@ export function realStatOwnExecutable(watchPath: string): () => OwnExecutableSta
  * The real supervisor ports. The three listener starts are where the whole routing assembly is built: the codex translation's real ports, the provider route resolver over them, both pipelines (see `createDoorPipelines`), the three listeners that feed them, and the CA that signs both TLS-serving listeners' leaves.
  */
 /** `respawnGeneration` is the generation this door was started as (see `readRespawnGeneration`), threaded in because the env it came from is scrubbed before the supervisor's lazy `startWatchdog` closure would read it. */
-function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: number): FrontDoorSupervisorPorts {
+function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: number, trackTunnels: (count: () => number) => void): FrontDoorSupervisorPorts {
   const log = (line: string): void => {
-    appendLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
+    appendDoorLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
   };
   // The direct listener's port is only known once it has bound, but the route resolver needs it to name the address a headroom hop forwards an in-process route back to. No request can arrive before the binds complete, so a closure over the late-filled value is exact, not a race.
   let directPort = 0;
@@ -209,7 +206,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       });
     },
     log: (line) => {
-      appendLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
+      appendDoorLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
     },
   });
   // This generation's control token, minted per door start and written owner-only: the value the door's control routes demand and only this user's CLI can read. A crashed door's stale file never authenticates, because the next generation mints a fresh one over it.
@@ -394,7 +391,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   });
 
   const onListenerError = (name: string) => (error: Error): void => {
-    appendLog(paths, `frontdoor ${String(process.pid)}: ${name} listener failed: ${error.message}; exiting`);
+    appendDoorLog(paths, `frontdoor ${String(process.pid)}: ${name} listener failed: ${error.message}; exiting`);
     process.exit(1);
   };
 
@@ -576,6 +573,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       );
       // The bound transparent port is what the self-hosted mode's client-half dials name; recorded the moment it exists, exactly when the direct port is.
       transparentPort = server.transparentPort;
+      trackTunnels(server.openTunnels);
       return {
         port: server.port,
         close: async () => {
@@ -617,7 +615,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     doorHealth,
     checkQuotaExpiry: quotaExpiring.check,
     log: (line) => {
-      appendLog(paths, line);
+      appendDoorLog(paths, line);
     },
   };
 }
@@ -657,7 +655,7 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       )
       .option("--json", "Print the result as JSON.")
       .action((options: Readonly<{ json?: boolean }>) => {
-        const result = realRestartFrontDoor(paths, spawnDetachedSupervisor);
+        const result = realRestartFrontDoor(paths, spawnDetachedSupervisor, "restart-command");
         if (options.json === true) {
           printJson(result);
           return;
@@ -683,19 +681,28 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       // Not inherited by anything this door starts.
       Reflect.deleteProperty(process.env, DOOR_AWAIT_PID_ENV);
       Reflect.deleteProperty(process.env, DOOR_RESPAWN_GENERATION_ENV);
-      const supervisorPorts = realFrontDoorSupervisorPorts(paths, respawnGeneration);
+      // What the door can say about itself when it is told to exit: how many tunnels the exit drops, read from the connect surface once it is up (none before).
+      let openTunnels = (): number => 0;
+      const supervisorPorts = realFrontDoorSupervisorPorts(paths, respawnGeneration, (count) => {
+        openTunnels = count;
+      });
       const ownPid = process.pid;
       // Every way this process can end writes its reason to the log first, because the log is the only record that outlives it: a door that exits silently looks, from outside, like one that was never there.
       process.on("exit", (code) => {
         supervisorPorts.log(`frontdoor ${String(ownPid)}: exiting with code ${String(code)}`);
       });
       // The listeners are servers inside this process, so an orderly exit takes them with it: there is no child left behind to stop.
-      for (const signal of ["SIGTERM", "SIGINT"] as const) {
-        process.on(signal, () => {
-          supervisorPorts.log(`frontdoor ${String(ownPid)}: received ${signal}; exiting`);
-          deps.exit(0);
-        });
-      }
+      exitLoggingOnSignals(process, {
+        doorPid: ownPid,
+        log: supervisorPorts.log,
+        exit: deps.exit,
+        facts: () => ({
+          tunnels: openTunnels(),
+          liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => session.pid !== ownPid && realIsProcessRunning(session.pid)).length,
+          protocol: FRONT_DOOR_PROTOCOL,
+          uptimeSeconds: Math.round(process.uptime()),
+        }),
+      });
       // A door started by its watchdog's stall handling names the stalled door's pid and waits for it to be gone before binding (see `awaitPidExit`), and carries the respawn generation it was started as, so its own watchdog knows how much of the chain is left.
       if (Number.isInteger(awaited) && awaited > 0) {
         const waitedMs = await awaitPidExit(awaited, supervisorPorts);
