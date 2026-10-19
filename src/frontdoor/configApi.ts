@@ -283,6 +283,7 @@ export function createConfigApiRouter(deps: ConfigApiDeps) {
                 ...(launch?.pause === undefined ? {} : { launchPause: launch.pause }),
                 ...(launch?.explain === undefined ? {} : { launchExplain: launch.explain }),
                 ...(launch?.proxyBypass === undefined ? {} : { launchProxyBypass: launch.proxyBypass === false ? false : checkedProxyBypass(launch.proxyBypass, "launch.proxyBypass") }),
+                ...(launch?.statusline === undefined ? {} : { launchStatusline: launch.statusline }),
               });
               return { action: "updated" as const, kind: "profile" as const, name: input.name, value: profileValue(input.name, paths) };
             }),
