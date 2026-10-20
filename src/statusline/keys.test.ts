@@ -7,6 +7,10 @@ describe("statuslineKeys", () => {
   it("describes every setting, with a default that the schema accepts", () => {
     for (const key of statuslineKeys()) {
       expect(key.description, `${key.path} has a description`).not.toBe("");
+      if (key.optional) {
+        expect(key.defaultValue, `${key.path} is optional, so it has no default`).toBeUndefined();
+        continue;
+      }
       expect(key.defaultValue, `${key.path} has a default`).not.toBeUndefined();
       const [group, name] = key.path.split(".");
       expect(StatuslineSchema.safeParse({ [group ?? ""]: { [name ?? ""]: key.defaultValue } }).success, `${key.path} default is valid`).toBe(true);
@@ -46,6 +50,16 @@ describe("statuslineKeys", () => {
   it("describes the session settings", () => {
     expect(statuslineKeys().find((key) => key.path === "sessionTime.parts")).toMatchObject({ kind: "list", choices: ["started", "lastReply"], defaultValue: ["started", "lastReply"] });
     expect(statuslineKeys().find((key) => key.path === "promptCache.ttlSeconds")).toMatchObject({ kind: "integer", choices: [], defaultValue: 300 });
+  });
+});
+
+describe("an optional setting", () => {
+  it("is listed with its kind, no default and its own description", () => {
+    const warnAt = statuslineKeys().find((key) => key.path === "context.warnAt");
+    expect(warnAt).toMatchObject({ kind: "integer", optional: true, defaultValue: undefined });
+    expect(warnAt?.description).toContain("bands.warnAt");
+    expect(statuslineKeys().find((key) => key.path === "bands.warnAt")).toMatchObject({ optional: false });
+    expect(formatStatuslineKeys(statuslineKeys())).toContain("context.warnAt  (integer; no default)");
   });
 });
 

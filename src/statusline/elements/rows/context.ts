@@ -24,7 +24,7 @@ function cacheShareText(view: StatuslinePayloadView, style: BarStyle): string {
 
 /** The context window the figures are measured against: the setting's window where it gives one, the model's where it does not. */
 function windowTokensOf({ settings, view }: RenderContext): number | undefined {
-  return settings.context.autoCompactWindow > 0 ? settings.context.autoCompactWindow : view.contextWindowTokens;
+  return settings.context.autoCompactWindow ?? view.contextWindowTokens;
 }
 
 /** The tokens held against a window, with the reserve Claude Code keeps for compaction added in proportion: none while the window is nearly empty, all of it once half full, and a straight line between. */
@@ -34,24 +34,23 @@ function bufferedPercent(tokens: number, windowTokens: number): number {
   return Math.min(FULL_PERCENT, (held + AUTOCOMPACT_RESERVE_FRACTION * ramp) * FULL_PERCENT);
 }
 
-/** The percentage of the window in use. A window set in the settings is measured against the tokens held; otherwise it is the percentage the client reports, and where the client reports none (or reports 0 beside tokens already held, which is how a client says it has not worked it out yet) it is the estimate the settings ask for, if any. */
+/** The percentage of the window in use, or undefined when there is none to draw. A window set in the settings is measured against the tokens held, and with no tokens reported there is nothing to measure, so the percentage the client reports (which is against its own window) is not drawn in its place. Otherwise it is the percentage the client reports. Where the client reports none, or reports 0 beside tokens already held (which is how a client says it has not worked it out yet), it is the estimate the settings ask for when one can be made from the tokens and the window; a reported value that cannot be replaced by an estimate is kept. */
 function usedPercentOf(context: RenderContext): number | undefined {
   const { settings, view } = context;
   const tokens = view.contextTotalTokens;
   const windowTokens = windowTokensOf(context);
-  if (settings.context.autoCompactWindow > 0 && tokens !== undefined && windowTokens !== undefined) {
-    return Math.min(FULL_PERCENT, (tokens / windowTokens) * FULL_PERCENT);
+  if (settings.context.autoCompactWindow !== undefined) {
+    return tokens === undefined ? undefined : Math.min(FULL_PERCENT, (tokens / settings.context.autoCompactWindow) * FULL_PERCENT);
   }
-  const estimating = settings.context.estimate !== "never";
+  const estimated = settings.context.estimate === "never" || tokens === undefined || windowTokens === undefined || windowTokens <= 0 ? undefined : estimateOf(settings.context.estimate, tokens, windowTokens);
   const reported = view.contextUsedPercentage;
   const reportedUnworked = reported === 0 && tokens !== undefined && tokens > 0;
-  if (reported !== undefined && !(estimating && reportedUnworked)) {
-    return reported;
-  }
-  if (!estimating || tokens === undefined || windowTokens === undefined || windowTokens <= 0) {
-    return undefined;
-  }
-  return settings.context.estimate === "buffered" ? bufferedPercent(tokens, windowTokens) : Math.min(FULL_PERCENT, (tokens / windowTokens) * FULL_PERCENT);
+  return reported === undefined || (reportedUnworked && estimated !== undefined) ? estimated : reported;
+}
+
+/** The percentage of the window the tokens held make up, with the compaction reserve added when asked. */
+function estimateOf(kind: "raw" | "buffered", tokens: number, windowTokens: number): number {
+  return kind === "buffered" ? bufferedPercent(tokens, windowTokens) : Math.min(FULL_PERCENT, (tokens / windowTokens) * FULL_PERCENT);
 }
 
 /** The tokens the last request held, over the input and the cache, as the breakdown at high use writes them, or nothing when the client did not report the last request. */
@@ -106,6 +105,9 @@ export function contextRow(context: RenderContext): RowOutput {
       return settings.context.value satisfies never;
   }
   const high = settings.context.breakdown === "critical" && percent >= bands.criticalAt ? breakdownText(context) : undefined;
+  if (settings.context.bar === "hidden" && afterBar.length === 0) {
+    return { kind: "text", lines: [] };
+  }
   const trailer = `${cacheShareText(view, style)}${high === undefined ? "" : palette.paint("label", high)}`;
   const label = ["Ctx", ...beforeBar].join(" ");
   if (settings.context.bar === "shown") {

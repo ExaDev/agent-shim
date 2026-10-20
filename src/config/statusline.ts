@@ -116,8 +116,6 @@ const overrideText = z.string().max(MAX_DISPLAY_TEXT_CHARS).regex(OPTIONAL_LABEL
 const wholePercent = z.number().int().min(1).max(MAX_PERCENT);
 /** A whole percentage that may be nothing, for a threshold where zero means "always". */
 const thresholdPercent = z.number().int().min(0).max(MAX_PERCENT);
-/** A whole percentage, or 0 to leave the choice to the setting it falls back on. */
-const percentOrFollowBands = z.number().int().min(0).max(MAX_PERCENT);
 
 /**
  * Every statusline setting, grouped, with each leaf's meaning attached as its description. The groups are declared once as plain shapes and used twice: whole, for the resolved settings (every key present), and `partial`, for what a configuration layer may set (every key optional). The description of a key is what `agent-shim statusline keys` prints, so a key without one is a defect, and a test refuses it.
@@ -148,10 +146,15 @@ const SHAPES = {
   context: {
     bar: z.enum(["shown", "hidden"]).describe("Whether the context row draws its bar, or only its figures on one line of text."),
     value: z.enum(STATUSLINE_CONTEXT_VALUES).describe("The context figure: both (the tokens held against the window, then the percentage), percent, tokens, or remaining (the percentage of the window left)."),
-    warnAt: percentOrFollowBands.describe("The whole percentage of the context window at which the context bar turns yellow; 0 follows bands.warnAt."),
-    criticalAt: percentOrFollowBands.describe("The whole percentage of the context window at which the context bar turns red and, with context.breakdown set to critical, the token breakdown appears; 0 follows bands.criticalAt."),
-    autoCompactWindow: z.number().int().min(0).describe("A window in tokens to measure the context against instead of the model's, matching the figure /context gives once Claude Code compacts before the window is full; 0 measures against the model's window."),
-    estimate: z.enum(STATUSLINE_CONTEXT_ESTIMATES).describe(`What to draw when the client reports no percentage of the window in use: never (nothing), raw (the tokens held over the window), or buffered (that, plus the ${String(AUTOCOMPACT_RESERVE_FRACTION * MAX_PERCENT)}% of the window Claude Code reserves for compaction, rising from nothing at ${String(AUTOCOMPACT_RESERVE_RAMP_START * MAX_PERCENT)}% of the window held to the whole reserve at ${String(AUTOCOMPACT_RESERVE_RAMP_END * MAX_PERCENT)}%).`),
+    warnAt: wholePercent.optional().describe("The whole percentage of the context window at which the context bar turns yellow; while it is unset the context bar follows bands.warnAt."),
+    criticalAt: wholePercent.optional().describe("The whole percentage of the context window at which the context bar turns red and, with context.breakdown set to critical, the token breakdown appears; while it is unset the context bar follows bands.criticalAt."),
+    autoCompactWindow: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("A window in tokens to measure the context against instead of the model's, matching the figure /context gives once Claude Code compacts before the window is full. While it is set, the row draws nothing until the client reports the tokens held, since without them there is nothing to measure against it; while it is unset the model's own window is used."),
+    estimate: z.enum(STATUSLINE_CONTEXT_ESTIMATES).describe(`What to draw when the client reports no percentage of the window in use, or reports 0 while tokens are already held (which is how a client says it has not worked it out yet): never (nothing is estimated: a percentage reported, 0 included, is drawn as it is, and none reported draws nothing), raw (the tokens held over the window), or buffered (that, plus the ${String(AUTOCOMPACT_RESERVE_FRACTION * MAX_PERCENT)}% of the window Claude Code reserves for compaction, rising from nothing at ${String(AUTOCOMPACT_RESERVE_RAMP_START * MAX_PERCENT)}% of the window held to the whole reserve at ${String(AUTOCOMPACT_RESERVE_RAMP_END * MAX_PERCENT)}%).`),
     breakdown: z.enum(["never", "critical"]).describe("Whether to add the input and cache tokens of the last request to the context row once its use reaches context.criticalAt."),
   },
   bands: {
@@ -288,7 +291,7 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   account: { parts: ["user", "organisation", "plan"], userLength: 0 },
   effort: { format: "full" },
   advisor: { override: "" },
-  context: { bar: "shown", value: "both", warnAt: 0, criticalAt: 0, autoCompactWindow: 0, estimate: "never", breakdown: "never" },
+  context: { bar: "shown", value: "both", estimate: "never", breakdown: "never" },
   bands: { warnAt: 70, criticalAt: 90 },
   labels: { fiveHour: "5h", sevenDay: "Wk" },
   bar: { width: 10, filled: "\u2588", empty: "\u2591" },
@@ -333,9 +336,9 @@ export function mergeStatuslineSettings(base: unknown, over: unknown): unknown {
   return merged;
 }
 
-/** The colour bands of the context bar: its own thresholds where the settings give them, `bands` where they leave one at 0. */
+/** The colour bands of the context bar: its own thresholds where the settings give them, `bands` while it leaves one unset. */
 export function contextBands({ bands, context }: Readonly<ResolvedStatusline>): { readonly warnAt: number; readonly criticalAt: number } {
-  return { warnAt: context.warnAt === 0 ? bands.warnAt : context.warnAt, criticalAt: context.criticalAt === 0 ? bands.criticalAt : context.criticalAt };
+  return { warnAt: context.warnAt ?? bands.warnAt, criticalAt: context.criticalAt ?? bands.criticalAt };
 }
 
 /** The statusline's settings with the defaults filled in, or a message naming what is wrong when the combination is not drawable (a warning threshold must sit below its critical one, which a per-key cascade cannot check layer by layer). */
@@ -346,7 +349,7 @@ export function resolveStatusline(settings: Readonly<StatuslineSettings> | undef
   }
   const forContext = contextBands(resolved);
   if (forContext.warnAt >= forContext.criticalAt) {
-    throw new RangeError(`statusline context.warnAt (${String(forContext.warnAt)}) must be below context.criticalAt (${String(forContext.criticalAt)}), each falling back to bands when it is 0`);
+    throw new RangeError(`statusline context.warnAt (${String(forContext.warnAt)}) must be below context.criticalAt (${String(forContext.criticalAt)}), each following bands while it is unset`);
   }
   return resolved;
 }

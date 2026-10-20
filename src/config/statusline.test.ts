@@ -5,7 +5,7 @@ import { contextBands, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATU
 const OVER_LONG_LABEL = "x".repeat(MAX_STATUSLINE_LABEL_COLUMNS + 1);
 const WARN_ABOVE_DEFAULT_CRITICAL = 95;
 const CRITICAL_ABOVE_WARN = 99;
-
+const OWN_WINDOW = 100_000;
 const OWN_PAIR = { warnAt: 40, criticalAt: 50 };
 
 describe("StatuslineSchema", () => {
@@ -270,13 +270,13 @@ describe("the context group", () => {
   it("accepts each key with its values and refuses a value outside them", () => {
     const good = { context: { bar: "hidden", value: "remaining", warnAt: 60, criticalAt: 85, autoCompactWindow: 160_000, estimate: "buffered", breakdown: "critical" } };
     expect(StatuslineSchema.parse(good)).toEqual(good);
-    const bad = [{ bar: "off" }, { value: "ratio" }, { warnAt: -1 }, { criticalAt: 101 }, { warnAt: 50.5 }, { autoCompactWindow: -1 }, { autoCompactWindow: 1.5 }, { estimate: "always" }, { breakdown: "always" }];
+    const bad = [{ bar: "off" }, { value: "ratio" }, { warnAt: 0 }, { warnAt: -1 }, { criticalAt: 101 }, { warnAt: 50.5 }, { autoCompactWindow: 0 }, { autoCompactWindow: -1 }, { autoCompactWindow: 1.5 }, { estimate: "always" }, { breakdown: "always" }];
     for (const context of bad) {
       expect(StatuslineSchema.safeParse({ context }).success, JSON.stringify(context)).toBe(false);
     }
   });
 
-  it("follows the bands for a threshold left at 0, and uses its own where one is set", () => {
+  it("follows the bands for a threshold left unset, and uses its own where one is set", () => {
     expect(contextBands(resolveStatusline({ bands: { warnAt: 60, criticalAt: 80 } }))).toEqual({ warnAt: 60, criticalAt: 80 });
     expect(contextBands(resolveStatusline({ context: { warnAt: 50 } }))).toEqual({ warnAt: 50, criticalAt: STATUSLINE_DEFAULTS.bands.criticalAt });
     expect(contextBands(resolveStatusline({ bands: { warnAt: 60, criticalAt: 80 }, context: { warnAt: 70, criticalAt: 85 } }))).toEqual({ warnAt: 70, criticalAt: 85 });
@@ -286,6 +286,13 @@ describe("the context group", () => {
     expect(() => resolveStatusline({ context: { warnAt: 95 } })).toThrow(/context\.warnAt \(95\) must be below context\.criticalAt \(90\)/);
     expect(() => resolveStatusline({ context: { criticalAt: 60 } })).toThrow(/context\.warnAt \(70\) must be below context\.criticalAt \(60\)/);
     expect(resolveStatusline({ context: OWN_PAIR }).context.criticalAt).toBe(OWN_PAIR.criticalAt);
+  });
+
+  it("has no default for the keys that stay unset", () => {
+    expect(STATUSLINE_DEFAULTS.context.warnAt).toBeUndefined();
+    expect(STATUSLINE_DEFAULTS.context.criticalAt).toBeUndefined();
+    expect(STATUSLINE_DEFAULTS.context.autoCompactWindow).toBeUndefined();
+    expect(resolveStatusline({ context: { autoCompactWindow: OWN_WINDOW } }).context.autoCompactWindow).toBe(OWN_WINDOW);
   });
 
   it("leaves the token totals out of the rows drawn by default", () => {

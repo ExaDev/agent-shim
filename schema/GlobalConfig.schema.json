@@ -310,22 +310,22 @@
                   "description": "The context figure: both (the tokens held against the window, then the percentage), percent, tokens, or remaining (the percentage of the window left)."
                 },
                 "warnAt": {
+                  "description": "The whole percentage of the context window at which the context bar turns yellow; while it is unset the context bar follows bands.warnAt.",
                   "type": "integer",
-                  "minimum": 0,
-                  "maximum": 100,
-                  "description": "The whole percentage of the context window at which the context bar turns yellow; 0 follows bands.warnAt."
+                  "minimum": 1,
+                  "maximum": 100
                 },
                 "criticalAt": {
+                  "description": "The whole percentage of the context window at which the context bar turns red and, with context.breakdown set to critical, the token breakdown appears; while it is unset the context bar follows bands.criticalAt.",
                   "type": "integer",
-                  "minimum": 0,
-                  "maximum": 100,
-                  "description": "The whole percentage of the context window at which the context bar turns red and, with context.breakdown set to critical, the token breakdown appears; 0 follows bands.criticalAt."
+                  "minimum": 1,
+                  "maximum": 100
                 },
                 "autoCompactWindow": {
+                  "description": "A window in tokens to measure the context against instead of the model's, matching the figure /context gives once Claude Code compacts before the window is full. While it is set, the row draws nothing until the client reports the tokens held, since without them there is nothing to measure against it; while it is unset the model's own window is used.",
                   "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991,
-                  "description": "A window in tokens to measure the context against instead of the model's, matching the figure /context gives once Claude Code compacts before the window is full; 0 measures against the model's window."
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
                 },
                 "estimate": {
                   "type": "string",
@@ -334,7 +334,7 @@
                     "raw",
                     "buffered"
                   ],
-                  "description": "What to draw when the client reports no percentage of the window in use: never (nothing), raw (the tokens held over the window), or buffered (that, plus the 16.5% of the window Claude Code reserves for compaction, rising from nothing at 5% of the window held to the whole reserve at 50%)."
+                  "description": "What to draw when the client reports no percentage of the window in use, or reports 0 while tokens are already held (which is how a client says it has not worked it out yet): never (nothing is estimated: a percentage reported, 0 included, is drawn as it is, and none reported draws nothing), raw (the tokens held over the window), or buffered (that, plus the 16.5% of the window Claude Code reserves for compaction, rising from nothing at 5% of the window held to the whole reserve at 50%)."
                 },
                 "breakdown": {
                   "type": "string",

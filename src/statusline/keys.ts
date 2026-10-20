@@ -13,8 +13,10 @@ export interface StatuslineKey {
   /** The allowed values of a `choice`, or of each member of a `list`. */
   readonly choices: readonly string[];
   readonly description: string;
-  /** The value the statusline uses when no layer sets the key. */
+  /** The value the statusline uses when no layer sets the key; undefined for an optional key, which has none. */
   readonly defaultValue: unknown;
+  /** Whether the key may stay unset with no default value, the statusline then behaving as its description says. */
+  readonly optional: boolean;
 }
 
 function valueAt(source: unknown, path: readonly string[]): unknown {
@@ -28,8 +30,10 @@ function valueAt(source: unknown, path: readonly string[]): unknown {
   return current;
 }
 
-function keyOf(path: readonly string[], leaf: z.ZodType): StatuslineKey {
-  const common = { path: path.join("."), description: leaf.description ?? "", defaultValue: valueAt(STATUSLINE_DEFAULTS, path) };
+function keyOf(path: readonly string[], declared: z.ZodType): StatuslineKey {
+  const optional = declared instanceof z.ZodOptional;
+  const leaf = optional ? declared.unwrap() : declared;
+  const common = { path: path.join("."), description: declared.description ?? "", defaultValue: valueAt(STATUSLINE_DEFAULTS, path), optional };
   if (leaf instanceof z.ZodNumber) {
     return { ...common, kind: "integer", choices: [] };
   }
@@ -65,7 +69,7 @@ export function formatStatuslineKeys(keys: readonly StatuslineKey[]): string {
   return keys
     .map((key) => {
       const takes = key.kind === "choice" || key.kind === "list" || key.kind === "colour" ? `${key.kind} of ${key.choices.join(", ")}` : key.kind;
-      return `${key.path}  (${takes}; default ${JSON.stringify(key.defaultValue)})\n    ${key.description}`;
+      return `${key.path}  (${takes}; ${key.optional ? "no default" : `default ${JSON.stringify(key.defaultValue)}`})\n    ${key.description}`;
     })
     .join("\n");
 }
