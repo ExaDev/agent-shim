@@ -4,6 +4,7 @@ import { CACHE_RETENTION_MS, cacheFileFor } from "../cacheFile";
 import { PROMPT_CACHE_TTL_SECONDS } from "../../config/statusline";
 import type { StatuslinePorts } from "../ports";
 import { fakeStatuslineFilesystem, fakeStatuslinePorts, type FakeStatuslineFilesystem } from "../testing";
+import { MAX_LIVE_TOOL_CALL_MS } from "./activity";
 import { FINGERPRINT_BYTES, MAX_TRANSCRIPT_READ_BYTES, readTranscript } from "./reader";
 
 const TRANSCRIPT = "/sessions/one.jsonl";
@@ -38,6 +39,8 @@ const CACHE_READ = 100;
 /** How many times the filler repeats so a transcript is several reads long, and how many lines past one read another is. */
 const FILLER_READS = 3;
 const LINES_PAST_A_READ = 5;
+/** How many different skills the old part of the activity transcript uses, round and round. */
+const EARLY_SKILLS = 3;
 const THREE_BOUNDARIES = 3;
 /** A first line longer than the part of it that identifies a transcript. */
 const OVERSIZED_FIRST_LINE = 70_000;
@@ -255,6 +258,60 @@ describe("readTranscript", () => {
     // The totals after catching up are those of a full scan, and the latest-state facts are still the end's.
     expect(facts).toMatchObject({ complete: true, tokens: { inputTokens: records + 1 }, session: { title: "Final name", lastResponseAtMs: T0 + THREE_DAYS, startedAtMs: T0 } });
     expect(disk.files.get(cacheFileFor(ports, "transcript", TRANSCRIPT))).not.toContain('"newer"');
+  });
+
+  it("reads what the session is doing: its tool calls, agents and todo list, and the skills and servers it has used", () => {
+    const calls: readonly (readonly [string, string, Record<string, unknown>])[] = [
+      ["r", "Read", { file_path: "/a/b.ts" }],
+      ["s", "Skill", { skill: "commit" }],
+      ["m", "mcp__github__list_issues", {}],
+      ["g", "Agent", { subagent_type: "Explore", description: "Look around" }],
+      ["t", "TaskCreate", { subject: "Write it" }],
+    ];
+    const text =
+      calls
+        .map(([id, name, input], index) => line({ type: "assistant", timestamp: at(index * SECOND_MS), message: { content: [{ type: "tool_use", id, name, input }] } }))
+        .join("") + line({ type: "user", timestamp: at(calls.length * SECOND_MS), message: { content: [{ type: "tool_result", tool_use_id: "r", content: "ok" }] } });
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: text });
+    const facts = readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0 + (calls.length + 1) * SECOND_MS);
+    expect(facts?.activity.tools.map((tool) => `${tool.name}:${tool.status}`)).toEqual(["Read:completed", "Skill:running", "mcp__github__list_issues:running"]);
+    expect(facts?.activity).toMatchObject({ skills: ["commit"], mcpServers: ["github"], agents: [{ type: "Explore", description: "Look around", status: "running" }], todos: [{ content: "Write it", status: "pending" }] });
+  });
+
+  it("pairs a tool call with a result that arrives in a later refresh, from the cache, and ages a call with no result by the clock it is given", () => {
+    const call = line({ type: "assistant", timestamp: at(0), message: { content: [{ type: "tool_use", id: "x", name: "Bash", input: { command: "sleep 5" } }] } });
+    const answer = line({ type: "user", timestamp: at(SECOND_MS), message: { content: [{ type: "tool_result", tool_use_id: "x", content: "" }] } });
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: call });
+    expect(readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0)?.activity.tools).toEqual([{ name: "Bash", target: "sleep 5", status: "running" }]);
+    expect(readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0 + MAX_LIVE_TOOL_CALL_MS + 1)?.activity.tools).toEqual([]);
+    disk.files.set(TRANSCRIPT, call + answer);
+    expect(readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0 + MAX_LIVE_TOOL_CALL_MS + 1)?.activity.tools).toEqual([{ name: "Bash", target: "sleep 5", status: "completed" }]);
+  });
+
+  it("reports the calls and todo list the end of a long transcript holds on the first refresh, and the skills only once it has caught up", () => {
+    const records = Math.ceil((OVER_TWO_WINDOWS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES);
+    const old = Array.from({ length: records }, (_, index) => oddLine({ type: "assistant", timestamp: at(0), message: { id: `o${String(index)}`, content: [{ type: "tool_use", id: `old${String(index)}`, name: "Skill", input: { skill: `early-${String(index % EARLY_SKILLS)}` } }] } })).join("");
+    const newest =
+      line({ type: "assistant", timestamp: at(THREE_DAYS), message: { content: [{ type: "tool_use", id: "last", name: "Grep", input: { pattern: "needle" } }] } }) +
+      line({ type: "assistant", timestamp: at(THREE_DAYS), message: { content: [{ type: "tool_use", id: "todo", name: "TodoWrite", input: { todos: [{ content: "Finish", status: "in_progress" }] } }, { type: "tool_use", id: "skill-late", name: "Skill", input: { skill: "late" } }] } });
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: old + newest });
+    const { ports, bytesRead } = countingPorts(disk);
+
+    const first = readTranscript(ports, TRANSCRIPT, T0 + THREE_DAYS);
+    expect(first).toMatchObject({ complete: false, activity: { todos: [{ content: "Finish", status: "in_progress" }] } });
+    expect(first?.activity.tools.map((tool) => tool.name)).toContain("Grep");
+    expect(first?.activity.skills).not.toContain("late");
+    expect(bytesRead()).toBeLessThanOrEqual(MAX_READ_PER_REFRESH);
+
+    let facts = first;
+    while (facts?.complete === false) {
+      const before = bytesRead();
+      facts = readTranscript(ports, TRANSCRIPT, T0 + THREE_DAYS);
+      expect(bytesRead() - before).toBeLessThanOrEqual(MAX_READ_PER_REFRESH);
+      expect(facts?.activity.todos).toEqual([{ content: "Finish", status: "in_progress" }]);
+    }
+    expect(facts?.activity.skills).toEqual(["early-0", "early-1", "early-2", "late"]);
+    expect(facts?.activity.tools.at(-1)?.name).toBe("Skill");
   });
 
   it("keeps the cache tier an early write showed when the end of the transcript holds a request but no write that names a tier", () => {
