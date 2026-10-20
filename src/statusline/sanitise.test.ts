@@ -137,6 +137,38 @@ describe("visibleDisplayText", () => {
     expect(visibleDisplayText("a\u115F\u1160b")).toBe("a  b");
   });
 
+  it("looks at the jamo before a filler as well as the one after it", () => {
+    expect(visibleDisplayText("\u1100\u115Fb")).toBe("\u1100\u115Fb");
+    expect(visibleDisplayText("\u1100\u1160b")).toBe("\u1100\u1160b");
+    expect(visibleDisplayText("\u115F\u1161b")).toBe("\u115F\u1161b");
+  });
+
+  describe("the jamo that keep a filler in its cluster", () => {
+    /** The first and last code point of each range of Hangul jamo other than the fillers. */
+    const INSIDE = ["\u1100", "\u115E", "\u1161", "\u11FF", "\uA960", "\uA97F", "\uD7B0", "\uD7FF"];
+    /** The code points just outside those ranges (the surrogates between the last two blocks cannot stand alone, so the next code point after them is used). */
+    const OUTSIDE = ["\u10FF", "\u1200", "\uA95F", "\uA980", "\uD7AF", "\uE000"];
+    const FILLERS = ["\u115F", "\u1160"];
+
+    it("leaves a filler beside the end of any jamo range as part of the cluster, on either side", () => {
+      for (const jamo of INSIDE) {
+        for (const filler of FILLERS) {
+          expect(visibleDisplayText(`a${jamo}${filler}b`), `${JSON.stringify(jamo)} then ${JSON.stringify(filler)}`).not.toContain(" ");
+          expect(visibleDisplayText(`a${filler}${jamo}b`), `${JSON.stringify(filler)} then ${JSON.stringify(jamo)}`).not.toContain(" ");
+        }
+      }
+    });
+
+    it("turns a filler beside the code point just outside any jamo range into a space, on either side", () => {
+      for (const other of OUTSIDE) {
+        for (const filler of FILLERS) {
+          expect(visibleDisplayText(`a${other}${filler}b`), `${JSON.stringify(other)} then ${JSON.stringify(filler)}`).toContain(" ");
+          expect(visibleDisplayText(`a${filler}${other}b`), `${JSON.stringify(filler)} then ${JSON.stringify(other)}`).toContain(" ");
+        }
+      }
+    });
+  });
+
   it("treats a blank cell inside a name as a space", () => {
     expect(visibleDisplayText("a\u2800b")).toBe("a b");
     for (const filler of ["\u115F", "\u1160", "\u3164", "\uFFA0"]) {
