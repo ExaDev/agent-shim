@@ -23,7 +23,7 @@ export interface StatuslinePorts {
 }
 
 /** What `readRange` returns: the bytes read and the size of the file they were read from. */
-interface FileRange {
+export interface FileRange {
   readonly size: number;
   readonly bytes: Uint8Array;
 }
@@ -46,9 +46,9 @@ export function realStatuslinePorts(env: Readonly<Record<string, string | undefi
         return undefined;
       }
     },
-    readRange: (path, start, length) => {
+    readRange: (file, start, length) => {
       try {
-        const descriptor = fs.openSync(path, "r");
+        const descriptor = fs.openSync(file, "r");
         try {
           const { size } = fs.fstatSync(descriptor);
           const buffer = Buffer.alloc(Math.max(0, Math.min(length, size - start)));

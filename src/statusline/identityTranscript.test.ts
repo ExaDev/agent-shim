@@ -36,6 +36,14 @@ function identityIn(lines: readonly string[], log: ReadLog = newReadLog()): Retu
   return readTranscriptIdentity(fakeStatuslinePorts({ readRange: fakeRangeReader({ [PATH]: `${lines.join("\n")}\n` }, log) }), PATH);
 }
 
+/** Names made of two-byte characters, so a chunk edge can fall between the bytes of one; and the byte offsets into the first of them, and into the second, that an edge is put at. */
+const WIDE_CHARACTERS = 8;
+const BYTES_PER_WIDE_CHARACTER = 2;
+const WIDE_MODEL = "é".repeat(WIDE_CHARACTERS);
+const WIDE_ADVISOR = "è".repeat(WIDE_CHARACTERS);
+const INTO_FIRST_CHARACTER = 1;
+const MID_CHARACTER_OFFSETS = [INTO_FIRST_CHARACTER, INTO_FIRST_CHARACTER + BYTES_PER_WIDE_CHARACTER];
+
 const NEITHER = { model: undefined, advisor: undefined };
 
 describe("readTranscriptIdentity", () => {
@@ -79,10 +87,21 @@ describe("readTranscriptIdentity", () => {
     }
   });
 
-  it("joins a multi-byte character cut by a chunk edge before it is read", () => {
-    for (const lead of EDGE_SHIFTS) {
-      const line = assistant("modèl-é", undefined, `${filler(lead)}${"é".repeat(TRANSCRIPT_CHUNK_BYTES)}`);
-      expect(identityIn([line, user("tail")]), `lead ${String(lead)}`).toEqual({ model: "modèl-é", advisor: undefined });
+  it("joins a multi-byte character cut by a chunk edge before it is read, in the model and in the advisor", () => {
+    for (const target of ["model", "advisor"] as const) {
+      for (const insideCharacter of MID_CHARACTER_OFFSETS) {
+        const record = `{"type":"assistant","message":{"model":"${WIDE_MODEL}"},"advisorModel":"${WIDE_ADVISOR}"}`;
+        const marker = new TextEncoder().encode(target === "model" ? WIDE_MODEL : WIDE_ADVISOR);
+        const recordBytes = new TextEncoder().encode(record);
+        const targetStart = recordBytes.findIndex((_, at) => marker.every((byte, i) => recordBytes[at + i] === byte));
+        // The file ends with a user line sized so that the first chunk edge, counted back from the end, falls `insideCharacter` bytes into the target's first character.
+        const userBytes = targetStart + insideCharacter + TRANSCRIPT_CHUNK_BYTES - (recordBytes.length + 1) - 1;
+        const padding = userBytes - new TextEncoder().encode(user()).length;
+        const text = `${record}\n${user(filler(padding))}\n`;
+        const bytes = new TextEncoder().encode(text);
+        expect(bytes.length - TRANSCRIPT_CHUNK_BYTES, `${target} edge`).toBe(targetStart + insideCharacter);
+        expect(readTranscriptIdentity(fakeStatuslinePorts({ readRange: fakeRangeReader({ [PATH]: text }) }), PATH), `${target} ${String(insideCharacter)}`).toEqual({ model: WIDE_MODEL, advisor: WIDE_ADVISOR });
+      }
     }
   });
 
