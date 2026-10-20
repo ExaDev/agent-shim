@@ -6,7 +6,9 @@ import { graphemesOf } from "../graphemes";
 import { visibleDisplayText } from "../sanitise";
 import { recordTimeMs, type TranscriptRecord } from "./record";
 
-/** The most tool calls the state keeps: the line of tools shows what the session has just been doing, so older calls are forgotten as newer ones arrive. */
+/**
+ * The most tool calls the state keeps: the line of tools shows what the session has just been doing, so older calls are forgotten as newer ones arrive. It is also the most results kept while they wait for their calls. A result is written ahead of its call by a few milliseconds, so only the latest few are really waiting; the others are results (or announcements that a background agent finished) whose call is not in this transcript, because it lies before a compaction or in another one. They are kept like the rest, since the call might still arrive, and leave only when newer ones push them out. A result matters only if its call then stays among the tracked ones, so no more are kept than calls are.
+ */
 export const MAX_TRACKED_TOOL_CALLS = 20;
 
 /** The most agent calls the state keeps, for the same reason. */
@@ -15,42 +17,67 @@ export const MAX_TRACKED_AGENTS = 10;
 /** The most items of a todo list the state keeps. A session's list is a handful of items; the bound only stops a runaway one from growing the cache file the statusline rewrites at every refresh, and an item past it is forgotten oldest first. */
 export const MAX_TRACKED_TODOS = 200;
 
-/** The most results kept while they wait for their calls: a result is written ahead of its call by a few milliseconds, so only the latest few can be waiting. */
-export const MAX_UNMATCHED_RESULTS = 20;
-
 const BYTES_PER_KIBIBYTE = 1024;
 
 /** The most characters of any one text the state keeps (a target, a description, a todo): all of them are cut to a few dozen columns when drawn, and a command or a prompt can be many kilobytes. */
 export const MAX_STORED_TEXT_CHARS = 200;
 
-/** The characters kept of the digest of a call id, and of the time of a call in base 36 (a millisecond clock fits in eight until the year 2058). Forty-eight bits of digest make a collision between two of the few thousand calls remembered about one in a billion. */
-const CALL_DIGEST_CHARS = 8;
-const CALL_TIME_RADIX = 36;
-
-/** The two quotes and the comma that a string takes in a JSON array, beside the string. */
-const QUOTES_AND_COMMA_BYTES = 3;
-
-/** What a remembered call takes in the cache file: its digest and time, the quotes around them and a comma. */
-const REMEMBERED_CALL_BYTES = CALL_DIGEST_CHARS + CALL_DIGEST_CHARS + QUOTES_AND_COMMA_BYTES;
-
-/** How much of the cache file, which is rewritten at every refresh, the memory of calls may take. */
+/** How much of the cache file, which is rewritten at every refresh, the memory of calls may take in all, and the copies of it the file holds at once: the state's, and the state of the end of the transcript while the state is catching up with it. */
 const CALL_MEMORY_KIBIBYTES = 64;
 const CALL_MEMORY_BYTES = CALL_MEMORY_KIBIBYTES * BYTES_PER_KIBIBYTE;
-
-/**
- * The most calls remembered, to tell a call written again from a new one. A resumed session has the history it resumes from written to its transcript again, with the same ids and the original times. A call is a replay when it is remembered, or when it is no newer than the newest call forgotten, which is every call the memory is too short to hold: so the memory's length decides only how far back a call that was never written before can lie and still be read as new, and no replay is ever read as new at any length.
- */
-export const MAX_REMEMBERED_CALLS = Math.floor(CALL_MEMORY_BYTES / REMEMBERED_CALL_BYTES);
+const CALL_MEMORY_COPIES = 2;
 
 /** How much of the cache file the names of the skills used, and the names of the MCP servers used, may take each. */
 const NAME_MEMORY_KIBIBYTES = 16;
 const NAME_MEMORY_BYTES = NAME_MEMORY_KIBIBYTES * BYTES_PER_KIBIBYTE;
 
+/** The two quotes and the comma that a string takes in a JSON array, beside the string. */
+const QUOTES_AND_COMMA_BYTES = 3;
+
+/** The characters a call's time is kept in, in base 36 and padded, so that times compare as text (a millisecond clock fits in eight until the year 2058; a time that does not fit is kept as none). */
+const CALL_TIME_CHARS = 8;
+const CALL_TIME_RADIX = 36;
+
+/**
+ * How unlikely a new call or name is to be mistaken for one remembered, as a power of two: a digest that matches by chance makes a genuine call, and the results that wait for it, vanish without a trace, and makes a name uncounted. The digest is the base 64 characters of a hash, six bits each.
+ */
+const COLLISION_TOLERANCE_BITS = 32;
+const DIGEST_BITS_PER_CHAR = 6;
+
+/** What one remembered call takes in the cache file for a digest of `digestChars` characters: the digest and the time, the quotes around them and a comma. */
+function rememberedCallBytes(digestChars: number): number {
+  return digestChars + CALL_TIME_CHARS + QUOTES_AND_COMMA_BYTES;
+}
+
+/** How many calls fit the memory of calls, and how many names of one kind the names' memory counts, for a digest of `digestChars` characters. */
+function callsRemembered(digestChars: number): number {
+  return Math.floor(CALL_MEMORY_BYTES / (CALL_MEMORY_COPIES * rememberedCallBytes(digestChars)));
+}
+function namesCounted(digestChars: number): number {
+  return Math.floor(NAME_MEMORY_BYTES / (digestChars + QUOTES_AND_COMMA_BYTES));
+}
+
+/** The shortest digest for which a new call or name matching any of those remembered, which are the most there is room for, is within the tolerance. */
+function digestCharsWithinTolerance(): number {
+  let chars = 1;
+  while (DIGEST_BITS_PER_CHAR * chars < COLLISION_TOLERANCE_BITS + Math.log2(Math.max(callsRemembered(chars), namesCounted(chars)))) {
+    chars += 1;
+  }
+  return chars;
+}
+
+const CALL_DIGEST_CHARS = digestCharsWithinTolerance();
+
+/**
+ * The most calls remembered, to tell a call written again from a new one. A resumed session has the history it resumes from written to its transcript again, with the same ids and the original times. A call is a replay when it is remembered, or when it is no newer than the newest call forgotten that was in order, which is every call the memory is too short to hold; a forgotten call stamped later than a call written after it (a clock that jumped) is not in order and moves nothing. So the memory's length decides only how far back a call that was never written before can lie and still be read as new, and a replay of a call that was in order is never read as new at any length.
+ */
+export const MAX_REMEMBERED_CALLS = callsRemembered(CALL_DIGEST_CHARS);
+
 /** The most names of each kind kept whole, for the rows to draw: they are cut to the cap on any stored text, so this many fit the budget at the most. Past it a name is only counted. */
 export const MAX_TRACKED_NAMES = Math.floor(NAME_MEMORY_BYTES / MAX_STORED_TEXT_CHARS);
 
 /** The most names of each kind counted after those kept whole, each by its digest. A session that used more has a count that is a floor, and says so. */
-export const MAX_COUNTED_NAMES = Math.floor(NAME_MEMORY_BYTES / (CALL_DIGEST_CHARS + QUOTES_AND_COMMA_BYTES));
+export const MAX_COUNTED_NAMES = namesCounted(CALL_DIGEST_CHARS);
 
 const MS_PER_SECOND = 1_000;
 const SECONDS_PER_MINUTE = 60;
@@ -324,12 +351,15 @@ function digestOf(id: string): string {
   return createHash("sha256").update(id).digest("base64url").slice(0, CALL_DIGEST_CHARS);
 }
 
-function rememberedTimeMs(entry: string): number | undefined {
-  const time = Number.parseInt(entry.slice(CALL_DIGEST_CHARS), CALL_TIME_RADIX);
-  return Number.isNaN(time) ? undefined : time;
+/** A call's time as it is kept in a memory entry: fixed width so that times compare as text, and nothing for a time that is unknown or does not fit. */
+function timeKeyOf(atMs: number | undefined): string {
+  const key = atMs === undefined || !Number.isSafeInteger(atMs) || atMs < 0 ? "" : atMs.toString(CALL_TIME_RADIX);
+  return key.length > CALL_TIME_CHARS ? "" : key.padStart(key === "" ? 0 : CALL_TIME_CHARS, "0");
 }
 
-/** True when the call `id`, written at `atMs`, has been read before: it is remembered, or it is no newer than the newest call forgotten. Either way a record repeating it is history written again. */
+const timeKeyOfEntry = (entry: string): string => entry.slice(CALL_DIGEST_CHARS);
+
+/** True when the call `id`, written at `atMs`, has been read before: it is remembered, or it is no newer than the newest in-order call forgotten. Either way a record repeating it is history written again. */
 function isRemembered(state: ActivityLatest, id: string, atMs: number | undefined): boolean {
   if (atMs !== undefined && state.forgottenUpToMs !== undefined && atMs <= state.forgottenUpToMs) {
     return true;
@@ -338,12 +368,25 @@ function isRemembered(state: ActivityLatest, id: string, atMs: number | undefine
   return state.rememberedCalls.some((entry) => entry.startsWith(digest));
 }
 
-/** The state remembering the call `id` written at `atMs`; the oldest call remembered is forgotten when the memory is full, and its time becomes the one up to which every call is history. */
+/**
+ * The state remembering the call `id` written at `atMs`. The oldest call remembered is forgotten when the memory is full, and its time becomes the one up to which every call is history, provided it was in order: no newer than every call remembered after it. A call stamped later than one written after it (a clock that ran ahead and came back) would otherwise make every genuine call until that time look like a replay; and the price of leaving it out is only that a replay of that one call, once it is forgotten, is read as new.
+ */
 function remember(state: ActivityLatest, id: string, atMs: number | undefined): ActivityLatest {
-  const all = [...state.rememberedCalls, `${digestOf(id)}${atMs === undefined ? "" : atMs.toString(CALL_TIME_RADIX)}`];
-  const forgotten = all.slice(0, -MAX_REMEMBERED_CALLS).flatMap((entry) => rememberedTimeMs(entry) ?? []);
-  const forgottenUpToMs = Math.max(state.forgottenUpToMs ?? Number.NEGATIVE_INFINITY, ...forgotten);
-  return { ...state, rememberedCalls: all.slice(-MAX_REMEMBERED_CALLS), ...(Number.isFinite(forgottenUpToMs) ? { forgottenUpToMs } : {}) };
+  const all = [...state.rememberedCalls, `${digestOf(id)}${timeKeyOf(atMs)}`];
+  const kept = all.slice(-MAX_REMEMBERED_CALLS);
+  const oldestKept = kept.map(timeKeyOfEntry).filter((key) => key !== "").reduce<string | undefined>((oldest, key) => (oldest === undefined || key < oldest ? key : oldest), undefined);
+  const inOrder = all
+    .slice(0, -MAX_REMEMBERED_CALLS)
+    .map(timeKeyOfEntry)
+    .filter((key) => key !== "" && (oldestKept === undefined || key <= oldestKept));
+  const newest = inOrder.reduce<string | undefined>((latest, key) => (latest === undefined || key > latest ? key : latest), undefined);
+  const forgottenUpToMs = Math.max(state.forgottenUpToMs ?? Number.NEGATIVE_INFINITY, newest === undefined ? Number.NEGATIVE_INFINITY : Number.parseInt(newest, CALL_TIME_RADIX));
+  return { ...state, rememberedCalls: kept, ...(Number.isFinite(forgottenUpToMs) ? { forgottenUpToMs } : {}) };
+}
+
+/** The latest-state activity before any record has been read, remembering the calls `earlier` has: for folding a later part of the transcript on its own, so that the history it repeats from the part `earlier` was folded from is not read as new. */
+export function replayMemoryOf(earlier: ActivityLatest): ActivityLatest {
+  return { ...EMPTY_ACTIVITY_LATEST, rememberedCalls: earlier.rememberedCalls, ...(earlier.forgottenUpToMs === undefined ? {} : { forgottenUpToMs: earlier.forgottenUpToMs }) };
 }
 
 /** The state after a tool call, and the results that were written ahead of it, applied in the order they were read. */
@@ -414,7 +457,7 @@ function foldToolResult(state: ActivityLatest, result: Readonly<CallResult>): Ac
   if (applied !== undefined) {
     return applied;
   }
-  return isRemembered(state, result.id, result.atMs) ? state : { ...state, unmatchedResults: [...state.unmatchedResults, result].slice(-MAX_UNMATCHED_RESULTS) };
+  return isRemembered(state, result.id, result.atMs) ? state : { ...state, unmatchedResults: [...state.unmatchedResults, result].slice(-MAX_TRACKED_TOOL_CALLS) };
 }
 
 /** What a `TaskCreate` result says: `Task #12 created successfully: ...`, which names the task whatever else the record carries. */

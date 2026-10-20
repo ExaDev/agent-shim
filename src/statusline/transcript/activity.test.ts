@@ -20,7 +20,6 @@ import {
   MAX_TRACKED_NAMES,
   MAX_TRACKED_TODOS,
   MAX_TRACKED_TOOL_CALLS,
-  MAX_UNMATCHED_RESULTS,
   type ActivityLatest,
   type ActivityState,
 } from "./activity";
@@ -189,9 +188,9 @@ describe("a result written to the file before its call", () => {
   });
 
   it("keeps only the latest few results that have no call", () => {
-    const records = Array.from({ length: MAX_UNMATCHED_RESULTS + EXTRA_CALLS }, (_, index) => result(`orphan${String(index)}`, SECOND));
+    const records = Array.from({ length: MAX_TRACKED_TOOL_CALLS + EXTRA_CALLS }, (_, index) => result(`orphan${String(index)}`, SECOND));
     const { unmatchedResults } = fold(records).latest;
-    expect(unmatchedResults).toHaveLength(MAX_UNMATCHED_RESULTS);
+    expect(unmatchedResults).toHaveLength(MAX_TRACKED_TOOL_CALLS);
     expect(unmatchedResults[0]?.id).toBe(`orphan${String(EXTRA_CALLS)}`);
   });
 
@@ -315,6 +314,25 @@ describe("history written again by a resumed session", () => {
     const again = factsAt([...history, list("old", 0), use("f0", "Read", {}, 1)]);
     expect(again.todos).toEqual(once.todos);
     expect(again.tools).toEqual(once.tools);
+  });
+
+  it("is not blinded by one call stamped far ahead of the rest: calls written after it are still new once it is forgotten", () => {
+    const ahead = use("ahead", "Read", {}, MANY_TIMES_THE_LIMIT * MAX_LIVE_AGENT_MS);
+    const history = Array.from({ length: MAX_REMEMBERED_CALLS + EXTRA_CALLS }, (_, index) => use(`k${String(index)}`, "Glob", {}, (index + 1) * SECOND));
+    const fresh = [use("fresh1", "Grep", {}, MAX_REMEMBERED_CALLS * SECOND + MINUTE), use("write", "TodoWrite", { todos: [{ content: "now", status: "in_progress" }] }, MAX_REMEMBERED_CALLS * SECOND + MINUTE + SECOND)];
+    const state = fold([ahead, ...history]);
+    expect(state.latest.forgottenUpToMs).toBeLessThan(T0 + MANY_TIMES_THE_LIMIT * MAX_LIVE_AGENT_MS);
+    const facts = activityFactsOf(fold(fresh, state), T0 + SECOND, LIMITS);
+    expect(facts.tools.map((tool) => tool.name)).toContain("Grep");
+    expect(facts.todos.map((todo) => todo.content)).toEqual(["now"]);
+  });
+
+  it("reads a call never written before as history when it is no newer than the newest call forgotten, and as new when it is newer", () => {
+    const history = Array.from({ length: MAX_REMEMBERED_CALLS + EXTRA_CALLS }, (_, index) => use(`k${String(index)}`, "Glob", {}, index));
+    const newestForgotten = EXTRA_CALLS - 1;
+    const names = (ms: number): string[] => activityFactsOf(fold([use("stray", "Grep", {}, ms)], fold(history)), T0 + SECOND, LIMITS).tools.map((tool) => tool.name);
+    expect(names(newestForgotten)).not.toContain("Grep");
+    expect(names(newestForgotten + 1)).toContain("Grep");
   });
 
   it("reads a call that was never written, and is no older than the newest forgotten, as new while the memory holds it", () => {
