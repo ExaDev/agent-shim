@@ -9,6 +9,9 @@ describe("parseStatuslineAssignment", () => {
     expect(parseStatuslineAssignment("labels.fiveHour=Session")).toEqual({ path: "labels.fiveHour", value: "Session" });
     expect(parseStatuslineAssignment("layout.header=model,account")).toEqual({ path: "layout.header", value: ["model", "account"] });
     expect(parseStatuslineAssignment("layout.rows=")).toEqual({ path: "layout.rows", value: [] });
+    expect(parseStatuslineAssignment('extra.command=["git","describe","--tags"]')).toEqual({ path: "extra.command", value: ["git", "describe", "--tags"] });
+    expect(parseStatuslineAssignment('extra.command=["a,b","c d"]')).toEqual({ path: "extra.command", value: ["a,b", "c d"] });
+    expect(parseStatuslineAssignment("extra.command=")).toEqual({ path: "extra.command", value: [] });
     expect(parseStatuslineAssignment("git.showDirty=false")).toEqual({ path: "git.showDirty", value: false });
     expect(parseStatuslineAssignment("jj.enabled=true")).toEqual({ path: "jj.enabled", value: true });
     expect(parseStatuslineAssignment("language=zh-Hans")).toEqual({ path: "language", value: "zh-Hans" });
@@ -36,6 +39,9 @@ describe("parseStatuslineAssignment", () => {
     expect(() => parseStatuslineAssignment("bar.colour=1")).toThrow(/is not a statusline setting/);
     expect(() => parseStatuslineAssignment("bar.width=wide")).toThrow(/is not a number/);
     expect(() => parseStatuslineAssignment("bar.width=")).toThrow(/is not a number/);
+    for (const bad of ["date +%H", "[1]", '{"a":1}', '["a",']) {
+      expect(() => parseStatuslineAssignment(`extra.command=${bad}`), bad).toThrow(/is not a JSON array of strings/);
+    }
     expect(() => parseStatuslineAssignment("git.enabled=yes")).toThrow(/is not true or false/);
     expect(() => parseStatuslineAssignment("git.enabled=")).toThrow(/is not true or false/);
     expect(() => parseStatuslineAssignment("usage.bar=yes")).toThrow(/is not true or false/);

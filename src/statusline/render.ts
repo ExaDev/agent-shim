@@ -4,6 +4,7 @@ import type { ClientPayload } from "./payload";
 import type { StatuslinePorts } from "./ports";
 import { ELEMENTS, HEADER_ROLES, type ElementRegistry } from "./elements/registry";
 import type { StatuslineSummary } from "./enrich";
+import { customLineOf } from "./elements/customLine";
 import { headerUnits, layoutHeader, packLines, SEPARATOR } from "./headerLayout";
 import { readTranscriptIdentity } from "./identityTranscript";
 import { translatorFor } from "./messages/catalogues";
@@ -52,6 +53,14 @@ function ruleLine(headerLines: readonly string[], width: number, palette: Palett
   return palette.paint("label", RULE_CHARACTER.repeat(Math.min(width, widest)));
 }
 
+/** The header's lines, then a rule when the settings ask for one, then the rows' lines. */
+function expandedLines(header: ReturnType<typeof headerUnits>, drawn: Parameters<typeof layoutRows>[0], width: number, palette: Palette, settings: ResolvedStatusline): string[] {
+  const headerLines = header.length > 0 ? layoutHeader(header, width, SEPARATOR).split("\n") : [];
+  const rowLines = layoutRows(drawn, { mergeBars: settings.layout.mergeBars, merge: settings.layout.merge, rightAlign: settings.layout.rightAlign, barCells: settings.bar.width }, width);
+  const rule = settings.layout.rule === "belowHeader" && headerLines.length > 0 && rowLines.length > 0 ? [ruleLine(headerLines, width, palette)] : [];
+  return [...headerLines, ...rule, ...rowLines];
+}
+
 /**
  * The built-in statusline, laid out and coloured the way the Antigravity CLI's own statusline is: the model, the provider's account (email and subscription plan) and the identity when it is not that account, on the first line; then the context window's use (tokens against the window, the prompt cache's hit percentage) and the quota windows the door reports, each a bar that fills with use and turns yellow then red, one line when they fit and two when they do not.
  */
@@ -83,13 +92,11 @@ export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
   const header = headerUnits(parts, settings.git.branchOverflow);
 
   const drawn = settings.layout.rows.map((name) => ({ name, output: elements.rows[name](context) }));
-  if (settings.layout.mode === "compact") {
-    return packLines([...header, ...compactUnits(drawn, settings.bar.width)], width, SEPARATOR)
-      .map((line) => line.join(SEPARATOR))
-      .join("\n");
+  const body = settings.layout.mode === "compact" ? packLines([...header, ...compactUnits(drawn, settings.bar.width)], width, SEPARATOR).map((line) => line.join(SEPARATOR)) : expandedLines(header, drawn, width, context.palette, settings);
+  // The person's own line sits above everything or below it, not among the rows: a position in the rows is the order of `layout.rows`, and this is the line before the first or after the last, in either layout mode.
+  const custom = customLineOf(context);
+  if (custom === undefined) {
+    return body.join("\n");
   }
-  const headerLines = header.length > 0 ? layoutHeader(header, width, SEPARATOR).split("\n") : [];
-  const rowLines = layoutRows(drawn, { mergeBars: settings.layout.mergeBars, merge: settings.layout.merge, rightAlign: settings.layout.rightAlign, barCells: settings.bar.width }, width);
-  const rule = settings.layout.rule === "belowHeader" && headerLines.length > 0 && rowLines.length > 0 ? [ruleLine(headerLines, width, context.palette)] : [];
-  return [...headerLines, ...rule, ...rowLines].join("\n");
+  return (settings.customLine.position === "first" ? [custom, ...body] : [...body, custom]).join("\n");
 }

@@ -136,7 +136,7 @@ export function registerProfileCommand(program: Command, deps: CommandDeps): voi
       .option("--no-launch-explain", "Launches under this profile name only the member a pool pick chose.")
       .option("--launch-proxy-bypass <host>", "Launches under this profile keep this host off the front door by adding it to NO_PROXY, so its traffic goes direct (repeatable; replaces the profile's list).", collectRepeated)
       .option("--no-launch-proxy-bypass", "Clear this profile's list of hosts kept off the front door.")
-      .option("--statusline <setting=value>", "Set one statusline setting for launches under this profile (repeatable; `agent-shim statusline keys` lists them; a list is comma-separated, a list of groups such as layout.merge is groups separated by semicolons with commas inside each group, and an empty value is the empty list).", collectRepeated)
+      .option("--statusline <setting=value>", "Set one statusline setting for launches under this profile (repeatable; `agent-shim statusline keys` lists them; a list is comma-separated, a list of groups such as layout.merge is groups separated by semicolons with commas inside each group, a list of free text such as extra.command is a JSON array of strings, and an empty value is the empty list).", collectRepeated)
       .option("--unset-statusline <setting>", "Remove one statusline setting from this profile so the shallower layers or the default apply again (repeatable).", collectRepeated)
       .option("--json", "Print the result as JSON.")
       .action(async (name: string, allOptions: ProfileSetOptions) => {

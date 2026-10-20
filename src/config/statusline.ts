@@ -6,7 +6,7 @@ import { graphemesOf } from "../statusline/graphemes";
 import { STATUSLINE_LANGUAGES } from "../statusline/messages/languages";
 
 /** The segments of the statusline's header, in the order they are drawn unless a setting reorders them. */
-export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "dailyCost", "sessionName", "duration", "speed"] as const;
+export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "dailyCost", "sessionName", "duration", "speed", "extra"] as const;
 
 /** The rows below the header, in the order they are drawn unless a setting reorders them: the context window's bar, the quota windows' bars, the added directories, the files the working tree has changed, the machine's memory bar, and the line of configuration counts, then the lines of text about the session read from its transcript: when it started and last answered, its prompt cache, its compactions and tokens, and what it is doing (its tool calls, the skills and MCP servers it has used, its agents and its todo list). */
 export const STATUSLINE_ROWS = ["context", "quota", "addedDirs", "gitFiles", "memory", "environment", "sessionTime", "promptCache", "compactions", "tokens", "tools", "skills", "mcp", "agents", "todos"] as const;
@@ -16,6 +16,9 @@ const STATUSLINE_SESSION_TIME_PARTS = ["started", "lastReply"] as const;
 
 /** The lifetimes of Anthropic's prompt cache: the five minutes a cache write lives unless it asked for more, and the one-hour tier a request can opt into (https://docs.claude.com/en/docs/build-with-claude/prompt-caching). */
 export const PROMPT_CACHE_TTL_SECONDS = { fiveMinutes: 300, oneHour: 3600 } as const;
+
+/** The orange of the 256-colour palette, which no colour name stands for and the custom line is drawn in by default, as claude-hud draws its own. */
+const ORANGE_PALETTE_INDEX = 208;
 
 /** The named colours, as the terminal's own palette: `default` leaves the text in the terminal's colour, and `dim` is the faint attribute rather than a colour. */
 export const STATUSLINE_COLOUR_NAMES = [
@@ -110,6 +113,15 @@ export const MAX_ACCOUNT_USER_CHARS = 254;
 
 /** The most characters of text that comes from outside the statusline (a model name, an output style, an advisor) or that a setting replaces one with: longer than any real identifier of those kinds, and short enough to leave the header line room for its other segments. */
 export const MAX_DISPLAY_TEXT_CHARS = 80;
+
+/** The most arguments (the program included) the extra segment's command may have: a command that prints a label is a program and a few flags, and a longer list is a script that belongs in a file. */
+export const MAX_EXTRA_COMMAND_ARGUMENTS = 16;
+
+/** The longest one argument of the extra segment's command may be, in characters: well above any path or flag, and short enough that a settings file cannot be made to carry a payload as an argument. */
+export const MAX_EXTRA_COMMAND_ARGUMENT_CHARS = 1024;
+
+/** One argument of a command: any text but a NUL, which no program can be given. */
+const commandArgument = z.string().max(MAX_EXTRA_COMMAND_ARGUMENT_CHARS).refine((argument) => !argument.includes("\u0000"), "must not contain a NUL character");
 
 /** Printable text with no control, format or separator characters, so a label cannot move the cursor or split the line. */
 const LABEL_RE = /^[^\p{C}\p{Z}]+(?: [^\p{C}\p{Z}]+)*$/u;
@@ -225,6 +237,13 @@ const SHAPES = {
     estimate: z.enum(STATUSLINE_CONTEXT_ESTIMATES).describe(`What to draw when the client reports no percentage of the window in use, or reports 0 while tokens are already held (which is how a client says it has not worked it out yet): never (nothing is estimated: a percentage reported, 0 included, is drawn as it is, and none reported draws nothing), raw (the tokens held over the window), or buffered (that, plus the ${String(AUTOCOMPACT_RESERVE_FRACTION * MAX_PERCENT)}% of the window Claude Code reserves for compaction, rising from nothing at ${String(AUTOCOMPACT_RESERVE_RAMP_START * MAX_PERCENT)}% of the window held to the whole reserve at ${String(AUTOCOMPACT_RESERVE_RAMP_END * MAX_PERCENT)}%).`),
     breakdown: z.enum(["never", "critical"]).describe("Whether to add the input and cache tokens of the last request to the context row once its use reaches context.criticalAt."),
   },
+  customLine: {
+    text: overrideText.describe("A line of your own text to draw, in colours.custom; empty draws nothing. It is cleaned of anything that draws nothing and cut to the usable width."),
+    position: z.enum(["first", "last"]).describe("Where the custom line sits: first draws it above the header, and last below the last row."),
+  },
+  extra: {
+    command: z.array(commandArgument).max(MAX_EXTRA_COMMAND_ARGUMENTS).describe("The program and arguments the extra segment runs, as a list and not a shell string (for example [\"git\", \"describe\", \"--tags\"]); the first line of its standard output, or the label of a JSON object it prints, is the segment, and a command that fails or prints nothing draws nothing. It runs with your privileges on every refresh, so only your own configuration (the global config, a profile, a directory rule or a command-line assignment) may set it: a project file such as .agent-shim.json is refused."),
+  },
   bands: {
     warnAt: wholePercent.describe("The whole percentage of use at which a bar turns yellow; it must be below criticalAt."),
     criticalAt: wholePercent.describe("The whole percentage of use at which a bar turns red."),
@@ -286,6 +305,7 @@ const SHAPES = {
     gitBranch: colourValue.describe("The colour of the branch or bookmark and its ahead, behind and dirty markers."),
     activity: colourValue.describe("The colour of the names of the tools, skills and MCP servers the tools, skills and mcp rows draw. Their running markers take colours.warning and their finished markers colours.context."),
     agent: colourValue.describe("The colour of an agent's type in the agents row."),
+    custom: colourValue.describe("The colour of the custom line."),
   },
   project: {
     pathLevels: z.enum(STATUSLINE_PATH_LEVELS).describe("How many trailing directories of the working directory the project segment shows: 1, 2 or 3, or full for the whole absolute path."),
@@ -347,6 +367,8 @@ export const StatuslineSchema = z.strictObject({
     .strictObject({ ...SHAPES.context, warnAt: unsettable(SHAPES.context.warnAt), criticalAt: unsettable(SHAPES.context.criticalAt), autoCompactWindow: unsettable(SHAPES.context.autoCompactWindow) })
     .partial()
     .optional(),
+  customLine: z.strictObject(SHAPES.customLine).partial().optional(),
+  extra: z.strictObject(SHAPES.extra).partial().optional(),
   bands: z.strictObject(SHAPES.bands).partial().optional(),
   labels: z.strictObject(SHAPES.labels).partial().optional(),
   bar: z.strictObject(SHAPES.bar).partial().optional(),
@@ -375,6 +397,8 @@ export const ResolvedStatuslineSchema = z.strictObject({
   effort: z.strictObject(SHAPES.effort),
   advisor: z.strictObject(SHAPES.advisor),
   context: z.strictObject(SHAPES.context),
+  customLine: z.strictObject(SHAPES.customLine),
+  extra: z.strictObject(SHAPES.extra),
   bands: z.strictObject(SHAPES.bands),
   labels: z.strictObject(SHAPES.labels),
   bar: z.strictObject(SHAPES.bar),
@@ -403,6 +427,8 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   effort: { format: "full" },
   advisor: { override: "" },
   context: { bar: "shown", value: "both", estimate: "never", breakdown: "never" },
+  customLine: { text: "", position: "last" },
+  extra: { command: [] },
   bands: { warnAt: 70, criticalAt: 90 },
   labels: { fiveHour: "", sevenDay: "" },
   bar: { width: 10, filled: "\u2588", empty: "\u2591" },
@@ -427,6 +453,7 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
     gitBranch: "cyan",
     activity: "cyan",
     agent: "magenta",
+    custom: ORANGE_PALETTE_INDEX,
   },
   project: { pathLevels: "1", addedDirsLayout: "inline" },
   git: { enabled: true, showDirty: true, showAheadBehind: false, showLineDiff: false, branchOverflow: "truncate", pushWarnAt: 0, pushCriticalAt: 0 },
