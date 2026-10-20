@@ -1,9 +1,10 @@
+import stringWidth from "string-width";
+
 const ESCAPE_CHAR_CODE = 27;
 /** The escape character that opens every ANSI control sequence. */
 export const ESCAPE = String.fromCharCode(ESCAPE_CHAR_CODE);
-const ANSI_REGEX = new RegExp(`${ESCAPE}\\[[0-9;]*[a-zA-Z]`, "g");
 
-/** How many terminal columns a string takes: its length without the ANSI colour sequences, which draw nothing. */
+/** How many terminal columns a string takes: escape sequences draw nothing, a wide (East Asian) character takes two columns, and a combining mark or a joined emoji sequence takes the cells of the character it joins. */
 export function visibleLength(text: string): number {
-  return text.replace(ANSI_REGEX, "").length;
+  return stringWidth(text);
 }
