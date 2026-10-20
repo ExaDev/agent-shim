@@ -73,12 +73,28 @@ describe("visibleDisplayText", () => {
   });
 
   it("is empty when nothing visible is left", () => {
-    for (const nothing of ["", "   ", "\u200B", "\u2060\u200B", "\u200D", "\u200C\u200D", "\uFE0F", "\u2800", "\u2800\u2800", "\u3164", "\u00A0\u2003", `${ESCAPE}]0;title`, "\u{E0067}\u{E007F}"]) {
+    for (const nothing of ["\u0301", "\u0301\u0302", "\u115F", "\u1160", "\u115F\u1160", "\u180B", "\u034F", "\u{E0100}", "", "   ", "\u200B", "\u2060\u200B", "\u200D", "\u200C\u200D", "\uFE0F", "\u2800", "\u2800\u2800", "\u3164", "\u00A0\u2003", `${ESCAPE}]0;title`, "\u{E0067}\u{E007F}"]) {
       expect(visibleDisplayText(nothing), JSON.stringify(nothing)).toBe("");
     }
   });
 
+  it("gives the same result when applied to its own result", () => {
+    const inputs = ["Claude\u00A0Opus", "\u0301abc", "a\u200B\u0301", "\u{1F3F4}\u{E0067}\u{E0062}\u{E007F} x", "Fa\u200Crsi", "a\u2800\u115Fb", "\u0301\u0302", " \u034F ", `${ESCAPE}[31mred${ESCAPE}[0m`, "\u{1F469}\u200D\u{1F4BB}\u200D"];
+    for (const input of inputs) {
+      const once = visibleDisplayText(input);
+      expect(visibleDisplayText(once), JSON.stringify(input)).toBe(once);
+    }
+  });
+
+  it("drops a mark that stands alone before a name and keeps a mark on a letter", () => {
+    expect(visibleDisplayText("\u0301abc")).toBe("abc");
+    expect(visibleDisplayText("e\u0301abc")).toBe("e\u0301abc");
+  });
+
   it("treats a blank cell inside a name as a space", () => {
     expect(visibleDisplayText("a\u2800b")).toBe("a b");
+    for (const filler of ["\u115F", "\u1160", "\u3164", "\uFFA0"]) {
+      expect(visibleDisplayText(`a${filler}b`), JSON.stringify(filler)).toBe("a b");
+    }
   });
 });

@@ -47,6 +47,14 @@ describe("StatuslineSchema", () => {
     expect(StatuslineSchema.safeParse({ labels: { fiveHour: "5 hour" } }).success).toBe(true);
   });
 
+  it("refuses a label that draws nothing, whatever its length", () => {
+    for (const bad of ["\u0301", "\u0301\u0302", "\u2800", "\u3164", "\u034F", "\u115F\u1160"]) {
+      const result = StatuslineSchema.safeParse({ labels: { fiveHour: bad } });
+      expect(result.success, JSON.stringify(bad)).toBe(false);
+    }
+    expect(StatuslineSchema.safeParse({ labels: { fiveHour: "e\u0301" } }).success).toBe(true);
+  });
+
   it("measures a label in terminal columns, so a wide character counts for two", () => {
     const widestWide = "\u65E5".repeat(MAX_STATUSLINE_LABEL_COLUMNS / 2);
     expect(StatuslineSchema.safeParse({ labels: { fiveHour: widestWide } }).success).toBe(true);
@@ -126,6 +134,12 @@ describe("StatuslineSchema colours and bar characters", () => {
         expect(result.success, `${key} ${JSON.stringify(value)}`).toBe(false);
         expect(JSON.stringify(result.error?.issues)).toContain("one terminal column");
       }
+    }
+  });
+
+  it("refuses a bar character that draws nothing", () => {
+    for (const value of ["\u2800", "\uFFA0", "\u3164", "\u0301", "\u034F"]) {
+      expect(StatuslineSchema.safeParse({ bar: { filled: value } }).success, JSON.stringify(value)).toBe(false);
     }
   });
 
