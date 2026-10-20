@@ -10,6 +10,9 @@ export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "accoun
 /** The rows below the header, in the order they are drawn unless a setting reorders them: the context window's bar, the quota windows' bars, the added directories, the files the working tree has changed, the machine's memory bar, and the line of configuration counts. */
 export const STATUSLINE_ROWS = ["context", "quota", "addedDirs", "gitFiles", "memory", "environment"] as const;
 
+/** The lifetimes of Anthropic's prompt cache: the five minutes a cache write lives unless it asked for more, and the one-hour tier a request can opt into (https://docs.claude.com/en/docs/build-with-claude/prompt-caching). */
+export const PROMPT_CACHE_TTL_SECONDS = { fiveMinutes: 300, oneHour: 3600 } as const;
+
 /** The named colours, as the terminal's own palette: `default` leaves the text in the terminal's colour, and `dim` is the faint attribute rather than a colour. */
 export const STATUSLINE_COLOUR_NAMES = [
   "default",

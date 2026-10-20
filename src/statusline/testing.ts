@@ -77,6 +77,7 @@ export function fakeRenderContext(overrides: Readonly<Partial<Omit<RenderContext
     palette: createPalette(settings.colours, false),
     ports: fakeStatuslinePorts(),
     transcriptIdentity: () => ({ model: undefined, advisor: undefined }),
+    transcript: () => undefined,
     ...overrides,
     settings,
     payload: parseClientPayload(overrides.payload ?? {}),

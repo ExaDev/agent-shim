@@ -10,6 +10,7 @@ import { headerUnits, layoutHeader, SEPARATOR } from "./headerLayout";
 import { readTranscriptIdentity } from "./identityTranscript";
 import { colourEnabled, createPalette } from "./palette";
 import { TWENTY } from "./style";
+import { readTranscript, type TranscriptFacts } from "./transcript/reader";
 
 /** Claude Code indents the status line one column from the terminal edge and truncates at its own usable width, replacing the final column with an ellipsis. COLUMNS is correct in the child environment, but the usable width is four columns short of it, so a line as wide as COLUMNS minus two still loses its tail. */
 export const RESERVED_COLUMNS = 4;
@@ -52,6 +53,10 @@ export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
     palette: createPalette(settings.colours, colourEnabled(input.ports.env)),
     ports: input.ports,
     transcriptIdentity: once(() => (input.payload.transcript_path === undefined ? { model: undefined, advisor: undefined } : readTranscriptIdentity(input.ports, input.payload.transcript_path))),
+    transcript: once((): TranscriptFacts | undefined => {
+      const transcriptPath = input.payload.transcript_path;
+      return transcriptPath === undefined || transcriptPath === "" ? undefined : readTranscript(input.ports, transcriptPath, input.nowMs);
+    }),
   };
   // The segments drawn are the ones the settings list, in the order they list them.
   const parts = settings.layout.header.flatMap((name) => {
