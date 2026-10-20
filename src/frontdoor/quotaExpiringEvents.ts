@@ -1,5 +1,6 @@
 import { QUOTA_EXPIRING_EVENT_SOURCE, USAGE_EVENT_SOURCE, type QuotaExpiringEvent } from "./eventSchemas";
 import type { DoorEventHub } from "./eventHub";
+import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "../usage/pick";
 import { UsageSnapshotSchema, type UsageSnapshot } from "../usage/schema";
 
 /**
@@ -9,24 +10,6 @@ import { UsageSnapshotSchema, type UsageSnapshot } from "../usage/schema";
  *
  * One event per (identity, provider, window, reset instant): the window entering its final span publishes, further ticks in the same span stay silent, and a later window instance (a new reset instant) publishes again. A window already fully used publishes nothing, because there is no allowance left to spend.
  */
-
-/** One hour in milliseconds, the unit the windows' own spans are stated in. */
-const MS_PER_HOUR = 3_600_000;
-
-/** One day in milliseconds, the unit the seven-day window's span is stated in. */
-const MS_PER_DAY = 86_400_000;
-
-/** The hours in the five-hour unified window, the span the header's own name states. */
-const FIVE_HOUR_WINDOW_HOURS = 5;
-
-/** The days in the seven-day unified window, the span the header's own name states. */
-const SEVEN_DAY_WINDOW_DAYS = 7;
-
-/** The five-hour unified window's own span, the unit its final fraction is taken of. */
-export const FIVE_HOUR_WINDOW_MS = FIVE_HOUR_WINDOW_HOURS * MS_PER_HOUR;
-
-/** The seven-day unified window's own span, the unit its final fraction is taken of. */
-const SEVEN_DAY_WINDOW_MS = SEVEN_DAY_WINDOW_DAYS * MS_PER_DAY;
 
 /** The denominator of the final-span fraction: the window's span divided by this is the stretch that counts as expiring. */
 const FINAL_SPAN_DENOMINATOR = 30;

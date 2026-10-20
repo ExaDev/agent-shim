@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { USAGE_SCHEMA_VERSION, type UsageSnapshot } from "../usage/schema";
 import { QUOTA_EXPIRING_EVENT_SOURCE, USAGE_EVENT_SOURCE, type DoorEvent } from "./eventSchemas";
 import { createDoorEventHub } from "./eventHub";
-import { createQuotaExpiringPublisher, FIVE_HOUR_WINDOW_MS, QUOTA_EXPIRING_WINDOW_FRACTION } from "./quotaExpiringEvents";
+import { FIVE_HOUR_WINDOW_MS } from "../usage/pick";
+import { createQuotaExpiringPublisher, QUOTA_EXPIRING_WINDOW_FRACTION } from "./quotaExpiringEvents";
 
 /** Where the fake clock starts, in epoch milliseconds, so reset instants are named as offsets from it. */
 const NOW_MS = Date.parse("2026-10-07T12:00:00.000Z");
