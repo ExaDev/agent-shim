@@ -12,7 +12,7 @@ import type { HeadroomDecision } from "./frontdoor/headroomDecision";
 import { expect, vi, type Mock } from "vitest";
 
 import { runLauncher, type FarmRuntime, type RunLauncherParams } from "./launcher";
-import type { CredentialCommandResult, CredentialPort } from "./credential";
+import type { AsyncCredentialPort, CredentialCommandResult, CredentialPort } from "./credential";
 import type { FsPort, FrontDoorPort, LogPort, ProcPort, ReportRow, SpawnPort, SpawnResult } from "./launcher/ports";
 import { renderReport } from "./launcher/report";
 import { buildLayoutPaths } from "./paths";
@@ -551,6 +551,19 @@ export function fakeCredentials(options: FakeCredentialOptions = {}): Credential
       .fn<CredentialPort["runCommand"]>()
       .mockReturnValue({ status: 0, stdout: "", stderr: "", timedOut: false, ...options.command }),
     personPresent: () => options.personPresent ?? true,
+  };
+}
+
+/** `fakeCredentials` behind the asynchronous port the front door resolves with: the same files and command outcome, and the same mocks to assert on. */
+export function fakeAsyncCredentials(options: FakeCredentialOptions = {}): AsyncCredentialPort & {
+  readonly runCommand: Mock<AsyncCredentialPort["runCommand"]>;
+  readonly readSecretFile: Mock<AsyncCredentialPort["readSecretFile"]>;
+} {
+  const sync = fakeCredentials(options);
+  return {
+    readSecretFile: sync.readSecretFile,
+    runCommand: vi.fn<AsyncCredentialPort["runCommand"]>(async (argv, runOptions) => await Promise.resolve(sync.runCommand(argv, runOptions))),
+    personPresent: async () => await Promise.resolve(sync.personPresent()),
   };
 }
 

@@ -9,11 +9,13 @@ import {
   describeCredential,
   isInteractiveSource,
   resolveCredential,
+  resolveCredentialAsync,
+  shareInFlightResolutions,
   summariseCredential,
   unpackKeyringToken,
 } from "./credential";
 import type { CachedCredential, CredentialCachePort } from "./credentialCache";
-import { fakeCredentials } from "./test-helpers";
+import { fakeAsyncCredentials, fakeCredentials, type FakeCredentialOptions } from "./test-helpers";
 
 const resolve = (credential: Credential, env: Readonly<Record<string, string | undefined>>, port = fakeCredentials()) =>
   resolveCredential({ credential, env, port, subject: "provider z" });
@@ -265,3 +267,151 @@ describe("unpackKeyringToken", () => {
   });
 });
 
+
+describe("resolveCredentialAsync", () => {
+  const NOW = 2_000_000;
+  const HOUR = 3_600_000;
+  const OP_SOURCE = { op: "op://vault/z/credential" } as const;
+  const cached: Credential = { sources: [OP_SOURCE], cache: { ttl: "1h", store: "file" } };
+  const looseFile = { "/secrets/z": { content: "tok\n", mode: 0o100644 } };
+
+  interface Scenario {
+    readonly name: string;
+    readonly credential: Credential;
+    readonly env?: Readonly<Record<string, string | undefined>>;
+    readonly options?: FakeCredentialOptions;
+    readonly entries?: Record<string, CachedCredential>;
+    readonly refresh?: boolean;
+  }
+
+  /** Each case exercises one branch of the resolution; the synchronous and asynchronous resolvers must answer every one identically, effects included. */
+  const scenarios: readonly Scenario[] = [
+    { name: "an env source", credential: { sources: [{ env: "Z" }] }, env: { Z: "tok-z" } },
+    { name: "an unset env source falling through to a command", credential: { sources: [{ env: "Z" }, OP_SOURCE] }, options: { command: { stdout: " from-op \n" } } },
+    { name: "a command that exits non-zero", credential: { sources: [OP_SOURCE] }, options: { command: { status: 1, stderr: "denied\n" } } },
+    { name: "a command that times out", credential: { sources: [OP_SOURCE] }, options: { command: { status: null, timedOut: true } } },
+    { name: "a command that prints nothing", credential: { sources: [OP_SOURCE] }, options: { command: { stdout: "\n" } } },
+    { name: "an interactive source with nobody present", credential: { sources: [{ command: ["pass", "show", "z"], interactive: true }] }, options: { personPresent: false } },
+    { name: "a literal", credential: { sources: [{ literal: "placeholder" }], target: "apiKey" } },
+    { name: "a secret file readable by others", credential: { sources: [{ file: "/secrets/z" }] }, options: { files: looseFile } },
+    { name: "a missing secret file", credential: { sources: [{ file: "/secrets/z" }] } },
+    { name: "a fresh cache entry", credential: cached, entries: { "provider z": { token: "cached", fetchedAt: NOW - HOUR + 1, source: OP_SOURCE } } },
+    { name: "an expired cache entry", credential: cached, entries: { "provider z": { token: "old", fetchedAt: NOW - HOUR, source: OP_SOURCE } }, options: { command: { stdout: "fresh\n" } } },
+    { name: "a fresh cache entry skipped on refresh", credential: cached, entries: { "provider z": { token: "cached", fetchedAt: NOW - 1, source: OP_SOURCE } }, options: { command: { stdout: "fresh\n" } }, refresh: true },
+    { name: "an empty cache and a failing source", credential: cached, options: { command: { status: 2 } } },
+  ];
+
+  it.each(scenarios)("answers $name exactly as the synchronous resolver does, with the same effects", async (scenario) => {
+    const syncEntries = new Map(Object.entries(scenario.entries ?? {}));
+    const asyncEntries = new Map(Object.entries(scenario.entries ?? {}));
+    const syncPort = fakeCredentials(scenario.options);
+    const asyncPort = fakeAsyncCredentials(scenario.options);
+    const syncResult = resolveCredential({
+      credential: scenario.credential,
+      env: scenario.env ?? {},
+      port: {
+        ...syncPort,
+        cache: {
+          port: { read: (_store, owner) => syncEntries.get(owner), write: (_store, owner, entry) => {
+            syncEntries.set(owner, entry);
+          },
+          remove: (_store, owner) => {
+            syncEntries.delete(owner);
+          },
+          },
+          platform: "linux",
+          now: () => NOW,
+        },
+      },
+      subject: "provider z",
+      ...(scenario.refresh === undefined ? {} : { refresh: scenario.refresh }),
+    });
+    const asyncResult = await resolveCredentialAsync({
+      credential: scenario.credential,
+      env: scenario.env ?? {},
+      port: {
+        ...asyncPort,
+        cache: {
+          port: {
+            read: async (_store, owner) => await Promise.resolve(asyncEntries.get(owner)),
+            write: async (_store, owner, entry) => {
+              asyncEntries.set(owner, entry);
+              await Promise.resolve();
+            },
+          },
+          platform: "linux",
+          now: () => NOW,
+        },
+      },
+      subject: "provider z",
+      ...(scenario.refresh === undefined ? {} : { refresh: scenario.refresh }),
+    });
+    expect(asyncResult).toEqual(syncResult);
+    expect(asyncPort.runCommand.mock.calls).toEqual(syncPort.runCommand.mock.calls);
+    expect(asyncEntries).toEqual(syncEntries);
+  });
+
+  it("runs a command source without calling the synchronous port", async () => {
+    const port = fakeAsyncCredentials({ command: { stdout: "tok\n" } });
+    const result = await resolveCredentialAsync({ credential: { sources: [OP_SOURCE] }, env: {}, port, subject: "provider z" });
+    expect(result).toMatchObject({ ok: true, credential: { token: "tok" } });
+    expect(port.runCommand).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("shareInFlightResolutions", () => {
+  const block: Credential = { sources: [{ op: "op://vault/z/credential" }] };
+
+  /** A resolver whose runs stay open until released, counting how many started. */
+  function gatedResolver() {
+    const releases: (() => void)[] = [];
+    let started = 0;
+    const shared = shareInFlightResolutions(async () => {
+      started += 1;
+      await new Promise<void>((release) => {
+        releases.push(release);
+      });
+      return { ok: true as const, credential: { target: "bearer" as const, token: `run-${String(started)}`, source: block.sources[0] ?? { literal: "" }, warnings: [] } };
+    });
+    return {
+      shared,
+      started: () => started,
+      releaseAll: () => {
+        for (const release of releases.splice(0)) {
+          release();
+        }
+      },
+    };
+  }
+
+  const ask = async (shared: ReturnType<typeof gatedResolver>["shared"], subject = "provider z", refresh?: boolean) =>
+    await shared({ credential: block, env: {}, port: fakeAsyncCredentials(), subject, ...(refresh === undefined ? {} : { refresh }) });
+
+  it("shares one run between resolutions of the same credential that are in flight together", async () => {
+    const gate = gatedResolver();
+    const pending = [ask(gate.shared), ask(gate.shared), ask(gate.shared)];
+    gate.releaseAll();
+    const results = await Promise.all(pending);
+    expect(gate.started()).toBe(1);
+    expect(new Set(results.map((result) => (result.ok ? result.credential.token : "")))).toEqual(new Set(["run-1"]));
+  });
+
+  it("starts a new run for a resolution that begins after the previous one settled, so a rotated token is picked up", async () => {
+    const gate = gatedResolver();
+    const first = ask(gate.shared);
+    gate.releaseAll();
+    await first;
+    const second = ask(gate.shared);
+    gate.releaseAll();
+    await second;
+    expect(gate.started()).toBe(2);
+  });
+
+  it("keeps resolutions of different subjects, different blocks and a refresh apart", async () => {
+    const gate = gatedResolver();
+    const pending = [ask(gate.shared, "provider z"), ask(gate.shared, "provider y"), ask(gate.shared, "provider z", true)];
+    gate.releaseAll();
+    await Promise.all(pending);
+    expect(gate.started()).toBe(pending.length);
+  });
+});
