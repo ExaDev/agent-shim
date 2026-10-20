@@ -206,7 +206,7 @@
                     "none",
                     "belowHeader"
                   ],
-                  "description": "Whether a rule is drawn across the line between the header and the rows beneath it, as wide as the header's widest line (at least twenty columns, at most the width); it is drawn only when both the header and the rows have something to show, and not in the compact layout."
+                  "description": "Whether a rule is drawn across the line between the header and the rows beneath it, as wide as the header's widest line (at least 20 columns, at most the width); it is drawn only when both the header and the rows have something to show, and not in the compact layout."
                 },
                 "mergeBars": {
                   "type": "boolean",
@@ -258,7 +258,7 @@
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 1000,
-                  "description": "The exact width in columns lines are drawn to when the client reports none and the COLUMNS environment variable names none, in place of the width it would draw to for an assumed 80-column terminal; unlike a terminal's width, it is not reduced by the columns Claude Code keeps back for itself. It is 0, to leave it unset, or at least 20."
+                  "description": "The exact width in columns lines are drawn to when the client reports none and the COLUMNS environment variable names none, in place of the default width it would assume for the terminal; unlike a terminal's width, it is not reduced by the columns Claude Code keeps back for itself. It is 0, to leave it unset, or from 20 to 1000; a value outside that is refused, not clamped."
                 },
                 "forceMaxWidth": {
                   "type": "boolean",

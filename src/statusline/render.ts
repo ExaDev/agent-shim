@@ -11,7 +11,7 @@ import { compactUnits, layoutRows } from "./rowsLayout";
 import { visibleLength } from "./ansi";
 import { readTranscript, type TranscriptFacts } from "./transcript/reader";
 
-/** Claude Code indents the status line one column from the terminal edge and truncates at its own usable width, replacing the final column with an ellipsis. COLUMNS is correct in the child environment, but the usable width is four columns short of it, so a line as wide as COLUMNS minus two still loses its tail. */
+/** Claude Code indents the status line one column from the terminal edge and truncates at its own usable width, replacing the final column with an ellipsis. COLUMNS is correct in the child environment, but the usable width is short of it by this many columns, so a line as wide as COLUMNS minus two still loses its tail. */
 export const RESERVED_COLUMNS = 4;
 
 /** The columns a line may use on a terminal of `terminalColumns`: what the client leaves after its own reserve, and never fewer than a line can be drawn in. */
@@ -45,7 +45,7 @@ function once<T>(read: () => T): () => T {
 /** The character a rule between the header and the rows is drawn with. */
 const RULE_CHARACTER = "\u2500";
 
-/** A rule as wide as the header's widest line, at least twenty columns and at most `width`, in the label colour. */
+/** A rule as wide as the header's widest line, at least `MIN_STATUSLINE_COLUMNS` and at most `width`, in the label colour. */
 function ruleLine(headerLines: readonly string[], width: number, palette: Palette): string {
   const widest = Math.max(MIN_STATUSLINE_COLUMNS, ...headerLines.map(visibleLength));
   return palette.paint("label", RULE_CHARACTER.repeat(Math.min(width, widest)));
