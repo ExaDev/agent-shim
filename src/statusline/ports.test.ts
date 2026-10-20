@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { spawnSync } from "node:child_process";
 
-import { fileSizeLimitedCommand, realStatuslinePorts } from "./ports";
+import { fileSizeLimitedCommand, realStatuslinePorts, RUN_MAX_OUTPUT_BYTES, RUN_TIMEOUT_MS, STALE_RUN_DIRECTORY_MS } from "./ports";
 
 /** The ten bytes the range tests read from, and the ranges they read: from, length. */
 const DIGITS = "0123456789";
@@ -18,11 +18,14 @@ const PAST_END_RANGE = { start: 50, length: 5 };
 const OWNER_READ_WRITE = 0o600;
 const OWNER_ONLY_MASK = 0o777;
 
-/** How old a run directory must be for the next call to sweep it, and then some. */
-const STALE_MS = 3_600_000;
+/** How old a run directory is made for the next call to sweep it: well past the age at which one is stale. */
+const STALE_MS = STALE_RUN_DIRECTORY_MS * 2;
 
-/** What the programs that write a large file ask to write: three times the bound on a program's output. */
-const THREE_MEBIBYTES = 3_145_728;
+/** How many times the size POSIX counts `ulimit -f` in a shell's own block may be: bash counts in blocks twice that size, so under the limit a file may reach this multiple of the bound and no further. */
+const MAX_BLOCK_MULTIPLE = 2;
+
+/** What the programs that write a large file ask to write: a whole bound more than any shell lets a file reach under the limit. */
+const LARGE_FILE_BYTES = RUN_MAX_OUTPUT_BYTES * (MAX_BLOCK_MULTIPLE + 1);
 
 /** `use`d with ports whose state directory is a throwaway one (the file-backed runs need to write there), removed afterwards. */
 function withStateDirectory<T>(use: (ports: ReturnType<typeof realStatuslinePorts>) => T): T {
@@ -128,11 +131,10 @@ describe("realStatuslinePorts", () => {
   });
 
   describe("the output of a program", () => {
-    const OUTPUT_BYTES = 100_000;
-    /** The bound on a program's output, 1 MiB, and one byte over twice that, past which no shell lets a file grow. */
-    const OUTPUT_BOUND_BYTES = 1_048_576;
-    const TOO_MUCH_BYTES = OUTPUT_BOUND_BYTES * 2 + 1;
-    
+    /** Half the bound on a program's output: within it, with room to spare. */
+    const OUTPUT_BYTES = RUN_MAX_OUTPUT_BYTES / 2;
+    /** One byte over the most a shell lets a file grow to under the limit, past which no output is kept. */
+    const TOO_MUCH_BYTES = RUN_MAX_OUTPUT_BYTES * MAX_BLOCK_MULTIPLE + 1;
     const write = (bytes: number): string[] => ["-e", `require("node:fs").writeSync(1, "x".repeat(${String(bytes)}));`];
 
     it.each([[{}], [{ outputInFile: true }]])("is returned whole when it is within the bound (%j)", (options) => {
@@ -146,13 +148,13 @@ describe("realStatuslinePorts", () => {
     it.skipIf(process.platform === "win32")("goes to a file under a limit on the size of any file the program writes, so a program that never stops cannot fill the disk", () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
       const written = path.join(dir, "written");
-      const writeThreeMebibytesTo = ["-c", 'head -c 3145728 /dev/zero > "$0"; exit 0', written];
+      const writeLargeFileTo = ["-c", `head -c ${String(LARGE_FILE_BYTES)} /dev/zero > "$0"; exit 0`, written];
       try {
-        withStateDirectory((withFiles) => withFiles.run("/bin/sh", writeThreeMebibytesTo, os.tmpdir(), { outputInFile: true }));
-        expect(fs.statSync(written).size).toBeGreaterThanOrEqual(OUTPUT_BOUND_BYTES);
-        expect(fs.statSync(written).size).toBeLessThanOrEqual(OUTPUT_BOUND_BYTES * 2);
-        withStateDirectory((withFiles) => withFiles.run("/bin/sh", writeThreeMebibytesTo, os.tmpdir()));
-        expect(fs.statSync(written).size).toBe(THREE_MEBIBYTES);
+        withStateDirectory((withFiles) => withFiles.run("/bin/sh", writeLargeFileTo, os.tmpdir(), { outputInFile: true }));
+        expect(fs.statSync(written).size).toBeGreaterThanOrEqual(RUN_MAX_OUTPUT_BYTES);
+        expect(fs.statSync(written).size).toBeLessThanOrEqual(RUN_MAX_OUTPUT_BYTES * MAX_BLOCK_MULTIPLE);
+        withStateDirectory((withFiles) => withFiles.run("/bin/sh", writeLargeFileTo, os.tmpdir()));
+        expect(fs.statSync(written).size).toBe(LARGE_FILE_BYTES);
       } finally {
         fs.rmSync(dir, { recursive: true });
       }
@@ -162,6 +164,60 @@ describe("realStatuslinePorts", () => {
       const awkward = "a b; $HOME 'q' \"d\" *";
       for (const options of [{}, { outputInFile: true }]) {
         expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, ["-p", "process.argv[1]", "--", awkward], os.tmpdir(), options))).toBe(`${awkward}\n`);
+      }
+    });
+
+    it("sweeps what other calls left whatever state it is in: a dangling link, an entry that vanishes while it is looked at, and old directories after them", () => {
+      const state = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+      const runRoot = path.join(state, "run");
+      fs.mkdirSync(runRoot, { recursive: true });
+      const longAgo = new Date(Date.now() - STALE_MS);
+      const old = path.join(runRoot, "agent-shim-run-b-old");
+      fs.mkdirSync(old);
+      fs.utimesSync(old, longAgo, longAgo);
+      const dangling = path.join(runRoot, "agent-shim-run-a-dangling");
+      fs.symlinkSync(path.join(state, "nowhere"), dangling);
+      fs.lutimesSync(dangling, longAgo, longAgo);
+      const vanishing = path.join(runRoot, "agent-shim-run-c-vanishing");
+      fs.mkdirSync(vanishing);
+      const lstat = fs.lstatSync;
+      const spy = vi.spyOn(fs, "lstatSync").mockImplementation((target: fs.PathLike) => {
+        if (String(target) === vanishing) {
+          throw new Error("ENOENT: no such file or directory");
+        }
+        return lstat(target);
+      });
+      try {
+        expect(realStatuslinePorts({}, state).run(process.execPath, ["-p", "1"], os.tmpdir(), { outputInFile: true })).toBe("1\n");
+      } finally {
+        spy.mockRestore();
+      }
+      try {
+        expect(fs.readdirSync(runRoot).sort()).toEqual(["agent-shim-run-c-vanishing"]);
+      } finally {
+        fs.rmSync(state, { recursive: true });
+      }
+    });
+
+    it("keeps the run directory of a call that is still running, even one that has outrun its limit twice over, and sweeps one past the stale age", () => {
+      const state = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+      const runRoot = path.join(state, "run");
+      const overrun = path.join(runRoot, "agent-shim-run-overrun");
+      const stale = path.join(runRoot, "agent-shim-run-stale");
+      fs.mkdirSync(overrun, { recursive: true });
+      fs.mkdirSync(stale);
+      const setAge = (directory: string, ageMs: number): void => {
+        const time = new Date(Date.now() - ageMs);
+        fs.utimesSync(directory, time, time);
+      };
+      // A call on a loaded machine can take well past its limit before it is killed; its directory must survive the other calls' sweeps meanwhile.
+      setAge(overrun, RUN_TIMEOUT_MS * 2);
+      setAge(stale, STALE_RUN_DIRECTORY_MS + 1);
+      try {
+        expect(realStatuslinePorts({}, state).run(process.execPath, ["-p", "1"], os.tmpdir(), { outputInFile: true })).toBe("1\n");
+        expect(fs.readdirSync(runRoot)).toEqual(["agent-shim-run-overrun"]);
+      } finally {
+        fs.rmSync(state, { recursive: true });
       }
     });
 
@@ -210,7 +266,6 @@ describe("realStatuslinePorts", () => {
       ["zsh", ["/bin/zsh", "/usr/bin/zsh"]],
       ["busybox", ["/bin/busybox", "/usr/bin/busybox"]],
     ];
-    const ONE_MEBIBYTE = 1_048_576;
     const found = (candidates: readonly string[]): string | undefined => candidates.find((candidate) => fs.existsSync(candidate));
 
     /** Runs `file` and `args` through the limited command with `binary` started under the name `sh`, which is how a shell learns to behave as POSIX sh. */
@@ -237,10 +292,10 @@ describe("realStatuslinePorts", () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-shell-"));
         try {
           const written = path.join(dir, "written");
-          expect(through(binary, "/bin/sh", ["-c", 'head -c 3145728 /dev/zero > "$0"; exit 0', written]).status).toBe(0);
-          // A shell that counts the limit in 512-byte blocks stops the file at the bound, one that counts in 1024-byte blocks at twice it, and none lets it reach what the program wrote.
-          expect(fs.statSync(written).size).toBeGreaterThanOrEqual(ONE_MEBIBYTE);
-          expect(fs.statSync(written).size).toBeLessThanOrEqual(ONE_MEBIBYTE * 2);
+          expect(through(binary, "/bin/sh", ["-c", `head -c ${String(LARGE_FILE_BYTES)} /dev/zero > "$0"; exit 0`, written]).status).toBe(0);
+          // A shell that counts the limit in POSIX's blocks stops the file at the bound, one that counts in larger blocks at a multiple of it (at most MAX_BLOCK_MULTIPLE), and none lets it reach what the program wrote.
+          expect(fs.statSync(written).size).toBeGreaterThanOrEqual(RUN_MAX_OUTPUT_BYTES);
+          expect(fs.statSync(written).size).toBeLessThanOrEqual(RUN_MAX_OUTPUT_BYTES * MAX_BLOCK_MULTIPLE);
         } finally {
           fs.rmSync(dir, { recursive: true });
         }

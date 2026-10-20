@@ -50,16 +50,16 @@ export interface FileRange {
 }
 
 /** The longest a program the statusline starts may run: the statusline refreshes while a person is working, so a program that hangs must cost a bounded wait, and a few seconds is the most a refresh can wait without the line looking stuck. */
-const RUN_TIMEOUT_MS = 2_000;
+export const RUN_TIMEOUT_MS = 2_000;
 
 /** The file and directory modes the statusline's own state gets: readable by its owner alone, since the ledger names sessions and their spend. */
 const STATE_FILE_MODE = 0o600;
 const STATE_DIRECTORY_MODE = 0o700;
 
 /** The most standard output a program the statusline starts may produce: more than this is as good as none. */
-const RUN_MAX_OUTPUT_BYTES = 1_048_576;
+export const RUN_MAX_OUTPUT_BYTES = 1_048_576;
 
-/** The size of the blocks `ulimit -f` counts in on the shells that follow POSIX (512 bytes); a shell that counts in 1024-byte blocks (bash) lets a file grow to twice what is asked for, never to less. */
+/** The size of the blocks POSIX defines `ulimit -f` as counting in; a shell that counts in larger blocks (bash does) lets a file grow to a multiple of what is asked for, never to less. */
 const ULIMIT_BLOCK_BYTES = 512;
 
 /** The name prefix of the private directory a program's output is written into while it runs. */
@@ -71,10 +71,13 @@ const RUN_DIRECTORY = "run";
 /** The permissions of the file a program writes its output to: its owner only (the directory made for it is private too). Meaningless on Windows, which has no such permission bits. */
 const RUN_FILE_MODE = 0o600;
 
-/** How old a run directory must be to be swept as left by a call that no longer exists: a call lasts at most `RUN_TIMEOUT_MS` and the time to start, so a directory a minute old was left by a statusline that was cancelled, as Claude Code does with a command still running when a newer update arrives. */
-const STALE_RUN_DIRECTORY_MS = 60_000;
+/** How many times `RUN_TIMEOUT_MS` a run directory must outlive to be taken for one that a cancelled statusline left (Claude Code cancels a command still running when a newer update arrives): a call lasts at most the limit and the time to start, so a directory this much older than the limit has no call behind it, and the margin keeps a call on a loaded machine from having its directory swept under it. */
+const STALE_AFTER_TIMEOUTS = 10;
 
-/** The command that runs `file` with `args` under a limit on the size of any file it writes, through `shell` (the system shell, `/bin/sh`): `ulimit -f` is set and the shell `exec`s the program with the arguments as they are, so nothing in them is read by the shell, and a program that writes more is stopped by SIGXFSZ. The limit is `RUN_MAX_OUTPUT_BYTES` (twice that on a shell with 1024-byte blocks), and it covers every file the program writes and every process it starts. `exec` takes no `--`: dash does not accept it. */
+/** How old a run directory must be to be swept as left by a call that no longer exists. */
+export const STALE_RUN_DIRECTORY_MS = RUN_TIMEOUT_MS * STALE_AFTER_TIMEOUTS;
+
+/** The command that runs `file` with `args` under a limit on the size of any file it writes, through `shell` (the system shell, `/bin/sh`): `ulimit -f` is set and the shell `exec`s the program with the arguments as they are, so nothing in them is read by the shell, and a program that writes more is stopped by SIGXFSZ. The limit is `RUN_MAX_OUTPUT_BYTES`, or a multiple of it on a shell that counts in larger blocks than POSIX does, and it covers every file the program writes and every process it starts. `exec` takes no `--`: dash does not accept it. */
 export function fileSizeLimitedCommand(shell: string, file: string, args: readonly string[]): { readonly command: string; readonly args: readonly string[] } {
   return { command: shell, args: ["-c", `ulimit -f ${String(RUN_MAX_OUTPUT_BYTES / ULIMIT_BLOCK_BYTES)}; exec "$0" "$@"`, file, ...args] };
 }
@@ -92,15 +95,22 @@ function readOutput(descriptor: number): string | undefined {
 
 /** Removes the run directories under `root` that a cancelled call left behind: those older than `STALE_RUN_DIRECTORY_MS`. */
 function sweepStaleRunDirectories(root: string): void {
+  let names: string[];
   try {
-    for (const name of fs.readdirSync(root)) {
-      const directory = path.join(root, name);
-      if (name.startsWith(RUN_DIRECTORY_PREFIX) && Date.now() - fs.statSync(directory).mtimeMs > STALE_RUN_DIRECTORY_MS) {
-        discard(directory);
-      }
-    }
+    names = fs.readdirSync(root);
   } catch {
     return;
+  }
+  for (const name of names.filter((entry) => entry.startsWith(RUN_DIRECTORY_PREFIX))) {
+    const directory = path.join(root, name);
+    try {
+      // lstat, so a dangling link is judged by the link itself and can be removed; an entry that another call swept meanwhile is already gone.
+      if (Date.now() - fs.lstatSync(directory).mtimeMs > STALE_RUN_DIRECTORY_MS) {
+        discard(directory);
+      }
+    } catch {
+      continue;
+    }
   }
 }
 
