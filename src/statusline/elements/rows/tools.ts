@@ -1,5 +1,6 @@
 import { truncateWithEllipsis, visibleLength } from "../../ansi";
 import { packLines, SEPARATOR } from "../../headerLayout";
+import { paintCore } from "../../messages/around";
 import type { ToolCallFact } from "../../transcript/activity";
 import type { RenderContext, RowOutput } from "../context";
 import { DONE_MARK, ELLIPSIS, NO_LINES, RUNNING_MARK } from "./activityParts";
@@ -52,20 +53,21 @@ function finishedByKind(tools: readonly ToolCallFact[]): [string, number][] {
  * What the session's tools are doing, from the latest calls in its transcript: the newest running ones with what each acts on, then the kinds of finished call with how many of each, and a count of the kinds not named, joined by a separator and broken onto further lines where the width needs it. Calls to the `Skill` tool are left out when the skills row is drawn, which names them itself. A call with no result for longer than a live one can take is neither running nor finished. Nothing is drawn without a transcript to read or any call to show.
  */
 export function toolsRow(context: RenderContext): RowOutput {
-  const { palette, settings, width } = context;
+  const { palette, settings, width, t } = context;
+  const label = (text: string): string => palette.paint("label", text);
   const hideSkills = settings.layout.rows.includes("skills");
   const tools = (context.transcript()?.activity.tools ?? []).filter((tool) => !(hideSkills && tool.name === "Skill"));
   const { nameMaxLength, maxVisible } = settings.tools;
   const running = tools.filter((tool) => tool.status === "running").slice(-MAX_RUNNING_SHOWN);
   const parts = running.map((tool) => {
     const target = targetText(tool);
-    return `${palette.paint("warning", RUNNING_MARK)} ${palette.paint("activity", shortToolName(tool.name, nameMaxLength))}${target === "" ? "" : palette.paint("label", `: ${target}`)}`;
+    return `${palette.paint("warning", RUNNING_MARK)} ${palette.paint("activity", shortToolName(tool.name, nameMaxLength))}${target === "" ? "" : palette.paint("label", t("tools.target", { target }))}`;
   });
   const kinds = finishedByKind(tools);
   const named = maxVisible === 0 ? kinds : kinds.slice(0, maxVisible);
-  parts.push(...named.map(([name, count]) => `${palette.paint("context", DONE_MARK)} ${shortToolName(name, nameMaxLength)} ${palette.paint("label", `\u00D7${String(count)}`)}`));
+  parts.push(...named.map(([name, count]) => `${palette.paint("context", DONE_MARK)} ${shortToolName(name, nameMaxLength)}${paintCore(t("tools.count", { count }), label)}`));
   if (named.length < kinds.length) {
-    parts.push(palette.paint("label", `+${String(kinds.length - named.length)} more`));
+    parts.push(palette.paint("label", t("more", { count: kinds.length - named.length })));
   }
   return parts.length === 0 ? NO_LINES : { kind: "text", lines: packLines(parts, width, SEPARATOR).map((line) => line.join(SEPARATOR)) };
 }

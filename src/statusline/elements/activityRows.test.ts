@@ -190,7 +190,7 @@ describe("the skills and mcp rows", () => {
   it("paint the marker in the context colour, the names in the activity colour and the figures in the label colour", () => {
     const settings: StatuslineSettings = { colours: { context: "green", activity: "cyan", label: "blue" } };
     const [line = ""] = skills(["commit", "a", "b", "c", "d"], { settings, colour: true });
-    expect(line).toBe(`${ESCAPE}[32m\u2713${ESCAPE}[0m Skills ${ESCAPE}[34m(5)${ESCAPE}[0m: ${ESCAPE}[36mcommit${ESCAPE}[0m, ${ESCAPE}[36ma${ESCAPE}[0m, ${ESCAPE}[36mb${ESCAPE}[0m, ${ESCAPE}[36mc${ESCAPE}[0m, ${ESCAPE}[34m+1 more${ESCAPE}[0m`);
+    expect(line).toBe(`${ESCAPE}[32m\u2713${ESCAPE}[0m ${ESCAPE}[34mSkills (5):${ESCAPE}[0m ${ESCAPE}[36mcommit${ESCAPE}[0m, ${ESCAPE}[36ma${ESCAPE}[0m, ${ESCAPE}[36mb${ESCAPE}[0m, ${ESCAPE}[36mc${ESCAPE}[0m, ${ESCAPE}[34m+1 more${ESCAPE}[0m`);
   });
 });
 

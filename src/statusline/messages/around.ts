@@ -23,13 +23,24 @@ export function aroundValue(message: string, value: string, paint: (text: string
   return `${paintCore(before, paint)}${value}${paintCore(after, paint)}`;
 }
 
-/** The messages whose words are painted around a value that keeps its own colour: each has exactly one placeholder, for that value, in every language. */
-export const AROUND_VALUE_IDS = ["sessionTime.started", "sessionTime.lastReply", "addedDirs.label"] as const;
+/** The messages whose words are painted around a value that keeps its own colour: each has a placeholder for that value, exactly one in every language, and the ones that name a count (`COUNTED_AROUND_VALUE_IDS`) have a second, for the count. */
+export const AROUND_VALUE_IDS = ["sessionTime.started", "sessionTime.lastReply", "addedDirs.label", "skills.label", "mcp.label"] as const;
 
 export type AroundValueId = (typeof AROUND_VALUE_IDS)[number];
 
+/** The messages written around a value that also name a count, which the caller supplies. */
+export const COUNTED_AROUND_VALUE_IDS: readonly AroundValueId[] = ["skills.label", "mcp.label"];
+
+/** The count a counted message names; a defect in the caller when it is missing. */
+function requiredCount(id: AroundValueId, count: number | string | undefined): number | string {
+  if (count === undefined) {
+    throw new TypeError(`message "${id}" names a count, and none was given`);
+  }
+  return count;
+}
+
 /** The message `id` written with the mark where its one value goes. */
-function marked(t: Translate, id: AroundValueId): string {
+function marked(t: Translate, id: AroundValueId, count: number | string | undefined): string {
   switch (id) {
     case "sessionTime.started":
       return t(id, { time: VALUE_MARK });
@@ -37,12 +48,15 @@ function marked(t: Translate, id: AroundValueId): string {
       return t(id, { ago: VALUE_MARK });
     case "addedDirs.label":
       return t(id, { dirs: VALUE_MARK });
+    case "skills.label":
+    case "mcp.label":
+      return t(id, { count: requiredCount(id, count), names: VALUE_MARK });
     default:
       return id satisfies never;
   }
 }
 
-/** The message `id` with `value` where its value goes and its words painted by `paint`. */
-export function writeAround(t: Translate, id: AroundValueId, value: string, paint: (text: string) => string): string {
-  return aroundValue(marked(t, id), value, paint);
+/** The message `id` with `value` where its value goes and its words painted by `paint`; a message that names a count takes it as `count`. */
+export function writeAround(t: Translate, id: AroundValueId, value: string, paint: (text: string) => string, count?: number | string): string {
+  return aroundValue(marked(t, id, count), value, paint);
 }
