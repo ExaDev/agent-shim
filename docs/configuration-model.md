@@ -532,7 +532,7 @@ The environment variables read `true`/`1` and `false`/`0`, so `AGENT_SHIM_SKIP_P
 
 ### The statusline's appearance
 
-`launch.statusline` sets how the built-in statusline (`agent-shim statusline`) looks in the sessions a launch starts. The settings are grouped, every key is optional, and an absent key keeps its default, so nothing changes until a layer names a key; the three keys that have no default (`context.warnAt`, `context.criticalAt` and `context.autoCompactWindow`) are simply absent until a layer sets them. `agent-shim statusline keys` lists every setting with its kind, its default (or that it has none) and what it does, read from the same schema the configuration files are checked against.
+`launch.statusline` sets how the built-in statusline (`agent-shim statusline`) looks in the sessions a launch starts. The settings are grouped, every key is optional, and an absent key keeps its default, so nothing changes until a layer names a key; the keys that have no default (`context.warnAt`, `context.criticalAt` and `context.autoCompactWindow`) are simply absent until a layer sets them. `agent-shim statusline keys` lists every setting with its kind, its default (or that it has none) and what it does, read from the same schema the configuration files are checked against.
 
 ```json
 { "launch": { "statusline": { "layout": { "header": ["model", "account"], "rows": ["quota"] }, "bands": { "warnAt": 60, "criticalAt": 85 }, "labels": { "fiveHour": "Session", "sevenDay": "Week" }, "bar": { "width": 8 } } } }
