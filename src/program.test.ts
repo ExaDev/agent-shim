@@ -414,6 +414,12 @@ describe("profile commands", () => {
     expect(readProfile(paths, "acme")?.launch).toBeUndefined();
   });
 
+  it("describes both ways a list is written in the statusline option's help", async () => {
+    const help = (await cli(["profile", "set", "--help"])).stdout.replace(/\s+/g, " ");
+    expect(help).toContain("a list is comma-separated");
+    expect(help).toContain("semicolons");
+  });
+
   it("lists every statusline setting with its default and description", async () => {
     const listing = await cli(["statusline", "keys"]);
     expect(listing.stdout).toContain("bands.warnAt  (integer; default 70)");
