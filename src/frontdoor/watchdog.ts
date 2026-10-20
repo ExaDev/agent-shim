@@ -16,10 +16,23 @@ export const DOOR_AWAIT_PID_ENV = "AGENT_SHIM_FRONTDOOR_AWAIT_PID";
  */
 export const DOOR_RESPAWN_GENERATION_ENV = "AGENT_SHIM_FRONTDOOR_RESPAWN_GENERATION";
 
+/** The environment variable naming how long a respawned door waits, after the stalled door has released the sticky ports, before it binds: the cooldown the watchdog gives a chain of replacements that keeps stalling. Read once at startup, like the generation. */
+export const DOOR_RESPAWN_DELAY_ENV = "AGENT_SHIM_FRONTDOOR_RESPAWN_DELAY_MS";
+
 /**
- * The highest replacement generation the watchdog will start. Every stall gets a replacement as long as a further generation is left, because a young door killed by a stall the machine caused (observed in production: an overloaded host stalling the loop before the door had served a minute) left every live session with connection refused until some later launch happened to start a door. What must not happen is an endless chain of doors each killed at once, so after this many consecutive replacements the chain stops and the next launch's ensure takes over: each link already costs at least one stall bound, so a stall that has recurred this many times with no door serving in between is the machine's, and respawning faster than a launch cannot fix it.
+ * The highest replacement generation the watchdog starts at once. Every stall gets a replacement, because a young door killed by a stall the machine caused (observed in production: an overloaded host stalling the loop before the door had served a minute) left every live session with connection refused until some later launch happened to start a door. What must not happen is an endless chain of doors each killed at once, so a replacement past this generation waits a growing cooldown before it binds (see `respawnDelayMs`): the chain never ends with no door and nobody to start one, and it never spins faster than the machine can serve.
  */
 export const DOOR_RESPAWN_MAX_GENERATIONS = 3;
+
+/** The longest cooldown a replacement waits: the time the immediate generations together allow a stalled door, so a chain that keeps stalling is retried at that pace and no slower. */
+export const DOOR_RESPAWN_COOLDOWN_CAP_MS = DOOR_STALL_BOUND_MS * DOOR_RESPAWN_MAX_GENERATIONS;
+
+/**
+ * How long a replacement of `generation` waits before it binds: nothing up to `DOOR_RESPAWN_MAX_GENERATIONS`, then one stall bound more for each generation past it, up to `DOOR_RESPAWN_COOLDOWN_CAP_MS`. The step is the stall bound because that is how long a door that cannot serve takes to be noticed, so a cooldown shorter than it would let the next door stall before the machine had any quiet.
+ */
+export function respawnDelayMs(generation: number): number {
+  return Math.min(Math.max(0, generation - DOOR_RESPAWN_MAX_GENERATIONS) * DOOR_STALL_BOUND_MS, DOOR_RESPAWN_COOLDOWN_CAP_MS);
+}
 
 /** How many times the thread looks at the beat counter within one probe deadline, so a stall is noticed within a small fraction of the bound. */
 const CHECKS_PER_PROBE_DEADLINE = 2;
@@ -46,7 +59,7 @@ const { workerData, parentPort } = require("node:worker_threads");
 const fs = require("node:fs");
 const os = require("node:os");
 const inspector = require("node:inspector");
-const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnGeneration, respawnMaxGeneration, startLockFile, awaitPidEnv, respawnGenerationEnv } = workerData;
+const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnGeneration, respawnMaxGeneration, cooldownStepMs, cooldownCapMs, startLockFile, awaitPidEnv, respawnGenerationEnv, delayEnv } = workerData;
 const counter = new Int32Array(shared);
 let lastValue = Atomics.load(counter, 0);
 let lastChangeAt = Date.now();
@@ -143,10 +156,8 @@ const claimStartLock = (holder) => {
 };
 const spawnReplacement = () => {
   if (respawn === undefined || logFile === undefined) return;
-  if (respawnGeneration >= respawnMaxGeneration) {
-    log("not starting another replacement: this door was replacement generation " + String(respawnGeneration) + " of " + String(respawnMaxGeneration) + ", so the stall has recurred through consecutive doors and the machine, not the door, is the one refusing to serve; leaving the next launch's ensure to start one");
-    return;
-  }
+  const nextGeneration = respawnGeneration + 1;
+  const cooldownMs = Math.min(Math.max(0, nextGeneration - respawnMaxGeneration) * cooldownStepMs, cooldownCapMs);
   const startingBy = liveLockHolder();
   if (startingBy !== undefined) {
     log("not starting a replacement: process " + String(startingBy) + " holds the start lock, so a door is already being started and a second one would race it for the sticky ports");
@@ -154,7 +165,7 @@ const spawnReplacement = () => {
   }
   try {
     const out = fs.openSync(logFile, "a");
-    const child = require("node:child_process").spawn(respawn.command, respawn.args, { detached: true, stdio: ["ignore", out, out], env: Object.assign({}, respawn.env, { [awaitPidEnv]: String(ownPid), [respawnGenerationEnv]: String(respawnGeneration + 1) }) });
+    const child = require("node:child_process").spawn(respawn.command, respawn.args, { detached: true, stdio: ["ignore", out, out], env: Object.assign({}, respawn.env, { [awaitPidEnv]: String(ownPid), [respawnGenerationEnv]: String(nextGeneration), [delayEnv]: String(cooldownMs) }) });
     child.unref();
     fs.closeSync(out);
     if (!claimStartLock(child.pid)) {
@@ -163,7 +174,7 @@ const spawnReplacement = () => {
       log("withdrew replacement door " + String(child.pid) + ": a launcher took the start lock first and its door is the one starting");
       return;
     }
-    log("started replacement door " + String(child.pid) + " of generation " + String(respawnGeneration + 1) + ", which binds once this process is gone");
+    log("started replacement door " + String(child.pid) + " of generation " + String(nextGeneration) + ", which binds once this process is gone" + (cooldownMs > 0 ? " and a " + String(cooldownMs) + "ms cooldown has passed, since the stall has recurred through " + String(respawnMaxGeneration) + " consecutive replacements" : ""));
   } catch (error) {
     log("could not start a replacement door: " + (error instanceof Error ? error.message : String(error)));
   }
@@ -220,8 +231,12 @@ export interface ThreadWatchdogParams {
   readonly logFile?: string;
   /** How many watchdog respawns produced this door (`0` for a door no watchdog started), from `DOOR_RESPAWN_GENERATION_ENV` in production. */
   readonly respawnGeneration: number;
-  /** The highest replacement generation this door's watchdog may start (`DOOR_RESPAWN_MAX_GENERATIONS` in production). */
+  /** The highest replacement generation this door's watchdog starts with no cooldown (`DOOR_RESPAWN_MAX_GENERATIONS` in production); each generation past it waits `cooldownStepMs` longer, up to `cooldownCapMs`. */
   readonly respawnMaxGeneration: number;
+  /** How much longer each generation past `respawnMaxGeneration` waits before it binds (`DOOR_STALL_BOUND_MS` in production). */
+  readonly cooldownStepMs: number;
+  /** The longest cooldown (`DOOR_RESPAWN_COOLDOWN_CAP_MS` in production). */
+  readonly cooldownCapMs: number;
   /** The start lock a launcher's ensure takes before it spawns a door and the door removes once it is serving: the respawn takes the same lock, naming the replacement as holder, so a launch that finds the stalled door's pid dead waits for the replacement instead of starting a second door that would find the sticky ports held and move off them. */
   readonly startLockFile: string;
   /** How to start a replacement door on a stall: the invocation and environment of a door, to which the thread adds `DOOR_AWAIT_PID_ENV` and `DOOR_RESPAWN_GENERATION_ENV`. Omitted by a host that does not respawn. */
@@ -236,7 +251,7 @@ export function startThreadWatchdog(params: Readonly<ThreadWatchdogParams>): Doo
   const counter = new Int32Array(shared);
   const worker = new Worker(WATCHDOG_SOURCE, {
     eval: true,
-    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, startLockFile: params.startLockFile, awaitPidEnv: DOOR_AWAIT_PID_ENV, respawnGenerationEnv: DOOR_RESPAWN_GENERATION_ENV },
+    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, cooldownStepMs: params.cooldownStepMs, cooldownCapMs: params.cooldownCapMs, startLockFile: params.startLockFile, awaitPidEnv: DOOR_AWAIT_PID_ENV, respawnGenerationEnv: DOOR_RESPAWN_GENERATION_ENV, delayEnv: DOOR_RESPAWN_DELAY_ENV },
   });
   worker.unref();
   worker.on("message", (message: unknown) => {
