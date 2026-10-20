@@ -83,6 +83,8 @@ const CallResultSchema = z.strictObject({
   resolvedModel: z.string().optional(),
   /** True when the result says the agent was started in the background. */
   async: z.literal(true).optional(),
+  /** The identifier the client gave the task a `TaskCreate` made. */
+  taskId: z.string().optional(),
 });
 type CallResult = z.infer<typeof CallResultSchema>;
 
@@ -91,8 +93,10 @@ const TodoStatusSchema = z.enum(["pending", "in_progress", "completed"]);
 const TodoSchema = z.strictObject({
   content: z.string(),
   status: TodoStatusSchema,
-  /** The identifier a later `TaskUpdate` names the item by, when the item was created with one; an item without one is found by its place in the list. */
+  /** The identifier a later `TaskUpdate` names the item by. The client assigns it, and only the result of the `TaskCreate` that made the item carries it; an item from a `TodoWrite` has none. */
   id: z.string().optional(),
+  /** The `TaskCreate` call that made the item while its result has not been read: the item has no identifier yet, is not drawn, and is dropped when the result says the call failed. */
+  pendingCallId: z.string().optional(),
 });
 
 /**
@@ -199,18 +203,13 @@ function replacedTodos(previous: readonly z.infer<typeof TodoSchema>[], written:
   });
 }
 
-/** The item a `TaskUpdate` names: the one created with that identifier, else the one at that place in the list, counting from one, which is how the client numbers the tasks it creates. */
+/** The item a `TaskUpdate` names, by the identifier the client gave its task. */
 function todoIndexOf(todos: readonly z.infer<typeof TodoSchema>[], taskId: unknown): number | undefined {
   if (typeof taskId !== "string" && typeof taskId !== "number") {
     return undefined;
   }
-  const key = String(taskId);
-  const named = todos.findIndex((item) => item.id === key);
-  if (named !== -1) {
-    return named;
-  }
-  const position = /^\d+$/.test(key) ? Number.parseInt(key, 10) - 1 : -1;
-  return position >= 0 && position < todos.length ? position : undefined;
+  const index = todos.findIndex((item) => item.id === String(taskId));
+  return index === -1 ? undefined : index;
 }
 
 interface ToolUse {
@@ -219,7 +218,7 @@ interface ToolUse {
   readonly input: Readonly<Record<string, unknown>> | undefined;
 }
 
-/** The todo list after a call to a tool that edits it, or the state as it was for any other tool. */
+/** The todo list after a call to a tool that edits it. A `TaskCreate` adds an item that is not drawn until its result names it: the client assigns the identifier, results come back in any order, and a call that fails makes nothing. A `TaskUpdate` that sets the status `deleted` removes the item, and its description is a detail of the task, not its title. */
 function foldTodoCall(state: ActivityLatest, call: ToolUse): ActivityLatest {
   const { input } = call;
   if (call.name === TODO_WRITE_TOOL) {
@@ -228,24 +227,25 @@ function foldTodoCall(state: ActivityLatest, call: ToolUse): ActivityLatest {
   }
   if (call.name === TASK_CREATE_TOOL) {
     const content = stored(stringField(input, "subject") ?? stringField(input, "description") ?? "Untitled task");
-    const given = input?.taskId;
-    const id = typeof given === "string" || typeof given === "number" ? String(given) : call.id;
     const status = todoStatusOf(input?.status) ?? "pending";
-    return { ...state, todos: [...state.todos, { content, status, id }].slice(-MAX_TRACKED_TODOS), todosEdited: true };
+    return { ...state, todos: [...state.todos, { content, status, pendingCallId: call.id }].slice(-MAX_TRACKED_TODOS), todosEdited: true };
   }
   const index = todoIndexOf(state.todos, input?.taskId);
   const current = index === undefined ? undefined : state.todos[index];
   if (index === undefined || current === undefined) {
     return { ...state, todosEdited: true };
   }
-  const subject = stringField(input, "subject") ?? stringField(input, "description");
+  if (input?.status === "deleted") {
+    return { ...state, todos: state.todos.filter((_, at) => at !== index), todosEdited: true };
+  }
+  const subject = stringField(input, "subject");
   const updated = { ...current, status: todoStatusOf(input?.status) ?? current.status, content: subject === undefined ? current.content : stored(subject) };
   return { ...state, todos: state.todos.map((item, at) => (at === index ? updated : item)), todosEdited: true };
 }
 
 /** Whether a call with this id is tracked already: the client does not reuse an id, so a second call with one is a copy of the first. */
 function isTracked(state: ActivityLatest, id: string): boolean {
-  return state.tools.some((tool) => tool.id === id) || state.agents.some((agent) => agent.id === id);
+  return state.tools.some((tool) => tool.id === id) || state.agents.some((agent) => agent.id === id) || state.todos.some((item) => item.pendingCallId === id);
 }
 
 /** The state after a tool call, and the result that was written ahead of it if there is one. */
@@ -282,9 +282,9 @@ function foldTrackedCall(state: ActivityLatest, call: ToolUse, atMs: number | un
   return { ...state, tools: [...state.tools, tool].slice(-MAX_TRACKED_TOOL_CALLS) };
 }
 
-/** The state with `result` applied to the tracked call it answers: the call is finished, and an agent's result may say which model it ran on and that it was started in the background, in which case it has not finished. Undefined when no tracked call has the result's id. */
+/** The state with `result` applied to the tracked call it answers: the call is finished (a `TaskCreate` that made a task has its identifier, and one that failed leaves no item), and an agent's result may say which model it ran on and that it was started in the background, in which case it has not finished. Undefined when no tracked call has the result's id. */
 function applyResult(state: ActivityLatest, result: Readonly<CallResult>): ActivityLatest | undefined {
-  if (!state.tools.some((tool) => tool.id === result.id) && !state.agents.some((agent) => agent.id === result.id)) {
+  if (!state.tools.some((tool) => tool.id === result.id) && !state.agents.some((agent) => agent.id === result.id) && !state.todos.some((item) => item.pendingCallId === result.id)) {
     return undefined;
   }
   const tools = state.tools.map((tool) => (tool.id === result.id ? { ...tool, ...(result.atMs === undefined ? {} : { endedAtMs: result.atMs }), ...(result.failed === true ? { failed: true as const } : {}) } : tool));
@@ -296,12 +296,29 @@ function applyResult(state: ActivityLatest, result: Readonly<CallResult>): Activ
     const model = result.resolvedModel === undefined ? agent.model : stored(result.resolvedModel);
     return { ...agent, ...(model === undefined ? {} : { model }), ...(background ? { background: true as const } : {}), ...(!background && result.atMs !== undefined ? { endedAtMs: result.atMs } : {}) };
   });
-  return { ...state, tools, agents };
+  const todos = state.todos.flatMap((item): z.infer<typeof TodoSchema>[] => {
+    if (item.pendingCallId !== result.id) {
+      return [item];
+    }
+    return result.failed === true || result.taskId === undefined ? [] : [{ content: item.content, status: item.status, id: result.taskId }];
+  });
+  return { ...state, tools, agents, todos };
 }
 
 /** The state after a tool call's result: applied to its call, or kept until the call is read when the result was written first. */
 function foldToolResult(state: ActivityLatest, result: Readonly<CallResult>): ActivityLatest {
   return applyResult(state, result) ?? { ...state, unmatchedResults: [...state.unmatchedResults, result].slice(-MAX_UNMATCHED_RESULTS) };
+}
+
+/** What a `TaskCreate` result says: `Task #12 created successfully: ...`, which names the task whatever else the record carries. */
+const CREATED_TASK = /^Task #([^\s:]+) created/;
+
+/** The identifier of the task a `TaskCreate` result reports making, from its text or, when the record holds that one result, from the task the client stamps on the record. */
+function createdTaskId(content: string | readonly { readonly text?: string | undefined }[] | undefined, outcome: Readonly<NonNullable<TranscriptRecord["toolUseResult"]>> | undefined): string | undefined {
+  const text = typeof content === "string" ? content : content?.find((part) => part.text !== undefined)?.text;
+  const named = text === undefined ? undefined : CREATED_TASK.exec(text)?.[1];
+  const stamped = outcome?.task?.id;
+  return named ?? (stamped === undefined ? undefined : String(stamped));
 }
 
 /** The state after the client announced a finished background agent. The result of the call that started it was written at launch, so the announcement is what says when it ended. */
@@ -334,8 +351,10 @@ export function foldActivityLatest(state: ActivityLatest, record: TranscriptReco
       next = foldToolUse(next, { id: block.id, name: block.name, input: block.input }, atMs);
     } else if (record.type === "user" && block.type === "tool_result" && block.tool_use_id !== undefined) {
       const outcome = resultCount === 1 ? record.toolUseResult : undefined;
+      const taskId = createdTaskId(block.content, outcome);
       next = foldToolResult(next, {
         id: block.tool_use_id,
+        ...(taskId === undefined ? {} : { taskId }),
         ...(atMs === undefined ? {} : { atMs }),
         ...(block.is_error === true ? { failed: true as const } : {}),
         ...(outcome?.resolvedModel === undefined ? {} : { resolvedModel: outcome.resolvedModel }),
@@ -476,7 +495,7 @@ export function activityFactsOf(state: ActivityState, nowMs: number, newer?: Act
     }),
     todos: latest.todos.flatMap((todo) => {
       const content = visibleDisplayText(todo.content);
-      return content === "" ? [] : [{ content, status: todo.status }];
+      return content === "" || todo.pendingCallId !== undefined ? [] : [{ content, status: todo.status }];
     }),
   };
 }
