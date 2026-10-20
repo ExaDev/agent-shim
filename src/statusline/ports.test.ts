@@ -165,6 +165,16 @@ describe("realStatuslinePorts", () => {
       }
     });
 
+    it("does not make the run directory when the memory is read, which uses a pipe", () => {
+      const state = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+      try {
+        realStatuslinePorts({}, state).memoryUse();
+        expect(fs.existsSync(path.join(state, "run"))).toBe(false);
+      } finally {
+        fs.rmSync(state, { recursive: true });
+      }
+    });
+
     it("leaves no file behind, whether the program succeeded, failed, or was killed, and sweeps what a cancelled call left", () => {
       const state = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
       const runRoot = path.join(state, "run");

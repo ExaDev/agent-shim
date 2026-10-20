@@ -56,7 +56,9 @@ describe("readJjStatus", () => {
     const calls: { file: string; args: readonly string[]; cwd: string }[] = [];
     const ports = fakeStatuslinePorts({
       realPath: (path) => path,
-      run: (file, args, cwd) => {
+      run: (file, args, cwd, options) => {
+        // Jujutsu stays on a pipe: only a program the person chose has its output sent to a file.
+        expect(options).toBeUndefined();
         calls.push({ file, args, cwd });
         return output;
       },

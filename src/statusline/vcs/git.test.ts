@@ -17,7 +17,9 @@ const FILES: GitQuery = { workingTree: true, files: true, lineDiff: true };
 function gitPorts(answers: Readonly<Record<string, string>>, overrides: Partial<StatuslinePorts> = {}): { readonly ports: StatuslinePorts; readonly calls: string[] } {
   const calls: string[] = [];
   const ports = fakeStatuslinePorts({
-    run: (file, args, cwd) => {
+    run: (file, args, cwd, options) => {
+      // git stays on a pipe: only a program the person chose has its output sent to a file.
+      expect(options).toBeUndefined();
       expect(file).toBe("git");
       expect(cwd).toBe(CWD);
       const key = args.filter((arg) => arg !== "--no-optional-locks").join(" ");
