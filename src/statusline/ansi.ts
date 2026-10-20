@@ -40,3 +40,11 @@ export function truncateToColumns(text: string, columns: number): string {
   });
   return kept;
 }
+
+/** `text` as it is when it fits `columns`, else cut so that it and `ellipsis` together take no more than `columns`, with `ellipsis` after the cut. A limit smaller than the ellipsis leaves the ellipsis alone. */
+export function truncateWithEllipsis(text: string, columns: number, ellipsis: string): string {
+  if (visibleLength(text) <= columns) {
+    return text;
+  }
+  return `${truncateToColumns(text, Math.max(0, columns - visibleLength(ellipsis)))}${ellipsis}`;
+}
