@@ -118,7 +118,7 @@ const wholePercent = z.number().int().min(1).max(MAX_PERCENT);
 const thresholdPercent = z.number().int().min(0).max(MAX_PERCENT);
 
 /**
- * Every statusline setting, grouped, with each leaf's meaning attached as its description. The groups are declared once as plain shapes and used twice: whole, for the resolved settings (every key present), and `partial`, for what a configuration layer may set (every key optional). The description of a key is what `agent-shim statusline keys` prints, so a key without one is a defect, and a test refuses it.
+ * Every statusline setting, grouped, with each leaf's meaning attached as its description. The groups are declared once as plain shapes and used twice: whole, for the resolved settings (every key present except the optional ones, which have no default and are absent until a layer sets them), and `partial`, for what a configuration layer may set (every key optional; a layer may also write null for an optional key, see `unsettable`). The description of a key is what `agent-shim statusline keys` prints, so a key without one is a defect, and a test refuses it.
  */
 const SHAPES = {
   layout: {
@@ -233,6 +233,14 @@ const SHAPES = {
   },
 };
 
+/** What a layer writes to return an optional setting to unset even though a shallower layer sets it. Merging a layer drops the key, so what the layers above see is the setting absent, as if no layer had set it. */
+const UNSET_NOTE = "A layer may write null to return it to unset when a shallower layer sets it.";
+
+/** An optional setting as a layer may write it: the value, or null to unset it for the layers it is merged over. The resolved settings never hold null, since merging removes it. */
+function unsettable<T extends z.ZodType>(setting: z.ZodOptional<T>) {
+  return setting.unwrap().nullable().optional().describe(`${setting.description ?? ""} ${UNSET_NOTE}`);
+}
+
 /** What a configuration layer may set: every group and every key optional, so a layer names only what it changes. */
 export const StatuslineSchema = z.strictObject({
   layout: z.strictObject(SHAPES.layout).partial().optional(),
@@ -241,7 +249,10 @@ export const StatuslineSchema = z.strictObject({
   account: z.strictObject(SHAPES.account).partial().optional(),
   effort: z.strictObject(SHAPES.effort).partial().optional(),
   advisor: z.strictObject(SHAPES.advisor).partial().optional(),
-  context: z.strictObject(SHAPES.context).partial().optional(),
+  context: z
+    .strictObject({ ...SHAPES.context, warnAt: unsettable(SHAPES.context.warnAt), criticalAt: unsettable(SHAPES.context.criticalAt), autoCompactWindow: unsettable(SHAPES.context.autoCompactWindow) })
+    .partial()
+    .optional(),
   bands: z.strictObject(SHAPES.bands).partial().optional(),
   labels: z.strictObject(SHAPES.labels).partial().optional(),
   bar: z.strictObject(SHAPES.bar).partial().optional(),
@@ -258,7 +269,7 @@ export const StatuslineSchema = z.strictObject({
 });
 export type StatuslineSettings = z.infer<typeof StatuslineSchema>;
 
-/** The statusline with every setting decided. */
+/** The statusline with every setting decided, except the optional ones (`context.warnAt`, `context.criticalAt` and `context.autoCompactWindow`), which stay absent until a layer sets them. */
 export const ResolvedStatuslineSchema = z.strictObject({
   layout: z.strictObject(SHAPES.layout),
   model: z.strictObject(SHAPES.model),
@@ -324,14 +335,18 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** `over` laid on `base`, key by key: objects merge, and anything else (a scalar, a list) in `over` replaces what `base` has. Neither argument is changed. */
+/** `over` laid on `base`, key by key: objects merge, anything else (a scalar, a list) in `over` replaces what `base` has, and a null in `over` removes the key, which is how a layer unsets an optional setting a shallower layer set. The result holds no null, whatever `base` was. Neither argument is changed. */
 export function mergeStatuslineSettings(base: unknown, over: unknown): unknown {
-  if (!isPlainObject(base) || !isPlainObject(over)) {
+  if (!isPlainObject(over)) {
     return over === undefined ? base : over;
   }
-  const merged: Record<string, unknown> = { ...base };
+  const merged: Record<string, unknown> = isPlainObject(base) ? { ...base } : {};
   for (const [key, value] of Object.entries(over)) {
-    merged[key] = key in base ? mergeStatuslineSettings(base[key], value) : value;
+    if (value === null) {
+      Reflect.deleteProperty(merged, key);
+    } else {
+      merged[key] = mergeStatuslineSettings(merged[key], value);
+    }
   }
   return merged;
 }

@@ -64,12 +64,12 @@ export function statuslineKeys(): readonly StatuslineKey[] {
   return walk(ResolvedStatuslineSchema.shape, []);
 }
 
-/** The listing `statusline keys` prints: each setting's path, then its kind with the choices it takes and its default, then what it does. */
+/** The listing `statusline keys` prints: each setting's path, then its kind with the choices it takes and its default (or that it has none, being optional), then what it does. */
 export function formatStatuslineKeys(keys: readonly StatuslineKey[]): string {
   return keys
     .map((key) => {
       const takes = key.kind === "choice" || key.kind === "list" || key.kind === "colour" ? `${key.kind} of ${key.choices.join(", ")}` : key.kind;
-      return `${key.path}  (${takes}; ${key.optional ? "no default" : `default ${JSON.stringify(key.defaultValue)}`})\n    ${key.description}`;
+      return `${key.path}  (${takes}; ${key.optional ? "no default; none unsets it over shallower layers" : `default ${JSON.stringify(key.defaultValue)}`})\n    ${key.description}`;
     })
     .join("\n");
 }

@@ -59,7 +59,7 @@ describe("an optional setting", () => {
     expect(warnAt).toMatchObject({ kind: "integer", optional: true, defaultValue: undefined });
     expect(warnAt?.description).toContain("bands.warnAt");
     expect(statuslineKeys().find((key) => key.path === "bands.warnAt")).toMatchObject({ optional: false });
-    expect(formatStatuslineKeys(statuslineKeys())).toContain("context.warnAt  (integer; no default)");
+    expect(formatStatuslineKeys(statuslineKeys())).toContain("context.warnAt  (integer; no default; none unsets it over shallower layers)");
   });
 });
 
