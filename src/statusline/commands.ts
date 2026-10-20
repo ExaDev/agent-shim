@@ -15,6 +15,8 @@ import { antigravityStacksWithDefault, isAntigravityPayload } from "./client";
 import { fetchHeadroomSessionStats, headroomSessionIdOf, headroomTargetOf, realHeadroomGet } from "./headroom";
 import { enrichStatuslinePayload, identityOf } from "./enrich";
 import { readUsageLog } from "../usage/read";
+import { readModels } from "../modelsStore";
+import { readDoorCostUsd } from "./doorCost";
 import { parseClientPayload, viewOf } from "./payload";
 import { realStatuslinePorts } from "./ports";
 import { renderStatuslineBlock } from "./render";
@@ -110,16 +112,24 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
           routedTarget = undefined;
         }
       }
-      const { payload: enriched, summary } = enrichStatuslinePayload({ payload, env: process.env, snapshot, account, providerName, nowMs, headroom, routedTarget, ...(modelChoice === undefined ? {} : { modelChoice }) });
+      const clientPayload = parseClientPayload(payload);
+      const enrichParams = { payload, env: process.env, snapshot, account, providerName, nowMs, headroom, routedTarget, ...(modelChoice === undefined ? {} : { modelChoice }) };
       const renderer = process.env.AGENT_SHIM_STATUSLINE_CMD;
       if (renderer !== undefined && renderer !== "") {
         const child = spawn("/bin/sh", ["-c", renderer], { stdio: ["pipe", "inherit", "inherit"] });
-        child.stdin.end(`${JSON.stringify(enriched)}\n`);
+        child.stdin.end(`${JSON.stringify(enrichStatuslinePayload(enrichParams).payload)}\n`);
         child.on("close", (code) => {
           process.exit(code ?? 0);
         });
         return;
       }
+      const rawSettings = process.env[STATUSLINE_ENV];
+      const settings = resolveStatusline(rawSettings === undefined || rawSettings === "" ? undefined : statuslineSettingsFromEnv(rawSettings, STATUSLINE_ENV));
+      // What the conversation's requests cost the door is read only for a layout that draws a cost, since it reads the log from the conversation's first day on.
+      const conversationId = clientPayload.session_id;
+      const prices = settings.layout.header.some((name) => name === "cost" || name === "dailyCost") ? readModels(deps.paths)?.prices : undefined;
+      const doorCostUsd = prices === undefined || conversationId === undefined ? undefined : readDoorCostUsd({ fs: realFarmFs, logDir: deps.paths.usageLogDir, prices, conversationId, nowMs, sessionDurationMs: clientPayload.cost?.total_duration_ms });
+      const { summary } = enrichStatuslinePayload({ ...enrichParams, ...(doorCostUsd === undefined ? {} : { doorCostUsd }) });
       // Stacked beneath the Antigravity CLI's own line, which already names the model, the model would repeat it; replacing that line, this one is the only place it appears.
       let stackedUnderDefault = false;
       if (isAntigravityPayload(payload)) {
@@ -129,10 +139,7 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
           stackedUnderDefault = false;
         }
       }
-      const clientPayload = parseClientPayload(payload);
       const view = { ...viewOf(clientPayload), ...(stackedUnderDefault ? { modelDisplayName: undefined } : {}) };
-      const rawSettings = process.env[STATUSLINE_ENV];
-      const settings = resolveStatusline(rawSettings === undefined || rawSettings === "" ? undefined : statuslineSettingsFromEnv(rawSettings, STATUSLINE_ENV));
       console.log(renderStatuslineBlock({ summary, view, payload: clientPayload, terminalWidth: terminalWidthOf(payload, process.env), nowMs, settings, ports: realStatuslinePorts(process.env, deps.paths.statuslineDir) }));
       }),
     ["$ agent-shim statusline  # a client's statusline setting names this; it renders or delegates"],

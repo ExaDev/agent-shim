@@ -30,6 +30,8 @@ describe("statuslineKeys", () => {
     expect(statuslineKeys().find((key) => key.path === "usage.bar")).toMatchObject({ kind: "boolean", choices: [], defaultValue: true });
     expect(statuslineKeys().find((key) => key.path === "usage.timeFormat")).toMatchObject({ kind: "choice", choices: ["relative", "absolute", "both", "elapsed", "elapsedAndAbsolute"], defaultValue: "relative" });
     expect(statuslineKeys().find((key) => key.path === "clock.hourCycle")).toMatchObject({ kind: "choice", choices: ["auto", "h11", "h12", "h23", "h24"], defaultValue: "auto" });
+    expect(statuslineKeys().find((key) => key.path === "cost.routed")).toMatchObject({ kind: "boolean", choices: [], defaultValue: false });
+    expect(statuslineKeys().find((key) => key.path === "environment.threshold")).toMatchObject({ kind: "integer", defaultValue: 0 });
   });
 });
 

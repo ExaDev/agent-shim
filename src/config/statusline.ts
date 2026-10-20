@@ -5,10 +5,10 @@ import { drawsNothing } from "../statusline/blank";
 import { graphemesOf } from "../statusline/graphemes";
 
 /** The segments of the statusline's header, in the order they are drawn unless a setting reorders them. */
-export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs", "effort", "advisor", "version", "outputStyle"] as const;
+export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "dailyCost"] as const;
 
-/** The rows below the header, in the order they are drawn unless a setting reorders them: the context window's bar, the quota windows' bars, the added directories and the files the working tree has changed. */
-export const STATUSLINE_ROWS = ["context", "quota", "addedDirs", "gitFiles"] as const;
+/** The rows below the header, in the order they are drawn unless a setting reorders them: the context window's bar, the quota windows' bars, the added directories, the files the working tree has changed, the machine's memory bar, and the line of configuration counts. */
+export const STATUSLINE_ROWS = ["context", "quota", "addedDirs", "gitFiles", "memory", "environment"] as const;
 
 /** The named colours, as the terminal's own palette: `default` leaves the text in the terminal's colour, and `dim` is the faint attribute rather than a colour. */
 export const STATUSLINE_COLOUR_NAMES = [
@@ -149,6 +149,12 @@ const SHAPES = {
     hourCycle: z.enum(STATUSLINE_HOUR_CYCLES).describe("The hour cycle of a wall-clock time: `auto` follows the system locale, `h23` and `h24` are 24-hour time (`h24` writes midnight as 24:00), and `h12` and `h11` are 12-hour time with am or pm (`h11` writes the hour after midnight as 0)."),
     seconds: z.boolean().describe("Whether a wall-clock time includes seconds (`14:30:07`)."),
   },
+  cost: {
+    routed: z.boolean().describe("Whether the cost segments draw for a session routed through a provider or a cloud platform's model id, where the client's own figure is not what was billed; the figure drawn is then priced from the door's usage log with `agent-shim model price`, else the client's own when it is above zero."),
+  },
+  environment: {
+    threshold: z.number().int().min(0).describe("The fewest configuration items in total (CLAUDE.md files, rules, MCP servers and hook events) that must exist for the environment row to draw its counts."),
+  },
   colours: {
     context: colourValue.describe("The colour of the context bar and its figures below the warning threshold."),
     usage: colourValue.describe("The colour of the quota bars and their figures below the warning threshold."),
@@ -195,6 +201,8 @@ export const StatuslineSchema = z.strictObject({
   bar: z.strictObject(SHAPES.bar).partial().optional(),
   usage: z.strictObject(SHAPES.usage).partial().optional(),
   clock: z.strictObject(SHAPES.clock).partial().optional(),
+  cost: z.strictObject(SHAPES.cost).partial().optional(),
+  environment: z.strictObject(SHAPES.environment).partial().optional(),
   colours: z.strictObject(SHAPES.colours).partial().optional(),
   project: z.strictObject(SHAPES.project).partial().optional(),
   git: z.strictObject(SHAPES.git).partial().optional(),
@@ -215,6 +223,8 @@ export const ResolvedStatuslineSchema = z.strictObject({
   bar: z.strictObject(SHAPES.bar),
   usage: z.strictObject(SHAPES.usage),
   clock: z.strictObject(SHAPES.clock),
+  cost: z.strictObject(SHAPES.cost),
+  environment: z.strictObject(SHAPES.environment),
   colours: z.strictObject(SHAPES.colours),
   project: z.strictObject(SHAPES.project),
   git: z.strictObject(SHAPES.git),
@@ -235,6 +245,8 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   bar: { width: 10, filled: "\u2588", empty: "\u2591" },
   usage: { value: "used", bar: true, compact: false, resetLabel: false, modelScoped: false, timeFormat: "relative", threshold: 0, sevenDayThreshold: 0 },
   clock: { hourCycle: "auto", seconds: false },
+  cost: { routed: false },
+  environment: { threshold: 0 },
   colours: {
     context: "green",
     usage: "green",
