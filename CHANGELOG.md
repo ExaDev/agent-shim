@@ -1,3 +1,28 @@
+## [11.62.0](https://github.com/ExaDev/agent-shim/compare/v11.61.0...v11.62.0) (2026-10-20)
+
+### Features
+
+* **statusline:** choose a named bundle of settings with a preset ([c1ee34d](https://github.com/ExaDev/agent-shim/commit/c1ee34d9ad18b61ca45223cc66e2d57d9fa6d115))
+* **statusline:** write the statusline's words from a catalogue and choose their language ([12fc511](https://github.com/ExaDev/agent-shim/commit/12fc511ee5464189cb630ed54c48dbbbb39c2b25))
+
+### Bug Fixes
+
+* **statusline:** define the presets as claude-hud does, and read its Chinese tags ([745df94](https://github.com/ExaDev/agent-shim/commit/745df942ec8fd41dd35afcfa09c43e3b41a7fa1e))
+* **statusline:** let each language own the punctuation between labels and values ([fb1672d](https://github.com/ExaDev/agent-shim/commit/fb1672df062311f1d1ac9c7e044c7e0ae13dca97))
+* **statusline:** paint the added directories as separate runs, and make writing around a value total ([5901662](https://github.com/ExaDev/agent-shim/commit/5901662a092f15accd0cd30dc6ee0e605038b847))
+* **statusline:** say a detached head and a reset time in the catalogue's words ([08df32b](https://github.com/ExaDev/agent-shim/commit/08df32b038e1885f7a37f937d5c7fd60e41de423))
+
+### Documentation
+
+* **statusline:** say that the presets set the token breakdown ([fa22b7d](https://github.com/ExaDev/agent-shim/commit/fa22b7d1883915c41aebb16eb49cf3d41915a883))
+
+### Tests
+
+* **statusline:** classify the rows layout as plumbing, and check presets beside the layout settings ([2d7c543](https://github.com/ExaDev/agent-shim/commit/2d7c543321e4ca6fb520616755664f1350844f2a))
+* **statusline:** hold every module that writes for the screen to the catalogue ([6b5ddee](https://github.com/ExaDev/agent-shim/commit/6b5ddeec73de1c4f02cc15612205b5cee09b32d9))
+* **statusline:** pin the wording of every message in each language ([34a1b09](https://github.com/ExaDev/agent-shim/commit/34a1b09e26d4a91fdbbd11f924b596048d832dd0))
+* **statusline:** refuse a window label that is too long, a language and a preset that do not exist ([4ff4961](https://github.com/ExaDev/agent-shim/commit/4ff49618d7e2dba35bac3b0e0738b32238e03b55))
+
 ## [11.61.0](https://github.com/ExaDev/agent-shim/compare/v11.60.2...v11.61.0) (2026-10-20)
 
 ### Features
