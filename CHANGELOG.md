@@ -1,3 +1,13 @@
+## [11.57.1](https://github.com/ExaDev/agent-shim/compare/v11.57.0...v11.57.1) (2026-10-20)
+
+### Bug Fixes
+
+* **frontdoor:** resolve a launch without blocking the event loop ([497ab36](https://github.com/ExaDev/agent-shim/commit/497ab3631fad879059a4c2f0e995783b0847ae6b))
+
+### Code Refactoring
+
+* **spawn:** route every synchronous spawn through a wrapper that refuses inside the door ([935d80f](https://github.com/ExaDev/agent-shim/commit/935d80f723a399ec4ea16b26e113afee1bf7b649))
+
 ## [11.57.0](https://github.com/ExaDev/agent-shim/compare/v11.56.1...v11.57.0) (2026-10-20)
 
 ### Features
