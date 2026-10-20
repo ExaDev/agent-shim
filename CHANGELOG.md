@@ -1,3 +1,9 @@
+## [11.62.1](https://github.com/ExaDev/agent-shim/compare/v11.62.0...v11.62.1) (2026-10-20)
+
+### Bug Fixes
+
+* **deps:** take the patched vite beneath vitest ([047a3fe](https://github.com/ExaDev/agent-shim/commit/047a3fe13a79b5407a523391cb6913beb9d85db1))
+
 ## [11.62.0](https://github.com/ExaDev/agent-shim/compare/v11.61.0...v11.62.0) (2026-10-20)
 
 ### Features
