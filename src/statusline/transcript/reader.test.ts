@@ -15,9 +15,15 @@ const AT = {
   threeMinutes: 180_000,
 };
 const LINE_BYTES = 1_024;
+/** The most one refresh reads while the cumulative facts are behind, fingerprint check aside: a window from where the cache ends and the window at the end of the transcript, which is one byte longer so it can tell whether it starts on a line. */
+const MAX_READ_PER_REFRESH = 2 * MAX_TRANSCRIPT_READ_BYTES + 1;
 /** A line length that does not divide a read, so a read ends inside a line, and how often a record in a run is a compaction. */
 const ODD_LINE_BYTES = 997;
 const BOUNDARY_EVERY = 7;
+/** How many reads a transcript is a little over, three days in milliseconds, and the bytes of a line that are not its filler. */
+const OVER_TWO_WINDOWS = 2.5;
+const THREE_DAYS = 259_200_000;
+const PARTIAL_LINE_OVERHEAD = 11;
 /** Digits of the response ids the token tests write, enough for every record of a transcript several reads long. */
 const ID_DIGITS = 6;
 const FIRST_INPUT = 10;
@@ -189,7 +195,7 @@ describe("readTranscript", () => {
     }
     expect(facts).toMatchObject({ complete: true, bytes: bytesOf(text), session: { startedAtMs: T0, compactions: 2, title: "late-name" } });
     expect(completes).toEqual([...Array.from({ length: FILLER_READS }, () => false), true]);
-    expect(reads.every((read) => read <= MAX_TRANSCRIPT_READ_BYTES)).toBe(true);
+    expect(reads.every((read) => read <= MAX_READ_PER_REFRESH)).toBe(true);
 
     const afterConverging = bytesRead();
     readTranscript(ports, TRANSCRIPT, T0);
@@ -205,17 +211,89 @@ describe("readTranscript", () => {
     const { ports, bytesRead } = countingPorts(disk);
     let facts = readTranscript(ports, TRANSCRIPT, T0);
     let refreshes = 1;
-    expect(bytesRead()).toBeLessThanOrEqual(MAX_TRANSCRIPT_READ_BYTES);
+    expect(bytesRead()).toBeLessThanOrEqual(MAX_READ_PER_REFRESH);
     while (facts?.complete === false) {
       const before = bytesRead();
       facts = readTranscript(ports, TRANSCRIPT, T0);
       refreshes += 1;
-      expect(bytesRead() - before).toBeLessThanOrEqual(MAX_TRANSCRIPT_READ_BYTES);
+      expect(bytesRead() - before).toBeLessThanOrEqual(MAX_READ_PER_REFRESH);
       expect(refreshes).toBeLessThanOrEqual(Math.ceil(bytesOf(text) / MAX_TRANSCRIPT_READ_BYTES) + 1);
     }
     expect(facts?.session.compactions).toBe(expectedCompactions);
     // More than one read was needed, so the equality above is the result of folding across read boundaries that fall inside lines.
     expect(refreshes).toBeGreaterThan(FILLER_READS);
+  });
+
+  it("reports what the end of a long transcript says on the first refresh, while the totals are still being caught up", () => {
+    const records = Math.ceil((OVER_TWO_WINDOWS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES);
+    // Each record is a response of its own, so each adds its token to the totals.
+    const old = Array.from({ length: records }, (_, index) => oddLine({ type: "assistant", timestamp: at(0), slug: "old-slug", requestId: "r", message: { id: `o${String(index)}`, usage: { input_tokens: 1 } } })).join("");
+    const newest = line({ type: "assistant", timestamp: at(THREE_DAYS), requestId: "r-final", message: { id: "final", usage: { input_tokens: 1 } } }) + line({ type: "custom-title", customTitle: "Final name" });
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: old + newest });
+    const { ports, bytesRead } = countingPorts(disk);
+
+    const first = readTranscript(ports, TRANSCRIPT, T0);
+    expect(first).toMatchObject({ complete: false, session: { title: "Final name", lastResponseAtMs: T0 + THREE_DAYS, startedAtMs: T0 } });
+    // The cache clock is anchored to the request the last response answers, which is the record before it.
+    expect(first?.session.promptCache?.anchorAtMs).toBe(T0);
+    expect(first?.tokens.inputTokens).toBeLessThan(records + 1);
+    expect(bytesRead()).toBeLessThanOrEqual(MAX_READ_PER_REFRESH);
+
+    let facts = first;
+    let refreshes = 1;
+    while (facts?.complete === false) {
+      const before = bytesRead();
+      facts = readTranscript(ports, TRANSCRIPT, T0);
+      refreshes += 1;
+      expect(bytesRead() - before).toBeLessThanOrEqual(MAX_READ_PER_REFRESH);
+      expect(facts?.session, `refresh ${String(refreshes)}`).toMatchObject({ title: "Final name", lastResponseAtMs: T0 + THREE_DAYS });
+    }
+    // The totals after catching up are those of a full scan, and the latest-state facts are still the end's.
+    expect(facts).toMatchObject({ complete: true, tokens: { inputTokens: records + 1 }, session: { title: "Final name", lastResponseAtMs: T0 + THREE_DAYS, startedAtMs: T0 } });
+    expect(disk.files.get(cacheFileFor(ports, "transcript", TRANSCRIPT))).not.toContain('"newer"');
+  });
+
+  it("keeps a title the first window read when the end of the transcript sets none, and a later one over it when it does", () => {
+    const title = line({ type: "ai-title", aiTitle: "Early title" });
+    const records = Math.ceil((OVER_TWO_WINDOWS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES);
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: title + oddLine({ type: "user", timestamp: at(0), message: { content: "x" } }).repeat(records) });
+    const ports = fakeStatuslinePorts(disk.ports);
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { title: "Early title" } });
+    disk.files.set(TRANSCRIPT, (disk.files.get(TRANSCRIPT) ?? "") + line({ type: "custom-title", customTitle: "Renamed" }));
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { title: "Renamed" } });
+  });
+
+  it("folds what is appended while it is still catching up into the end's facts, reading only the appended bytes for them", () => {
+    const records = Math.ceil((OVER_TWO_WINDOWS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES);
+    const text = oddLine({ type: "assistant", timestamp: at(0), requestId: "r", message: { id: "old" } }).repeat(records);
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: text });
+    const { ports, bytesRead } = countingPorts(disk);
+    readTranscript(ports, TRANSCRIPT, T0);
+    const appended = line({ type: "assistant", timestamp: at(THREE_DAYS), requestId: "r-new", message: { id: "new" } });
+    disk.files.set(TRANSCRIPT, text + appended);
+    const before = bytesRead();
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { lastResponseAtMs: T0 + THREE_DAYS } });
+    expect(bytesRead() - before).toBe(MAX_TRANSCRIPT_READ_BYTES + bytesOf(appended));
+  });
+
+  it("is complete after the read that takes in exactly one window to the end of the transcript", () => {
+    const text = paddedLine({ type: "system", subtype: "compact_boundary", timestamp: at(0) }).repeat((2 * MAX_TRANSCRIPT_READ_BYTES) / LINE_BYTES);
+    const ports = fakeStatuslinePorts(fakeStatuslineFilesystem({ [TRANSCRIPT]: text }).ports);
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.complete).toBe(false);
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: true, session: { compactions: (2 * MAX_TRANSCRIPT_READ_BYTES) / LINE_BYTES } });
+  });
+
+  it("takes a line of exactly one window with no newline yet for a line still being written, and a line that no longer fits a window with its newline for a bigger one", () => {
+    const whole = paddedLine({ type: "system", subtype: "compact_boundary", timestamp: at(0) }).repeat(MAX_TRANSCRIPT_READ_BYTES / LINE_BYTES);
+    const partial = `{"note":"${"x".repeat(MAX_TRANSCRIPT_READ_BYTES - PARTIAL_LINE_OVERHEAD)}"}`;
+    expect(bytesOf(partial)).toBe(MAX_TRANSCRIPT_READ_BYTES);
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: whole + partial });
+    const ports = fakeStatuslinePorts(disk.ports);
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.complete).toBe(false);
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: true, session: { compactions: MAX_TRANSCRIPT_READ_BYTES / LINE_BYTES } });
+    disk.files.set(TRANSCRIPT, `${whole}${partial}\n${boundary(MINUTE)}`);
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false });
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { compactions: MAX_TRANSCRIPT_READ_BYTES / LINE_BYTES + 1 } });
   });
 
   it("folds what is appended after it has caught up without reading the rest again", () => {
@@ -282,15 +360,15 @@ describe("readTranscript", () => {
     expect([...disk.files.keys()]).toEqual([TRANSCRIPT]);
   });
 
-  it("passes a single line bigger than a read a read at a time, while it is still being written, without ever reading more than a read", () => {
+  it("passes a single line bigger than a read a read at a time, while it is still being written, reading no more than a refresh may", () => {
     const huge = line({ type: "user", timestamp: at(0), message: { content: "x".repeat(MAX_TRANSCRIPT_READ_BYTES + LINE_BYTES) } });
     const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: huge.slice(0, -1) });
     const { ports, bytesRead } = countingPorts(disk);
     expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { startedAtMs: undefined, compactions: 0 } });
-    expect(bytesRead()).toBeLessThanOrEqual(MAX_TRANSCRIPT_READ_BYTES);
+    expect(bytesRead()).toBeLessThanOrEqual(MAX_READ_PER_REFRESH);
     const afterFirst = bytesRead();
     readTranscript(ports, TRANSCRIPT, T0);
-    expect(bytesRead() - afterFirst).toBeLessThanOrEqual(MAX_TRANSCRIPT_READ_BYTES);
+    expect(bytesRead() - afterFirst).toBeLessThanOrEqual(MAX_READ_PER_REFRESH);
     const afterSecond = bytesRead();
     expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false });
     expect(bytesRead() - afterSecond).toBe(0);

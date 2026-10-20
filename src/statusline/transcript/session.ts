@@ -18,23 +18,34 @@ const PromptCacheClockSchema = z.strictObject({
   pendingAtMs: z.number().optional(),
 });
 
-/** Everything the session facts are folded from, one transcript record at a time. It is JSON-serialisable, because the statusline is a new process at every refresh and keeps it between them. */
-export const SessionStateSchema = z.strictObject({
+/** The facts that add up over the whole transcript, or begin it, so only a read of every record makes them exact: when the session began, and how many times it was compacted. */
+const CumulativeStateSchema = z.strictObject({
   startedAtMs: z.number().optional(),
   /** True once the start of the transcript was read and held no timestamp, so a timestamp met later is not the session's start. */
   startUnknown: z.literal(true).optional(),
-  lastAssistantAtMs: z.number().optional(),
   compactions: z.number().int().nonnegative(),
+});
+
+/** The facts that are the newest value of something, so the end of the transcript settles them whatever came before: the latest response, the names, and the prompt cache's clock. */
+export const LatestStateSchema = z.strictObject({
+  lastAssistantAtMs: z.number().optional(),
   customTitle: z.string().optional(),
   slug: z.string().optional(),
   aiTitle: z.string().optional(),
   cache: PromptCacheClockSchema,
 });
 
+/** Everything the session facts are folded from, one transcript record at a time, in the two kinds the facts come in. It is JSON-serialisable, because the statusline is a new process at every refresh and keeps it between them. */
+export const SessionStateSchema = z.strictObject({ cumulative: CumulativeStateSchema, latest: LatestStateSchema });
+type CumulativeState = z.infer<typeof CumulativeStateSchema>;
+export type LatestState = z.infer<typeof LatestStateSchema>;
 export type SessionState = z.infer<typeof SessionStateSchema>;
 
 /** The state before any record has been read. */
-export const EMPTY_SESSION_STATE: SessionState = { compactions: 0, cache: {} };
+export const EMPTY_SESSION_STATE: SessionState = { cumulative: { compactions: 0 }, latest: { cache: {} } };
+
+/** The latest-state facts before any record has been read. */
+export const EMPTY_LATEST_STATE: LatestState = EMPTY_SESSION_STATE.latest;
 
 /** The openers of user text that Claude Code produces locally: a slash command writes its invocation, its output and its caveat as user records, and an interrupt writes a marker, and none of them sends a request. */
 const LOCAL_ONLY_USER_TEXT_PREFIXES = ["<command-name>", "<command-message>", "<local-command-", "[Request interrupted by user"];
@@ -56,7 +67,7 @@ function opensRequest(record: TranscriptRecord): boolean {
 }
 
 /** The tier a request's cache writes used, from its per-tier write counters. A request that wrote nothing (a pure cache read) says nothing, so the tier seen earlier stands. A request that wrote to both tiers takes the shorter, which is the first part of the prefix to lapse. */
-function ttlOf(record: TranscriptRecord): SessionState["cache"]["ttlSeconds"] {
+function ttlOf(record: TranscriptRecord): LatestState["cache"]["ttlSeconds"] {
   const writes = record.message?.usage?.cache_creation;
   if ((writes?.ephemeral_5m_input_tokens ?? 0) > 0) {
     return PROMPT_CACHE_TTL_SECONDS.fiveMinutes;
@@ -65,7 +76,7 @@ function ttlOf(record: TranscriptRecord): SessionState["cache"]["ttlSeconds"] {
 }
 
 /** The cache clock after one record of the main conversation. */
-function foldPromptCache(cache: SessionState["cache"], record: TranscriptRecord, atMs: number | undefined): SessionState["cache"] {
+function foldPromptCache(cache: LatestState["cache"], record: TranscriptRecord, atMs: number | undefined): LatestState["cache"] {
   if (atMs === undefined) {
     return cache;
   }
@@ -85,22 +96,29 @@ function foldPromptCache(cache: SessionState["cache"], record: TranscriptRecord,
   return { ...next, previousMainAtMs: atMs };
 }
 
-/** `state` after one more transcript record, read in file order. */
-export function foldSession(state: SessionState, record: TranscriptRecord): SessionState {
+/** The cumulative facts after one more transcript record, read in file order. */
+function foldCumulative(state: Readonly<CumulativeState>, record: TranscriptRecord): CumulativeState {
   const atMs = recordTimeMs(record);
-  const next: SessionState = { ...state };
+  const next: CumulativeState = { ...state };
+  if (record.type === "system" && record.subtype === "compact_boundary" && atMs !== undefined) {
+    next.compactions += 1;
+  }
+  if (atMs !== undefined && next.startedAtMs === undefined && next.startUnknown !== true) {
+    next.startedAtMs = atMs;
+  }
+  return next;
+}
+
+/** The latest-state facts after one more transcript record, read in file order. Folding the records of the end of a transcript alone gives the facts the whole of it would, as long as the end holds a record that sets each. */
+export function foldLatest(state: LatestState, record: TranscriptRecord): LatestState {
+  const atMs = recordTimeMs(record);
+  const next: LatestState = { ...state };
   if (record.type === "custom-title" && record.customTitle !== undefined) {
     next.customTitle = record.customTitle;
   } else if (record.type === "ai-title" && record.aiTitle !== undefined) {
     next.aiTitle = record.aiTitle;
   } else if (record.slug !== undefined) {
     next.slug = record.slug;
-  }
-  if (record.type === "system" && record.subtype === "compact_boundary" && atMs !== undefined) {
-    next.compactions += 1;
-  }
-  if (atMs !== undefined && next.startedAtMs === undefined && next.startUnknown !== true) {
-    next.startedAtMs = atMs;
   }
   if (record.type === "assistant" && atMs !== undefined) {
     next.lastAssistantAtMs = atMs;
@@ -109,6 +127,11 @@ export function foldSession(state: SessionState, record: TranscriptRecord): Sess
     next.cache = foldPromptCache(state.cache, record, atMs);
   }
   return next;
+}
+
+/** `state` after one more transcript record, read in file order. */
+export function foldSession(state: SessionState, record: TranscriptRecord): SessionState {
+  return { cumulative: foldCumulative(state.cumulative, record), latest: foldLatest(state.latest, record) };
 }
 
 /** What the session's transcript says about the session. */
@@ -123,16 +146,36 @@ export interface SessionFacts {
   readonly promptCache: { readonly anchorAtMs: number; readonly ttlSeconds: number | undefined } | undefined;
 }
 
-/** The facts a state holds. */
-export function sessionFactsOf(state: SessionState): SessionFacts {
-  const { cache } = state;
+/** Whether a prompt cache clock holds a request: one that has seen none says nothing about the cache. */
+function hasRequest(cache: LatestState["cache"]): boolean {
+  return cache.anchorAtMs !== undefined || cache.pendingAtMs !== undefined;
+}
+
+/**
+ * The facts a state holds. `newer`, when given, is the latest-state facts folded from the end of the transcript alone while the cumulative ones are still being caught up: each of its facts that is set replaces the state's, because the end of the transcript is later than anything the state has read, and one it lacks is left as the state has it.
+ */
+export function sessionFactsOf(state: SessionState, newer?: LatestState): SessionFacts {
+  const { cumulative } = state;
+  const latest: LatestState = newer === undefined ? state.latest : { ...state.latest, ...definedOnly(newer), cache: hasRequest(newer.cache) ? newer.cache : state.latest.cache };
+  const { cache } = latest;
   // A request still waiting for its response has already refreshed the cache, so it is the live anchor once it is later than the last response's. A pending request stamped earlier than that response is clock skew, and the earlier anchor is the one that cannot overstate the lifetime left.
   const anchorAtMs = cache.pendingAtMs !== undefined && (cache.anchorAtMs === undefined || cache.pendingAtMs > cache.anchorAtMs) ? cache.pendingAtMs : cache.anchorAtMs;
   return {
-    title: [state.customTitle, state.slug, state.aiTitle].flatMap((name) => (name === undefined ? [] : visibleDisplayText(name))).find((name) => name !== ""),
-    startedAtMs: state.startedAtMs,
-    lastResponseAtMs: state.lastAssistantAtMs,
-    compactions: state.compactions,
+    title: [latest.customTitle, latest.slug, latest.aiTitle].flatMap((name) => (name === undefined ? [] : visibleDisplayText(name))).find((name) => name !== ""),
+    startedAtMs: cumulative.startedAtMs,
+    lastResponseAtMs: latest.lastAssistantAtMs,
+    compactions: cumulative.compactions,
     promptCache: anchorAtMs === undefined ? undefined : { anchorAtMs, ttlSeconds: cache.ttlSeconds },
+  };
+}
+
+/** The fields of `state` that are set, without the prompt cache clock. */
+function definedOnly(state: LatestState): Omit<LatestState, "cache"> {
+  const { lastAssistantAtMs, customTitle, slug, aiTitle } = state;
+  return {
+    ...(lastAssistantAtMs === undefined ? {} : { lastAssistantAtMs }),
+    ...(customTitle === undefined ? {} : { customTitle }),
+    ...(slug === undefined ? {} : { slug }),
+    ...(aiTitle === undefined ? {} : { aiTitle }),
   };
 }

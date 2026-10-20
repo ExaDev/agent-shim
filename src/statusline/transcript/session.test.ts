@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { PROMPT_CACHE_TTL_SECONDS } from "../../config/statusline";
 import { parseTranscriptRecord } from "./record";
-import { EMPTY_SESSION_STATE, foldSession, sessionFactsOf, type SessionFacts, type SessionState } from "./session";
+import { EMPTY_LATEST_STATE, EMPTY_SESSION_STATE, foldLatest, foldSession, sessionFactsOf, type LatestState, type SessionFacts, type SessionState } from "./session";
 
 const T0 = Date.parse("2026-10-19T10:00:00.000Z");
 const SECOND = 1_000;
@@ -143,5 +143,37 @@ describe("the prompt cache's clock", () => {
 
   it("has no clock before the main conversation sends a request", () => {
     expect(factsOf({ type: "permission-mode" }, { type: "system", subtype: "turn_duration", timestamp: at(0) }).promptCache).toBeUndefined();
+  });
+});
+
+describe("session facts with the end of the transcript read on its own", () => {
+  const stateOf = (...records: readonly Record<string, unknown>[]): SessionState =>
+    records.reduce<SessionState>((state, record) => {
+      const parsed = parseTranscriptRecord(JSON.stringify(record));
+      return parsed === undefined ? state : foldSession(state, parsed);
+    }, EMPTY_SESSION_STATE);
+  const endOf = (...records: readonly Record<string, unknown>[]): LatestState =>
+    records.reduce<LatestState>((state, record) => {
+      const parsed = parseTranscriptRecord(JSON.stringify(record));
+      return parsed === undefined ? state : foldLatest(state, parsed);
+    }, EMPTY_LATEST_STATE);
+
+  it("takes the latest-state facts from the end and the cumulative ones from the state", () => {
+    const state = stateOf(prompt(0, { slug: "old" }), reply(SECOND), { type: "system", subtype: "compact_boundary", timestamp: at(MINUTE) });
+    const facts = sessionFactsOf(state, endOf(prompt(AT.fiveMinutes), reply(AT.fiveMinutes + SECOND, { slug: "new" })));
+    expect(facts).toMatchObject({ title: "new", lastResponseAtMs: T0 + AT.fiveMinutes + SECOND, startedAtMs: T0, compactions: 1 });
+    expect(facts.promptCache?.anchorAtMs).toBe(T0 + AT.fiveMinutes);
+  });
+
+  it("keeps what the state has for a fact the end does not set, and the state's cache clock when the end holds no request", () => {
+    const state = stateOf(prompt(0), reply(SECOND, { slug: "old" }), { type: "ai-title", aiTitle: "Earlier title" });
+    const facts = sessionFactsOf(state, endOf({ type: "permission-mode" }, { type: "system", subtype: "turn_duration", timestamp: at(AT.fiveMinutes) }));
+    expect(facts).toMatchObject({ title: "old", lastResponseAtMs: T0 + SECOND });
+    expect(facts.promptCache?.anchorAtMs).toBe(T0);
+  });
+
+  it("is what the state alone says when there is no end to read", () => {
+    const state = stateOf(prompt(0), reply(SECOND));
+    expect(sessionFactsOf(state, undefined)).toEqual(sessionFactsOf(state));
   });
 });
