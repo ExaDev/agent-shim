@@ -16,6 +16,9 @@ export const MAX_TRACKED_TODOS = 200;
 /** The most results kept while they wait for their calls: a result is written ahead of its call by a few milliseconds, so only the latest few can be waiting. */
 export const MAX_UNMATCHED_RESULTS = 20;
 
+/** The most call ids remembered, to tell a call written again from a new one: far more than a session makes between a resumed history and the point it was resumed from is ever long, and few enough (a few dozen bytes each) to keep the cache file small. */
+export const MAX_SEEN_CALL_IDS = 2000;
+
 /** The most distinct skill names, and the most distinct MCP server names, the state keeps, for the same reason. */
 export const MAX_TRACKED_NAMES = 256;
 
@@ -99,6 +102,8 @@ const AgentCallSchema = z.strictObject({
   background: z.literal(true).optional(),
   /** As for a tool call: the session wrote its next response with the agent unanswered. */
   abandoned: z.literal(true).optional(),
+  /** When the client announced the agent finished, read before the result that says the agent was started in the background; the agent ends then. */
+  announcedAtMs: z.number().optional(),
 });
 
 /** The outcome of a tool call whose call has not been read yet. A fast tool's result can be written to the file before its call, so the outcome is kept until the call arrives. */
@@ -112,6 +117,8 @@ const CallResultSchema = z.strictObject({
   async: z.literal(true).optional(),
   /** The identifier the client gave the task a `TaskCreate` made. */
   taskId: z.string().optional(),
+  /** True for the client's announcement that a background agent finished, which can be queued ahead of the call that started the agent; `atMs` is then when the agent ended. */
+  announced: z.literal(true).optional(),
 });
 type CallResult = z.infer<typeof CallResultSchema>;
 
@@ -138,6 +145,8 @@ export const ActivityLatestSchema = z.strictObject({
   todosEdited: z.literal(true).optional(),
   /** Results read before their calls, oldest first. */
   unmatchedResults: z.array(CallResultSchema),
+  /** The ids of the latest calls made, of every kind, oldest first: a session that is resumed has the history it resumes from written to its transcript again, with the same ids, and a call the state no longer tracks would otherwise come back as a new one. */
+  seenCallIds: z.array(z.string()),
   /** The response of the session's latest assistant record, which the records of one response share. A call is made in one response and answered before the next is written, so a call with no result when a response of another key appears was abandoned (an interrupted tool call). */
   responseKey: z.string().optional(),
 });
@@ -154,7 +163,7 @@ export const ActivityStateSchema = z.strictObject({ cumulative: ActivityCumulati
 export type ActivityState = z.infer<typeof ActivityStateSchema>;
 
 /** The latest-state activity before any record has been read. */
-export const EMPTY_ACTIVITY_LATEST: ActivityLatest = { tools: [], agents: [], todos: [], unmatchedResults: [] };
+export const EMPTY_ACTIVITY_LATEST: ActivityLatest = { tools: [], agents: [], todos: [], unmatchedResults: [], seenCallIds: [] };
 
 /** The state before any record has been read. */
 export const EMPTY_ACTIVITY_STATE: ActivityState = { cumulative: { skills: [], mcpServers: [] }, latest: EMPTY_ACTIVITY_LATEST };
@@ -272,9 +281,9 @@ function foldTodoCall(state: ActivityLatest, call: ToolUse): ActivityLatest {
   return { ...state, todos: state.todos.map((item, at) => (at === index ? updated : item)), todosEdited: true };
 }
 
-/** Whether a call with this id is tracked already: the client does not reuse an id, so a second call with one is a copy of the first. */
+/** Whether a call with this id has been made already: the client does not reuse an id, so a second call with one is a copy of the first. */
 function isTracked(state: ActivityLatest, id: string): boolean {
-  return state.tools.some((tool) => tool.id === id) || state.agents.some((agent) => agent.id === id) || state.todos.some((item) => item.pendingCallId === id);
+  return state.seenCallIds.includes(id) || state.tools.some((tool) => tool.id === id) || state.agents.some((agent) => agent.id === id) || state.todos.some((item) => item.pendingCallId === id);
 }
 
 /** The state after a tool call, and the result that was written ahead of it if there is one. */
@@ -313,17 +322,22 @@ function foldTrackedCall(state: ActivityLatest, call: ToolUse, atMs: number | un
 
 /** The state with `result` applied to the tracked call it answers: the call is finished (a `TaskCreate` that made a task has its identifier, and one that failed leaves no item), and an agent's result may say which model it ran on and that it was started in the background, in which case it has not finished. Undefined when no tracked call has the result's id. */
 function applyResult(state: ActivityLatest, result: Readonly<CallResult>): ActivityLatest | undefined {
-  if (!state.tools.some((tool) => tool.id === result.id) && !state.agents.some((agent) => agent.id === result.id) && !state.todos.some((item) => item.pendingCallId === result.id)) {
+  const answersAgent = state.agents.some((agent) => agent.id === result.id);
+  if (result.announced === true ? !answersAgent : !state.tools.some((tool) => tool.id === result.id) && !answersAgent && !state.todos.some((item) => item.pendingCallId === result.id)) {
     return undefined;
   }
-  const tools = state.tools.map((tool) => (tool.id === result.id ? { ...tool, ...(result.atMs === undefined ? {} : { endedAtMs: result.atMs }), ...(result.failed === true ? { failed: true as const } : {}) } : tool));
+  const tools = state.tools.map((tool) => (tool.id === result.id && result.announced !== true ? { ...tool, ...(result.atMs === undefined ? {} : { endedAtMs: result.atMs }), ...(result.failed === true ? { failed: true as const } : {}) } : tool));
   const agents = state.agents.map((agent) => {
     if (agent.id !== result.id) {
       return agent;
     }
+    if (result.announced === true) {
+      return result.atMs === undefined ? agent : agent.background === true ? { ...agent, endedAtMs: result.atMs } : { ...agent, announcedAtMs: result.atMs };
+    }
     const background = agent.background === true || result.async === true;
     const model = result.resolvedModel === undefined ? agent.model : stored(result.resolvedModel);
-    return { ...agent, ...(model === undefined ? {} : { model }), ...(background ? { background: true as const } : {}), ...(!background && result.atMs !== undefined ? { endedAtMs: result.atMs } : {}) };
+    const endedAtMs = background ? agent.announcedAtMs : result.atMs;
+    return { ...agent, ...(model === undefined ? {} : { model }), ...(background ? { background: true as const } : {}), ...(endedAtMs === undefined ? {} : { endedAtMs }) };
   });
   // A task made with an identifier the list already has begins a new list: the client numbers from one again once its list is empty, so the earlier tasks are gone.
   const restarted = state.todos.some((item) => item.pendingCallId === result.id && result.failed !== true && result.taskId !== undefined && state.todos.some((other) => other.id === result.taskId));
@@ -352,9 +366,9 @@ function createdTaskId(content: string | readonly { readonly text?: string | und
   return named ?? (stamped === undefined ? undefined : String(stamped));
 }
 
-/** The state after the client announced a finished background agent. The result of the call that started it was written at launch, so the announcement is what says when it ended. */
+/** The state after the client announced a finished background agent. The result of the call that started it was written at launch, so the announcement is what says when it ended. It can be queued ahead of the call, and is then kept until the call arrives. */
 function foldAgentAnnouncement(state: ActivityLatest, toolUseId: string, atMs: number): ActivityLatest {
-  return { ...state, agents: state.agents.map((agent) => (agent.id === toolUseId && agent.background === true ? { ...agent, endedAtMs: atMs } : agent)) };
+  return foldToolResult(state, { id: toolUseId, atMs, announced: true });
 }
 
 /** The calls with no result marked as abandoned, for the agents all but those started in the background, whose result came at launch and whose end is announced. */
@@ -396,7 +410,7 @@ export function foldActivityLatest(state: ActivityLatest, record: TranscriptReco
   const resultCount = content.filter((block) => block.type === "tool_result").length;
   for (const block of content) {
     if (record.type === "assistant" && block.type === "tool_use" && block.id !== undefined && block.name !== undefined && !isTracked(next, block.id)) {
-      next = foldToolUse(next, { id: block.id, name: block.name, input: block.input }, atMs);
+      next = foldToolUse({ ...next, seenCallIds: [...next.seenCallIds, block.id].slice(-MAX_SEEN_CALL_IDS) }, { id: block.id, name: block.name, input: block.input }, atMs);
     } else if (record.type === "user" && block.type === "tool_result" && block.tool_use_id !== undefined) {
       const outcome = resultCount === 1 ? record.toolUseResult : undefined;
       const taskId = createdTaskId(block.content, outcome);
@@ -520,6 +534,7 @@ export function activityFactsOf(state: ActivityState, nowMs: number, limits: Rea
           agents: followedBy(moved ? withUnanswered([], state.latest.agents).agents : state.latest.agents, newer.agents).slice(-MAX_TRACKED_AGENTS),
           todos: newer.todosReplaced === true ? newer.todos : newer.todosEdited === true ? [] : state.latest.todos,
           unmatchedResults: [],
+          seenCallIds: [],
         };
   return {
     tools: latest.tools.flatMap((tool): ToolCallFact[] => {
