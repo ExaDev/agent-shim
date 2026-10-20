@@ -129,6 +129,10 @@ describe("the extra segment", () => {
     expect(draw({ run: () => "y".repeat(MAX_DISPLAY_TEXT_CHARS * 2), settings: EXTRA_ONLY(["t"]) })).toBe("y".repeat(MAX_DISPLAY_TEXT_CHARS));
   });
 
+  it("drops control characters, a NUL included, rather than replacing them, so the neighbours of one join", () => {
+    expect(draw({ run: () => "a\u0000b\tc\n", settings: EXTRA_ONLY(["t"]) })).toBe("abc");
+  });
+
   it("is painted in the label colour", () => {
     const text = draw({ run: () => "lbl", settings: { layout: { header: ["extra"], rows: [] }, extra: { command: ["t"] }, colours: { label: "cyan" } }, colour: true });
     expect(text).toBe(`${ESCAPE}[36mlbl${ESCAPE}[0m`);
