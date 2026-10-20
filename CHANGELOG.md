@@ -1,3 +1,11 @@
+## [11.60.2](https://github.com/ExaDev/agent-shim/compare/v11.60.1...v11.60.2) (2026-10-20)
+
+### Bug Fixes
+
+* **config:** derive the longest name from the files made beside it, and guard the door's stat ([ac0ff6a](https://github.com/ExaDev/agent-shim/commit/ac0ff6aa760c4116cc0ff0d8a319f46acb0f636d))
+* **config:** hold names to two rules so stored files keep working and no name reaches a path ([006374d](https://github.com/ExaDev/agent-shim/commit/006374d6dbfe3af20533cff282e2093cf469a8d7))
+* **config:** keep a name from a configuration file inside the directory it names a file in ([052b3e2](https://github.com/ExaDev/agent-shim/commit/052b3e2e1290a475ada15aeb87349cd834202245))
+
 ## [11.60.1](https://github.com/ExaDev/agent-shim/compare/v11.60.0...v11.60.1) (2026-10-20)
 
 ### Bug Fixes
