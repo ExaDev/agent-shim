@@ -225,6 +225,17 @@ describe("the advisor segment", () => {
     expect(segments({ settings: onlyHeader("advisor"), ports: transcriptWith("claude-experimental") })).toEqual(["Advisor: experimental"]);
   });
 
+  it("writes a dated id with and without a minor version, and the older version-first naming, without reading a date as a minor", () => {
+    const written = (id: string): string[] => segments({ settings: onlyHeader("advisor"), ports: transcriptWith(id) });
+    expect(written("claude-opus-4-20250514")).toEqual(["Advisor: Opus 4"]);
+    expect(written("claude-sonnet-4-20250514")).toEqual(["Advisor: Sonnet 4"]);
+    expect(written("claude-opus-4-1-20250805")).toEqual(["Advisor: Opus 4.1"]);
+    expect(written("claude-3-5-sonnet-20241022")).toEqual(["Advisor: Sonnet 3.5"]);
+    expect(written("claude-3-haiku-20240307")).toEqual(["Advisor: Haiku 3"]);
+    expect(written("claude-opus")).toEqual(["Advisor: Opus"]);
+    expect(written("claude-opus-4-7-custom")).toEqual(["Advisor: opus-4-7-custom"]);
+  });
+
   it("shows the override instead of the transcript's, without reading the transcript", () => {
     const log = newReadLog();
     expect(segments({ settings: { ...onlyHeader("advisor"), advisor: { override: "Fable" } }, ports: transcriptOf(assistant("claude-opus-4-7", "claude-opus-4-7"), log) })).toEqual(["Advisor: Fable"]);
@@ -273,6 +284,11 @@ describe("the output style segment", () => {
 
   it("reads the style from the user's settings in the default configuration directory", () => {
     expect(segments({ settings: onlyHeader("outputStyle"), ports: files({ "/home/ada/.claude/settings.json": style("Explanatory") }) })).toEqual(["style: Explanatory"]);
+  });
+
+  it("treats an empty configuration directory as unset, so the settings are not looked for beside the working directory", () => {
+    const ports = { ...files({ "/home/ada/.claude/settings.json": style("Home"), "settings.json": style("Relative") }), env: { CLAUDE_CONFIG_DIR: "" } };
+    expect(segments({ settings: onlyHeader("outputStyle"), ports })).toEqual(["style: Home"]);
   });
 
   it("reads the configuration directory the environment names, not the home directory's", () => {
