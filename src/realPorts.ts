@@ -1,5 +1,6 @@
+import { spawnSyncBlocking } from "./blockingSpawn";
 import { refuseToBlockInRole } from "./processRole";
-import { execFile, spawn, spawnSync } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -240,8 +241,7 @@ export function realIsProcessAlive(pid: number): boolean {
  * When `ps` is unavailable (no POSIX userland, i.e. Windows) the answer is "not a zombie", falling back to plain signal-0 semantics rather than guessing every process dead.
  */
 function realIsProcessZombie(pid: number): boolean {
-  refuseToBlockInRole("a synchronous process-table read");
-  const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
+  const result = spawnSyncBlocking("a process-table read", "ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
   return result.status === 0 && result.stdout.trim().startsWith("Z");
 }
 
@@ -256,8 +256,7 @@ export function realIsProcessRunning(pid: number): boolean {
  * Whether `pid` is a live process running this tool's front-door supervisor, read from its command line. Without `ps` (no POSIX userland) the answer is false: an unprovable identity must never be signalled.
  */
 export function realIsFrontDoorSupervisor(pid: number): boolean {
-  refuseToBlockInRole("a synchronous process-table read");
-  const result = spawnSync("ps", ["-o", "pid=,command=", "-p", String(pid)], { encoding: "utf8" });
+  const result = spawnSyncBlocking("a process-table read", "ps", ["-o", "pid=,command=", "-p", String(pid)], { encoding: "utf8" });
   return result.status === 0 && parseFrontDoorSupervisorPids(result.stdout).includes(pid);
 }
 
@@ -325,16 +324,14 @@ const PS_TIMEOUT_MS = 2000;
 
 /** The command line `ps` reports for `pid`, or undefined when that is unknown: the pid has gone, there is no `ps` (no POSIX userland), or `ps` did not answer within `PS_TIMEOUT_MS`. Read-only: used to tell which release started a headroom daemon. */
 export function realProcessCommandLine(pid: number): string | undefined {
-  refuseToBlockInRole("a synchronous process-table read");
-  const result = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: PS_TIMEOUT_MS });
+  const result = spawnSyncBlocking("a process-table read", "ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: PS_TIMEOUT_MS });
   return result.status === 0 ? result.stdout.trim() : undefined;
 }
 
 /** Which of `pids` are running front-door supervisors, from bounded `ps` runs (see `frontDoorLivenessOf`). */
 export function realFrontDoorLiveness(pids: readonly number[]): FrontDoorLiveness {
-  refuseToBlockInRole("a synchronous process-table read");
   return frontDoorLivenessOf(pids, (asked) => {
-    const result = spawnSync("ps", ["-o", "pid=,stat=,command=", "-p", asked.map(String).join(",")], { encoding: "utf8", timeout: PS_TIMEOUT_MS });
+    const result = spawnSyncBlocking("a process-table read", "ps", ["-o", "pid=,stat=,command=", "-p", asked.map(String).join(",")], { encoding: "utf8", timeout: PS_TIMEOUT_MS });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr, ...(result.error === undefined ? {} : { error: result.error }) };
   });
 }
@@ -370,7 +367,7 @@ export async function realRunningAmong(pids: readonly number[]): Promise<Readonl
 /** The real `RunPort`, used for auxiliary commands whose output this process needs to read — git branch detection for `when: { branch }` conditions, and `check.ts`'s macOS Keychain lookup. */
 export const realRunPort: RunPort = {
   run(command, args) {
-    const result = spawnSync(command, [...args], { encoding: "utf8" });
+    const result = spawnSyncBlocking("an external command", command, args, { encoding: "utf8" });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   },
 };
@@ -388,7 +385,7 @@ const MACOS_GUI_SESSION_MANAGER = "Aqua";
  */
 function hasDesktopSession(): boolean {
   if (process.platform === "darwin") {
-    const result = spawnSync("launchctl", ["managername"], { encoding: "utf8" });
+    const result = spawnSyncBlocking("a desktop-session check", "launchctl", ["managername"], { encoding: "utf8" });
     return result.status === 0 && result.stdout.trim() === MACOS_GUI_SESSION_MANAGER;
   }
   return hasDisplayServer();
@@ -435,7 +432,7 @@ export const realCredentialPort: CredentialPort = {
   },
   runCommand(argv, options) {
     const [command, ...args] = argv;
-    const result = spawnSync(command, args, {
+    const result = spawnSyncBlocking("a credential command", command, args, {
       encoding: "utf8",
       timeout: options.timeoutMs,
       stdio: options.interactive ? ["inherit", "pipe", "inherit"] : ["ignore", "pipe", "pipe"],
@@ -646,7 +643,7 @@ export function realHeadroomPort(paths: LayoutPaths, options: { readonly spawnDa
 /** The real `SpawnPort`, backed by `node:child_process`'s `spawnSync` — the Node equivalent of the legacy bash tool's `exec`. */
 export const realSpawnPort: SpawnPort = {
   spawnSync(command, args, options) {
-    const result = spawnSync(command, args, options);
+    const result = spawnSyncBlocking("a spawned program", command, args, options);
     return { status: result.status, signal: result.signal, ...(result.error === undefined ? {} : { error: result.error }) };
   },
 };
