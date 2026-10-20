@@ -18,9 +18,15 @@ interface QuotaWindowView {
   readonly weekly: boolean;
 }
 
-/** `label` as text a terminal draws as it stands: the client's own text with its escape sequences and control characters removed, and no more than a label's own width so a long name cannot crowd the bar out. */
+/** Format characters (zero-width spaces, joiners, word joiners) and separators other than a plain space, except the zero-width joiner, which holds emoji sequences and conjuncts together. */
+const INVISIBLE = /(?![ \u200D])[\p{Cf}\p{Z}]/gu;
+
+const ZERO_WIDTH_JOINER = "\u200D";
+
+/** `label` as text a terminal draws as it stands and a person can read: the client's own text with its escape sequences, control characters and invisible characters removed, no more than a label's own width so a long name cannot crowd the bar out, and empty when nothing visible is left. A joiner that joins nothing is invisible and does not count as something left. */
 function safeLabel(label: string): string {
-  return graphemesOf(sanitiseDisplayText(label).trim()).slice(0, MAX_STATUSLINE_LABEL_CHARS).join("");
+  const visible = graphemesOf(sanitiseDisplayText(label).replace(INVISIBLE, "").trim()).filter((grapheme) => grapheme.replaceAll(ZERO_WIDTH_JOINER, "") !== "");
+  return visible.slice(0, MAX_STATUSLINE_LABEL_CHARS).join("").trim();
 }
 
 /** The per-model weekly windows the client's payload carries, read only for a session whose quota is the signed-in account's: a window with no name or no figure is not one to draw. */

@@ -19,6 +19,11 @@ describe("sanitiseDisplayText", () => {
     expect(sanitiseDisplayText(`${ESCAPE}]0;title\u0007x`)).toBe("x");
   });
 
+  it("removes an operating system command that never ends, payload included, up to the next escape", () => {
+    expect(sanitiseDisplayText(`a${ESCAPE}]0;never ends`)).toBe("a");
+    expect(sanitiseDisplayText(`a${ESCAPE}]0;cut short${ESCAPE}[31mb`)).toBe("ab");
+  });
+
   it("removes control characters and bidirectional overrides", () => {
     expect(sanitiseDisplayText("a\nb\tc\u0000d\u007fe")).toBe("abcde");
     expect(sanitiseDisplayText("gpj‮txt.exe")).toBe("gpjtxt.exe");

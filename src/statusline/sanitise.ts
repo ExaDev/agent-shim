@@ -4,8 +4,8 @@ import { graphemesOf } from "./graphemes";
 
 const BELL = "\\u0007";
 
-/** An ANSI control sequence: a CSI (`ESC [` parameters, intermediates, a final byte), an OSC (`ESC ]` up to a bell or `ESC \`), or a lone two-byte escape. */
-const ESCAPE_SEQUENCES = new RegExp([`${ESCAPE}\\[[0-?]*[ -/]*[@-~]`, `${ESCAPE}\\][^${BELL}${ESCAPE}]*(?:${BELL}|${ESCAPE}\\\\)`, `${ESCAPE}[@-Z\\\\-_]`].join("|"), "g");
+/** An ANSI control sequence: a CSI (`ESC [` parameters, intermediates, a final byte), an OSC (`ESC ]` up to a bell or `ESC \`, or to the end of the text or the next escape when it has no terminator), or a lone two-byte escape. */
+const ESCAPE_SEQUENCES = new RegExp([`${ESCAPE}\\[[0-?]*[ -/]*[@-~]`, `${ESCAPE}\\][^${BELL}${ESCAPE}]*(?:${BELL}|${ESCAPE}\\\\)?`, `${ESCAPE}[@-Z\\\\-_]`].join("|"), "g");
 
 /** Control characters, and the characters that reorder or isolate bidirectional text and so can make a path read as another. */
 const CONTROL_AND_BIDI = /[\p{Cc}؜‎‏‪-‮⁦-⁩⁪-⁯]/gu;
