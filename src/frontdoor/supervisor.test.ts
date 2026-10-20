@@ -173,6 +173,21 @@ describe("runFrontDoorSupervisor", () => {
     expect(world.closes).toEqual([]);
   });
 
+  it("asks about its sessions and its superseding owner without the synchronous liveness check", async () => {
+    const world = makeWorld();
+    world.alive.add(LIVE_SESSION);
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0, token: SESSION_TOKEN });
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: DEAD_SESSION, startedAt: 0, token: SESSION_TOKEN });
+    const ports = {
+      ...world.ports,
+      isRunning: (): boolean => {
+        throw new Error("the supervisor's tick must not read the process table synchronously");
+      },
+    };
+    expect(await runFrontDoorSupervisor(IDLE_MINUTES, ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
+    expect(listFrontDoorSessions(world.fs, paths.frontdoorSessionsDir).map((session) => session.pid)).toEqual([LIVE_SESSION]);
+  });
+
   it("shuts the door down after the idle window with no live session, keeping the sticky address", async () => {
     const world = makeWorld();
     writeFrontDoorState(world.fs, paths.frontdoorStateFile, { lastPort: STICKY_PORT });

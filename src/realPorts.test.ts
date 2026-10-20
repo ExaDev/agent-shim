@@ -1,9 +1,10 @@
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { realCredentialPort, realFarmFs, realFileSize, realReadFileTail, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
+import { realCredentialPort, realFarmFs, realFileSize, realReadFileTail, realRunningAmong, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
 
 /** Owner read and write only: the mode a secret file is written with here. */
 const OWNER_ONLY_PERMISSIONS = 0o600;
@@ -439,6 +440,37 @@ describe("realFarmFs owner-only writes", () => {
       expect(fs.readdirSync(root)).toEqual(["state.json"]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe.skipIf(process.platform === "win32")("realRunningAmong", () => {
+  /** A pid that has exited and been reaped, so nothing holds it. */
+  function exitedPid(): number {
+    return spawnSync(process.execPath, ["-e", "0"]).pid;
+  }
+
+  it("reports the running processes among the pids asked and no others", async () => {
+    const gone = exitedPid();
+    expect(await realRunningAmong([process.pid, gone])).toEqual(new Set([process.pid]));
+  });
+
+  it("answers an empty set for no pids without reading the process table", async () => {
+    expect(await realRunningAmong([])).toEqual(new Set());
+  });
+
+  it("leaves out a process that has exited but not been reaped", async () => {
+    // The child forks a grandchild and waits for it to exit without reaping it (WNOWAIT), so the grandchild is a zombie before its pid is printed and stays one for as long as the child lives.
+    const parent = spawn("python3", ["-c", "import os, time\nchild = os.fork()\nif child == 0:\n    os._exit(0)\nos.waitid(os.P_PID, child, os.WEXITED | os.WNOWAIT)\nprint(child, flush=True)\ntime.sleep(30)"], { stdio: ["ignore", "pipe", "inherit"] });
+    try {
+      const zombie = await new Promise<number>((resolve) => {
+        parent.stdout.once("data", (chunk: Buffer) => {
+          resolve(Number(chunk.toString().trim()));
+        });
+      });
+      expect(await realRunningAmong([parent.pid ?? 0, zombie])).toEqual(new Set([parent.pid]));
+    } finally {
+      parent.kill();
     }
   });
 });

@@ -12,7 +12,7 @@ import type { LayoutPaths } from "../paths";
 import { realSessionFs } from "../agents/realFs";
 import { collectSessionList, showSession } from "../agents/sessions";
 import { listIdentities } from "../identityStore";
-import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessRunning, realCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
+import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunningAmong, realCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { supervisedSessionOf, writeModelMove } from "../supervise/registry";
 import { createTargetObservationStore } from "../selection/targetStore";
 import { checkForUpdate } from "../update/commands";
@@ -413,6 +413,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       });
     },
     isRunning: realIsProcessRunning,
+    runningAmong: realRunningAmong,
     // The turnover check's file identity, over the installed entry resolved once at door start: re-resolving per tick would re-run the PATH scan every second and could theoretically flip between two files, while the entry itself is fixed for as long as this door lives. The existence check prefers the agent-shim sibling only when it is really there (see watchedInstallEntry).
     statOwnExecutable: realStatOwnExecutable(watchedInstallEntry(realOwnExecutablePath(), (candidate) => fs.existsSync(candidate))),
     startProviderListener: async (preferredPort) => {
@@ -725,7 +726,7 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
         exit: deps.exit,
         facts: () => ({
           tunnels: openTunnels(),
-          liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => session.pid !== ownPid && realIsProcessRunning(session.pid)).length,
+          liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => session.pid !== ownPid && realIsProcessAlive(session.pid)).length,
           protocol: FRONT_DOOR_PROTOCOL,
           uptimeSeconds: Math.round(process.uptime()),
         }),

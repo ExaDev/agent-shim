@@ -1,5 +1,5 @@
 import { refuseToBlockInRole } from "./processRole";
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -225,7 +225,7 @@ export const realHoldPort: HoldPort = {
 };
 
 /** Whether a process is still running. Signal 0 performs the permission and existence checks without delivering anything; `EPERM` means the process exists but belongs to another user. */
-function realIsProcessAlive(pid: number): boolean {
+export function realIsProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -240,6 +240,7 @@ function realIsProcessAlive(pid: number): boolean {
  * When `ps` is unavailable (no POSIX userland, i.e. Windows) the answer is "not a zombie", falling back to plain signal-0 semantics rather than guessing every process dead.
  */
 function realIsProcessZombie(pid: number): boolean {
+  refuseToBlockInRole("a synchronous process-table read");
   const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
   return result.status === 0 && result.stdout.trim().startsWith("Z");
 }
@@ -255,6 +256,7 @@ export function realIsProcessRunning(pid: number): boolean {
  * Whether `pid` is a live process running this tool's front-door supervisor, read from its command line. Without `ps` (no POSIX userland) the answer is false: an unprovable identity must never be signalled.
  */
 export function realIsFrontDoorSupervisor(pid: number): boolean {
+  refuseToBlockInRole("a synchronous process-table read");
   const result = spawnSync("ps", ["-o", "pid=,command=", "-p", String(pid)], { encoding: "utf8" });
   return result.status === 0 && parseFrontDoorSupervisorPids(result.stdout).includes(pid);
 }
@@ -323,16 +325,46 @@ const PS_TIMEOUT_MS = 2000;
 
 /** The command line `ps` reports for `pid`, or undefined when that is unknown: the pid has gone, there is no `ps` (no POSIX userland), or `ps` did not answer within `PS_TIMEOUT_MS`. Read-only: used to tell which release started a headroom daemon. */
 export function realProcessCommandLine(pid: number): string | undefined {
+  refuseToBlockInRole("a synchronous process-table read");
   const result = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", timeout: PS_TIMEOUT_MS });
   return result.status === 0 ? result.stdout.trim() : undefined;
 }
 
 /** Which of `pids` are running front-door supervisors, from bounded `ps` runs (see `frontDoorLivenessOf`). */
 export function realFrontDoorLiveness(pids: readonly number[]): FrontDoorLiveness {
+  refuseToBlockInRole("a synchronous process-table read");
   return frontDoorLivenessOf(pids, (asked) => {
     const result = spawnSync("ps", ["-o", "pid=,stat=,command=", "-p", asked.map(String).join(",")], { encoding: "utf8", timeout: PS_TIMEOUT_MS });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr, ...(result.error === undefined ? {} : { error: result.error }) };
   });
+}
+
+/** The state column `ps` reports for each of `pids` it knows, read without blocking the calling thread: `ps` is bounded by `PS_TIMEOUT_MS`, and a run that fails or times out reports nothing, so no pid is then in the map. */
+async function readProcessStates(pids: readonly number[]): Promise<ReadonlyMap<number, string>> {
+  return await new Promise((resolve) => {
+    execFile("ps", ["-o", "pid=,stat=", "-p", pids.map(String).join(",")], { encoding: "utf8", timeout: PS_TIMEOUT_MS }, (_error, stdout) => {
+      const states = new Map<number, string>();
+      for (const line of stdout.split("\n")) {
+        const [pidText, stat] = line.trim().split(/\s+/);
+        if (stat !== undefined) {
+          states.set(Number(pidText), stat);
+        }
+      }
+      resolve(states);
+    });
+  });
+}
+
+/**
+ * Which of `pids` are running, zombie-aware like `realIsProcessRunning` but without blocking the calling thread: signal 0 settles which processes exist, and one non-blocking `ps` over the survivors finds those that have exited but not been reaped. The front door's supervisor asks about every registered session once a tick, and a synchronous `ps` per session held its event loop for as long as a loaded machine took to start each one. A process `ps` did not report on (it failed or timed out, or the pid went between the two reads) counts by whether it exists, as `realIsProcessZombie` does when `ps` is unavailable.
+ */
+export async function realRunningAmong(pids: readonly number[]): Promise<ReadonlySet<number>> {
+  const existing = pids.filter(realIsProcessAlive);
+  if (existing.length === 0) {
+    return new Set();
+  }
+  const states = await readProcessStates(existing);
+  return new Set(existing.filter((pid) => states.get(pid)?.startsWith("Z") !== true));
 }
 
 /** The real `RunPort`, used for auxiliary commands whose output this process needs to read — git branch detection for `when: { branch }` conditions, and `check.ts`'s macOS Keychain lookup. */

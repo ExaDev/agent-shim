@@ -49,6 +49,10 @@ export interface FrontDoorSupervisorPorts {
   /** Zombie-aware liveness, the notion every coordination decision in this project uses. */
   readonly isRunning: (pid: number) => boolean;
   /**
+   * Which of `pids` are running, by the same zombie-aware notion as `isRunning` but answered without blocking the event loop. Everything the supervisor asks while it serves goes through this: it asks about every registered session once a tick, and a synchronous process-table read per session would hold the loop that answers every session for as long as the machine took to run them.
+   */
+  readonly runningAmong: (pids: readonly number[]) => Promise<ReadonlySet<number>>;
+  /**
    * Starts the provider listener in this process on `preferredPort` (falling back to any free port when the sticky one is taken, decided at bind time rather than by a racy check-then-bind probe) and resolves once it has bound and answered its own health probe over TLS. This is the HTTPS listener every provider session's base URL points at, serving a loopback leaf signed by agent-shim's CA.
    */
   readonly startProviderListener: (preferredPort: number | undefined) => Promise<FrontDoorListenerHandle>;
@@ -221,9 +225,9 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
   /**
    * The live supervisor the state file names in place of this one, or undefined while this door is still the one launches are sent to. An absent or unreadable record, this door's own pid and a dead owner all leave the door serving as the owner, the same claimability the headroom supervisor's ownership check applies: nothing serves at a dead owner's addresses, so it supersedes nobody.
    */
-  const supersedingOwner = (): number | undefined => {
+  const supersedingOwner = async (): Promise<number | undefined> => {
     const owner = readFrontDoorState(fs, paths.frontdoorStateFile)?.supervisorPid;
-    return owner !== undefined && owner !== ports.ownPid && ports.isRunning(owner) ? owner : undefined;
+    return owner !== undefined && owner !== ports.ownPid && (await ports.runningAmong([owner])).has(owner) ? owner : undefined;
   };
   // Set on the tick that first sees another live owner, and never cleared: from that moment launches are sent to the owner's addresses, and should that owner die, the next launch's ensure brings up a fresh door rather than returning to this one, which no longer appears in the state file.
   let supersededBy: number | undefined;
@@ -254,7 +258,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     // The successor's keepers take over: a draining door that kept running its own would act on the same usage stamps, windows and jobs beside them.
     ports.stopBackgroundWork?.();
     const drained = [direct.drain(), connect.drain(), http.drain()];
-    if (supersedingOwner() === undefined) {
+    if ((await supersedingOwner()) === undefined) {
       writeFrontDoorState(fs, paths.frontdoorStateFile, sticky());
     }
     markFrontDoorDraining(fs, paths.frontdoorDrainingDir, ports.ownPid);
@@ -279,7 +283,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
   // The owner's retirement: the serving machinery stopped, then the sticky addresses written so the next generation starts where this one served, unless another live supervisor has claimed the state file since this tick looked, whose record is never rewritten.
   const shutdown = async (): Promise<number> => {
     await closeServing();
-    if (supersedingOwner() === undefined) {
+    if ((await supersedingOwner()) === undefined) {
       writeFrontDoorState(fs, paths.frontdoorStateFile, sticky());
     }
     return 0;
@@ -297,13 +301,14 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     ticks += 1;
     // The listing precedes the prune so the launch lifecycle publisher sees each pruned launch's record with its start time; the prune's removals are handed to it beside the listing, and the idle decision reads the same listing minus those removals rather than listing again.
     const listed = listFrontDoorSessions(fs, paths.frontdoorSessionsDir);
-    const pruned = pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, ports.isRunning);
+    const running = await ports.runningAmong(listed.map((session) => session.pid));
+    const pruned = pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, (pid) => running.has(pid));
     ports.observeLaunchRegistry(listed, pruned);
     ports.checkQuotaExpiry();
     const prunedPids = new Set(pruned);
     const live = listed.filter((session) => !prunedPids.has(session.pid));
     if (supersededBy === undefined) {
-      supersededBy = supersedingOwner();
+      supersededBy = await supersedingOwner();
       if (supersededBy !== undefined) {
         ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: supervisor ${String(supersededBy)} now owns the front door; taking no new sessions and exiting once the sessions this door serves have ended`);
         ports.doorHealth.superseded(supersededBy);
