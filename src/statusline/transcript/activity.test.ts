@@ -120,6 +120,36 @@ describe("tool calls", () => {
   });
 });
 
+describe("records that copy earlier ones", () => {
+  const blob = (content: readonly unknown[], role: string): Record<string, unknown> => ({ type: "api-request-blob", sessionId: "s", hash: "h", message: { role, content } });
+  const SESSION = [
+    use("a", "Bash", { command: "ls" }),
+    use("ag", "Agent", { subagent_type: "Explore", run_in_background: true }),
+    result("a", SECOND),
+    result("ag", SECOND, false, { toolUseResult: { isAsync: true, status: "async_launched" } }),
+    { type: "queue-operation", operation: "enqueue", timestamp: at(MINUTE), content: "<task-id>t</task-id><tool-use-id>ag</tool-use-id>" },
+  ];
+  const copies = [
+    blob([{ type: "tool_use", id: "a", name: "Bash", input: { command: "ls" } }, { type: "tool_use", id: "ag", name: "Agent", input: { subagent_type: "Explore", run_in_background: true } }, { type: "tool_use", id: "s", name: "Skill", input: { skill: "copied" } }, { type: "tool_use", id: "m", name: "mcp__copied__tool", input: {} }], "assistant"),
+    blob([{ type: "tool_result", tool_use_id: "a", content: "x" }], "user"),
+  ];
+
+  it("add no call, agent, skill or server, and leave a call's end and an agent's end as they are", () => {
+    expect(factsAt([...SESSION, ...copies])).toEqual(factsAt(SESSION));
+    expect(factsAt([...SESSION, ...copies]).tools).toEqual([{ name: "Bash", target: "ls", status: "completed" }]);
+    expect(factsAt([...SESSION, ...copies]).agents).toMatchObject([{ type: "Explore", status: "completed" }]);
+  });
+
+  it("do not leave a call running when they come before the call's result", () => {
+    expect(factsAt([use("a", "Bash", { command: "ls" }), copies[0] ?? {}, result("a", SECOND)]).tools.map((tool) => tool.status)).toEqual(["completed"]);
+  });
+
+  it("are no reason to track a call whose id is already tracked, in a record of the right kind", () => {
+    expect(factsAt([use("a", "Read"), result("a", SECOND), use("a", "Read", {}, STEP.third)]).tools).toEqual([{ name: "Read", target: undefined, status: "completed" }]);
+    expect(factsAt([use("g", "Agent", {}), use("g", "Agent", {}, STEP.third)]).agents).toHaveLength(1);
+  });
+});
+
 describe("skills and MCP servers", () => {
   it("collects each skill and each server once, in the order first used", () => {
     const records = [

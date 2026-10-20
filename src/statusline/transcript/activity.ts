@@ -226,6 +226,11 @@ function foldTodoCall(state: ActivityLatest, call: ToolUse): ActivityLatest {
   return { ...state, todos: state.todos.map((item, at) => (at === index ? updated : item)), todosEdited: true };
 }
 
+/** Whether a call with this id is tracked already: the client does not reuse an id, so a second call with one is a copy of the first. */
+function isTracked(state: ActivityLatest, id: string): boolean {
+  return state.tools.some((tool) => tool.id === id) || state.agents.some((agent) => agent.id === id);
+}
+
 /** The state after a tool call: an agent, an edit to the todo list, or a tool call to track. */
 function foldToolUse(state: ActivityLatest, call: ToolUse, atMs: number | undefined): ActivityLatest {
   if (AGENT_TOOLS.includes(call.name)) {
@@ -287,10 +292,11 @@ export function foldActivityLatest(state: ActivityLatest, record: TranscriptReco
   if (!Array.isArray(content)) {
     return next;
   }
+  // Calls are made in assistant records and answered in user records. Other records can carry copies of both (the client writes the requests it sends to the API as `api-request-blob` records, whose messages hold earlier calls and results again), and a copy is not a second call.
   for (const block of content) {
-    if (block.type === "tool_use" && block.id !== undefined && block.name !== undefined) {
+    if (record.type === "assistant" && block.type === "tool_use" && block.id !== undefined && block.name !== undefined && !isTracked(next, block.id)) {
       next = foldToolUse(next, { id: block.id, name: block.name, input: block.input }, atMs);
-    } else if (block.type === "tool_result" && block.tool_use_id !== undefined) {
+    } else if (record.type === "user" && block.type === "tool_result" && block.tool_use_id !== undefined) {
       next = foldToolResult(next, record, block.tool_use_id, block.is_error === true, atMs);
     }
   }
@@ -305,7 +311,7 @@ function withName(names: readonly string[], name: string | undefined): readonly 
 /** The cumulative activity after one more transcript record, read in file order. */
 function foldActivityCumulative(state: ActivityState["cumulative"], record: TranscriptRecord): ActivityState["cumulative"] {
   const content = record.message?.content;
-  if (record.isSidechain === true || !Array.isArray(content)) {
+  if (record.isSidechain === true || record.type !== "assistant" || !Array.isArray(content)) {
     return state;
   }
   let skills: readonly string[] = state.skills;
