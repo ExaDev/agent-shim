@@ -475,14 +475,14 @@ describe("presets", () => {
   /** What each preset sets, written out from claude-hud's definitions (commands/configure.md, "Preset Definitions" and "Git Style Mapping") rather than read back from the code: the elements the statusline has for what each preset turns on, git as branch and dirty marker alone, and the reset label on. */
   const BUNDLES = {
     full: {
-      layout: { header: ["model", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "sessionName", "duration"], rows: ["context", "quota", "addedDirs", "memory", "environment", "promptCache", "compactions", "tokens"] },
+      layout: { header: ["model", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "sessionName", "duration"], rows: ["context", "quota", "addedDirs", "memory", "environment", "tools", "skills", "mcp", "agents", "todos", "promptCache", "compactions", "tokens"] },
       git: { enabled: true, showDirty: true, showAheadBehind: false, showLineDiff: false },
       jj: { enabled: true, showDirty: true, showConflicts: true },
       usage: { resetLabel: true },
       context: { breakdown: "critical" },
     },
     essential: {
-      layout: { header: ["model", "project", "vcs", "duration"], rows: ["context", "addedDirs"] },
+      layout: { header: ["model", "project", "vcs", "duration"], rows: ["context", "addedDirs", "tools", "agents", "todos"] },
       git: { enabled: true, showDirty: true, showAheadBehind: false, showLineDiff: false },
       jj: { enabled: false, showDirty: true, showConflicts: true },
       usage: { resetLabel: true },
@@ -530,6 +530,14 @@ describe("presets", () => {
       expect(resolveStatusline({ preset }).layout.header.filter((name) => own.includes(name)), preset).toEqual([]);
       expect(resolveStatusline({ preset }).layout.rows.filter((name) => ["gitFiles", "sessionTime"].includes(name)), preset).toEqual([]);
     }
+  });
+
+  it("turn on the activity rows as claude-hud's definitions do: all five in full, tools, agents and todos in essential, none in minimal or standard", () => {
+    const activity = (preset: (typeof STATUSLINE_PRESETS)[number]): string[] => resolveStatusline({ preset }).layout.rows.filter((name) => ["tools", "skills", "mcp", "agents", "todos"].includes(name));
+    expect(activity("full")).toEqual(["tools", "skills", "mcp", "agents", "todos"]);
+    expect(activity("essential")).toEqual(["tools", "agents", "todos"]);
+    expect(activity("minimal")).toEqual([]);
+    expect(activity("standard")).toEqual([]);
   });
 
   it("sit beneath the keys the same layer sets", () => {
