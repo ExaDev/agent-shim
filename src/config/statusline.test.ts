@@ -543,6 +543,20 @@ describe("presets", () => {
     expect(resolveStatusline(merged)).toEqual(resolveStatusline(StatuslineSchema.parse(mergeStatuslineSettings(undefined, merged))));
   });
 
+  it("leave the rest of the layout alone, so merge groups and right alignment keep validating whichever preset is chosen", () => {
+    for (const preset of STATUSLINE_PRESETS) {
+      const resolved = resolveStatusline({ preset, layout: { merge: [["context", "addedDirs"]], rightAlign: ["addedDirs"] } });
+      expect(resolved.layout, preset).toMatchObject({ mode: "expanded", rule: "none", mergeBars: true, merge: [["context", "addedDirs"]], rightAlign: ["addedDirs"], maxWidth: 0, forceMaxWidth: false });
+    }
+    const merged = LAYERED({ layout: { merge: [["context", "quota"]], rightAlign: ["quota"] } }, { preset: "minimal" });
+    expect(resolveStatusline(StatuslineSchema.parse(merged)).layout).toMatchObject({ rows: ["context", "addedDirs"], merge: [["context", "quota"]], rightAlign: ["quota"] });
+  });
+
+  it("do not excuse a right alignment that no merge group holds, or a forced width without one", () => {
+    expect(() => resolveStatusline({ preset: "full", layout: { rightAlign: ["quota"] } })).toThrow(/rightAlign/);
+    expect(() => resolveStatusline({ preset: "minimal", layout: { forceMaxWidth: true } })).toThrow(/maxWidth/);
+  });
+
   it("keep a layer's own keys when it names no preset, and change neither argument", () => {
     const base = { layout: { header: ["model"] } };
     const over = { preset: "full" };
