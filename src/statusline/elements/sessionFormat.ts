@@ -17,6 +17,22 @@ export function formatElapsed(ms: number): string {
   return `${String(Math.floor(minutes / MINUTES_PER_HOUR))}h ${String(minutes % MINUTES_PER_HOUR)}m`;
 }
 
+/** How long something has run, to the second: `<1s`, `12s`, `1m 5s`, `1h 5m`. */
+export function formatSpan(ms: number): string {
+  if (ms < MS_PER_SECOND) {
+    return "<1s";
+  }
+  const seconds = Math.floor(ms / MS_PER_SECOND);
+  if (seconds < SECONDS_PER_MINUTE) {
+    return `${String(seconds)}s`;
+  }
+  const minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
+  if (minutes < MINUTES_PER_HOUR) {
+    return `${String(minutes)}m ${String(seconds % SECONDS_PER_MINUTE)}s`;
+  }
+  return `${String(Math.floor(minutes / MINUTES_PER_HOUR))}h ${String(minutes % MINUTES_PER_HOUR)}m`;
+}
+
 /** The two largest whole units of a span, as `value` and its remainder: `2h 5m`, `3d`. */
 function twoUnits(larger: number, smaller: number, largerUnit: string, smallerUnit: string): string {
   return smaller > 0 ? `${String(larger)}${largerUnit} ${String(smaller)}${smallerUnit}` : `${String(larger)}${largerUnit}`;

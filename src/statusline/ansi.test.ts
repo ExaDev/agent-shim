@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ESCAPE, truncateToColumns, visibleLength } from "./ansi";
+import { ESCAPE, truncateToColumns, truncateWithEllipsis, visibleLength } from "./ansi";
 
 const THREE_COLUMNS = 3;
 const SIX_COLUMNS = 6;
@@ -51,5 +51,25 @@ describe("truncateToColumns", () => {
       expect(visibleLength(truncateToColumns(coloured, limit)), String(limit)).toBeLessThanOrEqual(limit);
     }
     expect(visibleLength(truncateToColumns(coloured, visibleLength(coloured)))).toBe(visibleLength(coloured));
+  });
+});
+
+describe("truncateWithEllipsis", () => {
+  it("leaves text that fits alone, at exactly the limit too", () => {
+    expect(truncateWithEllipsis("abcd", FOUR_COLUMNS, "\u2026")).toBe("abcd");
+    expect(truncateWithEllipsis("abc", FOUR_COLUMNS, "\u2026")).toBe("abc");
+  });
+
+  it("cuts text that does not fit so that the cut text and the ellipsis together fit", () => {
+    expect(truncateWithEllipsis("abcde", FOUR_COLUMNS, "\u2026")).toBe("abc\u2026");
+    expect(truncateWithEllipsis("abcdef", FIVE_COLUMNS, "...")).toBe("ab...");
+  });
+
+  it("counts a wide character as the columns it takes, and never splits one", () => {
+    expect(truncateWithEllipsis("\u65e5\u672c\u8a9e", FOUR_COLUMNS, "\u2026")).toBe("\u65e5\u2026");
+  });
+
+  it("leaves only the ellipsis when the limit is smaller than it", () => {
+    expect(truncateWithEllipsis("abcdef", 1, "...")).toBe("...");
   });
 });
