@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { statuslineKeys } from "../statusline/keys";
-import { contextBands, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_COLUMNS, MAX_STATUSLINE_LABEL_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
+import { contextBands, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_COLUMNS, MAX_STATUSLINE_LABEL_COLUMNS, MIN_STATUSLINE_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
 
 const A_CONFIGURED_WIDTH = 100;
 const OVER_LONG_LABEL = "x".repeat(MAX_STATUSLINE_LABEL_COLUMNS + 1);
@@ -245,8 +245,11 @@ describe("resolveStatusline", () => {
 describe("the width settings", () => {
   const accepts = (layout: unknown): boolean => StatuslineSchema.safeParse({ layout }).success;
 
-  it("accept a width from none to the widest a terminal is taken to be, and refuse any other", () => {
+  it("accept a width from none, or the narrowest a line is drawn in, to the widest a terminal is taken to be, and refuse any other", () => {
     expect(accepts({ maxWidth: 0 })).toBe(true);
+    expect(accepts({ maxWidth: MIN_STATUSLINE_COLUMNS })).toBe(true);
+    expect(accepts({ maxWidth: MIN_STATUSLINE_COLUMNS - 1 })).toBe(false);
+    expect(accepts({ maxWidth: 1 })).toBe(false);
     expect(accepts({ maxWidth: MAX_STATUSLINE_COLUMNS })).toBe(true);
     expect(accepts({ maxWidth: MAX_STATUSLINE_COLUMNS + 1 })).toBe(false);
     expect(accepts({ maxWidth: -1 })).toBe(false);

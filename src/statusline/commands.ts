@@ -22,7 +22,7 @@ import { realStatuslinePorts } from "./ports";
 import { renderStatuslineBlock } from "./render";
 import { formatStatuslineKeys, statuslineKeys } from "./keys";
 import { statuslineSettingsFromEnv } from "./settings";
-import { terminalWidthOf } from "./width";
+import { widthsOf } from "./width";
 
 async function readAllStdin(): Promise<string> {
   return await new Promise((resolve) => {
@@ -140,7 +140,8 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
         }
       }
       const view = { ...viewOf(clientPayload), ...(stackedUnderDefault ? { modelDisplayName: undefined } : {}) };
-      console.log(renderStatuslineBlock({ summary, view, payload: clientPayload, terminalWidth: terminalWidthOf(payload, process.env, settings.layout), nowMs, settings, ports: realStatuslinePorts(process.env, deps.paths.statuslineDir) }));
+      const widths = widthsOf(payload, process.env, settings.layout);
+      console.log(renderStatuslineBlock({ summary, view, payload: clientPayload, terminalWidth: widths.terminal, lineWidth: widths.line, nowMs, settings, ports: realStatuslinePorts(process.env, deps.paths.statuslineDir) }));
       }),
     ["$ agent-shim statusline  # a client's statusline setting names this; it renders or delegates"],
   );

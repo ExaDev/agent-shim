@@ -262,11 +262,11 @@
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 1000,
-                  "description": "The width in columns to draw for when the client reports none and the COLUMNS environment variable names none, in place of the 80 it would otherwise assume; 0 leaves it at that."
+                  "description": "The exact width in columns lines are drawn to when the client reports none and the COLUMNS environment variable names none, in place of the width it would draw to for an assumed 80-column terminal; unlike a terminal's width, it is not reduced by the columns Claude Code keeps back for itself. It is 0, to leave it unset, or at least 20."
                 },
                 "forceMaxWidth": {
                   "type": "boolean",
-                  "description": "Whether maxWidth is the width drawn for whatever the client reports, even when the terminal is narrower or wider; it needs maxWidth to be set."
+                  "description": "Whether maxWidth is the exact width lines are drawn to for whatever the client reports, even when the terminal is narrower or wider; it needs maxWidth to be set."
                 }
               },
               "additionalProperties": false
