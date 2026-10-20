@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { declareThisProcessTheFrontDoor, isFrontDoorSupervisorPid, resetFrontDoorDeclarationForTests } from "./selfIdentity";
+import { declareThisProcessTheFrontDoor, isDeclaredFrontDoor, isFrontDoorSupervisorPid, resetFrontDoorDeclarationForTests } from "./selfIdentity";
 
 /** Pids that are not this process's: one the identity check recognises and one it does not. */
 const OTHER_DOOR_PID = process.pid + 1;
@@ -30,5 +30,18 @@ describe("isFrontDoorSupervisorPid", () => {
     const identify = vi.fn(() => false);
     expect(isFrontDoorSupervisorPid(process.pid, identify)).toBe(false);
     expect(identify).toHaveBeenCalledWith(process.pid);
+  });
+});
+
+describe("isDeclaredFrontDoor", () => {
+  afterEach(() => {
+    resetFrontDoorDeclarationForTests();
+  });
+
+  it("is true only for this process, and only once it has declared itself the door", () => {
+    expect(isDeclaredFrontDoor(process.pid)).toBe(false);
+    declareThisProcessTheFrontDoor();
+    expect(isDeclaredFrontDoor(process.pid)).toBe(true);
+    expect(isDeclaredFrontDoor(OTHER_DOOR_PID)).toBe(false);
   });
 });
