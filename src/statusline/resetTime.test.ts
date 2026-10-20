@@ -59,7 +59,13 @@ describe("formatResetTime", () => {
     }
     expect(textFor(withinHalfSecond, { timeFormat: "elapsedAndAbsolute" }).text).toBe("100% elapsed");
     const justOver = { resetsAt: new Date(NOW_MS + OVER_HALF_A_SECOND_MS).toISOString(), periodMs: FIVE_HOUR_PERIOD_MS };
-    expect(textFor(justOver, { timeFormat: "both" })).toEqual({ text: "0m, at 09:00", pending: true });
+    expect(textFor(justOver, { timeFormat: "both" })).toEqual({ text: "1s, at 09:00", pending: true });
+  });
+
+  it("tells the seconds left when less than a minute remains", () => {
+    const FORTY_FIVE_SECONDS_MS = 45_000;
+    expect(textFor({ resetsAt: new Date(NOW_MS + FORTY_FIVE_SECONDS_MS).toISOString(), periodMs: undefined }, {})).toEqual({ text: "45s", pending: true });
+    expect(textFor({ resetsAt: new Date(NOW_MS + 2 * FORTY_FIVE_SECONDS_MS).toISOString(), periodMs: undefined }, {}).text).toBe("1m");
   });
 
   it("writes the wall-clock time under the clock settings", () => {

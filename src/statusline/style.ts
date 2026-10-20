@@ -62,10 +62,13 @@ export function formatTokens(num: number): string {
   return String(Math.round(num));
 }
 
-/** The Antigravity statusline's own duration form: `6d 17h`, `4h 23m`, `23m`, and `available` for nothing outstanding. */
+/** The Antigravity statusline's own duration form: `6d 17h`, `4h 23m`, `23m`, `45s` for under a minute, and `available` for nothing outstanding. */
 export function formatDuration(seconds: number | undefined): string {
   if (seconds === undefined || seconds <= 0) {
     return "available";
+  }
+  if (seconds < SECONDS_PER_MINUTE) {
+    return `${String(seconds)}s`;
   }
   const days = Math.floor(seconds / SECONDS_PER_DAY);
   const hours = Math.floor((seconds % SECONDS_PER_DAY) / (MINUTES_PER_HOUR * SECONDS_PER_MINUTE));
