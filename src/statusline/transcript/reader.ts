@@ -5,6 +5,7 @@ import { z } from "zod";
 import { cacheFileFor, loadCache, saveCache } from "../cacheFile";
 import type { StatuslinePorts } from "../ports";
 import { parseTranscriptRecord } from "./record";
+import { EMPTY_TOKEN_STATE, foldTokens, TokenStateSchema, type SessionTokens, type TokenState } from "./tokens";
 import { EMPTY_SESSION_STATE, foldSession, SessionStateSchema, sessionFactsOf, type SessionFacts, type SessionState } from "./session";
 
 /** The most bytes one read of a transcript takes in. A transcript grows to many megabytes and the statusline reads it at every refresh, so the work is bounded by bytes: a refresh reads at most this much from where the last one stopped, and a transcript that has grown by more than this since (or that has never been read) is caught up over several refreshes. */
@@ -17,7 +18,7 @@ const NEWLINE = 0x0a;
 
 /** The kind of cache file the reader keeps, and the version of what it holds: a file of another version is read as absent. */
 const CACHE_KIND = "transcript";
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 
 const TranscriptCacheSchema = z.strictObject({
   version: z.literal(CACHE_VERSION),
@@ -30,6 +31,7 @@ const TranscriptCacheSchema = z.strictObject({
   /** True while the offset lies inside a line that was too big to read, which is passed a window at a time until its end. */
   skipping: z.literal(true).optional(),
   session: SessionStateSchema,
+  tokens: TokenStateSchema,
 });
 
 type TranscriptCache = z.infer<typeof TranscriptCacheSchema>;
@@ -43,19 +45,23 @@ export interface TranscriptFacts {
   /** False while the reader is still catching up with a transcript bigger than a read takes in, or for good once it skipped a line bigger than a read, so a count over the whole session (compactions) may fall short of the truth. */
   readonly complete: boolean;
   readonly session: SessionFacts;
+  /** The tokens the session has used, over every response read; short of the truth while `complete` is false. */
+  readonly tokens: SessionTokens;
 }
 
 /** The lines of a read as records, in order, and how many bytes they took: only whole lines are taken, so a record the client is still writing is read at the next refresh. */
-function foldLines(state: SessionState, bytes: Uint8Array): { readonly state: SessionState; readonly consumed: number } {
+function foldLines(state: { readonly session: SessionState; readonly tokens: TokenState }, bytes: Uint8Array): { readonly session: SessionState; readonly tokens: TokenState; readonly consumed: number } {
   const end = bytes.lastIndexOf(NEWLINE) + 1;
-  let folded = state;
+  let session = state.session;
+  let tokens = state.tokens;
   for (const line of new TextDecoder().decode(bytes.subarray(0, end)).split("\n")) {
     const record = line === "" ? undefined : parseTranscriptRecord(line);
     if (record !== undefined) {
-      folded = foldSession(folded, record);
+      session = foldSession(session, record);
+      tokens = foldTokens(tokens, record);
     }
   }
-  return { state: folded, consumed: end };
+  return { session, tokens, consumed: end };
 }
 
 /** A digest of the transcript's first line, or of its first `FINGERPRINT_BYTES` when that line is longer. A cache is written only once a line is complete, so the digest of a first line still being written is never kept. */
@@ -68,7 +74,7 @@ function fingerprintOf(head: Uint8Array): string {
 
 /** The facts of what the cache holds, whether or not the read that produced it reached the end of the transcript: until it has, the state lacks what the rest of the transcript says, so the facts are not complete. */
 function factsOf(size: number, cache: TranscriptCache, reachedEnd: boolean): TranscriptFacts {
-  return { bytes: size, complete: cache.complete && reachedEnd, session: sessionFactsOf(cache.session) };
+  return { bytes: size, complete: cache.complete && reachedEnd, session: sessionFactsOf(cache.session), tokens: cache.tokens.totals };
 }
 
 /** What the state holds when a line that may have shown the session's start was skipped. */
@@ -89,12 +95,12 @@ function advance(cache: TranscriptCache, window: Uint8Array, reachedEnd: boolean
     offset += lineEnd + 1;
     bytes = bytes.subarray(lineEnd + 1);
   }
-  const { state, consumed } = foldLines(cache.session, bytes);
+  const { session: folded, tokens, consumed } = foldLines(cache, bytes);
   if (consumed === 0 && bytes.length > 0 && !reachedEnd) {
     const session = cache.session.startedAtMs === undefined ? { ...cache.session, ...START_UNKNOWN } : cache.session;
     return { ...cache, offset: offset + bytes.length, complete: false, skipping: true, session };
   }
-  return { version: cache.version, fingerprint: cache.fingerprint, offset: offset + consumed, complete: cache.complete, session: state };
+  return { version: cache.version, fingerprint: cache.fingerprint, offset: offset + consumed, complete: cache.complete, session: folded, tokens };
 }
 
 /**
@@ -111,7 +117,7 @@ export function readTranscript(ports: StatuslinePorts, transcriptPath: string, n
   if (window === undefined) {
     return undefined;
   }
-  const base: TranscriptCache = cached ?? { version: CACHE_VERSION, fingerprint: "", offset: 0, complete: true, session: EMPTY_SESSION_STATE };
+  const base: TranscriptCache = cached ?? { version: CACHE_VERSION, fingerprint: "", offset: 0, complete: true, session: EMPTY_SESSION_STATE, tokens: EMPTY_TOKEN_STATE };
   const reachedEnd = window.size - from <= MAX_TRANSCRIPT_READ_BYTES;
   const next = advance(base, window.bytes, reachedEnd);
   if (next.offset > base.offset) {

@@ -18,6 +18,13 @@ const LINE_BYTES = 1_024;
 /** A line length that does not divide a read, so a read ends inside a line, and how often a record in a run is a compaction. */
 const ODD_LINE_BYTES = 997;
 const BOUNDARY_EVERY = 7;
+/** Digits of the response ids the token tests write, enough for every record of a transcript several reads long. */
+const ID_DIGITS = 6;
+const FIRST_INPUT = 10;
+const FIRST_OUTPUT = 5;
+const SECOND_INPUT = 20;
+const GROWN_OUTPUT = 9;
+const CACHE_READ = 100;
 /** How many times the filler repeats so a transcript is several reads long, and how many lines past one read another is. */
 const FILLER_READS = 3;
 const LINES_PAST_A_READ = 5;
@@ -131,6 +138,31 @@ describe("readTranscript", () => {
     expect(disk.files.has(stale)).toBe(false);
     expect(disk.files.has(recent)).toBe(true);
     expect(disk.files.has(cacheFileFor(fakeStatuslinePorts(), "transcript", TRANSCRIPT))).toBe(true);
+  });
+
+  it("sums the tokens of the responses, counting a response whose records straddle two refreshes once", () => {
+    const response = (id: string, input: number, output: number): string => line({ type: "assistant", timestamp: at(0), message: { id, usage: { input_tokens: input, output_tokens: output, cache_read_input_tokens: CACHE_READ } } });
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: response("a", FIRST_INPUT, FIRST_OUTPUT) + response("b", SECOND_INPUT, 1) });
+    const ports = fakeStatuslinePorts(disk.ports);
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.tokens).toEqual({ inputTokens: FIRST_INPUT + SECOND_INPUT, outputTokens: FIRST_OUTPUT + 1, cacheCreationTokens: 0, cacheReadTokens: 2 * CACHE_READ });
+    disk.files.set(TRANSCRIPT, (disk.files.get(TRANSCRIPT) ?? "") + response("b", SECOND_INPUT, GROWN_OUTPUT));
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.tokens).toEqual({ inputTokens: FIRST_INPUT + SECOND_INPUT, outputTokens: FIRST_OUTPUT + GROWN_OUTPUT, cacheCreationTokens: 0, cacheReadTokens: 2 * CACHE_READ });
+  });
+
+  it("sums the tokens of a transcript bigger than a read over successive refreshes, short of the total until it has caught up and equal to it after", () => {
+    const filler = paddedLine({ type: "assistant", timestamp: at(0), message: { id: "x", usage: { input_tokens: 1 } } });
+    const responses = (FILLER_READS * MAX_TRANSCRIPT_READ_BYTES) / LINE_BYTES;
+    // Each record is a response of its own: the ids differ, so none is taken for a repeat of the one before.
+    const text = Array.from({ length: responses }, (_, index) => filler.replace('"id":"x"', `"id":"r${String(index).padStart(ID_DIGITS, "0")}"`)).join("");
+    const ports = fakeStatuslinePorts(fakeStatuslineFilesystem({ [TRANSCRIPT]: text }).ports);
+    const first = readTranscript(ports, TRANSCRIPT, T0);
+    expect(first?.complete).toBe(false);
+    expect(first?.tokens.inputTokens).toBeLessThan(responses);
+    let facts = first;
+    while (facts?.complete === false) {
+      facts = readTranscript(ports, TRANSCRIPT, T0);
+    }
+    expect(facts?.tokens.inputTokens).toBe(responses);
   });
 
   it("reads a transcript it cannot read as nothing", () => {
