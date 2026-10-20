@@ -7,10 +7,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FRONTDOOR_PROBE_ATTEMPTS } from "./ensure";
 import { PROBE_TIMEOUT_MS } from "./probe";
-import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog, type DoorWatchdog, type ThreadWatchdogParams } from "./watchdog";
+import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_MAX_GENERATIONS, respawnDelayMs, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog, type DoorWatchdog, type ThreadWatchdogParams } from "./watchdog";
 
 /** The respawn ceiling the tests run at: small so the chain-end case needs no real doors, and one above the middle generation so the stepping case can observe a spawn that is not the last. */
 const TEST_RESPAWN_MAX_GENERATION = 3;
+/** Generations past the immediate ones that are far enough on for the cooldown to have reached its cap. */
+const GENERATIONS_PAST_THE_CAP = 100;
+
+/** The cooldown each generation past the immediate ones adds, and its cap: small, so a test that waits for the replacement is not slowed. */
+const TEST_COOLDOWN_STEP_MS = 30;
+const TEST_COOLDOWN_CAP_MS = 60;
+
 /** The start lock's file name inside each test's own directory. */
 const LOCK_NAME = "start.lock";
 
@@ -36,6 +43,20 @@ describe("the watchdog's derived constants", () => {
 
   it("checks several times within its bound, so a stall is noticed within a fraction of it", () => {
     expect(DOOR_STALL_BOUND_MS / DOOR_WATCHDOG_CHECK_MS).toBeGreaterThan(1);
+  });
+});
+
+describe("respawnDelayMs", () => {
+  it("is nothing for the immediate generations and one stall bound more for each generation past them", () => {
+    expect(respawnDelayMs(1)).toBe(0);
+    expect(respawnDelayMs(DOOR_RESPAWN_MAX_GENERATIONS)).toBe(0);
+    expect(respawnDelayMs(DOOR_RESPAWN_MAX_GENERATIONS + 1)).toBe(DOOR_STALL_BOUND_MS);
+    expect(respawnDelayMs(DOOR_RESPAWN_MAX_GENERATIONS + 2)).toBe(2 * DOOR_STALL_BOUND_MS);
+  });
+
+  it("stops growing at the cap, which is the time the immediate generations together allow", () => {
+    expect(respawnDelayMs(DOOR_RESPAWN_MAX_GENERATIONS + GENERATIONS_PAST_THE_CAP)).toBe(DOOR_RESPAWN_COOLDOWN_CAP_MS);
+    expect(DOOR_RESPAWN_COOLDOWN_CAP_MS).toBe(DOOR_STALL_BOUND_MS * DOOR_RESPAWN_MAX_GENERATIONS);
   });
 });
 
@@ -67,7 +88,7 @@ describe("startThreadWatchdog", () => {
         checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS,
         action: "report",
         respawnGeneration: 0,
-        respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, startLockFile: path.join(directory, LOCK_NAME),
+        respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: path.join(directory, LOCK_NAME),
         onReport: (message) => {
           if (timer !== undefined) clearInterval(timer);
           resolve(message);
@@ -98,7 +119,7 @@ describe("startThreadWatchdog", () => {
 
   it("acts while the main thread is blocked, which is the case it exists for", async () => {
     const reported = new Promise<string>((resolve) => {
-      watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, startLockFile: path.join(directory, LOCK_NAME), onReport: (message) => {
+      watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: path.join(directory, LOCK_NAME), onReport: (message) => {
           resolve(message);
         } });
     });
@@ -111,7 +132,7 @@ describe("startThreadWatchdog", () => {
 
   it("does nothing once stopped, so a slow orderly retirement is never taken for a stall", async () => {
     const reported: string[] = [];
-    watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, startLockFile: path.join(directory, LOCK_NAME), onReport: (message) => {
+    watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: path.join(directory, LOCK_NAME), onReport: (message) => {
         reported.push(message);
       } });
     watchdog.stop();
@@ -129,7 +150,7 @@ describe("startThreadWatchdog", () => {
     async function stallWith(extra: { readonly respawnGeneration?: number; readonly respawnMaxGeneration?: number; readonly respawn?: ThreadWatchdogParams["respawn"] }): Promise<string> {
       const logFile = path.join(directory, "frontdoor.log");
       await new Promise<void>((resolve) => {
-        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", logFile, respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, startLockFile: path.join(directory, LOCK_NAME), ...extra, onReport: () => {
+        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", logFile, respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: path.join(directory, LOCK_NAME), ...extra, onReport: () => {
             resolve();
           } });
       });
@@ -154,7 +175,7 @@ describe("startThreadWatchdog", () => {
     it("names the function a blocked main thread was held in", async () => {
       const logFile = path.join(directory, "frontdoor.log");
       const reported = new Promise<void>((resolve) => {
-        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: PAUSE_WAIT_GUARD_MS, action: "report", logFile, respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, startLockFile: path.join(directory, LOCK_NAME), onReport: () => {
+        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: PAUSE_WAIT_GUARD_MS, action: "report", logFile, respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: path.join(directory, LOCK_NAME), onReport: () => {
             resolve();
           } });
       });
@@ -226,12 +247,44 @@ describe("startThreadWatchdog", () => {
       expect(lockHolder()).not.toBe(dead);
     });
 
-    it("leaves the next launch's ensure to start one when the stall has already recurred through every replacement generation", async () => {
+    it("starts a replacement past the immediate generations too, naming the cooldown it waits before binding", async () => {
       const markerFile = path.join(directory, MARKER);
-      const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, "x")`], env: { PATH: process.env.PATH ?? "" } };
+      const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_RESPAWN_DELAY_ENV} + ":" + process.env.${DOOR_RESPAWN_GENERATION_ENV})`], env: { PATH: process.env.PATH ?? "" } };
       const log = await stallWith({ respawnGeneration: TEST_RESPAWN_MAX_GENERATION, respawn });
-      expect(log).toMatch(new RegExp(`not starting another replacement: this door was replacement generation ${String(TEST_RESPAWN_MAX_GENERATION)} of ${String(TEST_RESPAWN_MAX_GENERATION)}`));
-      expect(fs.existsSync(markerFile)).toBe(false);
+      await vi.waitFor(
+        () => {
+        expect(fs.existsSync(markerFile)).toBe(true);
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
+      expect(fs.readFileSync(markerFile, "utf8")).toBe(`${String(TEST_COOLDOWN_STEP_MS)}:${String(TEST_RESPAWN_MAX_GENERATION + 1)}`);
+      expect(log).toMatch(new RegExp(`${String(TEST_COOLDOWN_STEP_MS)}ms cooldown`));
+    });
+
+    it("starts the immediate generations with no cooldown", async () => {
+      const markerFile = path.join(directory, MARKER);
+      const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_RESPAWN_DELAY_ENV})`], env: { PATH: process.env.PATH ?? "" } };
+      await stallWith({ respawnGeneration: 0, respawn });
+      await vi.waitFor(
+        () => {
+        expect(fs.existsSync(markerFile)).toBe(true);
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
+      expect(fs.readFileSync(markerFile, "utf8")).toBe("0");
+    });
+
+    it("caps the cooldown, so a chain that keeps stalling is retried at a steady pace", async () => {
+      const markerFile = path.join(directory, MARKER);
+      const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_RESPAWN_DELAY_ENV})`], env: { PATH: process.env.PATH ?? "" } };
+      await stallWith({ respawnGeneration: TEST_RESPAWN_MAX_GENERATION + GENERATIONS_PAST_THE_CAP, respawn });
+      await vi.waitFor(
+        () => {
+        expect(fs.existsSync(markerFile)).toBe(true);
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
+      expect(fs.readFileSync(markerFile, "utf8")).toBe(String(TEST_COOLDOWN_CAP_MS));
     });
   });
 });

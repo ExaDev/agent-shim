@@ -73,7 +73,7 @@ import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, g
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
-import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_MAX_GENERATIONS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
+import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_MAX_GENERATIONS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
 import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, liveSessionTokens, removeFrontDoorSession, writeFrontDoorSession, readFrontDoorSessionModels } from "./state";
@@ -87,6 +87,12 @@ import { createUsageStore } from "../usage/store";
 import type { UsageRecord } from "../usage/schema";
 
 /** How a door's watchdog starts a replacement: this very executable running the supervisor subcommand, pinned to this door's state root exactly as `spawnDetachedSupervisor` pins it. Every environment value is a string, as the watchdog thread's `spawn` requires. */
+/** The cooldown this door was told to wait before binding (`DOOR_RESPAWN_DELAY_ENV`), or 0 for a door no watchdog started or one started with none. Read once at startup, with the generation. */
+function readRespawnDelayMs(): number {
+  const delay = Number(process.env[DOOR_RESPAWN_DELAY_ENV]);
+  return Number.isInteger(delay) && delay > 0 ? delay : 0;
+}
+
 /** The respawn generation this door was started as (`DOOR_RESPAWN_GENERATION_ENV`), or 0 for a door no watchdog started. Read once at startup so the env can be scrubbed before anything is served and the value handed to the supervisor ports explicitly. */
 function readRespawnGeneration(): number {
   const generation = Number(process.env[DOOR_RESPAWN_GENERATION_ENV]);
@@ -626,6 +632,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         respawn: respawnInvocation(paths),
         respawnGeneration,
         respawnMaxGeneration: DOOR_RESPAWN_MAX_GENERATIONS,
+        cooldownStepMs: DOOR_STALL_BOUND_MS,
+        cooldownCapMs: DOOR_RESPAWN_COOLDOWN_CAP_MS,
         startLockFile: paths.frontdoorLockFile,
       }),
     // The launch lifecycle publisher over the same backbone the typed API serves: the tick's registry facts go in here, and the door's own register, prune and end moments come out as source-tagged events.
@@ -702,9 +710,11 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       // A door started by its watchdog's stall handling names the stalled door's pid and waits for it to be gone before binding (see `awaitPidExit`), and carries the respawn generation it was started as, so its own watchdog knows how much of the chain is left. Both are read here, before the ports are built, so the supervisor's lazy watchdog wiring never has to see the env again.
       const awaited = Number(process.env[DOOR_AWAIT_PID_ENV]);
       const respawnGeneration = readRespawnGeneration();
+      const respawnDelayMs = readRespawnDelayMs();
       // Not inherited by anything this door starts.
       Reflect.deleteProperty(process.env, DOOR_AWAIT_PID_ENV);
       Reflect.deleteProperty(process.env, DOOR_RESPAWN_GENERATION_ENV);
+      Reflect.deleteProperty(process.env, DOOR_RESPAWN_DELAY_ENV);
       const retire = new AbortController();
       // What the door can say about itself when it is told to exit: how many tunnels it carries, read from the connect surface once it is up (none before).
       let openTunnels = (): number => 0;
@@ -735,6 +745,11 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       if (Number.isInteger(awaited) && awaited > 0) {
         const waitedMs = await awaitPidExit(awaited, supervisorPorts);
         supervisorPorts.log(`frontdoor ${String(ownPid)}: stalled door ${String(awaited)} released the sticky ports after ${String(waitedMs)}ms`);
+      }
+      // A chain of doors that keeps stalling is retried at a growing pace (see `respawnDelayMs`): the ports are free, and this door gives the machine its cooldown before it asks them of it.
+      if (respawnDelayMs > 0) {
+        supervisorPorts.log(`frontdoor ${String(ownPid)}: waiting ${String(respawnDelayMs)}ms before binding, since the stall has recurred through every immediate replacement`);
+        await supervisorPorts.sleep(respawnDelayMs);
       }
       // Declared before anything is served, so a launch the door plans for itself never asks `ps` or probes its own held event loop whether it is alive.
       declareThisProcessTheFrontDoor();
