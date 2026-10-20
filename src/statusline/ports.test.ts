@@ -12,8 +12,12 @@ const TAIL_RANGE = { start: 8, length: 100 };
 const AT_END_RANGE = { start: 10, length: 5 };
 const PAST_END_RANGE = { start: 50, length: 5 };
 
+/** The permission bits of a file only its owner may read and write, and the mask that selects the permission bits of a mode. */
+const OWNER_READ_WRITE = 0o600;
+const OWNER_ONLY_MASK = 0o777;
+
 describe("realStatuslinePorts", () => {
-  const ports = realStatuslinePorts({ HOME: "/h" });
+  const ports = realStatuslinePorts({ HOME: "/h" }, "/state");
 
   it("carries the environment it was given and the home directory", () => {
     expect(ports.env).toEqual({ HOME: "/h" });
@@ -24,7 +28,7 @@ describe("realStatuslinePorts", () => {
     const original = process.env.TZ;
     try {
       process.env.TZ = "Asia/Tokyo";
-      const { clock } = realStatuslinePorts({});
+      const { clock } = realStatuslinePorts({}, "/state");
       expect(clock.timeZone).toBe("Asia/Tokyo");
       expect(Intl.getCanonicalLocales(clock.locale)).toEqual([clock.locale]);
     } finally {
@@ -114,5 +118,71 @@ describe("realStatuslinePorts", () => {
     } finally {
       fs.rmSync(dir, { recursive: true });
     }
+  });
+
+  it("carries the state directory it was given", () => {
+    expect(ports.stateDirectory).toBe("/state");
+  });
+
+  it("lists a directory's entries, and reports what is missing as undefined", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+    try {
+      fs.writeFileSync(path.join(dir, "a.txt"), "x");
+      fs.symlinkSync(dir, path.join(dir, "self"));
+      expect(ports.listDirectory(dir)).toEqual(expect.arrayContaining(["a.txt", "self"]));
+      expect(ports.listDirectory(path.join(dir, "missing"))).toBeUndefined();
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("writes a file's text, creating its directories, replacing it whole and leaving no temporary file behind", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+    try {
+      const file = path.join(dir, "deep", "er", "ledger.json");
+      ports.writeText(file, "first");
+      ports.writeText(file, "second");
+      expect(fs.readFileSync(file, "utf8")).toBe("second");
+      expect(fs.readdirSync(path.dirname(file))).toEqual(["ledger.json"]);
+      expect(fs.statSync(file).mode & OWNER_ONLY_MASK).toBe(OWNER_READ_WRITE);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("drops a write it cannot make, without throwing", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+    try {
+      fs.writeFileSync(path.join(dir, "blocker"), "x");
+      expect(() => {
+        ports.writeText(path.join(dir, "blocker", "ledger.json"), "x");
+      }).not.toThrow();
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("removes a file or a whole directory, and a path that is not there is not an error", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+    try {
+      fs.mkdirSync(path.join(dir, "tree", "inner"), { recursive: true });
+      fs.writeFileSync(path.join(dir, "tree", "inner", "a.txt"), "x");
+      fs.writeFileSync(path.join(dir, "b.txt"), "x");
+      ports.removePath(path.join(dir, "tree"));
+      ports.removePath(path.join(dir, "b.txt"));
+      expect(() => {
+        ports.removePath(path.join(dir, "missing"));
+      }).not.toThrow();
+      expect(fs.readdirSync(dir)).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("reports the machine's memory in use against its total", () => {
+    const use = ports.memoryUse();
+    expect(use?.totalBytes).toBe(os.totalmem());
+    expect(use?.usedBytes).toBeGreaterThan(0);
+    expect(use?.usedBytes).toBeLessThanOrEqual(os.totalmem());
   });
 });
