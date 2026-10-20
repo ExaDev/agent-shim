@@ -1,3 +1,9 @@
+## [11.62.2](https://github.com/ExaDev/agent-shim/compare/v11.62.1...v11.62.2) (2026-10-20)
+
+### Bug Fixes
+
+* **frontdoor:** prune only the launches the liveness check covered ([281d048](https://github.com/ExaDev/agent-shim/commit/281d04877c2340e8cfb81af7869912c5ab51243f))
+
 ## [11.62.1](https://github.com/ExaDev/agent-shim/compare/v11.62.0...v11.62.1) (2026-10-20)
 
 ### Bug Fixes
