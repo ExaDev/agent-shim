@@ -156,7 +156,7 @@ function hasRequest(cache: LatestState["cache"]): boolean {
  */
 export function sessionFactsOf(state: SessionState, newer?: LatestState): SessionFacts {
   const { cumulative } = state;
-  const latest: LatestState = newer === undefined ? state.latest : { ...state.latest, ...definedOnly(newer), cache: hasRequest(newer.cache) ? newer.cache : state.latest.cache };
+  const latest: LatestState = newer === undefined ? state.latest : { ...state.latest, ...newer, cache: hasRequest(newer.cache) ? { ...newer.cache, ttlSeconds: newer.cache.ttlSeconds ?? state.latest.cache.ttlSeconds } : state.latest.cache };
   const { cache } = latest;
   // A request still waiting for its response has already refreshed the cache, so it is the live anchor once it is later than the last response's. A pending request stamped earlier than that response is clock skew, and the earlier anchor is the one that cannot overstate the lifetime left.
   const anchorAtMs = cache.pendingAtMs !== undefined && (cache.anchorAtMs === undefined || cache.pendingAtMs > cache.anchorAtMs) ? cache.pendingAtMs : cache.anchorAtMs;
@@ -166,16 +166,5 @@ export function sessionFactsOf(state: SessionState, newer?: LatestState): Sessio
     lastResponseAtMs: latest.lastAssistantAtMs,
     compactions: cumulative.compactions,
     promptCache: anchorAtMs === undefined ? undefined : { anchorAtMs, ttlSeconds: cache.ttlSeconds },
-  };
-}
-
-/** The fields of `state` that are set, without the prompt cache clock. */
-function definedOnly(state: LatestState): Omit<LatestState, "cache"> {
-  const { lastAssistantAtMs, customTitle, slug, aiTitle } = state;
-  return {
-    ...(lastAssistantAtMs === undefined ? {} : { lastAssistantAtMs }),
-    ...(customTitle === undefined ? {} : { customTitle }),
-    ...(slug === undefined ? {} : { slug }),
-    ...(aiTitle === undefined ? {} : { aiTitle }),
   };
 }
