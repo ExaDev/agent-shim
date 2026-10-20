@@ -41,9 +41,18 @@ describe("front-door session registry", () => {
     const fs = createFakeFarmFs({});
     writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 0, token: "live-token" });
     writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: DEAD, startedAt: 0, token: "dead-token" });
-    expect(pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, (pid) => pid === LIVE)).toEqual([DEAD]);
+    expect(pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listFrontDoorSessions(fs, paths.frontdoorSessionsDir), (pid) => pid === LIVE)).toEqual([DEAD]);
     expect(listFrontDoorSessions(fs, paths.frontdoorSessionsDir).map((session) => session.pid)).toEqual([LIVE]);
     expect([...liveSessionTokens(fs, paths.frontdoorSessionsDir)]).toEqual(["live-token"]);
+  });
+
+  it("keeps a launch that registered after the listing the liveness check covered, since it was never checked", () => {
+    const fs = createFakeFarmFs({});
+    writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: DEAD, startedAt: 0, token: "dead-token" });
+    const listed = listFrontDoorSessions(fs, paths.frontdoorSessionsDir);
+    writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 1, token: "late-token" });
+    expect(pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listed, () => false)).toEqual([DEAD]);
+    expect([...liveSessionTokens(fs, paths.frontdoorSessionsDir)]).toEqual(["late-token"]);
   });
 
   it("finds the models block a launch resolved by the session id its requests carry, and loses it with the launch", () => {
@@ -53,7 +62,7 @@ describe("front-door session registry", () => {
     expect(readFrontDoorSessionModels(fs, paths.frontdoorSessionsDir, "s-live")).toEqual({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } });
     expect(readFrontDoorSessionModels(fs, paths.frontdoorSessionsDir, "s-plain")).toBeUndefined();
     expect(readFrontDoorSessionModels(fs, paths.frontdoorSessionsDir, "unknown")).toBeUndefined();
-    pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, (pid) => pid === DEAD);
+    pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listFrontDoorSessions(fs, paths.frontdoorSessionsDir), (pid) => pid === DEAD);
     expect(readFrontDoorSessionModels(fs, paths.frontdoorSessionsDir, "s-live")).toBeUndefined();
   });
 

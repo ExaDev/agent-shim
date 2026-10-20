@@ -302,7 +302,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     // The listing precedes the prune so the launch lifecycle publisher sees each pruned launch's record with its start time; the prune's removals are handed to it beside the listing, and the idle decision reads the same listing minus those removals rather than listing again.
     const listed = listFrontDoorSessions(fs, paths.frontdoorSessionsDir);
     const running = await ports.runningAmong(listed.map((session) => session.pid));
-    const pruned = pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, (pid) => running.has(pid));
+    const pruned = pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listed, (pid) => running.has(pid));
     ports.observeLaunchRegistry(listed, pruned);
     ports.checkQuotaExpiry();
     const prunedPids = new Set(pruned);
