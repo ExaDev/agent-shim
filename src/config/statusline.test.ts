@@ -114,6 +114,25 @@ describe("StatuslineSchema model and identity settings", () => {
   });
 });
 
+describe("StatuslineSchema cost and environment", () => {
+  it("accepts the cost segments and the machine rows in a layout, and the keys of their groups", () => {
+    const settings = { layout: { header: ["cost", "dailyCost"], rows: ["memory", "environment"] }, cost: { routed: true }, environment: { threshold: 3 } };
+    expect(StatuslineSchema.parse(settings)).toEqual(settings);
+  });
+
+  it("refuses a routed setting that is not a boolean, and a threshold that is negative or fractional", () => {
+    for (const bad of [{ cost: { routed: "yes" } }, { environment: { threshold: -1 } }, { environment: { threshold: 1.5 } }, { environment: { count: 1 } }]) {
+      expect(StatuslineSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it("leaves the segments and rows that were drawn before them as the default layout", () => {
+    expect(STATUSLINE_DEFAULTS.layout).toEqual({ header: ["model", "provider", "route", "account", "identity", "headroom"], rows: ["context", "quota"] });
+    expect(STATUSLINE_DEFAULTS.cost).toEqual({ routed: false });
+    expect(STATUSLINE_DEFAULTS.environment).toEqual({ threshold: 0 });
+  });
+});
+
 describe("StatuslineSchema colours and bar characters", () => {
   it("accepts a colour as a name, a palette index or a hex value", () => {
     for (const value of ["cyan", "default", 0, MAX_STATUSLINE_PALETTE_INDEX, "#00ff7f", "#00FF7F"]) {

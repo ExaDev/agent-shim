@@ -4,6 +4,7 @@ import type { RenderContext, RowOutput } from "./context";
 import { accountSegment } from "./header/account";
 import { advisorSegment } from "./header/advisor";
 import { effortSegment } from "./header/effort";
+import { costSegment, dailyCostSegment } from "./header/cost";
 import { headroomSegment } from "./header/headroom";
 import { identitySegment } from "./header/identity";
 import { modelSegment } from "./header/model";
@@ -16,6 +17,8 @@ import { vcsSegment } from "./header/vcs";
 import { addedDirsRow } from "./rows/addedDirs";
 import { contextRow } from "./rows/context";
 import { gitFilesRow } from "./rows/gitFiles";
+import { environmentRow } from "./rows/environment";
+import { memoryRow } from "./rows/memory";
 import { quotaRow } from "./rows/quota";
 
 /** How one element draws itself. */
@@ -39,10 +42,12 @@ export const HEADER_ROLES: Readonly<Record<(typeof STATUSLINE_HEADER_SEGMENTS)[n
   advisor: "label",
   version: "label",
   outputStyle: "label",
+  cost: "label",
+  dailyCost: "label",
 };
 
 /** Every element the built-in statusline can draw. A setting can only name an element listed here, and the schema's lists of names are what keep the two in step. */
 export const ELEMENTS: ElementRegistry = {
-  header: { model: modelSegment, provider: providerSegment, route: routeSegment, account: accountSegment, identity: identitySegment, headroom: headroomSegment, project: projectSegment, vcs: vcsSegment, effort: effortSegment, advisor: advisorSegment, version: versionSegment, outputStyle: outputStyleSegment },
-  rows: { context: contextRow, quota: quotaRow, addedDirs: addedDirsRow, gitFiles: gitFilesRow },
+  header: { model: modelSegment, provider: providerSegment, route: routeSegment, account: accountSegment, identity: identitySegment, headroom: headroomSegment, project: projectSegment, vcs: vcsSegment, effort: effortSegment, advisor: advisorSegment, version: versionSegment, outputStyle: outputStyleSegment, cost: costSegment, dailyCost: dailyCostSegment },
+  rows: { context: contextRow, quota: quotaRow, addedDirs: addedDirsRow, gitFiles: gitFilesRow, memory: memoryRow, environment: environmentRow },
 };

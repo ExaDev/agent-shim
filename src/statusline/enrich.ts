@@ -33,6 +33,8 @@ export interface StatuslineSummary {
   readonly routedTarget?: string | undefined;
   /** The model choice the session's last request was served by, when a routing layer chose among alternatives for its model name (a virtual model's or a tier alias's selection): the name the session asked for, the model and provider that answered, and the distinct providers the choice could have landed on. Absent when the last request named its model explicitly. */
   readonly modelChoice?: { readonly requested: string; readonly served: string; readonly provider: string; readonly providers: readonly string[] };
+  /** What the requests the door served for this session cost, priced from the configured model prices; absent when the caller did not read the usage log or no price covers every request. */
+  readonly doorCostUsd?: number | undefined;
 }
 
 /** One of a provider's quota windows, in the form the statusline draws. */
@@ -199,6 +201,8 @@ export interface EnrichParams {
   readonly routedTarget?: string | undefined;
   /** The model choice the session's last request was served by, when a routing layer chose among alternatives for its model name: see `StatuslineSummary.modelChoice`. */
   readonly modelChoice?: { readonly requested: string; readonly served: string; readonly provider: string; readonly providers: readonly string[] };
+  /** What the requests the door served for this session cost: see `StatuslineSummary.doorCostUsd`. */
+  readonly doorCostUsd?: number | undefined;
 }
 
 /**
@@ -231,6 +235,7 @@ export function enrichStatuslinePayload(params: EnrichParams): { readonly payloa
     headroom: params.headroom,
     routedTarget: params.routedTarget,
     ...(params.modelChoice === undefined ? {} : { modelChoice: params.modelChoice }),
+    ...(params.doorCostUsd === undefined ? {} : { doorCostUsd: params.doorCostUsd }),
   };
   if (params.snapshot !== undefined) {
     const scopedName = providerScopedState(params.snapshot, params.providerName, params.env.AGENT_SHIM_PROVIDER);

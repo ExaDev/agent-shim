@@ -30,6 +30,9 @@ function valueAt(source: unknown, path: readonly string[]): unknown {
 
 function keyOf(path: readonly string[], leaf: z.ZodType): StatuslineKey {
   const common = { path: path.join("."), description: leaf.description ?? "", defaultValue: valueAt(STATUSLINE_DEFAULTS, path) };
+  if (leaf instanceof z.ZodBoolean) {
+    return { ...common, kind: "boolean", choices: [] };
+  }
   if (leaf instanceof z.ZodNumber) {
     return { ...common, kind: "integer", choices: [] };
   }
