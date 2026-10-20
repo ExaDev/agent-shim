@@ -420,6 +420,7 @@ describe("profile commands", () => {
     expect(listing.stdout).toContain(`layout.header  (list of ${STATUSLINE_HEADER_SEGMENTS.join(", ")};`);
     expect(listing.stdout).toContain("account.parts  (list of user, organisation, plan; default");
     expect(listing.stdout).toContain("model.source  (choice of client, transcript, auto; default \"client\")");
+    expect(listing.stdout).toContain("sessionTime.parts  (list of started, lastReply; default [\"started\",\"lastReply\"])");
     const json = JSON.parse((await cli(["statusline", "keys", "--json"])).stdout) as { path: string }[];
     expect(json.map((key) => key.path)).toContain("labels.sevenDay");
   });

@@ -68,6 +68,19 @@ Checked against claude-hud at commit `939eb66`.
 | `segment:advisor` | `layout.header`: the `advisor` segment, placed in the list |
 | `segment:version` | `layout.header`: the `version` segment, placed in the list |
 | `segment:auth` | `layout.header`: the `account` segment, placed in the list; `account.parts` chooses what it says |
+| `display.showSessionName` | `layout.header`: the session name segment is drawn when the list names `sessionName`: the title `/rename` gave the session, else the name Claude Code generated for it |
+| `display.showDuration` | `layout.header`: the duration segment is drawn when the list names `duration`, counted from the first timestamp in the transcript |
+| `display.showSessionStartDate` | `sessionTime.parts`: the start is drawn when the list names `started`, on the `sessionTime` row (`layout.rows`) |
+| `display.showLastResponseAt` | `sessionTime.parts`: the time since the last response is drawn when the list names `lastReply`, on the `sessionTime` row (`layout.rows`) |
+| `display.showCompactions` | `layout.rows`: the compactions row is drawn when the list names `compactions`; it stays hidden until the first compaction, and its count ends in a plus when the transcript was too big to count in full |
+| `display.showSpeed` | `layout.header`: the speed segment is drawn when the list names `speed`; it measures against the previous refresh's sample, kept in the statusline cache, and estimates from the transcript's growth when the client reports no output tokens |
+| `display.showPromptCache` | `layout.rows`: the prompt cache row is drawn when the list names `promptCache`; the expiry is a clock time written under `clock.hourCycle` and `clock.seconds`, in the machine's locale and time zone |
+| `display.promptCacheTtlSeconds` | `promptCache.ttlSeconds`: the lifetime used until the transcript shows which tier the session writes |
+| `element:sessionTime` | `layout.rows`: the `sessionTime` row, whose parts `sessionTime.parts` chooses |
+| `element:promptCache` | `layout.rows`: the `promptCache` row |
+| `segment:sessionName` | `layout.header`: the `sessionName` segment |
+| `segment:duration` | `layout.header`: the `duration` segment |
+| `segment:speed` | `layout.header`: the `speed` segment |
 | `display.showCost` | `layout.header`: the cost segment is drawn when the list names `cost`: the client's own figure, else an estimate priced from the door's usage log |
 | `display.showRoutedCost` | `cost.routed`: a routed session is one whose launch selected a provider, or whose model id is a cloud platform's; its cost is priced from the door's own record of each request, which claude-hud has no equivalent of, before the client's figure |
 | `display.showDailyCost` | `layout.header`: the daily cost segment is drawn when the list names `dailyCost`; independent of the cost segment, as in claude-hud, and kept in a ledger under the agent-shim home |

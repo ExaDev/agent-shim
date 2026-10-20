@@ -5,10 +5,13 @@ import { drawsNothing } from "../statusline/blank";
 import { graphemesOf } from "../statusline/graphemes";
 
 /** The segments of the statusline's header, in the order they are drawn unless a setting reorders them. */
-export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "dailyCost"] as const;
+export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "dailyCost", "sessionName", "duration", "speed"] as const;
 
-/** The rows below the header, in the order they are drawn unless a setting reorders them: the context window's bar, the quota windows' bars, the added directories, the files the working tree has changed, the machine's memory bar, and the line of configuration counts. */
-export const STATUSLINE_ROWS = ["context", "quota", "addedDirs", "gitFiles", "memory", "environment"] as const;
+/** The rows below the header, in the order they are drawn unless a setting reorders them: the context window's bar, the quota windows' bars, the added directories, the files the working tree has changed, the machine's memory bar, and the line of configuration counts, then the lines of text about the session read from its transcript. */
+export const STATUSLINE_ROWS = ["context", "quota", "addedDirs", "gitFiles", "memory", "environment", "sessionTime", "promptCache", "compactions"] as const;
+
+/** The parts of the session-time row, in the order the row draws them. */
+const STATUSLINE_SESSION_TIME_PARTS = ["started", "lastReply"] as const;
 
 /** The lifetimes of Anthropic's prompt cache: the five minutes a cache write lives unless it asked for more, and the one-hour tier a request can opt into (https://docs.claude.com/en/docs/build-with-claude/prompt-caching). */
 export const PROMPT_CACHE_TTL_SECONDS = { fiveMinutes: 300, oneHour: 3600 } as const;
@@ -158,6 +161,16 @@ const SHAPES = {
   environment: {
     threshold: z.number().int().min(0).describe("The fewest configuration items in total (CLAUDE.md files, rules, MCP servers and hook events) that must exist for the environment row to draw its counts."),
   },
+  sessionTime: {
+    parts: distinctList(z.enum(STATUSLINE_SESSION_TIME_PARTS)).describe("The parts of the sessionTime row to draw, in drawing order: when the session started, and how long ago the last response was written; a part left out is hidden, and an empty list hides the row."),
+  },
+  promptCache: {
+    ttlSeconds: z
+      .number()
+      .int()
+      .min(1)
+      .describe("How long the prompt cache lives, in seconds, when the transcript has not yet shown which tier the session writes (five minutes or one hour); the tier the transcript shows takes over once it does."),
+  },
   colours: {
     context: colourValue.describe("The colour of the context bar and its figures below the warning threshold."),
     usage: colourValue.describe("The colour of the quota bars and their figures below the warning threshold."),
@@ -206,6 +219,8 @@ export const StatuslineSchema = z.strictObject({
   clock: z.strictObject(SHAPES.clock).partial().optional(),
   cost: z.strictObject(SHAPES.cost).partial().optional(),
   environment: z.strictObject(SHAPES.environment).partial().optional(),
+  sessionTime: z.strictObject(SHAPES.sessionTime).partial().optional(),
+  promptCache: z.strictObject(SHAPES.promptCache).partial().optional(),
   colours: z.strictObject(SHAPES.colours).partial().optional(),
   project: z.strictObject(SHAPES.project).partial().optional(),
   git: z.strictObject(SHAPES.git).partial().optional(),
@@ -228,6 +243,8 @@ export const ResolvedStatuslineSchema = z.strictObject({
   clock: z.strictObject(SHAPES.clock),
   cost: z.strictObject(SHAPES.cost),
   environment: z.strictObject(SHAPES.environment),
+  sessionTime: z.strictObject(SHAPES.sessionTime),
+  promptCache: z.strictObject(SHAPES.promptCache),
   colours: z.strictObject(SHAPES.colours),
   project: z.strictObject(SHAPES.project),
   git: z.strictObject(SHAPES.git),
@@ -250,6 +267,8 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   clock: { hourCycle: "auto", seconds: false },
   cost: { routed: false },
   environment: { threshold: 0 },
+  sessionTime: { parts: [...STATUSLINE_SESSION_TIME_PARTS] },
+  promptCache: { ttlSeconds: PROMPT_CACHE_TTL_SECONDS.fiveMinutes },
   colours: {
     context: "green",
     usage: "green",

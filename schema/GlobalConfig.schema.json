@@ -165,7 +165,10 @@
                       "version",
                       "outputStyle",
                       "cost",
-                      "dailyCost"
+                      "dailyCost",
+                      "sessionName",
+                      "duration",
+                      "speed"
                     ]
                   },
                   "description": "The header segments to draw, in drawing order; a segment left out is hidden, and an empty list hides the header."
@@ -180,7 +183,10 @@
                       "addedDirs",
                       "gitFiles",
                       "memory",
-                      "environment"
+                      "environment",
+                      "sessionTime",
+                      "promptCache",
+                      "compactions"
                     ]
                   },
                   "description": "The rows to draw below the header, in drawing order; a row left out is hidden, and an empty list hides every row."
@@ -427,6 +433,35 @@
                   "minimum": 0,
                   "maximum": 9007199254740991,
                   "description": "The fewest configuration items in total (CLAUDE.md files, rules, MCP servers and hook events) that must exist for the environment row to draw its counts."
+                }
+              },
+              "additionalProperties": false
+            },
+            "sessionTime": {
+              "type": "object",
+              "properties": {
+                "parts": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "started",
+                      "lastReply"
+                    ]
+                  },
+                  "description": "The parts of the sessionTime row to draw, in drawing order: when the session started, and how long ago the last response was written; a part left out is hidden, and an empty list hides the row."
+                }
+              },
+              "additionalProperties": false
+            },
+            "promptCache": {
+              "type": "object",
+              "properties": {
+                "ttlSeconds": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991,
+                  "description": "How long the prompt cache lives, in seconds, when the transcript has not yet shown which tier the session writes (five minutes or one hour); the tier the transcript shows takes over once it does."
                 }
               },
               "additionalProperties": false
