@@ -59,7 +59,7 @@ const { workerData, parentPort } = require("node:worker_threads");
 const fs = require("node:fs");
 const os = require("node:os");
 const inspector = require("node:inspector");
-const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnGeneration, respawnMaxGeneration, cooldownStepMs, cooldownCapMs, startLockFile, awaitPidEnv, respawnGenerationEnv, delayEnv } = workerData;
+const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnGeneration, respawnMaxGeneration, cooldownStepMs, cooldownCapMs, startLockFile, awaitPidEnv, respawnGenerationEnv, delayEnv, nativeSample } = workerData;
 const counter = new Int32Array(shared);
 let lastValue = Atomics.load(counter, 0);
 let lastChangeAt = Date.now();
@@ -179,6 +179,28 @@ const spawnReplacement = () => {
     log("could not start a replacement door: " + (error instanceof Error ? error.message : String(error)));
   }
 };
+// Captures where a main thread that could not be paused is held natively, with the platform's own sampler, so a stall the inspector cannot name still leaves a stack to read. The wait is bounded by the sampling time plus its start-up, and the capture never delays the process ending beyond that.
+const takeNativeSample = () => new Promise((resolve) => {
+  if (nativeSample === undefined) { resolve(); return; }
+  try {
+    fs.mkdirSync(nativeSample.directory, { recursive: true });
+    const file = require("node:path").join(nativeSample.directory, String(ownPid) + ".txt");
+    const args = nativeSample.args.map((arg) => arg.replace("{pid}", String(ownPid)).replace("{seconds}", String(nativeSample.seconds)).replace("{file}", file));
+    const child = require("node:child_process").spawn(nativeSample.command, args, { stdio: "ignore" });
+    const giveUp = setTimeout(() => { child.kill(); log("the native sampler did not finish in time"); resolve(); }, (nativeSample.seconds + 2) * 1000);
+    child.once("error", (error) => { clearTimeout(giveUp); log("could not sample the main thread natively: " + error.message); resolve(); });
+    child.once("close", () => {
+      clearTimeout(giveUp);
+      log("native stack of the blocked main thread written to " + file);
+      const kept = fs.readdirSync(nativeSample.directory).filter((name) => name.endsWith(".txt")).map((name) => ({ name, at: fs.statSync(require("node:path").join(nativeSample.directory, name)).mtimeMs })).sort((a, b) => b.at - a.at);
+      for (const old of kept.slice(nativeSample.keep)) fs.rmSync(require("node:path").join(nativeSample.directory, old.name), { force: true });
+      resolve();
+    });
+  } catch (error) {
+    log("could not sample the main thread natively: " + (error instanceof Error ? error.message : String(error)));
+    resolve();
+  }
+});
 const timer = setInterval(() => {
   if (stopped) return;
   const now = Date.now();
@@ -199,8 +221,9 @@ const timer = setInterval(() => {
     const [oneMinute, fiveMinutes, fifteenMinutes] = os.loadavg();
     log("machine load at the stall: " + oneMinute.toFixed(1) + " (1m), " + fiveMinutes.toFixed(1) + " (5m), " + fifteenMinutes.toFixed(1) + " (15m) across " + String(os.cpus().length) + " cpus");
     spawnReplacement();
-    describeMainThread(pauseWaitMs, action !== "kill-process").then((where) => {
+    describeMainThread(pauseWaitMs, action !== "kill-process").then(async (where) => {
       log(where);
+      if (where.startsWith("the main thread could not be paused")) await takeNativeSample();
       if (action === "kill-process") {
         process.kill(ownPid, "SIGKILL");
       } else {
@@ -241,6 +264,10 @@ export interface ThreadWatchdogParams {
   readonly startLockFile: string;
   /** How to start a replacement door on a stall: the invocation and environment of a door, to which the thread adds `DOOR_AWAIT_PID_ENV` and `DOOR_RESPAWN_GENERATION_ENV`. Omitted by a host that does not respawn. */
   readonly respawn?: { readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> };
+  /**
+   * How to capture the native stack of a main thread the inspector could not pause (it was blocked inside a native call, which no JavaScript frame names): a command run with `{pid}`, `{seconds}` and `{file}` replaced in its arguments, its output written to `directory` as `<pid>.txt`, keeping the newest `keep` files. Omitted where the platform has no such tool (production sets it on macOS only).
+   */
+  readonly nativeSample?: { readonly command: string; readonly args: readonly string[]; readonly directory: string; readonly seconds: number; readonly keep: number };
   /** Called on the main thread with the recorded message when `action` is `report` and the stall was seen. */
   readonly onReport?: (message: string) => void;
 }
@@ -251,7 +278,7 @@ export function startThreadWatchdog(params: Readonly<ThreadWatchdogParams>): Doo
   const counter = new Int32Array(shared);
   const worker = new Worker(WATCHDOG_SOURCE, {
     eval: true,
-    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, cooldownStepMs: params.cooldownStepMs, cooldownCapMs: params.cooldownCapMs, startLockFile: params.startLockFile, awaitPidEnv: DOOR_AWAIT_PID_ENV, respawnGenerationEnv: DOOR_RESPAWN_GENERATION_ENV, delayEnv: DOOR_RESPAWN_DELAY_ENV },
+    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, cooldownStepMs: params.cooldownStepMs, cooldownCapMs: params.cooldownCapMs, startLockFile: params.startLockFile, awaitPidEnv: DOOR_AWAIT_PID_ENV, respawnGenerationEnv: DOOR_RESPAWN_GENERATION_ENV, delayEnv: DOOR_RESPAWN_DELAY_ENV, nativeSample: params.nativeSample },
   });
   worker.unref();
   worker.on("message", (message: unknown) => {
