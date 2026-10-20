@@ -23,6 +23,10 @@ const LOW_THRESHOLDS = { warnAt: 20, criticalAt: 40 };
 const HALF = 2;
 const QUARTER = 4;
 const JUST_CLEARED = 100;
+/** The default critical threshold of the bands, and how far under a threshold a percentage still counts as under it. */
+const DEFAULT_WARN_AT = 70;
+const DEFAULT_CRITICAL_AT = 90;
+const JUST_BELOW = 0.1;
 const GREEN = `${ESCAPE}[32m`;
 const YELLOW = `${ESCAPE}[33m`;
 const RED = `${ESCAPE}[31m`;
@@ -120,7 +124,7 @@ describe("the context row's thresholds", () => {
     const at = (percent: number, settings: StatuslineSettings, colour: string): void => {
       const line = draw(settings, { contextUsedPercentage: percent })[0] ?? "";
       expect(line, `figure at ${String(percent)}`).toContain(`${colour}${percent.toFixed(1)}%`);
-      expect(line, `bar at ${String(percent)}`).toContain(`[${colour}█`);
+      expect(line, `bar at ${String(percent)}`).toContain(`[${colour}\u2588`);
     };
     at(IN_WARNING_BAND, {}, YELLOW);
     at(IN_WARNING_BAND, { context: { warnAt: LATE_WARN_AT } }, GREEN);
@@ -128,6 +132,14 @@ describe("the context row's thresholds", () => {
     at(IN_WARNING_BAND, { bands: { warnAt: LATE_WARN_AT, criticalAt: LATE_CRITICAL_AT } }, GREEN);
     at(ABOVE_BANDS_BELOW_CRITICAL, { context: { criticalAt: EARLY_CRITICAL_AT } }, RED);
     at(ABOVE_BANDS_BELOW_CRITICAL, {}, YELLOW);
+  });
+
+  it("colours at exactly each threshold in the colour of the band it opens", () => {
+    const line = (percent: number): string => draw({}, { contextUsedPercentage: percent })[0] ?? "";
+    expect(line(DEFAULT_WARN_AT - JUST_BELOW)).toContain(`${GREEN}${(DEFAULT_WARN_AT - JUST_BELOW).toFixed(1)}%`);
+    expect(line(DEFAULT_WARN_AT)).toContain(`${YELLOW}${DEFAULT_WARN_AT.toFixed(1)}%`);
+    expect(line(DEFAULT_CRITICAL_AT - JUST_BELOW)).toContain(`${YELLOW}${(DEFAULT_CRITICAL_AT - JUST_BELOW).toFixed(1)}%`);
+    expect(line(DEFAULT_CRITICAL_AT)).toContain(`${RED}${DEFAULT_CRITICAL_AT.toFixed(1)}%`);
   });
 
   it("leaves the cache share on the bands, whatever the context thresholds are", () => {
@@ -219,6 +231,16 @@ describe("the context row's breakdown at high use", () => {
     expect(stripAnsi(draw({ context: { breakdown: "critical" } }, { contextUsedPercentage: 80 }, usage)[0] ?? "")).not.toContain("in:");
     expect(stripAnsi(draw({}, high, usage)[0] ?? "")).not.toContain("in:");
     expect(stripAnsi(draw({ context: { breakdown: "critical" } }, high)[0] ?? "")).not.toContain("in:");
+  });
+
+  it("adds the breakdown at exactly the critical threshold, and not a hair below it", () => {
+    const atAndBelow = (settings: StatuslineSettings, threshold: number): void => {
+      expect(stripAnsi(draw(settings, { contextUsedPercentage: threshold }, usage)[0] ?? ""), `at ${String(threshold)}`).toContain("in:");
+      expect(stripAnsi(draw(settings, { contextUsedPercentage: threshold - JUST_BELOW }, usage)[0] ?? ""), `below ${String(threshold)}`).not.toContain("in:");
+    };
+    atAndBelow({ context: { breakdown: "critical" } }, DEFAULT_CRITICAL_AT);
+    atAndBelow({ context: { breakdown: "critical", criticalAt: EARLY_CRITICAL_AT } }, EARLY_CRITICAL_AT);
+    atAndBelow({ context: { breakdown: "critical" }, bands: { warnAt: OWN_WARN_AT, criticalAt: OWN_CRITICAL_AT } }, OWN_CRITICAL_AT);
   });
 
   it("takes its threshold from context.criticalAt", () => {
