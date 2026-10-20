@@ -93,14 +93,14 @@ describe("the extra segment", () => {
     expect(calls).toEqual([]);
   });
 
-  it("runs the program with its arguments, as given and without a shell, in the session's directory", () => {
-    const calls: [string, readonly string[], string][] = [];
-    const run: StatuslinePorts["run"] = (file, args, cwd) => {
-      calls.push([file, args, cwd]);
+  it("runs the program with its arguments, as given and without a shell, in the session's directory, with its output going to a file", () => {
+    const calls: [string, readonly string[], string, unknown][] = [];
+    const run: StatuslinePorts["run"] = (file, args, cwd, options) => {
+      calls.push([file, args, cwd, options]);
       return "v1.2\n";
     };
     expect(draw({ run, settings: EXTRA_ONLY(["tool", "--flag", "a b; $HOME"]), payload: { cwd: PROJECT_DIR } })).toBe("v1.2");
-    expect(calls).toEqual([["tool", ["--flag", "a b; $HOME"], PROJECT_DIR]]);
+    expect(calls).toEqual([["tool", ["--flag", "a b; $HOME"], PROJECT_DIR, { outputInFile: true }]]);
   });
 
   it("draws the first line with something on it, or the label of a JSON object", () => {
