@@ -107,6 +107,69 @@ describe("realStatuslinePorts", () => {
         fs.rmSync(dir, { recursive: true });
       }
     });
+    it("returns the output of a program that exits at once, though a process it started still has the output open", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+      const pidFile = path.join(dir, "pid");
+      const leftover = `setTimeout(() => {}, ${String(PROGRAM_RUN_MS)});`;
+      const script = `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(leftover)}], { stdio: ["ignore", "inherit", "ignore"] }); child.unref(); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); process.stdout.write("parent\\n");`;
+      try {
+        const start = Date.now();
+        expect(ports.run(process.execPath, ["-e", script], os.tmpdir())).toBe("parent\n");
+        expect(Date.now() - start).toBeLessThan(PROGRAM_RUN_MS);
+      } finally {
+        // The leftover is outside what the port can reach, so the test ends it.
+        if (fs.existsSync(pidFile)) {
+          process.kill(Number(fs.readFileSync(pidFile, "utf8")), "SIGKILL");
+        }
+        fs.rmSync(dir, { recursive: true });
+      }
+    });
+  });
+
+  describe("the output of a program", () => {
+    const OUTPUT_BYTES = 100_000;
+    /** The bound on a program's output, 1 MiB, and one byte over twice that, past which no shell lets the file grow. */
+    const OUTPUT_BOUND_BYTES = 1_048_576;
+    const TOO_MUCH_BYTES = OUTPUT_BOUND_BYTES * 2 + 1;
+    const write = (bytes: number): string[] => ["-e", `require("node:fs").writeSync(1, "x".repeat(${String(bytes)}));`];
+
+    it("is returned whole when it is within the bound", () => {
+      expect(ports.run(process.execPath, write(OUTPUT_BYTES), os.tmpdir())?.length).toBe(OUTPUT_BYTES);
+    });
+
+    it.skipIf(process.platform === "win32")("is not returned, and the program is stopped, when it writes more than the bound", () => {
+      expect(ports.run(process.execPath, write(TOO_MUCH_BYTES), os.tmpdir())).toBeUndefined();
+    });
+
+    it.skipIf(process.platform === "win32")("starts the program with a limit on the size of the file it writes, so a program that never stops cannot fill the disk", () => {
+      /** The bound on a program's output, 1 MiB, in the 512-byte blocks `ulimit -f` is asked in. */
+      const boundInBlocks = 2048;
+      expect(Number(ports.run("/bin/sh", ["-c", "ulimit -f"], os.tmpdir())?.trim())).toBe(boundInBlocks);
+    });
+
+    it("leaves no file behind, whether the program succeeded, failed, or was killed", () => {
+      const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+      const previous = process.env.TMPDIR;
+      process.env.TMPDIR = scratch;
+      try {
+        expect(ports.run(process.execPath, ["-p", "1"], os.tmpdir())).toBe("1\n");
+        expect(ports.run(process.execPath, ["-e", "process.exit(3)"], os.tmpdir())).toBeUndefined();
+        expect(ports.run(process.execPath, write(TOO_MUCH_BYTES), os.tmpdir())).toBeUndefined();
+        expect(ports.run("/nonexistent/program", [], os.tmpdir())).toBeUndefined();
+        expect(fs.readdirSync(scratch)).toEqual([]);
+      } finally {
+        if (previous === undefined) {
+          delete process.env.TMPDIR;
+        } else {
+          process.env.TMPDIR = previous;
+        }
+        fs.rmSync(scratch, { recursive: true });
+      }
+    });
+
+    it("keeps its arguments as they are, whatever characters they hold, and runs a program named like an option", () => {
+      expect(ports.run(process.execPath, ["-p", "process.argv[1]", "--", "a b; $HOME 'q' \"d\""], os.tmpdir())).toBe("a b; $HOME 'q' \"d\"\n");
+    });
   });
 
   it("tells a directory from anything else without following a final link, and nothing from a missing path", () => {
