@@ -1,3 +1,9 @@
+## [11.60.1](https://github.com/ExaDev/agent-shim/compare/v11.60.0...v11.60.1) (2026-10-20)
+
+### Bug Fixes
+
+* **usage:** plan the door's identity launches over probes run without blocking ([9e2da87](https://github.com/ExaDev/agent-shim/commit/9e2da87d25371875825ec201761534464b40aae8))
+
 ## [11.60.0](https://github.com/ExaDev/agent-shim/compare/v11.59.0...v11.60.0) (2026-10-20)
 
 ### Features
