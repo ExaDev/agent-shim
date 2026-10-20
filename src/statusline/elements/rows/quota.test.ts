@@ -9,6 +9,9 @@ import { fakeStatuslinePorts } from "../../testing";
 
 const NOW_MS = Date.parse("2026-10-16T09:00:00.000Z");
 const TERMINAL = 170;
+/** Narrow enough that three windows of text cannot share a line, and wide enough for any one of them. */
+const NARROW_TERMINAL = 40;
+const NARROW_USABLE_COLUMNS = 36;
 const NO_VIEW = { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined };
 
 const SUMMARY: StatuslineSummary = {
@@ -38,12 +41,12 @@ const COLOURED = {};
 
 const MODEL_SCOPED_PAYLOAD = { rate_limits: { model_scoped: [{ display_name: "Fable", utilization: 60, resets_at: "2026-10-19T09:00:00.000Z" }] } };
 
-function quotaLines(settings: StatuslineSettings, summary: Partial<StatuslineSummary> = {}, payload: unknown = {}, env: Readonly<Record<string, string | undefined>> = PLAIN): string[] {
+function quotaLines(settings: StatuslineSettings, summary: Partial<StatuslineSummary> = {}, payload: unknown = {}, env: Readonly<Record<string, string | undefined>> = PLAIN, terminalWidth: number = TERMINAL): string[] {
   const output = renderStatuslineBlock({
     summary: { ...SUMMARY, ...summary },
     view: NO_VIEW,
     payload: parseClientPayload(payload),
-    terminalWidth: TERMINAL,
+    terminalWidth,
     nowMs: NOW_MS,
     settings: resolveStatusline({ ...settings, layout: { header: [], rows: ["quota"] } }),
     ports: fakeStatuslinePorts({ env }),
@@ -55,7 +58,7 @@ describe("the quota row's usage settings", () => {
   it("draws a bar per window with the figure and the time left by default", () => {
     const lines = quotaLines({});
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/^5h \[.*\] 25\.0% \(1h 30m\) \| Wk \[.*\] 40\.0% \(4d 1h\)$/u);
+    expect(lines[0]).toBe("5h [████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 25.0% (1h 30m) | Wk [█████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 40.0% (4d 1h)");
   });
 
   it("writes the share left instead of the share used with usage.value, and keeps the bar and colour on the share used", () => {
@@ -136,6 +139,11 @@ describe("the per-model weekly windows", () => {
     expect(quotaLines({ usage: { bar: false, modelScoped: true } }, { provider: "z.ai" }, MODEL_SCOPED_PAYLOAD)).toEqual(["5h 25.0% (1h 30m) | Wk 40.0% (4d 1h)"]);
   });
 
+  it("keep a name's emoji sequences whole when it is cut to a label's width", () => {
+    const payload = { rate_limits: { model_scoped: [{ display_name: "\u{1F469}\u200D\u{1F4BB} code review assistant", utilization: 10, resets_at: "2026-10-19T09:00:00.000Z" }] } };
+    expect(quotaLines({ usage: { bar: false, modelScoped: true } }, { fiveHourUsed: undefined, sevenDayUsed: undefined }, payload)).toEqual(["\u{1F469}\u200D\u{1F4BB} code revie 10.0% (3d 0h)"]);
+  });
+
   it("draw a name with its control characters stripped and cut to a label's width, and skip a window with no name or figure", () => {
     const payload = {
       rate_limits: {
@@ -147,7 +155,7 @@ describe("the per-model weekly windows", () => {
       },
     };
     const lines = quotaLines({ usage: { bar: false, modelScoped: true } }, { fiveHourUsed: undefined, sevenDayUsed: undefined }, payload);
-    expect(lines).toEqual(["A[2Jvery lon 10.0% (3d 0h)"]);
+    expect(lines).toEqual(["Avery long m 10.0% (3d 0h)"]);
   });
 });
 
@@ -164,5 +172,25 @@ describe("the quota row for windows other than the account's own", () => {
   it("applies the settings to a provider's own windows, whose length the provider reports", () => {
     const windows = [{ measures: "tokens", utilization: 0.5, resetsAt: "2026-10-16T10:30:00.000Z", periodMs: 18_000_000 }];
     expect(quotaLines({ usage: { bar: false, timeFormat: "elapsed" } }, { providerQuotaWindows: windows, provider: "z.ai", fiveHourUsed: undefined, sevenDayUsed: undefined })).toEqual(["tokens 50.0% (70% elapsed)"]);
+  });
+});
+
+describe("the quota row drawn as text on a narrow terminal", () => {
+  const WIDE_WINDOWS = { usage: { bar: false, modelScoped: true } };
+
+  it("breaks the windows onto as many lines as the width needs, a separator between neighbours on a line", () => {
+    const lines = quotaLines(WIDE_WINDOWS, {}, MODEL_SCOPED_PAYLOAD, PLAIN, NARROW_TERMINAL);
+    expect(lines).toEqual(["5h 25.0% (1h 30m) | Wk 40.0% (4d 1h)", "Fable 60.0% (3d 0h)"]);
+    for (const line of lines) {
+      expect(line.length).toBeLessThanOrEqual(NARROW_USABLE_COLUMNS);
+    }
+  });
+
+  it("breaks the compact line the same way, which is longer and so takes a line for each window here", () => {
+    expect(quotaLines({ usage: { compact: true, modelScoped: true } }, {}, MODEL_SCOPED_PAYLOAD, PLAIN, NARROW_TERMINAL)).toEqual(["5h: 25.0% (1h 30m)", "Wk: 40.0% (4d 1h)", "Fable: 60.0% (3d 0h)"]);
+  });
+
+  it("draws one line when the windows fit it", () => {
+    expect(quotaLines(WIDE_WINDOWS, {}, MODEL_SCOPED_PAYLOAD, PLAIN, TERMINAL)).toHaveLength(1);
   });
 });

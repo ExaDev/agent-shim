@@ -76,9 +76,14 @@ const colourValue = z.union([z.enum(STATUSLINE_COLOUR_NAMES), z.number().int().m
 
 const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
+/** `text` split into the characters a person sees (a letter with its accents, an emoji with its modifiers), which is what a width limit on a name counts. */
+export function graphemesOf(text: string): string[] {
+  return Array.from(GRAPHEMES.segment(text), ({ segment }) => segment);
+}
+
 /** Whether `text` is one grapheme that draws something: no control, format, separator or unassigned character, so a bar character cannot move the cursor or vanish. Wide glyphs pass and may misalign a bar, which the terminal decides. */
 function isSingleVisibleGrapheme(text: string): boolean {
-  return [...GRAPHEMES.segment(text)].length === 1 && !/[\p{C}\p{Z}]/u.test(text);
+  return graphemesOf(text).length === 1 && !/[\p{C}\p{Z}]/u.test(text);
 }
 
 const barCharacter = z.string().refine(isSingleVisibleGrapheme, "must be a single visible character");

@@ -32,8 +32,10 @@ function elapsedPercent(resetMs: number, periodMs: number | undefined, nowMs: nu
  */
 export function formatResetTime(window: ResetWindow, nowMs: number, settings: ResolvedStatusline, clock: StatuslinePorts["clock"]): ResetText {
   const resetMs = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
-  const pending = Number.isFinite(resetMs) && resetMs > nowMs;
-  const relative = formatDuration(secondsUntil(window.resetsAt, nowMs));
+  const secondsLeft = secondsUntil(window.resetsAt, nowMs);
+  // A reset less than half a second away rounds to no time left, and is said to be available rather than "resets in available".
+  const pending = secondsLeft !== undefined && secondsLeft > 0;
+  const relative = formatDuration(secondsLeft);
   const absolute = pending ? `at ${formatWallClock(resetMs, nowMs, clock, settings.clock)}` : AVAILABLE;
   const elapsed = elapsedPercent(resetMs, window.periodMs, nowMs);
   const elapsedText = elapsed === undefined ? undefined : `${String(elapsed)}% elapsed`;
