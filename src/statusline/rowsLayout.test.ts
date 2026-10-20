@@ -92,6 +92,28 @@ describe("layoutRows", () => {
     expect(apart[1]?.startsWith("RAM         [")).toBe(true);
   });
 
+  it("ends a run of bars at a merge group that is wholly empty and has a row of text, however many rows it has, and not at one made of bar rows", () => {
+    const emptyText: DrawnRow["output"] = { kind: "text", lines: [] };
+    const around = (middle: readonly DrawnRow[]): DrawnRow[] => [...rows(["context", bars("Ctx 634k/1M")]), ...middle, ...rows(["memory", bars("RAM")])];
+    const apart = [...layout(rows(["context", bars("Ctx 634k/1M")]), { mergeBars: true }), ...layout(rows(["memory", bars("RAM")]), { mergeBars: true })];
+    for (const [label, middle] of [
+      ["a text row and a bar row", rows(["environment", emptyText], ["quota", NOTHING])],
+      ["two text rows", rows(["environment", emptyText], ["sessionTime", emptyText])],
+      ["a text row alone", rows(["environment", emptyText])],
+    ] as const) {
+      const merge = [middle.map((row) => row.name)];
+      expect(layout(around(middle), { mergeBars: true, merge }), label).toEqual(apart);
+    }
+    // Rows of bars only, wholly empty, leave the bars either side on one grid, and so does a group with a row that has something to show.
+    const emptyBars = rows(["quota", NOTHING], ["promptCache", NOTHING]);
+    expect(layout(around(emptyBars), { mergeBars: true, merge: [["quota", "promptCache"]] })).toHaveLength(1);
+    // A group with a bar row that has something to show skips its empty row of text: nothing ends the run, so the three bars keep one grid.
+    const withBar = rows(["environment", emptyText], ["quota", bars("5h")]);
+    expect(layout(around(withBar), { mergeBars: true, merge: [["environment", "quota"]] })).toEqual(layout(rows(["context", bars("Ctx 634k/1M")], ["quota", bars("5h")], ["memory", bars("RAM")]), { mergeBars: false }));
+    const partly = rows(["environment", emptyText], ["sessionTime", text("started")]);
+    expect(layout(around(partly), { mergeBars: true, merge: [["environment", "sessionTime"]] })).toEqual([...layout(rows(["context", bars("Ctx 634k/1M")]), { mergeBars: true }), "started", ...layout(rows(["memory", bars("RAM")]), { mergeBars: true })]);
+  });
+
   it("ends a run of shared bar rows at a row of text, and at the rows of a group", () => {
     const split = layout(rows(["context", bars("Ctx")], ["environment", text("2 rules")], ["quota", bars("5h")]), { mergeBars: true });
     expect(split).toHaveLength(THREE_LINES);
