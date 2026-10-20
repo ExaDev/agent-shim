@@ -42,6 +42,9 @@ const LINES_PAST_A_READ = 5;
 /** How many different skills the old part of the activity transcript uses, round and round. */
 const EARLY_SKILLS = 3;
 const THREE_BOUNDARIES = 3;
+/** The version of the cache the reader writes, and how many versions before it a cache of an older reader may have. */
+const CURRENT_CACHE_VERSION = 7;
+const EARLIER_VERSIONS = 2;
 /** A first line longer than the part of it that identifies a transcript. */
 const OVERSIZED_FIRST_LINE = 70_000;
 /** A first line a little longer than the part of it that identifies a transcript, and a first line still being written. */
@@ -136,6 +139,20 @@ describe("readTranscript", () => {
     for (const stale of staleCaches) {
       const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: text, [cacheFile]: stale });
       expect(readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0)?.session.compactions, stale).toBe(2);
+    }
+  });
+
+  it("rebuilds from the transcript when the cache is of an earlier version, whatever else in it is current, and writes the current one", () => {
+    const text = boundary(0) + boundary(MINUTE);
+    const cacheFile = cacheFileFor(fakeStatuslinePorts(), "transcript", TRANSCRIPT);
+    const written = fakeStatuslineFilesystem({ [TRANSCRIPT]: text });
+    readTranscript(fakeStatuslinePorts(written.ports), TRANSCRIPT, T0);
+    const current = written.files.get(cacheFile) ?? "";
+    expect(current).toContain(`"version":${String(CURRENT_CACHE_VERSION)}`);
+    for (let version = CURRENT_CACHE_VERSION - EARLIER_VERSIONS; version < CURRENT_CACHE_VERSION; version += 1) {
+      const earlier = current.replace(`"version":${String(CURRENT_CACHE_VERSION)}`, `"version":${String(version)}`).replace('"compactions":2', '"compactions":9');
+      const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: text, [cacheFile]: earlier });
+      expect(readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0)?.session.compactions, `version ${String(version)}`).toBe(2);
     }
   });
 
@@ -323,6 +340,18 @@ describe("readTranscript", () => {
     }
     expect(facts?.activity.skills.names).toEqual(["early-0", "early-1", "early-2", "late"]);
     expect(facts?.activity.tools.at(-1)?.name).toBe("Skill");
+  });
+
+  it("does not show as new the history the end of a long transcript repeats from the part already read, while it catches up", () => {
+    const call = (id: string, name: string, ms: number): string => line({ type: "assistant", timestamp: at(ms), message: { id: `m${id}`, content: [{ type: "tool_use", id, name, input: {} }] } });
+    const answered = (id: string, name: string, ms: number): string => call(id, name, ms) + line({ type: "user", timestamp: at(ms), message: { content: [{ type: "tool_result", tool_use_id: id, content: "done" }] } });
+    const early = answered("e1", "Read", 1) + answered("e2", "Edit", 2);
+    const filler = oddLine({ type: "user", timestamp: at(MINUTE), message: { content: "x" } }).repeat(Math.ceil((OVER_TWO_WINDOWS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES));
+    const end = answered("e1", "Read", 1) + answered("e2", "Edit", 2) + answered("n1", "Grep", AT.twoMinutes);
+    const ports = fakeStatuslinePorts(fakeStatuslineFilesystem({ [TRANSCRIPT]: early + filler + end }).ports);
+    const first = readTranscript(ports, TRANSCRIPT, T0);
+    expect(first?.complete).toBe(false);
+    expect(first?.activity.tools.map((tool) => tool.name)).toEqual(["Grep"]);
   });
 
   it("draws no todo list while the end of a long transcript edits it in place without rewriting it, and the right one once it has caught up", () => {

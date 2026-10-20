@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { cacheFileFor, loadCache, saveCache } from "../cacheFile";
 import type { StatuslinePorts } from "../ports";
-import { activityFactsOf, bashLiveLimitMs, ActivityLatestSchema, ActivityStateSchema, EMPTY_ACTIVITY_LATEST, EMPTY_ACTIVITY_STATE, foldActivity, foldActivityLatest, type ActivityFacts, type ActivityLatest, type ActivityState } from "./activity";
+import { activityFactsOf, bashLiveLimitMs, replayMemoryOf, ActivityLatestSchema, ActivityStateSchema, EMPTY_ACTIVITY_LATEST, EMPTY_ACTIVITY_STATE, foldActivity, foldActivityLatest, type ActivityFacts, type ActivityLatest, type ActivityState } from "./activity";
 import { parseTranscriptRecord, type TranscriptRecord } from "./record";
 import { EMPTY_TOKEN_STATE, foldTokens, TokenStateSchema, type SessionTokens, type TokenState } from "./tokens";
 import { EMPTY_LATEST_STATE, EMPTY_SESSION_STATE, foldLatest, foldSession, LatestStateSchema, SessionStateSchema, sessionFactsOf, type LatestState, type SessionFacts, type SessionState } from "./session";
@@ -139,7 +139,7 @@ export function readTranscript(ports: StatuslinePorts, transcriptPath: string, n
   const reachedEnd = window.size - from <= MAX_TRANSCRIPT_READ_BYTES;
   const advanced = advance(base, window.bytes, reachedEnd);
   // While the cumulative facts are behind, the latest-state ones are folded from the end of the transcript, so what the session last did is not hidden for as many refreshes as the catching up takes.
-  const newer = reachedEnd ? undefined : newerFrom(ports, transcriptPath, window.size, previousNewer);
+  const newer = reachedEnd ? undefined : newerFrom(ports, transcriptPath, window.size, previousNewer, advanced);
   const next: TranscriptCache = { ...advanced, ...(newer === undefined ? {} : { newer }) };
   if (next.offset > base.offset) {
     // A cache is written only once a line is complete, so the digest of a first line still being written is never kept.
@@ -149,9 +149,9 @@ export function readTranscript(ports: StatuslinePorts, transcriptPath: string, n
 }
 
 /**
- * The latest-state facts of the end of a transcript of `size` bytes, to carry in the cache: `previous` carried on over what was appended since when that is no more than a read, else the last read's worth of the transcript from its first whole line, folded from nothing. Nothing when no line starts inside that read.
+ * The latest-state facts of the end of a transcript of `size` bytes, to carry in the cache: `previous` carried on over what was appended since when that is no more than a read, else the last read's worth of the transcript from its first whole line, folded from nothing but the calls `cumulative` remembers when it has not read as far as that line, so history the end repeats from the part already read is not taken for new calls (history repeated from the part between the two is, since nothing remembers it). Nothing when no line starts inside that read.
  */
-function newerFrom(ports: StatuslinePorts, transcriptPath: string, size: number, previous: TranscriptCache["newer"]): TranscriptCache["newer"] {
+function newerFrom(ports: StatuslinePorts, transcriptPath: string, size: number, previous: TranscriptCache["newer"], cumulative: CumulativeCache): TranscriptCache["newer"] {
   if (previous !== undefined && previous.offset <= size && size - previous.offset <= MAX_TRANSCRIPT_READ_BYTES) {
     const appended = ports.readRange(transcriptPath, previous.offset, MAX_TRANSCRIPT_READ_BYTES);
     return appended === undefined ? undefined : foldNewer(previous, appended.bytes, previous.offset);
@@ -163,7 +163,8 @@ function newerFrom(ports: StatuslinePorts, transcriptPath: string, size: number,
     return undefined;
   }
   const firstLine = from === 0 ? 0 : tail.bytes.indexOf(NEWLINE) + 1;
-  return firstLine === 0 && from > 0 ? undefined : foldNewer({ state: EMPTY_LATEST_STATE, activity: EMPTY_ACTIVITY_LATEST }, tail.bytes.subarray(firstLine), from + firstLine);
+  const start = from + firstLine;
+  return firstLine === 0 && from > 0 ? undefined : foldNewer({ state: EMPTY_LATEST_STATE, activity: cumulative.offset <= start ? replayMemoryOf(cumulative.activity.latest) : EMPTY_ACTIVITY_LATEST }, tail.bytes.subarray(firstLine), start);
 }
 
 /** The latest-state facts after the whole lines of `bytes`, which start at `offset`, with where they end. */
