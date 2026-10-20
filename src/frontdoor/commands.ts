@@ -12,7 +12,7 @@ import type { LayoutPaths } from "../paths";
 import { realSessionFs } from "../agents/realFs";
 import { collectSessionList, showSession } from "../agents/sessions";
 import { listIdentities } from "../identityStore";
-import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunningAmong, realCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
+import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunningAmong, realAsyncCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
 import { supervisedSessionOf, writeModelMove } from "../supervise/registry";
 import { createTargetObservationStore } from "../selection/targetStore";
 import { checkForUpdate } from "../update/commands";
@@ -32,7 +32,7 @@ import { runJobs } from "../usage/jobKeeper";
 import { resolveJobIdentity } from "../usage/jobTarget";
 import { machineTimeZone } from "../usage/anchor";
 import { runWindowKeeper } from "../usage/windowKeeper";
-import { realCredentialCacheEnv } from "../realCredentialCache";
+import { realAsyncCredentialCacheEnv } from "../realCredentialCache";
 import { createDoorPipelines } from "./assembly";
 import { appendDoorLog } from "./doorLog";
 import { retireOnSignals } from "./replacement";
@@ -227,7 +227,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       directPort: () => directPort,
       // The same port (cache included) the launcher resolves a launch's provider with, so the credential the door attaches at the route and the one the launcher handed the child are the same resolution of the same block.
       env: process.env,
-      credentials: { ...realCredentialPort, cache: realCredentialCacheEnv(paths) },
+      credentials: { ...realAsyncCredentialPort, cache: realAsyncCredentialCacheEnv(paths) },
       usageSnapshotOf: (identity) => (identity === undefined ? undefined : routingSnapshots.get(identity) ?? readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity)),
       // An `acct:` model member is served by relaunch: the door leaves a move request for the session's supervisor (found across every pool's registry, since the door does not know which pool launched the session) and answers the request with what is happening. A session nothing supervises gets the message naming the command to run instead.
       observations: (target) => observations.observation(target),

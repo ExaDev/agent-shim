@@ -5,7 +5,7 @@ import type { CodexRoutePorts } from "../codex/route";
 import { resolveCodexConfig } from "../codex/translate";
 import { resolveAntigravityConfig, type ResolvedAntigravityConfig } from "../antigravity/translate";
 import { createCachedAntigravityQuotaSource, fetchAntigravityQuotaSummary, type AntigravityQuotaMap } from "../antigravity/quota";
-import { resolveCredential, type CredentialPort, type ResolvedCredential } from "../credential";
+import { resolveCredentialAsync, shareInFlightResolutions, type AsyncCredentialPort, type ResolvedCredential, type ResolveCredentialAsyncParams, type CredentialResolution } from "../credential";
 import { LegacyProviderFileError, loadProvider } from "../providersStore";
 import type { FsPort } from "../launcher/ports";
 import { createCodexRouteMount } from "./codexMount";
@@ -165,8 +165,8 @@ export function createProviderRouteResolver(deps: {
    * The environment `env` credential sources are read from, and whose `OP_SERVICE_ACCOUNT_TOKEN` decides an `op` source's interactivity: the door process's own, the same environment the launcher resolved the launch's provider against.
    */
   readonly env: Readonly<Record<string, string | undefined>>;
-  /** Resolves an `http` provider's credential block: the same port the launcher resolves a launch's provider with, cache included. */
-  readonly credentials: CredentialPort;
+  /** Resolves an `http` provider's credential block: the same sources and cache the launcher resolves a launch's provider with, asked without blocking because a request waits on it inside the process that answers every session. */
+  readonly credentials: AsyncCredentialPort;
   /** Reads the session identity's usage snapshot, kept fresh by the caller (the door's own store writes it): the per-provider quota facts a route condition skips an exhausted target with. */
   readonly usageSnapshotOf?: (identity: string | undefined) => UsageSnapshot | undefined;
   /**
@@ -183,6 +183,8 @@ export function createProviderRouteResolver(deps: {
   /** The pass-through every bare /v1/ request from the CONNECT surface rides: straight to Claude Code's own API, with no per-request upstream for a headroom hop (the daemon's default upstream is exactly that API, which is what an OAuth session wants). */
   const oauthRoute = createPassthroughRoute("anthropic", { baseUrl: `https://${CONNECT_INTERCEPT_HOST}:${String(HTTPS_PORT)}`, stripPrefix: undefined, headroomUpstream: undefined });
 
+  /** Resolves a credential block on the request path; requests in flight together for the same block share one run of its sources. */
+  const resolveCredential = shareInFlightResolutions(resolveCredentialAsync);
   /**
    * One cached quota source per antigravity provider, for this resolver's lifetime: each refresh resolves the provider's own credential block and polls the backend's quota summary exactly as its CLI does, so the unified headers a session's responses carry describe the account's real windows.
    */
@@ -221,7 +223,7 @@ export function createProviderRouteResolver(deps: {
     const source = createCachedAntigravityQuotaSource({
       now: () => Date.now(),
       fetchSummary: async (nowMs) => {
-        const res = resolveCredential({ credential: definition.credential, env: deps.env, port: deps.credentials, subject: `provider ${provider}` });
+        const res = await resolveCredential({ credential: definition.credential, env: deps.env, port: deps.credentials, subject: `provider ${provider}` });
         if (!res.ok) {
           return undefined;
         }
@@ -293,8 +295,8 @@ export function createProviderRouteResolver(deps: {
         ok: true,
         route: createAntigravityRouteMount(
           {
-            loadProvider: () => {
-              const res = resolveCredential({
+            loadProvider: async () => {
+              const res = await resolveCredential({
                 credential: antigravityProvider.credential,
                 env: deps.env,
                 port: deps.credentials,
@@ -331,7 +333,7 @@ export function createProviderRouteResolver(deps: {
           stripPrefix: `${PROVIDER_PATH_PREFIX}${encodeURIComponent(provider)}`,
           headroomUpstream: directOrigin(deps.directPort()),
         }),
-        { provider, credential: httpProvider.credential, env: deps.env, port: deps.credentials },
+        { provider, credential: httpProvider.credential, env: deps.env, port: deps.credentials, resolve: resolveCredential },
       ),
     };
   };
@@ -518,14 +520,20 @@ function providerCredentialHeaders(credential: ResolvedCredential): Record<strin
  */
 function attachingProviderCredential(
   route: FrontDoorRoute,
-  deps: { readonly provider: string; readonly credential: Credential; readonly env: Readonly<Record<string, string | undefined>>; readonly port: CredentialPort },
+  deps: {
+    readonly provider: string;
+    readonly credential: Credential;
+    readonly env: Readonly<Record<string, string | undefined>>;
+    readonly port: AsyncCredentialPort;
+    readonly resolve: (params: ResolveCredentialAsyncParams) => Promise<CredentialResolution>;
+  },
 ): FrontDoorRoute {
   return {
     name: route.name,
     headroomEligible: route.headroomEligible,
     headroomUpstream: route.headroomUpstream,
     serve: async (request, response) => {
-      const resolution = resolveCredential({ credential: deps.credential, env: deps.env, port: deps.port, subject: `provider ${deps.provider}` });
+      const resolution = await deps.resolve({ credential: deps.credential, env: deps.env, port: deps.port, subject: `provider ${deps.provider}` });
       if (!resolution.ok) {
         // 502 with the api_error type, the shape the pass-through itself answers an unreachable upstream with: the door cannot authenticate this request at its upstream, which is a gateway failure, never the client's credential to fix.
         response.start(HTTP_STATUS.badGateway, { "Content-Type": "application/json" });

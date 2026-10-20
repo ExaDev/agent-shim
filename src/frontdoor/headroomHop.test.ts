@@ -16,7 +16,7 @@ import { HEADROOM_SOCKET_DIR_MODE, headroomSocketPath, type HeadroomSocketTarget
 import { writeHeadroomState } from "../headroom/state";
 import { buildLayoutPaths, type LayoutPaths } from "../paths";
 import { realFarmFs, realHeadroomSocketTrust } from "../realPorts";
-import { FAKE_HOME, fakeCredentials, fakeFs, followsLaunchFlag } from "../test-helpers";
+import { FAKE_HOME, fakeAsyncCredentials, fakeFs, followsLaunchFlag } from "../test-helpers";
 import { createDoorPipelines } from "./assembly";
 import { headroomSocketTarget } from "./status";
 import { LOOPBACK_LEAF_NAMES, generateCa, mintLeaf, type CaMaterial, type LeafCert } from "./connect";
@@ -244,7 +244,7 @@ async function startDoor(options: { readonly files: Record<string, unknown>; rea
     log: () => undefined,
   };
   let directPort = 0;
-  const resolveRoute = createProviderRouteResolver({ fs: fakeFs(options.files), providersDir: PROVIDERS_DIR, codexPorts: ports, directPort: () => directPort, env: {}, credentials: fakeCredentials() });
+  const resolveRoute = createProviderRouteResolver({ fs: fakeFs(options.files), providersDir: PROVIDERS_DIR, codexPorts: ports, directPort: () => directPort, env: {}, credentials: fakeAsyncCredentials() });
   const log = options.log ?? ((): void => undefined);
   const pipelines = createDoorPipelines({
     resolveRoute,

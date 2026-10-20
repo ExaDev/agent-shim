@@ -64,7 +64,7 @@ describe("createAntigravityRouteMount", () => {
   it("creates a route with proper metadata", () => {
     const mount = createAntigravityRouteMount(
       {
-        loadProvider: () => ({ ok: false, status: 404, message: "not found" }),
+        loadProvider: async () => await Promise.resolve({ ok: false, status: 404, message: "not found" }),
       },
       "http://127.0.0.1:4100",
       "my-ag",
@@ -92,7 +92,7 @@ describe("createAntigravityRouteMount", () => {
 
     const mount = createAntigravityRouteMount(
       {
-        loadProvider: () => ({
+        loadProvider: async () => await Promise.resolve({
           ok: true,
           config: DEFAULT_CONFIG,
           token: "dummy-key",
@@ -140,7 +140,7 @@ describe("createAntigravityRouteMount", () => {
   it("returns 400 when body chunk is not a Buffer", async () => {
     const mount = createAntigravityRouteMount(
       {
-        loadProvider: () => ({ ok: false, status: 404, message: "not found" }),
+        loadProvider: async () => await Promise.resolve({ ok: false, status: 404, message: "not found" }),
       },
       "http://127.0.0.1:4100",
       "my-ag",
@@ -188,7 +188,7 @@ describe("a tier alias the translator resolved", () => {
 
     const mount = createAntigravityRouteMount(
       {
-        loadProvider: () => ({
+        loadProvider: async () => await Promise.resolve({
           ok: true,
           config: DEFAULT_CONFIG,
           token: "dummy-key",

@@ -38,7 +38,7 @@ async function collectStream(stream: Readonly<AsyncIterable<string>>): Promise<s
 describe("createAntigravityRoute", () => {
   it("rejects non-POST requests with 400", async () => {
     const route = createAntigravityRoute({
-      loadProvider: () => ({ ok: false, status: 404, message: "not used" }),
+      loadProvider: async () => await Promise.resolve({ ok: false, status: 404, message: "not used" }),
     });
 
     const res = await route({
@@ -57,7 +57,7 @@ describe("createAntigravityRoute", () => {
 
   it("returns 404 when path does not contain provider name", async () => {
     const route = createAntigravityRoute({
-      loadProvider: () => ({ ok: false, status: 404, message: "not used" }),
+      loadProvider: async () => await Promise.resolve({ ok: false, status: 404, message: "not used" }),
     });
 
     const res = await route({
@@ -76,7 +76,7 @@ describe("createAntigravityRoute", () => {
 
   it("returns lookup failure status when provider not found", async () => {
     const route = createAntigravityRoute({
-      loadProvider: (name) => ({
+      loadProvider: async (name) => await Promise.resolve({
         ok: false,
         status: HTTP_STATUS.notFound,
         message: `unknown provider: ${name}`,
@@ -99,7 +99,7 @@ describe("createAntigravityRoute", () => {
 
   it("returns 400 on malformed JSON body", async () => {
     const route = createAntigravityRoute({
-      loadProvider: () => ({
+      loadProvider: async () => await Promise.resolve({
         ok: true,
         config: DEFAULT_CLOUD_CONFIG,
         token: "key-123",
@@ -122,7 +122,7 @@ describe("createAntigravityRoute", () => {
 
   it("returns 400 on schema validation failure", async () => {
     const route = createAntigravityRoute({
-      loadProvider: () => ({
+      loadProvider: async () => await Promise.resolve({
         ok: true,
         config: DEFAULT_CLOUD_CONFIG,
         token: "key-123",
@@ -162,7 +162,7 @@ describe("createAntigravityRoute", () => {
     };
 
     const route = createAntigravityRoute({
-      loadProvider: () => ({
+      loadProvider: async () => await Promise.resolve({
         ok: true,
         config: DEFAULT_CLOUD_CONFIG,
         token: "test-api-key",
@@ -228,7 +228,7 @@ describe("createAntigravityRoute", () => {
     };
 
     const route = createAntigravityRoute({
-      loadProvider: () => ({
+      loadProvider: async () => await Promise.resolve({
         ok: true,
         config: DEFAULT_LOCAL_CONFIG,
         token: "",
@@ -260,7 +260,7 @@ describe("createAntigravityRoute", () => {
     };
 
     const route = createAntigravityRoute({
-      loadProvider: () => ({
+      loadProvider: async () => await Promise.resolve({
         ok: true,
         config: DEFAULT_CLOUD_CONFIG,
         token: "bad-key",
@@ -293,7 +293,7 @@ describe("createAntigravityRoute", () => {
   const SINGLE_CANDIDATE_CONFIG = resolveAntigravityConfig({ mode: "cloud", cloud: { endpoint: "https://generativelanguage.googleapis.com" }, models: { haiku: "gemini-3.8-flash-low" } });
   const askFromClaudeCode = async (quotaSource?: () => Record<string, { remaining_fraction: number; reset_in_seconds: number }>) =>
     await createAntigravityRoute({
-      loadProvider: () => ({ ok: true, config: SINGLE_CANDIDATE_CONFIG, token: "key" }),
+      loadProvider: async () => await Promise.resolve({ ok: true, config: SINGLE_CANDIDATE_CONFIG, token: "key" }),
       fetchFn: rejectedByBackend,
       ...(quotaSource === undefined ? {} : { quotaSource }),
     })({
@@ -335,7 +335,7 @@ describe("createAntigravityRoute", () => {
       return await Promise.resolve(new Response("Resource has been exhausted (e.g. check quota)", { status: HTTP_STATUS.tooManyRequests }));
     };
     let quota: Record<string, { remaining_fraction: number; reset_in_seconds: number }> = { "gemini-5h": { remaining_fraction: 0, reset_in_seconds: FIVE_HOURS_SEC } };
-    const route = createAntigravityRoute({ loadProvider: () => ({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "key" }), fetchFn: recordingBackend, quotaSource: () => quota });
+    const route = createAntigravityRoute({ loadProvider: async () => await Promise.resolve({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "key" }), fetchFn: recordingBackend, quotaSource: () => quota });
     const ask = async (): Promise<unknown> =>
       await route({ method: "POST", path: "/providers/ag/v1/messages", body: JSON.stringify({ model: "claude-haiku-5-5", max_tokens: 1024, metadata: { user_id: "session-1" }, messages: [{ role: "user", content: "Hi" }] }), signal: new AbortController().signal });
     await ask();
@@ -356,7 +356,7 @@ describe("createAntigravityRoute", () => {
     // One map held by the caller, handed to each mounting: the resolver builds the route afresh per request, and without the shared memory every remount forgets where the session was.
     const lastRouted = new Map<string, string>();
     const mount = (): ReturnType<typeof createAntigravityRoute> =>
-      createAntigravityRoute({ loadProvider: () => ({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "key" }), fetchFn: recordingBackend, quotaSource: () => quota, lastRouted });
+      createAntigravityRoute({ loadProvider: async () => await Promise.resolve({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "key" }), fetchFn: recordingBackend, quotaSource: () => quota, lastRouted });
     const ask = async (): Promise<void> => {
       await mount()({ method: "POST", path: "/providers/ag/v1/messages", body: JSON.stringify({ model: "claude-haiku-5-5", max_tokens: 1024, metadata: { user_id: "session-1" }, messages: [{ role: "user", content: "hi" }] }), signal: new AbortController().signal });
     };
@@ -397,7 +397,7 @@ describe("createAntigravityRoute", () => {
     };
 
     const route = createAntigravityRoute({
-      loadProvider: () => ({
+      loadProvider: async () => await Promise.resolve({
         ok: true,
         config: DEFAULT_LOCAL_CONFIG,
         token: "",

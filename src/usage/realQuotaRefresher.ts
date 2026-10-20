@@ -1,4 +1,4 @@
-import { realCredentialPort, realFarmFs, realFsPort } from "../realPorts";
+import { realAsyncCredentialPort, realFarmFs, realFsPort } from "../realPorts";
 import type { LayoutPaths } from "../paths";
 import { createProviderLookup, createQuotaRefresher, type QuotaRefresher } from "./quotaRefresh";
 import { realQuotaHttpGet } from "./quotaHttp";
@@ -9,7 +9,7 @@ import type { UsageStore } from "./store";
 export function createRealQuotaRefresher(params: { readonly paths: LayoutPaths; readonly store: UsageStore; readonly log: (line: string) => void }): QuotaRefresher {
   const { paths, store, log } = params;
   return createQuotaRefresher({
-    lookup: createProviderLookup({ fs: realFsPort, providersDir: paths.providersDir, env: process.env, credentials: realCredentialPort }),
+    lookup: createProviderLookup({ fs: realFsPort, providersDir: paths.providersDir, env: process.env, credentials: realAsyncCredentialPort }),
     http: realQuotaHttpGet,
     readQuota: (identity, provider) => {
       try {

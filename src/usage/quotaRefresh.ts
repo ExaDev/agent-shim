@@ -1,5 +1,5 @@
 import { isAntigravityProvider, isHttpProvider, isRouterProvider } from "../config/schema";
-import { resolveCredential, type CredentialPort } from "../credential";
+import { resolveCredentialAsync, type AsyncCredentialPort } from "../credential";
 import type { FsPort } from "../launcher/ports";
 import { loadProvider } from "../providersStore";
 import { ANTHROPIC_PROVIDER } from "./middleware";
@@ -13,7 +13,7 @@ export const QUOTA_REQUEST_TIMEOUT_MS = 10_000;
 export interface QuotaProviderLookup {
   readonly baseUrl: string;
   /** Throws an error whose message says why no key could be resolved. Never include the key in any message. */
-  readonly apiKey: () => string;
+  readonly apiKey: () => Promise<string>;
 }
 
 /** Everything the refresher depends on, injected so it runs against fakes. */
@@ -58,7 +58,7 @@ export function createQuotaRefresher(deps: QuotaRefresherDeps): QuotaRefresher {
   const fetchNow = async (identity: string, provider: string, lookup: QuotaProviderLookup, adapter: ProviderQuotaAdapter): Promise<RefreshOutcome> => {
     const key = `${identity}\u0000${provider}`;
     try {
-      const apiKey = lookup.apiKey();
+      const apiKey = await lookup.apiKey();
       const quota = await adapter.fetch(apiKey, deps.http, AbortSignal.timeout(QUOTA_REQUEST_TIMEOUT_MS), deps.now());
       if (!deps.record(identity, provider, quota)) {
         return { status: "no-usage" };
@@ -124,7 +124,7 @@ export interface ProviderLookupPorts {
   readonly providersDir: string;
   /** Where `env` credential sources are read. */
   readonly env: Readonly<Record<string, string | undefined>>;
-  readonly credentials: CredentialPort;
+  readonly credentials: AsyncCredentialPort;
 }
 
 /**
@@ -143,8 +143,8 @@ export function createProviderLookup(ports: ProviderLookupPorts): (name: string)
     }
     return {
       baseUrl,
-      apiKey: () => {
-        const resolution = resolveCredential({ credential: isRouterProvider(definition) ? { sources: [] } : definition.credential, env: ports.env, port: ports.credentials, subject: `provider ${name}` });
+      apiKey: async () => {
+        const resolution = await resolveCredentialAsync({ credential: isRouterProvider(definition) ? { sources: [] } : definition.credential, env: ports.env, port: ports.credentials, subject: `provider ${name}` });
         if (!resolution.ok) {
           throw new Error(resolution.message);
         }
