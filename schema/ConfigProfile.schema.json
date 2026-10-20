@@ -167,7 +167,7 @@
                 "essential",
                 "minimal"
               ],
-              "description": "A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts, usage.resetLabel and context.breakdown) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments and the context row; full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, prompt cache, compactions and session tokens rows, with the token breakdown at high use, essential adds the duration and the added directories row, and minimal adds the added directories row alone."
+              "description": "A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts, usage.resetLabel and context.breakdown) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments and the context row; full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown at high use, essential adds the duration, the added directories row and the tools, agents and todos rows, and minimal adds the added directories row alone."
             },
             "layout": {
               "type": "object",
@@ -259,7 +259,12 @@
                         "sessionTime",
                         "promptCache",
                         "compactions",
-                        "tokens"
+                        "tokens",
+                        "tools",
+                        "skills",
+                        "mcp",
+                        "agents",
+                        "todos"
                       ]
                     }
                   },
@@ -279,7 +284,12 @@
                       "sessionTime",
                       "promptCache",
                       "compactions",
-                      "tokens"
+                      "tokens",
+                      "tools",
+                      "skills",
+                      "mcp",
+                      "agents",
+                      "todos"
                     ]
                   },
                   "description": "Rows that start the right-aligned part of a merged line: the first of them to appear on a line, and the rows after it, are pushed to the right edge, with the gap padded by spaces. A row named here must belong to a group in layout.merge, and it has no effect when it is the first row of its line."
