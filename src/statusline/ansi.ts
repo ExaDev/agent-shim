@@ -24,17 +24,15 @@ export function visibleLength(text: string): number {
  */
 export function truncateToColumns(text: string, columns: number): string {
   let used = 0;
-  let full = false;
   let kept = "";
   text.split(SPLIT_ON_ESCAPES).forEach((part, index) => {
     if (index % 2 === 1) {
       kept += part;
       return;
     }
-    for (const grapheme of full ? [] : graphemesOf(part)) {
+    for (const grapheme of graphemesOf(part)) {
       used += visibleLength(grapheme);
       if (used > columns) {
-        full = true;
         return;
       }
       kept += grapheme;

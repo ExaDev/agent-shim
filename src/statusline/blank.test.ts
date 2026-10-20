@@ -10,7 +10,7 @@ describe("drawsNothing", () => {
   });
 
   it("is false for text with any visible cell, including a mark on a letter", () => {
-    for (const something of ["a", "e\u0301", "日", "\u{1F600}", " a ", "\u2800a"]) {
+    for (const something of ["a", "e\u0301", "\u65e5", "\u{1F600}", " a ", "\u2800a"]) {
       expect(drawsNothing(something), JSON.stringify(something)).toBe(false);
     }
   });

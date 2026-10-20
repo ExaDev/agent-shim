@@ -40,6 +40,14 @@ const SUMMARY: StatuslineSummary = {
 };
 
 /** The environment of a test that reads text, not colour. */
+/** The characters a bar is drawn with by default. */
+const FILLED = "\u2588";
+const EMPTY = "\u2591";
+/** How many cells of a default bar at the test terminal's width are filled and empty for the five-hour and weekly windows. */
+const FIVE_HOUR_FILLED = 16;
+const FIVE_HOUR_EMPTY = 46;
+const WEEK_FILLED = 25;
+const WEEK_EMPTY = 37;
 const PLAIN = { NO_COLOR: "1" };
 const COLOURED = {};
 
@@ -62,14 +70,14 @@ describe("the quota row's usage settings", () => {
   it("draws a bar per window with the figure and the time left by default", () => {
     const lines = quotaLines({});
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toBe("5h [████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 25.0% (1h 30m) | Wk [█████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 40.0% (4d 1h)");
+    expect(lines[0]).toBe(`5h [${FILLED.repeat(FIVE_HOUR_FILLED)}${EMPTY.repeat(FIVE_HOUR_EMPTY)}] 25.0% (1h 30m) | Wk [${FILLED.repeat(WEEK_FILLED)}${EMPTY.repeat(WEEK_EMPTY)}] 40.0% (4d 1h)`);
   });
 
   it("writes the share left instead of the share used with usage.value, and keeps the bar and colour on the share used", () => {
     const [plain] = quotaLines({ usage: { value: "remaining" } });
     expect(plain).toContain("75.0% (1h 30m)");
     expect(plain).toContain("60.0% (4d 1h)");
-    const filled = (line: string | undefined): number => (line ?? "").split("█").length - 1;
+    const filled = (line: string | undefined): number => (line ?? "").split("\u2588").length - 1;
     expect(filled(plain)).toBe(filled(quotaLines({})[0]));
     // 25% used is past the warning threshold of 20, so the figure is yellow although it is the share left that is drawn.
     const [coloured] = quotaLines({ usage: { value: "remaining" }, bands: { warnAt: 20, criticalAt: 30 } }, {}, {}, COLOURED);

@@ -95,6 +95,6 @@ describe("formatWallClock", () => {
     expect(at("fi", "auto", true)).toBe("9.05.00");
     expect(at("gu-IN")).toBe("09:05 AM");
     expect(at("de-DE")).toBe("09:05");
-    expect(at("ja-JP", "h12")).toBe("午前9:05");
+    expect(at("ja-JP", "h12")).toBe("\u5348\u524d9:05");
   });
 });

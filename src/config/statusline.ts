@@ -232,7 +232,7 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   advisor: { override: "" },
   bands: { warnAt: 70, criticalAt: 90 },
   labels: { fiveHour: "5h", sevenDay: "Wk" },
-  bar: { width: 10, filled: "█", empty: "░" },
+  bar: { width: 10, filled: "\u2588", empty: "\u2591" },
   usage: { value: "used", bar: true, compact: false, resetLabel: false, modelScoped: false, timeFormat: "relative", threshold: 0, sevenDayThreshold: 0 },
   clock: { hourCycle: "auto", seconds: false },
   colours: {
