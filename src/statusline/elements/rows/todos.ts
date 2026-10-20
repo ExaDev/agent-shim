@@ -1,7 +1,7 @@
 import { truncateWithEllipsis, visibleLength } from "../../ansi";
 import { paintCore } from "../../messages/around";
 import type { RenderContext, RowOutput } from "../context";
-import { ACTIVE_MARK, DONE_MARK, NO_LINES } from "./activityParts";
+import { ACTIVE_MARK, DONE_MARK, fitToWidth, markColumns, markedLine, NO_LINES } from "./activityParts";
 
 /** The most columns of the active todo's words the row draws: more than this is a paragraph the line has no room for. */
 const MAX_TODO_COLUMNS = 50;
@@ -21,10 +21,10 @@ export function todosRow({ palette, transcript, width, t }: RenderContext): RowO
   }
   const progressText = t("todos.progress", { done, total: todos.length });
   const mark = active === undefined ? palette.paint("context", DONE_MARK) : palette.paint("warning", ACTIVE_MARK);
-  // The mark and the space after it take two columns beside the words and the progress, which holds the space between them itself where the language writes one.
-  const room = Math.min(MAX_TODO_COLUMNS, width - visibleLength(DONE_MARK) - 1 - visibleLength(progressText));
-  const words = room < MIN_TODO_COLUMNS ? "" : truncateWithEllipsis(active?.content ?? t("todos.allComplete"), room, TODO_ELLIPSIS);
+  // The mark and what sets it apart from the words take columns beside them and the progress, which holds the space between them itself where the language writes one.
+  const room = Math.min(MAX_TODO_COLUMNS, width - markColumns(t) - visibleLength(progressText));
+  const words = room < MIN_TODO_COLUMNS ? "" : truncateWithEllipsis(active === undefined ? t("todos.allComplete") : (active.content ?? t("todos.untitled")), room, TODO_ELLIPSIS);
   const label = (text: string): string => palette.paint("label", text);
   const progress = words === "" ? paintCore(progressText.trimStart(), label) : `${words}${paintCore(progressText, label)}`;
-  return { kind: "text", lines: [`${mark} ${progress}`] };
+  return { kind: "text", lines: [fitToWidth(markedLine(t, mark, progress), width)] };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AROUND_VALUE_IDS, aroundValue, COUNTED_AROUND_VALUE_IDS, paintCore, VALUE_MARK, writeAround } from "./around";
+import { AROUND_VALUE_IDS, aroundValue, namesCount, paintCore, VALUE_MARK, writeAround } from "./around";
 import { CATALOGUES, translatorFor } from "./catalogues";
 import { STATUSLINE_LANGUAGES } from "./languages";
 
@@ -52,7 +52,7 @@ describe("the messages written around a value", () => {
   for (const language of STATUSLINE_LANGUAGES) {
     describe(language, () => {
       for (const id of AROUND_VALUE_IDS) {
-        const counted = COUNTED_AROUND_VALUE_IDS.includes(id);
+        const counted = namesCount(id);
 
         it(`${id} holds a placeholder for the value, and one for the count when it names one, and no other`, () => {
           expect(CATALOGUES[language][id].match(/\{\w+\}/g)).toHaveLength(counted ? 2 : 1);

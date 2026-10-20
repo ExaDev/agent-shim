@@ -4,7 +4,7 @@ import { resolveStatusline, type StatuslineSettings } from "../../config/statusl
 import { ESCAPE, visibleLength } from "../ansi";
 import { createPalette } from "../palette";
 import { fakeRenderContext } from "../testing";
-import { EMPTY_ACTIVITY_FACTS, type ActivityFacts, type AgentFact, type ToolCallFact } from "../transcript/activity";
+import { EMPTY_ACTIVITY_FACTS, type ActivityFacts, type AgentFact, type NamesFact, type ToolCallFact } from "../transcript/activity";
 import type { TranscriptFacts } from "../transcript/reader";
 import type { RenderContext, RowOutput } from "./context";
 import { agentsRow } from "./rows/agents";
@@ -39,6 +39,8 @@ const TARGET_COLUMNS = 20;
 const NAME_COLUMNS = 64;
 const LONG_NAME_COLUMNS = 70;
 const ELLIPSIS = "\u2026";
+/** Wide enough for the mark and the progress alone, and too narrow for the progress and any word. */
+const NARROWEST_PROGRESS = "\u25B8 (0/1)".length;
 
 function facts(activity: Partial<ActivityFacts>, complete = true): TranscriptFacts {
   return {
@@ -66,6 +68,7 @@ function linesOf(output: RowOutput): readonly string[] {
   return output.kind === "text" ? output.lines : [];
 }
 
+const namesOf = (names: readonly string[]): NamesFact => ({ names, total: names.length, exact: true });
 const tool = (name: string, status: ToolCallFact["status"] = "completed", target?: string): ToolCallFact => ({ name, target, status });
 const agent = (overrides: Partial<AgentFact> = {}): AgentFact => ({ type: "Explore", model: undefined, description: undefined, status: "running", startedAtMs: NOW_MS - TWELVE_SECONDS, endedAtMs: undefined, ...overrides });
 
@@ -155,8 +158,8 @@ describe("the tools row", () => {
 });
 
 describe("the skills and mcp rows", () => {
-  const skills = (names: readonly string[], drawing?: Drawing & { readonly complete?: boolean }): readonly string[] => linesOf(skillsRow(contextOf(facts({ skills: names }, drawing?.complete), drawing)));
-  const servers = (names: readonly string[], drawing?: Drawing): readonly string[] => linesOf(mcpRow(contextOf(facts({ mcpServers: names }), drawing)));
+  const skills = (names: readonly string[], drawing?: Drawing & { readonly complete?: boolean }): readonly string[] => linesOf(skillsRow(contextOf(facts({ skills: namesOf(names) }, drawing?.complete), drawing)));
+  const servers = (names: readonly string[], drawing?: Drawing): readonly string[] => linesOf(mcpRow(contextOf(facts({ mcpServers: namesOf(names) }), drawing)));
 
   it("draw nothing without a transcript, or without a name", () => {
     expect(linesOf(skillsRow(contextOf(undefined)))).toEqual([]);
@@ -187,10 +190,18 @@ describe("the skills and mcp rows", () => {
     expect(skills(["alpha-skill", "beta-skill", "gamma-skill"], { width: NARROW })).toEqual(["\u2713 Skills (3): alpha-skill, beta-skill", "gamma-skill"]);
   });
 
-  it("paint the marker in the context colour, the names in the activity colour and the figures in the label colour", () => {
+  it("paint the marker in the context colour, the names in the activity colour and only the count and the rest in the label colour, leaving the title and its colon plain", () => {
     const settings: StatuslineSettings = { colours: { context: "green", activity: "cyan", label: "blue" } };
     const [line = ""] = skills(["commit", "a", "b", "c", "d"], { settings, colour: true });
-    expect(line).toBe(`${ESCAPE}[32m\u2713${ESCAPE}[0m ${ESCAPE}[34mSkills (5):${ESCAPE}[0m ${ESCAPE}[36mcommit${ESCAPE}[0m, ${ESCAPE}[36ma${ESCAPE}[0m, ${ESCAPE}[36mb${ESCAPE}[0m, ${ESCAPE}[36mc${ESCAPE}[0m, ${ESCAPE}[34m+1 more${ESCAPE}[0m`);
+    expect(line).toBe(`${ESCAPE}[32m\u2713${ESCAPE}[0m Skills ${ESCAPE}[34m(5)${ESCAPE}[0m: ${ESCAPE}[36mcommit${ESCAPE}[0m, ${ESCAPE}[36ma${ESCAPE}[0m, ${ESCAPE}[36mb${ESCAPE}[0m, ${ESCAPE}[36mc${ESCAPE}[0m, ${ESCAPE}[34m+1 more${ESCAPE}[0m`);
+  });
+
+  it("end the count in a plus when the state had no room to count every name", () => {
+    expect(linesOf(skillsRow(contextOf(facts({ skills: { names: ["a"], total: 1, exact: false } }))))).toEqual(["\u2713 Skills (1+): a"]);
+  });
+
+  it("count the names the state kept only as a number among the ones not named", () => {
+    expect(linesOf(skillsRow(contextOf(facts({ skills: { names: ["a", "b", "c", "d"], total: 9, exact: true } }))))).toEqual(["\u2713 Skills (9): a, b, c, d, +5 more"]);
   });
 });
 
@@ -316,7 +327,7 @@ describe("the todos row", () => {
   });
 
   it("leaves the words out and draws the progress alone when even a cut word does not fit", () => {
-    const [drawn = ""] = linesOf(todosRow({ ...contextOf(facts({ todos: [{ content: "Write", status: "in_progress" }] }), { width: 1 }), width: 1 }));
+    const [drawn = ""] = linesOf(todosRow({ ...contextOf(facts({ todos: [{ content: "Write", status: "in_progress" }] }), { width: NARROWEST_PROGRESS }), width: NARROWEST_PROGRESS }));
     expect(drawn).toBe("\u25B8 (0/1)");
   });
 
@@ -324,5 +335,48 @@ describe("the todos row", () => {
     const settings: StatuslineSettings = { colours: { warning: "yellow", context: "green" } };
     expect(draw([{ content: "A", status: "in_progress" }], { settings, colour: true })[0]).toContain(`${ESCAPE}[33m\u25B8${ESCAPE}[0m`);
     expect(draw([{ content: "A", status: "completed" }], { settings, colour: true })[0]).toContain(`${ESCAPE}[32m\u2713${ESCAPE}[0m`);
+  });
+});
+
+describe("the words the facts leave out", () => {
+  const ZH_HANS: StatuslineSettings = { language: "zh-Hans" };
+  const ZH_HANT: StatuslineSettings = { language: "zh-Hant" };
+
+  it("are written in the language's words: an agent with no type and a task with no title", () => {
+    const untyped = [agent({ type: undefined })];
+    const untitled = [{ content: undefined, status: "in_progress" as const }];
+    expect(linesOf(agentsRow(contextOf(facts({ agents: untyped }))))).toEqual(["◐ agent (12s)"]);
+    expect(linesOf(agentsRow(contextOf(facts({ agents: untyped }), { settings: ZH_HANS })))).toEqual(["◐ 智能体（12s）"]);
+    expect(linesOf(agentsRow(contextOf(facts({ agents: untyped }), { settings: ZH_HANT })))).toEqual(["◐ 代理程式（12s）"]);
+    expect(linesOf(todosRow(contextOf(facts({ todos: untitled }))))).toEqual(["▸ Untitled task (0/1)"]);
+    expect(linesOf(todosRow(contextOf(facts({ todos: untitled }), { settings: ZH_HANS })))).toEqual(["▸ 未命名任务（0/1）"]);
+  });
+});
+
+describe("a name or a command that is wider than the line", () => {
+  const WIDTH = 28;
+  const LONG = 60;
+
+  it("gives the first name what the line has left after the title and count, in every language", () => {
+    const names = { names: ["d".repeat(LONG)], total: 1, exact: true };
+    const [en = ""] = linesOf(skillsRow(contextOf(facts({ skills: names }), { width: WIDTH })));
+    expect(en).toBe(`✓ Skills (1): ${"d".repeat(WIDTH - "✓ Skills (1): ".length - 1)}${ELLIPSIS}`);
+    expect(visibleLength(en)).toBe(WIDTH);
+    for (const language of ["zh-Hans", "zh-Hant"] as const) {
+      const [line = ""] = linesOf(mcpRow(contextOf(facts({ mcpServers: names }), { width: WIDTH, settings: { language } })));
+      expect(visibleLength(line), language).toBeLessThanOrEqual(WIDTH);
+      expect(line, language).toContain(ELLIPSIS);
+    }
+  });
+
+  it("gives a running call's name and target what the line has left", () => {
+    const [line = ""] = linesOf(toolsRow(contextOf(facts({ tools: [tool("Bash", "running", "x".repeat(LONG))] }), { width: WIDTH })));
+    expect(visibleLength(line)).toBeLessThanOrEqual(WIDTH);
+    expect(line.startsWith("◐ Bash: ")).toBe(true);
+  });
+
+  it("cuts a finished call's name so its count stays", () => {
+    const [line = ""] = linesOf(toolsRow(contextOf(facts({ tools: [tool("n".repeat(LONG))] }), { width: WIDTH })));
+    expect(line).toBe(`✓ ${"n".repeat(WIDTH - "✓ ".length - " ×1".length - 1)}${ELLIPSIS} ×1`);
   });
 });

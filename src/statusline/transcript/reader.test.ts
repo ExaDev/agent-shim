@@ -277,7 +277,7 @@ describe("readTranscript", () => {
     const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: text });
     const facts = readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0 + (calls.length + 1) * SECOND_MS);
     expect(facts?.activity.tools.map((tool) => `${tool.name}:${tool.status}`)).toEqual(["Read:completed", "Skill:running", "mcp__github__list_issues:running"]);
-    expect(facts?.activity).toMatchObject({ skills: ["commit"], mcpServers: ["github"], agents: [{ type: "Explore", description: "Look around", status: "running" }], todos: [{ content: "Write it", status: "pending" }] });
+    expect(facts?.activity).toMatchObject({ skills: { names: ["commit"], total: 1, exact: true }, mcpServers: { names: ["github"], total: 1, exact: true }, agents: [{ type: "Explore", description: "Look around", status: "running" }], todos: [{ content: "Write it", status: "pending" }] });
   });
 
   it("pairs a tool call with a result that arrives in a later refresh, from the cache, and ages a call with no result by the clock it is given", () => {
@@ -311,7 +311,7 @@ describe("readTranscript", () => {
     const first = readTranscript(ports, TRANSCRIPT, T0 + THREE_DAYS);
     expect(first).toMatchObject({ complete: false, activity: { todos: [{ content: "Finish", status: "in_progress" }] } });
     expect(first?.activity.tools.map((tool) => tool.name)).toContain("Grep");
-    expect(first?.activity.skills).not.toContain("late");
+    expect(first?.activity.skills.names).not.toContain("late");
     expect(bytesRead()).toBeLessThanOrEqual(MAX_READ_PER_REFRESH);
 
     let facts = first;
@@ -321,7 +321,7 @@ describe("readTranscript", () => {
       expect(bytesRead() - before).toBeLessThanOrEqual(MAX_READ_PER_REFRESH);
       expect(facts?.activity.todos).toEqual([{ content: "Finish", status: "in_progress" }]);
     }
-    expect(facts?.activity.skills).toEqual(["early-0", "early-1", "early-2", "late"]);
+    expect(facts?.activity.skills.names).toEqual(["early-0", "early-1", "early-2", "late"]);
     expect(facts?.activity.tools.at(-1)?.name).toBe("Skill");
   });
 
