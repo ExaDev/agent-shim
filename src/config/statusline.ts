@@ -239,7 +239,7 @@ const SHAPES = {
   },
   customLine: {
     text: overrideText.describe("A line of your own text to draw, in colours.custom; empty draws nothing. It is cleaned of anything that draws nothing and cut to the usable width."),
-    position: z.enum(["first", "last"]).describe("Where the custom line sits: first draws it above the header, and last below the last row."),
+    position: z.enum(["first", "last"]).describe("Where the custom line sits: first draws it above the header, and last below the last row, as a line of its own in either layout mode."),
   },
   extra: {
     command: z
