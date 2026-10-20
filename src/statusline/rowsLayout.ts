@@ -77,32 +77,52 @@ function mergedItems(rows: readonly DrawnRow[], settings: RowsLayoutSettings, wi
 /** The run key of the bar rows that are in no group while `mergeBars` is set: they share a run with each other, but never with a group's rows. */
 const BARS_RUN = -1;
 
-/** The rows cut into runs of rows that sit next to each other and share a run key: the index of their merge group, or the bars run for bar rows outside every group when `mergeBars` is set. Any other row is a run of its own. */
+/** Rows that sit next to each other and share a run key. */
+interface Run {
+  readonly key: number | undefined;
+  readonly rows: DrawnRow[];
+}
+
+/**
+ * The rows cut into runs of rows that sit next to each other and share a run key: the index of their merge group, or the bars run for bar rows outside every group when `mergeBars` is set. Any other row is a run of its own. A run of bar rows with nothing to show among them draws nothing and is left out, so the bars either side of it are as if it were not there.
+ */
 function runsOf(rows: readonly DrawnRow[], settings: RowsLayoutSettings): DrawnRow[][] {
   const groupOf = new Map(settings.merge.flatMap((group, index) => group.map((name) => [name, index] as const)));
   const keyOf = (row: DrawnRow): number | undefined => groupOf.get(row.name) ?? (settings.mergeBars && row.output.kind === "bars" ? BARS_RUN : undefined);
-  const runs: { readonly key: number | undefined; readonly rows: DrawnRow[] }[] = [];
-  for (const row of rows) {
-    const key = keyOf(row);
+  const runs: Run[] = [];
+  const add = (key: number | undefined, row: DrawnRow): void => {
     const last = runs.at(-1);
     if (last !== undefined && key !== undefined && last.key === key) {
       last.rows.push(row);
     } else {
       runs.push({ key, rows: [row] });
     }
+  };
+  for (const row of rows) {
+    add(keyOf(row), row);
   }
-  return runs.map((run) => run.rows);
+  const silent = (run: Run): boolean => run.rows.every((row) => isEmpty(row.output) && row.output.kind === "bars");
+  const kept: Run[] = [];
+  for (const run of runs.filter((candidate) => !silent(candidate))) {
+    const last = kept.at(-1);
+    if (last !== undefined && run.key === BARS_RUN && last.key === BARS_RUN) {
+      last.rows.push(...run.rows);
+    } else {
+      kept.push(run);
+    }
+  }
+  return kept.map((run) => run.rows);
 }
 
 /**
- * The lines of the rows below the header. Rows that sit next to each other in the order and belong to one merge group, and bar rows outside every group while `mergeBars` is set, are joined onto a line when they fit together (bars sharing a grid, other rows as one line of text), else each is drawn on its own. Bars of consecutive items keep one grid, so their columns line up whether they share a line or not, and a row of text, even one with nothing to show, ends the run.
+ * The lines of the rows below the header. Rows that sit next to each other in the order and belong to one merge group, and bar rows outside every group while `mergeBars` is set, are joined onto a line when they fit together (bars sharing a grid, other rows as one line of text), else each is drawn on its own. Bars of consecutive items keep one grid, so their columns line up whether they share a line or not, and a row of text, even one with nothing to show, ends the run, as does a merge group of which no row has anything to show but one is a row of text.
  */
 export function layoutRows(rows: readonly DrawnRow[], settings: RowsLayoutSettings, width: number): string[] {
   const items = runsOf(rows, settings).flatMap((run): readonly Item[] => {
     const present = run.filter((row) => !isEmpty(row.output));
     if (present.length === 0) {
-      // A row of text with nothing to show still ends a run of bars, as any row of text does, so the bars either side of it keep grids of their own; a bar row with nothing to show does not.
-      return run.length === 1 && run[0]?.output.kind === "text" ? [BREAK] : [];
+      // Runs of bar rows alone with nothing to show were left out, so what is left is a row of text, or a merge group with one, that has nothing to show. It still ends a run of bars, as any row of text does, so the bars either side of it keep grids of their own.
+      return [BREAK];
     }
     return present.length > 1 ? mergedItems(present, settings, width) : present.map(itemOf);
   });
