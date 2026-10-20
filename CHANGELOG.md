@@ -1,3 +1,15 @@
+## [11.57.0](https://github.com/ExaDev/agent-shim/compare/v11.56.1...v11.57.0) (2026-10-20)
+
+### Features
+
+* **statusline:** draw the session's cost, today's spend, memory and configuration counts ([2c5a443](https://github.com/ExaDev/agent-shim/commit/2c5a44327adb460671336122b015bc3e9ed4b301))
+* **statusline:** give the renderer ports to files, state and memory ([e8006b5](https://github.com/ExaDev/agent-shim/commit/e8006b5391e6e55f78fa506309f51b596fcc684c))
+* **usage:** record the client's conversation id on each request ([8fa5fde](https://github.com/ExaDev/agent-shim/commit/8fa5fde19b0a979ec45305eeaa001fddd825be67))
+
+### Bug Fixes
+
+* **statusline:** remove the duplicate boolean key kind and test the width and link handling ([a9755ac](https://github.com/ExaDev/agent-shim/commit/a9755acd844e9b7380568a461c766335374186cf))
+
 ## [11.56.1](https://github.com/ExaDev/agent-shim/compare/v11.56.0...v11.56.1) (2026-10-20)
 
 ### Bug Fixes
