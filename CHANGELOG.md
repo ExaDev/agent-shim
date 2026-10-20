@@ -1,3 +1,19 @@
+## [11.54.0](https://github.com/ExaDev/agent-shim/compare/v11.53.0...v11.54.0) (2026-10-20)
+
+### Features
+
+* **statusline:** model and identity segments ([09746c7](https://github.com/ExaDev/agent-shim/commit/09746c73938e7395f96ac67c611c50554a10333c))
+* **statusline:** read the end of a file through the ports ([492015e](https://github.com/ExaDev/agent-shim/commit/492015e3bd0192347d1ef754c6f29619596ab516))
+
+### Bug Fixes
+
+* **statusline:** find the newest assistant record by reading the transcript backwards ([6003185](https://github.com/ExaDev/agent-shim/commit/60031857701e34ef18afd93cbb19e2ec68938d74))
+* **statusline:** read dated model ids and an empty configuration directory correctly ([08ee49d](https://github.com/ExaDev/agent-shim/commit/08ee49d1dc6bba4e3f7c9c1c025aecd1d1820288))
+
+### Tests
+
+* **statusline:** cut a chunk edge inside a multi-byte character of the model and advisor ([3defed4](https://github.com/ExaDev/agent-shim/commit/3defed4f0c12c6573d3e7dfa2492a650c80e1441))
+
 ## [11.53.0](https://github.com/ExaDev/agent-shim/compare/v11.52.1...v11.53.0) (2026-10-19)
 
 ### Features
