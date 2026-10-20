@@ -26,7 +26,7 @@ import { runChild } from "../usage/childRun";
 import { createCatalogueKeeper } from "../catalogueKeeper";
 import { CATALOGUE_REFRESH_TIMEOUT_MS, catalogueCachePath } from "../providerCatalogue";
 import { createProviderCanonicaliser, loadProviderAliases } from "../providerAliases";
-import { listProviders } from "../providersStore";
+import { listProviders, providerFileDefined } from "../providersStore";
 import { WINDOW_OPEN_TIMEOUT_MS } from "../usage/realWindowOpener";
 import { runJobs } from "../usage/jobKeeper";
 import { resolveJobIdentity } from "../usage/jobTarget";
@@ -389,7 +389,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
 
   // The existence check is a stat, not a parse: it runs on every provider request.
   const canonicalProvider = createProviderCanonicaliser({
-    defined: (name) => realFarmFs.lstat(path.join(paths.providersDir, `${name}.json`)) !== undefined,
+    defined: (name) => providerFileDefined((file) => realFarmFs.lstat(file), paths.providersDir, name),
     aliases: () => loadProviderAliases(paths.providerAliasesFile, realFsPort),
     log,
   });

@@ -28,7 +28,7 @@ import type { FsPort } from "./launcher/ports";
 import { assembleCascade, type CascadeInput } from "./resolve/walk";
 import type { LayoutPaths } from "./paths";
 import { FAMILY_PREFIX, buildFamilies, expandFamilyMembers, type Family } from "./models/families";
-import { providerFilePath, requireNewProviderName, UnsafeNameError } from "./config/names";
+import { isStoredName, providerFilePath, requireNewProviderName, UnsafeNameError } from "./config/names";
 
 /** Raised by any operation that requires a provider to already exist, when it does not. */
 export class ProviderNotFoundError extends CliError {
@@ -48,6 +48,11 @@ export class ProviderAlreadyExistsError extends CliError {
 
 export function providerJsonPath(paths: LayoutPaths, name: string): string {
   return providerFilePath(paths.providersDir, name);
+}
+
+/** Whether a provider file exists for `name`, by a stat that `lstat` performs, for a name that may come from a request path: one that cannot name a file inside `providersDir` is not defined, and nothing is stat-ed for it. */
+export function providerFileDefined(lstat: (filePath: string) => unknown, providersDir: string, name: string): boolean {
+  return isStoredName(name) && lstat(providerFilePath(providersDir, name)) !== undefined;
 }
 
 /** True when a provider file exists for `name`, regardless of whether it validates. */

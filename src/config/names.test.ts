@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { FileNameSchema, InvalidProviderNameError, isFileName, isStoredName, profileFilePath, providerFilePath, requireNewProviderName, StoredNameSchema, UnsafeNameError } from "./names";
+import { FileNameSchema, MAX_NAME_BYTES, InvalidProviderNameError, isFileName, isStoredName, profileFilePath, providerFilePath, requireNewProviderName, StoredNameSchema, UnsafeNameError } from "./names";
 
-/** The longest a name may be, and one more: the cap is a filesystem component limit less the longest suffix. */
-const LONGEST = 250;
-const SAFE = ["client-base", "me@example.com", "a.b_c-d", "Work2", "0", "x..y", "a.json", "x".repeat(LONGEST)];
+const SAFE = ["client-base", "me@example.com", "a.b_c-d", "Work2", "0", "x..y", "a.json", "x".repeat(MAX_NAME_BYTES)];
 /** Names that cannot stay inside their directory, or are empty or over-long: no rule accepts them. */
-const ESCAPING = ["", ".", "..", "../x", "a/b", "a\\b", "/abs", "../../proj/evil", "a\u0000b", "x".repeat(LONGEST + 1)];
+const ESCAPING = ["", ".", "..", "../x", "a/b", "a\\b", "/abs", "../../proj/evil", "a\u0000b", "x".repeat(MAX_NAME_BYTES + 1)];
 /** Names that stay inside their directory but have not the shape new names are given: an older, looser rule allowed them. */
 const OLDER_SHAPES = [".hidden", "my profile", "_old", "-leading", "@leading", "a\nb", "a\n", "tab\there"];
 

@@ -8,7 +8,7 @@ import { isRouterProvider, type Provider } from "./config/schema";
 import type { FsPort } from "./launcher/ports";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { InvalidProviderNameError } from "./config/names";
-import { addProvider, LEGACY_LITERAL_PLACEHOLDER, legacyProviderConversion, LegacyProviderFileError, listProviders, loadProvider, ProviderAlreadyExistsError, providerExists, ProviderKindMismatchError, ProviderNotFoundError, readProvider, removeProvider, resolveProvider, resolveRoutedProviderCredentials, updateProvider } from "./providersStore";
+import { addProvider, LEGACY_LITERAL_PLACEHOLDER, legacyProviderConversion, LegacyProviderFileError, listProviders, loadProvider, providerFileDefined, ProviderAlreadyExistsError, providerExists, ProviderKindMismatchError, ProviderNotFoundError, readProvider, removeProvider, resolveProvider, resolveRoutedProviderCredentials, updateProvider } from "./providersStore";
 import { renameProvider } from "./providerRename";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { realFarmFs } from "./realPorts";
@@ -320,6 +320,32 @@ describe("providers", () => {
       expect(() => {
         removeProvider(paths, "z");
       }).toThrow(ProviderNotFoundError);
+    });
+  });
+
+  describe("providerFileDefined", () => {
+    it("stats the provider's file for an ordinary name, and for a name stored under an older rule", () => {
+      const stats: string[] = [];
+      const lstat = (file: string): unknown => {
+        stats.push(file);
+        return file.endsWith("z.json") || file.endsWith("_old.json") ? {} : undefined;
+      };
+      expect(providerFileDefined(lstat, "/p", "z")).toBe(true);
+      expect(providerFileDefined(lstat, "/p", "_old")).toBe(true);
+      expect(providerFileDefined(lstat, "/p", "missing")).toBe(false);
+      expect(stats).toEqual(["/p/z.json", "/p/_old.json", "/p/missing.json"]);
+    });
+
+    it("says a name taken from a request path that would leave the directory is not defined, without stat-ing anything", () => {
+      const stats: string[] = [];
+      const lstat = (file: string): unknown => {
+        stats.push(file);
+        return {};
+      };
+      for (const name of ["../x", "..", "a/b", "", "a\\b"]) {
+        expect(providerFileDefined(lstat, "/p", name), JSON.stringify(name)).toBe(false);
+      }
+      expect(stats).toEqual([]);
     });
   });
 

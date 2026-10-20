@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import categoriesDefaultJson from "./categories.default.json";
+import { MAX_NAME_BYTES } from "./names";
 import {
   CATEGORY_NAMES,
   CategoryClassificationSchema,
@@ -230,6 +231,34 @@ describe("DirectoryRulesSchema", () => {
     ];
     const parsed = DirectoryRulesSchema.parse({ rules });
     expect(parsed.rules).toHaveLength(rules.length);
+  });
+});
+
+describe("names in the person's own configuration", () => {
+  const route = { when: { kind: "textCompare", op: "matches", left: { kind: "reference", key: "request.model" }, right: { kind: "textLiteral", value: ".*" } } };
+  const http = { displayName: "Z", baseUrl: "https://example.com", credential: { sources: [{ literal: "placeholder" }] } };
+  const sites: [string, (name: string) => boolean][] = [
+    ["launch.provider", (name) => GlobalConfigSchema.safeParse({ launch: { provider: name } }).success],
+    ["a provider route's provider", (name) => ProviderSchema.safeParse({ ...http, routes: [{ ...route, provider: name }] }).success],
+    ["an identity's defaultConfigProfile", (name) => IdentitySchema.safeParse({ name: "work", defaultConfigProfile: name }).success],
+    ["the global defaultConfigProfile", (name) => GlobalConfigSchema.safeParse({ defaultConfigProfile: name }).success],
+    ["a profile's extends", (name) => ConfigProfileSchema.safeParse({ extends: [name] }).success],
+    ["a directory rule's configProfile", (name) => DirectoryRulesSchema.safeParse({ rules: [{ path: "/work", configProfile: name }] }).success],
+  ];
+
+  it.each(sites)("%s accepts a name stored under an older rule and refuses one that would leave its directory", (_site, accepts) => {
+    for (const name of ["client-base", "my profile", "_old"]) {
+      expect(accepts(name), name).toBe(true);
+    }
+    for (const name of ["", "..", "../x", "a/b", "a\\b"]) {
+      expect(accepts(name), JSON.stringify(name)).toBe(false);
+    }
+  });
+
+  it("publishes the length bounds of a name in the JSON Schema, which a refinement alone would not", () => {
+    const published = JSON.stringify(z.toJSONSchema(ConfigProfileSchema, { io: "input" }));
+    expect(published).toContain('"minLength":1');
+    expect(published).toContain(`"maxLength":${String(MAX_NAME_BYTES)}`);
   });
 });
 
