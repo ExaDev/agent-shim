@@ -3,11 +3,10 @@ import { describe, expect, it } from "vitest";
 import { resolveStatusline, STATUSLINE_DEFAULTS, type StatuslineSettings } from "../config/statusline";
 import { ESCAPE } from "./ansi";
 import type { StatuslineSummary } from "./enrich";
-import { TRANSCRIPT_TAIL_BYTES } from "./identityTranscript";
 import { parseClientPayload } from "./payload";
 import type { StatuslinePorts } from "./ports";
 import { renderStatuslineBlock } from "./render";
-import { fakeStatuslinePorts } from "./testing";
+import { fakeRangeReader, fakeStatuslinePorts, newReadLog, type ReadLog } from "./testing";
 
 const WIDE_TERMINAL = 400;
 const NOW_MS = Date.parse("2026-10-19T00:00:00.000Z");
@@ -53,8 +52,12 @@ function assistant(model: string, advisorModel?: string): string {
   return record({ type: "assistant", message: { model }, ...(advisorModel === undefined ? {} : { advisorModel }) });
 }
 
-/** The header's segments, in order, drawn from the payload, summary, ports and settings given, with the first line's justification and colour removed. */
-/** The payload names the transcript unless a test says otherwise, so the ports decide whether there is anything to read. */
+/** Ports whose only file is the transcript the payload names, holding `text`; each read is recorded in `log`. */
+function transcriptOf(text: string, log: ReadLog = newReadLog()): Partial<StatuslinePorts> {
+  return { readRange: fakeRangeReader({ [TRANSCRIPT]: text }, log) };
+}
+
+/** The header's segments, in order, drawn from the payload, summary, ports and settings given, with the first line's justification and colour removed. The payload names the transcript unless a test says otherwise, so the ports decide whether there is anything to read. */
 function segments(options: { readonly settings?: StatuslineSettings; readonly payload?: Readonly<Record<string, unknown>>; readonly summary?: Partial<StatuslineSummary>; readonly view?: Partial<typeof VIEW>; readonly ports?: Partial<StatuslinePorts> } = {}): string[] {
   const settings = resolveStatusline({ ...options.settings, layout: { rows: [], ...options.settings?.layout } });
   const block = renderStatuslineBlock({
@@ -90,41 +93,48 @@ describe("the model segment", () => {
   });
 
   it("takes the name of the model the transcript says answered when the source is the transcript, and has no arrow to add", () => {
-    const ports = { readTail: () => [assistant("claude-opus-4-7"), assistant("glm-5.3")].join("\n") };
+    const ports = transcriptOf([assistant("claude-opus-4-7"), assistant("glm-5.3")].join("\n"));
     const modelChoice = { requested: "auto", served: "glm-5.3", provider: "zai", providers: ["zai"] };
     expect(segments({ settings: { ...onlyHeader("model"), model: { source: "transcript" } }, ports, summary: { modelChoice } })).toEqual(["glm-5.3"]);
   });
 
+  it("never takes a name Claude Code wrote itself, and keeps the real model the record before it names", () => {
+    const ports = transcriptOf([assistant("glm-5.3"), assistant("<synthetic>")].join("\n"));
+    expect(segments({ settings: { ...onlyHeader("model"), model: { source: "transcript" } }, ports })).toEqual(["glm-5.3"]);
+    expect(segments({ settings: { ...onlyHeader("model"), model: { source: "auto" } }, ports: transcriptOf(assistant("<synthetic>")) })).toEqual(["Claude Opus 4.7 (1M context)"]);
+  });
+
   it("applies the format to a served name too", () => {
-    const ports = { readTail: () => assistant("Claude Haiku 4.5 (200k context)") };
+    const ports = transcriptOf(assistant("Claude Haiku 4.5 (200k context)"));
     expect(segments({ settings: { ...onlyHeader("model"), model: { source: "transcript", format: "short" } }, ports })).toEqual(["Haiku 4.5"]);
   });
 
   it("keeps the client's name under auto while the answering model is a Claude model, and follows a proxy's redirect to any other", () => {
     const settings = { ...onlyHeader("model"), model: { source: "auto" as const } };
-    expect(segments({ settings, ports: { readTail: () => assistant("claude-opus-4-7") } })).toEqual(["Claude Opus 4.7 (1M context)"]);
-    expect(segments({ settings, ports: { readTail: () => assistant("anthropic.claude-opus-4-7-v1:0") } })).toEqual(["Claude Opus 4.7 (1M context)"]);
-    expect(segments({ settings, ports: { readTail: () => assistant("glm-5.3") } })).toEqual(["glm-5.3"]);
+    expect(segments({ settings, ports: transcriptOf(assistant("claude-opus-4-7")) })).toEqual(["Claude Opus 4.7 (1M context)"]);
+    expect(segments({ settings, ports: transcriptOf(assistant("anthropic.claude-opus-4-7-v1:0")) })).toEqual(["Claude Opus 4.7 (1M context)"]);
+    expect(segments({ settings, ports: transcriptOf(assistant("glm-5.3")) })).toEqual(["glm-5.3"]);
   });
 
   it("falls back to the client's name while the transcript has no assistant record, and never reads the transcript for the client source", () => {
-    let reads = 0;
-    const counting = { readTail: () => (reads += 1, undefined) };
-    expect(segments({ settings: { ...onlyHeader("model"), model: { source: "transcript" } }, ports: counting, payload: { transcript_path: TRANSCRIPT } })).toEqual(["Claude Opus 4.7 (1M context)"]);
-    expect(reads).toBe(1);
-    segments({ settings: onlyHeader("model"), ports: counting, payload: { transcript_path: TRANSCRIPT } });
-    expect(reads).toBe(1);
+    const log = newReadLog();
+    const ports = transcriptOf(record({ type: "user", message: { content: "hi" } }), log);
+    expect(segments({ settings: { ...onlyHeader("model"), model: { source: "transcript" } }, ports })).toEqual(["Claude Opus 4.7 (1M context)"]);
+    expect(log.reads.length).toBeGreaterThan(0);
+    log.reads.length = 0;
+    segments({ settings: onlyHeader("model"), ports });
+    expect(log.reads).toEqual([]);
   });
 
-  it("strips control characters from a served name, so an escape sequence cannot reach the terminal", () => {
-    const ports = { readTail: () => assistant(`${ESCAPE}[31mevil‮model`) };
+  it("strips control characters and escape sequences from a served name, so none can reach the terminal", () => {
+    const ports = transcriptOf(assistant(`${ESCAPE}[31mevil\u202Emodel`));
     expect(segments({ settings: { ...onlyHeader("model"), model: { source: "transcript" } }, ports })).toEqual(["evilmodel"]);
   });
 
-  it("asks the ports for the tail of the transcript the payload names, bounded by TRANSCRIPT_TAIL_BYTES", () => {
-    const calls: [string, number][] = [];
-    segments({ settings: { ...onlyHeader("model"), model: { source: "transcript" } }, payload: { transcript_path: TRANSCRIPT }, ports: { readTail: (path, maxBytes) => (calls.push([path, maxBytes]), undefined) } });
-    expect(calls).toEqual([[TRANSCRIPT, TRANSCRIPT_TAIL_BYTES]]);
+  it("reads nothing from a payload that names no transcript", () => {
+    const log = newReadLog();
+    expect(segments({ settings: { ...onlyHeader("model"), model: { source: "transcript" } }, ports: transcriptOf(assistant("glm-5.3"), log), payload: { transcript_path: undefined } })).toEqual(["Claude Opus 4.7 (1M context)"]);
+    expect(log.reads).toEqual([]);
   });
 });
 
@@ -188,6 +198,16 @@ describe("the effort segment", () => {
     expect(effort("full", { effort: "LOW" })).toEqual(["○ low"]);
   });
 
+  it("removes escape sequences and control characters from a level, so none can reach the terminal", () => {
+    expect(effort("full", { effort: `${ESCAPE}[2Jhigh` })).toEqual(["◑ high"]);
+    expect(effort("text", { effort: { level: `${ESCAPE}[2J\u0007` } })).toEqual([]);
+  });
+
+  it("writes a level that names an inherited object property as its own name, not as a symbol", () => {
+    expect(effort("full", { effort: "constructor" })).toEqual(["constructor"]);
+    expect(effort("symbol", { effort: "__proto__" })).toEqual(["__proto__"]);
+  });
+
   it("draws nothing when the client reports no level", () => {
     for (const payload of [{}, { effort: "" }, { effort: {} }, { effort: { level: null } }, { effort: 3 }]) {
       expect(effort("full", payload), JSON.stringify(payload)).toEqual([]);
@@ -196,7 +216,7 @@ describe("the effort segment", () => {
 });
 
 describe("the advisor segment", () => {
-  const transcriptWith = (advisor: string): Partial<StatuslinePorts> => ({ readTail: () => [assistant("claude-opus-4-7", "claude-sonnet-4-6"), assistant("claude-opus-4-7", advisor)].join("\n") });
+  const transcriptWith = (advisor: string): Partial<StatuslinePorts> => transcriptOf([assistant("claude-opus-4-7", "claude-sonnet-4-6"), assistant("claude-opus-4-7", advisor)].join("\n"));
 
   it("shows the latest advisor the transcript records, written as a person says it", () => {
     expect(segments({ settings: onlyHeader("advisor"), ports: transcriptWith("claude-opus-4-7") })).toEqual(["Advisor: Opus 4.7"]);
@@ -206,28 +226,28 @@ describe("the advisor segment", () => {
   });
 
   it("shows the override instead of the transcript's, without reading the transcript", () => {
-    let reads = 0;
-    const counting = { readTail: () => (reads += 1, undefined) };
-    expect(segments({ settings: { ...onlyHeader("advisor"), advisor: { override: "Fable" } }, ports: counting, payload: { transcript_path: TRANSCRIPT } })).toEqual(["Advisor: Fable"]);
-    expect(reads).toBe(0);
+    const log = newReadLog();
+    expect(segments({ settings: { ...onlyHeader("advisor"), advisor: { override: "Fable" } }, ports: transcriptOf(assistant("claude-opus-4-7", "claude-opus-4-7"), log) })).toEqual(["Advisor: Fable"]);
+    expect(log.reads).toEqual([]);
   });
 
   it("draws nothing when no advisor has been set", () => {
-    expect(segments({ settings: onlyHeader("advisor"), ports: { readTail: () => assistant("claude-opus-4-7") } })).toEqual([]);
+    expect(segments({ settings: onlyHeader("advisor"), ports: transcriptOf(assistant("claude-opus-4-7")) })).toEqual([]);
     expect(segments({ settings: onlyHeader("advisor") })).toEqual([]);
   });
 
   it("skips a record that is not whole, such as the one a read of a growing file ends in, and keeps what came before", () => {
-    const ports = { readTail: () => `${assistant("claude-opus-4-7", "claude-opus-4-7")}\n{"type":"assistant","advisorModel":"claude-so` };
+    const ports = transcriptOf(`${assistant("claude-opus-4-7", "claude-opus-4-7")}\n{"type":"assistant","advisorModel":"claude-so`);
     expect(segments({ settings: onlyHeader("advisor"), ports })).toEqual(["Advisor: Opus 4.7"]);
   });
 
   it("reads the transcript once for the model and the advisor together", () => {
-    let reads = 0;
-    const ports = { readTail: () => (reads += 1, assistant("glm-5.3", "claude-opus-4-7")) };
     const settings = { ...onlyHeader("model", "advisor"), model: { source: "transcript" as const } };
-    expect(segments({ settings, ports, payload: { transcript_path: TRANSCRIPT } })).toEqual(["glm-5.3", "Advisor: Opus 4.7"]);
-    expect(reads).toBe(1);
+    const together = newReadLog();
+    expect(segments({ settings, ports: transcriptOf(assistant("glm-5.3", "claude-opus-4-7"), together) })).toEqual(["glm-5.3", "Advisor: Opus 4.7"]);
+    const alone = newReadLog();
+    segments({ settings: { ...onlyHeader("model"), model: { source: "transcript" as const } }, ports: transcriptOf(assistant("glm-5.3", "claude-opus-4-7"), alone) });
+    expect(together).toEqual(alone);
   });
 });
 
@@ -236,6 +256,11 @@ describe("the version segment", () => {
     expect(segments({ settings: onlyHeader("version"), payload: { version: "2.1.81" } })).toEqual(["CC v2.1.81"]);
     expect(segments({ settings: onlyHeader("version"), payload: {} })).toEqual([]);
     expect(segments({ settings: onlyHeader("version"), payload: { version: "" } })).toEqual([]);
+  });
+
+  it("removes escape sequences and control characters from the version", () => {
+    expect(segments({ settings: onlyHeader("version"), payload: { version: `${ESCAPE}[2J2.1.81\u0007` } })).toEqual(["CC v2.1.81"]);
+    expect(segments({ settings: onlyHeader("version"), payload: { version: `${ESCAPE}[2J` } })).toEqual([]);
   });
 });
 
@@ -294,7 +319,7 @@ describe("the segments' defaults", () => {
   it("draw none of the added segments, and leave the established ones as they were, whatever the payload and transcript hold", () => {
     expect(STATUSLINE_DEFAULTS.layout.header).toEqual(["model", "provider", "route", "account", "identity", "headroom"]);
     const payload = { version: "2.1.81", effort: "high", cwd: "/work", transcript_path: TRANSCRIPT };
-    const ports = { readTail: () => assistant("glm-5.3", "claude-opus-4-7"), readText: () => explanatoryStyle() };
+    const ports = { ...transcriptOf(assistant("glm-5.3", "claude-opus-4-7")), readText: () => explanatoryStyle() };
     expect(segments({ payload, ports })).toEqual(["Claude Opus 4.7 (1M context)", "ada.lovelace@example.com · Max 20x"]);
   });
 });

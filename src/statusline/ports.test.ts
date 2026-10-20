@@ -5,8 +5,12 @@ import { describe, expect, it } from "vitest";
 
 import { realStatuslinePorts } from "./ports";
 
-/** More bytes than any file these tests write, so a read of that size returns a file whole. */
-const MORE_THAN_THE_FILE = 1_000;
+/** The ten bytes the range tests read from, and the ranges they read: from, length. */
+const DIGITS = "0123456789";
+const MID_RANGE = { start: 2, length: 3 };
+const TAIL_RANGE = { start: 8, length: 100 };
+const AT_END_RANGE = { start: 10, length: 5 };
+const PAST_END_RANGE = { start: 50, length: 5 };
 
 describe("realStatuslinePorts", () => {
   const ports = realStatuslinePorts({ HOME: "/h" });
@@ -28,19 +32,21 @@ describe("realStatuslinePorts", () => {
     }
   });
 
-  it("reads the end of a file from a line boundary, the whole file when it fits, and undefined when it cannot be read", () => {
+  it("reads a range of a file with the file's whole size, never more bytes than asked for", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
     try {
-      const file = path.join(dir, "log.jsonl");
-      fs.writeFileSync(file, "first line\nsecond line\nthird line\n");
-      expect(ports.readTail(file, MORE_THAN_THE_FILE)).toBe("first line\nsecond line\nthird line\n");
-      // A cut inside the second line drops its partial remainder, leaving only the whole line after it.
-      expect(ports.readTail(file, "d line\nthird line\n".length)).toBe("third line\n");
-      expect(ports.readTail(file, "third line\n".length)).toBe("");
-      expect(ports.readTail(path.join(dir, "missing.jsonl"), MORE_THAN_THE_FILE)).toBeUndefined();
-      // A multi-byte character cut in half sits in the partial first line, so it never reaches the text.
-      fs.writeFileSync(file, "caf\u00e9 au lait\nnext\n");
-      expect(ports.readTail(file, "\u00a9 au lait\nnext\n".length - 1)).toBe("next\n");
+      const file = path.join(dir, "range.txt");
+      fs.writeFileSync(file, DIGITS);
+      const text = ({ start, length }: { start: number; length: number }): { size: number | undefined; text: string | undefined } => {
+        const range = ports.readRange(file, start, length);
+        return { size: range?.size, text: range === undefined ? undefined : new TextDecoder().decode(range.bytes) };
+      };
+      expect(text(MID_RANGE)).toEqual({ size: 10, text: "234" });
+      expect(text(TAIL_RANGE)).toEqual({ size: 10, text: "89" });
+      expect(text(AT_END_RANGE)).toEqual({ size: 10, text: "" });
+      expect(text(PAST_END_RANGE)).toEqual({ size: 10, text: "" });
+      expect(text({ start: 0, length: 0 })).toEqual({ size: 10, text: "" });
+      expect(ports.readRange(path.join(dir, "missing.txt"), 0, MID_RANGE.length)).toBeUndefined();
     } finally {
       fs.rmSync(dir, { recursive: true });
     }

@@ -1,6 +1,7 @@
 import type { ResolvedStatusline } from "../../config/statusline";
 import type { StatuslineSummary } from "../enrich";
 import type { BarCell } from "../barGrid";
+import type { TranscriptIdentity } from "../identityTranscript";
 import type { Palette } from "../palette";
 import type { ClientPayload } from "../payload";
 import type { StatuslinePorts } from "../ports";
@@ -30,8 +31,8 @@ export interface RenderContext {
   readonly palette: Palette;
   /** What the statusline may read from the machine. */
   readonly ports: StatuslinePorts;
-  /** The end of the session's transcript (`TRANSCRIPT_TAIL_BYTES` of it), or undefined when the payload names none or it cannot be read. Read on first use and the same text on every later call in the render, so elements that each need it cost one read between them. */
-  readonly transcriptTail: () => string | undefined;
+  /** The model and advisor of the newest assistant record in the session's transcript, or neither when the payload names no transcript or it holds none. Read on first use and the same on every later call in the render, so elements that each need it cost one read between them. */
+  readonly transcriptIdentity: () => TranscriptIdentity;
 }
 
 /** How a bar is coloured and drawn under the settings, for the row whose bar is below its warning threshold in `okRole`'s colour. */

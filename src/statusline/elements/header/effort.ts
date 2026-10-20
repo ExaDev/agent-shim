@@ -1,23 +1,24 @@
 import type { ResolvedStatusline } from "../../../config/statusline";
+import { boundedDisplayText } from "../../sanitise";
 import type { RenderContext } from "../context";
 
 /** The symbol that stands for each effort level the client reports: a circle that fills as the level rises. A level with no entry is written as its name. */
-const EFFORT_SYMBOLS: Readonly<Record<string, string>> = {
-  low: "○",
-  medium: "◔",
-  high: "◑",
-  xhigh: "◕",
-  max: "●",
-};
+const EFFORT_SYMBOLS: ReadonlyMap<string, string> = new Map([
+  ["low", "○"],
+  ["medium", "◔"],
+  ["high", "◑"],
+  ["xhigh", "◕"],
+  ["max", "●"],
+]);
 
-/** The effort level the client reports, lower-cased and trimmed, or undefined when it reports none. The client sends the level as a bare string or, from Claude Code 2.1.115, as an object's `level`. */
+/** The effort level the client reports, lower-cased and trimmed, or undefined when it reports none. The client sends the level as a bare string or, from Claude Code 2.1.115, as an object's `level`; it is cleaned like any text from outside the statusline, so an escape sequence in it cannot reach the terminal. */
 function effortLevelOf(effort: RenderContext["payload"]["effort"]): string | undefined {
-  const level = (typeof effort === "string" ? effort : effort?.level)?.trim().toLowerCase();
-  return level === undefined || level === "" ? undefined : level;
+  const level = boundedDisplayText((typeof effort === "string" ? effort : effort?.level) ?? "").toLowerCase();
+  return level === "" ? undefined : level;
 }
 
 function formatEffort(level: string, format: ResolvedStatusline["effort"]["format"]): string {
-  const symbol = EFFORT_SYMBOLS[level];
+  const symbol = EFFORT_SYMBOLS.get(level);
   if (symbol === undefined || format === "text") {
     return level;
   }

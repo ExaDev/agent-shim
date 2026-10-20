@@ -1,4 +1,3 @@
-import { readTranscriptIdentity } from "../../identityTranscript";
 import { boundedDisplayText } from "../../sanitise";
 import type { RenderContext } from "../context";
 
@@ -20,11 +19,11 @@ function prettifyModelId(id: string): string {
 }
 
 /** The advisor model, as the settings name it or else as the session's transcript records it once `/advisor` is set; undefined when neither does. */
-export function advisorSegment({ settings, transcriptTail }: RenderContext): string | undefined {
+export function advisorSegment({ settings, transcriptIdentity }: RenderContext): string | undefined {
   if (settings.advisor.override !== "") {
     return `Advisor: ${settings.advisor.override}`;
   }
-  const recorded = readTranscriptIdentity(transcriptTail()).advisor;
+  const recorded = transcriptIdentity().advisor;
   const advisor = recorded === undefined ? "" : boundedDisplayText(prettifyModelId(recorded));
   return advisor === "" ? undefined : `Advisor: ${advisor}`;
 }
