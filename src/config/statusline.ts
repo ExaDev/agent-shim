@@ -1,6 +1,7 @@
 import stringWidth from "string-width";
 import { z } from "zod";
 
+import { drawsNothing } from "../statusline/blank";
 import { graphemesOf } from "../statusline/graphemes";
 
 /** The segments of the statusline's header, in the order they are drawn unless a setting reorders them. */
@@ -79,7 +80,7 @@ const colourValue = z.union([z.enum(STATUSLINE_COLOUR_NAMES), z.number().int().m
 
 /** Whether `text` is one grapheme that draws something in exactly one terminal column: no control, format, separator or unassigned character, so a bar character cannot move the cursor or vanish, and not a wide or zero-width one, because a bar is laid out in columns and repeats the glyph once per column. */
 function isSingleVisibleGrapheme(text: string): boolean {
-  return graphemesOf(text).length === 1 && stringWidth(text) === 1 && !/[\p{C}\p{Z}]/u.test(text);
+  return graphemesOf(text).length === 1 && stringWidth(text) === 1 && !/[\p{C}\p{Z}]/u.test(text) && !drawsNothing(text);
 }
 
 const barCharacter = z.string().refine(isSingleVisibleGrapheme, "must be a single visible character that takes one terminal column");
@@ -87,6 +88,7 @@ const barCharacter = z.string().refine(isSingleVisibleGrapheme, "must be a singl
 const labelText = z
   .string()
   .refine((text) => stringWidth(text) <= MAX_STATUSLINE_LABEL_COLUMNS, `must take no more than ${String(MAX_STATUSLINE_LABEL_COLUMNS)} terminal columns`)
+  .refine((text) => !drawsNothing(text), "must show something: a label of only combining marks or blank characters draws nothing")
   .regex(LABEL_RE, "must be visible text without control characters");
 /** Text that replaces something the statusline would otherwise work out; empty leaves the statusline to work it out. */
 const overrideText = z.string().max(MAX_DISPLAY_TEXT_CHARS).regex(OPTIONAL_LABEL_RE, "must be visible text without control characters");
