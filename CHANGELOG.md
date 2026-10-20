@@ -1,3 +1,28 @@
+## [11.59.0](https://github.com/ExaDev/agent-shim/compare/v11.58.0...v11.59.0) (2026-10-20)
+
+### Features
+
+* **statusline:** draw a session's token totals as a row ([116f404](https://github.com/ExaDev/agent-shim/commit/116f4043b889b384d88fb3af55d358bd90c9ee95))
+* **statusline:** give the context row claude-hud's options ([cc71a14](https://github.com/ExaDev/agent-shim/commit/cc71a142a51cb4056500f98becd07a5322439ac7))
+* **statusline:** let a layer unset an optional setting a shallower layer set ([ef42605](https://github.com/ExaDev/agent-shim/commit/ef426050f57e9adbbcbf99e4e3806d827e8904f6))
+
+### Bug Fixes
+
+* **statusline:** catch up with a long transcript a read at a time ([a6bd9fd](https://github.com/ExaDev/agent-shim/commit/a6bd9fde8ba9f34beddcf1d11ec6e942b6bfbe5a))
+* **statusline:** keep the cache tier an early write showed while catching up ([55433d4](https://github.com/ExaDev/agent-shim/commit/55433d4e3672b8b47334d982b7eddeae9cbb99b6))
+* **statusline:** keep the end of a long transcript's facts right while catching up ([3743711](https://github.com/ExaDev/agent-shim/commit/3743711cc7c3d406c52a40f1f15caba5cf338948))
+* **statusline:** make the context row's edge cases and unset settings exact ([16a43fd](https://github.com/ExaDev/agent-shim/commit/16a43fdab4f49c44b8a634923405b86e3aa21cda))
+
+### Documentation
+
+* **statusline:** describe how the compaction count and keys without defaults behave ([a880459](https://github.com/ExaDev/agent-shim/commit/a880459a23ebc3f841f6716e5948450f05861bbd))
+* **statusline:** state when the end of a long transcript sets a fact at once ([a2f6c34](https://github.com/ExaDev/agent-shim/commit/a2f6c3433481a6a98013005c0825fa3eb2ca80dc))
+
+### Tests
+
+* **statusline:** cover the end of a long transcript at its edges ([3af5f56](https://github.com/ExaDev/agent-shim/commit/3af5f5608feddcab4a9e7202123018d2d257fb61))
+* **statusline:** pin the context row at exactly its thresholds ([68b2c61](https://github.com/ExaDev/agent-shim/commit/68b2c61057186ccf50e1fcf0e40b1b1ed60caf0a))
+
 ## [11.58.0](https://github.com/ExaDev/agent-shim/compare/v11.57.1...v11.58.0) (2026-10-20)
 
 ### Features
