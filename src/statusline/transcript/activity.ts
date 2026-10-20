@@ -20,7 +20,7 @@ export const MAX_UNMATCHED_RESULTS = 20;
 export const MAX_TRACKED_NAMES = 256;
 
 /** The most characters of any one text the state keeps (a target, a description, a todo): all of them are cut to a few dozen columns when drawn, and a command or a prompt can be many kilobytes. */
-const MAX_STORED_TEXT_CHARS = 200;
+export const MAX_STORED_TEXT_CHARS = 200;
 
 const MS_PER_SECOND = 1_000;
 const SECONDS_PER_MINUTE = 60;

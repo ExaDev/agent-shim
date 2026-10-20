@@ -12,6 +12,7 @@ import {
   BASH_DEFAULT_TIMEOUT_MS,
   BASH_MAX_TIMEOUT_MS,
   bashLiveLimitMs,
+  MAX_STORED_TEXT_CHARS,
   MAX_TRACKED_AGENTS,
   MAX_TRACKED_NAMES,
   MAX_TRACKED_TODOS,
@@ -31,6 +32,7 @@ const STEP = { third: 3, fourth: 4, fifth: 5, ninth: 9 } as const;
 const COMMAND_TARGET_CHARS = 30;
 const LONG_COMMAND_CHARS = 40;
 const MANY_TIMES_THE_LIMIT = 10;
+const ONE_MEBIBYTE = 1_048_576;
 const EXTRA_CALLS = 5;
 const EXTRA_NAMES = 3;
 const EXTRA_TODOS = 3;
@@ -483,6 +485,59 @@ describe("the todo list", () => {
     const { todos } = factsAt(records);
     expect(todos).toHaveLength(MAX_TRACKED_TODOS);
     expect(todos[0]?.content).toBe("task 3");
+  });
+});
+
+describe("the text the state keeps", () => {
+  const over = "x".repeat(MAX_STORED_TEXT_CHARS * MANY_TIMES_THE_LIMIT);
+  const exactly = "y".repeat(MAX_STORED_TEXT_CHARS);
+
+  it("is cut to the most characters the state keeps, for every text a call carries", () => {
+    const facts = factsAt([
+      use("r", "Read", { file_path: over }),
+      use("g", "Agent", { subagent_type: over, description: over, model: over }),
+      use("t", "TodoWrite", { todos: [{ content: over, status: "pending" }] }),
+      use("c", "TaskCreate", { subject: over }),
+      { type: "user", timestamp: at(1), message: { content: [{ type: "tool_result", tool_use_id: "c", content: "Task #1 created" }] } },
+      use("s", "Skill", { skill: over }),
+      use("m", `mcp__${over}__tool`),
+    ]);
+    expect(facts.tools[0]?.target).toHaveLength(MAX_STORED_TEXT_CHARS);
+    expect(facts.agents[0]?.type).toHaveLength(MAX_STORED_TEXT_CHARS);
+    expect(facts.agents[0]?.description).toHaveLength(MAX_STORED_TEXT_CHARS);
+    expect(facts.agents[0]?.model).toHaveLength(MAX_STORED_TEXT_CHARS);
+    expect(facts.todos.map((todo) => todo.content.length)).toEqual([MAX_STORED_TEXT_CHARS, MAX_STORED_TEXT_CHARS]);
+    expect(facts.skills[0]).toHaveLength(MAX_STORED_TEXT_CHARS);
+    expect(facts.mcpServers[0]).toHaveLength(MAX_STORED_TEXT_CHARS);
+  });
+
+  it("keeps the state, which is rewritten to the cache file at every refresh, under a mebibyte when every list is full of texts far longer than any row draws", () => {
+    const huge = "z".repeat(ONE_MEBIBYTE);
+    const records: Record<string, unknown>[] = [];
+    for (let index = 0; index < MAX_TRACKED_TODOS; index += 1) {
+      records.push(use(`c${String(index)}`, "TaskCreate", { subject: huge }), { type: "user", timestamp: at(1), message: { content: [{ type: "tool_result", tool_use_id: `c${String(index)}`, content: `Task #${String(index)} created` }] } });
+    }
+    for (let index = 0; index < MAX_TRACKED_NAMES; index += 1) {
+      records.push(use(`s${String(index)}`, "Skill", { skill: `${String(index)}${huge}` }), use(`m${String(index)}`, `mcp__${String(index)}${huge}__tool`));
+    }
+    for (let index = 0; index < MAX_TRACKED_TOOL_CALLS; index += 1) {
+      records.push(use(`t${String(index)}`, `Read${huge}`, { file_path: huge }));
+    }
+    for (let index = 0; index < MAX_TRACKED_AGENTS; index += 1) {
+      records.push(use(`g${String(index)}`, "Agent", { subagent_type: huge, description: huge, model: huge }));
+    }
+    expect(JSON.stringify(fold(records)).length).toBeLessThan(ONE_MEBIBYTE);
+  });
+
+  it("leaves a text of exactly that many characters whole", () => {
+    expect(factsAt([use("r", "Read", { file_path: exactly })]).tools[0]?.target).toBe(exactly);
+  });
+
+  it("cuts between characters a person sees, never inside one", () => {
+    const family = "\u{1F469}\u200D\u{1F4BB}";
+    const cut = factsAt([use("r", "Read", { file_path: family.repeat(MAX_STORED_TEXT_CHARS) })]).tools[0]?.target ?? "";
+    expect(cut.length % family.length).toBe(0);
+    expect(cut.length).toBeGreaterThan(0);
   });
 });
 
