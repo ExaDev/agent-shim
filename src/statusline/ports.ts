@@ -25,7 +25,7 @@ export interface StatuslinePorts {
   readonly writeText: (path: string, text: string) => void;
   /** Removes a file or a directory with everything beneath it. A failure is dropped, like a failed write: it only leaves derived state in place for the next render to remove. */
   readonly removePath: (path: string) => void;
-  /** The standard output of a program run without a shell in `cwd`, or undefined when it fails or outruns the time the statusline allows a program. */
+  /** The standard output of a program run in `cwd`, or undefined when it fails, outruns the time the statusline allows a program, or writes more than it may. No shell ever interprets the program's arguments: they reach it as they are, even when `outputInFile` has the system shell set the file size limit and then start the program. */
   readonly run: (file: string, args: readonly string[], cwd: string, options?: RunOptions) => string | undefined;
   /** What lies at `path`, without following a final symbolic link (a link is `other`), or undefined when nothing does. */
   readonly entryKind: (path: string) => "directory" | "other" | undefined;
@@ -82,10 +82,10 @@ export function fileSizeLimitedCommand(shell: string, file: string, args: readon
   return { command: shell, args: ["-c", `ulimit -f ${String(RUN_MAX_OUTPUT_BYTES / ULIMIT_BLOCK_BYTES)}; exec "$0" "$@"`, file, ...args] };
 }
 
-/** `descriptor`'s file read whole when it is no larger than `RUN_MAX_OUTPUT_BYTES`, else undefined: a program that wrote more has no usable output. */
+/** `descriptor`'s file read whole when it is smaller than `RUN_MAX_OUTPUT_BYTES`, else undefined: a program that wrote more has no usable output, and one whose file reached the bound exactly was cut off there by a shell that counts the limit in POSIX's blocks (and one that ignores the signal exits normally), so a file of that size is refused as a larger one is, whichever block size the shell counts in. */
 function readOutput(descriptor: number): string | undefined {
   const { size } = fs.fstatSync(descriptor);
-  if (size > RUN_MAX_OUTPUT_BYTES) {
+  if (size >= RUN_MAX_OUTPUT_BYTES) {
     return undefined;
   }
   const buffer = Buffer.alloc(size);
