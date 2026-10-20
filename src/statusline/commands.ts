@@ -150,7 +150,7 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
 /** `agent-shim statusline keys`: every setting of the built-in statusline, from the schema the configuration files are checked against. Created from its parent so it shares the program's output and exit handling. */
 function registerStatuslineKeys(statusline: Command): void {
   withExamples(
-    statusline.command("keys").description("List every setting of the built-in statusline with its kind, its default and what it does.").option("--json", "Print the settings as JSON."),
+    statusline.command("keys").description("List every setting of the built-in statusline with its kind, its default (if it has one) and what it does.").option("--json", "Print the settings as JSON."),
     ["agent-shim statusline keys", "agent-shim statusline keys --json"],
   ).action((options: { readonly json?: boolean }) => {
     if (options.json === true) {

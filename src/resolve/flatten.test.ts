@@ -259,6 +259,9 @@ describe("phase one: launch proxyBypass", () => {
   });
 });
 
+const OWN_WARN_AT = 50;
+const LATER_WARN_AT = 65;
+
 describe("phase one: launch statusline", () => {
   it("merges key by key in every group, so a deeper layer that sets one label leaves a shallower layer's thresholds and the other label alone", () => {
     const flattened = flattenLayers(
@@ -274,6 +277,18 @@ describe("phase one: launch statusline", () => {
   it("takes the deepest layer's list whole", () => {
     const flattened = flattenLayers([layer(0, { launch: { statusline: { layout: { header: ["model", "provider"] } } } }), layer(1, { launch: { statusline: { layout: { header: ["identity"] } } } })], { home: FAKE_HOME });
     expect(flattened.launch.statusline).toEqual({ layout: { header: ["identity"] } });
+  });
+
+  it("lets a deeper layer unset an optional setting a shallower one set, and a deeper one still set it again", () => {
+    const warnAt = (...writes: readonly (number | null | undefined)[]) =>
+      flattenLayers(
+        writes.map((write, depth) => layer(depth, { launch: { statusline: { bar: { width: depth + 1 }, ...(write === undefined ? {} : { context: { warnAt: write } }) } } })),
+        { home: FAKE_HOME },
+      ).launch.statusline;
+    expect(warnAt(OWN_WARN_AT, undefined, undefined)).toEqual({ bar: { width: 3 }, context: { warnAt: OWN_WARN_AT } });
+    expect(warnAt(OWN_WARN_AT, null, undefined)).toEqual({ bar: { width: 3 }, context: {} });
+    expect(warnAt(OWN_WARN_AT, null, LATER_WARN_AT)).toEqual({ bar: { width: 3 }, context: { warnAt: LATER_WARN_AT } });
+    expect(warnAt(undefined, null)).toEqual({ bar: { width: 2 }, context: {} });
   });
 
   it("leaves the setting absent when no layer sets it", () => {

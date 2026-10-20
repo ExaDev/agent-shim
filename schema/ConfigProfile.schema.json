@@ -312,22 +312,43 @@
                   "description": "The context figure: both (the tokens held against the window, then the percentage), percent, tokens, or remaining (the percentage of the window left)."
                 },
                 "warnAt": {
-                  "description": "The whole percentage of the context window at which the context bar turns yellow; while it is unset the context bar follows bands.warnAt.",
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 100
+                  "description": "The whole percentage of the context window at which the context bar turns yellow; while it is unset the context bar follows bands.warnAt. A layer may write null to return it to unset when a shallower layer sets it.",
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 100
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "criticalAt": {
-                  "description": "The whole percentage of the context window at which the context bar turns red and, with context.breakdown set to critical, the token breakdown appears; while it is unset the context bar follows bands.criticalAt.",
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 100
+                  "description": "The whole percentage of the context window at which the context bar turns red and, with context.breakdown set to critical, the token breakdown appears; while it is unset the context bar follows bands.criticalAt. A layer may write null to return it to unset when a shallower layer sets it.",
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 100
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "autoCompactWindow": {
-                  "description": "A window in tokens to measure the context against instead of the model's, matching the figure /context gives once Claude Code compacts before the window is full. While it is set, the row draws nothing until the client reports the tokens held, since without them there is nothing to measure against it; while it is unset the model's own window is used.",
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
+                  "description": "A window in tokens to measure the context against instead of the model's, matching the figure /context gives once Claude Code compacts before the window is full. While it is set, the row draws nothing until the client reports the tokens held, since without them there is nothing to measure against it; while it is unset the model's own window is used. A layer may write null to return it to unset when a shallower layer sets it.",
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "estimate": {
                   "type": "string",

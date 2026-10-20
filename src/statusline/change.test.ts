@@ -58,6 +58,12 @@ describe("applyStatuslineChange", () => {
     expect(() => applyStatuslineChange(undefined, { set: { "context.warnAt": 0 } })).toThrow(/statusline: context\.warnAt:/);
   });
 
+  it("writes none for an optional setting as null, which unsets it for the layers it is merged over, and takes none as an ordinary value for any other", () => {
+    expect(parseStatuslineAssignment("context.warnAt=none")).toEqual({ path: "context.warnAt", value: null });
+    expect(applyStatuslineChange(undefined, { set: { "context.warnAt": null } })).toEqual({ context: { warnAt: null } });
+    expect(() => parseStatuslineAssignment("bar.width=none")).toThrow(/not a number/);
+  });
+
   it("removing a setting that is not set is not an error", () => {
     expect(applyStatuslineChange({ bar: { width: 6 } }, { unset: ["bands.warnAt"] })).toEqual({ bar: { width: 6 } });
   });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
+import { statuslineKeys } from "../statusline/keys";
 import { contextBands, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_LABEL_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
 
 const OVER_LONG_LABEL = "x".repeat(MAX_STATUSLINE_LABEL_COLUMNS + 1);
@@ -298,5 +300,42 @@ describe("the context group", () => {
   it("leaves the token totals out of the rows drawn by default", () => {
     expect(STATUSLINE_DEFAULTS.layout.rows).toEqual(["context", "quota"]);
     expect(StatuslineSchema.parse({ layout: { rows: ["context", "tokens"] } })).toEqual({ layout: { rows: ["context", "tokens"] } });
+  });
+});
+
+describe("unsetting an optional setting from a layer", () => {
+  const OPTIONAL = [
+    ["context", "warnAt", OWN_PAIR.warnAt],
+    ["context", "criticalAt", OWN_PAIR.criticalAt],
+    ["context", "autoCompactWindow", OWN_WINDOW],
+  ] as const;
+
+  it("accepts null for exactly the optional settings in a layer", () => {
+    for (const [group, name, value] of OPTIONAL) {
+      expect(StatuslineSchema.safeParse({ [group]: { [name]: null } }).success, `${name} null`).toBe(true);
+      expect(StatuslineSchema.safeParse({ [group]: { [name]: value } }).success, `${name} value`).toBe(true);
+    }
+    for (const bad of [{ bands: { warnAt: null } }, { context: { value: null } }, { layout: { header: null } }, { colours: { model: null } }]) {
+      expect(StatuslineSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it("lists exactly those settings as optional, with no default", () => {
+    const keys = statuslineKeys().filter((key) => key.optional);
+    expect(keys.map((key) => key.path)).toEqual(OPTIONAL.map(([group, name]) => `${group}.${name}`));
+    expect(JSON.stringify(z.toJSONSchema(StatuslineSchema))).toContain("A layer may write null to return it to unset");
+  });
+
+  it("removes the key when merged over a layer that set it, or over nothing, and leaves no null behind", () => {
+    expect(mergeStatuslineSettings({ context: { warnAt: OWN_PAIR.warnAt, bar: "hidden" } }, { context: { warnAt: null } })).toEqual({ context: { bar: "hidden" } });
+    expect(mergeStatuslineSettings(undefined, { context: { warnAt: null, value: "percent" } })).toEqual({ context: { value: "percent" } });
+    expect(mergeStatuslineSettings({ bar: { width: 6 } }, { context: { warnAt: null } })).toEqual({ bar: { width: 6 }, context: {} });
+  });
+
+  it("resolves a null to the setting unset, following the bands again", () => {
+    const resolved = resolveStatusline({ bands: { warnAt: 55, criticalAt: 80 }, context: { warnAt: null, autoCompactWindow: null } });
+    expect(resolved.context).not.toHaveProperty("warnAt");
+    expect(resolved.context).not.toHaveProperty("autoCompactWindow");
+    expect(contextBands(resolved)).toEqual({ warnAt: 55, criticalAt: 80 });
   });
 });

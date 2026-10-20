@@ -8,6 +8,9 @@ export interface StatuslineChange {
   readonly unset?: readonly string[];
 }
 
+/** What an optional setting is written as to unset it for the layers it is merged over (stored as null), as against `--unset-statusline`, which removes it from the one layer. */
+const UNSET_WORD = "none";
+
 function keyNamed(path: string): StatuslineKey {
   const found = statuslineKeys().find((key) => key.path === path);
   if (found === undefined) {
@@ -16,7 +19,7 @@ function keyNamed(path: string): StatuslineKey {
   return found;
 }
 
-/** The value a `<setting>=<value>` option names, written the way the setting's kind is written: a whole number, `true` or `false`, text, one choice, a colour (a name, a palette index or #rrggbb), or a comma-separated list of choices (an empty value is the empty list). The value's own validity is the schema's to judge. */
+/** The value a `<setting>=<value>` option names, written the way the setting's kind is written: a whole number, `true` or `false`, text, one choice, a colour (a name, a palette index or #rrggbb), or a comma-separated list of choices (an empty value is the empty list); an optional setting also takes `none`, which unsets it for the layers it is merged over. The value's own validity is the schema's to judge. */
 export function parseStatuslineAssignment(text: string): { readonly path: string; readonly value: unknown } {
   const split = text.indexOf("=");
   if (split < 1) {
@@ -25,6 +28,9 @@ export function parseStatuslineAssignment(text: string): { readonly path: string
   const path = text.slice(0, split);
   const raw = text.slice(split + 1);
   const key = keyNamed(path);
+  if (key.optional && raw === UNSET_WORD) {
+    return { path, value: null };
+  }
   switch (key.kind) {
     case "integer": {
       const number = Number(raw);
