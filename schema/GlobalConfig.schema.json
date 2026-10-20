@@ -186,7 +186,8 @@
                       "environment",
                       "sessionTime",
                       "promptCache",
-                      "compactions"
+                      "compactions",
+                      "tokens"
                     ]
                   },
                   "description": "The rows to draw below the header, in drawing order; a row left out is hidden, and an empty list hides every row."

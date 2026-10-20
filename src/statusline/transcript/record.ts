@@ -2,6 +2,8 @@ import { z } from "zod";
 
 const text = z.string().optional().catch(undefined);
 const number = z.number().optional().catch(undefined);
+/** A token count the client wrote; a negative or malformed one reads as absent. */
+const count = z.number().nonnegative().optional().catch(undefined);
 
 /** One block of a message's content: a block's type, and the text of a text block. */
 const ContentBlockSchema = z.looseObject({ type: text, text });
@@ -25,9 +27,15 @@ const TranscriptRecordSchema = z
     requestId: text,
     message: z
       .looseObject({
+        /** The API response the record belongs to; the records of one response share it. */
+        id: z.string().min(1).optional().catch(undefined),
         content: z.union([z.string(), z.array(ContentBlockSchema)]).optional().catch(undefined),
         usage: z
           .looseObject({
+            input_tokens: count,
+            output_tokens: count,
+            cache_creation_input_tokens: count,
+            cache_read_input_tokens: count,
             cache_creation: z.looseObject({ ephemeral_5m_input_tokens: number, ephemeral_1h_input_tokens: number }).optional().catch(undefined),
           })
           .optional()

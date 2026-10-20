@@ -8,7 +8,7 @@ import { graphemesOf } from "../statusline/graphemes";
 export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "dailyCost", "sessionName", "duration", "speed"] as const;
 
 /** The rows below the header, in the order they are drawn unless a setting reorders them: the context window's bar, the quota windows' bars, the added directories, the files the working tree has changed, the machine's memory bar, and the line of configuration counts, then the lines of text about the session read from its transcript. */
-export const STATUSLINE_ROWS = ["context", "quota", "addedDirs", "gitFiles", "memory", "environment", "sessionTime", "promptCache", "compactions"] as const;
+export const STATUSLINE_ROWS = ["context", "quota", "addedDirs", "gitFiles", "memory", "environment", "sessionTime", "promptCache", "compactions", "tokens"] as const;
 
 /** The parts of the session-time row, in the order the row draws them. */
 const STATUSLINE_SESSION_TIME_PARTS = ["started", "lastReply"] as const;

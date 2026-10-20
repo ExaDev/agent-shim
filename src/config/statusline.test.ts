@@ -287,4 +287,9 @@ describe("the context group", () => {
     expect(() => resolveStatusline({ context: { criticalAt: 60 } })).toThrow(/context\.warnAt \(70\) must be below context\.criticalAt \(60\)/);
     expect(resolveStatusline({ context: OWN_PAIR }).context.criticalAt).toBe(OWN_PAIR.criticalAt);
   });
+
+  it("leaves the token totals out of the rows drawn by default", () => {
+    expect(STATUSLINE_DEFAULTS.layout.rows).toEqual(["context", "quota"]);
+    expect(StatuslineSchema.parse({ layout: { rows: ["context", "tokens"] } })).toEqual({ layout: { rows: ["context", "tokens"] } });
+  });
 });

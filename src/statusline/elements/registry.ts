@@ -26,6 +26,7 @@ import { memoryRow } from "./rows/memory";
 import { promptCacheRow } from "./rows/promptCache";
 import { quotaRow } from "./rows/quota";
 import { sessionTimeRow } from "./rows/sessionTime";
+import { tokensRow } from "./rows/tokens";
 
 /** How one element draws itself. */
 export interface ElementRegistry {
@@ -76,5 +77,5 @@ export const ELEMENTS: ElementRegistry = {
     duration: durationSegment,
     speed: speedSegment,
   },
-  rows: { context: contextRow, quota: quotaRow, addedDirs: addedDirsRow, gitFiles: gitFilesRow, memory: memoryRow, environment: environmentRow, sessionTime: sessionTimeRow, promptCache: promptCacheRow, compactions: compactionsRow },
+  rows: { context: contextRow, quota: quotaRow, addedDirs: addedDirsRow, gitFiles: gitFilesRow, memory: memoryRow, environment: environmentRow, sessionTime: sessionTimeRow, promptCache: promptCacheRow, compactions: compactionsRow, tokens: tokensRow },
 };
