@@ -110,7 +110,9 @@ export function layoutBarGrid(units: readonly BarUnit[], maxWidth: number, separ
       separatorLength,
       baseBarCells,
     );
-  for (let perRow = widest; perRow >= 1; perRow -= 1) {
+  // One bar to a row pads every group's labels and figures to match, which a single unit's groups do not accept (they keep to their own alignment instead); units of their own are meant to line up, so they may.
+  const fewest = nonEmpty.length > 1 ? 1 : 2;
+  for (let perRow = widest; perRow >= fewest; perRow -= 1) {
     const grid = layoutFor(perRow);
     if (grid.baseWidth <= maxWidth) {
       return renderGrid(grid, maxWidth, separator, baseBarCells);
