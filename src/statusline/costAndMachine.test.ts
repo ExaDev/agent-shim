@@ -8,6 +8,8 @@ import { renderStatuslineBlock } from "./render";
 import { fakeStatuslineFilesystem, fakeStatuslinePorts, fakeStatuslineSummary, type FakeStatuslineFilesystem } from "./testing";
 
 const WIDE_TERMINAL = 120;
+/** Narrow enough that the counts of the environment row cannot share one line. */
+const NARROW_TERMINAL = 30;
 const YEAR = 2026;
 const OCTOBER = 9;
 const DAY = 19;
@@ -31,6 +33,7 @@ interface Scene {
   readonly filesystem?: FakeStatuslineFilesystem;
   readonly memory?: { readonly usedBytes: number; readonly totalBytes: number };
   readonly env?: Record<string, string>;
+  readonly terminalWidth?: number;
 }
 
 /** The statusline for a scene, drawn in plain text with the ports a scene describes. */
@@ -40,7 +43,7 @@ function draw(scene: Scene): string {
     summary: scene.summary ?? fakeStatuslineSummary(),
     view: viewOf(payload),
     payload,
-    terminalWidth: WIDE_TERMINAL,
+    terminalWidth: scene.terminalWidth ?? WIDE_TERMINAL,
     nowMs: NOON,
     settings: resolveStatusline(scene.settings),
     ports: fakeStatuslinePorts({ ...(scene.filesystem ?? fakeStatuslineFilesystem(scene.files ?? {})).ports, stateDirectory: STATE, homeDirectory: "/home/test", env: { NO_COLOR: "1", ...scene.env }, memoryUse: () => scene.memory }),
@@ -101,7 +104,7 @@ describe("the memory row", () => {
     const line = draw({ settings: MEMORY_ONLY, memory: { usedBytes: EIGHT_GIB * GIBIBYTE, totalBytes: SIXTEEN_GIB * GIBIBYTE } });
     expect(line).toContain("RAM ");
     expect(line).toContain("50.0% (8.0 GB / 16 GB)");
-    expect(line).toContain("█");
+    expect(line).toContain("\u2588");
   });
 
   it("draws nothing when the platform gives no figure", () => {
@@ -138,6 +141,14 @@ describe("the environment row", () => {
   it("draws the counts of the session's configuration, each left out at zero and pluralised", () => {
     expect(draw({ settings: ENVIRONMENT_ONLY, files: FILES, payload: { cwd: "/work" } })).toBe("2 CLAUDE.md | 1 rule | 1 MCP");
     expect(draw({ settings: ENVIRONMENT_ONLY, files: { ...FILES, "/home/test/.claude/rules/b.md": "" }, payload: { cwd: "/work" } })).toContain("2 rules");
+  });
+
+  it("breaks onto further lines at a narrow width, and fits on one at a wide width", () => {
+    const scene = { settings: ENVIRONMENT_ONLY, files: FILES, payload: { cwd: "/work" } };
+    expect(draw({ ...scene, terminalWidth: WIDE_TERMINAL }).split("\n")).toHaveLength(1);
+    const narrow = draw({ ...scene, terminalWidth: NARROW_TERMINAL }).split("\n");
+    expect(narrow.length).toBeGreaterThan(1);
+    expect(narrow.join(" ")).toContain("2 CLAUDE.md");
   });
 
   it("takes the project from the workspace when the client sends no cwd", () => {

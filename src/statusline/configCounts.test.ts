@@ -105,6 +105,20 @@ describe("countConfiguration", () => {
     expect(counts(files, { project: HOME })).toEqual({ claudeMd: 1, rules: 1, mcpServers: 1, hookEvents: 1 });
   });
 
+  it("counts a CLAUDE.md that is a link to a file, and not one that is a broken link, a link to a directory or a directory", () => {
+    const real = { "/real/CLAUDE.md": "" };
+    expect(counts(real, { links: { [`${HOME}/.claude/CLAUDE.md`]: "/real/CLAUDE.md" } }).claudeMd).toBe(1);
+    expect(counts(real, { links: { [`${HOME}/.claude/CLAUDE.md`]: "/real/missing.md" } }).claudeMd).toBe(0);
+    expect(counts({ "/real/dir/inner.txt": "" }, { links: { [`${HOME}/.claude/CLAUDE.md`]: "/real/dir" } }).claudeMd).toBe(0);
+    expect(counts({ [`${HOME}/.claude/CLAUDE.md/inner.txt`]: "" }).claudeMd).toBe(0);
+  });
+
+  it("walks into a link to a directory in a rules tree even when its name ends in .md, and counts a link to a file", () => {
+    const files = { "/real/rules/inside.md": "", "/real/other.md": "", "/real/folder/deep.md": "", "/real/folder/deeper.md": "" };
+    const links = { [`${HOME}/.claude/rules`]: "/real/rules", "/real/rules/folder.md": "/real/folder", "/real/rules/file.md": "/real/other.md" };
+    expect(counts(files, { links }).rules).toBe(RULES_FILES + 1);
+  });
+
   it("reads a file over the size bound as holding nothing, and one under it whole", () => {
     const mebibyte = 1_048_576;
     const padded = (mebibytes: number): string => JSON.stringify({ mcpServers: { a: {} }, padding: "x".repeat(mebibytes * mebibyte) });
