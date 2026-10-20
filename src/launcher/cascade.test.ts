@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildLayoutPaths } from "../paths";
+import { flattenLayers } from "../resolve/flatten";
 import { assembleCascade } from "../resolve/walk";
 import { FAKE_HOME } from "../test-helpers";
 import { loadCascadeInput, readDirectorySelections } from "./cascade";
@@ -29,6 +30,34 @@ describe("loadCascadeInput", () => {
       `directory-rule:${paths.directoryRulesFile}`,
       `portable-local:${FAKE_HOME}/work/acme/.agent-shim.local.json`,
     ]);
+  });
+
+  describe("the statusline's extra command, which runs a program", () => {
+    const launch = { statusline: { extra: { command: ["date"] } } };
+    const statuslineOf = (read: ReturnType<typeof fakeReader>): unknown => {
+      const loaded = loadCascadeInput({ paths, home: FAKE_HOME, cwd: `${FAKE_HOME}/work/acme`, read, baseConfigProfile: "mine" });
+      return flattenLayers(assembleCascade(loaded.input).layers, { home: FAKE_HOME }).launch.statusline;
+    };
+
+    it("is read from the layers a person controls: the global config, a profile and a directory rule", () => {
+      const profile = `${FAKE_HOME}/.agent-shim/config-profiles/mine.json`;
+      expect(statuslineOf(fakeReader({ [paths.globalConfigFile]: { launch }, [profile]: {} }))).toEqual({ extra: { command: ["date"] } });
+      expect(statuslineOf(fakeReader({ [profile]: { launch } }))).toEqual({ extra: { command: ["date"] } });
+      expect(statuslineOf(fakeReader({ [profile]: {}, [paths.directoryRulesFile]: { rules: [{ path: "~/work/acme", launch }] } }))).toEqual({ extra: { command: ["date"] } });
+    });
+
+    it("is refused in a project file, committed or local, naming the file, so a cloned repository cannot choose the program", () => {
+      for (const name of [".agent-shim.json", ".agent-shim.local.json"]) {
+        const file = `${FAKE_HOME}/work/acme/${name}`;
+        const read = fakeReader({ [file]: { launch } });
+        expect(() => loadCascadeInput({ paths, home: FAKE_HOME, cwd: `${FAKE_HOME}/work/acme`, read })).toThrow(file);
+      }
+    });
+
+    it("lets a project file set the settings that only draw", () => {
+      const read = fakeReader({ [`${FAKE_HOME}/work/acme/.agent-shim.json`]: { launch: { statusline: { customLine: { text: "hello" } } } }, [`${FAKE_HOME}/.agent-shim/config-profiles/mine.json`]: {} });
+      expect(statuslineOf(read)).toEqual({ customLine: { text: "hello" } });
+    });
   });
 
   it("matches a directory rule written with a ~-rooted path against the real directory", () => {

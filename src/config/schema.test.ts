@@ -267,6 +267,23 @@ describe("PortableConfigSchema", () => {
     expect(PortableConfigSchema.safeParse({ path: "/x" }).success).toBe(false);
     expect(PortableConfigSchema.parse({ categories: { history: false } }).categories).toEqual({ history: false });
   });
+
+  it("accepts the statusline settings that only draw, and refuses the extra command, which runs a program", () => {
+    expect(PortableConfigSchema.safeParse({ launch: { statusline: { customLine: { text: "hello" }, layout: { header: ["model"] } } } }).success).toBe(true);
+    for (const extra of [{ command: ["date"] }, { command: [] }, {}]) {
+      const result = PortableConfigSchema.safeParse({ launch: { statusline: { extra } } });
+      expect(result.success, JSON.stringify(extra)).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(["launch", "statusline", "extra"]);
+      expect(result.error?.issues[0]?.message).toContain("project file");
+    }
+  });
+
+  it("lets the extra command through the schemas of the layers a person controls", () => {
+    const launch = { statusline: { extra: { command: ["date"] } } };
+    expect(ConfigProfileSchema.safeParse({ launch }).success).toBe(true);
+    expect(DirectoryRulesSchema.safeParse({ rules: [{ path: "/work", launch }] }).success).toBe(true);
+    expect(GlobalConfigSchema.safeParse({ launch }).success).toBe(true);
+  });
 });
 
 describe("GlobalConfigSchema", () => {
