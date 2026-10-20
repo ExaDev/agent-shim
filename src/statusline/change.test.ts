@@ -51,6 +51,13 @@ describe("applyStatuslineChange", () => {
     expect(applyStatuslineChange({ bar: { width: 6 } }, { unset: ["bar.width"] })).toBeUndefined();
   });
 
+  it("sets an optional setting from text and unsets it again, so it follows what it falls back on", () => {
+    const { path, value } = parseStatuslineAssignment("context.warnAt=60");
+    expect(applyStatuslineChange(undefined, { set: { [path]: value } })).toEqual({ context: { warnAt: 60 } });
+    expect(applyStatuslineChange({ context: { warnAt: 60 } }, { unset: ["context.warnAt"] })).toBeUndefined();
+    expect(() => applyStatuslineChange(undefined, { set: { "context.warnAt": 0 } })).toThrow(/statusline: context\.warnAt:/);
+  });
+
   it("removing a setting that is not set is not an error", () => {
     expect(applyStatuslineChange({ bar: { width: 6 } }, { unset: ["bands.warnAt"] })).toEqual({ bar: { width: 6 } });
   });

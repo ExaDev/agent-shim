@@ -108,6 +108,13 @@ describe("the context row without its bar", () => {
   });
 });
 
+describe("the context row with nothing to show", () => {
+  it("draws nothing for tokens without a bar when the client reports no tokens, but still draws the bar with the percentage", () => {
+    expect(draw({ context: { bar: "hidden", value: "tokens" } }, { contextTotalTokens: undefined, cacheHitRatio: 0.93 })).toEqual([]);
+    expect(stripAnsi(draw({ context: { value: "tokens" } }, { contextTotalTokens: undefined })[0] ?? "")).toMatch(/^Ctx \[.*\]$/);
+  });
+});
+
 describe("the context row's thresholds", () => {
   it("colours the figure and the bar by the bands until the context thresholds are set, then by those", () => {
     const at = (percent: number, settings: StatuslineSettings, colour: string): void => {
@@ -140,9 +147,13 @@ describe("the context row measured against a window", () => {
     expect(stripAnsi(line ?? "")).toMatch(/\] 100\.0%$/);
   });
 
-  it("falls back to the percentage the client reports when it reports no tokens to measure", () => {
-    const [line] = draw({ context: { autoCompactWindow: 100_000 } }, { contextTotalTokens: undefined });
-    expect(stripAnsi(line ?? "")).toMatch(/\] 45\.0%$/);
+  it("draws nothing while the client reports no tokens to measure, rather than the percentage against its own window", () => {
+    expect(draw({ context: { autoCompactWindow: 100_000 } }, { contextTotalTokens: undefined })).toEqual([]);
+    expect(draw({ context: { autoCompactWindow: 100_000, bar: "hidden" } }, { contextTotalTokens: undefined })).toEqual([]);
+  });
+
+  it("draws 0.0% for tokens not yet held", () => {
+    expect(stripAnsi(draw({ context: { autoCompactWindow: 100_000 } }, { contextTotalTokens: 0 })[0] ?? "")).toMatch(/\] 0\.0%$/);
   });
 });
 
@@ -179,6 +190,15 @@ describe("the context row when the client reports no percentage", () => {
   it("treats a reported 0 beside tokens already held as not yet worked out when asked to estimate, and as 0 when not", () => {
     expect(stripAnsi(draw({ context: { estimate: "raw" } }, { contextUsedPercentage: 0 })[0] ?? "")).toMatch(/\] 45\.0%$/);
     expect(stripAnsi(draw({}, { contextUsedPercentage: 0 })[0] ?? "")).toMatch(/\] 0\.0%$/);
+  });
+
+  it("keeps a reported 0 when no estimate can be made from the tokens and the window", () => {
+    for (const estimate of ["raw", "buffered"] as const) {
+      const noWindow = draw({ context: { estimate } }, { contextUsedPercentage: 0, contextWindowTokens: undefined });
+      expect(stripAnsi(noWindow[0] ?? ""), estimate).toMatch(/\] 0\.0%$/);
+      const noTokens = draw({ context: { estimate } }, { contextUsedPercentage: 0, contextTotalTokens: undefined });
+      expect(stripAnsi(noTokens[0] ?? ""), estimate).toMatch(/\] 0\.0%$/);
+    }
   });
 
   it("keeps the percentage the client reports when it reports one", () => {
