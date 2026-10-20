@@ -22,6 +22,12 @@ export interface CredentialCachePort {
   readonly remove: (store: CredentialCacheStore, owner: string) => void;
 }
 
+/** `CredentialCachePort` for a process whose event loop serves others: the same entries, read and written without blocking the calling thread. Only what resolving a credential needs (a read, and a write after a live fetch). */
+export interface AsyncCredentialCachePort {
+  readonly read: (store: CredentialCacheStore, owner: string) => Promise<CachedCredential | undefined>;
+  readonly write: (store: CredentialCacheStore, owner: string, entry: CachedCredential) => Promise<void>;
+}
+
 /** The store a block uses: its own choice, else the Keychain on macOS and a file elsewhere. */
 export function effectiveStore(cache: Readonly<CredentialCache>, platform: NodeJS.Platform): CredentialCacheStore {
   return cache.store ?? (platform === "darwin" ? "keychain" : "file");

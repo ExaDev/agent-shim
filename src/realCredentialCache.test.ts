@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CachedCredential } from "./credentialCache";
-import { cacheFileNameFor, createRealCredentialCache } from "./realCredentialCache";
+import { cacheFileNameFor, createAsyncRealCredentialCache, createRealCredentialCache } from "./realCredentialCache";
 
 const PERMISSION_BITS = 0o777;
 const OWNER_ONLY_DIR = 0o700;
@@ -64,5 +64,36 @@ describe("real file credential cache", () => {
     cache.write("file", "identity ../../escape", entry);
     expect(fs.readdirSync(path.join(root, "credential-cache"))).toHaveLength(1);
     expect(fs.existsSync(path.join(root, "..", "escape"))).toBe(false);
+  });
+});
+
+describe("real asynchronous file credential cache", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "credential-cache-async-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("round-trips an entry at owner-only permissions, in the file the synchronous cache reads", async () => {
+    const cache = createAsyncRealCredentialCache(root);
+    await cache.write("file", "provider z", entry);
+    expect(await cache.read("file", "provider z")).toEqual(entry);
+    expect(createRealCredentialCache(root).read("file", "provider z")).toEqual(entry);
+    const file = path.join(root, "credential-cache", cacheFileNameFor("provider z"));
+    expect(fs.statSync(file).mode & PERMISSION_BITS).toBe(OWNER_ONLY_FILE);
+    expect(fs.statSync(path.dirname(file)).mode & PERMISSION_BITS).toBe(OWNER_ONLY_DIR);
+  });
+
+  it("reads an entry the synchronous cache wrote, and treats a missing or malformed one as no entry", async () => {
+    createRealCredentialCache(root).write("file", "provider z", entry);
+    const cache = createAsyncRealCredentialCache(root);
+    expect(await cache.read("file", "provider z")).toEqual(entry);
+    expect(await cache.read("file", "provider absent")).toBeUndefined();
+    fs.writeFileSync(path.join(root, "credential-cache", cacheFileNameFor("provider bad")), "{not json");
+    expect(await cache.read("file", "provider bad")).toBeUndefined();
   });
 });

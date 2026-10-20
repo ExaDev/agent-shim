@@ -7,7 +7,7 @@ import path from "node:path";
 import { isSea } from "node:sea";
 
 import { cosmiconfigReader } from "./config/load";
-import type { CredentialPort } from "./credential";
+import type { AsyncCredentialPort, CredentialCommandResult, CredentialPort } from "./credential";
 import { defaultVersionsDir, discoverClaudeBinary, installedVersions, type ClaudeBinaryResolver, type VersionsDirEntry } from "./versionDiscovery";
 import { frontDoorLivenessOf, parseFrontDoorSupervisorPids } from "./frontdoor/supervisorProcesses";
 import type { FrontDoorLiveness } from "./frontdoor/state";
@@ -391,10 +391,27 @@ function hasDesktopSession(): boolean {
     const result = spawnSync("launchctl", ["managername"], { encoding: "utf8" });
     return result.status === 0 && result.stdout.trim() === MACOS_GUI_SESSION_MANAGER;
   }
+  return hasDisplayServer();
+}
+
+/** Whether a desktop session exists on a platform that is not macOS: Windows is not asked, other POSIX systems count an X11 or Wayland display. */
+function hasDisplayServer(): boolean {
   if (process.platform === "win32") {
     return false;
   }
   return (process.env.DISPLAY ?? "") !== "" || (process.env.WAYLAND_DISPLAY ?? "") !== "";
+}
+
+/** `hasDesktopSession` without blocking the calling thread. */
+async function hasDesktopSessionAsync(): Promise<boolean> {
+  if (process.platform !== "darwin") {
+    return hasDisplayServer();
+  }
+  return await new Promise((resolve) => {
+    execFile("launchctl", ["managername"], { encoding: "utf8" }, (error, stdout) => {
+      resolve(error === null && stdout.trim() === MACOS_GUI_SESSION_MANAGER);
+    });
+  });
 }
 
 /**
@@ -432,6 +449,52 @@ export const realCredentialPort: CredentialPort = {
     return { status: result.status, stdout: result.stdout, stderr: options.interactive ? "" : result.stderr, timedOut: false };
   },
   personPresent: () => process.stdin.isTTY || hasDesktopSession(),
+};
+
+/**
+ * Runs a credential command without blocking the calling thread, with the semantics of `realCredentialPort.runCommand`: no shell, the timeout ends the process, a non-interactive run gets no stdin and has its stderr captured, an interactive run inherits stdin and stderr, and a program that cannot be started reports its error as stderr.
+ */
+async function runCredentialCommand(argv: readonly [string, ...string[]], options: { readonly timeoutMs: number; readonly interactive: boolean }): Promise<CredentialCommandResult> {
+  const [command, ...args] = argv;
+  return await new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: options.interactive ? ["inherit", "pipe", "inherit"] : ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, options.timeoutMs);
+    let settled = false;
+    const settle = (result: CredentialCommandResult): void => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      }
+    };
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once("error", (error) => {
+      settle({ status: null, stdout: "", stderr: error.message, timedOut: false });
+    });
+    child.once("close", (status) => {
+      settle(timedOut ? { status: null, stdout: "", stderr: "", timedOut: true } : { status, stdout, stderr: options.interactive ? "" : stderr, timedOut: false });
+    });
+  });
+}
+
+/** The real `AsyncCredentialPort`: `realCredentialPort`'s secret file reads, with commands and the desktop-session check run without blocking the calling thread. The cache is supplied by the caller, as for the synchronous port. */
+export const realAsyncCredentialPort: AsyncCredentialPort = {
+  readSecretFile: (filePath) => realCredentialPort.readSecretFile(filePath),
+  runCommand: runCredentialCommand,
+  personPresent: async () => process.stdin.isTTY || (await hasDesktopSessionAsync()),
 };
 
 /** Reads the git branch checked out at `cwd`, and whether the repository is in detached-HEAD state. Both undefined when `cwd` is not in a repository at all. */

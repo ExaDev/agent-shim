@@ -1,5 +1,5 @@
 import type { Credential, CredentialCache, CredentialSource, CredentialTarget, CredentialTargetVar } from "./config/schema";
-import { effectiveStore, isFresh, type CredentialCachePort } from "./credentialCache";
+import { effectiveStore, isFresh, type AsyncCredentialCachePort, type CachedCredential, type CredentialCachePort } from "./credentialCache";
 
 /** The exit status for a launch whose selected provider or identity has a credential block none of whose sources yields a token: 64, the conventional `EX_USAGE`, because the invocation asked for a credential the environment cannot supply. */
 export const CREDENTIAL_UNAVAILABLE_EXIT = 64;
@@ -47,6 +47,23 @@ export interface CredentialPort {
   readonly personPresent: () => boolean;
   /** Where cached credentials live, used only for a credential block that asks for caching. Omit to resolve every launch from the sources. */
   readonly cache?: CredentialCacheEnv;
+}
+
+/**
+ * The asynchronous counterpart of `CredentialPort`, for a process whose event loop serves other processes: the front door resolves a credential on the request path, and a synchronous `spawnSync` there holds every other session's request for as long as the secret store takes to answer. The shapes match `CredentialPort` apart from the effects that spawn a process or wait on one, which return promises.
+ */
+export interface AsyncCredentialPort {
+  /** Reads a `file` source's path (absolute or `~`-rooted); a plain file read, which does not spawn a process. */
+  readonly readSecretFile: CredentialPort["readSecretFile"];
+  /** Runs a command source's argv directly (no shell) under a timeout, capturing stdout, without blocking the calling thread. */
+  readonly runCommand: (
+    argv: readonly [string, ...string[]],
+    options: { readonly timeoutMs: number; readonly interactive: boolean },
+  ) => Promise<CredentialCommandResult>;
+  /** Whether a person can answer a prompt now, as `CredentialPort.personPresent`. */
+  readonly personPresent: () => Promise<boolean>;
+  /** Where cached credentials live, used only for a credential block that asks for caching. */
+  readonly cache?: AsyncCredentialCacheEnv;
 }
 
 /** The sources that run a command: `command` itself and the two presets that compile to one. */
@@ -188,6 +205,13 @@ export interface CredentialCacheEnv {
   readonly now: () => number;
 }
 
+/** `CredentialCacheEnv` for a cache whose entries are read and written without blocking. */
+export interface AsyncCredentialCacheEnv {
+  readonly port: AsyncCredentialCachePort;
+  readonly platform: NodeJS.Platform;
+  readonly now: () => number;
+}
+
 /** A resolved credential: the token, where it goes, and which source produced it. `warnings` carries any source refused on the way for a reason worth reporting (a secret file with loose permissions). */
 export interface ResolvedCredential {
   readonly target: CredentialTarget;
@@ -234,49 +258,82 @@ export function unpackKeyringToken(raw: string): string {
   return trimmed;
 }
 
-function trySource(source: CredentialSource, params: ResolveCredentialParams): SourceOutcome {
-  const none = (reason: string, warn = false): SourceOutcome => ({ ok: false, reason, warn });
+/** A source that yielded no token, with the reason; `warn` marks one worth reporting even when a later source succeeds. */
+function declined(reason: string, warn = false): SourceOutcome {
+  return { ok: false, reason, warn };
+}
 
+/** Whether a source runs a command, as opposed to reading the environment, a file or a literal. */
+function isCommandBacked(source: CredentialSource): source is CommandBackedSource {
+  return "command" in source || "op" in source || "keychain" in source;
+}
+
+/** What a source that spawns nothing yields: an `env` variable, a `literal`, or a secret `file` (refused when group or others can read or write it). */
+function immediateOutcome(source: Exclude<CredentialSource, CommandBackedSource>, params: Readonly<{ env: Readonly<Record<string, string | undefined>>; port: Pick<CredentialPort, "readSecretFile"> }>): SourceOutcome {
   if ("env" in source) {
     const value = params.env[source.env];
-    return value === undefined || value === "" ? none("is unset or empty") : { ok: true, token: unpackKeyringToken(value) };
+    return value === undefined || value === "" ? declined("is unset or empty") : { ok: true, token: unpackKeyringToken(value) };
   }
   if ("literal" in source) {
     return { ok: true, token: source.literal };
   }
-  if ("file" in source) {
-    const read = params.port.readSecretFile(source.file);
-    if (!read.found) {
-      return none("does not exist");
-    }
-    if (read.mode !== undefined && (read.mode & GROUP_OTHER_PERMISSION_BITS) !== 0) {
-      return none(
-        `is readable or writable by group or others (mode ${(read.mode & PERMISSION_BITS).toString(OCTAL_RADIX)}); run \`chmod 600 ${source.file}\``,
-        true,
-      );
-    }
-    const token = unpackKeyringToken(read.content.trim());
-    return token === "" ? none("is empty") : { ok: true, token };
+  const read = params.port.readSecretFile(source.file);
+  if (!read.found) {
+    return declined("does not exist");
   }
+  if (read.mode !== undefined && (read.mode & GROUP_OTHER_PERMISSION_BITS) !== 0) {
+    return declined(
+      `is readable or writable by group or others (mode ${(read.mode & PERMISSION_BITS).toString(OCTAL_RADIX)}); run \`chmod 600 ${source.file}\``,
+      true,
+    );
+  }
+  const token = unpackKeyringToken(read.content.trim());
+  return token === "" ? declined("is empty") : { ok: true, token };
+}
 
-  const argv = commandArgv(source);
-  const interactive = isInteractiveSource(source, params.env);
-  if (interactive && !params.port.personPresent()) {
-    return none("needs a person to approve it, but there is no terminal or desktop session");
-  }
-  const timeoutMs = source.timeoutMs ?? (interactive ? CREDENTIAL_INTERACTIVE_TIMEOUT_MS : CREDENTIAL_COMMAND_TIMEOUT_MS);
-  const result = params.port.runCommand(argv, { timeoutMs, interactive });
+const NO_PERSON_REASON = "needs a person to approve it, but there is no terminal or desktop session";
+
+/** How a command-backed source is run: its argv, whether it needs a person, and the time it may take. */
+function commandRunOf(source: CommandBackedSource, env: Readonly<Record<string, string | undefined>>): { readonly argv: readonly [string, ...string[]]; readonly interactive: boolean; readonly timeoutMs: number } {
+  const interactive = isInteractiveSource(source, env);
+  return { argv: commandArgv(source), interactive, timeoutMs: source.timeoutMs ?? (interactive ? CREDENTIAL_INTERACTIVE_TIMEOUT_MS : CREDENTIAL_COMMAND_TIMEOUT_MS) };
+}
+
+/** What a finished credential command yields: its trimmed stdout as the token, or why there is none. */
+function commandOutcome(result: CredentialCommandResult, timeoutMs: number): SourceOutcome {
   if (result.timedOut) {
-    return none(`timed out after ${String(timeoutMs)}ms`);
+    return declined(`timed out after ${String(timeoutMs)}ms`);
   }
   if (result.status !== 0) {
     // Never stdout, which would be the credential: the exit status and stderr, which is where a well-behaved secret tool explains itself.
     const stderr = result.stderr.trim();
     const outcome = result.status === null ? "could not be run or was killed by a signal" : `exited with status ${String(result.status)}`;
-    return none(`${outcome}${stderr === "" ? "" : `: ${stderr}`}`);
+    return declined(`${outcome}${stderr === "" ? "" : `: ${stderr}`}`);
   }
   const token = unpackKeyringToken(result.stdout.trim());
-  return token === "" ? none("printed no token") : { ok: true, token };
+  return token === "" ? declined("printed no token") : { ok: true, token };
+}
+
+function trySource(source: CredentialSource, params: ResolveCredentialParams): SourceOutcome {
+  if (!isCommandBacked(source)) {
+    return immediateOutcome(source, params);
+  }
+  const run = commandRunOf(source, params.env);
+  if (run.interactive && !params.port.personPresent()) {
+    return declined(NO_PERSON_REASON);
+  }
+  return commandOutcome(params.port.runCommand(run.argv, { timeoutMs: run.timeoutMs, interactive: run.interactive }), run.timeoutMs);
+}
+
+async function trySourceAsync(source: CredentialSource, params: ResolveCredentialAsyncParams): Promise<SourceOutcome> {
+  if (!isCommandBacked(source)) {
+    return immediateOutcome(source, params);
+  }
+  const run = commandRunOf(source, params.env);
+  if (run.interactive && !(await params.port.personPresent())) {
+    return declined(NO_PERSON_REASON);
+  }
+  return commandOutcome(await params.port.runCommand(run.argv, { timeoutMs: run.timeoutMs, interactive: run.interactive }), run.timeoutMs);
 }
 
 /** The `agent-shim credential warm` invocation that refills the cache for a subject such as `identity work` or `provider z`. */
@@ -285,8 +342,30 @@ function warmCommandFor(subject: string): string {
   return kind === "provider" ? `agent-shim credential warm --provider ${name ?? ""}` : `agent-shim credential warm ${name ?? ""}`;
 }
 
+/** The resolution for a token read from the cache. */
+function cachedResolution(target: CredentialTarget, entry: CachedCredential): CredentialResolution {
+  return { ok: true, credential: { target, token: entry.token, source: entry.source, warnings: [], cachedAt: entry.fetchedAt } };
+}
+
+/** The resolution for a token a source just produced. */
+function liveResolution(target: CredentialTarget, token: string, source: CredentialSource, warnings: readonly string[]): CredentialResolution {
+  return { ok: true, credential: { target, token, source, warnings } };
+}
+
+/** The resolution when no source yielded a token: a message naming every source and why. */
+function unresolved(subject: string, cacheBlock: Readonly<CredentialCache> | undefined, attempts: readonly string[]): CredentialResolution {
+  const hint = cacheBlock === undefined ? "" : `; fill the cache from a terminal with \`${warmCommandFor(subject)}\``;
+  return { ok: false, message: `agent-shim: ${subject} has no usable credential: ${attempts.join("; ")}${hint}` };
+}
+
+/** The line reported for a source that yielded nothing, and the warning form of it when the source asked to be reported. */
+function declinedLine(source: CredentialSource, outcome: Extract<SourceOutcome, { readonly ok: false }>, subject: string): { readonly attempt: string; readonly warning: string | undefined } {
+  const attempt = `${describeSource(source)} ${outcome.reason}`;
+  return { attempt, warning: outcome.warn ? `agent-shim: ${subject}: skipped ${attempt}` : undefined };
+}
+
 /**
- * Resolves a credential block: a fresh cached token if the block caches one, else tries each source in order and returns the first non-empty token, with the block's target, storing it when the block caches. When none yields one, the message names every source and why, and never a value; for a caching block it also names the command that fills the cache from a terminal. Pure over its injected ports.
+ * Resolves a credential block: a fresh cached token if the block caches one, else tries each source in order and returns the first non-empty token, with the block's target, storing it when the block caches. When none yields one, the message names every source and why it yielded nothing.
  */
 export function resolveCredential(params: ResolveCredentialParams): CredentialResolution {
   const target = params.credential.target ?? "bearer";
@@ -296,7 +375,7 @@ export function resolveCredential(params: ResolveCredentialParams): CredentialRe
   if (cacheBlock !== undefined && cache !== undefined && store !== undefined && params.refresh !== true) {
     const entry = cache.port.read(store, params.subject);
     if (entry !== undefined && isFresh(entry, cacheBlock, cache.now())) {
-      return { ok: true, credential: { target, token: entry.token, source: entry.source, warnings: [], cachedAt: entry.fetchedAt } };
+      return cachedResolution(target, entry);
     }
   }
   const attempts: string[] = [];
@@ -307,16 +386,72 @@ export function resolveCredential(params: ResolveCredentialParams): CredentialRe
       if (cache !== undefined && store !== undefined) {
         cache.port.write(store, params.subject, { token: outcome.token, fetchedAt: cache.now(), source });
       }
-      return { ok: true, credential: { target, token: outcome.token, source, warnings } };
+      return liveResolution(target, outcome.token, source, warnings);
     }
-    const line = `${describeSource(source)} ${outcome.reason}`;
-    attempts.push(line);
-    if (outcome.warn) {
-      warnings.push(`agent-shim: ${params.subject}: skipped ${line}`);
+    const line = declinedLine(source, outcome, params.subject);
+    attempts.push(line.attempt);
+    if (line.warning !== undefined) {
+      warnings.push(line.warning);
     }
   }
-  const hint = cacheBlock === undefined ? "" : `; fill the cache from a terminal with \`${warmCommandFor(params.subject)}\``;
-  return { ok: false, message: `agent-shim: ${params.subject} has no usable credential: ${attempts.join("; ")}${hint}` };
+  return unresolved(params.subject, cacheBlock, attempts);
+}
+
+/** Inputs to `resolveCredentialAsync`: those of `resolveCredential` over the asynchronous port. */
+export interface ResolveCredentialAsyncParams extends Omit<ResolveCredentialParams, "port"> {
+  readonly port: AsyncCredentialPort;
+}
+
+/**
+ * `resolveCredential` without blocking the calling thread: the same cache decision, the same sources in the same order and the same outcomes, with every effect that spawns a process awaited. For a process whose event loop serves others (the front door), where a synchronous secret-store call would hold every other session's request.
+ */
+export async function resolveCredentialAsync(params: ResolveCredentialAsyncParams): Promise<CredentialResolution> {
+  const target = params.credential.target ?? "bearer";
+  const cacheBlock = params.credential.cache;
+  const cache = cacheBlock === undefined ? undefined : params.port.cache;
+  const store = cacheBlock === undefined || cache === undefined ? undefined : effectiveStore(cacheBlock, cache.platform);
+  if (cacheBlock !== undefined && cache !== undefined && store !== undefined && params.refresh !== true) {
+    const entry = await cache.port.read(store, params.subject);
+    if (entry !== undefined && isFresh(entry, cacheBlock, cache.now())) {
+      return cachedResolution(target, entry);
+    }
+  }
+  const attempts: string[] = [];
+  const warnings: string[] = [];
+  for (const source of params.credential.sources) {
+    const outcome = await trySourceAsync(source, params);
+    if (outcome.ok) {
+      if (cache !== undefined && store !== undefined) {
+        await cache.port.write(store, params.subject, { token: outcome.token, fetchedAt: cache.now(), source });
+      }
+      return liveResolution(target, outcome.token, source, warnings);
+    }
+    const line = declinedLine(source, outcome, params.subject);
+    attempts.push(line.attempt);
+    if (line.warning !== undefined) {
+      warnings.push(line.warning);
+    }
+  }
+  return unresolved(params.subject, cacheBlock, attempts);
+}
+
+/**
+ * Wraps an asynchronous resolver so concurrent resolutions of the same credential share one run: a burst of requests through a provider whose credential comes from a secret store would otherwise start one store call each. Only calls in flight together are shared, so the next request after one settles resolves afresh and a rotated token is picked up as it is today; how long a token is kept is the block's own `cache` setting.
+ */
+export function shareInFlightResolutions(resolve: (params: ResolveCredentialAsyncParams) => Promise<CredentialResolution>): (params: ResolveCredentialAsyncParams) => Promise<CredentialResolution> {
+  const inFlight = new Map<string, Promise<CredentialResolution>>();
+  return async (params) => {
+    const key = JSON.stringify([params.subject, params.credential, params.refresh === true]);
+    const running = inFlight.get(key);
+    if (running !== undefined) {
+      return await running;
+    }
+    const started = resolve(params).finally(() => {
+      inFlight.delete(key);
+    });
+    inFlight.set(key, started);
+    return await started;
+  };
 }
 
 /**

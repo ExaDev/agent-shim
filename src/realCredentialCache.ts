@@ -1,11 +1,11 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
 import type { CredentialCacheStore } from "./config/schema";
-import type { CredentialCacheEnv } from "./credential";
+import type { AsyncCredentialCacheEnv, CredentialCacheEnv } from "./credential";
 import type { LayoutPaths } from "./paths";
-import { CachedCredentialSchema, type CachedCredential, type CredentialCachePort } from "./credentialCache";
+import { CachedCredentialSchema, type AsyncCredentialCachePort, type CachedCredential, type CredentialCachePort } from "./credentialCache";
 
 /** The Keychain service every cached credential is filed under; the owner (`identity work`) is the account. */
 const KEYCHAIN_CACHE_SERVICE = "agent-shim-credential-cache";
@@ -40,6 +40,33 @@ function requireKeychain(): void {
 function security(args: readonly string[], stdin?: string): { status: number | null; stdout: string } {
   const result = spawnSync("security", args, { encoding: "utf8", ...(stdin === undefined ? {} : { input: stdin }), stdio: ["pipe", "pipe", "ignore"] });
   return { status: result.status, stdout: result.stdout };
+}
+
+/** `security`, run without blocking the calling thread. `stdin`, when given, feeds `security -i` so a token never appears in the process list. */
+async function securityAsync(args: readonly string[], stdin?: string): Promise<{ status: number | null; stdout: string }> {
+  return await new Promise((resolve) => {
+    const child = spawn("security", args, { stdio: ["pipe", "pipe", "ignore"] });
+    let stdout = "";
+    let settled = false;
+    const settle = (status: number | null): void => {
+      if (!settled) {
+        settled = true;
+        resolve({ status, stdout });
+      }
+    };
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stdin.on("error", () => {
+      // The program exited before reading its input; its exit status says what happened.
+    });
+    child.stdin.end(stdin);
+    child.once("error", () => {
+      settle(null);
+    });
+    child.once("close", settle);
+  });
 }
 
 /**
@@ -93,4 +120,49 @@ export function createRealCredentialCache(root: string): CredentialCachePort {
 /** The cache environment the real launcher hands the resolver: the real stores under this layout's root, this platform, and the wall clock. */
 export function realCredentialCacheEnv(paths: LayoutPaths): CredentialCacheEnv {
   return { port: createRealCredentialCache(paths.root), platform: process.platform, now: () => Date.now() };
+}
+
+/**
+ * The `AsyncCredentialCachePort` over the same stores as `createRealCredentialCache`, for a process whose event loop serves others: the file store reads and writes through the promise file API and the Keychain store runs `security` without blocking.
+ */
+export function createAsyncRealCredentialCache(root: string): AsyncCredentialCachePort {
+  const dir = path.join(root, "credential-cache");
+  const filePath = (owner: string): string => path.join(dir, cacheFileNameFor(owner));
+  return {
+    async read(store: CredentialCacheStore, owner: string): Promise<CachedCredential | undefined> {
+      if (store === "file") {
+        try {
+          return parseEntry(await fs.promises.readFile(filePath(owner), "utf8"));
+        } catch {
+          return undefined;
+        }
+      }
+      requireKeychain();
+      const result = await securityAsync(["find-generic-password", "-s", KEYCHAIN_CACHE_SERVICE, "-a", owner, "-w"]);
+      return result.status === 0 ? parseEntry(Buffer.from(result.stdout.trim(), "base64").toString("utf8")) : undefined;
+    },
+    async write(store: CredentialCacheStore, owner: string, entry: CachedCredential): Promise<void> {
+      const serialised = JSON.stringify(entry);
+      if (store === "file") {
+        await fs.promises.mkdir(dir, { recursive: true, mode: CACHE_DIR_MODE });
+        await fs.promises.chmod(dir, CACHE_DIR_MODE);
+        const target = filePath(owner);
+        const temp = `${target}.${String(process.pid)}.tmp`;
+        await fs.promises.writeFile(temp, serialised, { mode: CACHE_FILE_MODE });
+        await fs.promises.rename(temp, target);
+        return;
+      }
+      requireKeychain();
+      const encoded = Buffer.from(serialised, "utf8").toString("base64");
+      const result = await securityAsync(["-i"], `add-generic-password -U -s ${KEYCHAIN_CACHE_SERVICE} -a ${JSON.stringify(owner)} -w ${encoded}\n`);
+      if (result.status !== 0) {
+        throw new Error(`could not write the keychain credential cache for ${owner}`);
+      }
+    },
+  };
+}
+
+/** The cache environment the front door resolves a request's credential with: `realCredentialCacheEnv`'s stores, this platform and the wall clock, read and written without blocking. */
+export function realAsyncCredentialCacheEnv(paths: LayoutPaths): AsyncCredentialCacheEnv {
+  return { port: createAsyncRealCredentialCache(paths.root), platform: process.platform, now: () => Date.now() };
 }

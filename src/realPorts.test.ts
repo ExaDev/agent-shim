@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { realCredentialPort, realFarmFs, realFileSize, realReadFileTail, realRunningAmong, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
+import { realAsyncCredentialPort, realCredentialPort, realFarmFs, realFileSize, realReadFileTail, realRunningAmong, resolveContentSourcePath, resolveExecutableCandidate, resolveOwnExecutablePath } from "./realPorts";
 
 /** Owner read and write only: the mode a secret file is written with here. */
 const OWNER_ONLY_PERMISSIONS = 0o600;
@@ -472,5 +472,43 @@ describe.skipIf(process.platform === "win32")("realRunningAmong", () => {
     } finally {
       parent.kill();
     }
+  });
+});
+
+describe("realAsyncCredentialPort.runCommand", () => {
+  const NODE = process.execPath;
+  /** A time limit no run under test reaches; a case that does reach it has failed. */
+  const GENEROUS_TIMEOUT_MS = 60_000;
+  /** A limit for a command that never exits on its own: it only has to pass once the process has started. */
+  const SHORT_TIMEOUT_MS = 200;
+  const run = async (script: string, options: { readonly timeoutMs?: number } = {}) =>
+    await realAsyncCredentialPort.runCommand([NODE, "-e", script], { timeoutMs: options.timeoutMs ?? GENEROUS_TIMEOUT_MS, interactive: false });
+
+  it("reports the exit status and captured output of a command", async () => {
+    expect(await run("process.stdout.write('tok\\n')")).toEqual({ status: 0, stdout: "tok\n", stderr: "", timedOut: false });
+    expect(await run("process.stderr.write('denied'); process.exit(3)")).toEqual({ status: 3, stdout: "", stderr: "denied", timedOut: false });
+  });
+
+  it("gives the command no standard input, so one that reads it sees the end at once", async () => {
+    const result = await run("process.stdin.on('data', () => {}); process.stdin.on('end', () => process.stdout.write('eof'))", { timeoutMs: GENEROUS_TIMEOUT_MS });
+    expect(result).toMatchObject({ status: 0, stdout: "eof", timedOut: false });
+  });
+
+  it("ends a command that outlives its timeout and says so", async () => {
+    const result = await run("setInterval(() => {}, 1000)", { timeoutMs: SHORT_TIMEOUT_MS });
+    expect(result).toEqual({ status: null, stdout: "", stderr: "", timedOut: true });
+  });
+
+  it("reports a program that cannot be started as its error, with no status", async () => {
+    const result = await realAsyncCredentialPort.runCommand(["agent-shim-no-such-program-x"], { timeoutMs: GENEROUS_TIMEOUT_MS, interactive: false });
+    expect(result.status).toBeNull();
+    expect(result.timedOut).toBe(false);
+    expect(result.stderr).toMatch(/ENOENT/);
+  });
+
+  it("answers as the synchronous port does for the same command", async () => {
+    const argv = [NODE, "-e", "process.stdout.write('same'); process.stderr.write('also'); process.exit(2)"] as const;
+    const options = { timeoutMs: GENEROUS_TIMEOUT_MS, interactive: false };
+    expect(await realAsyncCredentialPort.runCommand(argv, options)).toEqual(realCredentialPort.runCommand(argv, options));
   });
 });
