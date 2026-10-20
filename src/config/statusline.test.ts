@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { statuslineKeys } from "../statusline/keys";
-import { contextBands, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_LABEL_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
+import { contextBands, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_COLUMNS, MAX_STATUSLINE_LABEL_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
 
+const A_CONFIGURED_WIDTH = 100;
 const OVER_LONG_LABEL = "x".repeat(MAX_STATUSLINE_LABEL_COLUMNS + 1);
 const WARN_ABOVE_DEFAULT_CRITICAL = 95;
 const CRITICAL_ABOVE_WARN = 99;
@@ -131,7 +132,7 @@ describe("StatuslineSchema cost and environment", () => {
   });
 
   it("leaves the segments and rows that were drawn before them as the default layout", () => {
-    expect(STATUSLINE_DEFAULTS.layout).toEqual({ header: ["model", "provider", "route", "account", "identity", "headroom"], rows: ["context", "quota"] });
+    expect(STATUSLINE_DEFAULTS.layout).toMatchObject({ header: ["model", "provider", "route", "account", "identity", "headroom"], rows: ["context", "quota"] });
     expect(STATUSLINE_DEFAULTS.cost).toEqual({ routed: false });
     expect(STATUSLINE_DEFAULTS.environment).toEqual({ threshold: 0 });
   });
@@ -201,7 +202,7 @@ describe("StatuslineSchema project and version control settings", () => {
   });
 
   it("keeps the segments and rows drawn by default to the ones drawn before the project and version control elements existed", () => {
-    expect(STATUSLINE_DEFAULTS.layout).toEqual({ header: ["model", "provider", "route", "account", "identity", "headroom"], rows: ["context", "quota"] });
+    expect(STATUSLINE_DEFAULTS.layout).toMatchObject({ header: ["model", "provider", "route", "account", "identity", "headroom"], rows: ["context", "quota"] });
   });
 
   it("defaults git on and jj off, as claude-hud does", () => {
@@ -238,6 +239,25 @@ describe("resolveStatusline", () => {
     expect(() => resolveStatusline({ bands: { criticalAt: 60 } })).toThrow(/bands\.warnAt \(70\) must be below bands\.criticalAt \(60\)/);
     expect(() => resolveStatusline({ bands: { warnAt: 80, criticalAt: 80 } })).toThrow(RangeError);
     expect(resolveStatusline({ bands: { warnAt: WARN_ABOVE_DEFAULT_CRITICAL, criticalAt: CRITICAL_ABOVE_WARN } }).bands.warnAt).toBe(WARN_ABOVE_DEFAULT_CRITICAL);
+  });
+});
+
+describe("the width settings", () => {
+  const accepts = (layout: unknown): boolean => StatuslineSchema.safeParse({ layout }).success;
+
+  it("accept a width from none to the widest a terminal is taken to be, and refuse any other", () => {
+    expect(accepts({ maxWidth: 0 })).toBe(true);
+    expect(accepts({ maxWidth: MAX_STATUSLINE_COLUMNS })).toBe(true);
+    expect(accepts({ maxWidth: MAX_STATUSLINE_COLUMNS + 1 })).toBe(false);
+    expect(accepts({ maxWidth: -1 })).toBe(false);
+    expect(accepts({ maxWidth: 80.5 })).toBe(false);
+    expect(accepts({ forceMaxWidth: "yes" })).toBe(false);
+  });
+
+  it("refuse a forced width when no width is set, whichever layer set which", () => {
+    expect(() => resolveStatusline({ layout: { forceMaxWidth: true } })).toThrow(/layout\.forceMaxWidth needs layout\.maxWidth/);
+    expect(resolveStatusline({ layout: { forceMaxWidth: true, maxWidth: A_CONFIGURED_WIDTH } }).layout.maxWidth).toBe(A_CONFIGURED_WIDTH);
+    expect(resolveStatusline({ layout: { maxWidth: A_CONFIGURED_WIDTH } }).layout.forceMaxWidth).toBe(false);
   });
 });
 

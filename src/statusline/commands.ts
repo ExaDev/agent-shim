@@ -140,7 +140,7 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
         }
       }
       const view = { ...viewOf(clientPayload), ...(stackedUnderDefault ? { modelDisplayName: undefined } : {}) };
-      console.log(renderStatuslineBlock({ summary, view, payload: clientPayload, terminalWidth: terminalWidthOf(payload, process.env), nowMs, settings, ports: realStatuslinePorts(process.env, deps.paths.statuslineDir) }));
+      console.log(renderStatuslineBlock({ summary, view, payload: clientPayload, terminalWidth: terminalWidthOf(payload, process.env, settings.layout), nowMs, settings, ports: realStatuslinePorts(process.env, deps.paths.statuslineDir) }));
       }),
     ["$ agent-shim statusline  # a client's statusline setting names this; it renders or delegates"],
   );

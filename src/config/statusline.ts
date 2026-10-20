@@ -61,6 +61,9 @@ export const MAX_STATUSLINE_PALETTE_INDEX = 255;
 /** The most terminal columns a window label may take (a wide character takes two): a label is padded into a column beside its bar, so a wider one crowds the bar out at narrow widths. */
 export const MAX_STATUSLINE_LABEL_COLUMNS = 12;
 
+/** The widest a terminal is taken to be: no terminal is wider, and a limit beyond it would only let a typing slip make every line unreadable. */
+export const MAX_STATUSLINE_COLUMNS = 1000;
+
 /** The widest a bar's base size may be: bars grow to fill the line's spare width anyway, so a base beyond a wide terminal's usable columns only forces the layout to wrap. */
 const MAX_BAR_CELLS = 40;
 
@@ -124,6 +127,8 @@ const SHAPES = {
   layout: {
     header: distinctList(z.enum(STATUSLINE_HEADER_SEGMENTS)).describe("The header segments to draw, in drawing order; a segment left out is hidden, and an empty list hides the header."),
     rows: distinctList(z.enum(STATUSLINE_ROWS)).describe("The rows to draw below the header, in drawing order; a row left out is hidden, and an empty list hides every row."),
+    maxWidth: z.number().int().min(0).max(MAX_STATUSLINE_COLUMNS).describe("The width in columns to draw for when the client reports none and the COLUMNS environment variable names none, in place of the 80 it would otherwise assume; 0 leaves it at that."),
+    forceMaxWidth: z.boolean().describe("Whether maxWidth is the width drawn for whatever the client reports, even when the terminal is narrower or wider; it needs maxWidth to be set."),
   },
   model: {
     format: z.enum(["full", "compact", "short"]).describe("How the model's name is written: full is the name as the client gives it, compact drops a context-window suffix such as (1M context), and short also drops a leading Claude."),
@@ -296,7 +301,7 @@ export type ResolvedStatusline = z.infer<typeof ResolvedStatuslineSchema>;
 
 /** What the statusline draws when no layer sets a key. */
 export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
-  layout: { header: [...DEFAULT_HEADER_SEGMENTS], rows: [...DEFAULT_ROWS] },
+  layout: { header: [...DEFAULT_HEADER_SEGMENTS], rows: [...DEFAULT_ROWS], maxWidth: 0, forceMaxWidth: false },
   model: { format: "full", override: "", source: "client" },
   provider: { name: "" },
   account: { parts: ["user", "organisation", "plan"], userLength: 0 },
@@ -356,7 +361,7 @@ export function contextBands({ bands, context }: Readonly<ResolvedStatusline>): 
   return { warnAt: context.warnAt ?? bands.warnAt, criticalAt: context.criticalAt ?? bands.criticalAt };
 }
 
-/** The statusline's settings with the defaults filled in, or a message naming what is wrong when the combination is not drawable (a warning threshold must sit below its critical one, which a per-key cascade cannot check layer by layer). */
+/** The statusline's settings with the defaults filled in, or a message naming what is wrong when the combination is not drawable (a warning threshold must sit below its critical one, and a forced width needs a width to force, which a per-key cascade cannot check layer by layer). */
 export function resolveStatusline(settings: Readonly<StatuslineSettings> | undefined): ResolvedStatusline {
   const resolved = ResolvedStatuslineSchema.parse(mergeStatuslineSettings(STATUSLINE_DEFAULTS, settings));
   if (resolved.bands.warnAt >= resolved.bands.criticalAt) {
@@ -365,6 +370,9 @@ export function resolveStatusline(settings: Readonly<StatuslineSettings> | undef
   const forContext = contextBands(resolved);
   if (forContext.warnAt >= forContext.criticalAt) {
     throw new RangeError(`statusline context.warnAt (${String(forContext.warnAt)}) must be below context.criticalAt (${String(forContext.criticalAt)}), each following bands while it is unset`);
+  }
+  if (resolved.layout.forceMaxWidth && resolved.layout.maxWidth === 0) {
+    throw new RangeError("statusline layout.forceMaxWidth needs layout.maxWidth to be set");
   }
   return resolved;
 }
