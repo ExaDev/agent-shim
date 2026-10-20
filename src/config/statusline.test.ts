@@ -380,6 +380,29 @@ describe("the context group", () => {
   });
 });
 
+describe("the activity settings", () => {
+  const ACTIVITY_ROWS = ["tools", "skills", "mcp", "agents", "todos"] as const;
+
+  it("accept each tools key as a whole number from nothing up, and refuse a negative or fractional one", () => {
+    expect(StatuslineSchema.parse({ tools: { nameMaxLength: 12, maxVisible: 0 } })).toEqual({ tools: { nameMaxLength: 12, maxVisible: 0 } });
+    for (const bad of [{ nameMaxLength: -1 }, { maxVisible: 1.5 }, { nameMaxLength: "12" }, { unknown: 1 }]) {
+      expect(StatuslineSchema.safeParse({ tools: bad }).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it("default to the whole name and four kinds of finished call", () => {
+    expect(STATUSLINE_DEFAULTS.tools).toEqual({ nameMaxLength: 0, maxVisible: 4 });
+  });
+
+  it("let a layout list the activity rows and take the two colours", () => {
+    expect(StatuslineSchema.parse({ layout: { rows: [...ACTIVITY_ROWS] }, colours: { activity: "cyan", agent: 5 } })).toEqual({ layout: { rows: [...ACTIVITY_ROWS] }, colours: { activity: "cyan", agent: 5 } });
+  });
+
+  it("stay out of the rows drawn by default", () => {
+    expect(STATUSLINE_DEFAULTS.layout.rows.filter((row) => ACTIVITY_ROWS.some((activity) => activity === row))).toEqual([]);
+  });
+});
+
 describe("unsetting an optional setting from a layer", () => {
   const OPTIONAL = [
     ["context", "warnAt", OWN_PAIR.warnAt],

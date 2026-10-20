@@ -41,6 +41,8 @@ describe("statuslineKeys", () => {
     expect(statuslineKeys().find((key) => key.path === "labels.fiveHour")).toMatchObject({ kind: "text", defaultValue: "" });
     expect(statuslineKeys().find((key) => key.path === "language")).toMatchObject({ kind: "choice", choices: ["en", "zh-Hans", "zh-Hant"], defaultValue: "en" });
     expect(statuslineKeys().find((key) => key.path === "preset")).toMatchObject({ kind: "choice", choices: ["standard", "full", "essential", "minimal"], defaultValue: "standard" });
+    expect(statuslineKeys().find((key) => key.path === "tools.maxVisible")).toMatchObject({ kind: "integer", choices: [], defaultValue: 4 });
+    expect(statuslineKeys().find((key) => key.path === "colours.agent")).toMatchObject({ kind: "colour", defaultValue: "magenta" });
     expect(statuslineKeys().find((key) => key.path === "git.showDirty")).toMatchObject({ kind: "boolean", choices: [], defaultValue: true });
     expect(statuslineKeys().find((key) => key.path === "project.pathLevels")).toMatchObject({ kind: "choice", choices: ["1", "2", "3", "full"], defaultValue: "1" });
     expect(statuslineKeys().find((key) => key.path === "usage.bar")).toMatchObject({ kind: "boolean", choices: [], defaultValue: true });

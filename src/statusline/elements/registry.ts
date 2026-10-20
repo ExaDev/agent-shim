@@ -18,14 +18,19 @@ import { sessionNameSegment } from "./header/sessionName";
 import { speedSegment } from "./header/speed";
 import { vcsSegment } from "./header/vcs";
 import { addedDirsRow } from "./rows/addedDirs";
+import { agentsRow } from "./rows/agents";
 import { compactionsRow } from "./rows/compactions";
 import { contextRow } from "./rows/context";
 import { gitFilesRow } from "./rows/gitFiles";
 import { environmentRow } from "./rows/environment";
+import { mcpRow } from "./rows/mcp";
 import { memoryRow } from "./rows/memory";
 import { promptCacheRow } from "./rows/promptCache";
 import { quotaRow } from "./rows/quota";
 import { sessionTimeRow } from "./rows/sessionTime";
+import { skillsRow } from "./rows/skills";
+import { todosRow } from "./rows/todos";
+import { toolsRow } from "./rows/tools";
 import { tokensRow } from "./rows/tokens";
 
 /** How one element draws itself. */
@@ -77,5 +82,5 @@ export const ELEMENTS: ElementRegistry = {
     duration: durationSegment,
     speed: speedSegment,
   },
-  rows: { context: contextRow, quota: quotaRow, addedDirs: addedDirsRow, gitFiles: gitFilesRow, memory: memoryRow, environment: environmentRow, sessionTime: sessionTimeRow, promptCache: promptCacheRow, compactions: compactionsRow, tokens: tokensRow },
+  rows: { context: contextRow, quota: quotaRow, addedDirs: addedDirsRow, gitFiles: gitFilesRow, memory: memoryRow, environment: environmentRow, sessionTime: sessionTimeRow, promptCache: promptCacheRow, compactions: compactionsRow, tokens: tokensRow, tools: toolsRow, skills: skillsRow, mcp: mcpRow, agents: agentsRow, todos: todosRow },
 };

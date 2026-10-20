@@ -8,8 +8,8 @@ import { STATUSLINE_LANGUAGES } from "../statusline/messages/languages";
 /** The segments of the statusline's header, in the order they are drawn unless a setting reorders them. */
 export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "dailyCost", "sessionName", "duration", "speed"] as const;
 
-/** The rows below the header, in the order they are drawn unless a setting reorders them: the context window's bar, the quota windows' bars, the added directories, the files the working tree has changed, the machine's memory bar, and the line of configuration counts, then the lines of text about the session read from its transcript. */
-export const STATUSLINE_ROWS = ["context", "quota", "addedDirs", "gitFiles", "memory", "environment", "sessionTime", "promptCache", "compactions", "tokens"] as const;
+/** The rows below the header, in the order they are drawn unless a setting reorders them: the context window's bar, the quota windows' bars, the added directories, the files the working tree has changed, the machine's memory bar, and the line of configuration counts, then the lines of text about the session read from its transcript: when it started and last answered, its prompt cache, its compactions and tokens, and what it is doing (its tool calls, the skills and MCP servers it has used, its agents and its todo list). */
+export const STATUSLINE_ROWS = ["context", "quota", "addedDirs", "gitFiles", "memory", "environment", "sessionTime", "promptCache", "compactions", "tokens", "tools", "skills", "mcp", "agents", "todos"] as const;
 
 /** The parts of the session-time row, in the order the row draws them. */
 const STATUSLINE_SESSION_TIME_PARTS = ["started", "lastReply"] as const;
@@ -268,6 +268,10 @@ const SHAPES = {
       .min(1)
       .describe("How long the prompt cache lives, in seconds, when the transcript has not yet shown which tier the session writes (five minutes or one hour); the tier the transcript shows takes over once it does."),
   },
+  tools: {
+    nameMaxLength: z.number().int().min(0).describe("The most terminal columns of a tool's name the tools row draws, cut with an ellipsis. With a limit set, a tool of an MCP server is shown by its own name, without the server's, whether or not it needs cutting. 0 draws every name whole, an MCP tool's with its server."),
+    maxVisible: z.number().int().min(0).describe("The most kinds of finished tool call the tools row names, the most-used first, with the rest counted as +N more. 0 names every kind."),
+  },
   colours: {
     context: colourValue.describe("The colour of the context bar and its figures below the warning threshold."),
     usage: colourValue.describe("The colour of the quota bars and their figures below the warning threshold."),
@@ -280,6 +284,8 @@ const SHAPES = {
     project: colourValue.describe("The colour of the project path segment."),
     git: colourValue.describe("The colour of the version control segment's wrapper text (`git:(` and `)`)."),
     gitBranch: colourValue.describe("The colour of the branch or bookmark and its ahead, behind and dirty markers."),
+    activity: colourValue.describe("The colour of the names of the tools, skills and MCP servers the tools, skills and mcp rows draw. Their running markers take colours.warning and their finished markers colours.context."),
+    agent: colourValue.describe("The colour of an agent's type in the agents row."),
   },
   project: {
     pathLevels: z.enum(STATUSLINE_PATH_LEVELS).describe("How many trailing directories of the working directory the project segment shows: 1, 2 or 3, or full for the whole absolute path."),
@@ -350,6 +356,7 @@ export const StatuslineSchema = z.strictObject({
   environment: z.strictObject(SHAPES.environment).partial().optional(),
   sessionTime: z.strictObject(SHAPES.sessionTime).partial().optional(),
   promptCache: z.strictObject(SHAPES.promptCache).partial().optional(),
+  tools: z.strictObject(SHAPES.tools).partial().optional(),
   colours: z.strictObject(SHAPES.colours).partial().optional(),
   project: z.strictObject(SHAPES.project).partial().optional(),
   git: z.strictObject(SHAPES.git).partial().optional(),
@@ -377,6 +384,7 @@ export const ResolvedStatuslineSchema = z.strictObject({
   environment: z.strictObject(SHAPES.environment),
   sessionTime: z.strictObject(SHAPES.sessionTime),
   promptCache: z.strictObject(SHAPES.promptCache),
+  tools: z.strictObject(SHAPES.tools),
   colours: z.strictObject(SHAPES.colours),
   project: z.strictObject(SHAPES.project),
   git: z.strictObject(SHAPES.git),
@@ -404,6 +412,7 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   environment: { threshold: 0 },
   sessionTime: { parts: [...STATUSLINE_SESSION_TIME_PARTS] },
   promptCache: { ttlSeconds: PROMPT_CACHE_TTL_SECONDS.fiveMinutes },
+  tools: { nameMaxLength: 0, maxVisible: 4 },
   colours: {
     context: "green",
     usage: "green",
@@ -416,6 +425,8 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
     project: "yellow",
     git: "magenta",
     gitBranch: "cyan",
+    activity: "cyan",
+    agent: "magenta",
   },
   project: { pathLevels: "1", addedDirsLayout: "inline" },
   git: { enabled: true, showDirty: true, showAheadBehind: false, showLineDiff: false, branchOverflow: "truncate", pushWarnAt: 0, pushCriticalAt: 0 },

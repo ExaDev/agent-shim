@@ -210,7 +210,12 @@
                       "sessionTime",
                       "promptCache",
                       "compactions",
-                      "tokens"
+                      "tokens",
+                      "tools",
+                      "skills",
+                      "mcp",
+                      "agents",
+                      "todos"
                     ]
                   },
                   "description": "The rows to draw below the header, in drawing order; a row left out is hidden, and an empty list hides every row."
@@ -640,6 +645,24 @@
               },
               "additionalProperties": false
             },
+            "tools": {
+              "type": "object",
+              "properties": {
+                "nameMaxLength": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "The most terminal columns of a tool's name the tools row draws, cut with an ellipsis. With a limit set, a tool of an MCP server is shown by its own name, without the server's, whether or not it needs cutting. 0 draws every name whole, an MCP tool's with its server."
+                },
+                "maxVisible": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991,
+                  "description": "The most kinds of finished tool call the tools row names, the most-used first, with the rest counted as +N more. 0 names every kind."
+                }
+              },
+              "additionalProperties": false
+            },
             "colours": {
               "type": "object",
               "properties": {
@@ -1049,6 +1072,80 @@
                     }
                   ],
                   "description": "The colour of the branch or bookmark and its ahead, behind and dirty markers."
+                },
+                "activity": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "dim",
+                        "black",
+                        "red",
+                        "green",
+                        "yellow",
+                        "blue",
+                        "magenta",
+                        "cyan",
+                        "white",
+                        "brightBlack",
+                        "brightRed",
+                        "brightGreen",
+                        "brightYellow",
+                        "brightBlue",
+                        "brightMagenta",
+                        "brightCyan",
+                        "brightWhite"
+                      ]
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^#[0-9a-fA-F]{6}$"
+                    }
+                  ],
+                  "description": "The colour of the names of the tools, skills and MCP servers the tools, skills and mcp rows draw. Their running markers take colours.warning and their finished markers colours.context."
+                },
+                "agent": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "dim",
+                        "black",
+                        "red",
+                        "green",
+                        "yellow",
+                        "blue",
+                        "magenta",
+                        "cyan",
+                        "white",
+                        "brightBlack",
+                        "brightRed",
+                        "brightGreen",
+                        "brightYellow",
+                        "brightBlue",
+                        "brightMagenta",
+                        "brightCyan",
+                        "brightWhite"
+                      ]
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^#[0-9a-fA-F]{6}$"
+                    }
+                  ],
+                  "description": "The colour of an agent's type in the agents row."
                 }
               },
               "additionalProperties": false
