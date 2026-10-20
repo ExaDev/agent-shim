@@ -79,6 +79,36 @@ describe("realStatuslinePorts", () => {
     expect(ports.run("echo", ["$HOME"], os.tmpdir())).toBe("$HOME\n");
   });
 
+  describe("a program that outruns the limit", () => {
+    /** How long the programs below ask to run for: far longer than the limit, so returning before it is over can only mean the program was killed. */
+    const PROGRAM_RUN_MS = 60_000;
+
+    it("is killed with a signal it cannot trap, and the call returns before the program would have finished", () => {
+      const script = `process.on("SIGTERM", () => {}); setTimeout(() => {}, ${String(PROGRAM_RUN_MS)});`;
+      const start = Date.now();
+      expect(ports.run(process.execPath, ["-e", script], os.tmpdir())).toBeUndefined();
+      expect(Date.now() - start).toBeLessThan(PROGRAM_RUN_MS);
+    });
+
+    it("does not hold the call through a process it started that still has the output open", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+      const pidFile = path.join(dir, "pid");
+      const leftover = `setTimeout(() => {}, ${String(PROGRAM_RUN_MS)});`;
+      const script = `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(leftover)}], { stdio: ["ignore", "inherit", "ignore"] }); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); setTimeout(() => {}, ${String(PROGRAM_RUN_MS)});`;
+      try {
+        const start = Date.now();
+        expect(ports.run(process.execPath, ["-e", script], os.tmpdir())).toBeUndefined();
+        expect(Date.now() - start).toBeLessThan(PROGRAM_RUN_MS);
+      } finally {
+        // The leftover is outside what the port can reach, so the test ends it.
+        if (fs.existsSync(pidFile)) {
+          process.kill(Number(fs.readFileSync(pidFile, "utf8")), "SIGKILL");
+        }
+        fs.rmSync(dir, { recursive: true });
+      }
+    });
+  });
+
   it("tells a directory from anything else without following a final link, and nothing from a missing path", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
     try {
