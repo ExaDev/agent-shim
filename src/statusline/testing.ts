@@ -1,4 +1,4 @@
-import type { StatuslinePorts } from "./ports";
+import type { FileRange, StatuslinePorts } from "./ports";
 
 /** One call to a fake `readRange`: where it started and how many bytes it asked for. */
 interface RangeRead {
@@ -25,7 +25,8 @@ export function fakeRangeReader(files: Readonly<Record<string, string>>, log: Re
       return undefined;
     }
     const all = new TextEncoder().encode(text);
-    return { size: all.length, bytes: all.subarray(start, start + length) };
+    const range: FileRange = { size: all.length, bytes: all.subarray(start, start + length) };
+    return range;
   };
 }
 
