@@ -1,17 +1,21 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveStatusline, type StatuslineSettings } from "../../../config/statusline";
-import { ESCAPE } from "../../ansi";
+import { ESCAPE, visibleLength } from "../../ansi";
 import type { StatuslineSummary } from "../../enrich";
 import { parseClientPayload } from "../../payload";
-import { renderStatuslineBlock } from "../../render";
+import { renderStatuslineBlock, RESERVED_COLUMNS } from "../../render";
+import { TWENTY as MINIMUM_LINE_COLUMNS } from "../../style";
 import { fakeStatuslinePorts } from "../../testing";
 
 const NOW_MS = Date.parse("2026-10-16T09:00:00.000Z");
 const TERMINAL = 170;
 /** Narrow enough that three windows of text cannot share a line, and wide enough for any one of them. */
 const NARROW_TERMINAL = 40;
-const NARROW_USABLE_COLUMNS = 36;
+/** How much narrower than the narrow terminal the too-narrow one is, and the use shown in the window too wide for it. */
+const WIDTH_REMOVED = 20;
+const WINDOW_USED = 60;
+const NARROW_USABLE_COLUMNS = NARROW_TERMINAL - RESERVED_COLUMNS;
 const NO_VIEW = { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined };
 
 const SUMMARY: StatuslineSummary = {
@@ -144,6 +148,16 @@ describe("the per-model weekly windows", () => {
     expect(quotaLines({ usage: { bar: false, modelScoped: true } }, { fiveHourUsed: undefined, sevenDayUsed: undefined }, payload)).toEqual(["\u{1F469}\u200D\u{1F4BB} code revie 10.0% (3d 0h)"]);
   });
 
+  it("skip a window whose name is nothing a person can see, and strip what is invisible from one that has more", () => {
+    const named = (display_name: string) => ({ rate_limits: { model_scoped: [{ display_name, utilization: 10, resets_at: "2026-10-19T09:00:00.000Z" }] } });
+    const lines = (name: string): string[] => quotaLines({ usage: { bar: false, modelScoped: true } }, { fiveHourUsed: undefined, sevenDayUsed: undefined }, named(name));
+    for (const invisible of ["\u200B", "\u2060", "\u2028", "\u200D", " \u200B\u3000 ", `${ESCAPE}]0;title only`]) {
+      expect(lines(invisible), JSON.stringify(invisible)).toEqual([]);
+    }
+    expect(lines("Fa\u200Bble\u2028!")).toEqual(["Fable! 10.0% (3d 0h)"]);
+    expect(lines(`Fable${ESCAPE}]0;never terminated`)).toEqual(["Fable 10.0% (3d 0h)"]);
+  });
+
   it("draw a name with its control characters stripped and cut to a label's width, and skip a window with no name or figure", () => {
     const payload = {
       rate_limits: {
@@ -182,7 +196,7 @@ describe("the quota row drawn as text on a narrow terminal", () => {
     const lines = quotaLines(WIDE_WINDOWS, {}, MODEL_SCOPED_PAYLOAD, PLAIN, NARROW_TERMINAL);
     expect(lines).toEqual(["5h 25.0% (1h 30m) | Wk 40.0% (4d 1h)", "Fable 60.0% (3d 0h)"]);
     for (const line of lines) {
-      expect(line.length).toBeLessThanOrEqual(NARROW_USABLE_COLUMNS);
+      expect(visibleLength(line)).toBeLessThanOrEqual(NARROW_USABLE_COLUMNS);
     }
   });
 
@@ -192,5 +206,42 @@ describe("the quota row drawn as text on a narrow terminal", () => {
 
   it("draws one line when the windows fit it", () => {
     expect(quotaLines(WIDE_WINDOWS, {}, MODEL_SCOPED_PAYLOAD, PLAIN, TERMINAL)).toHaveLength(1);
+  });
+});
+
+describe("the quota row's text lines measured in columns", () => {
+  const ONE_WINDOW = { fiveHourUsed: undefined, sevenDayUsed: undefined, fiveHourResetAt: undefined, sevenDayResetAt: undefined };
+  const named = (display_name: string, utilization = 10) => ({ rate_limits: { model_scoped: [{ display_name, utilization, resets_at: "2026-10-19T09:00:00.000Z" }] } });
+  const stripAnsi = (text: string): string => text.replace(new RegExp(`${ESCAPE}\\[[0-9;]*m`, "g"), "");
+
+  it("packs windows by the columns they draw, which a wide character doubles", () => {
+    // Two columns each for two characters: the part is 18 columns but 16 UTF-16 units, and with the 17-column five-hour window and the separator it is 38 columns against 36 usable.
+    const wide = quotaLines({ usage: { bar: false, modelScoped: true } }, {}, named("\u65E5\u672C"), PLAIN, NARROW_TERMINAL);
+    expect(wide).toEqual(["5h 25.0% (1h 30m) | Wk 40.0% (4d 1h)", "\u65E5\u672C 10.0% (3d 0h)"]);
+    expect(quotaLines({ usage: { bar: false, modelScoped: true, sevenDayThreshold: 100 } }, {}, named("\u65E5\u672C"), PLAIN, NARROW_TERMINAL)).toEqual(["5h 25.0% (1h 30m)", "\u65E5\u672C 10.0% (3d 0h)"]);
+  });
+
+  it("counts a joined emoji sequence as the cells it draws, not its code units", () => {
+    // One emoji is two columns (five UTF-16 units), so the part is 16 columns and shares a line with the 17-column window within 36.
+    const technologist = "\u{1F469}\u200D\u{1F4BB}";
+    expect(quotaLines({ usage: { bar: false, modelScoped: true, sevenDayThreshold: 100 } }, {}, named(technologist), PLAIN, NARROW_TERMINAL)).toEqual([`5h 25.0% (1h 30m) | ${technologist} 10.0% (3d 0h)`]);
+  });
+
+  it("packs coloured windows by what they draw, whatever escapes they carry", () => {
+    const coloured = quotaLines({ usage: { bar: false, modelScoped: true } }, {}, MODEL_SCOPED_PAYLOAD, COLOURED, NARROW_TERMINAL);
+    expect(coloured.some((line) => line.includes(ESCAPE))).toBe(true);
+    expect(coloured.map(stripAnsi)).toEqual(["5h 25.0% (1h 30m) | Wk 40.0% (4d 1h)", "Fable 60.0% (3d 0h)"]);
+  });
+
+  it("draws a window wider than the line whole, on a line of its own", () => {
+    const lines = quotaLines({ usage: { bar: false, modelScoped: true } }, ONE_WINDOW, named("Longer label", WINDOW_USED), PLAIN, NARROW_TERMINAL - WIDTH_REMOVED);
+    expect(lines).toEqual(["Longer label 60.0% (3d 0h)"]);
+    expect(visibleLength(lines[0] ?? "")).toBeGreaterThan(NARROW_TERMINAL - WIDTH_REMOVED - RESERVED_COLUMNS);
+  });
+
+  it("keeps a floor under the width, however narrow the terminal", () => {
+    const atFloor = quotaLines({ usage: { bar: false, modelScoped: true } }, {}, MODEL_SCOPED_PAYLOAD, PLAIN, MINIMUM_LINE_COLUMNS + RESERVED_COLUMNS);
+    expect(atFloor).toEqual(["5h 25.0% (1h 30m)", "Wk 40.0% (4d 1h)", "Fable 60.0% (3d 0h)"]);
+    expect(quotaLines({ usage: { bar: false, modelScoped: true } }, {}, MODEL_SCOPED_PAYLOAD, PLAIN, 1)).toEqual(atFloor);
   });
 });
