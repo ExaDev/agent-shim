@@ -12,6 +12,7 @@ import {
   BASH_DEFAULT_TIMEOUT_MS,
   BASH_MAX_TIMEOUT_MS,
   bashLiveLimitMs,
+  MAX_SEEN_CALL_IDS,
   MAX_STORED_TEXT_CHARS,
   MAX_TRACKED_AGENTS,
   MAX_TRACKED_NAMES,
@@ -286,6 +287,33 @@ describe("whether a call is still running", () => {
   });
 });
 
+describe("history written again by a resumed session", () => {
+  it("adds no call that left the tracked window and is written again, with its result, in the same order", () => {
+    const history = Array.from({ length: MAX_TRACKED_TOOL_CALLS + EXTRA_CALLS }, (_, index) => [use(`h${String(index)}`, `Tool${String(index)}`, {}, index), result(`h${String(index)}`, index)]).flat();
+    const once = factsAt(history).tools;
+    expect(factsAt([...history, ...history.slice(0, EXTRA_CALLS * 2)]).tools).toEqual(once);
+    expect(factsAt([...history, ...history.slice(0, EXTRA_CALLS * 2), use("new", "Fresh", {}, MINUTE)]).tools.at(-1)).toMatchObject({ name: "Fresh", status: "running" });
+  });
+
+  it("adds no agent that left the tracked window and is written again, as running", () => {
+    const history = Array.from({ length: MAX_TRACKED_AGENTS + EXTRA_CALLS }, (_, index) => [use(`g${String(index)}`, "Agent", { subagent_type: `T${String(index)}`, run_in_background: true }, index), result(`g${String(index)}`, index, false, { toolUseResult: { isAsync: true } })]).flat();
+    const once = factsAt(history).agents;
+    expect(factsAt([...history, ...history.slice(0, EXTRA_CALLS * 2)]).agents).toEqual(once);
+  });
+
+  it("adds no task written again, so the list is not rebuilt from its own copy", () => {
+    const history = [...Array.from({ length: 3 }, (_, index) => [use(`c${String(index)}`, "TaskCreate", { subject: `task ${String(index)}` }, index), { type: "user", timestamp: at(index), message: { content: [{ type: "tool_result", tool_use_id: `c${String(index)}`, content: `Task #${String(index + 1)} created` }] } }]).flat()];
+    expect(factsAt([...history, ...history.slice(0, 2)]).todos).toEqual(factsAt(history).todos);
+  });
+
+  it("remembers the latest call ids only, so a bounded number of them are kept in the state", () => {
+    const records = Array.from({ length: MAX_SEEN_CALL_IDS + EXTRA_CALLS }, (_, index) => use(`s${String(index)}`, "Read", {}, 1));
+    const { seenCallIds } = fold(records).latest;
+    expect(seenCallIds).toHaveLength(MAX_SEEN_CALL_IDS);
+    expect(seenCallIds[0]).toBe(`s${String(EXTRA_CALLS)}`);
+  });
+});
+
 describe("skills and MCP servers", () => {
   it("collects each skill and each server once, in the order first used", () => {
     const records = [
@@ -348,6 +376,19 @@ describe("agents", () => {
     expect(factsAt([launch(), spawned]).agents[0]).toMatchObject({ status: "running", endedAtMs: undefined });
     expect(factsAt([launch({ run_in_background: "true" }), result("ag", SECOND)]).agents[0]?.status).toBe("running");
     expect(factsAt([launch({ run_in_background: "false" }), result("ag", SECOND)]).agents[0]?.status).toBe("completed");
+  });
+
+  it("ends a background agent from an announcement queued ahead of the call that started it, however the result says it was started", () => {
+    const announced = { type: "queue-operation", operation: "enqueue", timestamp: at(MINUTE), content: "<task-id>t</task-id><tool-use-id>ag</tool-use-id>" };
+    const returned = result("ag", SECOND, false, { toolUseResult: { isAsync: true, status: "async_launched" } });
+    expect(factsAt([announced, launch(), returned]).agents[0]).toMatchObject({ status: "completed", endedAtMs: T0 + MINUTE });
+    expect(factsAt([announced, launch({ run_in_background: true }), returned]).agents[0]).toMatchObject({ status: "completed", endedAtMs: T0 + MINUTE });
+  });
+
+  it("does not end a foreground agent from an announcement, queued before or after", () => {
+    const announced = { type: "queue-operation", operation: "enqueue", timestamp: at(MINUTE), content: "<task-id>t</task-id><tool-use-id>ag</tool-use-id>" };
+    expect(factsAt([announced, launch(), result("ag", SECOND)]).agents[0]).toMatchObject({ status: "completed", endedAtMs: T0 + SECOND });
+    expect(factsAt([announced, launch()]).agents[0]?.status).toBe("running");
   });
 
   it("takes the input's run_in_background for a background agent before its call returns", () => {
