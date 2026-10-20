@@ -12,8 +12,8 @@ describe("visibleLength", () => {
   it("counts the columns a string draws, not its code units", () => {
     expect(visibleLength("abc")).toBe(THREE_COLUMNS);
     expect(visibleLength("日本語")).toBe(SIX_COLUMNS);
-    expect(visibleLength("\u{1F469}‍\u{1F4BB}")).toBe(2);
-    expect(visibleLength("é")).toBe(1);
+    expect(visibleLength("\u{1F469}\u200D\u{1F4BB}")).toBe(2);
+    expect(visibleLength("e\u0301")).toBe(1);
   });
 
   it("counts nothing for a colour, a link or any other escape sequence", () => {
@@ -34,5 +34,22 @@ describe("truncateToColumns", () => {
     expect(truncateToColumns("\u65E5\u672C\u8A9E", FOUR_COLUMNS)).toBe("\u65E5\u672C");
     expect(truncateToColumns("\u65E5\u672C\u8A9E", FIVE_COLUMNS)).toBe("\u65E5\u672C");
     expect(truncateToColumns("a\u65E5", TWO_COLUMNS)).toBe("a");
+  });
+
+  it("never cuts an escape sequence, which takes no column", () => {
+    const red = `${ESCAPE}[31m`;
+    const reset = `${ESCAPE}[0m`;
+    expect(truncateToColumns(`${red}red${reset}`, TWO_COLUMNS)).toBe(`${red}re${reset}`);
+    expect(truncateToColumns(`${red}red${reset}`, THREE_COLUMNS)).toBe(`${red}red${reset}`);
+    expect(truncateToColumns(`${red}red`, 0)).toBe(red);
+    expect(truncateToColumns(`${ESCAPE}]0;title\u0007abc`, TWO_COLUMNS)).toBe(`${ESCAPE}]0;title\u0007ab`);
+  });
+
+  it("measures the same as visibleLength, so what it keeps never exceeds the limit", () => {
+    const coloured = `${ESCAPE}[32m\u65E5\u672C${ESCAPE}[0m abc`;
+    for (let limit = 0; limit <= visibleLength(coloured); limit += 1) {
+      expect(visibleLength(truncateToColumns(coloured, limit)), String(limit)).toBeLessThanOrEqual(limit);
+    }
+    expect(visibleLength(truncateToColumns(coloured, visibleLength(coloured)))).toBe(visibleLength(coloured));
   });
 });
