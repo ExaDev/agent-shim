@@ -14,6 +14,8 @@ const ContentBlockSchema = z.looseObject({
   input: z.record(z.string(), z.unknown()).optional().catch(undefined),
   tool_use_id: text,
   is_error: z.boolean().optional().catch(undefined),
+  /** What a tool returned: text, or blocks of it. */
+  content: z.union([z.string(), z.array(z.looseObject({ type: text, text }))]).optional().catch(undefined),
 });
 
 /**
