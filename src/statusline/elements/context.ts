@@ -6,6 +6,7 @@ import type { Palette } from "../palette";
 import type { ClientPayload } from "../payload";
 import type { StatuslinePorts } from "../ports";
 import type { BarStyle } from "../style";
+import type { TranscriptFacts } from "../transcript/reader";
 
 /** The payload fields the built-in statusline shows: the model, the context window's use, and the prompt cache's effectiveness. */
 export interface StatuslinePayloadView {
@@ -18,7 +19,7 @@ export interface StatuslinePayloadView {
   readonly freshInputTokens: number | undefined;
 }
 
-/** Everything one element needs to draw itself: what the door knows about the session, the client's payload, the clock, the terminal's width, the settings, the palette they describe, and the ports to the machine. */
+/** Everything one element needs to draw itself: what the door knows about the session, the client's payload, the clock, the terminal's width, the settings, the palette they describe, the ports to the machine, and the session's transcript. */
 export interface RenderContext {
   readonly summary: StatuslineSummary;
   readonly view: StatuslinePayloadView;
@@ -35,6 +36,8 @@ export interface RenderContext {
   readonly ports: StatuslinePorts;
   /** The model and advisor of the newest assistant record in the session's transcript, or neither when the payload names no transcript or it holds none. Read on first use and the same on every later call in the render, so elements that each need it cost one read between them. */
   readonly transcriptIdentity: () => TranscriptIdentity;
+  /** What the session's transcript says, or undefined when the client names no transcript or it cannot be read. The transcript is read the first time an element asks and that read is shared, so a line that draws nothing from it never touches it. */
+  readonly transcript: () => TranscriptFacts | undefined;
 }
 
 /** How a bar is coloured and drawn under the settings, for the row whose bar is below its warning threshold in `okRole`'s colour. */
