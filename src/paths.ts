@@ -88,6 +88,8 @@ export interface LayoutPaths {
   readonly usageLogDir: string;
   /** Directory of the latest-state snapshots, one `<identity>.json` per identity: the stable file other tools read. */
   readonly usageSnapshotsDir: string;
+  /** Directory of the built-in statusline's own state (the day's cost ledger): derived data, which the statusline rewrites whenever it is gone. */
+  readonly statuslineDir: string;
   /** One file per provider holding the model catalogue the door last fetched from it. */
   readonly catalogueDir: string;
   /** Path to the file recording what the person has allowed the MCP server's agents to do (`agent-shim mcp permissions`), mode 0600 and written only by that command: the running server re-reads it on every request, so a change needs no restart. */
@@ -178,6 +180,7 @@ export function buildLayoutPaths(root: string): LayoutPaths {
     usageDir: path.join(root, "usage"),
     usageLogDir: path.join(root, "usage", "log"),
     usageSnapshotsDir: path.join(root, "usage", "snapshots"),
+    statuslineDir: path.join(root, "statusline"),
     catalogueDir: path.join(root, "catalogues"),
     usagePicksFile: path.join(root, "usage", "picks.json"),
     usageAnchorsFile: path.join(root, "usage", "anchors.json"),
