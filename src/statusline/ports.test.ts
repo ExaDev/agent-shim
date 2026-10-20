@@ -141,6 +141,11 @@ describe("realStatuslinePorts", () => {
       expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, write(OUTPUT_BYTES), os.tmpdir(), options))?.length).toBe(OUTPUT_BYTES);
     });
 
+    it("is not returned from a file when it reaches the bound, as a shell that counts the limit in POSIX's blocks leaves a file cut off there by a program that ignores the signal and exits normally", () => {
+      expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, write(RUN_MAX_OUTPUT_BYTES), os.tmpdir(), { outputInFile: true }))).toBeUndefined();
+      expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, write(RUN_MAX_OUTPUT_BYTES - 1), os.tmpdir(), { outputInFile: true }))?.length).toBe(RUN_MAX_OUTPUT_BYTES - 1);
+    });
+
     it.each([[{}], [{ outputInFile: true }]])("is not returned when it is more than the bound (%j)", (options) => {
       expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, write(TOO_MUCH_BYTES), os.tmpdir(), options))).toBeUndefined();
     });
