@@ -64,7 +64,7 @@ export function trackSpeed(ports: StatuslinePorts, transcriptPath: string, curre
   const file = cacheFileFor(ports, CACHE_KIND, transcriptPath);
   const { tokensPerSecond, remember } = speedBetween(loadCache(ports, file, SpeedSampleSchema), current);
   if (remember) {
-    saveCache(ports, file, current);
+    saveCache(ports, file, current, current.at);
   }
   return tokensPerSecond;
 }

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
-import { cacheFileFor, loadCache, pruneCache, saveCache } from "../cacheFile";
+import { cacheFileFor, loadCache, saveCache } from "../cacheFile";
 import type { FileRange, StatuslinePorts } from "../ports";
 import { parseTranscriptRecord, recordTimeMs } from "./record";
 import { EMPTY_SESSION_STATE, foldSession, SessionStateSchema, sessionFactsOf, type SessionFacts, type SessionState } from "./session";
@@ -12,16 +12,6 @@ export const MAX_TRANSCRIPT_READ_BYTES = 4_194_304;
 
 /** The most of a transcript's first line that identifies it. A cache describes one file, and the file at a path can be replaced by another that is longer than the old one, so the cache keeps a digest of the first line (the first records of a session are written once and never change), cut at this many bytes for a line longer than that. */
 export const FINGERPRINT_BYTES = 4_096;
-
-/** Thirty days: a transcript that has not grown for a month belongs to a session that is over, and each cache file is small enough that keeping one that long costs nothing worth a shorter limit. */
-const RETENTION_DAYS = 30;
-const HOURS_PER_DAY = 24;
-const MINUTES_PER_HOUR = 60;
-const SECONDS_PER_MINUTE = 60;
-const MS_PER_SECOND = 1_000;
-
-/** How long a transcript's cache file may go without a write before it is removed. A write happens whenever new lines were read, so a file this old belongs to a transcript that has not grown for that long, and a session resumed after it simply reads its transcript afresh. */
-export const TRANSCRIPT_CACHE_RETENTION_MS = RETENTION_DAYS * HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND;
 
 const NEWLINE = 0x0a;
 
@@ -157,11 +147,7 @@ function foldInto({ ports, file, nowMs, range, created, head, base, source }: Re
   const next: TranscriptCache = { ...base, offset: source.offset + consumed, session: state };
   const fingerprint = created && head !== undefined ? fingerprintOf(head) : base.fingerprint;
   if (next.offset > base.offset) {
-    saveCache(ports, file, { ...next, fingerprint });
-    if (created) {
-      // A transcript's first write is the moment to forget the sessions that are over; later writes would only repeat the directory scan.
-      pruneCache(ports, nowMs - TRANSCRIPT_CACHE_RETENTION_MS);
-    }
+    saveCache(ports, file, { ...next, fingerprint }, nowMs);
   }
   return factsOf(range, next);
 }

@@ -88,7 +88,7 @@ export interface LayoutPaths {
   readonly usageLogDir: string;
   /** Directory of the latest-state snapshots, one `<identity>.json` per identity: the stable file other tools read. */
   readonly usageSnapshotsDir: string;
-  /** Directory of the built-in statusline's own state (the day's cost ledger): derived data, which the statusline rewrites whenever it is gone. */
+  /** Directory of the built-in statusline's own state (the day's cost ledger, and under `session/` what it keeps between refreshes about each transcript it reads): derived data, which the statusline rewrites whenever it is gone. */
   readonly statuslineDir: string;
   /** One file per provider holding the model catalogue the door last fetched from it. */
   readonly catalogueDir: string;
