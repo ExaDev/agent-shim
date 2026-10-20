@@ -3,7 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { realStatuslinePorts } from "./ports";
+import { spawnSync } from "node:child_process";
+
+import { fileSizeLimitedCommand, realStatuslinePorts } from "./ports";
 
 /** The ten bytes the range tests read from, and the ranges they read: from, length. */
 const DIGITS = "0123456789";
@@ -15,6 +17,22 @@ const PAST_END_RANGE = { start: 50, length: 5 };
 /** The permission bits of a file only its owner may read and write, and the mask that selects the permission bits of a mode. */
 const OWNER_READ_WRITE = 0o600;
 const OWNER_ONLY_MASK = 0o777;
+
+/** How old a run directory must be for the next call to sweep it, and then some. */
+const STALE_MS = 3_600_000;
+
+/** What the programs that write a large file ask to write: three times the bound on a program's output. */
+const THREE_MEBIBYTES = 3_145_728;
+
+/** `use`d with ports whose state directory is a throwaway one (the file-backed runs need to write there), removed afterwards. */
+function withStateDirectory<T>(use: (ports: ReturnType<typeof realStatuslinePorts>) => T): T {
+  const state = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+  try {
+    return use(realStatuslinePorts({}, state));
+  } finally {
+    fs.rmSync(state, { recursive: true });
+  }
+}
 
 describe("realStatuslinePorts", () => {
   const ports = realStatuslinePorts({ HOME: "/h" }, "/state");
@@ -83,38 +101,21 @@ describe("realStatuslinePorts", () => {
     /** How long the programs below ask to run for: far longer than the limit, so returning before it is over can only mean the program was killed. */
     const PROGRAM_RUN_MS = 60_000;
 
-    it("is killed with a signal it cannot trap, and the call returns before the program would have finished", () => {
+    it.each([[{}], [{ outputInFile: true }]])("is killed with a signal it cannot trap, and the call returns before the program would have finished (%j)", (options) => {
       const script = `process.on("SIGTERM", () => {}); setTimeout(() => {}, ${String(PROGRAM_RUN_MS)});`;
       const start = Date.now();
-      expect(ports.run(process.execPath, ["-e", script], os.tmpdir())).toBeUndefined();
+      expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, ["-e", script], os.tmpdir(), options))).toBeUndefined();
       expect(Date.now() - start).toBeLessThan(PROGRAM_RUN_MS);
     });
 
-    it("does not hold the call through a process it started that still has the output open", () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
-      const pidFile = path.join(dir, "pid");
-      const leftover = `setTimeout(() => {}, ${String(PROGRAM_RUN_MS)});`;
-      const script = `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(leftover)}], { stdio: ["ignore", "inherit", "ignore"] }); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); setTimeout(() => {}, ${String(PROGRAM_RUN_MS)});`;
-      try {
-        const start = Date.now();
-        expect(ports.run(process.execPath, ["-e", script], os.tmpdir())).toBeUndefined();
-        expect(Date.now() - start).toBeLessThan(PROGRAM_RUN_MS);
-      } finally {
-        // The leftover is outside what the port can reach, so the test ends it.
-        if (fs.existsSync(pidFile)) {
-          process.kill(Number(fs.readFileSync(pidFile, "utf8")), "SIGKILL");
-        }
-        fs.rmSync(dir, { recursive: true });
-      }
-    });
-    it("returns the output of a program that exits at once, though a process it started still has the output open", () => {
+    it("returns the output of a program that exits at once, though a process it started still has the output open, when the output goes to a file", () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
       const pidFile = path.join(dir, "pid");
       const leftover = `setTimeout(() => {}, ${String(PROGRAM_RUN_MS)});`;
       const script = `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(leftover)}], { stdio: ["ignore", "inherit", "ignore"] }); child.unref(); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); process.stdout.write("parent\\n");`;
       try {
         const start = Date.now();
-        expect(ports.run(process.execPath, ["-e", script], os.tmpdir())).toBe("parent\n");
+        expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, ["-e", script], os.tmpdir(), { outputInFile: true }))).toBe("parent\n");
         expect(Date.now() - start).toBeLessThan(PROGRAM_RUN_MS);
       } finally {
         // The leftover is outside what the port can reach, so the test ends it.
@@ -128,48 +129,115 @@ describe("realStatuslinePorts", () => {
 
   describe("the output of a program", () => {
     const OUTPUT_BYTES = 100_000;
-    /** The bound on a program's output, 1 MiB, and one byte over twice that, past which no shell lets the file grow. */
+    /** The bound on a program's output, 1 MiB, and one byte over twice that, past which no shell lets a file grow. */
     const OUTPUT_BOUND_BYTES = 1_048_576;
     const TOO_MUCH_BYTES = OUTPUT_BOUND_BYTES * 2 + 1;
+    
     const write = (bytes: number): string[] => ["-e", `require("node:fs").writeSync(1, "x".repeat(${String(bytes)}));`];
 
-    it("is returned whole when it is within the bound", () => {
-      expect(ports.run(process.execPath, write(OUTPUT_BYTES), os.tmpdir())?.length).toBe(OUTPUT_BYTES);
+    it.each([[{}], [{ outputInFile: true }]])("is returned whole when it is within the bound (%j)", (options) => {
+      expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, write(OUTPUT_BYTES), os.tmpdir(), options))?.length).toBe(OUTPUT_BYTES);
     });
 
-    it.skipIf(process.platform === "win32")("is not returned, and the program is stopped, when it writes more than the bound", () => {
-      expect(ports.run(process.execPath, write(TOO_MUCH_BYTES), os.tmpdir())).toBeUndefined();
+    it.each([[{}], [{ outputInFile: true }]])("is not returned when it is more than the bound (%j)", (options) => {
+      expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, write(TOO_MUCH_BYTES), os.tmpdir(), options))).toBeUndefined();
     });
 
-    it.skipIf(process.platform === "win32")("starts the program with a limit on the size of the file it writes, so a program that never stops cannot fill the disk", () => {
-      /** The bound on a program's output, 1 MiB, in the 512-byte blocks `ulimit -f` is asked in. */
-      const boundInBlocks = 2048;
-      expect(Number(ports.run("/bin/sh", ["-c", "ulimit -f"], os.tmpdir())?.trim())).toBe(boundInBlocks);
-    });
-
-    it("leaves no file behind, whether the program succeeded, failed, or was killed", () => {
-      const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
-      const previous = process.env.TMPDIR;
-      process.env.TMPDIR = scratch;
+    it.skipIf(process.platform === "win32")("goes to a file under a limit on the size of any file the program writes, so a program that never stops cannot fill the disk", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+      const written = path.join(dir, "written");
+      const writeThreeMebibytesTo = ["-c", 'head -c 3145728 /dev/zero > "$0"; exit 0', written];
       try {
-        expect(ports.run(process.execPath, ["-p", "1"], os.tmpdir())).toBe("1\n");
-        expect(ports.run(process.execPath, ["-e", "process.exit(3)"], os.tmpdir())).toBeUndefined();
-        expect(ports.run(process.execPath, write(TOO_MUCH_BYTES), os.tmpdir())).toBeUndefined();
-        expect(ports.run("/nonexistent/program", [], os.tmpdir())).toBeUndefined();
-        expect(fs.readdirSync(scratch)).toEqual([]);
+        withStateDirectory((withFiles) => withFiles.run("/bin/sh", writeThreeMebibytesTo, os.tmpdir(), { outputInFile: true }));
+        expect(fs.statSync(written).size).toBeGreaterThanOrEqual(OUTPUT_BOUND_BYTES);
+        expect(fs.statSync(written).size).toBeLessThanOrEqual(OUTPUT_BOUND_BYTES * 2);
+        withStateDirectory((withFiles) => withFiles.run("/bin/sh", writeThreeMebibytesTo, os.tmpdir()));
+        expect(fs.statSync(written).size).toBe(THREE_MEBIBYTES);
       } finally {
-        if (previous === undefined) {
-          delete process.env.TMPDIR;
-        } else {
-          process.env.TMPDIR = previous;
-        }
-        fs.rmSync(scratch, { recursive: true });
+        fs.rmSync(dir, { recursive: true });
       }
     });
 
-    it("keeps its arguments as they are, whatever characters they hold, and runs a program named like an option", () => {
-      expect(ports.run(process.execPath, ["-p", "process.argv[1]", "--", "a b; $HOME 'q' \"d\""], os.tmpdir())).toBe("a b; $HOME 'q' \"d\"\n");
+    it("keeps its arguments as they are, whatever characters they hold", () => {
+      const awkward = "a b; $HOME 'q' \"d\" *";
+      for (const options of [{}, { outputInFile: true }]) {
+        expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, ["-p", "process.argv[1]", "--", awkward], os.tmpdir(), options))).toBe(`${awkward}\n`);
+      }
     });
+
+    it("leaves no file behind, whether the program succeeded, failed, or was killed, and sweeps what a cancelled call left", () => {
+      const state = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+      const runRoot = path.join(state, "run");
+      const stale = path.join(runRoot, "agent-shim-run-stale");
+      const fresh = path.join(runRoot, "agent-shim-run-fresh");
+      const unrelated = path.join(runRoot, "other");
+      fs.mkdirSync(stale, { recursive: true });
+      fs.mkdirSync(fresh);
+      fs.mkdirSync(unrelated);
+      const longAgo = new Date(Date.now() - STALE_MS);
+      fs.utimesSync(stale, longAgo, longAgo);
+      fs.utimesSync(unrelated, longAgo, longAgo);
+      try {
+        const own = realStatuslinePorts({}, state);
+        expect(own.run(process.execPath, ["-p", "1"], os.tmpdir(), { outputInFile: true })).toBe("1\n");
+        expect(fs.readdirSync(runRoot).sort()).toEqual(["agent-shim-run-fresh", "other"]);
+        expect(own.run(process.execPath, ["-e", "process.exit(3)"], os.tmpdir(), { outputInFile: true })).toBeUndefined();
+        expect(own.run(process.execPath, write(TOO_MUCH_BYTES), os.tmpdir(), { outputInFile: true })).toBeUndefined();
+        expect(own.run("/nonexistent/program", [], os.tmpdir(), { outputInFile: true })).toBeUndefined();
+        expect(fs.readdirSync(runRoot).sort()).toEqual(["agent-shim-run-fresh", "other"]);
+      } finally {
+        fs.rmSync(state, { recursive: true });
+      }
+    });
+  });
+
+  describe("the command that limits the size of a file, under each POSIX shell that stands in for /bin/sh", () => {
+    /** The shells a system may have as /bin/sh, by where they are found: dash on Debian and Ubuntu, bash (which runs in POSIX mode when started as `sh`), the Korn shell, zsh (which emulates sh when started as `sh`) and busybox's ash. A shell that is not here is skipped, and the test says so by name. */
+    const SHELLS: readonly (readonly [string, readonly string[]])[] = [
+      ["dash", ["/bin/dash", "/usr/bin/dash"]],
+      ["bash", ["/bin/bash", "/usr/bin/bash", "/opt/homebrew/bin/bash"]],
+      ["ksh", ["/bin/ksh", "/usr/bin/ksh"]],
+      ["zsh", ["/bin/zsh", "/usr/bin/zsh"]],
+      ["busybox", ["/bin/busybox", "/usr/bin/busybox"]],
+    ];
+    const ONE_MEBIBYTE = 1_048_576;
+    const found = (candidates: readonly string[]): string | undefined => candidates.find((candidate) => fs.existsSync(candidate));
+
+    /** Runs `file` and `args` through the limited command with `binary` started under the name `sh`, which is how a shell learns to behave as POSIX sh. */
+    function through(binary: string, file: string, args: readonly string[]): { readonly status: number | null; readonly stdout: string } {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-shell-"));
+      try {
+        const shell = path.join(dir, "sh");
+        fs.symlinkSync(binary, shell);
+        const { command, args: commandArgs } = fileSizeLimitedCommand(shell, file, args);
+        const result = spawnSync(command, [...commandArgs], { encoding: "utf8" });
+        return { status: result.status, stdout: result.stdout };
+      } finally {
+        fs.rmSync(dir, { recursive: true });
+      }
+    }
+
+    for (const [name, candidates] of SHELLS) {
+      const binary = process.platform === "win32" ? undefined : found(candidates);
+      // A shell that is not installed here is a skipped test whose title says so, not a pass.
+      (binary === undefined ? it.skip : it)(`${name}${binary === undefined ? " is not installed on this machine, so the limited command is not run under it" : " runs the program with the limit set and its arguments untouched"}`, () => {
+        if (binary === undefined) {
+          return;
+        }
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-shell-"));
+        try {
+          const written = path.join(dir, "written");
+          expect(through(binary, "/bin/sh", ["-c", 'head -c 3145728 /dev/zero > "$0"; exit 0', written]).status).toBe(0);
+          // A shell that counts the limit in 512-byte blocks stops the file at the bound, one that counts in 1024-byte blocks at twice it, and none lets it reach what the program wrote.
+          expect(fs.statSync(written).size).toBeGreaterThanOrEqual(ONE_MEBIBYTE);
+          expect(fs.statSync(written).size).toBeLessThanOrEqual(ONE_MEBIBYTE * 2);
+        } finally {
+          fs.rmSync(dir, { recursive: true });
+        }
+        expect(through(binary, process.execPath, ["-p", "process.argv[1]", "--", "a b; $HOME 'q'"])).toEqual({ status: 0, stdout: "a b; $HOME 'q'\n" });
+        expect(through(binary, "/nonexistent/program", []).status).not.toBe(0);
+      });
+    }
   });
 
   it("tells a directory from anything else without following a final link, and nothing from a missing path", () => {

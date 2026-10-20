@@ -26,7 +26,7 @@ export interface StatuslinePorts {
   /** Removes a file or a directory with everything beneath it. A failure is dropped, like a failed write: it only leaves derived state in place for the next render to remove. */
   readonly removePath: (path: string) => void;
   /** The standard output of a program run without a shell in `cwd`, or undefined when it fails or outruns the time the statusline allows a program. */
-  readonly run: (file: string, args: readonly string[], cwd: string) => string | undefined;
+  readonly run: (file: string, args: readonly string[], cwd: string, options?: RunOptions) => string | undefined;
   /** What lies at `path`, without following a final symbolic link (a link is `other`), or undefined when nothing does. */
   readonly entryKind: (path: string) => "directory" | "other" | undefined;
   /** `path` with every symbolic link resolved, or undefined when it does not exist. */
@@ -35,6 +35,12 @@ export interface StatuslinePorts {
   readonly modifiedAtMs: (path: string) => number | undefined;
   /** How much of the machine's memory is in use, or undefined when the platform gives no figure the statusline trusts. */
   readonly memoryUse: () => MemoryUse | undefined;
+}
+
+/** How a program is run, beyond the defaults. */
+interface RunOptions {
+  /** Capture the program's standard output in a size-limited file instead of a pipe, for a program the person chose: a process it leaves running cannot then hold the call, and the output it wrote is kept. The limit applies to every file the program writes, and to every process it starts. */
+  readonly outputInFile?: boolean;
 }
 
 /** What `readRange` returns: the bytes read and the size of the file they were read from. */
@@ -46,7 +52,11 @@ export interface FileRange {
 /** The longest a program the statusline starts may run: the statusline refreshes while a person is working, so a program that hangs must cost a bounded wait, and a few seconds is the most a refresh can wait without the line looking stuck. */
 const RUN_TIMEOUT_MS = 2_000;
 
-/** The most standard output a program the statusline starts may produce: more than this is as good as none, and a program that keeps writing is killed once the file it writes to reaches twice this. */
+/** The file and directory modes the statusline's own state gets: readable by its owner alone, since the ledger names sessions and their spend. */
+const STATE_FILE_MODE = 0o600;
+const STATE_DIRECTORY_MODE = 0o700;
+
+/** The most standard output a program the statusline starts may produce: more than this is as good as none. */
 const RUN_MAX_OUTPUT_BYTES = 1_048_576;
 
 /** The size of the blocks `ulimit -f` counts in on the shells that follow POSIX (512 bytes); a shell that counts in 1024-byte blocks (bash) lets a file grow to twice what is asked for, never to less. */
@@ -55,17 +65,18 @@ const ULIMIT_BLOCK_BYTES = 512;
 /** The name prefix of the private directory a program's output is written into while it runs. */
 const RUN_DIRECTORY_PREFIX = "agent-shim-run-";
 
-/** The permissions of the file and directory a program writes its output to: its owner only. */
+/** The directory, inside the statusline's state directory, that those directories are made in. */
+const RUN_DIRECTORY = "run";
+
+/** The permissions of the file a program writes its output to: its owner only (the directory made for it is private too). Meaningless on Windows, which has no such permission bits. */
 const RUN_FILE_MODE = 0o600;
 
-/**
- * The program and arguments to start so that the file it writes cannot grow past `RUN_MAX_OUTPUT_BYTES` (twice that on a shell with 1024-byte blocks): started by `/bin/sh` with `ulimit -f` set, which `exec`s the program with the arguments as they are, so nothing in them is read by the shell, and a program that writes more is stopped by SIGXFSZ. Windows has no `ulimit`, so there only the time limit bounds the file.
- */
-function limitedFileSize(file: string, args: readonly string[]): { readonly command: string; readonly args: readonly string[] } {
-  if (process.platform === "win32") {
-    return { command: file, args };
-  }
-  return { command: "/bin/sh", args: ["-c", `ulimit -f ${String(RUN_MAX_OUTPUT_BYTES / ULIMIT_BLOCK_BYTES)}; exec -- "$0" "$@"`, file, ...args] };
+/** How old a run directory must be to be swept as left by a call that no longer exists: a call lasts at most `RUN_TIMEOUT_MS` and the time to start, so a directory a minute old was left by a statusline that was cancelled, as Claude Code does with a command still running when a newer update arrives. */
+const STALE_RUN_DIRECTORY_MS = 60_000;
+
+/** The command that runs `file` with `args` under a limit on the size of any file it writes, through `shell` (the system shell, `/bin/sh`): `ulimit -f` is set and the shell `exec`s the program with the arguments as they are, so nothing in them is read by the shell, and a program that writes more is stopped by SIGXFSZ. The limit is `RUN_MAX_OUTPUT_BYTES` (twice that on a shell with 1024-byte blocks), and it covers every file the program writes and every process it starts. `exec` takes no `--`: dash does not accept it. */
+export function fileSizeLimitedCommand(shell: string, file: string, args: readonly string[]): { readonly command: string; readonly args: readonly string[] } {
+  return { command: shell, args: ["-c", `ulimit -f ${String(RUN_MAX_OUTPUT_BYTES / ULIMIT_BLOCK_BYTES)}; exec "$0" "$@"`, file, ...args] };
 }
 
 /** `descriptor`'s file read whole when it is no larger than `RUN_MAX_OUTPUT_BYTES`, else undefined: a program that wrote more has no usable output. */
@@ -79,21 +90,52 @@ function readOutput(descriptor: number): string | undefined {
   return buffer.toString("utf8", 0, read);
 }
 
+/** Removes the run directories under `root` that a cancelled call left behind: those older than `STALE_RUN_DIRECTORY_MS`. */
+function sweepStaleRunDirectories(root: string): void {
+  try {
+    for (const name of fs.readdirSync(root)) {
+      const directory = path.join(root, name);
+      if (name.startsWith(RUN_DIRECTORY_PREFIX) && Date.now() - fs.statSync(directory).mtimeMs > STALE_RUN_DIRECTORY_MS) {
+        discard(directory);
+      }
+    }
+  } catch {
+    return;
+  }
+}
+
 /**
- * A program run without a shell, as `StatuslinePorts.run` describes.
+ * A program run without a shell (except the one `fileSizeLimitedCommand` starts it through when its output is asked to go to a file), as `StatuslinePorts.run` describes. It is killed with SIGKILL when it outruns `RUN_TIMEOUT_MS`: SIGTERM, which a timeout sends by default, can be ignored, and the program would then hold the statusline for as long as it chose to run.
  *
- * Its standard output goes to a file in a private temporary directory, not to a pipe, because the call waits for a pipe to close: a program that exits but leaves a process holding the pipe (anything started with `&`, an agent such as gpg-agent or ssh-agent) would hold the call to the time limit and lose its output. With a file the call returns when the program exits, the output it wrote is kept, and a leftover that still has the file open is outside what the port reaches. The file is removed afterwards, whatever happened. Its size is bounded by `limitedFileSize`, and its time by `RUN_TIMEOUT_MS`, past which the program is killed with SIGKILL, a signal it cannot trap (SIGTERM, which a timeout sends by default, can be ignored, and the program would then hold the statusline for as long as it chose to run).
+ * By default its standard output goes to a pipe, bounded by `RUN_MAX_OUTPUT_BYTES`. With `outputInFile` it goes to a file in a private directory under `runRoot`, removed afterwards whatever happened, because the call waits for a pipe to close: a program that exits but leaves a process holding the pipe (anything started with `&`, an agent such as gpg-agent or ssh-agent) would hold the call to the time limit and lose its output. With a file the call returns when the program exits and the output it wrote is kept. A file has no buffer limit, so such a program is started under `ulimit -f`, which also bounds every other file it writes; Windows has no `ulimit`, and there only the time limit bounds the file. A call that is cancelled (Claude Code does so with SIGTERM when a newer update arrives) cannot remove its directory, so the next call sweeps the ones that are old enough, and the program it started keeps running until it exits. On Windows a directory is also left behind when a process the program started still holds the file open, to be swept by a later call.
  *
  * Only the program itself is killed at the limit. A process it started stays running after the program is killed or exits, and the synchronous API cannot reap it: `spawnSync` has no documented way to start the program as the leader of a process group (`detached` is neither a documented nor a typed option), and gives the pid back only once the program has gone, so there is no group to signal.
  */
-function runProgram(file: string, args: readonly string[], cwd: string): string | undefined {
+function runProgram(runRoot: string, file: string, args: readonly string[], cwd: string, options: RunOptions = {}): string | undefined {
+  return options.outputInFile === true ? runWithOutputInFile(runRoot, file, args, cwd) : runWithPipe(file, args, cwd);
+}
+
+/** A program with its standard output on a pipe, bounded by `RUN_MAX_OUTPUT_BYTES`; killed with SIGKILL at `RUN_TIMEOUT_MS`. */
+function runWithPipe(file: string, args: readonly string[], cwd: string): string | undefined {
+  try {
+    const result = spawnSyncBlocking("a statusline command", file, args, { cwd, encoding: "utf8", timeout: RUN_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: RUN_MAX_OUTPUT_BYTES, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+    return result.error === undefined && result.status === 0 ? result.stdout : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A program with its standard output in a file of a private directory under `runRoot`, as `runProgram` describes. */
+function runWithOutputInFile(runRoot: string, file: string, args: readonly string[], cwd: string): string | undefined {
   let directory: string | undefined;
   try {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), RUN_DIRECTORY_PREFIX));
+    sweepStaleRunDirectories(runRoot);
+    fs.mkdirSync(runRoot, { recursive: true, mode: STATE_DIRECTORY_MODE });
+    directory = fs.mkdtempSync(path.join(runRoot, RUN_DIRECTORY_PREFIX));
     const descriptor = fs.openSync(path.join(directory, "stdout"), "wx+", RUN_FILE_MODE);
     try {
-      const { command, args: commandArgs } = limitedFileSize(file, args);
-      const result = spawnSyncBlocking("a statusline command", command, commandArgs, { cwd, timeout: RUN_TIMEOUT_MS, killSignal: "SIGKILL", stdio: ["ignore", descriptor, "ignore"], windowsHide: true });
+      const limited = process.platform === "win32" ? { command: file, args } : fileSizeLimitedCommand("/bin/sh", file, args);
+      const result = spawnSyncBlocking("a statusline command", limited.command, limited.args, { cwd, timeout: RUN_TIMEOUT_MS, killSignal: "SIGKILL", stdio: ["ignore", descriptor, "ignore"], windowsHide: true });
       return result.error === undefined && result.status === 0 ? readOutput(descriptor) : undefined;
     } finally {
       fs.closeSync(descriptor);
@@ -115,10 +157,6 @@ function readText(file: string): string | undefined {
   }
 }
 
-/** The file and directory modes the statusline's own state gets: readable by its owner alone, since the ledger names sessions and their spend. */
-const STATE_FILE_MODE = 0o600;
-const STATE_DIRECTORY_MODE = 0o700;
-
 /** Removes a file or directory tree, as `StatuslinePorts.removePath` describes; one that cannot be removed was either never there or is left for the next render to remove. */
 function discard(target: string): void {
   try {
@@ -132,7 +170,7 @@ function discard(target: string): void {
 function readMemoryUse(): MemoryUse | undefined {
   const totalBytes = os.totalmem();
   if (process.platform === "darwin") {
-    const output = runProgram("/usr/bin/vm_stat", [], process.cwd());
+    const output = runWithPipe("/usr/bin/vm_stat", [], process.cwd());
     const usedBytes = output === undefined ? undefined : usedBytesFromVmStat(output);
     return usedBytes === undefined ? undefined : { usedBytes, totalBytes };
   }
@@ -167,7 +205,7 @@ export function realStatuslinePorts(env: Readonly<Record<string, string | undefi
         return undefined;
       }
     },
-    run: runProgram,
+    run: (file, args, cwd, options) => runProgram(path.join(stateDirectory, RUN_DIRECTORY), file, args, cwd, options),
     entryKind: (target) => {
       try {
         return fs.lstatSync(target).isDirectory() ? "directory" : "other";

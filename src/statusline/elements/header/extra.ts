@@ -19,14 +19,14 @@ function labelOf(output: string): string {
 }
 
 /**
- * The output of the command `extra.command` names, as a header segment; undefined when no command is set, or when it fails, outruns the ports' time limit or prints nothing visible. The command is run without a shell, in the session's working directory, through the run port, which bounds both the time it may take and the output it may produce. What it prints is cleaned of escape sequences and of anything that draws nothing before it is drawn, and cut to the length of other text from outside the statusline.
+ * The output of the command `extra.command` names, as a header segment; undefined when no command is set, or when it fails, outruns the ports' time limit or prints nothing visible. The command is run without a shell, in the session's working directory, through the run port, which bounds the time it may take and, with its output going to a size-limited file, what it may write. What it prints is cleaned of escape sequences and of anything that draws nothing before it is drawn, and cut to the length of other text from outside the statusline.
  */
 export function extraSegment({ settings, payload, ports }: RenderContext): string | undefined {
   const [program, ...args] = settings.extra.command;
   if (program === undefined) {
     return undefined;
   }
-  const output = ports.run(program, args, payload.cwd ?? payload.workspace?.current_dir ?? ports.homeDirectory);
+  const output = ports.run(program, args, payload.cwd ?? payload.workspace?.current_dir ?? ports.homeDirectory, { outputInFile: true });
   if (output === undefined) {
     return undefined;
   }
