@@ -33,6 +33,20 @@ describe("statuslineKeys", () => {
     expect(statuslineKeys().find((key) => key.path === "cost.routed")).toMatchObject({ kind: "boolean", choices: [], defaultValue: false });
     expect(statuslineKeys().find((key) => key.path === "environment.threshold")).toMatchObject({ kind: "integer", defaultValue: 0 });
   });
+
+  it("lists the session elements as names a layout can use, none of them drawn by default", () => {
+    const header = statuslineKeys().find((key) => key.path === "layout.header");
+    const rows = statuslineKeys().find((key) => key.path === "layout.rows");
+    expect(header?.choices).toEqual(expect.arrayContaining(["sessionName", "duration", "speed"]));
+    expect(rows?.choices).toEqual(expect.arrayContaining(["sessionTime", "promptCache", "compactions"]));
+    expect(header?.defaultValue).toEqual(["model", "provider", "route", "account", "identity", "headroom"]);
+    expect(rows?.defaultValue).toEqual(["context", "quota"]);
+  });
+
+  it("describes the session settings", () => {
+    expect(statuslineKeys().find((key) => key.path === "sessionTime.parts")).toMatchObject({ kind: "list", choices: ["started", "lastReply"], defaultValue: ["started", "lastReply"] });
+    expect(statuslineKeys().find((key) => key.path === "promptCache.ttlSeconds")).toMatchObject({ kind: "integer", choices: [], defaultValue: 300 });
+  });
 });
 
 describe("formatStatuslineKeys", () => {

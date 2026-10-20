@@ -5,6 +5,7 @@ import { accountSegment } from "./header/account";
 import { advisorSegment } from "./header/advisor";
 import { effortSegment } from "./header/effort";
 import { costSegment, dailyCostSegment } from "./header/cost";
+import { durationSegment } from "./header/duration";
 import { headroomSegment } from "./header/headroom";
 import { identitySegment } from "./header/identity";
 import { modelSegment } from "./header/model";
@@ -13,13 +14,18 @@ import { projectSegment } from "./header/project";
 import { providerSegment } from "./header/provider";
 import { routeSegment } from "./header/route";
 import { versionSegment } from "./header/version";
+import { sessionNameSegment } from "./header/sessionName";
+import { speedSegment } from "./header/speed";
 import { vcsSegment } from "./header/vcs";
 import { addedDirsRow } from "./rows/addedDirs";
+import { compactionsRow } from "./rows/compactions";
 import { contextRow } from "./rows/context";
 import { gitFilesRow } from "./rows/gitFiles";
 import { environmentRow } from "./rows/environment";
 import { memoryRow } from "./rows/memory";
+import { promptCacheRow } from "./rows/promptCache";
 import { quotaRow } from "./rows/quota";
+import { sessionTimeRow } from "./rows/sessionTime";
 
 /** How one element draws itself. */
 export interface ElementRegistry {
@@ -44,10 +50,31 @@ export const HEADER_ROLES: Readonly<Record<(typeof STATUSLINE_HEADER_SEGMENTS)[n
   outputStyle: "label",
   cost: "label",
   dailyCost: "label",
+  sessionName: "label",
+  duration: "label",
+  speed: "label",
 };
 
 /** Every element the built-in statusline can draw. A setting can only name an element listed here, and the schema's lists of names are what keep the two in step. */
 export const ELEMENTS: ElementRegistry = {
-  header: { model: modelSegment, provider: providerSegment, route: routeSegment, account: accountSegment, identity: identitySegment, headroom: headroomSegment, project: projectSegment, vcs: vcsSegment, effort: effortSegment, advisor: advisorSegment, version: versionSegment, outputStyle: outputStyleSegment, cost: costSegment, dailyCost: dailyCostSegment },
-  rows: { context: contextRow, quota: quotaRow, addedDirs: addedDirsRow, gitFiles: gitFilesRow, memory: memoryRow, environment: environmentRow },
+  header: {
+    model: modelSegment,
+    provider: providerSegment,
+    route: routeSegment,
+    account: accountSegment,
+    identity: identitySegment,
+    headroom: headroomSegment,
+    project: projectSegment,
+    vcs: vcsSegment,
+    effort: effortSegment,
+    advisor: advisorSegment,
+    version: versionSegment,
+    outputStyle: outputStyleSegment,
+    cost: costSegment,
+    dailyCost: dailyCostSegment,
+    sessionName: sessionNameSegment,
+    duration: durationSegment,
+    speed: speedSegment,
+  },
+  rows: { context: contextRow, quota: quotaRow, addedDirs: addedDirsRow, gitFiles: gitFilesRow, memory: memoryRow, environment: environmentRow, sessionTime: sessionTimeRow, promptCache: promptCacheRow, compactions: compactionsRow },
 };
