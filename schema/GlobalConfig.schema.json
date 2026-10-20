@@ -7,7 +7,9 @@
       "type": "string"
     },
     "defaultConfigProfile": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 197
     },
     "walkUpLimit": {
       "type": "string",
@@ -111,7 +113,9 @@
           "type": "boolean"
         },
         "provider": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 197
         },
         "headroom": {
           "type": "boolean"
@@ -1059,7 +1063,7 @@
                 {
                   "type": "string",
                   "minLength": 1,
-                  "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]{0,249})$"
+                  "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]{0,196})$"
                 },
                 {
                   "type": "object",
@@ -1067,7 +1071,7 @@
                     "identity": {
                       "type": "string",
                       "minLength": 1,
-                      "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]{0,249})$"
+                      "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]{0,196})$"
                     },
                     "when": {
                       "anyOf": [
@@ -1344,7 +1348,7 @@
                   "identity": {
                     "type": "string",
                     "minLength": 1,
-                    "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]{0,249})$"
+                    "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]{0,196})$"
                   }
                 },
                 "required": [

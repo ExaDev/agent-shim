@@ -325,9 +325,12 @@ describe("runDoctor: stored names", () => {
   });
 
   it("fails a file whose name cannot be used at all, telling the person to rename or remove it", () => {
-    const report = runDoctor(baseParams({ configProfiles: [profile("")], providers: [provider("", {})] }));
+    const report = runDoctor(baseParams({ configProfiles: [profile(""), profile("a\\b")], providers: [provider("", {})] }));
     expect(findingOf(report, "config-profile", "").some((finding) => finding.severity === "fail" && finding.message.includes("Rename or remove the file"))).toBe(true);
     expect(findingOf(report, "provider", "").some((finding) => finding.severity === "fail" && finding.message.includes("Rename or remove the file"))).toBe(true);
+    expect(findingOf(report, "config-profile", "").every((finding) => finding.severity === "fail")).toBe(true);
+    expect(findingOf(report, "provider", "").every((finding) => finding.severity === "fail")).toBe(true);
+    expect(findingOf(report, "config-profile", "a\\b").some((finding) => finding.severity === "pass")).toBe(false);
     expect(report.ok).toBe(false);
   });
 

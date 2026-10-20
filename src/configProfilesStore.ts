@@ -89,7 +89,7 @@ function reportUnusableProfileName(name: string, message: string): void {
   console.error(`agent-shim: config-profiles/${name}.json is skipped: ${message}`);
 }
 
-/** Lists every configuration profile under `configProfilesDir` that has a valid `<name>.json`. A file whose name cannot stay inside the directory (only one called just `.json` can be on disk) is skipped and reported through `onUnusable` (standard error by default). */
+/** Lists every configuration profile under `configProfilesDir` that has a valid `<name>.json`. A file whose name cannot be used (one called just `.json`, one with a backslash in its name on a system where that is an ordinary character, or one longer than a name may now be) is skipped and reported through `onUnusable` (standard error by default). */
 export function listProfiles(paths: LayoutPaths, onUnusable: (name: string, message: string) => void = reportUnusableProfileName): readonly ProfileListEntry[] {
   if (!fs.existsSync(paths.configProfilesDir)) {
     return [];

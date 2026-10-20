@@ -9,10 +9,12 @@
     "name": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]{0,249}$"
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]{0,196}$"
     },
     "defaultConfigProfile": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 197
     },
     "allowAmbientCredential": {
       "default": false,
