@@ -3,6 +3,7 @@ import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "../../../usage/pick";
 import { truncateToColumns } from "../../ansi";
 import type { BarCell } from "../../barGrid";
 import { packLines, SEPARATOR } from "../../headerLayout";
+import { paintCore } from "../../messages/around";
 import { formatResetTime } from "../../resetTime";
 import { visibleDisplayText } from "../../sanitise";
 import { barCell, FULL_PERCENT, statusColor, withColor, type BarStyle } from "../../style";
@@ -103,7 +104,7 @@ export function quotaRow(context: RenderContext): RowOutput {
     return { window, value, plainReset, suffix: parenthesised(reset) };
   });
   if (settings.usage.compact) {
-    const lines = parts.map(({ window, value, plainReset }) => `${palette.paint("label", `${window.label}:`)} ${value}${plainReset === "" ? "" : ` ${palette.paint("label", `(${plainReset})`)}`}`);
+    const lines = parts.map(({ window, value, plainReset }) => `${paintCore(context.t("quota.compactLabel", { label: window.label }), (text) => palette.paint("label", text))}${value}${plainReset === "" ? "" : ` ${palette.paint("label", `(${plainReset})`)}`}`);
     return { kind: "text", lines: wrapped(lines, context.width) };
   }
   if (!settings.usage.bar) {

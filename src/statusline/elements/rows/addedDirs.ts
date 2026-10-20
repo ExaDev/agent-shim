@@ -7,6 +7,6 @@ export function addedDirsRow({ payload, settings, palette, t }: RenderContext): 
   if (settings.project.addedDirsLayout !== "row" || names.length === 0) {
     return { kind: "text", lines: [] };
   }
-  const drawn = [...names, ...(more > 0 ? [t("more", { count: more })] : [])].map((text) => palette.paint("label", text));
-  return { kind: "text", lines: [`${palette.paint("label", t("addedDirs.label"))} ${drawn.join(palette.paint("label", ", "))}`] };
+  const drawn = [...names, ...(more > 0 ? [t("more", { count: more })] : [])];
+  return { kind: "text", lines: [palette.paint("label", t("addedDirs.label", { dirs: drawn.join(t("list.separator")) }))] };
 }

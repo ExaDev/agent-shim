@@ -86,11 +86,11 @@ function allModules(directory = ""): string[] {
 }
 
 /** The text of every string and template piece in a module that holds a letter, outside imports, exports and types. */
-function literalsIn(file: string): string[] {
+function literalsIn(file: string, withoutLetters = false): string[] {
   const source = ts.createSourceFile(file, fs.readFileSync(path.join(__dirname, "..", file), "utf8"), ts.ScriptTarget.Latest, true);
   const found: string[] = [];
   const visit = (node: ts.Node): void => {
-    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) && /[A-Za-z]/.test(node.text)) {
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) && (withoutLetters || /[A-Za-z]/.test(node.text))) {
       const parent = node.parent;
       if (!ts.isImportDeclaration(parent) && !ts.isExportDeclaration(parent) && !ts.isLiteralTypeNode(parent) && !ts.isPropertySignature(parent)) {
         found.push(node.text);
@@ -152,6 +152,11 @@ const NOT_WORDS: Readonly<Record<string, readonly string[]>> = {
   "memoryUse.ts": ["B", "KB", "MB", "GB", "TB"],
 };
 
+/** The strings with a comma, colon or semicolon in them that the catalogue does not hold, by module and why: the colon that names the version control in `git:(main)`, which is the syntax of the segment and not a sentence. */
+const PUNCTUATION_KEPT: Readonly<Record<string, readonly string[]>> = {
+  "elements/header/vcs.ts": [":("],
+};
+
 /** The modules that are neither plumbing nor in a data directory, which are the ones that write words: any module that is added falls here until someone decides which it is. */
 function writingModules(): string[] {
   const plumbing = new Set(Object.values(PLUMBING).flat());
@@ -171,11 +176,26 @@ describe("the statusline's words", () => {
     expect(bypassing).toEqual([]);
   });
 
-  it("leave no exemption unused: every string listed as not a word is in its module", () => {
-    const stale = Object.entries(NOT_WORDS).flatMap(([file, texts]) => {
-      const present = new Set(modules.includes(file) ? literalsIn(file) : []);
-      return texts.filter((text) => !present.has(text)).map((text) => `${file}: ${JSON.stringify(text)}`);
-    });
+  it("take their commas, colons and semicolons from the catalogue, because a language writes its own", () => {
+    const written = modules.flatMap((file) =>
+      literalsIn(file, true)
+        .filter((text) => /[,:;\uFF0C\uFF1A\uFF1B\u3001]/.test(text) && !messageIds.has(text) && !(PUNCTUATION_KEPT[file] ?? []).includes(text))
+        .map((text) => `${file}: ${JSON.stringify(text)}`),
+    );
+    expect(written).toEqual([]);
+  });
+
+  it("leave no exemption unused: every string listed as kept is in its module", () => {
+    const stale = [
+      ...Object.entries(NOT_WORDS).flatMap(([file, texts]) => {
+        const present = new Set(modules.includes(file) ? literalsIn(file) : []);
+        return texts.filter((text) => !present.has(text)).map((text) => `${file}: ${JSON.stringify(text)}`);
+      }),
+      ...Object.entries(PUNCTUATION_KEPT).flatMap(([file, texts]) => {
+        const present = new Set(modules.includes(file) ? literalsIn(file, true) : []);
+        return texts.filter((text) => !present.has(text)).map((text) => `${file}: ${JSON.stringify(text)}`);
+      }),
+    ];
     expect(stale).toEqual([]);
   });
 
