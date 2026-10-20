@@ -15,6 +15,9 @@ const AT = {
   threeMinutes: 180_000,
 };
 const LINE_BYTES = 1_024;
+/** A line length that does not divide a read, so a read ends inside a line, and how often a record in a run is a compaction. */
+const ODD_LINE_BYTES = 997;
+const BOUNDARY_EVERY = 7;
 /** How many times the filler repeats so a transcript is several reads long, and how many lines past one read another is. */
 const FILLER_READS = 3;
 const LINES_PAST_A_READ = 5;
@@ -49,6 +52,12 @@ function countingPorts(disk: FakeStatuslineFilesystem): { readonly ports: Status
     },
   });
   return { ports, listings, bytesRead: () => total };
+}
+
+/** A line of exactly `ODD_LINE_BYTES` bytes, newline included. */
+function oddLine(record: Record<string, unknown>): string {
+  const json = JSON.stringify(record);
+  return `${json}${" ".repeat(ODD_LINE_BYTES - 1 - json.length)}\n`;
 }
 
 /** One line of exactly `LINE_BYTES` bytes, newline included, so a file of them has a known layout. */
@@ -128,7 +137,7 @@ describe("readTranscript", () => {
     expect(readTranscript(fakeStatuslinePorts(fakeStatuslineFilesystem({}).ports), TRANSCRIPT, T0)).toBeUndefined();
   });
 
-  it("bounds a first read of a transcript bigger than a read takes in, by bytes, and says it left the start unread", () => {
+  it("catches up with a transcript bigger than a read one read per refresh, each bounded by a read, and says so until it has", () => {
     const fillerLines = (FILLER_READS * MAX_TRANSCRIPT_READ_BYTES) / LINE_BYTES;
     const early = paddedLine({ type: "system", subtype: "compact_boundary", timestamp: at(0) });
     const filler = paddedLine({ type: "user", timestamp: at(MINUTE), message: { content: "x" } });
@@ -137,15 +146,60 @@ describe("readTranscript", () => {
     const text = early + filler.repeat(fillerLines) + recent + title;
     const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: text });
     const { ports, bytesRead } = countingPorts(disk);
-    const facts = readTranscript(ports, TRANSCRIPT, T0);
-    expect(facts).toMatchObject({ complete: false, bytes: bytesOf(text), session: { startedAtMs: T0, compactions: 1, title: "late-name" } });
-    // The head read that discovers the size, and the tail read (one byte over the window, to tell whether the window starts on a line).
-    expect(bytesRead()).toBe(2 * MAX_TRANSCRIPT_READ_BYTES + 1);
-    expect(bytesRead()).toBeLessThan(bytesOf(text));
+    let facts = readTranscript(ports, TRANSCRIPT, T0);
+    const reads = [bytesRead()];
+    const completes = [facts?.complete];
+    while (facts?.complete === false && completes.length <= FILLER_READS + 1) {
+      const before = bytesRead();
+      facts = readTranscript(ports, TRANSCRIPT, T0);
+      reads.push(bytesRead() - before);
+      completes.push(facts?.complete);
+    }
+    expect(facts).toMatchObject({ complete: true, bytes: bytesOf(text), session: { startedAtMs: T0, compactions: 2, title: "late-name" } });
+    expect(completes).toEqual([...Array.from({ length: FILLER_READS }, () => false), true]);
+    expect(reads.every((read) => read <= MAX_TRANSCRIPT_READ_BYTES)).toBe(true);
 
-    const afterFirst = bytesRead();
+    const afterConverging = bytesRead();
     readTranscript(ports, TRANSCRIPT, T0);
-    expect(bytesRead() - afterFirst).toBe(0);
+    expect(bytesRead() - afterConverging).toBe(0);
+  });
+
+  it("reads at most one read from where the cache ends on each refresh, and the same counts as the whole transcript holds, across reads that end inside a line", () => {
+    const fillerLines = (FILLER_READS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES;
+    const lines = Array.from({ length: fillerLines }, (_, index) => oddLine(index % BOUNDARY_EVERY === 0 ? { type: "system", subtype: "compact_boundary", timestamp: at(index) } : { type: "user", timestamp: at(index), message: { content: "x" } }));
+    const text = lines.join("") + boundary(AT.twoMinutes);
+    const expectedCompactions = lines.filter((entry) => entry.includes("compact_boundary")).length + 1;
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: text });
+    const { ports, bytesRead } = countingPorts(disk);
+    let facts = readTranscript(ports, TRANSCRIPT, T0);
+    let refreshes = 1;
+    expect(bytesRead()).toBeLessThanOrEqual(MAX_TRANSCRIPT_READ_BYTES);
+    while (facts?.complete === false) {
+      const before = bytesRead();
+      facts = readTranscript(ports, TRANSCRIPT, T0);
+      refreshes += 1;
+      expect(bytesRead() - before).toBeLessThanOrEqual(MAX_TRANSCRIPT_READ_BYTES);
+      expect(refreshes).toBeLessThanOrEqual(Math.ceil(bytesOf(text) / MAX_TRANSCRIPT_READ_BYTES) + 1);
+    }
+    expect(facts?.session.compactions).toBe(expectedCompactions);
+    // More than one read was needed, so the equality above is the result of folding across read boundaries that fall inside lines.
+    expect(refreshes).toBeGreaterThan(FILLER_READS);
+  });
+
+  it("folds what is appended after it has caught up without reading the rest again", () => {
+    const text = paddedLine({ type: "system", subtype: "compact_boundary", timestamp: at(0) }).repeat((FILLER_READS * MAX_TRANSCRIPT_READ_BYTES) / LINE_BYTES);
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: text });
+    const { ports, bytesRead } = countingPorts(disk);
+    let facts = readTranscript(ports, TRANSCRIPT, T0);
+    while (facts?.complete === false) {
+      facts = readTranscript(ports, TRANSCRIPT, T0);
+    }
+    expect(facts?.session.compactions).toBe((FILLER_READS * MAX_TRANSCRIPT_READ_BYTES) / LINE_BYTES);
+    const before = bytesRead();
+    const appended = boundary(MINUTE);
+    disk.files.set(TRANSCRIPT, text + appended);
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: true, session: { compactions: (FILLER_READS * MAX_TRANSCRIPT_READ_BYTES) / LINE_BYTES + 1 } });
+    expect(bytesRead() - before).toBe(bytesOf(appended));
   });
 
   it("takes the first line of the window when the window starts exactly on a line", () => {
@@ -156,16 +210,17 @@ describe("readTranscript", () => {
     expect(facts?.session.compactions).toBe(MAX_TRANSCRIPT_READ_BYTES / LINE_BYTES);
   });
 
-  it("reads a transcript that has grown by more than a read takes in from its end, and says what it skipped", () => {
+  it("catches up over successive refreshes with a transcript that has grown by more than a read takes in, and says so until it has", () => {
     const first = boundary(0);
     const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: first });
     const ports = fakeStatuslinePorts(disk.ports);
     expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: true, session: { compactions: 1 } });
 
-    const skipped = paddedLine({ type: "system", subtype: "compact_boundary", timestamp: at(MINUTE) });
+    const middle = paddedLine({ type: "system", subtype: "compact_boundary", timestamp: at(MINUTE) });
     const filler = paddedLine({ type: "user", timestamp: at(AT.twoMinutes), message: { content: "x" } }).repeat(MAX_TRANSCRIPT_READ_BYTES / LINE_BYTES);
-    disk.files.set(TRANSCRIPT, first + skipped + filler + boundary(AT.threeMinutes));
+    disk.files.set(TRANSCRIPT, first + middle + filler + boundary(AT.threeMinutes));
     expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { startedAtMs: T0, compactions: 2 } });
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: true, session: { startedAtMs: T0, compactions: THREE_BOUNDARIES } });
   });
 
   it("starts again when the file at the path begins with the same line but is shorter than what was read of it", () => {
@@ -195,13 +250,23 @@ describe("readTranscript", () => {
     expect([...disk.files.keys()]).toEqual([TRANSCRIPT]);
   });
 
-  it("makes no progress, and costs only a bounded read, through a single line bigger than a read", () => {
+  it("passes a single line bigger than a read a read at a time, while it is still being written, without ever reading more than a read", () => {
     const huge = line({ type: "user", timestamp: at(0), message: { content: "x".repeat(MAX_TRANSCRIPT_READ_BYTES + LINE_BYTES) } });
     const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: huge.slice(0, -1) });
     const { ports, bytesRead } = countingPorts(disk);
     expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { startedAtMs: undefined, compactions: 0 } });
-    expect(bytesRead()).toBeLessThanOrEqual(2 * MAX_TRANSCRIPT_READ_BYTES + 1);
+    expect(bytesRead()).toBeLessThanOrEqual(MAX_TRANSCRIPT_READ_BYTES);
+    const afterFirst = bytesRead();
+    readTranscript(ports, TRANSCRIPT, T0);
+    expect(bytesRead() - afterFirst).toBeLessThanOrEqual(MAX_TRANSCRIPT_READ_BYTES);
+    const afterSecond = bytesRead();
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false });
+    expect(bytesRead() - afterSecond).toBe(0);
+    // The line ends, and the records after it are folded, though the facts stay incomplete: what the line said is lost.
+    disk.files.set(TRANSCRIPT, huge + boundary(MINUTE));
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { compactions: 1 } });
   });
+
   it("takes the start from a timestamped record past a long untimestamped first line", () => {
     const untimestamped = line({ type: "file-history-snapshot", snapshot: "x".repeat(OVERSIZED_FIRST_LINE) });
     const filler = paddedLine({ type: "user", timestamp: at(MINUTE), message: { content: "x" } }).repeat((FILLER_READS * MAX_TRANSCRIPT_READ_BYTES) / LINE_BYTES);
@@ -210,13 +275,29 @@ describe("readTranscript", () => {
     expect(facts).toMatchObject({ complete: false, session: { startedAtMs: T0 } });
   });
 
-  it("leaves the start unknown, now and after the transcript grows, when the head holds no timestamp", () => {
+  it("finds the start wherever the first timestamp is, once it has caught up, and shows none before", () => {
     const filler = paddedLine({ type: "mode" }).repeat((FILLER_READS * MAX_TRANSCRIPT_READ_BYTES) / LINE_BYTES);
     const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: filler + line({ type: "user", timestamp: at(MINUTE) }) });
     const ports = fakeStatuslinePorts(disk.ports);
     expect(readTranscript(ports, TRANSCRIPT, T0)?.session.startedAtMs).toBeUndefined();
+    let facts = readTranscript(ports, TRANSCRIPT, T0);
+    while (facts?.complete === false) {
+      facts = readTranscript(ports, TRANSCRIPT, T0);
+    }
+    expect(facts?.session.startedAtMs).toBe(T0 + MINUTE);
     disk.files.set(TRANSCRIPT, (disk.files.get(TRANSCRIPT) ?? "") + line({ type: "user", timestamp: at(AT.twoMinutes) }));
-    expect(readTranscript(ports, TRANSCRIPT, T0)?.session.startedAtMs).toBeUndefined();
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.session.startedAtMs).toBe(T0 + MINUTE);
+  });
+
+  it("leaves the start unknown for good when a line too big to read came before any timestamp", () => {
+    const huge = line({ type: "mode", note: "x".repeat(MAX_TRANSCRIPT_READ_BYTES + LINE_BYTES) });
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: huge + line({ type: "user", timestamp: at(MINUTE) }) });
+    const ports = fakeStatuslinePorts(disk.ports);
+    for (let refresh = 0; refresh < THREE_BOUNDARIES; refresh += 1) {
+      readTranscript(ports, TRANSCRIPT, T0);
+    }
+    disk.files.set(TRANSCRIPT, (disk.files.get(TRANSCRIPT) ?? "") + line({ type: "user", timestamp: at(AT.twoMinutes) }));
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { startedAtMs: undefined } });
   });
 
   it("does not use the state of a different file that has taken the path's place, even a longer one", () => {
@@ -234,6 +315,7 @@ describe("readTranscript", () => {
     readTranscript(ports, TRANSCRIPT, T0);
     const oversized = line({ type: "user", timestamp: at(MINUTE), message: { content: "x".repeat(MAX_TRANSCRIPT_READ_BYTES + LINE_BYTES) } });
     disk.files.set(TRANSCRIPT, first + oversized);
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { compactions: 1 } });
     expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { compactions: 1 } });
     const afterOversized = bytesRead();
     const appended = boundary(AT.twoMinutes);

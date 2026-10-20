@@ -274,12 +274,28 @@ describe("the session elements", () => {
     });
   });
 
-  describe("a transcript whose start could not be read", () => {
+  describe("a transcript whose start is far into it", () => {
     const unstarted = (): string => line({ type: "mode" }).repeat((FILLER_READS * MAX_TRANSCRIPT_READ_BYTES) / line({ type: "mode" }).length) + line({ type: "assistant", timestamp: at(MINUTE), requestId: "r1", message: {} });
 
-    it("shows no duration and no start, rather than a wrong one, and still shows the last reply", () => {
-      expect(render(T0 + AT.twoMinutes, header("model", "duration"), { transcript: unstarted() }).lines).toEqual(["Sonnet 5.5"]);
-      expect(render(T0 + AT.twoMinutes, rows("sessionTime"), { transcript: unstarted() }).lines).toEqual(["Last reply: 1m ago"]);
+    it("shows no duration and no start, rather than a wrong one, until the reader has caught up with the transcript, and then the right one", () => {
+      const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: unstarted() });
+      for (let refresh = 0; refresh < FILLER_READS; refresh += 1) {
+        expect(render(T0 + AT.twoMinutes, header("model", "duration"), { disk }).lines, `refresh ${String(refresh)}`).toEqual(["Sonnet 5.5"]);
+      }
+      expect(render(T0 + AT.twoMinutes, header("model", "duration"), { disk }).text).toMatch(/Sonnet 5\.5\s+\|\s+\S*\s*1m$/);
+      expect(render(T0 + AT.twoMinutes, rows("sessionTime"), { disk }).lines).toEqual([expect.stringContaining("Last reply: 1m ago")]);
+    });
+  });
+
+  describe("a transcript with a line too big to read", () => {
+    it("leaves the start unknown for good when the line came before any timestamp, and still shows the last reply", () => {
+      const huge = line({ type: "mode", note: "x".repeat(MAX_TRANSCRIPT_READ_BYTES + FILLER_BYTES) });
+      const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: huge + line({ type: "assistant", timestamp: at(MINUTE), requestId: "r1", message: {} }) });
+      for (let refresh = 0; refresh < FILLER_READS; refresh += 1) {
+        render(T0 + AT.twoMinutes, header("duration"), { disk });
+      }
+      expect(render(T0 + AT.twoMinutes, header("model", "duration"), { disk }).lines).toEqual(["Sonnet 5.5"]);
+      expect(render(T0 + AT.twoMinutes, rows("sessionTime"), { disk }).lines).toEqual(["Last reply: 1m ago"]);
     });
   });
 
@@ -291,10 +307,13 @@ describe("the session elements", () => {
       expect(render(T0, rows("compactions"), { transcript: line({ type: "user", timestamp: at(0) }) }).text).toBe("");
     });
 
-    it("ends the count in a plus when the transcript was too big to count in full", () => {
+    it("ends the count in a plus while the reader is catching up with a transcript too big to read at once, and in none once it has", () => {
       const filler = line({ type: "user", timestamp: at(MINUTE), message: { content: "x".repeat(FILLER_BYTES) } }).repeat((FILLER_READS * MAX_TRANSCRIPT_READ_BYTES) / FILLER_BYTES);
-      const big = line({ type: "user", timestamp: at(0) }) + filler + line({ type: "system", subtype: "compact_boundary", timestamp: at(AT.twoMinutes) });
-      expect(render(T0, rows("compactions"), { transcript: big }).lines).toEqual(["Compactions: 1+"]);
+      const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: line({ type: "system", subtype: "compact_boundary", timestamp: at(0) }) + filler + line({ type: "system", subtype: "compact_boundary", timestamp: at(AT.twoMinutes) }) });
+      for (let refresh = 0; refresh < FILLER_READS; refresh += 1) {
+        expect(render(T0, rows("compactions"), { disk }).lines, `refresh ${String(refresh)}`).toEqual(["Compactions: 1+"]);
+      }
+      expect(render(T0, rows("compactions"), { disk }).lines).toEqual(["Compactions: 2"]);
     });
   });
 
