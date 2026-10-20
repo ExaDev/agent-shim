@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { cosmiconfigReader } from "../config/load";
 import { buildLayoutPaths } from "../paths";
@@ -50,30 +50,52 @@ describe("loadCascadeInput", () => {
       expect(statuslineOf(fakeReader({ [profile]: {}, [paths.directoryRulesFile]: { rules: [{ path: "~/work/acme", launch }] } }))).toEqual({ extra: { command: ["date"] } });
     });
 
-    it("is refused in a project file, committed or local, naming the file, so a cloned repository cannot choose the program", () => {
-      for (const name of [".agent-shim.json", ".agent-shim.local.json"]) {
-        const file = `${FAKE_HOME}/work/acme/${name}`;
-        const read = fakeReader({ [file]: { launch } });
-        expect(() => loadCascadeInput({ paths, home: FAKE_HOME, cwd: `${FAKE_HOME}/work/acme`, read })).toThrow(file);
-      }
-    });
+    describe("through the real loader, on a real directory", () => {
+      const PROJECT_FILES = [".agent-shim.json", ".agent-shim.local.json", ".claude-use.json", ".claude-use.local.json"];
+      let home: string;
+      let real: ReturnType<typeof buildLayoutPaths>;
+      let project: string;
 
-    it("cannot be reached through a profile a project file names by a path, loading with the real reader from a real directory", () => {
-      const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cascade-extra-")));
-      try {
-        const real = buildLayoutPaths(path.join(home, ".agent-shim"));
-        const project = path.join(home, "proj");
+      beforeEach(() => {
+        home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cascade-extra-")));
+        real = buildLayoutPaths(path.join(home, ".agent-shim"));
+        project = path.join(home, "proj");
         fs.mkdirSync(project, { recursive: true });
         fs.mkdirSync(real.configProfilesDir, { recursive: true });
-        fs.writeFileSync(path.join(project, "evil.json"), JSON.stringify({ launch }));
-        for (const named of [{ configProfile: "../../proj/evil" }, { extends: ["../../proj/evil"] }]) {
-          const file = path.join(project, ".agent-shim.json");
-          fs.writeFileSync(file, JSON.stringify(named));
-          expect(() => loadCascadeInput({ paths: real, home, cwd: project, read: cosmiconfigReader() }), JSON.stringify(named)).toThrow(file);
-        }
-      } finally {
+      });
+
+      afterEach(() => {
         fs.rmSync(home, { recursive: true, force: true });
-      }
+      });
+
+      const load = (baseConfigProfile?: string): ReturnType<typeof loadCascadeInput> => loadCascadeInput({ paths: real, home, cwd: project, read: cosmiconfigReader(), ...(baseConfigProfile === undefined ? {} : { baseConfigProfile }) });
+      const realStatuslineOf = (loaded: ReturnType<typeof loadCascadeInput>): unknown => flattenLayers(assembleCascade(loaded.input).layers, { home }).launch.statusline;
+
+      it.each(PROJECT_FILES)("refuses the extra command in %s, naming the file, so a cloned repository cannot choose the program", (name) => {
+        const file = path.join(project, name);
+        for (const extra of [{ command: ["touch", "pwned"] }, { command: [] }, {}]) {
+          fs.writeFileSync(file, JSON.stringify({ launch: { statusline: { extra } } }));
+          expect(() => load(), JSON.stringify(extra)).toThrow(file);
+        }
+      });
+
+      it.each(PROJECT_FILES)("cannot reach a profile outside the profiles directory by a path named in %s", (name) => {
+        fs.writeFileSync(path.join(project, "evil.json"), JSON.stringify({ launch }));
+        const file = path.join(project, name);
+        for (const named of [{ configProfile: "../../proj/evil" }, { extends: ["../../proj/evil"] }]) {
+          fs.writeFileSync(file, JSON.stringify(named));
+          expect(() => load(), JSON.stringify(named)).toThrow(file);
+        }
+      });
+
+      it("lets only the person's own profiles carry the command, even when a project file selects one and that profile extends one with a looser name", () => {
+        fs.writeFileSync(path.join(real.configProfilesDir, "my base.json"), JSON.stringify({ launch }));
+        fs.writeFileSync(path.join(real.configProfilesDir, "mine.json"), JSON.stringify({ extends: ["my base"] }));
+        fs.writeFileSync(path.join(project, ".agent-shim.json"), JSON.stringify({ configProfile: "mine" }));
+        expect(realStatuslineOf(load("mine"))).toEqual({ extra: { command: ["date"] } });
+        fs.writeFileSync(path.join(project, ".agent-shim.json"), JSON.stringify({ configProfile: "my base" }));
+        expect(() => load()).toThrow(path.join(project, ".agent-shim.json"));
+      });
     });
 
     it("lets a project file set the settings that only draw", () => {
