@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { cacheFileFor, loadCache, saveCache } from "../cacheFile";
 import type { StatuslinePorts } from "../ports";
-import { activityFactsOf, ActivityLatestSchema, ActivityStateSchema, EMPTY_ACTIVITY_LATEST, EMPTY_ACTIVITY_STATE, foldActivity, foldActivityLatest, type ActivityFacts, type ActivityLatest, type ActivityState } from "./activity";
+import { activityFactsOf, bashLiveLimitMs, ActivityLatestSchema, ActivityStateSchema, EMPTY_ACTIVITY_LATEST, EMPTY_ACTIVITY_STATE, foldActivity, foldActivityLatest, type ActivityFacts, type ActivityLatest, type ActivityState } from "./activity";
 import { parseTranscriptRecord, type TranscriptRecord } from "./record";
 import { EMPTY_TOKEN_STATE, foldTokens, TokenStateSchema, type SessionTokens, type TokenState } from "./tokens";
 import { EMPTY_LATEST_STATE, EMPTY_SESSION_STATE, foldLatest, foldSession, LatestStateSchema, SessionStateSchema, sessionFactsOf, type LatestState, type SessionFacts, type SessionState } from "./session";
@@ -90,8 +90,8 @@ function fingerprintOf(head: Uint8Array): string {
 }
 
 /** The facts of what the cache holds, whether or not the read that produced it reached the end of the transcript. Until it has, the cumulative facts lack what the rest of the transcript says, so the facts are not complete; the latest-state facts are the end's, which the cache holds separately. */
-function factsOf(size: number, cache: TranscriptCache, reachedEnd: boolean, nowMs: number): TranscriptFacts {
-  return { bytes: size, complete: cache.complete && reachedEnd, session: sessionFactsOf(cache.session, cache.newer?.state), tokens: cache.tokens.totals, activity: activityFactsOf(cache.activity, nowMs, cache.newer?.activity) };
+function factsOf(size: number, cache: TranscriptCache, reachedEnd: boolean, nowMs: number, env: StatuslinePorts["env"]): TranscriptFacts {
+  return { bytes: size, complete: cache.complete && reachedEnd, session: sessionFactsOf(cache.session, cache.newer?.state), tokens: cache.tokens.totals, activity: activityFactsOf(cache.activity, nowMs, { bashMs: bashLiveLimitMs(env) }, cache.newer?.activity) };
 }
 
 /** What the state holds when a line that may have shown the session's start was skipped. */
@@ -145,7 +145,7 @@ export function readTranscript(ports: StatuslinePorts, transcriptPath: string, n
     // A cache is written only once a line is complete, so the digest of a first line still being written is never kept.
     saveCache(ports, file, { ...next, fingerprint: cached === undefined ? fingerprintOf(window.bytes) : base.fingerprint }, nowMs);
   }
-  return factsOf(window.size, next, reachedEnd, nowMs);
+  return factsOf(window.size, next, reachedEnd, nowMs, ports.env);
 }
 
 /**
