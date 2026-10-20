@@ -21,14 +21,14 @@ export function promptCacheRow(context: RenderContext): RowOutput {
   if (cache === undefined) {
     return { kind: "text", lines: [] };
   }
-  const { palette, nowMs, settings } = context;
+  const { palette, nowMs, settings, t } = context;
   const ttlSeconds = cache.ttlSeconds ?? settings.promptCache.ttlSeconds;
   const expiresAtMs = cache.anchorAtMs + ttlSeconds * MS_PER_SECOND;
   const remainingMs = expiresAtMs - nowMs;
-  const name = palette.paint("label", "Cache");
+  const name = palette.paint("label", t("promptCache.label"));
   if (remainingMs <= 0) {
-    return { kind: "text", lines: [`${name} ${palette.paint("label", "\u23F1 expired")}`] };
+    return { kind: "text", lines: [`${name} ${palette.paint("label", `\u23F1 ${t("promptCache.expired")}`)}`] };
   }
   const role = remainingMs <= warningSecondsOf(ttlSeconds) * MS_PER_SECOND ? "warning" : "context";
-  return { kind: "text", lines: [`${name} ${palette.paint(role, `\u23F1 until ${formatWallClock(expiresAtMs, nowMs, context.ports.clock, settings.clock)}`)}`] };
+  return { kind: "text", lines: [`${name} ${palette.paint(role, `\u23F1 ${t("promptCache.until", { time: formatWallClock(expiresAtMs, nowMs, context.ports.clock, settings.clock) })}`)}`] };
 }

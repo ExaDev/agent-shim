@@ -13,14 +13,16 @@ describe("statuslineKeys", () => {
       }
       expect(key.defaultValue, `${key.path} has a default`).not.toBeUndefined();
       const [group, name] = key.path.split(".");
-      expect(StatuslineSchema.safeParse({ [group ?? ""]: { [name ?? ""]: key.defaultValue } }).success, `${key.path} default is valid`).toBe(true);
+      // A setting outside any group is its own path; the others sit one level down.
+      const layer = name === undefined ? { [group ?? ""]: key.defaultValue } : { [group ?? ""]: { [name]: key.defaultValue } };
+      expect(StatuslineSchema.safeParse(layer).success, `${key.path} default is valid`).toBe(true);
     }
   });
 
   it("lists each setting once, by dotted path, in declaration order", () => {
     const paths = statuslineKeys().map((key) => key.path);
     expect(new Set(paths).size).toBe(paths.length);
-    expect(paths[0]).toBe("layout.header");
+    expect(paths.slice(0, 2)).toEqual(["language", "layout.header"]);
   });
 
   it("describes groups of rows as such, with the rows they may name and no group by default", () => {
@@ -35,7 +37,8 @@ describe("statuslineKeys", () => {
     expect(header).toMatchObject({ kind: "list" });
     expect(header?.choices).toContain("account");
     expect(statuslineKeys().find((key) => key.path === "bar.width")).toMatchObject({ kind: "integer", choices: [], defaultValue: 10 });
-    expect(statuslineKeys().find((key) => key.path === "labels.fiveHour")).toMatchObject({ kind: "text", defaultValue: "5h" });
+    expect(statuslineKeys().find((key) => key.path === "labels.fiveHour")).toMatchObject({ kind: "text", defaultValue: "" });
+    expect(statuslineKeys().find((key) => key.path === "language")).toMatchObject({ kind: "choice", choices: ["en", "zh-Hans", "zh-Hant"], defaultValue: "en" });
     expect(statuslineKeys().find((key) => key.path === "git.showDirty")).toMatchObject({ kind: "boolean", choices: [], defaultValue: true });
     expect(statuslineKeys().find((key) => key.path === "project.pathLevels")).toMatchObject({ kind: "choice", choices: ["1", "2", "3", "full"], defaultValue: "1" });
     expect(statuslineKeys().find((key) => key.path === "usage.bar")).toMatchObject({ kind: "boolean", choices: [], defaultValue: true });

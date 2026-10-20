@@ -2,9 +2,9 @@ import { addedDirNames, formatProjectPath, workingDirectoryOf } from "../../proj
 import type { RenderContext } from "../context";
 
 /** The directories added to the session as `+name` each, the form the project segment carries them in. */
-function inlineAddedDirs({ payload, palette }: RenderContext): string | undefined {
+function inlineAddedDirs({ payload, palette, t }: RenderContext): string | undefined {
   const { names, more } = addedDirNames(payload.workspace?.added_dirs);
-  const drawn = [...names.map((name) => `+${name}`), ...(more > 0 ? [`+${String(more)} more`] : [])];
+  const drawn = [...names.map((name) => `+${name}`), ...(more > 0 ? [t("more", { count: more })] : [])];
   return drawn.length === 0 ? undefined : drawn.map((text) => palette.paint("label", text)).join(" ");
 }
 

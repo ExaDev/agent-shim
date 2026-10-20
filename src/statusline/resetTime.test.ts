@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveStatusline, type StatuslineSettings } from "../config/statusline";
+import { translatorFor } from "./messages/catalogues";
 import { formatResetTime } from "./resetTime";
 
 const NOW_MS = Date.parse("2026-10-16T09:00:00.000Z");
@@ -14,7 +15,7 @@ const SOON = { resetsAt: "2026-10-16T10:30:00.000Z", periodMs: FIVE_HOUR_PERIOD_
 const NEXT_WEEK = { resetsAt: "2026-10-20T10:30:00.000Z", periodMs: undefined };
 
 function textFor(window: Readonly<Parameters<typeof formatResetTime>[0]>, usage: Readonly<NonNullable<StatuslineSettings["usage"]>>) {
-  return formatResetTime(window, NOW_MS, resolveStatusline({ usage }), CLOCK);
+  return formatResetTime(window, NOW_MS, resolveStatusline({ usage }), CLOCK, translatorFor("en"));
 }
 
 describe("formatResetTime", () => {
@@ -70,6 +71,6 @@ describe("formatResetTime", () => {
 
   it("writes the wall-clock time under the clock settings", () => {
     const settings = resolveStatusline({ usage: { timeFormat: "absolute" }, clock: { hourCycle: "h12", seconds: true } });
-    expect(formatResetTime(SOON, NOW_MS, settings, CLOCK).text).toBe("at 10:30:00 am");
+    expect(formatResetTime(SOON, NOW_MS, settings, CLOCK, translatorFor("en")).text).toBe("at 10:30:00 am");
   });
 });

@@ -6,6 +6,7 @@ import { ELEMENTS, HEADER_ROLES, type ElementRegistry } from "./elements/registr
 import type { StatuslineSummary } from "./enrich";
 import { headerUnits, layoutHeader, packLines, SEPARATOR } from "./headerLayout";
 import { readTranscriptIdentity } from "./identityTranscript";
+import { translatorFor } from "./messages/catalogues";
 import { colourEnabled, createPalette, type Palette } from "./palette";
 import { compactUnits, layoutRows } from "./rowsLayout";
 import { visibleLength } from "./ansi";
@@ -65,6 +66,7 @@ export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
     terminalWidth,
     width,
     settings,
+    t: translatorFor(settings.language),
     palette: createPalette(settings.colours, colourEnabled(input.ports.env)),
     ports: input.ports,
     transcriptIdentity: once(() => (input.payload.transcript_path === undefined ? { model: undefined, advisor: undefined } : readTranscriptIdentity(input.ports, input.payload.transcript_path))),

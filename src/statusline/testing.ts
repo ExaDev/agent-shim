@@ -3,6 +3,7 @@ import path from "node:path";
 import { resolveStatusline } from "../config/statusline";
 import type { RenderContext } from "./elements/context";
 import type { StatuslineSummary } from "./enrich";
+import { translatorFor } from "./messages/catalogues";
 import { createPalette } from "./palette";
 import { parseClientPayload } from "./payload";
 import type { FileRange, StatuslinePorts } from "./ports";
@@ -74,6 +75,7 @@ export function fakeRenderContext(overrides: Readonly<Partial<Omit<RenderContext
     nowMs: 0,
     terminalWidth: FAKE_TERMINAL_WIDTH,
     width: FAKE_TERMINAL_WIDTH,
+    t: translatorFor(settings.language),
     palette: createPalette(settings.colours, false),
     ports: fakeStatuslinePorts(),
     transcriptIdentity: () => ({ model: undefined, advisor: undefined }),

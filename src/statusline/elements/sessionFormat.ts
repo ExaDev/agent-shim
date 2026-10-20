@@ -1,3 +1,5 @@
+import type { Translate } from "../messages/catalogues";
+
 const MS_PER_SECOND = 1_000;
 const SECONDS_PER_MINUTE = 60;
 const MINUTES_PER_HOUR = 60;
@@ -20,22 +22,22 @@ function twoUnits(larger: number, smaller: number, largerUnit: string, smallerUn
   return smaller > 0 ? `${String(larger)}${largerUnit} ${String(smaller)}${smallerUnit}` : `${String(larger)}${largerUnit}`;
 }
 
-/** How long ago something happened, given the time since: `just now` for a time that has not come yet, then `12s ago`, `5m ago`, `2h 5m ago`, `3d 4h ago`. */
-export function formatAgo(ms: number): string {
+/** How long ago something happened, given the time since: the language's `just now` for a time that has not come yet, then `12s ago`, `5m ago`, `2h 5m ago`, `3d 4h ago`, with the units written the same in every language and the word `ago` placed as the language places it. */
+export function formatAgo(ms: number, t: Translate): string {
   if (ms < 0) {
-    return "just now";
+    return t("time.justNow");
   }
   const seconds = Math.floor(ms / MS_PER_SECOND);
   if (seconds < SECONDS_PER_MINUTE) {
-    return `${String(seconds)}s ago`;
+    return t("time.ago", { value: `${String(seconds)}s` });
   }
   const minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
   if (minutes < MINUTES_PER_HOUR) {
-    return `${String(minutes)}m ago`;
+    return t("time.ago", { value: `${String(minutes)}m` });
   }
   const hours = Math.floor(minutes / MINUTES_PER_HOUR);
   if (hours < HOURS_PER_DAY) {
-    return `${twoUnits(hours, minutes % MINUTES_PER_HOUR, "h", "m")} ago`;
+    return t("time.ago", { value: twoUnits(hours, minutes % MINUTES_PER_HOUR, "h", "m") });
   }
-  return `${twoUnits(Math.floor(hours / HOURS_PER_DAY), hours % HOURS_PER_DAY, "d", "h")} ago`;
+  return t("time.ago", { value: twoUnits(Math.floor(hours / HOURS_PER_DAY), hours % HOURS_PER_DAY, "d", "h") });
 }

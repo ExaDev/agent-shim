@@ -1,22 +1,23 @@
 import { AUTOCOMPACT_RESERVE_FRACTION, AUTOCOMPACT_RESERVE_RAMP_END, AUTOCOMPACT_RESERVE_RAMP_START, contextBands } from "../../../config/statusline";
+import type { Translate } from "../../messages/catalogues";
 import { barCell, formatTokens, FULL_PERCENT, statusColor, withColor, type BarStyle } from "../../style";
 import { barStyleOf, type RenderContext, type RowOutput, type StatuslinePayloadView } from "../context";
 
 /** The cache hit fraction drawn as a percentage in the colour of its band: a hit ratio is better the higher it is, so the bands are the remaining-style ones, red when nearly nothing is served from cache and green when most is. */
-function cacheHitText(hitFraction: number, style: BarStyle): string {
+function cacheHitText(hitFraction: number, style: BarStyle, t: Translate): string {
   const clamped = Math.max(0, Math.min(1, hitFraction));
-  return ` (Cache: ${withColor(statusColor(clamped, false, style), `${(clamped * FULL_PERCENT).toFixed(0)}%`)})`;
+  return ` (${t("context.cacheShare", { percent: withColor(statusColor(clamped, false, style), `${(clamped * FULL_PERCENT).toFixed(0)}%`) })})`;
 }
 
 /** The prompt cache's hit percentage, preferring the client's own request-level hit ratio, which survives a cold turn, over the last request's share of prompt tokens read from cache, which a single cold turn zeroes. */
-function cacheShareText(view: StatuslinePayloadView, style: BarStyle): string {
+function cacheShareText(view: StatuslinePayloadView, style: BarStyle, t: Translate): string {
   const hitRatio = view.cacheHitRatio;
   if (hitRatio !== undefined && Number.isFinite(hitRatio)) {
-    return cacheHitText(hitRatio, style);
+    return cacheHitText(hitRatio, style, t);
   }
   const promptTotal = (view.cacheReadTokens ?? 0) + (view.freshInputTokens ?? 0);
   if (promptTotal > 0 && (view.cacheReadTokens ?? 0) > 0) {
-    return cacheHitText((view.cacheReadTokens ?? 0) / promptTotal, style);
+    return cacheHitText((view.cacheReadTokens ?? 0) / promptTotal, style, t);
   }
   return "";
 }
@@ -54,13 +55,13 @@ function estimateOf(kind: "raw" | "buffered", tokens: number, windowTokens: numb
 }
 
 /** The tokens the last request held, over the input and the cache, as the breakdown at high use writes them, or nothing when the client did not report the last request. */
-function breakdownText({ payload }: RenderContext): string | undefined {
+function breakdownText({ payload, t }: RenderContext): string | undefined {
   const usage = payload.context_window?.current_usage;
   if (usage === undefined) {
     return undefined;
   }
   const cached = (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
-  return ` (in: ${formatTokens(usage.input_tokens ?? 0)}, cache: ${formatTokens(cached)})`;
+  return ` (${t("context.breakdown", { input: formatTokens(usage.input_tokens ?? 0), cached: formatTokens(cached) })})`;
 }
 
 /** The context window's bar, or its figures alone, written as the settings ask: the tokens held and the percentage in use, the prompt cache's hit share, and at high use the breakdown of the last request. */
@@ -108,8 +109,8 @@ export function contextRow(context: RenderContext): RowOutput {
   if (settings.context.bar === "hidden" && afterBar.length === 0) {
     return { kind: "text", lines: [] };
   }
-  const trailer = `${cacheShareText(view, style)}${high === undefined ? "" : palette.paint("label", high)}`;
-  const label = ["Ctx", ...beforeBar].join(" ");
+  const trailer = `${cacheShareText(view, style, context.t)}${high === undefined ? "" : palette.paint("label", high)}`;
+  const label = [context.t("context.label"), ...beforeBar].join(" ");
   if (settings.context.bar === "shown") {
     const suffix = afterBar.length === 0 ? trailer : ` ${afterBar.join(" ")}${trailer}`;
     return { kind: "bars", cells: [barCell(palette.paint("label", `${label} `), suffix, fraction, { ...style, bands })] };

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { drawsNothing } from "../statusline/blank";
 import { graphemesOf } from "../statusline/graphemes";
+import { STATUSLINE_LANGUAGES } from "../statusline/messages/languages";
 
 /** The segments of the statusline's header, in the order they are drawn unless a setting reorders them. */
 export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "dailyCost", "sessionName", "duration", "speed"] as const;
@@ -118,11 +119,19 @@ export const AUTOCOMPACT_RESERVE_RAMP_START = 0.05;
 /** The share of the window held from which the whole reserve is added; between the ramp's start and this the reserve rises in a straight line. */
 export const AUTOCOMPACT_RESERVE_RAMP_END = 0.5;
 
-const labelText = z
+const labelWithinColumns = (text: string): boolean => stringWidth(text) <= MAX_STATUSLINE_LABEL_COLUMNS;
+const labelWithinColumnsMessage = `must take no more than ${String(MAX_STATUSLINE_LABEL_COLUMNS)} terminal columns`;
+const labelShowsSomething = (text: string): boolean => !drawsNothing(text);
+const labelShowsSomethingMessage = "must show something: a label of only combining marks or blank characters draws nothing";
+const labelIsPlainText = (text: string): boolean => LABEL_RE.test(text);
+const labelIsPlainTextMessage = "must be visible text without control characters";
+
+/** A window's name, or nothing to use the name the language gives it. */
+const windowLabel = z
   .string()
-  .refine((text) => stringWidth(text) <= MAX_STATUSLINE_LABEL_COLUMNS, `must take no more than ${String(MAX_STATUSLINE_LABEL_COLUMNS)} terminal columns`)
-  .refine((text) => !drawsNothing(text), "must show something: a label of only combining marks or blank characters draws nothing")
-  .regex(LABEL_RE, "must be visible text without control characters");
+  .refine((text) => text === "" || labelWithinColumns(text), labelWithinColumnsMessage)
+  .refine((text) => text === "" || labelShowsSomething(text), labelShowsSomethingMessage)
+  .refine((text) => text === "" || labelIsPlainText(text), labelIsPlainTextMessage);
 /** Text that replaces something the statusline would otherwise work out; empty leaves the statusline to work it out. */
 const overrideText = z.string().max(MAX_DISPLAY_TEXT_CHARS).regex(OPTIONAL_LABEL_RE, "must be visible text without control characters");
 const wholePercent = z.number().int().min(1).max(MAX_PERCENT);
@@ -187,8 +196,8 @@ const SHAPES = {
     criticalAt: wholePercent.describe("The whole percentage of use at which a bar turns red."),
   },
   labels: {
-    fiveHour: labelText.describe("The name of the five-hour subscription window."),
-    sevenDay: labelText.describe("The name of the weekly subscription window."),
+    fiveHour: windowLabel.describe("The name of the five-hour subscription window; empty uses the language's own name for it."),
+    sevenDay: windowLabel.describe("The name of the weekly subscription window; empty uses the language's own name for it."),
   },
   bar: {
     width: z.number().int().min(1).max(MAX_BAR_CELLS).describe("A bar's width in cells before the line's spare width is shared out among the bars."),
@@ -266,8 +275,14 @@ function unsettable<T extends z.ZodType>(setting: z.ZodOptional<T>) {
   return setting.unwrap().nullable().optional().describe(`${setting.description ?? ""} ${UNSET_NOTE}`);
 }
 
+/** The settings that are not part of a group. */
+const TOP_LEVEL = {
+  language: z.enum(STATUSLINE_LANGUAGES).describe("The language of the words the statusline writes (labels, units of waiting such as `ago`, the names of effort levels): en, zh-Hans for Chinese in simplified characters, zh-Hant for traditional. Durations, token counts, the dollar sign and clock times are written the same in every language, and a clock time follows the system locale and the clock settings."),
+};
+
 /** What a configuration layer may set: every group and every key optional, so a layer names only what it changes. */
 export const StatuslineSchema = z.strictObject({
+  language: TOP_LEVEL.language.optional(),
   layout: z.strictObject(SHAPES.layout).partial().optional(),
   model: z.strictObject(SHAPES.model).partial().optional(),
   provider: z.strictObject(SHAPES.provider).partial().optional(),
@@ -296,6 +311,7 @@ export type StatuslineSettings = z.infer<typeof StatuslineSchema>;
 
 /** The statusline with every setting decided, except the optional ones (`context.warnAt`, `context.criticalAt` and `context.autoCompactWindow`), which stay absent until a layer sets them. */
 export const ResolvedStatuslineSchema = z.strictObject({
+  language: TOP_LEVEL.language,
   layout: z.strictObject(SHAPES.layout),
   model: z.strictObject(SHAPES.model),
   provider: z.strictObject(SHAPES.provider),
@@ -321,6 +337,7 @@ export type ResolvedStatusline = z.infer<typeof ResolvedStatuslineSchema>;
 
 /** What the statusline draws when no layer sets a key. */
 export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
+  language: "en",
   layout: { header: [...DEFAULT_HEADER_SEGMENTS], rows: [...DEFAULT_ROWS], mode: "expanded", rule: "none", mergeBars: true, merge: [], rightAlign: [], maxWidth: 0, forceMaxWidth: false },
   model: { format: "full", override: "", source: "client" },
   provider: { name: "" },
@@ -329,7 +346,7 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   advisor: { override: "" },
   context: { bar: "shown", value: "both", estimate: "never", breakdown: "never" },
   bands: { warnAt: 70, criticalAt: 90 },
-  labels: { fiveHour: "5h", sevenDay: "Wk" },
+  labels: { fiveHour: "", sevenDay: "" },
   bar: { width: 10, filled: "\u2588", empty: "\u2591" },
   usage: { value: "used", bar: true, compact: false, resetLabel: false, modelScoped: false, timeFormat: "relative", threshold: 0, sevenDayThreshold: 0 },
   clock: { hourCycle: "auto", seconds: false },

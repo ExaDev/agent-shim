@@ -8,11 +8,11 @@ export function costSegment(context: RenderContext): string | undefined {
   if (cost === undefined) {
     return undefined;
   }
-  return `${cost.source === "native" ? "Cost" : "Est."} ${formatUsd(cost.usd)}`;
+  return context.t(cost.source === "native" ? "cost.session" : "cost.estimated", { amount: formatUsd(cost.usd) });
 }
 
 /** Today's spend across the sessions seen on this machine, as `Today $12.34`; undefined until a session has been seen. Drawing it records this session's cost in the day's ledger through the state port, which is how the sessions' spends reach one another. */
 export function dailyCostSegment(context: RenderContext): string | undefined {
   const spend = recordDailySpend(context.ports, context.nowMs, context.payload.session_id, resolveSessionCost(context));
-  return spend === undefined ? undefined : `Today ${formatUsd(spend)}`;
+  return spend === undefined ? undefined : context.t("cost.today", { amount: formatUsd(spend) });
 }

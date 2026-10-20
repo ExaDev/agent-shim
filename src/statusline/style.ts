@@ -1,4 +1,5 @@
 import type { BarCell } from "./barGrid";
+import type { Translate } from "./messages/catalogues";
 import { RESET, type Palette } from "./palette";
 
 const SECONDS_PER_MINUTE = 60;
@@ -61,10 +62,10 @@ export function formatTokens(num: number): string {
   return String(Math.round(num));
 }
 
-/** A time left as the statusline writes it: days and hours (`6d 17h`), hours and padded minutes (`4h 03m`), minutes (`23m`), seconds under a minute (`45s`), and `available` for nothing outstanding. */
-export function formatDuration(seconds: number | undefined): string {
+/** A time left as the statusline writes it: days and hours (`6d 17h`), hours and padded minutes (`4h 03m`), minutes (`23m`), seconds under a minute (`45s`), and the language's word for `available` for nothing outstanding. */
+export function formatDuration(seconds: number | undefined, t: Translate): string {
   if (seconds === undefined || seconds <= 0) {
-    return "available";
+    return t("quota.available");
   }
   if (seconds < SECONDS_PER_MINUTE) {
     return `${String(seconds)}s`;

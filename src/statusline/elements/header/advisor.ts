@@ -20,11 +20,11 @@ function prettifyModelId(id: string): string {
 }
 
 /** The advisor model, as the settings name it or else as the session's transcript records it once `/advisor` is set; undefined when neither does. */
-export function advisorSegment({ settings, transcriptIdentity }: RenderContext): string | undefined {
+export function advisorSegment({ settings, transcriptIdentity, t }: RenderContext): string | undefined {
   if (settings.advisor.override !== "") {
-    return `Advisor: ${settings.advisor.override}`;
+    return t("advisor.name", { name: settings.advisor.override });
   }
   const recorded = transcriptIdentity().advisor;
   const advisor = recorded === undefined ? "" : boundedDisplayText(prettifyModelId(recorded));
-  return advisor === "" ? undefined : `Advisor: ${advisor}`;
+  return advisor === "" ? undefined : t("advisor.name", { name: advisor });
 }

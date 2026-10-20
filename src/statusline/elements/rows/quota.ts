@@ -44,10 +44,10 @@ function candidateWindows(context: RenderContext): readonly QuotaWindowView[] {
   }
   const windows: QuotaWindowView[] = [];
   if (summary.fiveHourUsed !== undefined) {
-    windows.push({ label: settings.labels.fiveHour, fraction: summary.fiveHourUsed / FULL_PERCENT, resetsAt: summary.fiveHourResetAt, periodMs: FIVE_HOUR_WINDOW_MS, weekly: false });
+    windows.push({ label: settings.labels.fiveHour === "" ? context.t("quota.fiveHour") : settings.labels.fiveHour, fraction: summary.fiveHourUsed / FULL_PERCENT, resetsAt: summary.fiveHourResetAt, periodMs: FIVE_HOUR_WINDOW_MS, weekly: false });
   }
   if (summary.sevenDayUsed !== undefined) {
-    windows.push({ label: settings.labels.sevenDay, fraction: summary.sevenDayUsed / FULL_PERCENT, resetsAt: summary.sevenDayResetAt, periodMs: SEVEN_DAY_WINDOW_MS, weekly: true });
+    windows.push({ label: settings.labels.sevenDay === "" ? context.t("quota.sevenDay") : settings.labels.sevenDay, fraction: summary.sevenDayUsed / FULL_PERCENT, resetsAt: summary.sevenDayResetAt, periodMs: SEVEN_DAY_WINDOW_MS, weekly: true });
   }
   // A provider outside Anthropic's unified rate-limit family (z.ai) reports its usage only through its own quota windows, which are drawn when no unified window is.
   if (summary.fiveHourUsed === undefined && summary.sevenDayUsed === undefined) {
@@ -78,7 +78,7 @@ function figuresOf(window: QuotaWindowView, context: RenderContext, style: BarSt
   const clamped = Math.max(0, Math.min(1, window.fraction));
   const used = window.fraction * FULL_PERCENT;
   const shown = settings.usage.value === "remaining" ? Math.max(0, FULL_PERCENT - used) : used;
-  const { text, pending } = formatResetTime(window, nowMs, settings, ports.clock);
+  const { text, pending } = formatResetTime(window, nowMs, settings, ports.clock, context.t);
   return { value: withColor(statusColor(clamped, true, style), `${shown.toFixed(1)}%`), reset: text, pending };
 }
 
@@ -92,7 +92,7 @@ function resetSuffix(reset: string, pending: boolean, context: RenderContext): s
   if (!usage.resetLabel || !pending || elapsedForm) {
     return `(${reset})`;
   }
-  return `(${usage.timeFormat === "absolute" ? "resets" : "resets in"} ${reset})`;
+  return `(${context.t(usage.timeFormat === "absolute" ? "quota.resets" : "quota.resetsIn")} ${reset})`;
 }
 
 /** The windows of a row drawn as text, a separator between neighbours on a line, broken into as many lines as the width needs. */

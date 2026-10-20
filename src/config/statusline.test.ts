@@ -45,8 +45,9 @@ describe("StatuslineSchema", () => {
     }
   });
 
-  it("refuses a label that is empty, too long, or carries control characters or edge whitespace", () => {
-    for (const bad of ["", OVER_LONG_LABEL, "5\u001b[31mh", "line\nbreak", " 5h", "5h ", "a\tb"]) {
+  it("takes an empty window label to mean the language's own name, and refuses one that is too long or carries control characters or edge whitespace", () => {
+    expect(StatuslineSchema.safeParse({ labels: { fiveHour: "", sevenDay: "" } }).success).toBe(true);
+    for (const bad of [OVER_LONG_LABEL, "5\u001b[31mh", "line\nbreak", " 5h", "5h ", "a\tb"]) {
       expect(StatuslineSchema.safeParse({ labels: { fiveHour: bad } }).success, JSON.stringify(bad)).toBe(false);
     }
     expect(StatuslineSchema.safeParse({ labels: { fiveHour: "5 hour" } }).success).toBe(true);
@@ -412,5 +413,21 @@ describe("unsetting an optional setting from a layer", () => {
     expect(resolved.context).not.toHaveProperty("warnAt");
     expect(resolved.context).not.toHaveProperty("autoCompactWindow");
     expect(contextBands(resolved)).toEqual({ warnAt: 55, criticalAt: 80 });
+  });
+});
+
+describe("the language setting", () => {
+  it("accepts the catalogue's languages, and English is the default", () => {
+    for (const language of ["en", "zh-Hans", "zh-Hant"]) {
+      expect(StatuslineSchema.safeParse({ language }).success, language).toBe(true);
+    }
+    for (const language of ["zh", "zh-TW", "fr", "EN", ""]) {
+      expect(StatuslineSchema.safeParse({ language }).success, language).toBe(false);
+    }
+    expect(resolveStatusline(undefined).language).toBe("en");
+  });
+
+  it("merges like any scalar: the deeper layer's choice wins", () => {
+    expect(mergeStatuslineSettings({ language: "zh-Hans", bar: { width: 6 } }, { language: "zh-Hant" })).toEqual({ language: "zh-Hant", bar: { width: 6 } });
   });
 });

@@ -11,7 +11,7 @@ export function memoryRow(context: RenderContext): RowOutput {
     const style = barStyleOf(context, "usage");
     const fraction = Math.max(0, Math.min(1, use.usedBytes / use.totalBytes));
     const percent = withColor(statusColor(fraction, true, style), `${(fraction * FULL_PERCENT).toFixed(1)}%`);
-    cells.push(barCell(context.palette.paint("label", "RAM "), ` ${percent} (${formatBytes(use.usedBytes)} / ${formatBytes(use.totalBytes)})`, fraction, style));
+    cells.push(barCell(context.palette.paint("label", `${context.t("memory.label")} `), ` ${percent} (${formatBytes(use.usedBytes)} / ${formatBytes(use.totalBytes)})`, fraction, style));
   }
   return { kind: "bars", cells };
 }

@@ -11,5 +11,5 @@ export function speedSegment(context: RenderContext): string | undefined {
   }
   const outputTokens = context.payload.context_window?.current_usage?.output_tokens;
   const tokensPerSecond = trackSpeed(context.ports, transcriptPath, { at: context.nowMs, outputTokens, transcriptBytes: outputTokens === undefined ? context.transcript()?.bytes : undefined });
-  return tokensPerSecond === undefined ? undefined : `out: ${tokensPerSecond.toFixed(1)} tok/s`;
+  return tokensPerSecond === undefined ? undefined : context.t("speed.rate", { rate: tokensPerSecond.toFixed(1) });
 }
