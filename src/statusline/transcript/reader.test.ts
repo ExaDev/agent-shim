@@ -314,6 +314,22 @@ describe("readTranscript", () => {
     expect(facts?.activity.tools.at(-1)?.name).toBe("Skill");
   });
 
+  it("draws no todo list while the end of a long transcript edits it in place without rewriting it, and the right one once it has caught up", () => {
+    const records = Math.ceil((OVER_TWO_WINDOWS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES);
+    const early = line({ type: "assistant", timestamp: at(0), message: { content: [{ type: "tool_use", id: "w", name: "TodoWrite", input: { todos: [{ content: "Early plan", status: "in_progress" }] } }] } });
+    const filler = Array.from({ length: records }, (_, index) => oddLine({ type: "assistant", timestamp: at(0), message: { id: `f${String(index)}`, content: [] } })).join("");
+    const late = line({ type: "assistant", timestamp: at(SECOND_MS), message: { content: [{ type: "tool_use", id: "u", name: "TaskUpdate", input: { taskId: "1", status: "completed" } }] } });
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: early + filler + late });
+    const { ports } = countingPorts(disk);
+    const first = readTranscript(ports, TRANSCRIPT, T0);
+    expect(first).toMatchObject({ complete: false, activity: { todos: [] } });
+    let facts = first;
+    while (facts?.complete === false) {
+      facts = readTranscript(ports, TRANSCRIPT, T0);
+    }
+    expect(facts?.activity.todos).toEqual([{ content: "Early plan", status: "completed" }]);
+  });
+
   it("keeps the cache tier an early write showed when the end of the transcript holds a request but no write that names a tier", () => {
     const write = oddLine({ type: "assistant", timestamp: at(0), requestId: "r0", message: { id: "w", usage: { cache_creation: { ephemeral_1h_input_tokens: 5 } } } });
     const filler = oddLine({ type: "user", timestamp: at(MINUTE), message: { content: "x" } }).repeat(Math.ceil((OVER_TWO_WINDOWS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES));

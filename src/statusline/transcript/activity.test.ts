@@ -323,9 +323,16 @@ describe("activityFactsOf with the facts folded from the end of the transcript",
     expect(activityFactsOf(behind, T0 + SECOND, overlapping).tools.map((tool) => tool.status)).toEqual(["completed"]);
   });
 
-  it("keeps the state's todo list while the end holds no TodoWrite, whatever tasks it creates, and replaces it once it does", () => {
+  it("keeps the state's todo list while the end does not touch it", () => {
+    const untouched = end([use("g", "Grep", {}, STEP.ninth)]);
+    expect(activityFactsOf(older, T0 + SECOND, untouched).todos.map((todo) => todo.content)).toEqual(["old"]);
+  });
+
+  it("draws no list when the end edits it in place with no TodoWrite before, since the list the state has is out of date and the end holds only a part of the new one, and replaces it once the end holds a TodoWrite", () => {
     const created = end([use("c", "TaskCreate", { subject: "tail" }, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, created).todos.map((todo) => todo.content)).toEqual(["old"]);
+    expect(activityFactsOf(older, T0 + SECOND, created).todos).toEqual([]);
+    const updated = end([use("u", "TaskUpdate", { taskId: "9" }, STEP.ninth)]);
+    expect(activityFactsOf(older, T0 + SECOND, updated).todos).toEqual([]);
     const written = end([use("w", "TodoWrite", { todos: [{ content: "fresh", status: "in_progress" }] }, STEP.ninth)]);
     expect(activityFactsOf(older, T0 + SECOND, written).todos.map((todo) => todo.content)).toEqual(["fresh"]);
   });
