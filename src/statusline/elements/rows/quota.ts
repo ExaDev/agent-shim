@@ -1,21 +1,11 @@
-import { MAX_STATUSLINE_LABEL_CHARS } from "../../../config/statusline";
+import { graphemesOf, MAX_STATUSLINE_LABEL_CHARS } from "../../../config/statusline";
+import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "../../../usage/pick";
 import type { BarCell } from "../../barGrid";
+import { packLines, SEPARATOR } from "../../headerLayout";
 import { formatResetTime } from "../../resetTime";
+import { sanitiseDisplayText } from "../../sanitise";
 import { barCell, FULL_PERCENT, statusColor, withColor, type BarStyle } from "../../style";
 import { barStyleOf, type RenderContext, type RowOutput } from "../context";
-
-const MS_PER_HOUR = 3_600_000;
-const HOURS_PER_DAY = 24;
-const FIVE_HOURS = 5;
-const DAYS_PER_WEEK = 7;
-/** The lengths of the subscription windows the account's limits are made of. */
-const FIVE_HOUR_PERIOD_MS = FIVE_HOURS * MS_PER_HOUR;
-const SEVEN_DAY_PERIOD_MS = DAYS_PER_WEEK * HOURS_PER_DAY * MS_PER_HOUR;
-
-const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
-/** What separates one window from the next in a row drawn as text. */
-const WINDOW_SEPARATOR = " | ";
 
 /** One quota window as the row draws it: how much of it is used, as a fraction, and when it resets. */
 interface QuotaWindowView {
@@ -28,11 +18,9 @@ interface QuotaWindowView {
   readonly weekly: boolean;
 }
 
-/** `label` as text a terminal draws as it stands: the client's own text carries no control character that could move the cursor, and no more than a label's own width so a long name cannot crowd the bar out. */
+/** `label` as text a terminal draws as it stands: the client's own text with its escape sequences and control characters removed, and no more than a label's own width so a long name cannot crowd the bar out. */
 function safeLabel(label: string): string {
-  return Array.from(GRAPHEMES.segment(label.replace(/\p{C}/gu, "").trim()), ({ segment }) => segment)
-    .slice(0, MAX_STATUSLINE_LABEL_CHARS)
-    .join("");
+  return graphemesOf(sanitiseDisplayText(label).trim()).slice(0, MAX_STATUSLINE_LABEL_CHARS).join("");
 }
 
 /** The per-model weekly windows the client's payload carries, read only for a session whose quota is the signed-in account's: a window with no name or no figure is not one to draw. */
@@ -42,7 +30,7 @@ function modelScopedWindows({ payload }: RenderContext): readonly QuotaWindowVie
     if (label === "" || window.utilization === undefined || !Number.isFinite(window.utilization)) {
       return [];
     }
-    return [{ label, fraction: window.utilization / FULL_PERCENT, resetsAt: window.resets_at, periodMs: SEVEN_DAY_PERIOD_MS, weekly: false }];
+    return [{ label, fraction: window.utilization / FULL_PERCENT, resetsAt: window.resets_at, periodMs: SEVEN_DAY_WINDOW_MS, weekly: false }];
   });
 }
 
@@ -55,10 +43,10 @@ function candidateWindows(context: RenderContext): readonly QuotaWindowView[] {
   }
   const windows: QuotaWindowView[] = [];
   if (summary.fiveHourUsed !== undefined) {
-    windows.push({ label: settings.labels.fiveHour, fraction: summary.fiveHourUsed / FULL_PERCENT, resetsAt: summary.fiveHourResetAt, periodMs: FIVE_HOUR_PERIOD_MS, weekly: false });
+    windows.push({ label: settings.labels.fiveHour, fraction: summary.fiveHourUsed / FULL_PERCENT, resetsAt: summary.fiveHourResetAt, periodMs: FIVE_HOUR_WINDOW_MS, weekly: false });
   }
   if (summary.sevenDayUsed !== undefined) {
-    windows.push({ label: settings.labels.sevenDay, fraction: summary.sevenDayUsed / FULL_PERCENT, resetsAt: summary.sevenDayResetAt, periodMs: SEVEN_DAY_PERIOD_MS, weekly: true });
+    windows.push({ label: settings.labels.sevenDay, fraction: summary.sevenDayUsed / FULL_PERCENT, resetsAt: summary.sevenDayResetAt, periodMs: SEVEN_DAY_WINDOW_MS, weekly: true });
   }
   // A provider outside Anthropic's unified rate-limit family (z.ai) reports its usage only through its own quota windows, which are drawn when no unified window is.
   if (summary.fiveHourUsed === undefined && summary.sevenDayUsed === undefined) {
@@ -106,6 +94,11 @@ function resetSuffix(reset: string, pending: boolean, context: RenderContext): s
   return `(${usage.timeFormat === "absolute" ? "resets" : "resets in"} ${reset})`;
 }
 
+/** The windows of a row drawn as text, a separator between neighbours on a line, broken into as many lines as the width needs. */
+function wrapped(windows: readonly string[], width: number): string[] {
+  return packLines(windows, width, SEPARATOR).map((line) => line.join(SEPARATOR));
+}
+
 /** The quota windows' row: the five-hour and weekly windows, the per-model weekly windows when asked for, every model family's window for an account whose limits are per family, or a provider's own windows when it reports no unified one. Drawn as bars, as text alone, or as one compact line of text, under `settings.usage`. */
 export function quotaRow(context: RenderContext): RowOutput {
   const { palette, settings } = context;
@@ -117,11 +110,11 @@ export function quotaRow(context: RenderContext): RowOutput {
   });
   if (settings.usage.compact) {
     const lines = parts.map(({ window, value, reset }) => `${palette.paint("label", `${window.label}:`)} ${value}${reset === "" ? "" : ` ${palette.paint("label", `(${reset})`)}`}`);
-    return { kind: "text", lines: lines.length === 0 ? [] : [lines.join(WINDOW_SEPARATOR)] };
+    return { kind: "text", lines: wrapped(lines, context.width) };
   }
   if (!settings.usage.bar) {
     const lines = parts.map(({ window, value, suffix }) => `${palette.paint("label", `${window.label} `)}${value}${suffix === "" ? "" : ` ${suffix}`}`);
-    return { kind: "text", lines: lines.length === 0 ? [] : [lines.join(WINDOW_SEPARATOR)] };
+    return { kind: "text", lines: wrapped(lines, context.width) };
   }
   const cells: BarCell[] = parts.map(({ window, value, suffix }) => barCell(palette.paint("label", `${window.label} `), ` ${value}${suffix === "" ? "" : ` ${suffix}`}`, Math.max(0, Math.min(1, window.fraction)), style));
   return { kind: "bars", cells };

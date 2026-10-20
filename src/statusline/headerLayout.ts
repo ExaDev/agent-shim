@@ -1,6 +1,9 @@
 import type { STATUSLINE_HEADER_SEGMENTS } from "../config/statusline";
 import { visibleLength } from "./ansi";
 
+/** What stands between the parts of a line: header segments, bars and the windows of a row drawn as text. */
+export const SEPARATOR = " | ";
+
 /** A header segment drawn, with the name that says which it is. */
 export interface HeaderPart {
   readonly name: (typeof STATUSLINE_HEADER_SEGMENTS)[number];
@@ -50,8 +53,8 @@ function justify(texts: readonly string[], maxWidth: number, separator: string):
   return parts.join("");
 }
 
-/** Packs texts onto as few lines as fit, in order, each line justified across the width: a text joins the current line when it fits beside what is there, and a text already alone on a line that is still too wide renders whole, exactly as the Antigravity statusline's own fallback does. */
-export function layoutHeader(texts: readonly string[], maxWidth: number, separator: string): string {
+/** Packs texts onto as few lines as fit, in order: a text joins the current line when it fits beside what is there with the separator between, and a text already alone on a line that is still too wide stays whole, exactly as the Antigravity statusline's own fallback does. */
+export function packLines(texts: readonly string[], maxWidth: number, separator: string): string[][] {
   const separatorLength = visibleLength(separator);
   const lines: string[][] = [];
   let current: string[] = [];
@@ -71,6 +74,12 @@ export function layoutHeader(texts: readonly string[], maxWidth: number, separat
   if (current.length > 0) {
     lines.push(current);
   }
-  return lines.map((line) => justify(line, maxWidth, separator)).join("\n");
+  return lines;
 }
 
+/** Packs texts onto as few lines as fit (see `packLines`), each line justified across the width. */
+export function layoutHeader(texts: readonly string[], maxWidth: number, separator: string): string {
+  return packLines(texts, maxWidth, separator)
+    .map((line) => justify(line, maxWidth, separator))
+    .join("\n");
+}

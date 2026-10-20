@@ -20,9 +20,20 @@ describe("realStatuslinePorts", () => {
     expect(ports.homeDirectory).toBe(os.homedir());
   });
 
-  it("tells the time in the machine's own locale and time zone", () => {
-    const resolved = Intl.DateTimeFormat().resolvedOptions();
-    expect(ports.clock).toEqual({ locale: resolved.locale, timeZone: resolved.timeZone });
+  it("tells the time in the time zone the process runs under, and in a locale that is a well-formed tag", () => {
+    const original = process.env.TZ;
+    try {
+      process.env.TZ = "Asia/Tokyo";
+      const { clock } = realStatuslinePorts({});
+      expect(clock.timeZone).toBe("Asia/Tokyo");
+      expect(Intl.getCanonicalLocales(clock.locale)).toEqual([clock.locale]);
+    } finally {
+      if (original === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = original;
+      }
+    }
   });
 
   it("reads a file's text, and reports a file it cannot read as undefined", () => {

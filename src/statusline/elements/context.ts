@@ -27,6 +27,8 @@ export interface RenderContext {
   readonly nowMs: number;
   /** The terminal's width in columns, before the client's own reserve is taken off. */
   readonly terminalWidth: number;
+  /** The columns a line may use: a row of text that is wider than this is broken into lines that fit. */
+  readonly width: number;
   readonly settings: ResolvedStatusline;
   readonly palette: Palette;
   /** What the statusline may read from the machine. */
