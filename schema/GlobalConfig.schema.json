@@ -8,7 +8,8 @@
     },
     "defaultConfigProfile": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
     },
     "walkUpLimit": {
       "type": "string",
@@ -113,7 +114,8 @@
         },
         "provider": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
         },
         "headroom": {
           "type": "boolean"

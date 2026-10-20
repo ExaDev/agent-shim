@@ -41,6 +41,7 @@ import type { ClaudeBinaryResolver } from "./versionDiscovery";
 import { resolveClaudeVersion, type PinnedClaudeVersion } from "./launcher/claudeVersion";
 import { runLaunchUpdateCheck, type UpdateLaunchPort } from "./update/launchHook";
 import { targetRefs } from "./models/targets";
+import { namedFilePath } from "./config/names";
 
 /**
  * Everything the farm resync needs that the launcher itself has no way to produce: a real filesystem, a real clock, the working directory, and a way to load the cascade for it.
@@ -359,7 +360,7 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   if (
     configProfileDecision.name !== undefined &&
     params.allowMissingConfigProfile !== true &&
-    fs.readConfigFile(path.join(paths.configProfilesDir, `${configProfileDecision.name}.json`)) === undefined
+    fs.readConfigFile(namedFilePath(paths.configProfilesDir, configProfileDecision.name, ".json", "configuration profile")) === undefined
   ) {
     log.error(
       `agent-shim: no configuration profile named "${configProfileDecision.name}" (selected via ${configProfileDecision.source}). ` +

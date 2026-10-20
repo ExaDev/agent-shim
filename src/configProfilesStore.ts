@@ -1,11 +1,11 @@
 import fs from "node:fs";
-import path from "node:path";
 import { applyPatch, readJson, writeJsonAtomic } from "./config/store";
 import { ConfigProfileSchema, expandAllCategoryKey, GlobalConfigSchema, isOverridableCategory, type CategoryMap, type ConfigProfile, type Entries, type GlobalConfig, type LaunchFlags } from "./config/schema";
 import { CliError } from "./cliError";
 import { applyStatuslineChange, type StatuslineChange } from "./statusline/change";
 import { ConfigValidationError } from "./config/load";
 import type { LayoutPaths } from "./paths";
+import { namedFilePath } from "./config/names";
 
 /** Raised by any operation that requires a configuration profile to already exist, when it does not. */
 export class ProfileNotFoundError extends CliError {
@@ -32,7 +32,7 @@ export class InvalidCategoryNameError extends CliError {
 }
 
 function profileJsonPath(paths: LayoutPaths, name: string): string {
-  return path.join(paths.configProfilesDir, `${name}.json`);
+  return namedFilePath(paths.configProfilesDir, name, ".json", "configuration profile");
 }
 
 /** True when a profile file exists for `name`, regardless of whether it validates. */

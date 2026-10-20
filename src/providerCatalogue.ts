@@ -1,4 +1,3 @@
-import path from "node:path";
 
 import picomatch from "picomatch";
 import { z } from "zod";
@@ -6,6 +5,7 @@ import { z } from "zod";
 import type { ResolvedCredential } from "./credential";
 import type { HttpProvider, ProviderCatalogue } from "./config/schema";
 import type { LayoutPaths } from "./paths";
+import { namedFilePath } from "./config/names";
 
 /** The URLs a provider with no configured catalogue URL is asked: under its base URL, then under its host. */
 const DEFAULT_CANDIDATE_URLS = 2;
@@ -44,7 +44,7 @@ export type CatalogueCache = z.infer<typeof CatalogueCacheSchema>;
 
 /** Where the door stores `name`'s fetched catalogue. */
 export function catalogueCachePath(paths: LayoutPaths, name: string): string {
-  return path.join(paths.catalogueDir, `${name}.json`);
+  return namedFilePath(paths.catalogueDir, name, ".json", "provider");
 }
 
 /** The catalogue a cache file holds, or `undefined` when the text is not one (missing, unparsable, or from a release that stored a different shape). */

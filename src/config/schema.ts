@@ -1,4 +1,5 @@
 import { proxyBypassSyntaxProblem } from "./proxyBypass";
+import { FILE_NAME_PATTERN, FileNameSchema } from "./names";
 import { StatuslineSchema } from "./statusline";
 import path from "node:path";
 
@@ -99,7 +100,7 @@ export type Entries = z.infer<typeof EntriesSchema>;
 const LaunchSchema = z.strictObject({
   skipPermissions: z.boolean().optional(),
   remoteControl: z.boolean().optional(),
-  provider: z.string().min(1).optional(),
+  provider: FileNameSchema.optional(),
   headroom: z.boolean().optional(),
   trackUsage: z.boolean().optional(),
   /** The exact Claude Code version to run, as it is named in Claude Code's versions directory (`2.1.220`). A pin that is not installed fails the launch; it never falls back to the highest version. */
@@ -376,7 +377,7 @@ const ProviderRouteSchema = z.strictObject({
   /** The condition, the same `when` union a configuration cascade entry takes: the object form or a trilean predicate tree over the request facts the door resolves (`request.model` and kin). */
   when: WhenSchema,
   /** The provider a matching request is sent to, by the name a provider file carries. */
-  provider: z.string().min(1),
+  provider: FileNameSchema,
   /** The model name to rewrite the request to before it reaches the target, for a provider that expects another form (OpenRouter's `anthropic/claude-...` for instance). A route that rewrites reads the whole body, the one copy the rewrite needs. */
   model: z.string().min(1).optional(),
 });
@@ -566,7 +567,7 @@ export type ModelsLayer = z.infer<typeof ModelsLayerSchema>;
 export const ConfigProfileSchema = z.strictObject({
   $schema: z.string().optional(),
   description: z.string().optional(),
-  extends: z.array(z.string().min(1)).optional(),
+  extends: z.array(FileNameSchema).optional(),
   categories: CategoryMapSchema.optional(),
   entries: EntriesSchema.optional(),
   launch: LaunchSchema.optional(),
@@ -578,13 +579,12 @@ export type ConfigProfile = z.infer<typeof ConfigProfileSchema>;
 export const POOL_SELECTOR_PREFIX = "pool:";
 
 const POOL_NAME_PATTERN = "[A-Za-z0-9][A-Za-z0-9._-]*";
-const IDENTITY_NAME_PATTERN = "[A-Za-z0-9][A-Za-z0-9._@-]*";
 
 /** A pool's own name: the identity alphabet minus `@`, since a pool is never an email address. */
 export const PoolNameSchema = z.string().min(1).regex(new RegExp(`^${POOL_NAME_PATTERN}$`));
 
 /** One `pool:`-prefixed pool name or bare identity name, the union every selector surface accepts. `:` is outside an identity name's character set, so the two can never collide. */
-const SELECTOR_RE = new RegExp(`^(${POOL_SELECTOR_PREFIX}${POOL_NAME_PATTERN}|${IDENTITY_NAME_PATTERN})$`);
+const SELECTOR_RE = new RegExp(`^(${POOL_SELECTOR_PREFIX}${POOL_NAME_PATTERN}|${FILE_NAME_PATTERN})$`);
 
 /** What a directory rule, a portable config or the active-identity file may name: a concrete identity, or `pool:<name>` to have agent-shim pick one member of a pool at launch. */
 const IdentitySelectorSchema = z.string().min(1).regex(SELECTOR_RE);
@@ -693,7 +693,7 @@ export type Job = z.infer<typeof JobSchema>;
 /** One directory rule in `~/.agent-shim/directory-rules.json`, scoped to an explicit absolute (or `~`-rooted) path. */
 export const DirectoryRuleSchema = ConfigProfileSchema.omit({ description: true }).extend({
   path: z.string().min(1),
-  configProfile: z.string().min(1).optional(),
+  configProfile: FileNameSchema.optional(),
   identity: IdentitySelectorSchema.optional(),
   when: WhenSchema.optional(),
 });
@@ -710,7 +710,7 @@ export type DirectoryRules = z.infer<typeof DirectoryRulesSchema>;
  * A committed `.agent-shim.json` (or its gitignored `.agent-shim.local.json` sibling). Structurally a directory rule without the `path` field: its scope is implicit — wherever the file lives, and everything below it — which is exactly what makes it portable across clone locations.
  */
 export const PortableConfigSchema = ConfigProfileSchema.omit({ description: true }).extend({
-  configProfile: z.string().min(1).optional(),
+  configProfile: FileNameSchema.optional(),
   identity: IdentitySelectorSchema.optional(),
   when: WhenSchema.optional(),
 });
@@ -802,7 +802,7 @@ const UpdateGlobalConfigSchema = z.strictObject({
 
 export const GlobalConfigSchema = z.strictObject({
   $schema: z.string().optional(),
-  defaultConfigProfile: z.string().min(1).optional(),
+  defaultConfigProfile: FileNameSchema.optional(),
   walkUpLimit: z.string().min(1).optional(),
   categories: CategoryMapSchema.optional(),
   entries: EntriesSchema.optional(),
@@ -825,8 +825,8 @@ export const IdentitySchema = z.strictObject({
     .string()
     .min(1)
     // `@` is allowed in the body so an email address names its own identity directly (joseph.mearman@exadev.io), but the first character stays strictly alphanumeric: a leading `@` would collide with the `@name` selector syntax's first-`@` split and make an unconventional directory name under identities/.
-    .regex(/^[A-Za-z0-9][A-Za-z0-9._@-]*$/),
-  defaultConfigProfile: z.string().min(1).optional(),
+    .regex(new RegExp(`^${FILE_NAME_PATTERN}$`)),
+  defaultConfigProfile: FileNameSchema.optional(),
   allowAmbientCredential: z.boolean().default(false),
   credential: CredentialSchema.optional(),
   /** When this identity's five-hour window should be open: the front door opens one at each anchor if none is. Absent, nothing is opened on a schedule. */

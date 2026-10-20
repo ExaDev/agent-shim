@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import path from "node:path";
 import { ConfigValidationError } from "./config/load";
 import { writeJsonAtomic } from "./config/store";
 import { parseIgnoringUnrecognisedKeys, noteIgnoredKeys } from "./config/unrecognisedKeys";
@@ -29,6 +28,7 @@ import type { FsPort } from "./launcher/ports";
 import { assembleCascade, type CascadeInput } from "./resolve/walk";
 import type { LayoutPaths } from "./paths";
 import { FAMILY_PREFIX, buildFamilies, expandFamilyMembers, type Family } from "./models/families";
+import { isFileName, namedFilePath } from "./config/names";
 
 /** Raised by any operation that requires a provider to already exist, when it does not. */
 export class ProviderNotFoundError extends CliError {
@@ -59,17 +59,17 @@ export class InvalidProviderNameError extends CliError {
   }
 }
 
-const PROVIDER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._@-]*$/;
 
 /** Throws `InvalidProviderNameError` unless `name` satisfies the provider naming rule. */
 export function requireValidProviderName(name: string): void {
-  if (!PROVIDER_NAME_RE.test(name)) {
+  if (!isFileName(name)) {
     throw new InvalidProviderNameError(name);
   }
 }
 
 export function providerJsonPath(paths: LayoutPaths, name: string): string {
-  return path.join(paths.providersDir, `${name}.json`);
+  requireValidProviderName(name);
+  return namedFilePath(paths.providersDir, name, ".json", "provider");
 }
 
 /** True when a provider file exists for `name`, regardless of whether it validates. */
@@ -175,7 +175,8 @@ export function readProvider(paths: LayoutPaths, name: string): Provider | undef
  * Reads and validates one provider definition through an injected `FsPort`, the same way `loadIdentity` reads an `identity.json`: the launcher never touches the real filesystem directly, so provider loading must flow through the port it is already handed.
  */
 export function loadProvider(providersDir: string, name: string, port: FsPort): Provider | undefined {
-  const filePath = path.join(providersDir, `${name}.json`);
+  requireValidProviderName(name);
+  const filePath = namedFilePath(providersDir, name, ".json", "provider");
   const raw = port.readConfigFile(filePath);
   return raw === undefined ? undefined : parseProviderFile(filePath, raw);
 }
