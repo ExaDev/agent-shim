@@ -7,9 +7,7 @@
       "type": "string"
     },
     "defaultConfigProfile": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
+      "type": "string"
     },
     "walkUpLimit": {
       "type": "string",
@@ -113,9 +111,7 @@
           "type": "boolean"
         },
         "provider": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
+          "type": "string"
         },
         "headroom": {
           "type": "boolean"
@@ -1144,7 +1140,7 @@
                 {
                   "type": "string",
                   "minLength": 1,
-                  "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]*)$"
+                  "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]{0,249})$"
                 },
                 {
                   "type": "object",
@@ -1152,7 +1148,7 @@
                     "identity": {
                       "type": "string",
                       "minLength": 1,
-                      "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]*)$"
+                      "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]{0,249})$"
                     },
                     "when": {
                       "anyOf": [
@@ -1429,7 +1425,7 @@
                   "identity": {
                     "type": "string",
                     "minLength": 1,
-                    "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]*)$"
+                    "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]{0,249})$"
                   }
                 },
                 "required": [

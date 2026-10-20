@@ -17,9 +17,7 @@
           "extends": {
             "type": "array",
             "items": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
+              "type": "string"
             }
           },
           "categories": {
@@ -120,9 +118,7 @@
                 "type": "boolean"
               },
               "provider": {
-                "type": "string",
-                "minLength": 1,
-                "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
+                "type": "string"
               },
               "headroom": {
                 "type": "boolean"
@@ -1295,14 +1291,12 @@
             "minLength": 1
           },
           "configProfile": {
-            "type": "string",
-            "minLength": 1,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
+            "type": "string"
           },
           "identity": {
             "type": "string",
             "minLength": 1,
-            "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]*)$"
+            "pattern": "^(pool:[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z0-9][A-Za-z0-9._@-]{0,249})$"
           },
           "when": {
             "anyOf": [

@@ -11,9 +11,10 @@ import { catalogueCachePath } from "./providerCatalogue";
 import { UsageSnapshotSchema } from "./usage/schema";
 import { listUsageSnapshots, snapshotPath, type UsageReadFs } from "./usage/read";
 import { readDirectoryRules, writeDirectoryRules } from "./directoryRulesStore";
+import { requireNewProviderName } from "./config/names";
 import type { LayoutPaths } from "./paths";
 import { aliasesAfterRename, readProviderAliases, writeProviderAliases } from "./providerAliases";
-import { ProviderAlreadyExistsError, ProviderNotFoundError, listProviders, providerExists, providerJsonPath, readProvider, requireValidProviderName } from "./providersStore";
+import { ProviderAlreadyExistsError, ProviderNotFoundError, listProviders, providerExists, providerJsonPath, readProvider } from "./providersStore";
 
 /** A model ref with a leading `<from>/` provider qualifier rewritten to `<to>/`. Refs that name no provider (`acct:work/opus`, `family:glm-5-1`, a virtual model's name) never start with a provider's name followed by a slash, because `:` is outside the provider alphabet. */
 function renameRef(ref: string, from: string, to: string): string {
@@ -91,7 +92,7 @@ export function renameProvider(paths: LayoutPaths, from: string, to: string, por
   if (from === to) {
     throw new UsageError(`"${from}" is already the provider's name.`);
   }
-  requireValidProviderName(to);
+  requireNewProviderName(to);
   if (!providerExists(paths, from)) {
     throw new ProviderNotFoundError(from);
   }

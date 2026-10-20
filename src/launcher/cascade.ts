@@ -13,7 +13,7 @@ import { walkDirectoryAncestors, type CascadeInput, type DirectoryLevelSources, 
 import type { ProfileSource } from "../resolve/extends";
 import { LEGACY_PORTABLE_CONFIG_FILENAME, LEGACY_PORTABLE_LOCAL_CONFIG_FILENAME } from "../legacy";
 import type { LayoutPaths } from "../paths";
-import { namedFilePath } from "../config/names";
+import { profileFilePath } from "../config/names";
 
 /** The committed, team-shared portable config file name. A level with none falls back to the former `.claude-use.json`, and likewise for the local file, see `src/legacy.ts`. */
 export const PORTABLE_CONFIG_FILENAME = ".agent-shim.json";
@@ -51,7 +51,7 @@ export function loadCascadeInput(params: LoadCascadeInputParams): LoadedCascade 
   const directoryRules = loadConfigFile(params.paths.directoryRulesFile, DirectoryRulesSchema, params.read);
 
   const loadProfile = (name: string): ProfileSource | undefined => {
-    const filepath = namedFilePath(params.paths.configProfilesDir, name, ".json", "configuration profile");
+    const filepath = profileFilePath(params.paths.configProfilesDir, name);
     const loaded = loadConfigFile(filepath, ConfigProfileSchema, params.read);
     if (loaded === undefined) {
       return undefined;

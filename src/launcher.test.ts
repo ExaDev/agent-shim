@@ -214,6 +214,16 @@ describe("runLauncher", () => {
     expect(run(true).code).toBe(0);
   });
 
+  it.each([
+    ["the --config-profile flag", ["--config-profile", "../../x", "--print"], {}, "cli-flag"],
+    ["AGENT_SHIM_CONFIG_PROFILE", ["--print"], { AGENT_SHIM_CONFIG_PROFILE: "../../x" }, "env"],
+  ])("refuses a configuration profile named by %s that would reach a file outside the profiles directory, even when that file exists", (_route, argv, env, source) => {
+    const outside = { [`${FAKE_HOME}/x.json`]: {} };
+    expect(() => {
+      runLauncher({ paths, fs: fakeFs(outside), spawn: fakeSpawn(), proc: fakeProc(env, argv), log: fakeLog(), resolveClaudeBinary: () => discovered });
+    }).toThrow(new RegExp(`selected via ${source}`));
+  });
+
   it("takes --identity as the explicit form of @name, and refuses two different names", () => {
     const spawn = fakeSpawn();
     runAndCaptureExit({ paths, fs: fakeFs({}), spawn, proc: fakeProc({}, ["--identity", "work", "--print"]), log: fakeLog(), resolveClaudeBinary: () => discovered });

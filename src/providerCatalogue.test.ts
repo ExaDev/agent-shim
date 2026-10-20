@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CATALOGUE_MAX_AGE_MS,
   CatalogueFetchError,
+  catalogueCachePath,
   catalogueHeaders,
   catalogueUrls,
   fetchCatalogue,
@@ -12,10 +13,24 @@ import {
   parseCatalogueCache,
   type CatalogueFetch,
 } from "./providerCatalogue";
+import { InvalidProviderNameError } from "./config/names";
+import { buildLayoutPaths } from "./paths";
 
 const NOW = Date.parse("2026-01-02T00:00:00Z");
 const CREDENTIAL = { target: "bearer", token: "secret-token" } as const;
 const PROVIDER = { baseUrl: "https://api.example.com/anthropic/" };
+
+describe("catalogueCachePath", () => {
+  const paths = buildLayoutPaths("/home/test/.agent-shim");
+
+  it("places a provider's cache directly inside the catalogues directory", () => {
+    expect(catalogueCachePath(paths, "z.ai")).toBe("/home/test/.agent-shim/catalogues/z.ai.json");
+  });
+
+  it.each(["../x", "../../etc/passwd", "a/b", "", ".."])("refuses %j, which would reach a file outside the directory", (name) => {
+    expect(() => catalogueCachePath(paths, name)).toThrow(InvalidProviderNameError);
+  });
+});
 
 describe("catalogueUrls", () => {
   it("asks under the base URL and then under the host", () => {

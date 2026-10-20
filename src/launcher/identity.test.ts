@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ConfigValidationError } from "../config/load";
+import { UnsafeNameError } from "../config/names";
 import { decideConfigProfile, decideIdentity, loadIdentity } from "./identity";
 import type { FsPort } from "./ports";
 
@@ -18,6 +19,28 @@ describe("decideIdentity", () => {
     env: {},
     readActiveIdentityFile: () => undefined,
   };
+
+  it.each([
+    ["the identity named on the command line", { argv0Identity: "../../x" }],
+    ["AGENT_SHIM_IDENTITY", { env: { AGENT_SHIM_IDENTITY: "../../x" } }],
+    ["a directory rule", { directoryPinnedIdentity: "a/b" }],
+    ["the active-identity file", { readActiveIdentityFile: () => ".." }],
+  ])("refuses a selector from %s that would name a path, naming where it came from", (source, override) => {
+    expect(() => decideIdentity({ ...baseParams, ...override })).toThrow(UnsafeNameError);
+    expect(() => decideIdentity({ ...baseParams, ...override })).toThrow(source);
+  });
+
+  it("refuses a pool selector whose pool name would name a path", () => {
+    expect(() => decideIdentity({ ...baseParams, argv0Identity: "pool:../x" })).toThrow(UnsafeNameError);
+    expect(decideIdentity({ ...baseParams, argv0Identity: "pool:fleet" })).toMatchObject({ pool: "fleet" });
+  });
+
+  it("refuses to load an identity file by a name that would leave the identities directory, reading nothing", () => {
+    const reads: string[] = [];
+    const fs = fakeFs({ readConfigFile: (file) => { reads.push(file); return {}; } });
+    expect(() => loadIdentity("/home/.agent-shim/identities", "../../x", fs)).toThrow(UnsafeNameError);
+    expect(reads).toEqual([]);
+  });
 
   it("skips resolution entirely when CLAUDE_CONFIG_DIR is already set, even if every other source would resolve one", () => {
     const result = decideIdentity({

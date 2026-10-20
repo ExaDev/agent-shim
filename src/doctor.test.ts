@@ -313,6 +313,30 @@ function provider(name: string, body: unknown): DoctorProviderInput {
   return { name, path: `/agent-shim/providers/${name}.json`, raw: JSON.stringify(body) };
 }
 
+describe("runDoctor: stored names", () => {
+  const findingOf = (report: ReturnType<typeof runDoctor>, section: "config-profile" | "provider", subject: string) => findingsFor(report, section).filter((finding) => finding.subject === subject);
+
+  it("warns about a profile or provider stored under a name a project file could not use, saying it still works and how to fix it", () => {
+    const report = runDoctor(baseParams({ configProfiles: [profile("my profile")], providers: [provider("_old", { displayName: "Old", baseUrl: "http://127.0.0.1:9", credential: { sources: [{ literal: "placeholder" }] } })] }));
+    const profileFindings = findingOf(report, "config-profile", "my profile");
+    expect(profileFindings.some((finding) => finding.severity === "warn" && finding.message.includes("still works from your own configuration") && finding.message.includes("Rename /agent-shim/config-profiles/my profile.json"))).toBe(true);
+    expect(findingOf(report, "provider", "_old").some((finding) => finding.severity === "warn" && finding.message.includes("a project file cannot name it"))).toBe(true);
+    expect(report.ok).toBe(true);
+  });
+
+  it("fails a file whose name cannot be used at all, telling the person to rename or remove it", () => {
+    const report = runDoctor(baseParams({ configProfiles: [profile("")], providers: [provider("", {})] }));
+    expect(findingOf(report, "config-profile", "").some((finding) => finding.severity === "fail" && finding.message.includes("Rename or remove the file"))).toBe(true);
+    expect(findingOf(report, "provider", "").some((finding) => finding.severity === "fail" && finding.message.includes("Rename or remove the file"))).toBe(true);
+    expect(report.ok).toBe(false);
+  });
+
+  it("says nothing about names that fit", () => {
+    const report = runDoctor(baseParams({ configProfiles: [profile("client-base")] }));
+    expect(findingOf(report, "config-profile", "client-base").every((finding) => finding.severity === "pass")).toBe(true);
+  });
+});
+
 describe("runDoctor: provider", () => {
   it("passes a current-format provider, describing its credential without any value", () => {
     const report = runDoctor(

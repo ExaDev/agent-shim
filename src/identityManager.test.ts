@@ -250,7 +250,7 @@ describe("identityManager", () => {
 
       const rejected = entries.find((entry) => entry.name === "written-by-a-newer-agent-shim");
       expect(rejected?.identity).toBeUndefined();
-      expect(rejected?.problem).toContain("must match pattern");
+      expect(rejected?.problem).toContain("must start with a letter or digit");
       expect(rejected?.problem).not.toContain("\n");
       expect(entries.find((entry) => entry.name === "work")?.identity?.name).toBe("work");
     });

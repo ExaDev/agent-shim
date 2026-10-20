@@ -1,7 +1,8 @@
 import path from "node:path";
 
 import { loadConfigFile, type LoadedFile } from "../config/load";
-import { IdentitySchema, POOL_SELECTOR_PREFIX, type Identity } from "../config/schema";
+import { FILE_NAME_RULE, isFileName, UnsafeNameError } from "../config/names";
+import { IdentitySchema, IdentitySelectorSchema, POOL_SELECTOR_PREFIX, type Identity } from "../config/schema";
 import type { FsPort } from "./ports";
 
 /** Which precedence rule produced an identity decision. */
@@ -58,7 +59,21 @@ function isNonEmpty(value: string | undefined): value is string {
   return value !== undefined && value !== "";
 }
 
+/** Where each source of an identity says it came from, for an error naming a selector that cannot be used. */
+const IDENTITY_SOURCE_LABELS: Readonly<Record<IdentityDecisionSource, string>> = {
+  "config-dir-escape-hatch": "CLAUDE_CONFIG_DIR",
+  argv: "the identity named on the command line",
+  env: "AGENT_SHIM_IDENTITY",
+  "directory-pin": "a directory rule",
+  "active-identity-file": "the active-identity file",
+  none: "nothing",
+};
+
+/** The decision for an identity or `pool:<name>` selector. The selector becomes a directory name under the agent-shim home, whatever supplied it (a command-line argument, the environment, a file), so one that is not an identity name or `pool:<name>` is refused here, naming where it came from, instead of reaching a path. */
 function selected(selector: string, source: IdentityDecisionSource): IdentityDecision {
+  if (!IdentitySelectorSchema.safeParse(selector).success) {
+    throw new UnsafeNameError(selector, "identity", `${FILE_NAME_RULE}, or be pool:<name> for a pool`, IDENTITY_SOURCE_LABELS[source]);
+  }
   const pool = poolNameOf(selector);
   return pool === undefined ? { name: selector, source, configDirEscapeHatch: false } : { pool, source, configDirEscapeHatch: false };
 }
@@ -161,5 +176,8 @@ export function decideConfigProfile(params: DecideConfigProfileParams): ConfigPr
  * Returns undefined when the file does not exist (e.g. the identity was resolved by name but never actually created — `agent-shim identity add` is Phase 4's job, not this one's). Throws `ConfigValidationError` when the file exists but fails validation, the same as any other config file in this project.
  */
 export function loadIdentity(identitiesDir: string, name: string, fs: FsPort): LoadedFile<Identity> | undefined {
+  if (!isFileName(name)) {
+    throw new UnsafeNameError(name, "identity", FILE_NAME_RULE);
+  }
   return loadConfigFile(path.join(identitiesDir, name, "identity.json"), IdentitySchema, fs.readConfigFile);
 }
