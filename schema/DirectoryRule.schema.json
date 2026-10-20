@@ -191,6 +191,22 @@
                   },
                   "description": "The rows to draw below the header, in drawing order; a row left out is hidden, and an empty list hides every row."
                 },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "expanded",
+                    "compact"
+                  ],
+                  "description": "How the statusline is laid out: expanded draws the header and then the rows, each on lines of its own as layout.merge allows, and compact draws the header segments and every row's content on one line, starting a new line only where the line would be wider than the width. layout.merge, layout.rightAlign and layout.rule have no effect in compact."
+                },
+                "rule": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "belowHeader"
+                  ],
+                  "description": "Whether a rule is drawn across the line between the header and the rows beneath it, as wide as the header's widest line (at least twenty columns, at most the width); it is drawn only when both the header and the rows have something to show, and not in the compact layout."
+                },
                 "merge": {
                   "type": "array",
                   "items": {
