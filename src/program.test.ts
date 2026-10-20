@@ -405,7 +405,7 @@ describe("profile commands", () => {
     await cli(["profile", "set", "acme", "--statusline", "layout.rows="]);
     expect(readProfile(paths, "acme")?.launch?.statusline?.layout?.rows).toEqual([]);
 
-    for (const bad of ["layout.header=colour", "bands.warnAt=0", "bar.width=wide", "labels.fiveHour=", "bar.colour=1", "nonsense"]) {
+    for (const bad of ["layout.header=colour", "bands.warnAt=0", "bar.width=wide", "labels.fiveHour=aaaaaaaaaaaaa", "language=fr", "preset=maximal", "bar.colour=1", "nonsense"]) {
       expect((await cli(["profile", "set", "acme", "--statusline", bad])).code, bad).toBe(EXIT_USAGE);
     }
     expect((await cli(["profile", "set", "acme", "--unset-statusline", "bar.colour"])).code).toBe(EXIT_USAGE);
