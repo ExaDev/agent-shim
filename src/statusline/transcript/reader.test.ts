@@ -24,6 +24,9 @@ const ODD_LINE_BYTES = 997;
 const BOUNDARY_EVERY = 7;
 /** How many reads a transcript is a little over, three days in milliseconds, and the bytes of a line that are not its filler. */
 const OVER_TWO_WINDOWS = 2.5;
+/** Reads of filler before and after two calls, so the transcript is between one and two reads long and the last read starts before the first one ends, with the calls in both. */
+const OVERLAP_BEFORE = 0.6;
+const OVERLAP_AFTER = 0.9;
 const OVER_TWO_WINDOWS_ALIGNED = 3;
 const FOUR_WINDOWS_ISH = 3.5;
 const SECOND_MS = 1_000;
@@ -43,7 +46,7 @@ const LINES_PAST_A_READ = 5;
 const EARLY_SKILLS = 3;
 const THREE_BOUNDARIES = 3;
 /** The version of the cache the reader writes, and how many versions before it a cache of an older reader may have. */
-const CURRENT_CACHE_VERSION = 7;
+const CURRENT_CACHE_VERSION = 8;
 const EARLIER_VERSIONS = 2;
 /** A first line longer than the part of it that identifies a transcript. */
 const OVERSIZED_FIRST_LINE = 70_000;
@@ -350,6 +353,33 @@ describe("readTranscript", () => {
     const end = answered("e1", "Read", 1) + answered("e2", "Edit", 2) + answered("n1", "Grep", AT.twoMinutes);
     const ports = fakeStatuslinePorts(fakeStatuslineFilesystem({ [TRANSCRIPT]: early + filler + end }).ports);
     const first = readTranscript(ports, TRANSCRIPT, T0);
+    expect(first?.complete).toBe(false);
+    expect(first?.activity.tools.map((tool) => tool.name)).toEqual(["Grep"]);
+  });
+
+  it("shows the calls of the end when the part already read reaches into it, which a memory of the part already read would take for repeats", () => {
+    const call = (id: string, name: string, ms: number): string => line({ type: "assistant", timestamp: at(ms), message: { id: `m${id}`, content: [{ type: "tool_use", id, name, input: {} }] } });
+    const answered = (id: string, name: string, ms: number): string => call(id, name, ms) + line({ type: "user", timestamp: at(ms), message: { content: [{ type: "tool_result", tool_use_id: id, content: "done" }] } });
+    const filler = (reads: number): string => oddLine({ type: "user", timestamp: at(MINUTE), message: { content: "x" } }).repeat(Math.ceil((reads * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES));
+    const text = filler(OVERLAP_BEFORE) + answered("c1", "Read", 1) + answered("c2", "Edit", 2) + filler(OVERLAP_AFTER);
+    const first = readTranscript(fakeStatuslinePorts(fakeStatuslineFilesystem({ [TRANSCRIPT]: text }).ports), TRANSCRIPT, T0);
+    expect(first?.complete).toBe(false);
+    expect(first?.activity.tools.map((tool) => tool.name)).toEqual(["Read", "Edit"]);
+  });
+
+  it("seeds the end with the memory of the part read when that part ends exactly where the end begins", () => {
+    const call = (id: string, name: string, ms: number): string => line({ type: "assistant", timestamp: at(ms), message: { id: `m${id}`, content: [{ type: "tool_use", id, name, input: {} }] } });
+    const answered = (id: string, name: string, ms: number): string => call(id, name, ms) + line({ type: "user", timestamp: at(ms), message: { content: [{ type: "tool_result", tool_use_id: id, content: "done" }] } });
+    /** One line of exactly `bytes` bytes, all of them single-byte characters. */
+    const exactLine = (bytes: number): string => {
+      const empty = line({ type: "user", timestamp: at(MINUTE), message: { content: "" } });
+      return line({ type: "user", timestamp: at(MINUTE), message: { content: "x".repeat(bytes - empty.length) } });
+    };
+    const head = answered("e1", "Read", 1) + answered("e2", "Edit", 2);
+    const tail = answered("e1", "Read", 1) + answered("e2", "Edit", 2) + answered("n1", "Grep", AT.twoMinutes);
+    const text = head + exactLine(MAX_TRANSCRIPT_READ_BYTES - head.length) + exactLine(MAX_TRANSCRIPT_READ_BYTES - tail.length) + tail;
+    expect(text).toHaveLength(2 * MAX_TRANSCRIPT_READ_BYTES);
+    const first = readTranscript(fakeStatuslinePorts(fakeStatuslineFilesystem({ [TRANSCRIPT]: text }).ports), TRANSCRIPT, T0);
     expect(first?.complete).toBe(false);
     expect(first?.activity.tools.map((tool) => tool.name)).toEqual(["Grep"]);
   });

@@ -27,21 +27,32 @@ const CALL_MEMORY_KIBIBYTES = 64;
 const CALL_MEMORY_BYTES = CALL_MEMORY_KIBIBYTES * BYTES_PER_KIBIBYTE;
 const CALL_MEMORY_COPIES = 2;
 
-/** How much of the cache file the names of the skills used, and the names of the MCP servers used, may take each. */
+/** How much of the same cache file the list of calls stamped out of order that the memory forgot may take, counted over the same copies. */
+const SKIPPED_MEMORY_KIBIBYTES = 4;
+const SKIPPED_MEMORY_BYTES = SKIPPED_MEMORY_KIBIBYTES * BYTES_PER_KIBIBYTE;
+
+/** How much of the cache file each of the two lists of names of one kind may take: the names kept whole, and the digests of the names counted after them. The kinds are the skills used and the MCP servers used. */
 const NAME_MEMORY_KIBIBYTES = 16;
 const NAME_MEMORY_BYTES = NAME_MEMORY_KIBIBYTES * BYTES_PER_KIBIBYTE;
 
 /** The two quotes and the comma that a string takes in a JSON array, beside the string. */
 const QUOTES_AND_COMMA_BYTES = 3;
 
-/** The characters a call's time is kept in, in base 36 and padded, so that times compare as text (a millisecond clock fits in eight until the year 2058; a time that does not fit is kept as none). */
-const CALL_TIME_CHARS = 8;
+/** The brackets that enclose a JSON array, and the comma that follows each element but the last. */
+const ARRAY_BRACKET_BYTES = 2;
+const ARRAY_COMMA_BYTES = 1;
+
+/**
+ * The characters a call's time is kept in, in base 36 and padded to a fixed width so that times compare as text. `CALL_TIME_CHARS` characters hold every time below `CALL_TIME_RADIX ** CALL_TIME_CHARS` milliseconds after 1970; a time beyond that or a negative one is kept as none. This many characters are enough for the times of thousands of years, where one fewer would end within the lifetime of the code and make every call untimed from then on, at the cost of one byte in every entry.
+ */
+const CALL_TIME_CHARS = 9;
 const CALL_TIME_RADIX = 36;
 
 /**
- * How unlikely a new call or name is to be mistaken for one remembered, as a power of two: a digest that matches by chance makes a genuine call, and the results that wait for it, vanish without a trace, and makes a name uncounted. The digest is the base 64 characters of a hash, six bits each.
+ * How unlikely a digest is to lose anything, as powers of two. A digest that matches another by chance makes a genuine call, and the results that wait for it, vanish without a trace, and makes a name uncounted. A session is assumed to make no more than two to the `SESSION_CALLS_BOUND_BITS` new calls (and so new names), far above any session measured, and the chance that it loses even one to a match is held below two to the minus `SESSION_LOSS_TOLERANCE_BITS`: with `entries` the most calls and skipped calls kept, or the most names of one kind counted, that takes more than `SESSION_CALLS_BOUND_BITS + log2(entries) + SESSION_LOSS_TOLERANCE_BITS` bits of digest, which is `DIGEST_BITS_PER_CHAR` bits to the character.
  */
-const COLLISION_TOLERANCE_BITS = 32;
+const SESSION_CALLS_BOUND_BITS = 20;
+const SESSION_LOSS_TOLERANCE_BITS = 10;
 const DIGEST_BITS_PER_CHAR = 6;
 
 /** What one remembered call takes in the cache file for a digest of `digestChars` characters: the digest and the time, the quotes around them and a comma. */
@@ -49,32 +60,55 @@ function rememberedCallBytes(digestChars: number): number {
   return digestChars + CALL_TIME_CHARS + QUOTES_AND_COMMA_BYTES;
 }
 
-/** How many calls fit the memory of calls, and how many names of one kind the names' memory counts, for a digest of `digestChars` characters. */
+/** How many calls fit the memory of calls for a digest of `digestChars` characters, in all the copies of it the cache file holds. */
 function callsRemembered(digestChars: number): number {
   return Math.floor(CALL_MEMORY_BYTES / (CALL_MEMORY_COPIES * rememberedCallBytes(digestChars)));
 }
+
+/** How many calls fit the list of skipped calls for a digest of `digestChars` characters, in all the copies of it the cache file holds. */
+function callsSkippedAtMost(digestChars: number): number {
+  return Math.floor(SKIPPED_MEMORY_BYTES / (CALL_MEMORY_COPIES * rememberedCallBytes(digestChars)));
+}
+
+/** How many names of one kind fit the names' memory, counted by a digest of `digestChars` characters. */
 function namesCounted(digestChars: number): number {
   return Math.floor(NAME_MEMORY_BYTES / (digestChars + QUOTES_AND_COMMA_BYTES));
 }
 
-/** The shortest digest for which a new call or name matching any of those remembered, which are the most there is room for, is within the tolerance. */
-function digestCharsWithinTolerance(): number {
+/**
+ * The shortest digest, in characters, of more than `bitsBeyondEntries + log2(entries)` bits, where `entriesAt(chars)` is how many entries fit when the digest has `chars` characters. With that many bits a single new digest matches one of the entries kept by chance with a probability below two to the minus `bitsBeyondEntries`, so over two to the `t` new ones any match has a probability below two to the minus `bitsBeyondEntries - t`.
+ */
+export function shortestDigestChars(bitsBeyondEntries: number, entriesAt: (chars: number) => number): number {
   let chars = 1;
-  while (DIGEST_BITS_PER_CHAR * chars < COLLISION_TOLERANCE_BITS + Math.log2(Math.max(callsRemembered(chars), namesCounted(chars)))) {
+  while (DIGEST_BITS_PER_CHAR * chars <= bitsBeyondEntries + Math.log2(entriesAt(chars))) {
     chars += 1;
   }
   return chars;
 }
 
-const CALL_DIGEST_CHARS = digestCharsWithinTolerance();
+/**
+ * The characters kept of the digest of a call id or a name. The bounds above are round powers of two, and the shortest digest that satisfies them holds up to `DIGEST_BITS_PER_CHAR` bits more than they need, so a bound moved one power of two either way, or a smaller figure for the entries at the lengths that decide, changes none of the constants derived from this one.
+ */
+export const CALL_DIGEST_CHARS = shortestDigestChars(SESSION_CALLS_BOUND_BITS + SESSION_LOSS_TOLERANCE_BITS, (chars) => Math.max(callsRemembered(chars) + callsSkippedAtMost(chars), namesCounted(chars)));
 
 /**
- * The most calls remembered, to tell a call written again from a new one. A resumed session has the history it resumes from written to its transcript again, with the same ids and the original times. A call is a replay when it is remembered, or when it is no newer than the newest call forgotten that was in order, which is every call the memory is too short to hold; a forgotten call stamped later than a call written after it (a clock that jumped) is not in order and moves nothing. So the memory's length decides only how far back a call that was never written before can lie and still be read as new, and a replay of a call that was in order is never read as new at any length.
+ * The largest share of the timed calls remembered after a forgotten call that may be older than it for the call to be in order. A smaller share is safer against being blinded by a clock that ran ahead, since the run must then be longer than one minus the share of the memory, and costs more entries in the list of skipped calls, since a late genuine call or two then makes a forgotten call not in order sooner. A larger share is the reverse.
+ */
+const MAX_OLDER_SHARE = 0.5;
+
+/**
+ * The most calls remembered, to tell a call written again from a new one. A resumed session has the history it resumes from written to its transcript again, with the same ids and the original times. A call is a replay when it is remembered (or was skipped, see `MAX_SKIPPED_CALLS`), or when it is no newer than the newest in-order call forgotten.
+ *
+ * A forgotten call is in order when no more than `MAX_OLDER_SHARE` of the calls with a time remembered after it are older than it. One that is not, stamped ahead of the calls that followed (by a clock that jumped), would make every genuine call until that time look like a replay, so it moves nothing. A genuine call written late, stamped before calls written before it, is one of the older calls but cannot decide on its own, so it does not hold the floor back.
+ *
+ * So the memory's length decides only how far back a call that was never written before can lie and still be read as new, and a replay of a call with a time that was in order is never read as new at any length. A call with no time is recognised only while it is remembered.
+ *
+ * The floor is raised wrongly, and every later genuine call taken for history until real time passes the stamp, only when a forgotten call that was stamped ahead of the genuine calls to come is in order because at least half of the timed calls then remembered are stamped no earlier than it: a clock that ran ahead and came back for more than half as many calls as the memory holds, in one run or in several that are later than the forgotten call. (In a session whose stamps rise, at least half of the calls remembered are always no earlier than the one forgotten, so it is the stamping ahead that carries the condition.) A resumed session can build the same from its replay: ahead calls forgotten while the list of skipped calls was full are read as new when the history is written again, and enter the memory with their stamps. Recognising every skipped call exactly cannot be bounded. A bounded alternative exists, which sends a forgotten call stamped at or after the time of the read to the list of skipped calls; it was not adopted because the fold, and so the content of the cache, would then depend on when the bytes were read.
  */
 export const MAX_REMEMBERED_CALLS = callsRemembered(CALL_DIGEST_CHARS);
 
-/** The most names of each kind kept whole, for the rows to draw: they are cut to the cap on any stored text, so this many fit the budget at the most. Past it a name is only counted. */
-export const MAX_TRACKED_NAMES = Math.floor(NAME_MEMORY_BYTES / MAX_STORED_TEXT_CHARS);
+/** The most forgotten calls that were not in order the state remembers beside the others, by digest and time, so that their replays are recognised too: without them a replay of such a call is read as new, and one that rewrites the todo list would put an old list over the current one. Such calls are rare, so the room is small; when it is full the oldest is let go, and its replay is then read as new again. One whose time the floor has passed needs no room, since the floor recognises it. */
+export const MAX_SKIPPED_CALLS = callsSkippedAtMost(CALL_DIGEST_CHARS);
 
 /** The most names of each kind counted after those kept whole, each by its digest. A session that used more has a count that is a floor, and says so. */
 export const MAX_COUNTED_NAMES = namesCounted(CALL_DIGEST_CHARS);
@@ -197,9 +231,11 @@ export const ActivityLatestSchema = z.strictObject({
   todosEdited: z.literal(true).optional(),
   /** Results read before their calls, oldest first. */
   unmatchedResults: z.array(CallResultSchema),
-  /** The latest calls made, of every kind, oldest first, each as the digest of its id followed by its time in base 36: a call remembered is not made again by a record that repeats it. */
+  /** The latest calls made, of every kind, oldest first, each as the digest of its id followed by its time in `CALL_TIME_CHARS` characters of base 36, or nothing when it has none: a call remembered is not made again by a record that repeats it. */
   rememberedCalls: z.array(z.string()),
-  /** The time of the newest call forgotten from `rememberedCalls`: a call at or before it is history written again, whatever its id. */
+  /** The forgotten calls that were stamped out of order, in the form of `rememberedCalls`, kept while the floor has not passed them. */
+  skippedCalls: z.array(z.string()),
+  /** The time of the newest in-order call forgotten from `rememberedCalls`: a call at or before it is history written again, whatever its id. */
   forgottenUpToMs: z.number().optional(),
   /** The response of the session's latest assistant record, which the records of one response share. A call is made in one response and answered before the next is written, so a call with no result when a response of another key appears was abandoned (an interrupted tool call). */
   responseKey: z.string().optional(),
@@ -228,18 +264,21 @@ export type ActivityState = z.infer<typeof ActivityStateSchema>;
 const EMPTY_NAME_SET: NameSet = { names: [], others: [] };
 
 /** The latest-state activity before any record has been read. */
-export const EMPTY_ACTIVITY_LATEST: ActivityLatest = { tools: [], agents: [], todos: [], unmatchedResults: [], rememberedCalls: [] };
+export const EMPTY_ACTIVITY_LATEST: ActivityLatest = { tools: [], agents: [], todos: [], unmatchedResults: [], rememberedCalls: [], skippedCalls: [] };
 
 /** The state before any record has been read. */
 export const EMPTY_ACTIVITY_STATE: ActivityState = { cumulative: { skills: EMPTY_NAME_SET, mcpServers: EMPTY_NAME_SET }, latest: EMPTY_ACTIVITY_LATEST };
 
-/** `text` cut to the most characters the state keeps of a text, between characters a person sees. */
+/** `text` cut to the most characters the state keeps of a text, between characters a person sees. The cut to twice that many code units first only bounds the work of finding the characters, since a character takes one or two units in nearly every text: any larger multiple gives the same result. */
 function stored(text: string): string {
   return graphemesOf(text.slice(0, MAX_STORED_TEXT_CHARS * 2))
     .slice(0, MAX_STORED_TEXT_CHARS)
     .join("");
 }
 
+/**
+ * The field `key` of `input` when it is a string with characters, else nothing. An empty string reads as absent, so `??` and `||` fall back the same at every call site.
+ */
 function stringField(input: Readonly<Record<string, unknown>> | undefined, key: string): string | undefined {
   const value = input?.[key];
   return typeof value === "string" && value !== "" ? value : undefined;
@@ -269,7 +308,9 @@ function targetOf(name: string, input: Readonly<Record<string, unknown>> | undef
   }
 }
 
-/** A todo's status as the client may spell it, or undefined for a spelling that is none of them. */
+/**
+ * A todo's status as the client may spell it, or undefined for a spelling that is none of them. The word it gives is never empty, so `??` and `||` fall back the same at every fallback on it.
+ */
 function todoStatusOf(status: unknown): z.infer<typeof TodoStatusSchema> | undefined {
   switch (status) {
     case "pending":
@@ -289,6 +330,7 @@ function todoStatusOf(status: unknown): z.infer<typeof TodoStatusSchema> | undef
 
 /** The list `TodoWrite` wrote, with the identifiers of the list it replaces kept on the items that still have their words: an item written again keeps the name later updates know it by, and two items with the same words each keep their own. */
 function replacedTodos(previous: readonly z.infer<typeof TodoSchema>[], written: readonly unknown[]): z.infer<typeof TodoSchema>[] {
+  // The list found is an array or nothing, and an array is true however empty, so either way of falling back reads the same.
   const idsByContent = new Map<string, string[]>();
   for (const item of previous) {
     if (item.id !== undefined) {
@@ -335,6 +377,7 @@ function foldTodoCall(state: ActivityLatest, call: ToolUse): ActivityLatest {
   }
   const index = todoIndexOf(state.todos, input?.taskId);
   const current = index === undefined ? undefined : state.todos[index];
+  // `current` is undefined exactly when `index` is, so either test alone decides; both are written for the types.
   if (index === undefined || current === undefined) {
     return { ...state, todosEdited: true };
   }
@@ -353,46 +396,58 @@ function digestOf(id: string): string {
 
 /** A call's time as it is kept in a memory entry: fixed width so that times compare as text, and nothing for a time that is unknown or does not fit. */
 function timeKeyOf(atMs: number | undefined): string {
-  const key = atMs === undefined || !Number.isSafeInteger(atMs) || atMs < 0 ? "" : atMs.toString(CALL_TIME_RADIX);
+  const key = atMs === undefined || atMs < 0 ? "" : atMs.toString(CALL_TIME_RADIX);
   return key.length > CALL_TIME_CHARS ? "" : key.padStart(key === "" ? 0 : CALL_TIME_CHARS, "0");
 }
 
 const timeKeyOfEntry = (entry: string): string => entry.slice(CALL_DIGEST_CHARS);
 
-/** True when the call `id`, written at `atMs`, has been read before: it is remembered, or it is no newer than the newest in-order call forgotten. Either way a record repeating it is history written again. */
+/** True when the call `id`, written at `atMs`, has been read before: it is remembered or skipped, or it is no newer than the newest in-order call forgotten. Either way a record repeating it is history written again. */
 function isRemembered(state: ActivityLatest, id: string, atMs: number | undefined): boolean {
   if (atMs !== undefined && state.forgottenUpToMs !== undefined && atMs <= state.forgottenUpToMs) {
     return true;
   }
   const digest = digestOf(id);
-  return state.rememberedCalls.some((entry) => entry.startsWith(digest));
+  return state.rememberedCalls.some((entry) => entry.startsWith(digest)) || state.skippedCalls.some((entry) => entry.startsWith(digest));
+}
+
+/** The entries that the floor has not passed, which are the ones the floor does not recognise already. */
+function beyondFloor(entries: readonly string[], floorMs: number | undefined): string[] {
+  return entries.filter((entry) => floorMs === undefined || Number.parseInt(timeKeyOfEntry(entry), CALL_TIME_RADIX) > floorMs);
 }
 
 /**
- * The state remembering the call `id` written at `atMs`. The oldest call remembered is forgotten when the memory is full, and its time becomes the one up to which every call is history, provided it was in order: no newer than every call remembered after it. A call stamped later than one written after it (a clock that ran ahead and came back) would otherwise make every genuine call until that time look like a replay; and the price of leaving it out is only that a replay of that one call, once it is forgotten, is read as new.
+ * The state remembering the call `id` written at `atMs`. When the memory is full the oldest call remembered is forgotten, and it has a time to give. If it was in order, that time becomes the one up to which every call is history; if not, its digest and time are kept apart, so that a replay of it is still recognised.
+ *
+ * Neither "no newer than every call remembered after it" nor the same capped at the oldest call remembered is used for in order. Each tells a call stamped ahead from the rest as well as this does, but one genuine call written late, stamped before the calls ahead of it, then holds the floor back for as long as it is remembered: the calls forgotten meanwhile are skipped, and when they are replayed they are read as new and enter the memory with their old times, which keeps the floor back and pushes genuine entries out. Counting how many are older makes a few late or ahead calls unable to decide.
  */
 function remember(state: ActivityLatest, id: string, atMs: number | undefined): ActivityLatest {
   const all = [...state.rememberedCalls, `${digestOf(id)}${timeKeyOf(atMs)}`];
   const kept = all.slice(-MAX_REMEMBERED_CALLS);
-  const oldestKept = kept.map(timeKeyOfEntry).filter((key) => key !== "").reduce<string | undefined>((oldest, key) => (oldest === undefined || key < oldest ? key : oldest), undefined);
-  const inOrder = all
-    .slice(0, -MAX_REMEMBERED_CALLS)
-    .map(timeKeyOfEntry)
-    .filter((key) => key !== "" && (oldestKept === undefined || key <= oldestKept));
-  const newest = inOrder.reduce<string | undefined>((latest, key) => (latest === undefined || key > latest ? key : latest), undefined);
-  const forgottenUpToMs = Math.max(state.forgottenUpToMs ?? Number.NEGATIVE_INFINITY, newest === undefined ? Number.NEGATIVE_INFINITY : Number.parseInt(newest, CALL_TIME_RADIX));
-  return { ...state, rememberedCalls: kept, ...(Number.isFinite(forgottenUpToMs) ? { forgottenUpToMs } : {}) };
+  const [forgotten] = all.slice(0, -MAX_REMEMBERED_CALLS);
+  const forgottenKey = forgotten === undefined ? "" : timeKeyOfEntry(forgotten);
+  if (forgotten === undefined || forgottenKey === "") {
+    return { ...state, rememberedCalls: kept };
+  }
+  const keptTimes = kept.map(timeKeyOfEntry).filter((key) => key !== "");
+  if (keptTimes.filter((key) => key < forgottenKey).length <= keptTimes.length * MAX_OLDER_SHARE) {
+    // The fallback only lowers the maximum and a kept time is never negative, so a remembered floor of zero would give the same maximum as none.
+    const forgottenUpToMs = Math.max(state.forgottenUpToMs ?? Number.NEGATIVE_INFINITY, Number.parseInt(forgottenKey, CALL_TIME_RADIX));
+    return { ...state, rememberedCalls: kept, skippedCalls: beyondFloor(state.skippedCalls, forgottenUpToMs), forgottenUpToMs };
+  }
+  return { ...state, rememberedCalls: kept, skippedCalls: beyondFloor([...state.skippedCalls, forgotten], state.forgottenUpToMs).slice(-MAX_SKIPPED_CALLS) };
 }
 
 /** The latest-state activity before any record has been read, remembering the calls `earlier` has: for folding a later part of the transcript on its own, so that the history it repeats from the part `earlier` was folded from is not read as new. */
 export function replayMemoryOf(earlier: ActivityLatest): ActivityLatest {
-  return { ...EMPTY_ACTIVITY_LATEST, rememberedCalls: earlier.rememberedCalls, ...(earlier.forgottenUpToMs === undefined ? {} : { forgottenUpToMs: earlier.forgottenUpToMs }) };
+  return { ...EMPTY_ACTIVITY_LATEST, rememberedCalls: earlier.rememberedCalls, skippedCalls: earlier.skippedCalls, ...(earlier.forgottenUpToMs === undefined ? {} : { forgottenUpToMs: earlier.forgottenUpToMs }) };
 }
 
 /** The state after a tool call, and the results that were written ahead of it, applied in the order they were read. */
 function foldToolUse(state: ActivityLatest, call: ToolUse, atMs: number | undefined): ActivityLatest {
   const added = foldTrackedCall(state, call, atMs);
   const waiting = added.unmatchedResults.filter((result) => result.id === call.id);
+  // A fold's state is an object, never a falsy value, so `||` would keep the same state.
   return waiting.reduce((folded, result) => applyResult(folded, result) ?? folded, { ...added, unmatchedResults: added.unmatchedResults.filter((result) => result.id !== call.id) });
 }
 
@@ -427,7 +482,7 @@ function applyResult(state: ActivityLatest, result: Readonly<CallResult>): Activ
   if (result.announced === true ? !answersAgent : !state.tools.some((tool) => tool.id === result.id) && !answersAgent && !state.todos.some((item) => item.pendingCallId === result.id)) {
     return undefined;
   }
-  const tools = state.tools.map((tool) => (tool.id === result.id && result.announced !== true ? { ...tool, ...(result.atMs === undefined ? {} : { endedAtMs: result.atMs }), ...(result.failed === true ? { failed: true as const } : {}) } : tool));
+  const tools = state.tools.map((tool) => (tool.id === result.id ? { ...tool, ...(result.atMs === undefined ? {} : { endedAtMs: result.atMs }), ...(result.failed === true ? { failed: true as const } : {}) } : tool));
   const agents = state.agents.map((agent) => {
     if (agent.id !== result.id) {
       return agent;
@@ -468,6 +523,7 @@ function createdTaskId(content: string | readonly { readonly text?: string | und
   const text = typeof content === "string" ? content : content?.find((part) => part.text !== undefined)?.text;
   const named = text === undefined ? undefined : CREATED_TASK.exec(text)?.[1];
   const stamped = outcome?.task?.id;
+  // The pattern's capture is at least one character, so a name found in the text is never empty and `||` would read the same.
   return named ?? (stamped === undefined ? undefined : String(stamped));
 }
 
@@ -502,6 +558,7 @@ export function foldActivityLatest(state: ActivityLatest, record: TranscriptReco
       next = foldAgentAnnouncement(next, toolUseId, atMs);
     }
   }
+  // The schema's least message id is one character, so an empty one is already absent and `||` would read the same.
   const responseKey = record.type === "assistant" ? (record.message?.id ?? record.requestId) : undefined;
   if (responseKey !== undefined && responseKey !== next.responseKey) {
     next = next.responseKey === undefined ? { ...next, responseKey } : foldNewResponse(next, responseKey);
@@ -532,12 +589,17 @@ export function foldActivityLatest(state: ActivityLatest, record: TranscriptReco
   return next;
 }
 
-/** `set` with `name` counted: kept whole while there is room, else by its digest, and noted as overflowed when the digests are full too. A name used before changes nothing. */
+/** What a name takes in the cache file as an element of a JSON array: its quoted text in UTF-8, escapes included, and the comma. */
+function nameBytes(name: string): number {
+  return Buffer.byteLength(JSON.stringify([name])) - ARRAY_BRACKET_BYTES + ARRAY_COMMA_BYTES;
+}
+
+/** `set` with `name` counted: kept whole while no name has gone to a digest and the names kept whole have room in bytes, else by its digest, and noted as overflowed when the digests are full too. A name used before changes nothing. Names are cut to the cap on any stored text, which in UTF-8 and with escapes is many times as many bytes, so the room is counted in bytes. */
 function withName(set: NameSet, name: string | undefined): NameSet {
   if (name === undefined || name === "" || set.names.includes(name)) {
     return set;
   }
-  if (set.names.length < MAX_TRACKED_NAMES) {
+  if (set.others.length === 0 && set.names.reduce((total, kept) => total + nameBytes(kept), nameBytes(name)) <= NAME_MEMORY_BYTES) {
     return { ...set, names: [...set.names, name] };
   }
   const digest = digestOf(name);
@@ -637,7 +699,7 @@ function visibleNames(set: NameSet): NamesFact {
  */
 export function activityFactsOf(state: ActivityState, nowMs: number, limits: Readonly<LiveLimits>, newer?: ActivityLatest): ActivityFacts {
   const latest: ActivityLatest =
-    newer === undefined ? state.latest : { tools: newer.tools, agents: newer.agents, todos: newer.todosReplaced === true ? newer.todos : [], unmatchedResults: [], rememberedCalls: [] };
+    newer === undefined ? state.latest : { tools: newer.tools, agents: newer.agents, todos: newer.todosReplaced === true ? newer.todos : [], unmatchedResults: [], rememberedCalls: [], skippedCalls: [] };
   return {
     tools: latest.tools.flatMap((tool): ToolCallFact[] => {
       const name = visibleDisplayText(tool.name);

@@ -19,7 +19,7 @@ const NEWLINE = 0x0a;
 
 /** The kind of cache file the reader keeps, and the version of what it holds: a file of another version is read as absent. */
 const CACHE_KIND = "transcript";
-const CACHE_VERSION = 7;
+const CACHE_VERSION = 8;
 
 const TranscriptCacheSchema = z.strictObject({
   version: z.literal(CACHE_VERSION),
@@ -149,7 +149,7 @@ export function readTranscript(ports: StatuslinePorts, transcriptPath: string, n
 }
 
 /**
- * The latest-state facts of the end of a transcript of `size` bytes, to carry in the cache: `previous` carried on over what was appended since when that is no more than a read, else the last read's worth of the transcript from its first whole line, folded from nothing but the calls `cumulative` remembers when it has not read as far as that line, so history the end repeats from the part already read is not taken for new calls (history repeated from the part between the two is, since nothing remembers it). Nothing when no line starts inside that read.
+ * The latest-state facts of the end of a transcript of `size` bytes, to carry in the cache: `previous` carried on over what was appended since when that is no more than a read, else the last read's worth of the transcript from its first whole line, folded from nothing but the calls `cumulative` remembers when it has not read past that line's start, so history the end repeats from the part already read is not taken for new calls (history repeated from the part between the two is, since nothing remembers it; and when the two overlap nothing is seeded, since the end's own calls are in the part read). Nothing when no line starts inside that read.
  */
 function newerFrom(ports: StatuslinePorts, transcriptPath: string, size: number, previous: TranscriptCache["newer"], cumulative: CumulativeCache): TranscriptCache["newer"] {
   if (previous !== undefined && previous.offset <= size && size - previous.offset <= MAX_TRANSCRIPT_READ_BYTES) {
