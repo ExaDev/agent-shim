@@ -345,7 +345,7 @@ export interface AgentFact {
   readonly endedAtMs: number | undefined;
 }
 
-export interface TodoFact {
+interface TodoFact {
   readonly content: string;
   readonly status: z.infer<typeof TodoStatusSchema>;
 }
