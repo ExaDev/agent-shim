@@ -15,7 +15,7 @@ const SOON = { resetsAt: "2026-10-16T10:30:00.000Z", periodMs: FIVE_HOUR_PERIOD_
 const NEXT_WEEK = { resetsAt: "2026-10-20T10:30:00.000Z", periodMs: undefined };
 
 function textFor(window: Readonly<Parameters<typeof formatResetTime>[0]>, usage: Readonly<NonNullable<StatuslineSettings["usage"]>>) {
-  return formatResetTime(window, NOW_MS, resolveStatusline({ usage }), CLOCK, translatorFor("en"));
+  return formatResetTime(window, NOW_MS, resolveStatusline({ usage }), CLOCK, translatorFor("en"), false);
 }
 
 describe("formatResetTime", () => {
@@ -40,6 +40,16 @@ describe("formatResetTime", () => {
   it("says nothing of a share it cannot work out, and keeps the wall-clock time beside it", () => {
     expect(textFor(NEXT_WEEK, { timeFormat: "elapsed" }).text).toBe("");
     expect(textFor(NEXT_WEEK, { timeFormat: "elapsedAndAbsolute" }).text).toBe("at 20 Oct 10:30");
+  });
+
+  it("introduces a reset still to come when asked to, except in the elapsed forms, and never one that is past", () => {
+    const labelled = (window: Readonly<Parameters<typeof formatResetTime>[0]>, usage: Readonly<NonNullable<StatuslineSettings["usage"]>>): string => formatResetTime(window, NOW_MS, resolveStatusline({ usage }), CLOCK, translatorFor("en"), true).text;
+    expect(labelled(SOON, {})).toBe("resets in 1h 30m");
+    expect(labelled(SOON, { timeFormat: "absolute" })).toBe("resets at 10:30");
+    expect(labelled(SOON, { timeFormat: "both" })).toBe("resets in 1h 30m, at 10:30");
+    expect(labelled(SOON, { timeFormat: "elapsed" })).toBe("70% elapsed");
+    expect(labelled(SOON, { timeFormat: "elapsedAndAbsolute" })).toBe("70% elapsed, at 10:30");
+    expect(labelled({ resetsAt: "2026-10-16T08:00:00.000Z", periodMs: FIVE_HOUR_PERIOD_MS }, {})).toBe("available");
   });
 
   it("calls a reset that is past or unknown available in every form that tells a time, and a past window wholly elapsed", () => {
@@ -71,6 +81,6 @@ describe("formatResetTime", () => {
 
   it("writes the wall-clock time under the clock settings", () => {
     const settings = resolveStatusline({ usage: { timeFormat: "absolute" }, clock: { hourCycle: "h12", seconds: true } });
-    expect(formatResetTime(SOON, NOW_MS, settings, CLOCK, translatorFor("en")).text).toBe("at 10:30:00 am");
+    expect(formatResetTime(SOON, NOW_MS, settings, CLOCK, translatorFor("en"), false).text).toBe("at 10:30:00 am");
   });
 });

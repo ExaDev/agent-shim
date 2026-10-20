@@ -190,3 +190,49 @@ describe("the rows the language setting reaches", () => {
     expect(EVERYTHING.layout?.rows).toEqual(expect.arrayContaining(STATUSLINE_ROWS.filter((row) => row !== "gitFiles")));
   });
 });
+
+describe("a detached head", () => {
+  const DETACHED_ONLY: StatuslineSettings = { layout: { header: ["vcs"], rows: [] } };
+  const NUL = "\0";
+
+  function detached(language: StatuslineLanguage): string {
+    const payload = parseClientPayload({ cwd: "/work" });
+    const run = (_file: string, args: readonly string[]): string | undefined => {
+      if (args.includes("status")) {
+        return `# branch.oid 0123${NUL}# branch.head (detached)${NUL}`;
+      }
+      return args.includes("--short") ? "abc1234\n" : undefined;
+    };
+    return renderStatuslineBlock({ summary: SUMMARY, view: viewOf(payload), payload, terminalWidth: WIDE_TERMINAL, nowMs: T0, settings: resolveStatusline({ ...DETACHED_ONLY, language }), ports: fakeStatuslinePorts({ env: { NO_COLOR: "1" }, run }) });
+  }
+
+  it("is named by its commit in the language's words", () => {
+    expect(detached("en")).toBe("git:(detached:abc1234)");
+    expect(detached("zh-Hans")).toBe("git:(\u5206\u79bb\u4e8e abc1234)");
+    expect(detached("zh-Hant")).toBe("git:(\u5206\u96e2\u65bc abc1234)");
+  });
+});
+
+describe("the reset of a quota window", () => {
+  const RESETS: StatuslineSettings = { layout: { header: [], rows: ["quota"] }, usage: { bar: false } };
+  const row = (language: StatuslineLanguage, usage: Readonly<NonNullable<StatuslineSettings["usage"]>>): string => draw({ language, settings: { ...RESETS, usage: { ...RESETS.usage, ...usage } }, summary: { ...SUMMARY, sevenDayUsed: undefined } })[0] ?? "";
+
+  it("says that a wall-clock time is the reset, with the label and without it, in every language", () => {
+    expect(row("en", { timeFormat: "absolute" })).toBe("5h 25.0% (at 11:30)");
+    expect(row("en", { timeFormat: "absolute", resetLabel: true })).toBe("5h 25.0% (resets at 11:30)");
+    expect(row("zh-Hans", { timeFormat: "absolute" })).toBe("5\u5c0f\u65f6 25.0% (11:30 \u91cd\u7f6e)");
+    expect(row("zh-Hans", { timeFormat: "absolute", resetLabel: true })).toBe("5\u5c0f\u65f6 25.0% (\u91cd\u7f6e\u4e8e 11:30)");
+    expect(row("zh-Hant", { timeFormat: "absolute" })).toBe("5\u5c0f\u6642 25.0% (11:30 \u91cd\u8a2d)");
+  });
+
+  it("keeps the meaning of a reset when the share elapsed and the time are told together", () => {
+    expect(row("en", { timeFormat: "elapsedAndAbsolute" })).toBe("5h 25.0% (71% elapsed, at 11:30)");
+    expect(row("zh-Hans", { timeFormat: "elapsedAndAbsolute" })).toBe("5\u5c0f\u65f6 25.0% (\u5df2\u8fc7 71%\uff0c11:30 \u91cd\u7f6e)");
+  });
+
+  it("tells the time left and the time of day together, introduced when the label asks", () => {
+    expect(row("en", { timeFormat: "both", resetLabel: true })).toBe("5h 25.0% (resets in 1h 26m, at 11:30)");
+    expect(row("zh-Hans", { timeFormat: "both", resetLabel: true })).toBe("5\u5c0f\u65f6 25.0% (\u8ddd\u91cd\u7f6e 1h 26m\uff0c\u4e8e 11:30)");
+    expect(row("zh-Hans", { timeFormat: "both" })).toBe("5\u5c0f\u65f6 25.0% (1h 26m\uff0c11:30 \u91cd\u7f6e)");
+  });
+});

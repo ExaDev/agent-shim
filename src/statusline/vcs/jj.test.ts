@@ -66,7 +66,7 @@ describe("readJjStatus", () => {
 
   it("reads the first bookmark, the dirty flag and the conflict flag from one read-only call", () => {
     const { ports, calls } = jjPorts(`wrulwzyw${FS}main${RS}other${FS}1${FS}0\n`);
-    expect(readJjStatus(ports, "/r")).toEqual({ kind: "jj", branch: "main", dirty: true, conflict: false, ahead: 0, behind: 0, lineDiff: undefined, files: undefined });
+    expect(readJjStatus(ports, "/r")).toEqual({ kind: "jj", branch: "main", detached: false, dirty: true, conflict: false, ahead: 0, behind: 0, lineDiff: undefined, files: undefined });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ file: "jj", cwd: "/r" });
     expect(calls[0]?.args).toEqual(expect.arrayContaining(["--ignore-working-copy", "--no-pager", "--color", "never"]));

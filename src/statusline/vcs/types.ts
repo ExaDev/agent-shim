@@ -15,8 +15,10 @@ export interface ChangedFile {
 /** What the statusline knows of the working directory's version control: git's or Jujutsu's, never both. */
 export interface VcsStatus {
   readonly kind: "git" | "jj";
-  /** The branch (git) or first bookmark (Jujutsu), else a tag, `detached:<commit>` or the change id. */
+  /** The branch (git) or first bookmark (Jujutsu), else a tag, the abbreviated commit of a detached HEAD, or the change id. */
   readonly branch: string;
+  /** Whether `branch` is the abbreviated commit of a detached HEAD that no tag names, which the segment says in words. */
+  readonly detached: boolean;
   readonly dirty: boolean;
   /** Whether the working-copy commit has an unresolved conflict; always false for git, whose conflicts are files. */
   readonly conflict: boolean;
