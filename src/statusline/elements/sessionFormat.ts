@@ -39,10 +39,3 @@ export function formatAgo(ms: number): string {
   }
   return `${twoUnits(Math.floor(hours / HOURS_PER_DAY), hours % HOURS_PER_DAY, "d", "h")} ago`;
 }
-
-/** A moment as `2026-10-19 20:05` in the time zone `timeZone` (an IANA name). */
-export function formatStartDate(atMs: number, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(atMs);
-  const field = (type: Intl.DateTimeFormatPartTypes): string => parts.find((part) => part.type === type)?.value ?? "";
-  return `${field("year")}-${field("month")}-${field("day")} ${field("hour")}:${field("minute")}`;
-}
