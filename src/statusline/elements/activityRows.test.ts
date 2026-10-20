@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveStatusline, type StatuslineSettings } from "../../config/statusline";
-import { ESCAPE } from "../ansi";
+import { ESCAPE, visibleLength } from "../ansi";
 import { createPalette } from "../palette";
 import { fakeRenderContext } from "../testing";
 import { EMPTY_ACTIVITY_FACTS, type ActivityFacts, type AgentFact, type ToolCallFact } from "../transcript/activity";
@@ -22,6 +22,10 @@ const FIVE = 5;
 const SEVEN = 7;
 const TWENTY_FIVE = 25;
 const FIFTY_ONE = 51;
+const TWENTY_COLUMNS = 20;
+const THIRTY_COLUMNS = 30;
+const FORTY_COLUMNS = 40;
+const ONE_HOUR_ONE_MINUTE = 3_660_000;
 const TWELVE_SECONDS = 12_000;
 const MAX_KINDS_SHOWN = 4;
 const THREE_MINUTES = 180_000;
@@ -246,6 +250,19 @@ describe("the agents row", () => {
     expect(draw([described], { width: "\u25D0 Explore (12s)".length })).toEqual(["\u25D0 Explore (12s)"]);
   });
 
+  it("fits every line to the width, giving up the description, then the model, then the end of the type", () => {
+    const long = agent({ type: "general-purpose", model: "claude-opus-4-8", description: "Write the tests for the rows", startedAtMs: NOW_MS - ONE_HOUR_ONE_MINUTE });
+    expect(draw([long], { width: WIDE })).toEqual(["\u25D0 general-purpose [opus-4.8]: Write the tests for the rows (1h 1m)"]);
+    expect(draw([long], { width: FORTY_COLUMNS })).toEqual(["\u25D0 general-purpose [opus-4.8] (1h 1m)"]);
+    expect(draw([long], { width: THIRTY_COLUMNS })).toEqual(["\u25D0 general-purpose (1h 1m)"]);
+    expect(draw([long], { width: TWENTY_COLUMNS })).toEqual([`\u25D0 general-p${ELLIPSIS} (1h 1m)`]);
+    for (const width of [TWENTY_COLUMNS, THIRTY_COLUMNS, FORTY_COLUMNS]) {
+      for (const drawn of draw([long], { width })) {
+        expect(visibleLength(drawn), `width ${String(width)}`).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+
   it("paints the type in the agent colour and the marker in the warning colour", () => {
     const settings: StatuslineSettings = { colours: { agent: "magenta", warning: "yellow", label: "blue" } };
     const [line = ""] = draw([agent()], { settings, colour: true });
@@ -281,6 +298,26 @@ describe("the todos row", () => {
   it("cuts the words of the item in progress", () => {
     expect(draw([{ content: "w".repeat(FIFTY_ONE + FIVE), status: "in_progress" }])).toEqual([`\u25B8 ${"w".repeat(TODO_COLUMNS - "...".length)}... (0/1)`]);
     expect(draw([{ content: "w".repeat(FIFTY_ONE - 1), status: "in_progress" }])).toEqual([`\u25B8 ${"w".repeat(FIFTY_ONE - 1)} (0/1)`]);
+  });
+
+  it("fits the line to the width with the progress whole, and the words giving way", () => {
+    const working = [{ content: "Write the tests for the new rows and ship them", status: "in_progress" as const }, { content: "b", status: "pending" as const }];
+    const finished = [{ content: "a", status: "completed" as const }, { content: "b", status: "completed" as const }];
+    expect(draw(working, { width: TWENTY_COLUMNS })).toEqual(["\u25B8 Write the... (0/2)"]);
+    expect(draw(working, { width: THIRTY_COLUMNS })).toEqual(["\u25B8 Write the tests for... (0/2)"]);
+    expect(draw(working, { width: FORTY_COLUMNS })).toEqual(["\u25B8 Write the tests for the new r... (0/2)"]);
+    expect(draw(finished, { width: TWENTY_COLUMNS })).toEqual(["\u2713 All todos... (2/2)"]);
+    expect(draw(finished, { width: THIRTY_COLUMNS })).toEqual(["\u2713 All todos complete (2/2)"]);
+    for (const width of [TWENTY_COLUMNS, THIRTY_COLUMNS, FORTY_COLUMNS]) {
+      for (const drawn of [...draw(working, { width }), ...draw(finished, { width })]) {
+        expect(visibleLength(drawn), `width ${String(width)}`).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+
+  it("leaves the words out and draws the progress alone when even a cut word does not fit", () => {
+    const [drawn = ""] = linesOf(todosRow({ ...contextOf(facts({ todos: [{ content: "Write", status: "in_progress" }] }), { width: 1 }), width: 1 }));
+    expect(drawn).toBe("\u25B8 (0/1)");
   });
 
   it("paints the marker in the warning colour when work is in progress and the context colour when it is all done", () => {
