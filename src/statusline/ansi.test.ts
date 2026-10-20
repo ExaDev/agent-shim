@@ -11,7 +11,7 @@ const FIVE_COLUMNS = 5;
 describe("visibleLength", () => {
   it("counts the columns a string draws, not its code units", () => {
     expect(visibleLength("abc")).toBe(THREE_COLUMNS);
-    expect(visibleLength("日本語")).toBe(SIX_COLUMNS);
+    expect(visibleLength("\u65e5\u672c\u8a9e")).toBe(SIX_COLUMNS);
     expect(visibleLength("\u{1F469}\u200D\u{1F4BB}")).toBe(2);
     expect(visibleLength("e\u0301")).toBe(1);
   });

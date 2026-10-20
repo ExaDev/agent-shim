@@ -144,7 +144,7 @@ describe("StatuslineSchema colours and bar characters", () => {
   });
 
   it("accepts one visible character for a bar, and refuses none, several and invisible ones", () => {
-    for (const value of ["#", "=", "█", "▰"]) {
+    for (const value of ["#", "=", "\u2588", "\u25b0"]) {
       expect(StatuslineSchema.safeParse({ bar: { filled: value } }).success, value).toBe(true);
     }
     for (const value of ["", "ab", " ", "\n", "\u200b", "\u001b", "\u2028"]) {
