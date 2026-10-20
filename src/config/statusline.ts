@@ -133,9 +133,10 @@ const SHAPES = {
   layout: {
     header: distinctList(z.enum(STATUSLINE_HEADER_SEGMENTS)).describe("The header segments to draw, in drawing order; a segment left out is hidden, and an empty list hides the header."),
     rows: distinctList(z.enum(STATUSLINE_ROWS)).describe("The rows to draw below the header, in drawing order; a row left out is hidden, and an empty list hides every row."),
-    mode: z.enum(["expanded", "compact"]).describe("How the statusline is laid out: expanded draws the header and then the rows, each on lines of its own as layout.merge allows, and compact draws the header segments and every row's content on one line, starting a new line only where the line would be wider than the width. layout.merge, layout.rightAlign and layout.rule have no effect in compact."),
+    mode: z.enum(["expanded", "compact"]).describe("How the statusline is laid out: expanded draws the header and then the rows, each on lines of its own as layout.merge allows, and compact draws the header segments and every row's content on one line, starting a new line only where the line would be wider than the width. layout.mergeBars, layout.merge, layout.rightAlign and layout.rule have no effect in compact."),
     rule: z.enum(["none", "belowHeader"]).describe("Whether a rule is drawn across the line between the header and the rows beneath it, as wide as the header's widest line (at least twenty columns, at most the width); it is drawn only when both the header and the rows have something to show, and not in the compact layout."),
-    merge: mergeGroups.describe("Groups of rows that share a line when they sit next to each other in layout.rows and fit on one line together, and are drawn on lines of their own when they do not; each group names at least two rows, and no row belongs to two groups. An empty list gives every row its own line."),
+    mergeBars: z.boolean().describe("Whether bar rows that sit next to each other in layout.rows share a line, and one grid, when they fit (the context and quota bars do by default); when false each bar row is on a line of its own, its bars still aligned to its neighbours'. A row of text is never joined by this setting, whichever form the quota row takes: layout.merge does that."),
+    merge: mergeGroups.describe("Groups of rows that share a line when they sit next to each other in layout.rows and fit on one line together, and are drawn on lines of their own when they do not; each group names at least two rows, and no row belongs to two groups. A group may mix bar rows and rows of text, which are joined with the separator when every member is a single line. Bar rows outside a group follow layout.mergeBars."),
     rightAlign: distinctList(z.enum(STATUSLINE_ROWS)).describe("Rows that start the right-aligned part of a merged line: the first of them to appear on a line, and the rows after it, are pushed to the right edge, with the gap padded by spaces. A row named here must belong to a group in layout.merge, and it has no effect when it is the first row of its line."),
     maxWidth: z.number().int().min(0).max(MAX_STATUSLINE_COLUMNS).describe("The width in columns to draw for when the client reports none and the COLUMNS environment variable names none, in place of the 80 it would otherwise assume; 0 leaves it at that."),
     forceMaxWidth: z.boolean().describe("Whether maxWidth is the width drawn for whatever the client reports, even when the terminal is narrower or wider; it needs maxWidth to be set."),
@@ -311,7 +312,7 @@ export type ResolvedStatusline = z.infer<typeof ResolvedStatuslineSchema>;
 
 /** What the statusline draws when no layer sets a key. */
 export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
-  layout: { header: [...DEFAULT_HEADER_SEGMENTS], rows: [...DEFAULT_ROWS], mode: "expanded", rule: "none", merge: [["context", "quota"]], rightAlign: [], maxWidth: 0, forceMaxWidth: false },
+  layout: { header: [...DEFAULT_HEADER_SEGMENTS], rows: [...DEFAULT_ROWS], mode: "expanded", rule: "none", mergeBars: true, merge: [], rightAlign: [], maxWidth: 0, forceMaxWidth: false },
   model: { format: "full", override: "", source: "client" },
   provider: { name: "" },
   account: { parts: ["user", "organisation", "plan"], userLength: 0 },

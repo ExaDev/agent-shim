@@ -7,6 +7,8 @@ const BASE_BAR_CELLS = 4;
 const WIDE = 120;
 const NARROW = 40;
 const THREE_LINES = 3;
+/** Too narrow for three bars and their text on one line, wide enough for one. */
+const TOO_NARROW_FOR_THREE = 45;
 /** Too narrow for two bars and their text on a line, wide enough for one. */
 const ONE_BAR_WIDE = 29;
 
@@ -26,7 +28,7 @@ function rows(...entries: readonly (readonly [DrawnRow["name"], DrawnRow["output
 }
 
 function layout(drawn: readonly DrawnRow[], settings: Partial<RowsLayoutSettings>, width = WIDE): string[] {
-  return layoutRows(drawn, { merge: [], rightAlign: [], barCells: BASE_BAR_CELLS, ...settings }, width);
+  return layoutRows(drawn, { mergeBars: false, merge: [], rightAlign: [], barCells: BASE_BAR_CELLS, ...settings }, width);
 }
 
 describe("layoutRows", () => {
@@ -66,6 +68,21 @@ describe("layoutRows", () => {
     expect(layout(rows(["context", bars("Ctx")], ["environment", tall]), { merge })).toHaveLength(THREE_LINES);
   });
 
+  it("shares a line between neighbouring bar rows outside every group while mergeBars is set, and never joins a row of text", () => {
+    const bothBars = rows(["context", bars("Ctx")], ["quota", bars("5h")]);
+    expect(layout(bothBars, { mergeBars: true })).toHaveLength(1);
+    expect(layout(bothBars, { mergeBars: false })).toHaveLength(2);
+    const textQuota = rows(["context", bars("Ctx")], ["quota", text("5h 3.6% (38m)")]);
+    expect(layout(textQuota, { mergeBars: true })).toEqual([expect.stringMatching(/^Ctx \[#+\] 10%$/), "5h 3.6% (38m)"]);
+  });
+
+  it("ends a run of shared bar rows at a row of text, and at the rows of a group", () => {
+    const split = layout(rows(["context", bars("Ctx")], ["environment", text("2 rules")], ["quota", bars("5h")]), { mergeBars: true });
+    expect(split).toHaveLength(THREE_LINES);
+    const grouped = layout(rows(["context", bars("Ctx")], ["memory", bars("Mem")], ["quota", bars("5h")]), { mergeBars: true, merge: [["memory", "environment"]] });
+    expect(grouped).toHaveLength(THREE_LINES);
+  });
+
   it("skips a row with nothing to show, leaving the others of its group merged", () => {
     const merge = [["context", "quota", "memory"] as const];
     const lines = layout(rows(["context", bars("Ctx")], ["quota", NOTHING], ["memory", bars("Mem")]), { merge });
@@ -100,6 +117,24 @@ describe("layoutRows", () => {
     const drawn = rows(["memory", text("Memory 4G")], ["environment", text("2 rules")]);
     const exact = "Memory 4G | 2 rules".length;
     expect(layout(drawn, { merge: [["memory", "environment"]], rightAlign: ["environment"] }, exact)).toEqual(["Memory 4G   2 rules"]);
+  });
+
+  it("keeps bars on the stretched grid when the only right-aligned row is the first of the group, since nothing is aligned", () => {
+    const drawn = rows(["context", bars("Ctx")], ["quota", bars("5h")]);
+    const [line] = layout(drawn, { merge: [["context", "quota"]], rightAlign: ["context"] }, WIDE);
+    expect(line?.length).toBe(WIDE);
+    expect(line).not.toMatch(/ {5,}/);
+    expect(line?.indexOf("[")).toBe("Ctx ".length);
+    const bar = line?.match(/\[#+\]/)?.[0] ?? "";
+    expect(bar.length).toBeGreaterThan(BASE_BAR_CELLS + 2);
+  });
+
+  it("joins the rows plainly, at base size, when the first row is named beside a later one, since the split would be at the first", () => {
+    const drawn = rows(["context", bars("Ctx")], ["quota", bars("5h")], ["memory", bars("Mem")]);
+    const settings = { merge: [["context", "quota", "memory"]], rightAlign: ["context", "memory"] } satisfies Partial<RowsLayoutSettings>;
+    const bar = `[${"#".repeat(BASE_BAR_CELLS)}] 10%`;
+    expect(layout(drawn, settings, WIDE)).toEqual([`Ctx ${bar} | 5h ${bar} | Mem ${bar}`]);
+    expect(layout(drawn, settings, TOO_NARROW_FOR_THREE)).toHaveLength(THREE_LINES);
   });
 
   it("ignores a right-aligned row that is not merged", () => {
