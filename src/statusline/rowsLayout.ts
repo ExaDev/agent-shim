@@ -23,6 +23,9 @@ export interface RowsLayoutSettings {
   readonly barCells: number;
 }
 
+/** An item that draws nothing and ends a run of bars. */
+const BREAK: Item = { kind: "lines", lines: [] };
+
 function isEmpty(output: RowOutput): boolean {
   return output.kind === "bars" ? output.cells.length === 0 : output.lines.length === 0;
 }
@@ -92,11 +95,15 @@ function runsOf(rows: readonly DrawnRow[], settings: RowsLayoutSettings): DrawnR
 }
 
 /**
- * The lines of the rows below the header. Rows that sit next to each other in the order and belong to one merge group, and bar rows outside every group while `mergeBars` is set, are joined onto a line when they fit together (bars sharing a grid, other rows as one line of text), else each is drawn on its own. Bars of consecutive items keep one grid, so their columns line up whether they share a line or not, and a row of text ends the run.
+ * The lines of the rows below the header. Rows that sit next to each other in the order and belong to one merge group, and bar rows outside every group while `mergeBars` is set, are joined onto a line when they fit together (bars sharing a grid, other rows as one line of text), else each is drawn on its own. Bars of consecutive items keep one grid, so their columns line up whether they share a line or not, and a row of text, even one with nothing to show, ends the run.
  */
 export function layoutRows(rows: readonly DrawnRow[], settings: RowsLayoutSettings, width: number): string[] {
-  const items = runsOf(rows, settings).flatMap((run) => {
+  const items = runsOf(rows, settings).flatMap((run): readonly Item[] => {
     const present = run.filter((row) => !isEmpty(row.output));
+    if (present.length === 0) {
+      // A row of text with nothing to show still ends a run of bars, as any row of text does, so the bars either side of it keep grids of their own; a bar row with nothing to show does not.
+      return run.length === 1 && run[0]?.output.kind === "text" ? [BREAK] : [];
+    }
     return present.length > 1 ? mergedItems(present, settings, width) : present.map(itemOf);
   });
   const lines: string[] = [];

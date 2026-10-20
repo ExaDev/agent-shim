@@ -399,6 +399,17 @@ describe("statusline settings", () => {
     }
   });
 
+  it("keeps the memory bar to its own grid when the quota row of text beside it has nothing to show, as it was drawn before rows could merge", () => {
+    const noWindows = { ...SUMMARY, fiveHourUsed: undefined, sevenDayUsed: undefined };
+    const memoryUse = (): { usedBytes: number; totalBytes: number } => ({ usedBytes: 32, totalBytes: 64 });
+    const draw = (settings: StatuslineSettings): string =>
+      renderBlock({ summary: noWindows, view: VIEW, payload: parseClientPayload({}), terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, settings: resolveStatusline(settings), ports: fakeStatuslinePorts({ memoryUse }) });
+    for (const usage of [{ bar: false }, { compact: true }]) {
+      const alone = (row: "context" | "memory"): string => draw({ usage, layout: { header: [], rows: [row] } });
+      expect(draw({ usage, layout: { header: [], rows: ["context", "quota", "memory"] } }), JSON.stringify(usage)).toBe(`${alone("context")}\n${alone("memory")}`);
+    }
+  });
+
   it("right-aligns the quota windows of a merged line at the right edge of the width", () => {
     const [line] = stripAnsi(render({ layout: { header: [], merge: [["context", "quota"]], rightAlign: ["quota"] } }, SUMMARY, ONE_ROW_TERMINAL)).split("\n");
     expect(line?.startsWith("Ctx")).toBe(true);

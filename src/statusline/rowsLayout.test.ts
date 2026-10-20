@@ -76,6 +76,22 @@ describe("layoutRows", () => {
     expect(layout(textQuota, { mergeBars: true })).toEqual([expect.stringMatching(/^Ctx \[#+\] 10%$/), "5h 3.6% (38m)"]);
   });
 
+  it("ends a run of shared bar rows at a row of text that has nothing to show, but not at a bar row that has none", () => {
+    const emptyText: DrawnRow["output"] = { kind: "text", lines: [] };
+    const context = rows(["context", bars("Ctx 634k/1M")]);
+    const memory = rows(["memory", bars("RAM")]);
+    const brokenByText = layout(rows(["context", bars("Ctx 634k/1M")], ["environment", emptyText], ["memory", bars("RAM")]), { mergeBars: true });
+    // Each bar row is drawn as it is alone, so RAM's label is not padded to line up with the context row's.
+    expect(brokenByText).toEqual([...layout(context, { mergeBars: true }), ...layout(memory, { mergeBars: true })]);
+    expect(brokenByText[1]?.startsWith("RAM [")).toBe(true);
+    const skippedBars = layout(rows(["context", bars("Ctx 634k/1M")], ["quota", NOTHING], ["memory", bars("RAM")]), { mergeBars: true });
+    expect(skippedBars).toHaveLength(1);
+    // With bar rows kept apart, a bar row with nothing to show leaves the others' bars on one grid.
+    const apart = layout(rows(["context", bars("Ctx 634k/1M")], ["quota", NOTHING], ["memory", bars("RAM")]), { mergeBars: false });
+    expect(apart).toHaveLength(2);
+    expect(apart[1]?.startsWith("RAM         [")).toBe(true);
+  });
+
   it("ends a run of shared bar rows at a row of text, and at the rows of a group", () => {
     const split = layout(rows(["context", bars("Ctx")], ["environment", text("2 rules")], ["quota", bars("5h")]), { mergeBars: true });
     expect(split).toHaveLength(THREE_LINES);
