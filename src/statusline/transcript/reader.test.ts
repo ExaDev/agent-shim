@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CACHE_RETENTION_MS, cacheFileFor } from "../cacheFile";
+import { PROMPT_CACHE_TTL_SECONDS } from "../../config/statusline";
 import type { StatuslinePorts } from "../ports";
 import { fakeStatuslineFilesystem, fakeStatuslinePorts, type FakeStatuslineFilesystem } from "../testing";
 import { FINGERPRINT_BYTES, MAX_TRANSCRIPT_READ_BYTES, readTranscript } from "./reader";
@@ -22,6 +23,9 @@ const ODD_LINE_BYTES = 997;
 const BOUNDARY_EVERY = 7;
 /** How many reads a transcript is a little over, three days in milliseconds, and the bytes of a line that are not its filler. */
 const OVER_TWO_WINDOWS = 2.5;
+const OVER_TWO_WINDOWS_ALIGNED = 3;
+const FOUR_WINDOWS_ISH = 3.5;
+const SECOND_MS = 1_000;
 const THREE_DAYS = 259_200_000;
 const PARTIAL_LINE_OVERHEAD = 11;
 /** Digits of the response ids the token tests write, enough for every record of a transcript several reads long. */
@@ -251,6 +255,58 @@ describe("readTranscript", () => {
     // The totals after catching up are those of a full scan, and the latest-state facts are still the end's.
     expect(facts).toMatchObject({ complete: true, tokens: { inputTokens: records + 1 }, session: { title: "Final name", lastResponseAtMs: T0 + THREE_DAYS, startedAtMs: T0 } });
     expect(disk.files.get(cacheFileFor(ports, "transcript", TRANSCRIPT))).not.toContain('"newer"');
+  });
+
+  it("keeps the cache tier an early write showed when the end of the transcript holds a request but no write that names a tier", () => {
+    const write = oddLine({ type: "assistant", timestamp: at(0), requestId: "r0", message: { id: "w", usage: { cache_creation: { ephemeral_1h_input_tokens: 5 } } } });
+    const filler = oddLine({ type: "user", timestamp: at(MINUTE), message: { content: "x" } }).repeat(Math.ceil((OVER_TWO_WINDOWS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES));
+    const end = line({ type: "user", timestamp: at(AT.twoMinutes), message: { content: "next" } }) + line({ type: "assistant", timestamp: at(AT.threeMinutes), requestId: "r1", message: { id: "r", usage: { cache_read_input_tokens: 9 } } });
+    const ports = fakeStatuslinePorts(fakeStatuslineFilesystem({ [TRANSCRIPT]: write + filler + end }).ports);
+    const first = readTranscript(ports, TRANSCRIPT, T0);
+    expect(first).toMatchObject({ complete: false, session: { promptCache: { ttlSeconds: PROMPT_CACHE_TTL_SECONDS.oneHour } } });
+    expect(first?.session.promptCache?.anchorAtMs).toBe(T0 + AT.twoMinutes);
+    let facts = first;
+    while (facts?.complete === false) {
+      facts = readTranscript(ports, TRANSCRIPT, T0);
+    }
+    expect(facts?.session.promptCache).toEqual({ anchorAtMs: T0 + AT.twoMinutes, ttlSeconds: PROMPT_CACHE_TTL_SECONDS.oneHour });
+  });
+
+  it("shows a title set in the middle of a long transcript only when the reader reaches it, since the last window holds none", () => {
+    const filler = oddLine({ type: "user", timestamp: at(0), message: { content: "x" } });
+    const half = filler.repeat(Math.ceil(MAX_TRANSCRIPT_READ_BYTES / ODD_LINE_BYTES));
+    const text = line({ type: "custom-title", customTitle: "A" }) + half + line({ type: "custom-title", customTitle: "B" }) + half.repeat(2) + half.slice(0, MAX_TRANSCRIPT_READ_BYTES);
+    const ports = fakeStatuslinePorts(fakeStatuslineFilesystem({ [TRANSCRIPT]: text }).ports);
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.session.title).toBe("A");
+    let facts = readTranscript(ports, TRANSCRIPT, T0);
+    expect(facts?.session.title).toBe("B");
+    while (facts?.complete === false) {
+      facts = readTranscript(ports, TRANSCRIPT, T0);
+    }
+    expect(facts?.session.title).toBe("B");
+  });
+
+  it("reads a tail window that starts exactly on a line from its first whole line", () => {
+    const filler = paddedLine({ type: "user", timestamp: at(0), message: { content: "x" } });
+    const windowLines = MAX_TRANSCRIPT_READ_BYTES / LINE_BYTES;
+    // Three windows of lines: the title "Old" is in the first, and the last window begins on the line that sets "Aligned".
+    const text = paddedLine({ type: "custom-title", customTitle: "Old" }) + filler.repeat(2 * windowLines - 1) + paddedLine({ type: "custom-title", customTitle: "Aligned" }) + filler.repeat(windowLines - 1);
+    expect(bytesOf(text)).toBe(OVER_TWO_WINDOWS_ALIGNED * MAX_TRANSCRIPT_READ_BYTES);
+    const ports = fakeStatuslinePorts(fakeStatuslineFilesystem({ [TRANSCRIPT]: text }).ports);
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { title: "Aligned" } });
+  });
+
+  it("does not trust a fold of the end that lies past the end of a transcript that was cut short", () => {
+    const record = (index: number): string => oddLine({ type: "assistant", timestamp: at(index * SECOND_MS), requestId: `r${String(index)}`, message: { id: `m${String(index)}` } });
+    const total = Math.ceil((FOUR_WINDOWS_ISH * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES);
+    const cut = Math.ceil((OVER_TWO_WINDOWS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES);
+    const lines = Array.from({ length: total }, (_, index) => record(index));
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: lines.join("") });
+    const ports = fakeStatuslinePorts(disk.ports);
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { lastResponseAtMs: T0 + (total - 1) * SECOND_MS } });
+    // The transcript is cut to a length between where the cumulative fold is and where the fold of the end read to, keeping its start.
+    disk.files.set(TRANSCRIPT, lines.slice(0, cut).join(""));
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { lastResponseAtMs: T0 + (cut - 1) * SECOND_MS } });
   });
 
   it("keeps a title the first window read when the end of the transcript sets none, and a later one over it when it does", () => {
