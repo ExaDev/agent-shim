@@ -12,7 +12,7 @@ import {
   BASH_DEFAULT_TIMEOUT_MS,
   BASH_MAX_TIMEOUT_MS,
   bashLiveLimitMs,
-  MAX_SEEN_CALL_IDS,
+  MAX_REMEMBERED_CALLS,
   MAX_STORED_TEXT_CHARS,
   MAX_TRACKED_AGENTS,
   MAX_TRACKED_NAMES,
@@ -38,6 +38,7 @@ const EXTRA_CALLS = 5;
 const EXTRA_NAMES = 3;
 const EXTRA_TODOS = 3;
 const FEW_MINUTES = 5;
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const at = (ms: number): string => new Date(T0 + ms).toISOString();
 
 const use = (id: string, name: string, input: Record<string, unknown> = {}, ms = 0, extra: Record<string, unknown> = {}): Record<string, unknown> => ({ type: "assistant", timestamp: at(ms), message: { content: [{ type: "tool_use", id, name, input }] }, ...extra });
@@ -202,7 +203,7 @@ describe("a result written to the file before its call", () => {
 
 describe("whether a call is still running", () => {
   const THREE_HOURS = 10_800_000;
-  const inResponse = (key: string, record: Record<string, unknown>): Record<string, unknown> => ({ ...record, message: { ...(record.message as Record<string, unknown>), id: key } });
+  const inResponse = (key: string, record: Record<string, unknown>): Record<string, unknown> => ({ ...record, message: { ...(isRecord(record.message) ? record.message : {}), id: key } });
   const names = (records: readonly Record<string, unknown>[], nowMs = T0 + SECOND): string[] => factsAt(records, nowMs).tools.map((tool) => `${tool.name}:${tool.status}`);
 
   it("keeps a call that waits for a person running for as long as the person takes", () => {
@@ -277,14 +278,6 @@ describe("whether a call is still running", () => {
     expect(facts.agents).toEqual([]);
   });
 
-  it("keeps the unresolved calls the state has when the end holds the same response", () => {
-    const state = fold([inResponse("r1", use("a", "Read"))]);
-    const end = [inResponse("r1", use("c", "Grep", {}, 2))].reduce<ActivityLatest>((latest, record) => {
-      const parsed = parseTranscriptRecord(JSON.stringify(record));
-      return parsed === undefined ? latest : foldActivityLatest(latest, parsed);
-    }, EMPTY_ACTIVITY_LATEST);
-    expect(activityFactsOf(state, T0 + SECOND, LIMITS, end).tools.map((tool) => tool.name)).toEqual(["Read", "Grep"]);
-  });
 });
 
 describe("history written again by a resumed session", () => {
@@ -306,11 +299,35 @@ describe("history written again by a resumed session", () => {
     expect(factsAt([...history, ...history.slice(0, 2)]).todos).toEqual(factsAt(history).todos);
   });
 
-  it("remembers the latest call ids only, so a bounded number of them are kept in the state", () => {
-    const records = Array.from({ length: MAX_SEEN_CALL_IDS + EXTRA_CALLS }, (_, index) => use(`s${String(index)}`, "Read", {}, 1));
-    const { seenCallIds } = fold(records).latest;
-    expect(seenCallIds).toHaveLength(MAX_SEEN_CALL_IDS);
-    expect(seenCallIds[0]).toBe(`s${String(EXTRA_CALLS)}`);
+  it("remembers the latest calls only, so a bounded number of them are kept in the state", () => {
+    const records = Array.from({ length: MAX_REMEMBERED_CALLS + EXTRA_CALLS }, (_, index) => use(`s${String(index)}`, "Read", {}, index));
+    const { rememberedCalls, forgottenUpToMs } = fold(records).latest;
+    expect(rememberedCalls).toHaveLength(MAX_REMEMBERED_CALLS);
+    expect(forgottenUpToMs).toBe(T0 + EXTRA_CALLS - 1);
+  });
+
+  it("adds no call written again after the memory has forgotten it, and leaves a newer todo list alone", () => {
+    const list = (subject: string, ms: number): Record<string, unknown> => use(`w${subject}`, "TodoWrite", { todos: [{ content: subject, status: "pending", activeForm: subject }] }, ms);
+    const history = [list("old", 0), ...Array.from({ length: MAX_REMEMBERED_CALLS + EXTRA_CALLS }, (_, index) => use(`f${String(index)}`, "Read", {}, index + 1)), list("new", MAX_REMEMBERED_CALLS + EXTRA_CALLS + 1)];
+    const once = factsAt(history);
+    expect(once.todos.map((item) => item.content)).toEqual(["new"]);
+    const again = factsAt([...history, list("old", 0), use("f0", "Read", {}, 1)]);
+    expect(again.todos).toEqual(once.todos);
+    expect(again.tools).toEqual(once.tools);
+  });
+
+  it("reads a call that was never written, and is no older than the newest forgotten, as new while the memory holds it", () => {
+    const records = [use("a", "Read", {}, MINUTE), use("b", "Grep", {}, 0)];
+    expect(factsAt(records).tools.map((tool) => tool.name)).toEqual(["Read", "Grep"]);
+  });
+
+  it("keeps no result for a call that was read and has left the tracked window, and applies every result waiting for a call", () => {
+    const history = Array.from({ length: MAX_TRACKED_TOOL_CALLS + EXTRA_CALLS }, (_, index) => use(`k${String(index)}`, "Read", {}, index));
+    expect(fold([...history, result("k0", STEP.fifth)]).latest.unmatchedResults).toEqual([]);
+    const launch = result("j", 1, false, { toolUseResult: { isAsync: true } });
+    const ended = { type: "queue-operation", operation: "enqueue", timestamp: at(STEP.third), content: "<task-notification><task-id>t</task-id><tool-use-id>j</tool-use-id></task-notification>" };
+    const [agent] = factsAt([launch, ended, use("j", "Agent", { subagent_type: "x", run_in_background: true }, 0)]).agents;
+    expect(agent).toMatchObject({ status: "completed", endedAtMs: T0 + STEP.third });
   });
 });
 
@@ -630,32 +647,26 @@ describe("activityFactsOf with the facts folded from the end of the transcript",
     return parsed === undefined ? state : foldActivityLatest(state, parsed);
   }, EMPTY_ACTIVITY_LATEST);
 
-  it("puts the end's calls after the state's, and keeps a call that both hold once", () => {
+  it("shows the end's calls alone, and none of the state's, which were made before records that were not read", () => {
     const newer = end([use("b", "Grep", {}, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, LIMITS, newer).tools.map((tool) => `${tool.name}:${tool.status}`)).toEqual(["Read:completed", "Skill:running", "Grep:running"]);
+    expect(activityFactsOf(older, T0 + SECOND, LIMITS, newer).tools.map((tool) => `${tool.name}:${tool.status}`)).toEqual(["Grep:running"]);
   });
 
-  it("takes a result the state read over the end's fold of the same call, which began after the call", () => {
-    const overlapping = end([use("a", "Read", {}, 1), use("b", "Grep", {}, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, LIMITS, overlapping).tools.map((tool) => `${tool.name}:${tool.status}`)).toEqual(["Skill:running", "Read:completed", "Grep:running"]);
-  });
-
-  it("takes the end's result of a call over the state's, which has none", () => {
-    const behind = fold([use("a", "Read", {}, 1)]);
+  it("shows the end's result of a call, not the state's", () => {
     const overlapping = end([use("a", "Read", {}, 1), result("a", 2)]);
-    expect(activityFactsOf(behind, T0 + SECOND, LIMITS, overlapping).tools.map((tool) => tool.status)).toEqual(["completed"]);
+    expect(activityFactsOf(fold([use("a", "Read", {}, 1)]), T0 + SECOND, LIMITS, overlapping).tools.map((tool) => tool.status)).toEqual(["completed"]);
   });
 
-  it("keeps the state's todo list while the end does not touch it", () => {
-    const untouched = end([use("g", "Grep", {}, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, LIMITS, untouched).todos.map((todo) => todo.content)).toEqual(["old"]);
+  it("shows the end's agents alone", () => {
+    const state = fold([use("g", "Agent", { subagent_type: "Old" }, 1)]);
+    const newer = end([use("h", "Agent", { subagent_type: "New" }, STEP.ninth)]);
+    expect(activityFactsOf(state, T0 + SECOND, LIMITS, newer).agents.map((agent) => agent.type)).toEqual(["New"]);
   });
 
-  it("draws no list when the end edits it in place with no TodoWrite before, since the list the state has is out of date and the end holds only a part of the new one, and replaces it once the end holds a TodoWrite", () => {
-    const created = end([use("c", "TaskCreate", { subject: "tail" }, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, LIMITS, created).todos).toEqual([]);
-    const updated = end([use("u", "TaskUpdate", { taskId: "9" }, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, LIMITS, updated).todos).toEqual([]);
+  it("draws no list unless the end holds a TodoWrite, since a list the state has is out of date and the end holds only a part of the new one", () => {
+    expect(activityFactsOf(older, T0 + SECOND, LIMITS, end([use("g", "Grep", {}, STEP.ninth)])).todos).toEqual([]);
+    expect(activityFactsOf(older, T0 + SECOND, LIMITS, end([use("c", "TaskCreate", { subject: "tail" }, STEP.ninth)])).todos).toEqual([]);
+    expect(activityFactsOf(older, T0 + SECOND, LIMITS, end([use("u", "TaskUpdate", { taskId: "9" }, STEP.ninth)])).todos).toEqual([]);
     const written = end([use("w", "TodoWrite", { todos: [{ content: "fresh", status: "in_progress" }] }, STEP.ninth)]);
     expect(activityFactsOf(older, T0 + SECOND, LIMITS, written).todos.map((todo) => todo.content)).toEqual(["fresh"]);
   });
@@ -663,5 +674,52 @@ describe("activityFactsOf with the facts folded from the end of the transcript",
   it("leaves the skills and servers to the state, since they add up over the whole transcript", () => {
     const newer = end([use("s", "Skill", { skill: "late" }, STEP.ninth)]);
     expect(activityFactsOf(older, T0 + SECOND, LIMITS, newer).skills).toEqual(["early"]);
+  });
+});
+
+describe("a transcript read in growing steps", () => {
+  /** A session with calls in parallel, an agent, a todo list written and then edited, and a skill. */
+  const SESSION: readonly Record<string, unknown>[] = [
+    use("r1", "Read", { file_path: "/a" }, 1),
+    use("g1", "Grep", { pattern: "x" }, 1),
+    result("g1", 2),
+    result("r1", 2),
+    use("w1", "TodoWrite", { todos: [{ content: "one", status: "in_progress" }, { content: "two", status: "pending" }] }, STEP.third),
+    result("w1", STEP.third),
+    use("ag", "Agent", { subagent_type: "Explore", description: "look" }, STEP.fourth),
+    result("ag", STEP.fifth),
+    use("e1", "Edit", { file_path: "/b" }, STEP.fifth),
+    use("c1", "TaskCreate", { subject: "three" }, STEP.sixth),
+    { type: "user", timestamp: at(STEP.sixth), message: { content: [{ type: "tool_result", tool_use_id: "c1", content: "Task #7 created successfully: three" }] } },
+    result("e1", STEP.sixth),
+    use("sk", "Skill", { skill: "commit" }, STEP.ninth),
+    use("w2", "TodoWrite", { todos: [{ content: "one", status: "completed" }, { content: "two", status: "in_progress" }] }, STEP.ninth + 1),
+    use("b1", "Bash", { command: "ls" }, STEP.ninth + 2),
+    result("b1", STEP.ninth + STEP.third),
+  ].map((record, index) => withResponse(`resp${String(index)}`, record));
+
+  function withResponse(key: string, record: Record<string, unknown>): Record<string, unknown> {
+    return { ...record, message: { ...(isRecord(record.message) ? record.message : {}), id: key } };
+  }
+
+  const endOf = (records: readonly Record<string, unknown>[]): ActivityLatest =>
+    records.reduce<ActivityLatest>((state, record) => {
+      const parsed = parseTranscriptRecord(JSON.stringify(record));
+      return parsed === undefined ? state : foldActivityLatest(state, parsed);
+    }, EMPTY_ACTIVITY_LATEST);
+
+  it("shows lists that end the way the whole transcript's do, whichever part of the end it has read", () => {
+    const whole = activityFactsOf(fold(SESSION), T0 + SECOND, LIMITS);
+    for (let start = 0; start < SESSION.length; start += 1) {
+      const caught = activityFactsOf(fold(SESSION.slice(0, start)), T0 + SECOND, LIMITS, endOf(SESSION.slice(start)));
+      expect(whole.tools.slice(whole.tools.length - caught.tools.length), `tools from record ${String(start)}`).toEqual(caught.tools);
+      expect(whole.agents.slice(whole.agents.length - caught.agents.length), `agents from record ${String(start)}`).toEqual(caught.agents);
+      expect([[], whole.todos], `todos from record ${String(start)}`).toContainEqual(caught.todos);
+    }
+  });
+
+  it("shows the whole transcript's facts once the end is the whole transcript", () => {
+    const whole = activityFactsOf(fold(SESSION), T0 + SECOND, LIMITS);
+    expect(activityFactsOf(fold([]), T0 + SECOND, LIMITS, endOf(SESSION))).toEqual({ ...whole, skills: [], mcpServers: [] });
   });
 });

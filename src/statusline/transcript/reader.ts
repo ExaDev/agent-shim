@@ -19,7 +19,7 @@ const NEWLINE = 0x0a;
 
 /** The kind of cache file the reader keeps, and the version of what it holds: a file of another version is read as absent. */
 const CACHE_KIND = "transcript";
-const CACHE_VERSION = 6;
+const CACHE_VERSION = 7;
 
 const TranscriptCacheSchema = z.strictObject({
   version: z.literal(CACHE_VERSION),
@@ -54,7 +54,7 @@ export interface TranscriptFacts {
   readonly session: SessionFacts;
   /** The tokens the session has used, over every response read; short of the truth while `complete` is false. */
   readonly tokens: SessionTokens;
-  /** What the session is doing: its latest tool calls and agents, its todo list, and the skills and MCP servers it has used. The calls, agents and todos are the newest state and right at once when the last window holds them; the skills and servers add up over the whole transcript, so they are short of the truth while `complete` is false. */
+  /** What the session is doing: its latest tool calls and agents, its todo list, and the skills and MCP servers it has used. The calls, agents and todos are the newest state: while `complete` is false they are the last window's alone (the calls and agents as many of the latest as it holds, the todo list when it holds a `TodoWrite` and none otherwise), never joined to the part read so far, and they are the session's own once `complete` is true; the skills and servers add up over the whole transcript, so they are short of the truth while `complete` is false. */
   readonly activity: ActivityFacts;
 }
 
@@ -122,7 +122,7 @@ function advance(cache: CumulativeCache, window: Uint8Array, reachedEnd: boolean
 }
 
 /**
- * What the session's transcript says, read through the ports and kept between refreshes. A refresh reads one window of the transcript, `MAX_TRANSCRIPT_READ_BYTES`, from where the cache ends (the start of the file when there is none) and folds its whole lines in order, so a transcript bigger than a window is caught up over successive refreshes. The facts that add up over the whole transcript are exact once the cache reaches the end of the file and marked incomplete until then; the facts that are the newest value of something are also folded from the last window of the transcript while it is behind, so each is right at once when that window holds a record that sets it and otherwise stays as the part read so far has it. Each refresh reads at most two windows and a byte, beside the check of the first line. A cache of another file, which the first line tells, is not used. A complete line bigger than a window is skipped without being read whole, and the facts stay incomplete for good, since what it said is lost. Returns undefined when the transcript cannot be read.
+ * What the session's transcript says, read through the ports and kept between refreshes. A refresh reads one window of the transcript, `MAX_TRANSCRIPT_READ_BYTES`, from where the cache ends (the start of the file when there is none) and folds its whole lines in order, so a transcript bigger than a window is caught up over successive refreshes. The facts that add up over the whole transcript are exact once the cache reaches the end of the file and marked incomplete until then; the facts that are the newest value of something are also folded from the last window of the transcript while it is behind, so each is right as soon as that window holds a record that sets it and otherwise stays as the part read so far has it, except the activity lists, which are the window's alone (see `activityFactsOf`). Each refresh reads at most two windows and a byte, beside the check of the first line. A cache of another file, which the first line tells, is not used. A complete line bigger than a window is skipped without being read whole, and the facts stay incomplete for good, since what it said is lost. Returns undefined when the transcript cannot be read.
  */
 export function readTranscript(ports: StatuslinePorts, transcriptPath: string, nowMs: number): TranscriptFacts | undefined {
   const file = cacheFileFor(ports, CACHE_KIND, transcriptPath);
