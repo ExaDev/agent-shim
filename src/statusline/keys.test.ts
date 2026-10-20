@@ -23,9 +23,9 @@ describe("statuslineKeys", () => {
     expect(paths[0]).toBe("layout.header");
   });
 
-  it("describes groups of rows as such, with the rows they may name and the groups drawn by default", () => {
+  it("describes groups of rows as such, with the rows they may name and no group by default", () => {
     const merge = statuslineKeys().find((key) => key.path === "layout.merge");
-    expect(merge).toMatchObject({ kind: "groups", defaultValue: [["context", "quota"]] });
+    expect(merge).toMatchObject({ kind: "groups", defaultValue: [] });
     expect(merge?.choices).toContain("quota");
     expect(formatStatuslineKeys(statuslineKeys())).toContain("layout.merge  (groups of ");
   });

@@ -81,7 +81,7 @@ export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
       .join("\n");
   }
   const headerLines = header.length > 0 ? layoutHeader(header, width, SEPARATOR).split("\n") : [];
-  const rowLines = layoutRows(drawn, { merge: settings.layout.merge, rightAlign: settings.layout.rightAlign, barCells: settings.bar.width }, width);
+  const rowLines = layoutRows(drawn, { mergeBars: settings.layout.mergeBars, merge: settings.layout.merge, rightAlign: settings.layout.rightAlign, barCells: settings.bar.width }, width);
   const rule = settings.layout.rule === "belowHeader" && headerLines.length > 0 && rowLines.length > 0 ? [ruleLine(headerLines, width, context.palette)] : [];
   return [...headerLines, ...rule, ...rowLines].join("\n");
 }

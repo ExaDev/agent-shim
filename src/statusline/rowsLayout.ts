@@ -15,8 +15,9 @@ export interface DrawnRow {
 /** What rows lay out as: bars, which are aligned to a grid with the bars beside them, or lines of text, which are drawn as they are. */
 type Item = { readonly kind: "bars"; readonly unit: BarUnit } | { readonly kind: "lines"; readonly lines: readonly string[] };
 
-/** The settings that decide how rows are laid out: the groups of rows that may share a line, and the rows that start a right-aligned part of one. */
+/** The settings that decide how rows are laid out: whether neighbouring bar rows share a line, the groups of rows that may share a line, and the rows that start a right-aligned part of one. */
 export interface RowsLayoutSettings {
+  readonly mergeBars: boolean;
   readonly merge: readonly (readonly RowName[])[];
   readonly rightAlign: readonly RowName[];
   readonly barCells: number;
@@ -70,27 +71,31 @@ function mergedItems(rows: readonly DrawnRow[], settings: RowsLayoutSettings, wi
   return rows.map(itemOf);
 }
 
-/** The rows cut into runs of rows that sit next to each other and belong to the same merge group; a row in no group is a run of its own. */
-function runsOf(rows: readonly DrawnRow[], merge: RowsLayoutSettings["merge"]): DrawnRow[][] {
-  const groupOf = new Map(merge.flatMap((group, index) => group.map((name) => [name, index] as const)));
-  const runs: { readonly group: number | undefined; readonly rows: DrawnRow[] }[] = [];
+/** The run key of the bar rows that are in no group while `mergeBars` is set: they share a run with each other, but never with a group's rows. */
+const BARS_RUN = -1;
+
+/** The rows cut into runs of rows that sit next to each other and share a run key: the index of their merge group, or the bars run for bar rows outside every group when `mergeBars` is set. Any other row is a run of its own. */
+function runsOf(rows: readonly DrawnRow[], settings: RowsLayoutSettings): DrawnRow[][] {
+  const groupOf = new Map(settings.merge.flatMap((group, index) => group.map((name) => [name, index] as const)));
+  const keyOf = (row: DrawnRow): number | undefined => groupOf.get(row.name) ?? (settings.mergeBars && row.output.kind === "bars" ? BARS_RUN : undefined);
+  const runs: { readonly key: number | undefined; readonly rows: DrawnRow[] }[] = [];
   for (const row of rows) {
-    const group = groupOf.get(row.name);
+    const key = keyOf(row);
     const last = runs.at(-1);
-    if (last !== undefined && group !== undefined && last.group === group) {
+    if (last !== undefined && key !== undefined && last.key === key) {
       last.rows.push(row);
     } else {
-      runs.push({ group, rows: [row] });
+      runs.push({ key, rows: [row] });
     }
   }
   return runs.map((run) => run.rows);
 }
 
 /**
- * The lines of the rows below the header. Rows that sit next to each other in the order and belong to one merge group are joined onto a line when they fit together (bars sharing a grid, other rows as one line of text), else each is drawn on its own. Bars of consecutive items keep one grid, so their columns line up whether they share a line or not, and a row of text ends the run.
+ * The lines of the rows below the header. Rows that sit next to each other in the order and belong to one merge group, and bar rows outside every group while `mergeBars` is set, are joined onto a line when they fit together (bars sharing a grid, other rows as one line of text), else each is drawn on its own. Bars of consecutive items keep one grid, so their columns line up whether they share a line or not, and a row of text ends the run.
  */
 export function layoutRows(rows: readonly DrawnRow[], settings: RowsLayoutSettings, width: number): string[] {
-  const items = runsOf(rows, settings.merge).flatMap((run) => {
+  const items = runsOf(rows, settings).flatMap((run) => {
     const present = run.filter((row) => !isEmpty(row.output));
     return present.length > 1 ? mergedItems(present, settings, width) : present.map(itemOf);
   });

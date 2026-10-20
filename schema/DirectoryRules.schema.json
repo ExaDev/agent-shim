@@ -205,7 +205,7 @@
                           "expanded",
                           "compact"
                         ],
-                        "description": "How the statusline is laid out: expanded draws the header and then the rows, each on lines of its own as layout.merge allows, and compact draws the header segments and every row's content on one line, starting a new line only where the line would be wider than the width. layout.merge, layout.rightAlign and layout.rule have no effect in compact."
+                        "description": "How the statusline is laid out: expanded draws the header and then the rows, each on lines of its own as layout.merge allows, and compact draws the header segments and every row's content on one line, starting a new line only where the line would be wider than the width. layout.mergeBars, layout.merge, layout.rightAlign and layout.rule have no effect in compact."
                       },
                       "rule": {
                         "type": "string",
@@ -214,6 +214,10 @@
                           "belowHeader"
                         ],
                         "description": "Whether a rule is drawn across the line between the header and the rows beneath it, as wide as the header's widest line (at least twenty columns, at most the width); it is drawn only when both the header and the rows have something to show, and not in the compact layout."
+                      },
+                      "mergeBars": {
+                        "type": "boolean",
+                        "description": "Whether bar rows that sit next to each other in layout.rows share a line, and one grid, when they fit (the context and quota bars do by default); when false each bar row is on a line of its own, its bars still aligned to its neighbours'. A row of text is never joined by this setting, whichever form the quota row takes: layout.merge does that."
                       },
                       "merge": {
                         "type": "array",
@@ -236,7 +240,7 @@
                             ]
                           }
                         },
-                        "description": "Groups of rows that share a line when they sit next to each other in layout.rows and fit on one line together, and are drawn on lines of their own when they do not; each group names at least two rows, and no row belongs to two groups. An empty list gives every row its own line."
+                        "description": "Groups of rows that share a line when they sit next to each other in layout.rows and fit on one line together, and are drawn on lines of their own when they do not; each group names at least two rows, and no row belongs to two groups. A group may mix bar rows and rows of text, which are joined with the separator when every member is a single line. Bar rows outside a group follow layout.mergeBars."
                       },
                       "rightAlign": {
                         "type": "array",
