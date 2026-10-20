@@ -10,8 +10,8 @@ export interface StatuslinePorts {
   readonly homeDirectory: string;
   /** The text of a file, or undefined when it cannot be read. */
   readonly readText: (path: string) => string | undefined;
-  /** The last `maxBytes` bytes of a file as text, or undefined when it cannot be read. Cutting a file short drops the partial line the cut lands in, so the text begins at a line boundary; a file that fits whole is returned whole. For a file that grows without bound, such as a session transcript, where reading all of it on every refresh is the cost to avoid. */
-  readonly readTail: (path: string, maxBytes: number) => string | undefined;
+  /** Up to `length` bytes of a file from byte `start`, with the file's whole size, or undefined when it cannot be read. A `start` at or past the end reads no bytes, and reading never loads more than `length` bytes however large the file is. */
+  readonly readRange: (path: string, start: number, length: number) => FileRange | undefined;
   /** The standard output of a program run without a shell in `cwd`, or undefined when it fails or outruns the time the statusline allows a program. */
   readonly run: (file: string, args: readonly string[], cwd: string) => string | undefined;
   /** What lies at `path`, without following a final symbolic link (a link is `other`), or undefined when nothing does. */
@@ -20,6 +20,12 @@ export interface StatuslinePorts {
   readonly realPath: (path: string) => string | undefined;
   /** When the file at `path` was last modified, in milliseconds since the epoch, or undefined when it cannot be read. */
   readonly modifiedAtMs: (path: string) => number | undefined;
+}
+
+/** What `readRange` returns: the bytes read and the size of the file they were read from. */
+interface FileRange {
+  readonly size: number;
+  readonly bytes: Uint8Array;
 }
 
 /** The longest a program the statusline starts may run: the statusline refreshes while a person is working, so a program that hangs must cost a bounded wait, and a few seconds is the most a refresh can wait without the line looking stuck. */
@@ -40,21 +46,14 @@ export function realStatuslinePorts(env: Readonly<Record<string, string | undefi
         return undefined;
       }
     },
-    readTail: (path, maxBytes) => {
+    readRange: (path, start, length) => {
       try {
         const descriptor = fs.openSync(path, "r");
         try {
           const { size } = fs.fstatSync(descriptor);
-          const start = Math.max(0, size - maxBytes);
-          const buffer = Buffer.alloc(size - start);
-          const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, start);
-          const text = buffer.toString("utf8", 0, bytesRead);
-          if (start === 0) {
-            return text;
-          }
-          // The cut may land inside a line, or inside a multi-byte character at the start of one; either way the first line is partial.
-          const firstBreak = text.indexOf("\n");
-          return firstBreak === -1 ? "" : text.slice(firstBreak + 1);
+          const buffer = Buffer.alloc(Math.max(0, Math.min(length, size - start)));
+          const read = fs.readSync(descriptor, buffer, 0, buffer.length, start);
+          return { size, bytes: buffer.subarray(0, read) };
         } finally {
           fs.closeSync(descriptor);
         }

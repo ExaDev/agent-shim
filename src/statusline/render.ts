@@ -7,7 +7,7 @@ import type { StatuslinePorts } from "./ports";
 import { ELEMENTS, HEADER_ROLES, type ElementRegistry } from "./elements/registry";
 import type { StatuslineSummary } from "./enrich";
 import { headerUnits, layoutHeader } from "./headerLayout";
-import { TRANSCRIPT_TAIL_BYTES } from "./identityTranscript";
+import { readTranscriptIdentity } from "./identityTranscript";
 import { colourEnabled, createPalette } from "./palette";
 import { TWENTY } from "./style";
 
@@ -50,7 +50,7 @@ export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
     settings,
     palette: createPalette(settings.colours, colourEnabled(input.ports.env)),
     ports: input.ports,
-    transcriptTail: once(() => (input.payload.transcript_path === undefined ? undefined : input.ports.readTail(input.payload.transcript_path, TRANSCRIPT_TAIL_BYTES))),
+    transcriptIdentity: once(() => (input.payload.transcript_path === undefined ? { model: undefined, advisor: undefined } : readTranscriptIdentity(input.ports, input.payload.transcript_path))),
   };
   // The segments drawn are the ones the settings list, in the order they list them.
   const parts = settings.layout.header.flatMap((name) => {

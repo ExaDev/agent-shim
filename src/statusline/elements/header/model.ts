@@ -1,6 +1,5 @@
 import type { ResolvedStatusline } from "../../../config/statusline";
 import type { StatuslineSummary } from "../../enrich";
-import { readTranscriptIdentity } from "../../identityTranscript";
 import type { RenderContext } from "../context";
 
 /** Whether a dynamic mode's choice names its provider beside the served model: the choice could cross providers, or routing by name left the launch's provider. */
@@ -26,12 +25,12 @@ function formatModelName(name: string, format: ResolvedStatusline["model"]["form
 }
 
 /** The name the segment draws and where it came from: a name served by the model itself (read from the transcript) already says what answered, which the arrow beside a dynamic mode's choice would only repeat. */
-function modelNameOf({ view, settings, transcriptTail }: RenderContext): { readonly name: string; readonly isServed: boolean } | undefined {
+function modelNameOf({ view, settings, transcriptIdentity }: RenderContext): { readonly name: string; readonly isServed: boolean } | undefined {
   if (settings.model.override !== "") {
     return { name: settings.model.override, isServed: false };
   }
   if (settings.model.source !== "client") {
-    const served = readTranscriptIdentity(transcriptTail()).model;
+    const served = transcriptIdentity().model;
     // A transcript with no assistant record yet has no served model, so the client's name stands in until there is one.
     if (served !== undefined && (settings.model.source === "transcript" || !isClaudeModelId(served))) {
       return { name: formatModelName(served, settings.model.format), isServed: true };
