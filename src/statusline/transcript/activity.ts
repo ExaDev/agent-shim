@@ -81,13 +81,15 @@ const TodoSchema = z.strictObject({
 });
 
 /**
- * The facts that are the newest value of something, so the end of the transcript settles them whatever came before: the latest tool calls, the latest agents, and the todo list. A list that is edited in place (`TaskCreate`, `TaskUpdate`) depends on what came before, so the end of a transcript settles it only once it holds a `TodoWrite`, which replaces the whole list: `todosReplaced` says one has been read.
+ * The facts that are the newest value of something, so the end of the transcript settles them whatever came before: the latest tool calls, the latest agents, and the todo list. A list that is edited in place (`TaskCreate`, `TaskUpdate`) depends on what came before, so the end of a transcript settles it only once it holds a `TodoWrite`, which replaces the whole list: `todosReplaced` says one has been read, and `todosEdited` that the list has been edited in place since the start of what was folded.
  */
 export const ActivityLatestSchema = z.strictObject({
   tools: z.array(ToolCallSchema),
   agents: z.array(AgentCallSchema),
   todos: z.array(TodoSchema),
   todosReplaced: z.literal(true).optional(),
+  /** True once a `TaskCreate` or `TaskUpdate` has been read: the list was edited in place, so a list read from before that is out of date. */
+  todosEdited: z.literal(true).optional(),
 });
 export type ActivityLatest = z.infer<typeof ActivityLatestSchema>;
 
@@ -212,16 +214,16 @@ function foldTodoCall(state: ActivityLatest, call: ToolUse): ActivityLatest {
     const given = input?.taskId;
     const id = typeof given === "string" || typeof given === "number" ? String(given) : call.id;
     const status = todoStatusOf(input?.status) ?? "pending";
-    return { ...state, todos: [...state.todos, { content, status, id }].slice(-MAX_TRACKED_TODOS) };
+    return { ...state, todos: [...state.todos, { content, status, id }].slice(-MAX_TRACKED_TODOS), todosEdited: true };
   }
   const index = todoIndexOf(state.todos, input?.taskId);
   const current = index === undefined ? undefined : state.todos[index];
   if (index === undefined || current === undefined) {
-    return state;
+    return { ...state, todosEdited: true };
   }
   const subject = stringField(input, "subject") ?? stringField(input, "description");
   const updated = { ...current, status: todoStatusOf(input?.status) ?? current.status, content: subject === undefined ? current.content : stored(subject) };
-  return { ...state, todos: state.todos.map((item, at) => (at === index ? updated : item)) };
+  return { ...state, todos: state.todos.map((item, at) => (at === index ? updated : item)), todosEdited: true };
 }
 
 /** The state after a tool call: an agent, an edit to the todo list, or a tool call to track. */
@@ -389,7 +391,7 @@ function followedBy<T extends { readonly id: string; readonly endedAtMs?: number
 }
 
 /**
- * The facts a state holds at `nowMs`. `newer`, when given, is the latest-state activity folded from the end of the transcript alone while the cumulative facts are still being caught up: its calls follow the state's, because the end of the transcript is later than anything the state has read, and its todo list replaces the state's once it holds a `TodoWrite`, since a list edited in place cannot be known from its end.
+ * The facts a state holds at `nowMs`. `newer`, when given, is the latest-state activity folded from the end of the transcript alone while the cumulative facts are still being caught up: its calls follow the state's, because the end of the transcript is later than anything the state has read, and its todo list replaces the state's once it holds a `TodoWrite`, since a list edited in place cannot be known from its end. A list the end edited in place with no `TodoWrite` before the edits is known to be out of date and not known to be anything else, so it is empty, where a list the end does not touch stands as the state has it.
  */
 export function activityFactsOf(state: ActivityState, nowMs: number, newer?: ActivityLatest): ActivityFacts {
   const latest: ActivityLatest =
@@ -398,7 +400,7 @@ export function activityFactsOf(state: ActivityState, nowMs: number, newer?: Act
       : {
           tools: followedBy(state.latest.tools, newer.tools).slice(-MAX_TRACKED_TOOL_CALLS),
           agents: followedBy(state.latest.agents, newer.agents).slice(-MAX_TRACKED_AGENTS),
-          todos: newer.todosReplaced === true ? newer.todos : state.latest.todos,
+          todos: newer.todosReplaced === true ? newer.todos : newer.todosEdited === true ? [] : state.latest.todos,
         };
   return {
     tools: latest.tools.flatMap((tool): ToolCallFact[] => {
