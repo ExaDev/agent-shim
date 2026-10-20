@@ -233,7 +233,7 @@
                       ]
                     }
                   },
-                  "description": "Groups of rows that share a line when they sit next to each other in layout.rows and fit on one line together, and are drawn on lines of their own when they do not; each group names at least two rows, and no row belongs to two groups. A group may mix bar rows and rows of text, which are joined with the separator when every member is a single line. Bar rows outside a group follow layout.mergeBars."
+                  "description": "Groups of rows that share a line when they sit next to each other in layout.rows and fit on one line together, and are drawn on lines of their own when they do not; each group names at least two rows, and no row belongs to two groups. A group may mix bar rows and rows of text, which are joined with the separator when every member is a single line. Bar rows outside a group follow layout.mergeBars. A group in which no row has anything to show draws nothing: one with a row of text in it still ends a run of bars sharing a line, as an empty row of text does, and one of bar rows alone is left out, so the bars either side of it share as if it were not there."
                 },
                 "rightAlign": {
                   "type": "array",
