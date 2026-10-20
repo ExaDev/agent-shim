@@ -33,6 +33,7 @@ function event(overrides: Partial<RoutedResponseEvent> = {}): RoutedResponseEven
     lineage: undefined,
     modelChoice: undefined,
     requestedModel: undefined,
+    clientSessionId: undefined,
     status: OK_STATUS,
     headers: SSE_HEADERS,
     ...overrides,
@@ -494,6 +495,26 @@ describe("createUsageMiddleware", () => {
       h.flush();
       expect(record).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("the client's conversation id", () => {
+  it("is recorded beside the launch's session id when the request carried one", () => {
+    const h = harness();
+    const body = begin(h, event({ clientSessionId: "conversation-1" }));
+    body.chunk(bytes(STREAM_BODY));
+    finishBody(h, body);
+    h.flush();
+    expect(singleRecord(h)).toMatchObject({ sessionId: "session-1", clientSessionId: "conversation-1" });
+  });
+
+  it("is absent from the record when the request carried none", () => {
+    const h = harness();
+    const body = begin(h, event());
+    body.chunk(bytes(STREAM_BODY));
+    finishBody(h, body);
+    h.flush();
+    expect(singleRecord(h)).not.toHaveProperty("clientSessionId");
   });
 });
 

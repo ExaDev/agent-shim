@@ -14,6 +14,9 @@ const VersionSchema = z.literal(USAGE_SCHEMA_VERSION);
 /** An ISO-8601 instant, always written in UTC by `Date.prototype.toISOString`. */
 const InstantSchema = z.iso.datetime();
 
+/** What a client's own session id may look like: letters, digits, dots, underscores and hyphens, starting with a letter or digit, up to a bound a UUID is well within. It becomes a file name in the statusline's ledger, so nothing that could name another path or carry a list (several headers joined into one value) is an id. */
+export const CLIENT_SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
 const TokenCountSchema = z.number().int().nonnegative();
 
 /** Token counts from a response body's `usage` object, renamed to this project's casing. Each field is present only when the response reported it. */
@@ -54,6 +57,8 @@ export const UsageRecordSchema = z.strictObject({
   provider: z.string(),
   /** The launch's session id, generated per launch. */
   sessionId: z.string().optional(),
+  /** The client's own id for the conversation, from the request's `x-claude-code-session-id` header: it changes when the conversation is cleared inside one launch, which `sessionId` does not, so it is what ties a request to the client's per-conversation figures. Absent when the client sent none. */
+  clientSessionId: z.string().regex(CLIENT_SESSION_ID_PATTERN).optional(),
   /** The project the launch ran in (its git repository root), when the launch sent one: headroom launches do. */
   project: z.string().optional(),
   /** Whether the request crossed headroom on its way upstream. Absent on a record written before the door recorded it, and false when the request went direct. */

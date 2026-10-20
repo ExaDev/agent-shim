@@ -43,9 +43,19 @@ function validSnapshot(): Record<string, unknown> {
   };
 }
 
+/** One longer than the longest client session id a record accepts. */
+const LONG_CLIENT_ID_LENGTH = 129;
+
 describe("UsageRecordSchema", () => {
   it("accepts a record with only its required fields", () => {
     expect(UsageRecordSchema.safeParse(validRecord()).success).toBe(true);
+  });
+
+  it("accepts a client session id that is a single safe id, and refuses one that could name a path or carry a list", () => {
+    expect(UsageRecordSchema.safeParse({ ...validRecord(), clientSessionId: "6f1c2a9e-0b4d-4e57-9d3a-1c2b3d4e5f60" }).success).toBe(true);
+    for (const bad of ["", "a, b", "../x", ".hidden", "x".repeat(LONG_CLIENT_ID_LENGTH)]) {
+      expect(UsageRecordSchema.safeParse({ ...validRecord(), clientSessionId: bad }).success, bad).toBe(false);
+    }
   });
 
   it("accepts the optional usage, limit and rate-limit header fields", () => {

@@ -47,6 +47,9 @@ class FakeServerResponse extends EventEmitter {
   }
 }
 
+/** One longer than the longest client session id the usage record accepts. */
+const LONG_CLIENT_ID_LENGTH = 129;
+
 /** An arbitrary instant the injected clock reports. */
 const RECEIVED_AT = 1_700_000_000_000;
 
@@ -100,7 +103,7 @@ function deps(resolution: RouteResolution, observers: readonly ResponseObserver[
 describe("createRoutedResponse", () => {
   it("applies backpressure: a write that the socket refuses waits for its drain", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined }, clientSessionId: undefined } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -116,7 +119,7 @@ describe("createRoutedResponse", () => {
 
   it("settles a backpressured write when the client goes away, so a route is never left waiting on a dead socket", async () => {
     const response = new FakeServerResponse(true);
-    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } } });
+    const routed = createRoutedResponse(response as unknown as PipelineRequest["response"], { deps: deps({ ok: true, route: recordingRoute() }).deps, servedPath: "/v1/messages", session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined }, route: "test", request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined }, clientSessionId: undefined } });
     routed.start(HTTP_STATUS.ok, {});
     let resolved = false;
     const write = routed.write("chunk").then(() => {
@@ -354,6 +357,34 @@ describe("serveRouted", () => {
   });
 });
 
+describe("the client's conversation id", () => {
+  it("reaches the observers from Claude Code's own header, which is not the launch's session id", async () => {
+    const events: RoutedResponseEvent[] = [];
+    const { request } = pipelineRequest();
+    const { deps: d } = deps({ ok: true, route: recordingRoute() }, [(event) => {
+      events.push(event);
+      return undefined;
+    }]);
+    await serveRouted({ ...request, headers: { ...request.headers, "x-claude-code-session-id": "conversation-1" } }, d);
+    await serveRouted({ ...request, headers: { ...request.headers, "x-claude-code-session-id": "conversation-2" } }, d);
+    expect(events.map((event) => event.clientSessionId)).toEqual(["conversation-1", "conversation-2"]);
+  });
+
+  it("is undefined when the client sent no such header, sent it twice, or sent something that is not a single id", async () => {
+    const events: RoutedResponseEvent[] = [];
+    const { request } = pipelineRequest();
+    const { deps: d } = deps({ ok: true, route: recordingRoute() }, [(event) => {
+      events.push(event);
+      return undefined;
+    }]);
+    await serveRouted(request, d);
+    for (const value of [["a", "b"], "a, b", "../x", "x".repeat(LONG_CLIENT_ID_LENGTH)]) {
+      await serveRouted({ ...request, headers: { ...request.headers, "x-claude-code-session-id": value } }, d);
+    }
+    expect(events.map((event) => event.clientSessionId)).toEqual([undefined, undefined, undefined, undefined, undefined]);
+  });
+});
+
 /** A body observer that records what it saw, in order. */
 function recordingBodyObserver(): ResponseBodyObserver & { readonly seen: string[] } {
   const seen: string[] = [];
@@ -374,7 +405,7 @@ function routedWith(response: FakeServerResponse, observers: readonly ResponseOb
     deps: d,
     session: { identity: "work", sessionId: "s", provider: undefined, headroom: false, projectId: undefined },
     route: "test",
-    request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined } },
+    request: { method: "POST", path: "/v1/messages", receivedAt: 0, viaHeadroom: false, thread: { lineage: undefined }, modelChoice: { value: undefined }, requestedModel: { value: undefined }, clientSessionId: undefined },
     servedPath: "/v1/messages",
   });
   return { routed, logs };
