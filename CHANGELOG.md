@@ -1,3 +1,9 @@
+## [11.56.1](https://github.com/ExaDev/agent-shim/compare/v11.56.0...v11.56.1) (2026-10-20)
+
+### Bug Fixes
+
+* **frontdoor:** answer the door's own liveness without reading the process table ([2cef79a](https://github.com/ExaDev/agent-shim/commit/2cef79a340de1c8fc1ae194e4ee5c40a4f865ce8))
+
 ## [11.56.0](https://github.com/ExaDev/agent-shim/compare/v11.55.0...v11.56.0) (2026-10-20)
 
 ### Features
