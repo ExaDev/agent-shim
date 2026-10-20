@@ -33,6 +33,7 @@ import { descendPolicyFor, resolveDecisions } from "./resolve/pipeline";
 import { enterRulesAnd } from "./resolve/walkPolicy";
 import { walkDirectoryAncestors } from "./resolve/walk";
 import type { Decision } from "./resolve/types";
+import { isFileName } from "./config/names";
 
 /** Raised by `configure` when no configuration profile resolves for the identity at the working directory, so there is no tier-three file for a toggle to land in. */
 export class NoConfigProfileResolvedError extends CliError {
@@ -497,14 +498,13 @@ const CATEGORY_LABELS: Record<"secret" | OverridableCategory, string> = {
 /* -------------------------------------------------------------------------------------------------- */
 
 /** A profile name must match the same shape as an identity name (`IdentitySchema`): start alphanumeric, then alphanumerics/dots/dashes/underscores/at signs. The `@` allowance moves in lockstep with the identity schema because `runIdentityWizard` offers the identity's own name as the default profile name — an email-shaped identity would otherwise suggest a profile name its own validator rejects. */
-const PROFILE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._@-]*$/;
 
 /** Validates a candidate profile name for the wizard's text prompt: non-empty, matches the allowed shape, and (only when `existingNames` is given) not already taken. */
 export function validateProfileName(value: string, existingNames?: readonly string[]): string | undefined {
   if (value.length === 0) {
     return "A name is required.";
   }
-  if (!PROFILE_NAME_RE.test(value)) {
+  if (!isFileName(value)) {
     return "Names must start with a letter or digit, and contain only letters, digits, dots, dashes, underscores, and at signs.";
   }
   if (existingNames?.includes(value) ?? false) {

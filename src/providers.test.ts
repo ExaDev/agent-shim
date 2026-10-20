@@ -308,6 +308,16 @@ describe("providers", () => {
       expect(loadProvider(paths.providersDir, "missing", port)).toBeUndefined();
     });
 
+    it("refuses a name that would reach a file outside the providers directory, and reads nothing there", () => {
+      addProvider(paths, "z", zInput);
+      const port = tempFsPort();
+      fs.writeFileSync(path.join(path.dirname(paths.providersDir), "outside.json"), JSON.stringify({ kind: "http" }));
+      for (const name of ["../outside", "../../z", "z/../z", ".hidden"]) {
+        expect(() => loadProvider(paths.providersDir, name, port), name).toThrow(InvalidProviderNameError);
+        expect(() => readProvider(paths, name), name).toThrow(InvalidProviderNameError);
+      }
+    });
+
     it("refuses an old-format provider file with its exact replacement instead of a bare schema error", () => {
       fs.mkdirSync(paths.providersDir, { recursive: true });
       fs.writeFileSync(path.join(paths.providersDir, "z.json"), JSON.stringify({ displayName: "GLM", baseUrl: "https://api.z.ai", tokenEnv: "Z_API_TOKEN" }));

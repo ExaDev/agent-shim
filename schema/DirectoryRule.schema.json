@@ -10,7 +10,8 @@
       "type": "array",
       "items": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
       }
     },
     "categories": {
@@ -112,7 +113,8 @@
         },
         "provider": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
         },
         "headroom": {
           "type": "boolean"
@@ -1286,7 +1288,8 @@
     },
     "configProfile": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
     },
     "identity": {
       "type": "string",

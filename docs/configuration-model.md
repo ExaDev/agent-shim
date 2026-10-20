@@ -182,7 +182,7 @@ A `.agent-shim.json` is self-contained by default:
 { "categories": { "history": false }, "entries": { "knowledge/skills/commit": true } }
 ```
 
-It may also reference a named `configProfile`, resolved first against any profile shipped in a sibling `.agent-shim/config-profiles/` directory in the same repo, falling back to the user's own local `~/.agent-shim/config-profiles/` — so a team can keep everything inline and portable, or ship a small reusable profile library alongside the pointer file.
+It may also reference a named `configProfile`, which is looked up only among the user's own `~/.agent-shim/config-profiles/`: a repository cannot ship profiles, because a profile can set more than a project file may (a program for the statusline to run, a provider). So a team keeps everything inline and portable, or names a profile each person is expected to have. Any name in a configuration file that becomes a file name (a profile in `configProfile`, `extends` or `defaultConfigProfile`, a provider in `launch.provider` or a provider route) must start with a letter or digit and contain only letters, digits, dots, dashes, underscores and at signs, so it cannot name a path outside the directory it is looked up in; a file that names one is refused, naming the file.
 
 **A per-repo local override pairs with the committed file.** Alongside `.agent-shim.json`, an optional `.agent-shim.local.json` in the same directory — gitignored, never committed — carries personal tweaks specific to that one clone. Add `.agent-shim.local.json` to your project's `.gitignore` the same way you'd gitignore any other personal override file.
 
