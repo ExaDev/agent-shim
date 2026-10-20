@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { statuslineKeys } from "../statusline/keys";
-import { contextBands, STATUSLINE_PRESETS, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_COLUMNS, MAX_STATUSLINE_LABEL_COLUMNS, MIN_STATUSLINE_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
+import { contextBands, STATUSLINE_PRESETS, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_EXTRA_COMMAND_ARGUMENT_CHARS, MAX_EXTRA_COMMAND_ARGUMENTS, MAX_STATUSLINE_COLUMNS, MAX_STATUSLINE_LABEL_COLUMNS, MIN_STATUSLINE_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
 
 const A_CONFIGURED_WIDTH = 100;
+/** The character code of the escape that starts a terminal control sequence. */
+const ESCAPE_CODE = 27;
 const OVER_LONG_LABEL = "x".repeat(MAX_STATUSLINE_LABEL_COLUMNS + 1);
 const WARN_ABOVE_DEFAULT_CRITICAL = 95;
 const CRITICAL_ABOVE_WARN = 99;
@@ -210,6 +212,34 @@ describe("StatuslineSchema project and version control settings", () => {
   it("defaults git on and jj off, as claude-hud does", () => {
     expect(STATUSLINE_DEFAULTS.git.enabled).toBe(true);
     expect(STATUSLINE_DEFAULTS.jj.enabled).toBe(false);
+  });
+});
+
+describe("StatuslineSchema custom line and extra command", () => {
+  it("accepts the groups and the extra segment in a layout", () => {
+    const settings = { layout: { header: ["extra", "model"] }, customLine: { text: "deploy: prod", position: "first" }, extra: { command: ["git", "describe", "--tags"] }, colours: { custom: "cyan" } };
+    expect(StatuslineSchema.parse(settings)).toEqual(settings);
+  });
+
+  it("refuses custom text that carries control or format characters, an unknown position and a colour outside the forms", () => {
+    const escape = String.fromCharCode(ESCAPE_CODE);
+    for (const bad of [{ customLine: { text: `${escape}[31mred` } }, { customLine: { text: "a\nb" } }, { customLine: { text: "x".repeat(MAX_DISPLAY_TEXT_CHARS + 1) } }, { customLine: { position: "middle" } }, { colours: { custom: "purple" } }]) {
+      expect(StatuslineSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it("refuses a command that is a shell string, has too many arguments, an over-long argument or a NUL", () => {
+    const tooMany = Array.from({ length: MAX_EXTRA_COMMAND_ARGUMENTS + 1 }, () => "a");
+    for (const command of ["date +%H", tooMany, ["x".repeat(MAX_EXTRA_COMMAND_ARGUMENT_CHARS + 1)], ["a\u0000b"], [1]]) {
+      expect(StatuslineSchema.safeParse({ extra: { command } }).success, JSON.stringify(command)).toBe(false);
+    }
+    expect(StatuslineSchema.safeParse({ extra: { command: tooMany.slice(1) } }).success).toBe(true);
+  });
+
+  it("draws nothing by default: no custom text and no command", () => {
+    expect(STATUSLINE_DEFAULTS.customLine.text).toBe("");
+    expect(STATUSLINE_DEFAULTS.extra.command).toEqual([]);
+    expect(STATUSLINE_DEFAULTS.layout.header).not.toContain("extra");
   });
 });
 

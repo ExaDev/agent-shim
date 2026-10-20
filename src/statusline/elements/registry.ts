@@ -4,6 +4,7 @@ import type { RenderContext, RowOutput } from "./context";
 import { accountSegment } from "./header/account";
 import { advisorSegment } from "./header/advisor";
 import { effortSegment } from "./header/effort";
+import { extraSegment } from "./header/extra";
 import { costSegment, dailyCostSegment } from "./header/cost";
 import { durationSegment } from "./header/duration";
 import { headroomSegment } from "./header/headroom";
@@ -59,6 +60,7 @@ export const HEADER_ROLES: Readonly<Record<(typeof STATUSLINE_HEADER_SEGMENTS)[n
   sessionName: "label",
   duration: "label",
   speed: "label",
+  extra: "label",
 };
 
 /** Every element the built-in statusline can draw. A setting can only name an element listed here, and the schema's lists of names are what keep the two in step. */
@@ -81,6 +83,7 @@ export const ELEMENTS: ElementRegistry = {
     sessionName: sessionNameSegment,
     duration: durationSegment,
     speed: speedSegment,
+    extra: extraSegment,
   },
   rows: { context: contextRow, quota: quotaRow, addedDirs: addedDirsRow, gitFiles: gitFilesRow, memory: memoryRow, environment: environmentRow, sessionTime: sessionTimeRow, promptCache: promptCacheRow, compactions: compactionsRow, tokens: tokensRow, tools: toolsRow, skills: skillsRow, mcp: mcpRow, agents: agentsRow, todos: todosRow },
 };

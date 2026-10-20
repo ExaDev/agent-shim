@@ -123,6 +123,7 @@ const PLUMBING: Readonly<Record<string, readonly string[]>> = {
 const NOT_WORDS: Readonly<Record<string, readonly string[]>> = {
   // The names of the sources, settings and colour roles the code compares or passes on.
   "cost.ts": ["native", "estimate", "anthropic.claude-"],
+  "elements/customLine.ts": ["custom"],
   "elements/header/cost.ts": ["native"],
   "elements/header/effort.ts": ["low", "medium", "high", "xhigh", "max", "string", "text", "symbol"],
   "elements/header/model.ts": ["claude-", "anthropic.", "full", "short", "client", "transcript"],

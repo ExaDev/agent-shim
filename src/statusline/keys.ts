@@ -2,8 +2,8 @@ import { z } from "zod";
 
 import { isPlainObject, ResolvedStatuslineSchema, STATUSLINE_COLOUR_NAMES, STATUSLINE_DEFAULTS } from "../config/statusline";
 
-/** How a setting's value is written: `boolean` is `true` or `false`, `choice` is one of a closed set, `list` an ordered list of such choices, `groups` a list of such lists, and `colour` a colour name, a palette index from 0 to 255 or `#rrggbb`. */
-type StatuslineKeyKind = "integer" | "boolean" | "text" | "choice" | "list" | "groups" | "colour";
+/** How a setting's value is written: `boolean` is `true` or `false`, `choice` is one of a closed set, `list` an ordered list of such choices, `groups` a list of such lists, `textList` an ordered list of free text (a program and its arguments), and `colour` a colour name, a palette index from 0 to 255 or `#rrggbb`. */
+type StatuslineKeyKind = "integer" | "boolean" | "text" | "choice" | "list" | "groups" | "textList" | "colour";
 
 /** One statusline setting, as the schema declares it. */
 export interface StatuslineKey {
@@ -54,6 +54,9 @@ function keyOf(path: readonly string[], declared: z.ZodType): StatuslineKey {
   }
   if (leaf instanceof z.ZodArray && leaf.element instanceof z.ZodArray && leaf.element.element instanceof z.ZodEnum) {
     return { ...common, kind: "groups", choices: Object.values(leaf.element.element.enum).map(String) };
+  }
+  if (leaf instanceof z.ZodArray && leaf.element instanceof z.ZodString) {
+    return { ...common, kind: "textList", choices: [] };
   }
   throw new TypeError(`statusline setting ${path.join(".")} has a kind the key listing does not describe`);
 }
