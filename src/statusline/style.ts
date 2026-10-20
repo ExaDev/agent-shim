@@ -62,7 +62,7 @@ export function formatTokens(num: number): string {
   return String(Math.round(num));
 }
 
-/** The Antigravity statusline's own duration form: `6d 17h`, `4h 23m`, `23m`, `45s` for under a minute, and `available` for nothing outstanding. */
+/** A time left as the statusline writes it: days and hours (`6d 17h`), hours and padded minutes (`4h 03m`), minutes (`23m`), seconds under a minute (`45s`), and `available` for nothing outstanding. */
 export function formatDuration(seconds: number | undefined): string {
   if (seconds === undefined || seconds <= 0) {
     return "available";
