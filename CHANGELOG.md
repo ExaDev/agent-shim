@@ -1,3 +1,9 @@
+## [11.54.1](https://github.com/ExaDev/agent-shim/compare/v11.54.0...v11.54.1) (2026-10-20)
+
+### Bug Fixes
+
+* **frontdoor:** read session liveness without blocking the door's event loop ([dc1ba10](https://github.com/ExaDev/agent-shim/commit/dc1ba108c5b3d183ab8ff94fd4bd062e6b38ba50))
+
 ## [11.54.0](https://github.com/ExaDev/agent-shim/compare/v11.53.0...v11.54.0) (2026-10-20)
 
 ### Features
