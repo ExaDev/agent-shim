@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { z } from "zod";
 
 import { graphemesOf } from "../graphemes";
@@ -16,8 +18,26 @@ export const MAX_TRACKED_TODOS = 200;
 /** The most results kept while they wait for their calls: a result is written ahead of its call by a few milliseconds, so only the latest few can be waiting. */
 export const MAX_UNMATCHED_RESULTS = 20;
 
-/** The most call ids remembered, to tell a call written again from a new one: far more than a session makes between a resumed history and the point it was resumed from is ever long, and few enough (a few dozen bytes each) to keep the cache file small. */
-export const MAX_SEEN_CALL_IDS = 2000;
+const BYTES_PER_KIBIBYTE = 1024;
+
+/** The characters kept of the digest of a call id, and the radix a call's time is kept in (a millisecond clock fits in eight characters of it until the year 2058). Forty-eight bits of digest make a collision between two of the few thousand calls remembered about one in a billion. */
+const CALL_DIGEST_CHARS = 8;
+const CALL_TIME_RADIX = 36;
+
+/** The two quotes and the comma that a string takes in a JSON array, beside the string. */
+const QUOTES_AND_COMMA_BYTES = 3;
+
+/** What a remembered call takes in the cache file: its digest and time, the quotes around them and a comma. */
+const REMEMBERED_CALL_BYTES = CALL_DIGEST_CHARS + CALL_DIGEST_CHARS + QUOTES_AND_COMMA_BYTES;
+
+/** How much of the cache file, which is rewritten at every refresh, the memory of calls may take. */
+const CALL_MEMORY_KIBIBYTES = 64;
+const CALL_MEMORY_BYTES = CALL_MEMORY_KIBIBYTES * BYTES_PER_KIBIBYTE;
+
+/**
+ * The most calls remembered, to tell a call written again from a new one. A resumed session has the history it resumes from written to its transcript again, with the same ids and the original times. A call is a replay when it is remembered, or when it is no newer than the newest call forgotten, which is every call the memory is too short to hold: so the memory's length decides only how far back a call that was never written before can lie and still be read as new, and no replay is ever read as new at any length.
+ */
+export const MAX_REMEMBERED_CALLS = Math.floor(CALL_MEMORY_BYTES / REMEMBERED_CALL_BYTES);
 
 /** The most distinct skill names, and the most distinct MCP server names, the state keeps, for the same reason. */
 export const MAX_TRACKED_NAMES = 256;
@@ -145,8 +165,10 @@ export const ActivityLatestSchema = z.strictObject({
   todosEdited: z.literal(true).optional(),
   /** Results read before their calls, oldest first. */
   unmatchedResults: z.array(CallResultSchema),
-  /** The ids of the latest calls made, of every kind, oldest first: a session that is resumed has the history it resumes from written to its transcript again, with the same ids, and a call the state no longer tracks would otherwise come back as a new one. */
-  seenCallIds: z.array(z.string()),
+  /** The latest calls made, of every kind, oldest first, each as the digest of its id followed by its time in base 36: a call remembered is not made again by a record that repeats it. */
+  rememberedCalls: z.array(z.string()),
+  /** The time of the newest call forgotten from `rememberedCalls`: a call at or before it is history written again, whatever its id. */
+  forgottenUpToMs: z.number().optional(),
   /** The response of the session's latest assistant record, which the records of one response share. A call is made in one response and answered before the next is written, so a call with no result when a response of another key appears was abandoned (an interrupted tool call). */
   responseKey: z.string().optional(),
 });
@@ -163,7 +185,7 @@ export const ActivityStateSchema = z.strictObject({ cumulative: ActivityCumulati
 export type ActivityState = z.infer<typeof ActivityStateSchema>;
 
 /** The latest-state activity before any record has been read. */
-export const EMPTY_ACTIVITY_LATEST: ActivityLatest = { tools: [], agents: [], todos: [], unmatchedResults: [], seenCallIds: [] };
+export const EMPTY_ACTIVITY_LATEST: ActivityLatest = { tools: [], agents: [], todos: [], unmatchedResults: [], rememberedCalls: [] };
 
 /** The state before any record has been read. */
 export const EMPTY_ACTIVITY_STATE: ActivityState = { cumulative: { skills: [], mcpServers: [] }, latest: EMPTY_ACTIVITY_LATEST };
@@ -281,19 +303,38 @@ function foldTodoCall(state: ActivityLatest, call: ToolUse): ActivityLatest {
   return { ...state, todos: state.todos.map((item, at) => (at === index ? updated : item)), todosEdited: true };
 }
 
-/** Whether a call with this id has been made already: the client does not reuse an id, so a second call with one is a copy of the first. */
-function isTracked(state: ActivityLatest, id: string): boolean {
-  return state.seenCallIds.includes(id) || state.tools.some((tool) => tool.id === id) || state.agents.some((agent) => agent.id === id) || state.todos.some((item) => item.pendingCallId === id);
+/** The digest of a call id, which is all the state keeps of a call it only remembers. */
+function digestOf(id: string): string {
+  return createHash("sha256").update(id).digest("base64url").slice(0, CALL_DIGEST_CHARS);
 }
 
-/** The state after a tool call, and the result that was written ahead of it if there is one. */
+function rememberedTimeMs(entry: string): number | undefined {
+  const time = Number.parseInt(entry.slice(CALL_DIGEST_CHARS), CALL_TIME_RADIX);
+  return Number.isNaN(time) ? undefined : time;
+}
+
+/** True when the call `id`, written at `atMs`, has been read before: it is remembered, or it is no newer than the newest call forgotten. Either way a record repeating it is history written again. */
+function isRemembered(state: ActivityLatest, id: string, atMs: number | undefined): boolean {
+  if (atMs !== undefined && state.forgottenUpToMs !== undefined && atMs <= state.forgottenUpToMs) {
+    return true;
+  }
+  const digest = digestOf(id);
+  return state.rememberedCalls.some((entry) => entry.startsWith(digest));
+}
+
+/** The state remembering the call `id` written at `atMs`; the oldest call remembered is forgotten when the memory is full, and its time becomes the one up to which every call is history. */
+function remember(state: ActivityLatest, id: string, atMs: number | undefined): ActivityLatest {
+  const all = [...state.rememberedCalls, `${digestOf(id)}${atMs === undefined ? "" : atMs.toString(CALL_TIME_RADIX)}`];
+  const forgotten = all.slice(0, -MAX_REMEMBERED_CALLS).flatMap((entry) => rememberedTimeMs(entry) ?? []);
+  const forgottenUpToMs = Math.max(state.forgottenUpToMs ?? Number.NEGATIVE_INFINITY, ...forgotten);
+  return { ...state, rememberedCalls: all.slice(-MAX_REMEMBERED_CALLS), ...(Number.isFinite(forgottenUpToMs) ? { forgottenUpToMs } : {}) };
+}
+
+/** The state after a tool call, and the results that were written ahead of it, applied in the order they were read. */
 function foldToolUse(state: ActivityLatest, call: ToolUse, atMs: number | undefined): ActivityLatest {
   const added = foldTrackedCall(state, call, atMs);
-  const waiting = added.unmatchedResults.find((result) => result.id === call.id);
-  if (waiting === undefined) {
-    return added;
-  }
-  return applyResult({ ...added, unmatchedResults: added.unmatchedResults.filter((result) => result !== waiting) }, waiting) ?? added;
+  const waiting = added.unmatchedResults.filter((result) => result.id === call.id);
+  return waiting.reduce((folded, result) => applyResult(folded, result) ?? folded, { ...added, unmatchedResults: added.unmatchedResults.filter((result) => result.id !== call.id) });
 }
 
 /** The state after a tool call: an agent, an edit to the todo list, or a tool call to track. */
@@ -350,9 +391,13 @@ function applyResult(state: ActivityLatest, result: Readonly<CallResult>): Activ
   return { ...state, tools, agents, todos };
 }
 
-/** The state after a tool call's result: applied to its call, or kept until the call is read when the result was written first. */
+/** The state after a tool call's result: applied to its call, or kept until the call is read when the result was written first. A result of a call that has been read and is no longer tracked is not kept, since no call will come for it. */
 function foldToolResult(state: ActivityLatest, result: Readonly<CallResult>): ActivityLatest {
-  return applyResult(state, result) ?? { ...state, unmatchedResults: [...state.unmatchedResults, result].slice(-MAX_UNMATCHED_RESULTS) };
+  const applied = applyResult(state, result);
+  if (applied !== undefined) {
+    return applied;
+  }
+  return isRemembered(state, result.id, result.atMs) ? state : { ...state, unmatchedResults: [...state.unmatchedResults, result].slice(-MAX_UNMATCHED_RESULTS) };
 }
 
 /** What a `TaskCreate` result says: `Task #12 created successfully: ...`, which names the task whatever else the record carries. */
@@ -409,8 +454,8 @@ export function foldActivityLatest(state: ActivityLatest, record: TranscriptReco
   // The record's own outcome (the model an agent ran on, whether it was started in the background) is its result's only when it holds one result.
   const resultCount = content.filter((block) => block.type === "tool_result").length;
   for (const block of content) {
-    if (record.type === "assistant" && block.type === "tool_use" && block.id !== undefined && block.name !== undefined && !isTracked(next, block.id)) {
-      next = foldToolUse({ ...next, seenCallIds: [...next.seenCallIds, block.id].slice(-MAX_SEEN_CALL_IDS) }, { id: block.id, name: block.name, input: block.input }, atMs);
+    if (record.type === "assistant" && block.type === "tool_use" && block.id !== undefined && block.name !== undefined && !isRemembered(next, block.id, atMs)) {
+      next = foldToolUse(remember(next, block.id, atMs), { id: block.id, name: block.name, input: block.input }, atMs);
     } else if (record.type === "user" && block.type === "tool_result" && block.tool_use_id !== undefined) {
       const outcome = resultCount === 1 ? record.toolUseResult : undefined;
       const taskId = createdTaskId(block.content, outcome);
@@ -507,35 +552,12 @@ function visibleNames(names: readonly string[]): string[] {
   return [...new Set(names.map(visibleDisplayText).filter((name) => name !== ""))];
 }
 
-/** The calls of `older` followed by those of `newer`. The end of the transcript can reach back over records the state has read already, so a call may be in both; it is then kept once, where `newer` has it, unless only `older` has seen the call's end. */
-function followedBy<T extends { readonly id: string; readonly endedAtMs?: number | undefined }>(older: readonly T[], newer: readonly T[]): T[] {
-  const olderById = new Map(older.map((call) => [call.id, call]));
-  const newerIds = new Set(newer.map((call) => call.id));
-  return [
-    ...older.filter((call) => !newerIds.has(call.id)),
-    ...newer.map((call) => {
-      const earlier = olderById.get(call.id);
-      return earlier?.endedAtMs !== undefined && call.endedAtMs === undefined ? earlier : call;
-    }),
-  ];
-}
-
 /**
- * The facts a state holds at `nowMs`. `newer`, when given, is the latest-state activity folded from the end of the transcript alone while the cumulative facts are still being caught up: its calls follow the state's, because the end of the transcript is later than anything the state has read, and its todo list replaces the state's once it holds a `TodoWrite`, since a list edited in place cannot be known from its end. A list the end edited in place with no `TodoWrite` before the edits is known to be out of date and not known to be anything else, so it is empty, where a list the end does not touch stands as the state has it.
+ * The facts a state holds at `nowMs`. `newer`, when given, is the latest-state activity folded from the end of the transcript alone while the cumulative facts are still being caught up. The calls the state has read are then not joined to it: they are from an earlier part of the transcript than the end, with the records between not read, and a list joined across that gap would hold calls that never stood side by side. The tools and agents are the end's alone, so they are the latest the session made, as many of them as the end holds; and the todo list is the end's when it holds a `TodoWrite`, which replaces the whole list, and empty otherwise, since a list edited in place cannot be known from its end.
  */
 export function activityFactsOf(state: ActivityState, nowMs: number, limits: Readonly<LiveLimits>, newer?: ActivityLatest): ActivityFacts {
-  // The end of the transcript holds a later response than the state has read when its key differs, and the calls the state has with no result were abandoned by it.
-  const moved = newer?.responseKey !== undefined && newer.responseKey !== state.latest.responseKey;
   const latest: ActivityLatest =
-    newer === undefined
-      ? state.latest
-      : {
-          tools: followedBy(moved ? withUnanswered(state.latest.tools, []).tools : state.latest.tools, newer.tools).slice(-MAX_TRACKED_TOOL_CALLS),
-          agents: followedBy(moved ? withUnanswered([], state.latest.agents).agents : state.latest.agents, newer.agents).slice(-MAX_TRACKED_AGENTS),
-          todos: newer.todosReplaced === true ? newer.todos : newer.todosEdited === true ? [] : state.latest.todos,
-          unmatchedResults: [],
-          seenCallIds: [],
-        };
+    newer === undefined ? state.latest : { tools: newer.tools, agents: newer.agents, todos: newer.todosReplaced === true ? newer.todos : [], unmatchedResults: [], rememberedCalls: [] };
   return {
     tools: latest.tools.flatMap((tool): ToolCallFact[] => {
       const name = visibleDisplayText(tool.name);
