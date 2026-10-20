@@ -7,7 +7,7 @@ import type { RequestedReplacementReason } from "./replacement";
 import { ensureFrontDoor, restartFrontDoor, type EnsureFrontDoorPorts, type RestartFrontDoorResult } from "./ensure";
 import { removeFrontDoorSession } from "./state";
 import { probeFrontDoorSync } from "./probe";
-import { isFrontDoorSupervisorPid } from "./selfIdentity";
+import { isDeclaredFrontDoor, isFrontDoorSupervisorPid } from "./selfIdentity";
 import { resolveTrustBundle, type TrustBundleFs } from "./trust";
 
 
@@ -27,7 +27,8 @@ export const realTrustBundleFs: TrustBundleFs = {
 function realEnsurePorts(paths: LayoutPaths, spawnDaemon: DaemonSpawner): EnsureFrontDoorPorts {
   return {
     fs: realFarmFs,
-    isRunning: realIsProcessRunning,
+    // The door plans launches of its own (the usage probe, the window opener, jobs), and asked whether the supervisor the state file names is running, the answer for itself is known: a synchronous `ps` here would hold the loop that answers every session.
+    isRunning: (pid) => isDeclaredFrontDoor(pid) || realIsProcessRunning(pid),
     now: () => Date.now(),
     sleep: realSleepSync,
     spawnSupervisor: (layout) => spawnDaemon(layout, "__frontdoor-supervisor", layout.frontdoorLogPath),

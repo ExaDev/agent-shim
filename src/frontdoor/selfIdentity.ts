@@ -10,11 +10,16 @@ export function declareThisProcessTheFrontDoor(): void {
   declaredPid = process.pid;
 }
 
+/** Whether `pid` is this process and this process has declared itself the serving door: a door that is asking is running, which no process-table read needs to confirm. */
+export function isDeclaredFrontDoor(pid: number): boolean {
+  return declaredPid !== undefined && pid === declaredPid && pid === process.pid;
+}
+
 /**
  * Whether `pid` is a front-door supervisor: this process when it has declared itself one (no `ps`), otherwise whatever `identify` finds out about another process.
  */
 export function isFrontDoorSupervisorPid(pid: number, identify: (pid: number) => boolean): boolean {
-  return (declaredPid !== undefined && pid === declaredPid && pid === process.pid) || identify(pid);
+  return isDeclaredFrontDoor(pid) || identify(pid);
 }
 
 /** Clears the declaration. For tests, which run in one process and must not leak a declaration into each other. */
