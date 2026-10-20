@@ -154,6 +154,16 @@
               ],
               "description": "The language of the words the statusline writes (labels, units of waiting such as `ago`, the names of effort levels): en, zh-Hans for Chinese in simplified characters, zh-Hant for traditional. Durations, token counts, the dollar sign and clock times are written the same in every language, and a clock time follows the system locale and the clock settings."
             },
+            "preset": {
+              "type": "string",
+              "enum": [
+                "standard",
+                "full",
+                "essential",
+                "minimal"
+              ],
+              "description": "A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, jj.enabled, jj.showDirty, jj.showConflicts and usage.resetLabel) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own, full draws every segment and row, essential is the model, project, version control and duration above the context bar, and minimal is the same without the duration."
+            },
             "layout": {
               "type": "object",
               "properties": {

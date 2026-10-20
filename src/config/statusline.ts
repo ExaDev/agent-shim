@@ -43,6 +43,32 @@ export const STATUSLINE_COLOUR_NAMES = [
 const DEFAULT_HEADER_SEGMENTS: readonly (typeof STATUSLINE_HEADER_SEGMENTS)[number][] = ["model", "provider", "route", "account", "identity", "headroom"];
 const DEFAULT_ROWS: readonly (typeof STATUSLINE_ROWS)[number][] = ["context", "quota"];
 
+/** The named bundles of settings a layer can choose with `preset`: `standard` is what the statusline draws with no settings at all, and the other three are claude-hud's presets. */
+export const STATUSLINE_PRESETS = ["standard", "full", "essential", "minimal"] as const;
+
+/** The keys every preset sets, and no others, so that choosing a preset in a deeper layer leaves nothing of a shallower layer's preset behind. A key that a claude-hud preset leaves alone is not here. */
+interface PresetBundle {
+  readonly layout: { readonly header: readonly (typeof STATUSLINE_HEADER_SEGMENTS)[number][]; readonly rows: readonly (typeof STATUSLINE_ROWS)[number][] };
+  readonly git: { readonly enabled: boolean; readonly showDirty: boolean; readonly showAheadBehind: boolean };
+  readonly jj: { readonly enabled: boolean; readonly showDirty: boolean; readonly showConflicts: boolean };
+  readonly usage: { readonly resetLabel: boolean };
+}
+
+/** claude-hud's version control style for its Full and Essential presets and its default: git on, the dirty marker on, ahead and behind off. */
+const GIT_WITH_DIRTY_MARKER = { enabled: true, showDirty: true, showAheadBehind: false } as const;
+
+const JJ_OFF = { enabled: false, showDirty: true, showConflicts: true } as const;
+
+/**
+ * What each preset sets. `full` draws every segment and row the statusline has, with the reset label on and Jujutsu opted in with its dirty and conflict markers (claude-hud's Full). `essential` is the model, the project, version control and the session's duration above the context bar (claude-hud's Essential: activity and git, with duration on and usage, counts and tokens off), and `minimal` is the same without the duration (claude-hud's Minimal: the model and the context bar, with git). A segment or a row added to the statusline is drawn by `full` as soon as it is in the name lists, and by the others only when their bundle names it.
+ */
+const PRESET_BUNDLES: Readonly<Record<(typeof STATUSLINE_PRESETS)[number], PresetBundle>> = {
+  standard: { layout: { header: DEFAULT_HEADER_SEGMENTS, rows: DEFAULT_ROWS }, git: { enabled: true, showDirty: true, showAheadBehind: false }, jj: JJ_OFF, usage: { resetLabel: false } },
+  full: { layout: { header: STATUSLINE_HEADER_SEGMENTS, rows: STATUSLINE_ROWS }, git: GIT_WITH_DIRTY_MARKER, jj: { enabled: true, showDirty: true, showConflicts: true }, usage: { resetLabel: true } },
+  essential: { layout: { header: ["model", "project", "vcs", "duration"], rows: ["context"] }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: false } },
+  minimal: { layout: { header: ["model", "project", "vcs"], rows: ["context"] }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: false } },
+};
+
 /** How many directory levels the project path shows: one to three, or the whole path. Written as text so that every value of a setting is one of a closed set of choices. */
 export const STATUSLINE_PATH_LEVELS = ["1", "2", "3", "full"] as const;
 
@@ -278,11 +304,13 @@ function unsettable<T extends z.ZodType>(setting: z.ZodOptional<T>) {
 /** The settings that are not part of a group. */
 const TOP_LEVEL = {
   language: z.enum(STATUSLINE_LANGUAGES).describe("The language of the words the statusline writes (labels, units of waiting such as `ago`, the names of effort levels): en, zh-Hans for Chinese in simplified characters, zh-Hant for traditional. Durations, token counts, the dollar sign and clock times are written the same in every language, and a clock time follows the system locale and the clock settings."),
+  preset: z.enum(STATUSLINE_PRESETS).describe("A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, jj.enabled, jj.showDirty, jj.showConflicts and usage.resetLabel) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own, full draws every segment and row, essential is the model, project, version control and duration above the context bar, and minimal is the same without the duration."),
 };
 
 /** What a configuration layer may set: every group and every key optional, so a layer names only what it changes. */
 export const StatuslineSchema = z.strictObject({
   language: TOP_LEVEL.language.optional(),
+  preset: TOP_LEVEL.preset.optional(),
   layout: z.strictObject(SHAPES.layout).partial().optional(),
   model: z.strictObject(SHAPES.model).partial().optional(),
   provider: z.strictObject(SHAPES.provider).partial().optional(),
@@ -312,6 +340,7 @@ export type StatuslineSettings = z.infer<typeof StatuslineSchema>;
 /** The statusline with every setting decided, except the optional ones (`context.warnAt`, `context.criticalAt` and `context.autoCompactWindow`), which stay absent until a layer sets them. */
 export const ResolvedStatuslineSchema = z.strictObject({
   language: TOP_LEVEL.language,
+  preset: TOP_LEVEL.preset,
   layout: z.strictObject(SHAPES.layout),
   model: z.strictObject(SHAPES.model),
   provider: z.strictObject(SHAPES.provider),
@@ -338,6 +367,7 @@ export type ResolvedStatusline = z.infer<typeof ResolvedStatuslineSchema>;
 /** What the statusline draws when no layer sets a key. */
 export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   language: "en",
+  preset: "standard",
   layout: { header: [...DEFAULT_HEADER_SEGMENTS], rows: [...DEFAULT_ROWS], mode: "expanded", rule: "none", mergeBars: true, merge: [], rightAlign: [], maxWidth: 0, forceMaxWidth: false },
   model: { format: "full", override: "", source: "client" },
   provider: { name: "" },
@@ -378,7 +408,7 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
 }
 
 /** `over` laid on `base`, key by key: objects merge, anything else (a scalar, a list) in `over` replaces what `base` has, and a null in `over` removes the key, which is how a layer unsets an optional setting a shallower layer set. The result holds no null, whatever `base` was. Neither argument is changed. */
-export function mergeStatuslineSettings(base: unknown, over: unknown): unknown {
+function mergeKeys(base: unknown, over: unknown): unknown {
   if (!isPlainObject(over)) {
     return over === undefined ? base : over;
   }
@@ -387,7 +417,7 @@ export function mergeStatuslineSettings(base: unknown, over: unknown): unknown {
     if (value === null) {
       Reflect.deleteProperty(merged, key);
     } else {
-      merged[key] = mergeStatuslineSettings(merged[key], value);
+      merged[key] = mergeKeys(merged[key], value);
     }
   }
   return merged;
@@ -396,6 +426,18 @@ export function mergeStatuslineSettings(base: unknown, over: unknown): unknown {
 /** The colour bands of the context bar: its own thresholds where the settings give them, `bands` while it leaves one unset. */
 export function contextBands({ bands, context }: Readonly<ResolvedStatusline>): { readonly warnAt: number; readonly criticalAt: number } {
   return { warnAt: context.warnAt ?? bands.warnAt, criticalAt: context.criticalAt ?? bands.criticalAt };
+}
+
+function isPresetName(value: unknown): value is (typeof STATUSLINE_PRESETS)[number] {
+  return STATUSLINE_PRESETS.some((name) => name === value);
+}
+
+/**
+ * `over` laid on `base`, key by key: objects merge, and anything else (a scalar, a list) in `over` replaces what `base` has. A null in `over` removes the key it names, which is how a layer unsets an optional setting. A `preset` in `over` first lays its bundle on `base`, so the layer's own keys sit above the preset and the preset above every shallower layer; the result keeps the preset's name and the keys it set, which makes laying it again on the defaults change nothing. Neither argument is changed.
+ */
+export function mergeStatuslineSettings(base: unknown, over: unknown): unknown {
+  const preset = isPlainObject(over) ? over.preset : undefined;
+  return mergeKeys(isPresetName(preset) ? mergeKeys(base, PRESET_BUNDLES[preset]) : base, over);
 }
 
 /** The statusline's settings with the defaults filled in, or a message naming what is wrong when the combination is not drawable (a warning threshold must sit below its critical one, a right-aligned row must be in a merge group, and a forced width needs a width to force, which a per-key cascade cannot check layer by layer). */

@@ -22,7 +22,8 @@ describe("statuslineKeys", () => {
   it("lists each setting once, by dotted path, in declaration order", () => {
     const paths = statuslineKeys().map((key) => key.path);
     expect(new Set(paths).size).toBe(paths.length);
-    expect(paths.slice(0, 2)).toEqual(["language", "layout.header"]);
+    expect(paths.slice(0, 2)).toEqual(["language", "preset"]);
+    expect(paths[2]).toBe("layout.header");
   });
 
   it("describes groups of rows as such, with the rows they may name and no group by default", () => {
@@ -39,6 +40,7 @@ describe("statuslineKeys", () => {
     expect(statuslineKeys().find((key) => key.path === "bar.width")).toMatchObject({ kind: "integer", choices: [], defaultValue: 10 });
     expect(statuslineKeys().find((key) => key.path === "labels.fiveHour")).toMatchObject({ kind: "text", defaultValue: "" });
     expect(statuslineKeys().find((key) => key.path === "language")).toMatchObject({ kind: "choice", choices: ["en", "zh-Hans", "zh-Hant"], defaultValue: "en" });
+    expect(statuslineKeys().find((key) => key.path === "preset")).toMatchObject({ kind: "choice", choices: ["standard", "full", "essential", "minimal"], defaultValue: "standard" });
     expect(statuslineKeys().find((key) => key.path === "git.showDirty")).toMatchObject({ kind: "boolean", choices: [], defaultValue: true });
     expect(statuslineKeys().find((key) => key.path === "project.pathLevels")).toMatchObject({ kind: "choice", choices: ["1", "2", "3", "full"], defaultValue: "1" });
     expect(statuslineKeys().find((key) => key.path === "usage.bar")).toMatchObject({ kind: "boolean", choices: [], defaultValue: true });

@@ -12,6 +12,7 @@ describe("parseStatuslineAssignment", () => {
     expect(parseStatuslineAssignment("git.showDirty=false")).toEqual({ path: "git.showDirty", value: false });
     expect(parseStatuslineAssignment("jj.enabled=true")).toEqual({ path: "jj.enabled", value: true });
     expect(parseStatuslineAssignment("language=zh-Hans")).toEqual({ path: "language", value: "zh-Hans" });
+    expect(parseStatuslineAssignment("preset=minimal")).toEqual({ path: "preset", value: "minimal" });
     expect(parseStatuslineAssignment("project.pathLevels=2")).toEqual({ path: "project.pathLevels", value: "2" });
     expect(parseStatuslineAssignment("usage.bar=false")).toEqual({ path: "usage.bar", value: false });
     expect(parseStatuslineAssignment("usage.compact=true")).toEqual({ path: "usage.compact", value: true });
