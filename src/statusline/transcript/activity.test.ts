@@ -28,7 +28,7 @@ const SECOND = 1_000;
 const SECONDS_PER_MINUTE = 60;
 const MINUTE = SECONDS_PER_MINUTE * SECOND;
 /** Times after T0 that records are stamped, named by their order and not by how long they are. */
-const STEP = { third: 3, fourth: 4, fifth: 5, ninth: 9 } as const;
+const STEP = { third: 3, fourth: 4, fifth: 5, sixth: 6, ninth: 9 } as const;
 const COMMAND_TARGET_CHARS = 30;
 const LONG_COMMAND_CHARS = 40;
 const MANY_TIMES_THE_LIMIT = 10;
@@ -253,9 +253,16 @@ describe("whether a call is still running", () => {
     expect(factsAt(records).agents.map((agent) => `${agent.type}:${agent.status}`)).toEqual(["Explore:running"]);
   });
 
-  it("forgets a task whose creation never reported back when the next response begins", () => {
-    const records = [inResponse("r1", use("c", "TaskCreate", { subject: "x" })), inResponse("r2", use("x", "Read", {}, 2)), { type: "user", timestamp: at(STEP.third), message: { content: [{ type: "tool_result", tool_use_id: "c", content: "Task #1 created successfully" }] } }];
+  it("finishes a call, an agent and a task whose result is written after the next response, as results are not always written in order", () => {
+    const next = inResponse("r2", use("x", "Read", {}, 2));
+    const late = (id: string, content = "ok"): Record<string, unknown> => ({ type: "user", timestamp: at(STEP.third), message: { content: [{ type: "tool_result", tool_use_id: id, content }] } });
+    const records = [inResponse("r1", use("a", "Edit")), inResponse("r1", use("g", "Agent", { subagent_type: "Plan" })), inResponse("r1", use("c", "TaskCreate", { subject: "x" })), next];
+    expect(names(records)).toEqual(["Read:running"]);
     expect(factsAt(records).todos).toEqual([]);
+    const answered = [...records, late("a"), late("g"), late("c", "Task #1 created successfully")];
+    expect(names(answered)).toEqual(["Edit:completed", "Read:running"]);
+    expect(factsAt(answered).agents).toMatchObject([{ type: "Plan", status: "completed" }]);
+    expect(factsAt(answered).todos).toEqual([{ content: "x", status: "pending" }]);
   });
 
   it("applies to the facts of the end of a long transcript too: a call the state has with no result is forgotten when the end holds a later response", () => {
@@ -334,6 +341,13 @@ describe("agents", () => {
     expect(factsAt([launch(), returned]).agents[0]).toMatchObject({ status: "running", endedAtMs: undefined });
     const announced = { type: "queue-operation", operation: "enqueue", timestamp: at(FEW_MINUTES * MINUTE), content: "<task-notification><task-id>t1</task-id><tool-use-id>ag</tool-use-id></task-notification>" };
     expect(factsAt([launch(), returned, announced]).agents[0]).toMatchObject({ status: "completed", endedAtMs: T0 + FEW_MINUTES * MINUTE });
+  });
+
+  it("keeps a teammate running after its call returns, and reads run_in_background written as the text true", () => {
+    const spawned = result("ag", SECOND, false, { toolUseResult: { status: "teammate_spawned" } });
+    expect(factsAt([launch(), spawned]).agents[0]).toMatchObject({ status: "running", endedAtMs: undefined });
+    expect(factsAt([launch({ run_in_background: "true" }), result("ag", SECOND)]).agents[0]?.status).toBe("running");
+    expect(factsAt([launch({ run_in_background: "false" }), result("ag", SECOND)]).agents[0]?.status).toBe("completed");
   });
 
   it("takes the input's run_in_background for a background agent before its call returns", () => {
@@ -453,6 +467,14 @@ describe("the todo list", () => {
   it("uses a TaskCreate's description for the title only when it has no subject", () => {
     expect(factsAt(created("c", { subject: "s", description: "d" }, "1", 1)).todos[0]?.content).toBe("s");
     expect(factsAt(created("c", { description: "d" }, "1", 1)).todos[0]?.content).toBe("d");
+  });
+
+  it("starts a new list when a task is made with an identifier the list already has, since the client numbers from one again once its list is empty", () => {
+    const records = [...created("c1", { subject: "old one" }, "1", 1), ...created("c2", { subject: "old two" }, "2", 2), update({ taskId: "1", status: "completed" }, STEP.third), ...created("c3", { subject: "new one" }, "1", STEP.fourth), update({ taskId: "1", status: "in_progress" }, STEP.fifth), ...created("c4", { subject: "new two" }, "2", STEP.sixth)];
+    expect(factsAt(records).todos).toEqual([
+      { content: "new one", status: "in_progress" },
+      { content: "new two", status: "pending" },
+    ]);
   });
 
   it("does not find a task by its place in the list", () => {

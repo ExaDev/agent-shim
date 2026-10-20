@@ -61,6 +61,9 @@ const TASK_UPDATE_TOOL = "TaskUpdate";
 const SKILL_TOOL = "Skill";
 const BASH_TOOL = "Bash";
 
+/** The statuses of an agent call's result that say the agent goes on running after the call returns: started in the background, or spawned as a teammate. */
+const STILL_RUNNING_STATUSES: readonly string[] = ["async_launched", "teammate_spawned"];
+
 /** The tool name the client gives a tool of an MCP server: `mcp__<server>__<tool>`. */
 const MCP_TOOL_NAME = /^mcp__(.+?)__(.+)$/;
 
@@ -80,6 +83,8 @@ const ToolCallSchema = z.strictObject({
   /** When the call's result was written; absent while it has none. */
   endedAtMs: z.number().optional(),
   failed: z.literal(true).optional(),
+  /** True once the session wrote its next response with the call still unanswered. A result can still come after that (results are not always written in order), which finishes the call. */
+  abandoned: z.literal(true).optional(),
 });
 
 const AgentCallSchema = z.strictObject({
@@ -92,6 +97,8 @@ const AgentCallSchema = z.strictObject({
   endedAtMs: z.number().optional(),
   /** True for an agent that keeps running after the call that started it has returned; its result comes much earlier than its end. */
   background: z.literal(true).optional(),
+  /** As for a tool call: the session wrote its next response with the agent unanswered. */
+  abandoned: z.literal(true).optional(),
 });
 
 /** The outcome of a tool call whose call has not been read yet. A fast tool's result can be written to the file before its call, so the outcome is kept until the call arrives. */
@@ -292,7 +299,7 @@ function foldTrackedCall(state: ActivityLatest, call: ToolUse, atMs: number | un
       ...(model === undefined ? {} : { model: stored(model) }),
       ...(description === undefined ? {} : { description: stored(description) }),
       ...(atMs === undefined ? {} : { startedAtMs: atMs }),
-      ...(input?.run_in_background === true ? { background: true as const } : {}),
+      ...(input?.run_in_background === true || input?.run_in_background === "true" ? { background: true as const } : {}),
     };
     return { ...state, agents: [...state.agents, agent].slice(-MAX_TRACKED_AGENTS) };
   }
@@ -318,7 +325,9 @@ function applyResult(state: ActivityLatest, result: Readonly<CallResult>): Activ
     const model = result.resolvedModel === undefined ? agent.model : stored(result.resolvedModel);
     return { ...agent, ...(model === undefined ? {} : { model }), ...(background ? { background: true as const } : {}), ...(!background && result.atMs !== undefined ? { endedAtMs: result.atMs } : {}) };
   });
-  const todos = state.todos.flatMap((item): z.infer<typeof TodoSchema>[] => {
+  // A task made with an identifier the list already has begins a new list: the client numbers from one again once its list is empty, so the earlier tasks are gone.
+  const restarted = state.todos.some((item) => item.pendingCallId === result.id && result.failed !== true && result.taskId !== undefined && state.todos.some((other) => other.id === result.taskId));
+  const todos = (restarted ? state.todos.filter((item) => item.pendingCallId !== undefined) : state.todos).flatMap((item): z.infer<typeof TodoSchema>[] => {
     if (item.pendingCallId !== result.id) {
       return [item];
     }
@@ -348,15 +357,17 @@ function foldAgentAnnouncement(state: ActivityLatest, toolUseId: string, atMs: n
   return { ...state, agents: state.agents.map((agent) => (agent.id === toolUseId && agent.background === true ? { ...agent, endedAtMs: atMs } : agent)) };
 }
 
-/** The state when a new response begins: the calls of the earlier responses that have no result were abandoned, so they are forgotten, and so are the tasks whose creation never reported back. An agent started in the background is left, since its result came at launch and its end is announced. */
-function foldNewResponse(state: ActivityLatest, key: string): ActivityLatest {
+/** The calls with no result marked as abandoned, for the agents all but those started in the background, whose result came at launch and whose end is announced. */
+function withUnanswered(tools: readonly z.infer<typeof ToolCallSchema>[], agents: readonly z.infer<typeof AgentCallSchema>[]): { readonly tools: z.infer<typeof ToolCallSchema>[]; readonly agents: z.infer<typeof AgentCallSchema>[] } {
   return {
-    ...state,
-    responseKey: key,
-    tools: state.tools.filter((tool) => tool.endedAtMs !== undefined),
-    agents: state.agents.filter((agent) => agent.endedAtMs !== undefined || agent.background === true),
-    todos: state.todos.filter((item) => item.pendingCallId === undefined),
+    tools: tools.map((tool) => (tool.endedAtMs === undefined ? { ...tool, abandoned: true as const } : tool)),
+    agents: agents.map((agent) => (agent.endedAtMs === undefined && agent.background !== true ? { ...agent, abandoned: true as const } : agent)),
   };
+}
+
+/** The state when a new response begins: the calls of the earlier responses that have no result were abandoned (a response is only written once the calls it asked for have answered or been given up, by an interrupt for one). A result written later still finishes a call. */
+function foldNewResponse(state: ActivityLatest, key: string): ActivityLatest {
+  return { ...state, responseKey: key, ...withUnanswered(state.tools, state.agents) };
 }
 
 /** The latest-state activity after one more transcript record, read in file order. The records of a subagent are left out of all of it: they belong to a conversation of its own, whose calls and todo list are not the session's. */
@@ -395,7 +406,7 @@ export function foldActivityLatest(state: ActivityLatest, record: TranscriptReco
         ...(atMs === undefined ? {} : { atMs }),
         ...(block.is_error === true ? { failed: true as const } : {}),
         ...(outcome?.resolvedModel === undefined ? {} : { resolvedModel: outcome.resolvedModel }),
-        ...(outcome?.isAsync === true || outcome?.status === "async_launched" ? { async: true as const } : {}),
+        ...(outcome?.isAsync === true || (outcome?.status !== undefined && STILL_RUNNING_STATUSES.includes(outcome.status)) ? { async: true as const } : {}),
       });
     }
   }
@@ -505,8 +516,8 @@ export function activityFactsOf(state: ActivityState, nowMs: number, limits: Rea
     newer === undefined
       ? state.latest
       : {
-          tools: followedBy(moved ? state.latest.tools.filter((tool) => tool.endedAtMs !== undefined) : state.latest.tools, newer.tools).slice(-MAX_TRACKED_TOOL_CALLS),
-          agents: followedBy(moved ? state.latest.agents.filter((agent) => agent.endedAtMs !== undefined || agent.background === true) : state.latest.agents, newer.agents).slice(-MAX_TRACKED_AGENTS),
+          tools: followedBy(moved ? withUnanswered(state.latest.tools, []).tools : state.latest.tools, newer.tools).slice(-MAX_TRACKED_TOOL_CALLS),
+          agents: followedBy(moved ? withUnanswered([], state.latest.agents).agents : state.latest.agents, newer.agents).slice(-MAX_TRACKED_AGENTS),
           todos: newer.todosReplaced === true ? newer.todos : newer.todosEdited === true ? [] : state.latest.todos,
           unmatchedResults: [],
         };
@@ -514,7 +525,7 @@ export function activityFactsOf(state: ActivityState, nowMs: number, limits: Rea
     tools: latest.tools.flatMap((tool): ToolCallFact[] => {
       const name = visibleDisplayText(tool.name);
       const resolved = tool.endedAtMs !== undefined;
-      if (name === "" || (!resolved && tool.name === BASH_TOOL && !isLive(tool.startedAtMs, nowMs, limits.bashMs))) {
+      if (name === "" || (!resolved && (tool.abandoned === true || (tool.name === BASH_TOOL && !isLive(tool.startedAtMs, nowMs, limits.bashMs))))) {
         return [];
       }
       const target = tool.target === undefined ? "" : visibleDisplayText(tool.target);
@@ -524,7 +535,7 @@ export function activityFactsOf(state: ActivityState, nowMs: number, limits: Rea
     mcpServers: visibleNames(state.cumulative.mcpServers),
     agents: latest.agents.flatMap((agent): AgentFact[] => {
       const ended = agent.endedAtMs !== undefined;
-      if (!ended && !isLive(agent.startedAtMs, nowMs, MAX_LIVE_AGENT_MS)) {
+      if (!ended && (agent.abandoned === true || !isLive(agent.startedAtMs, nowMs, MAX_LIVE_AGENT_MS))) {
         return [];
       }
       const type = visibleDisplayText(agent.type);
