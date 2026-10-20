@@ -9,6 +9,8 @@ const TIGHT = 40;
 /** Wide enough for the context bar and two windows to share one row. */
 const ONE_ROW = 200;
 const NARROWER_THAN_ANY_BAR = 10;
+/** Wide enough for one bar to a row with every label padded to the context row's, too narrow for two bars on a row. */
+const PADDED_COLUMN_FITS = 50;
 /** The context row, then five windows two to a row. */
 const ROOMY_ROWS = 4;
 const WINDOWS_ON_THE_ONE_ROW = 2;
@@ -95,6 +97,18 @@ describe("layoutBarGrid", () => {
     }
     expect(new Set(windowRows.map((row) => columnsOf(row, "[")[0])).size).toBe(1);
     expect(columnsOf(windowRows[0] ?? "", "[")[0]).toBe("Argon Wk ".length);
+  });
+
+  it("keeps the groups of one unit to their own alignment rather than padding them to each other's labels in a single column", () => {
+    const rows = layoutBarGrid([[CONTEXT, WINDOWS.slice(0, WINDOWS_ON_THE_ONE_ROW)]], PADDED_COLUMN_FITS, SEPARATOR, BASE_BAR_CELLS);
+    expect(rows).toHaveLength(1 + WINDOWS_ON_THE_ONE_ROW);
+    expect(columnsOf(rows[1] ?? "", "[")[0]).toBe("Gem Wk ".length);
+  });
+
+  it("pads the labels of units of their own to each other's in a single column when that fits", () => {
+    const rows = layoutBarGrid([[CONTEXT], [WINDOWS.slice(0, 1)]], PADDED_COLUMN_FITS, SEPARATOR, BASE_BAR_CELLS);
+    expect(rows).toHaveLength(2);
+    expect(columnsOf(rows[1] ?? "", "[")[0]).toBe(CONTEXT_PREFIX.length);
   });
 
   it("draws a bar whole, one to a row, when even that is wider than the line", () => {
