@@ -26,9 +26,9 @@ function keyOf(command: string, args: readonly string[]): string {
 }
 
 /**
- * Runs a synchronous, effect-free decision over commands that can only be run without blocking. `decide` is handed a `RunPort` that answers from what has been run so far and throws when asked for something new; each time that happens the command is run through `runAsync` and `decide` starts again, so it finishes once every command it asks for has an answer. `decide` must therefore change nothing outside itself before it returns (a read-only resolution), since it may be started several times; each command is run once, however many starts ask for it.
+ * Runs a synchronous, effect-free decision over commands that can only be run without blocking, and returns the `RunPort` that answers every command it asked for. `decide` is handed a `RunPort` that answers from what has been run so far and throws when asked for something new; each time that happens the command is run through `runAsync` and `decide` starts again, so it finishes once every command it asks for has an answer. `decide` must therefore change nothing outside itself before it returns (a read-only resolution), since it may be started several times; each command is run once, however many starts ask for it. The returned port throws for a command `decide` did not ask for, so a later synchronous step that asks for more fails loudly instead of blocking.
  */
-export async function resolveWithAsyncRuns<T>(decide: (run: RunPort) => T, runAsync: AsyncRun): Promise<T> {
+export async function recordRuns(decide: (run: RunPort) => unknown, runAsync: AsyncRun): Promise<RunPort> {
   const answers = new Map<string, ReplayRunResult>();
   const replay: RunPort = {
     run: (command, args) => {
@@ -41,7 +41,8 @@ export async function resolveWithAsyncRuns<T>(decide: (run: RunPort) => T, runAs
   };
   for (;;) {
     try {
-      return decide(replay);
+      decide(replay);
+      return replay;
     } catch (error: unknown) {
       if (!(error instanceof RunNeededError)) {
         throw error;
@@ -49,4 +50,16 @@ export async function resolveWithAsyncRuns<T>(decide: (run: RunPort) => T, runAs
       answers.set(keyOf(error.command, error.args), await runAsync(error.command, error.args));
     }
   }
+}
+
+/** `recordRuns` for a decision whose result is wanted: the decision's result once every command it asks for has an answer. */
+export async function resolveWithAsyncRuns<T>(decide: (run: RunPort) => T, runAsync: AsyncRun): Promise<T> {
+  let result: { readonly value: T } | undefined;
+  await recordRuns((run) => {
+    result = { value: decide(run) };
+  }, runAsync);
+  if (result === undefined) {
+    throw new Error("the decision finished without a result");
+  }
+  return result.value;
 }

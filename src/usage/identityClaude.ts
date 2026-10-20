@@ -1,7 +1,8 @@
-import { buildFarmRuntime, LaunchRefusedError, realPrepareLaunchParams } from "../launchWiring";
+import { buildFarmRuntime, LaunchRefusedError, realPrepareLaunchParams, resolveClaudeLaunch } from "../launchWiring";
 import { prepareLaunch } from "../launcher";
 import type { LayoutPaths } from "../paths";
-import type { DaemonSpawner } from "../realPorts";
+import { realRunAsync, type DaemonSpawner } from "../realPorts";
+import { recordRuns, type AsyncRun } from "../replayRun";
 
 /** The environment variable that makes a launch skip identity resolution, which would point a headless run at the wrong account. */
 const CONFIG_DIR_VARIABLE = "CLAUDE_CONFIG_DIR";
@@ -28,6 +29,8 @@ export interface IdentityClaudeParams {
   readonly spawnDaemon: DaemonSpawner;
   /** The longest one run may take, which also bounds the CLI's start-up. */
   readonly timeoutMs: number;
+  /** Runs the commands a launch decision asks for (the git branch of the directory, the Keychain probe of an identity's login) without blocking; the real one unless a test supplies another. */
+  readonly runAsync?: AsyncRun;
 }
 
 /** What a run gets: the planned binary and environment, and the controller that ends it when the time limit passes. */
@@ -43,11 +46,15 @@ export interface IdentityClaudeRun {
  */
 export async function withIdentityClaude<T>(params: Readonly<IdentityClaudeParams>, identity: string, flags: readonly string[], use: (run: IdentityClaudeRun) => Promise<T>): Promise<T> {
   const refusals: string[] = [];
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== CONFIG_DIR_VARIABLE));
+  const argv = [...identityLaunchArgv(identity, flags)];
+  // The launcher's decision asks for commands (a git branch, a Keychain probe) that spawn synchronously, and this runs inside the front door when the door refreshes usage: the read-only resolution of the same launch is started until every command it asks for has been run without blocking, and the launch below is planned over those answers.
+  const run = await recordRuns((replay) => resolveClaudeLaunch({ argv, cwd: params.cwd, env: definedEnvironment(env), paths: params.paths }, replay), params.runAsync ?? realRunAsync);
   const plan = prepareLaunch(
     realPrepareLaunchParams(params.paths, {
       proc: {
-        env: Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== CONFIG_DIR_VARIABLE)),
-        argv: [...identityLaunchArgv(identity, flags)],
+        env,
+        argv,
         exit: (code) => {
           throw new LaunchRefusedError(refusals.join("\n") || `the launch was refused (exit ${String(code)})`, code);
         },
@@ -61,7 +68,8 @@ export async function withIdentityClaude<T>(params: Readonly<IdentityClaudeParam
         },
       },
       spawnDaemon: params.spawnDaemon,
-      farm: buildFarmRuntime(params.paths, params.cwd),
+      run,
+      farm: buildFarmRuntime(params.paths, params.cwd, run),
     }),
   );
   const abort = new AbortController();

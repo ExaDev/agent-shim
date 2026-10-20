@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { resolveWithAsyncRuns, type AsyncRun } from "./replayRun";
+import { recordRuns, resolveWithAsyncRuns, type AsyncRun } from "./replayRun";
 
 const OK = { status: 0, stdout: "answer\n", stderr: "" };
 
@@ -47,6 +47,16 @@ describe("resolveWithAsyncRuns", () => {
         throw new Error("refused");
       }, runAsync),
     ).rejects.toThrow("refused");
+    expect(runAsync).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("recordRuns", () => {
+  it("returns a port that answers every command the decision asked for and throws for any other", async () => {
+    const runAsync = vi.fn<AsyncRun>(async (command) => await Promise.resolve({ status: 0, stdout: `${command} answered`, stderr: "" }));
+    const run = await recordRuns((port) => port.run("git", ["rev-parse"]), runAsync);
+    expect(run.run("git", ["rev-parse"]).stdout).toBe("git answered");
+    expect(() => run.run("security", ["find"])).toThrow(/no recorded answer for security find/);
     expect(runAsync).toHaveBeenCalledTimes(1);
   });
 });
