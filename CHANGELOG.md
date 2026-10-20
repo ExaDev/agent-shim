@@ -1,3 +1,17 @@
+## [11.60.0](https://github.com/ExaDev/agent-shim/compare/v11.59.0...v11.60.0) (2026-10-20)
+
+### Features
+
+* **frontdoor:** capture a native stack when a stalled door's main thread cannot be paused ([8b75db1](https://github.com/ExaDev/agent-shim/commit/8b75db127ee53407c953b8c46b59f94dff83e4cd))
+
+### Bug Fixes
+
+* **frontdoor:** keep replacing a stalled door with a growing cooldown instead of stopping ([0f580ee](https://github.com/ExaDev/agent-shim/commit/0f580eebd7eb78db9ad0e803f1d9fb67f781f364))
+
+### Documentation
+
+* **architecture:** the front door never blocks its event loop, and how that is enforced ([1f08d20](https://github.com/ExaDev/agent-shim/commit/1f08d2090a60cc4feec2baa6461966e6667afb05))
+
 ## [11.59.0](https://github.com/ExaDev/agent-shim/compare/v11.58.0...v11.59.0) (2026-10-20)
 
 ### Features
