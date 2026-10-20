@@ -130,7 +130,9 @@ const NOT_WORDS: Readonly<Record<string, readonly string[]>> = {
   "elements/header/project.ts": ["label", "inline"],
   "elements/header/vcs.ts": ["critical", "warning", "gitBranch", "git", "context"],
   "elements/registry.ts": ["model", "label", "project", "git"],
+  "elements/rows/activityParts.ts": ["text", "label", "activity", "context"],
   "elements/rows/addedDirs.ts": ["row", "text", "label"],
+  "elements/rows/agents.ts": ["running", "completed", "warning", "context", "label", "agent", "text"],
   "elements/rows/compactions.ts": ["text", "label"],
   "elements/rows/context.ts": ["context", "label", "bars", "text", "never", "buffered", "shown", "hidden", "both", "percent", "tokens", "remaining", "critical"],
   "elements/rows/environment.ts": ["text", "label"],
@@ -138,7 +140,9 @@ const NOT_WORDS: Readonly<Record<string, readonly string[]>> = {
   "elements/rows/memory.ts": ["usage", "label", "bars"],
   "elements/rows/promptCache.ts": ["text", "label", "warning", "context"],
   "elements/rows/quota.ts": ["remaining", "usage", "label", "text", "bars"],
+  "elements/rows/todos.ts": ["completed", "in_progress", "context", "warning", "text", "label"],
   "elements/rows/tokens.ts": ["text", "label"],
+  "elements/rows/tools.ts": ["label", "running", "Read", "Write", "Edit", "Skill", "skills", "warning", "activity", "context", "text"],
   "elements/rows/sessionTime.ts": ["started", "label", "text"],
   "projectPath.ts": ["full"],
   "resetTime.ts": ["relative", "absolute", "both", "elapsed", "elapsedAndAbsolute"],
@@ -148,7 +152,7 @@ const NOT_WORDS: Readonly<Record<string, readonly string[]>> = {
   "elements/header/account.ts": ["claude_max", "Max", "Max ", "claude_pro", "Pro", "claude_team", "team_standard", "Team Standard", "team_tier_1", "Team Premium", "Team", "claude_enterprise", "Enterprise", "default_", "free", "Free", "x"],
   "elements/header/outputStyle.ts": [".claude", "settings.json", "settings.local.json"],
   // The symbols that stand for units, which are the same in every language: durations, token counts and bytes.
-  "elements/sessionFormat.ts": ["<1m", "m", "h ", "s", "h", "d"],
+  "elements/sessionFormat.ts": ["<1m", "<1s", "m", "m ", "h ", "s", "h", "d"],
   "memoryUse.ts": ["B", "KB", "MB", "GB", "TB"],
 };
 

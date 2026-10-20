@@ -34,13 +34,39 @@ const ANSI = new RegExp(`${ESCAPE}\\[[0-9;]*[a-zA-Z]`, "g");
 const at = (ms: number): string => new Date(T0 + ms).toISOString();
 const line = (record: Record<string, unknown>): string => `${JSON.stringify(record)}\n`;
 
+const MS_PER_SECOND = 1_000;
+
+/** A tool call by the session, `seconds` after it began, and the result that answers it. */
+function activity(seconds: number, id: string, name: string, input: Record<string, unknown>): string {
+  return line({ type: "assistant", timestamp: at(THIRTY_SECONDS + seconds * MS_PER_SECOND), message: { content: [{ type: "tool_use", id, name, input }] } });
+}
+function activityResult(seconds: number, id: string): string {
+  return line({ type: "user", timestamp: at(THIRTY_SECONDS + seconds * MS_PER_SECOND), message: { content: [{ type: "tool_result", tool_use_id: id, content: "done" }] } });
+}
+
+/** What the session did, step by step: a call (`use`) or its answer (`result`). Each step is a second after the one before. */
+const STEPS: readonly (readonly ["use" | "result", string, string, Record<string, unknown>])[] = [
+  ["use", "r1", "Read", { file_path: "/work/src/a.ts" }],
+  ["result", "r1", "", {}],
+  ["use", "g1", "Grep", { pattern: "needle" }],
+  ["result", "g1", "", {}],
+  ["use", "s1", "Skill", { skill: "commit" }],
+  ["result", "s1", "", {}],
+  ["use", "m1", "mcp__github__list_issues", {}],
+  ["result", "m1", "", {}],
+  ["use", "a1", "Agent", { subagent_type: "Explore", description: "Map the code", model: "claude-opus-4-8" }],
+  ["use", "b1", "Bash", { command: "make" }],
+  ["use", "w1", "TodoWrite", { todos: [{ content: "Write the tests", status: "in_progress" }, { content: "Ship", status: "pending" }] }],
+];
+const ACTIVITY_RECORDS = STEPS.map(([kind, id, name, input], index) => (kind === "use" ? activity(index, id, name, input) : activityResult(index, id))).join("");
+
 /** A session that started at `T0`, was named, answered with an advisor's help, was compacted and wrote to the five-minute cache. */
 const SESSION =
   line({ type: "user", timestamp: at(0), slug: "generated-name" }) +
   line({ type: "assistant", timestamp: at(THIRTY_SECONDS), requestId: "r1", advisorModel: "claude-opus-4-7", message: { model: "claude-sonnet-5-5", usage: { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 30, cache_creation_input_tokens: 5, cache_creation: { ephemeral_5m_input_tokens: 5, ephemeral_1h_input_tokens: 0 } } } }) +
   line({ type: "system", subtype: "compact_boundary", timestamp: at(2 * THIRTY_SECONDS) }) +
-  line({ type: "custom-title", customTitle: "renamed" });
-
+  line({ type: "custom-title", customTitle: "renamed" }) +
+  ACTIVITY_RECORDS;
 const FILES: Readonly<Record<string, string>> = {
   [TRANSCRIPT]: SESSION,
   "/home/test/.claude/settings.json": JSON.stringify({ outputStyle: "concise", hooks: { PreToolUse: [], Stop: [] } }),
@@ -65,7 +91,7 @@ const SUMMARY: StatuslineSummary = {
 const EVERYTHING: StatuslineSettings = {
   layout: {
     header: ["model", "route", "headroom", "project", "effort", "advisor", "version", "outputStyle", "cost", "dailyCost", "sessionName", "duration", "speed"],
-    rows: ["context", "quota", "addedDirs", "memory", "environment", "sessionTime", "promptCache", "compactions", "tokens"],
+    rows: ["context", "quota", "addedDirs", "memory", "environment", "sessionTime", "promptCache", "compactions", "tokens", "tools", "skills", "mcp", "agents", "todos"],
   },
   context: { warnAt: 50, criticalAt: 60, breakdown: "critical" },
   usage: { resetLabel: true, timeFormat: "both" },
@@ -134,6 +160,11 @@ describe("the statusline in English", () => {
       "Cache \u23f1 until 10:05",
       "Compactions: 1",
       "Tokens 65 (in: 10, out: 20, cache: 35)",
+      "\u25d0 Bash: make | \u2713 Read \u00d71 | \u2713 Grep \u00d71 | \u2713 mcp__github__list_issues \u00d71",
+      "\u2713 Skills (1): commit",
+      "\u2713 MCPs (1): github",
+      "\u25d0 Explore [opus-4.8]: Map the code (3m 22s)",
+      "\u25b8 Write the tests (0/2)",
     ]);
   });
 });
@@ -159,6 +190,35 @@ describe.each(STATUSLINE_LANGUAGES.filter((language) => language !== "en"))("the
     for (const expected of [t("context.label"), t("promptCache.label"), t("memory.label"), t("compactions.label", { count: 1 }), t("addedDirs.label", { dirs }), t("sessionTime.started", { time: "10:00" }), t("environment.rules.other", { count: 2 })]) {
       expect(text, expected).toContain(expected);
     }
+  });
+});
+
+describe("the activity rows in each language", () => {
+  const ACTIVITY: StatuslineSettings = { layout: { header: [], rows: ["tools", "skills", "mcp", "agents", "todos"] } };
+  const lines = (language: StatuslineLanguage): string[] => draw({ language, settings: ACTIVITY });
+
+  it("write their labels, counts, brackets and colons in the language's own words and punctuation", () => {
+    expect(lines("zh-Hans")).toEqual([
+      "\u25d0 Bash\uff1amake | \u2713 Read 1 \u6b21 | \u2713 Grep 1 \u6b21 | \u2713 mcp__github__list_issues 1 \u6b21",
+      "\u2713 \u6280\u80fd\uff081\uff09\uff1acommit",
+      "\u2713 MCP\uff081\uff09\uff1agithub",
+      "\u25d0 Explore \u3010opus-4.8\u3011\uff1aMap the code\uff083m 22s\uff09",
+      "\u25b8 Write the tests\uff080/2\uff09",
+    ]);
+    expect(lines("zh-Hant")).toEqual(lines("zh-Hans"));
+  });
+
+  it("say that every todo is done in the language's words", () => {
+    const done = fakeStatuslineFilesystem({ ...FILES, [TRANSCRIPT]: activity(1, "w", "TodoWrite", { todos: [{ content: "Write the tests", status: "completed" }] }) });
+    expect(draw({ language: "en", settings: { layout: { header: [], rows: ["todos"] } }, disk: done })).toEqual(["\u2713 All todos complete (1/1)"]);
+    expect(draw({ language: "zh-Hans", settings: { layout: { header: [], rows: ["todos"] } }, disk: done })).toEqual(["\u2713 \u5168\u90e8\u5b8c\u6210\uff081/1\uff09"]);
+  });
+
+  it("count the names beyond the first few in the language's words", () => {
+    const many = fakeStatuslineFilesystem({ ...FILES, [TRANSCRIPT]: ["a", "b", "c", "d", "e", "f"].map((name, index) => activity(index, `s${name}`, "Skill", { skill: name })).join("") });
+    const skills: StatuslineSettings = { layout: { header: [], rows: ["skills"] } };
+    expect(draw({ language: "en", settings: skills, disk: many })).toEqual(["\u2713 Skills (6): a, b, c, d, +2 more"]);
+    expect(draw({ language: "zh-Hans", settings: skills, disk: many })).toEqual(["\u2713 \u6280\u80fd\uff086\uff09\uff1aa\uff0cb\uff0cc\uff0cd\uff0c\u53e6\u6709 2 \u4e2a"]);
   });
 });
 

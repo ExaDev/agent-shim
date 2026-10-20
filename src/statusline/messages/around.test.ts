@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { AROUND_VALUE_IDS, aroundValue, paintCore, VALUE_MARK, writeAround } from "./around";
+import { AROUND_VALUE_IDS, aroundValue, COUNTED_AROUND_VALUE_IDS, paintCore, VALUE_MARK, writeAround } from "./around";
 import { CATALOGUES, translatorFor } from "./catalogues";
 import { STATUSLINE_LANGUAGES } from "./languages";
 
+const COUNT = 7;
 const bracket = (text: string): string => `[${text}]`;
 
 describe("paintCore", () => {
@@ -51,21 +52,28 @@ describe("the messages written around a value", () => {
   for (const language of STATUSLINE_LANGUAGES) {
     describe(language, () => {
       for (const id of AROUND_VALUE_IDS) {
-        it(`${id} holds exactly one placeholder, for the value`, () => {
-          expect(CATALOGUES[language][id].match(/\{\w+\}/g)).toHaveLength(1);
+        const counted = COUNTED_AROUND_VALUE_IDS.includes(id);
+
+        it(`${id} holds a placeholder for the value, and one for the count when it names one, and no other`, () => {
+          expect(CATALOGUES[language][id].match(/\{\w+\}/g)).toHaveLength(counted ? 2 : 1);
         });
 
         it(`${id} draws its value once, with its words painted and the mark gone`, () => {
-          const written = writeAround(translatorFor(language), id, "VALUE", bracket);
+          const written = writeAround(translatorFor(language), id, "VALUE", bracket, counted ? COUNT : undefined);
           expect(written.split("VALUE")).toHaveLength(2);
           expect(written).not.toContain(VALUE_MARK);
           expect(written).toContain("[");
+          expect(written.includes(String(COUNT))).toBe(counted);
         });
       }
     });
   }
 
   it("are all that the statusline paints around a value: the registry names every message that is", () => {
-    expect([...AROUND_VALUE_IDS].sort()).toEqual(["addedDirs.label", "sessionTime.lastReply", "sessionTime.started"]);
+    expect([...AROUND_VALUE_IDS].sort()).toEqual(["addedDirs.label", "mcp.label", "sessionTime.lastReply", "sessionTime.started", "skills.label"]);
+  });
+
+  it("fails loudly when a message that names a count is written without one", () => {
+    expect(() => writeAround(translatorFor("en"), "skills.label", "VALUE", bracket)).toThrow(/names a count, and none was given/);
   });
 });
