@@ -44,7 +44,7 @@ export default defineConfig([
           paths: ["node:child_process", "child_process"].map((name) => ({
             name,
             importNames: ["spawnSync", "execFileSync", "execSync"],
-            message: "Use spawnSyncBlocking or execFileSyncBlocking from src/blockingSpawn.ts: they refuse to run inside the front door, whose event loop a synchronous spawn would hold.",
+            message: "Use spawnSyncBlocking from src/blockingSpawn.ts: it refuses to run inside the front door, whose event loop a synchronous spawn would hold.",
           })),
         },
       ],
