@@ -114,7 +114,7 @@ const DATA_DIRECTORIES: Readonly<Record<string, string>> = {
 const PLUMBING: Readonly<Record<string, readonly string[]>> = {
   "carry the settings and the command line": ["change.ts", "commands.ts", "keys.ts", "settings.ts"],
   "read the machine, the client's payload and the door": ["cacheFile.ts", "client.ts", "configCounts.ts", "dailyLedger.ts", "doorCost.ts", "enrich.ts", "headroom.ts", "identityTranscript.ts", "payload.ts", "ports.ts", "speed.ts"],
-  "lay out, measure, paint and clean text that others wrote": ["ansi.ts", "barGrid.ts", "blank.ts", "graphemes.ts", "headerLayout.ts", "palette.ts", "render.ts", "sanitise.ts", "width.ts"],
+  "lay out, measure, paint and clean text that others wrote": ["ansi.ts", "barGrid.ts", "blank.ts", "graphemes.ts", "headerLayout.ts", "palette.ts", "render.ts", "rowsLayout.ts", "sanitise.ts", "width.ts"],
   "stand in for the machine in tests": ["testing.ts"],
 };
 
