@@ -1,3 +1,31 @@
+## [11.61.0](https://github.com/ExaDev/agent-shim/compare/v11.60.2...v11.61.0) (2026-10-20)
+
+### Features
+
+* **statusline:** choose which rows share a line and which are pushed to the right ([348b86f](https://github.com/ExaDev/agent-shim/commit/348b86fbb5caeb0d63b3d3c964921e2ad14accf2))
+* **statusline:** draw everything on one line, and a rule below the header ([78f19ad](https://github.com/ExaDev/agent-shim/commit/78f19ad7353e933c58a88ad6f0e3b69ef6129109))
+* **statusline:** set the width to draw for when the terminal's is unknown or untrusted ([f90f852](https://github.com/ExaDev/agent-shim/commit/f90f8526a3372410e3ff61b6f050bf0effca7bbd))
+
+### Bug Fixes
+
+* **statusline:** draw to a configured width exactly, and refuse one too narrow to draw in ([27ffbd7](https://github.com/ExaDev/agent-shim/commit/27ffbd7aa82d8bfceb21b4eeaaa22ec04f7c77d3))
+* **statusline:** end a run of bars at a row of text that draws nothing ([52c89bb](https://github.com/ExaDev/agent-shim/commit/52c89bb6c08c5155b3795062a12d3fa6282cb90b))
+* **statusline:** keep a merge unit's groups to their own alignment on a narrow line ([0fef60c](https://github.com/ExaDev/agent-shim/commit/0fef60ce675e2b1683b7f14d4ac2dc5a8f718829))
+* **statusline:** keep the groups of one unit to their own alignment, as the grid always did ([832fdbd](https://github.com/ExaDev/agent-shim/commit/832fdbd95232eb4ef340f9bb175fe88de8249ee7))
+* **statusline:** share a line between bar rows only, unless a group says otherwise ([c1ef583](https://github.com/ExaDev/agent-shim/commit/c1ef5839ead5abdf4c6057981862d5ad983c942b))
+* **statusline:** treat a merge group with nothing to show like the rows in it ([8a6fc91](https://github.com/ExaDev/agent-shim/commit/8a6fc914e0372b7fabd08d68235deda85fb12f29))
+
+### Documentation
+
+* **statusline:** build the width descriptions from the constants, and say where maxWidth differs ([97dc6e2](https://github.com/ExaDev/agent-shim/commit/97dc6e2a8c734f3dbf500ee605f57af5d977fda0))
+* **statusline:** describe how the layout is split from the elements ([2f720f3](https://github.com/ExaDev/agent-shim/commit/2f720f3c88020d3ee474ba55b16420ef52684b7b))
+* **statusline:** say how a list of groups is written in the option help and the model ([81dbeb4](https://github.com/ExaDev/agent-shim/commit/81dbeb4f182cd7de9e0fe477b893586361a986d9))
+* **statusline:** say what a merge group with nothing to show does ([dde8cb2](https://github.com/ExaDev/agent-shim/commit/dde8cb29d2a6fb699a45885924153ec024db7906))
+
+### Tests
+
+* **statusline:** pin the one bar to a row that units of their own may fall back to ([6dfe59f](https://github.com/ExaDev/agent-shim/commit/6dfe59f50dd7fadb7f6d28fd440a80502fcd73ff))
+
 ## [11.60.2](https://github.com/ExaDev/agent-shim/compare/v11.60.1...v11.60.2) (2026-10-20)
 
 ### Bug Fixes
