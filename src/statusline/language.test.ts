@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { resolveStatusline, STATUSLINE_ROWS, type StatuslineSettings } from "../config/statusline";
 import { ESCAPE } from "./ansi";
 import type { StatuslineSummary } from "./enrich";
-import { CATALOGUES } from "./messages/catalogues";
+import { CATALOGUES, translatorFor } from "./messages/catalogues";
 import { STATUSLINE_LANGUAGES, type StatuslineLanguage } from "./messages/languages";
 import { parseClientPayload, viewOf } from "./payload";
 import { renderStatuslineBlock } from "./render";
@@ -154,8 +154,9 @@ describe.each(STATUSLINE_LANGUAGES.filter((language) => language !== "en"))("the
 
   it("writes the words it has, from its own catalogue", () => {
     const text = draw({ language, cost: COST_USD }).join("\n");
-    const messages = CATALOGUES[language];
-    for (const expected of [messages["context.label"], messages["promptCache.label"], messages["memory.label"], messages["compactions.label"].replace("{count}", "1"), messages["addedDirs.label"], messages["sessionTime.started"], messages["environment.rules.other"].replace("{count}", "2")]) {
+    const t = translatorFor(language);
+    const dirs = ["d0", "d1", "d2", "d3", "d4", t("more", { count: 3 })].join(t("list.separator"));
+    for (const expected of [t("context.label"), t("promptCache.label"), t("memory.label"), t("compactions.label", { count: 1 }), t("addedDirs.label", { dirs }), t("sessionTime.started", { time: "10:00" }), t("environment.rules.other", { count: 2 })]) {
       expect(text, expected).toContain(expected);
     }
   });
@@ -175,7 +176,7 @@ describe("the time of day", () => {
   it("is written by the clock settings and the system locale, whatever the language", () => {
     const rows: StatuslineSettings = { layout: { header: [], rows: ["sessionTime"] }, clock: { hourCycle: "h12" } };
     expect(draw({ language: "en", settings: rows })[0]).toContain("Started: 10:00 am");
-    expect(draw({ language: "zh-Hans", settings: rows })[0]).toContain("\u5F00\u59CB\uFF1A 10:00 am");
+    expect(draw({ language: "zh-Hans", settings: rows })[0]).toContain("\u5F00\u59CB\uFF1A10:00 am");
   });
 
   it("keeps durations, token counts and money the same in every language", () => {
@@ -234,5 +235,30 @@ describe("the reset of a quota window", () => {
     expect(row("en", { timeFormat: "both", resetLabel: true })).toBe("5h 25.0% (resets in 1h 26m, at 11:30)");
     expect(row("zh-Hans", { timeFormat: "both", resetLabel: true })).toBe("5\u5c0f\u65f6 25.0% (\u8ddd\u91cd\u7f6e 1h 26m\uff0c\u4e8e 11:30)");
     expect(row("zh-Hans", { timeFormat: "both" })).toBe("5\u5c0f\u65f6 25.0% (1h 26m\uff0c11:30 \u91cd\u7f6e)");
+  });
+});
+
+describe("the punctuation between drawn items", () => {
+  const ROW = (name: (typeof STATUSLINE_ROWS)[number], extra: StatuslineSettings = {}): StatuslineSettings => ({ layout: { header: [], rows: [name] }, project: { addedDirsLayout: "row" }, ...extra });
+  const rowOf = (language: StatuslineLanguage, settings: StatuslineSettings): string => draw({ language, settings })[0] ?? "";
+
+  it("is the language's own in a list of directories, with the label's colon and no space the code adds", () => {
+    expect(rowOf("en", ROW("addedDirs"))).toBe("Added dirs: d0, d1, d2, d3, d4, +3 more");
+    expect(rowOf("zh-Hans", ROW("addedDirs"))).toBe("\u9644\u52A0\u76EE\u5F55\uFF1Ad0\uFF0Cd1\uFF0Cd2\uFF0Cd3\uFF0Cd4\uFF0C\u53E6\u6709 3 \u4E2A");
+    expect(rowOf("zh-Hant", ROW("addedDirs"))).toBe("\u9644\u52A0\u76EE\u9304\uFF1Ad0\uFF0Cd1\uFF0Cd2\uFF0Cd3\uFF0Cd4\uFF0C\u53E6\u6709 3 \u500B");
+  });
+
+  it("is the language's own after the session times' labels", () => {
+    expect(rowOf("en", ROW("sessionTime"))).toBe("Started: 10:00 \u2502 Last reply: 3m ago");
+    expect(rowOf("zh-Hans", ROW("sessionTime"))).toBe("\u5F00\u59CB\uFF1A10:00 \u2502 \u4E0A\u6B21\u56DE\u590D\uFF1A3m\u524D");
+    expect(rowOf("zh-Hant", ROW("sessionTime"))).toBe("\u958B\u59CB\uFF1A10:00 \u2502 \u4E0A\u6B21\u56DE\u8986\uFF1A3m\u524D");
+  });
+
+  it("is the language's own after a window's name in the compact quota line, and between the parts of the token totals", () => {
+    const compact = ROW("quota", { usage: { compact: true } });
+    expect(rowOf("en", compact)).toMatch(/^5h: 25\.0% \(1h 26m\) \| Wk: 40\.0% \(available\)$/);
+    expect(rowOf("zh-Hans", compact)).toMatch(/^5\u5C0F\u65F6\uFF1A25\.0% \(1h 26m\) \| \u672C\u5468\uFF1A40\.0% \(\u53EF\u7528\)$/);
+    expect(rowOf("zh-Hans", ROW("tokens"))).toBe("\u8BCD\u5143 65\uFF08\u8F93\u5165 10\uFF0C\u8F93\u51FA 20\uFF0C\u7F13\u5B58 35\uFF09");
+    expect(rowOf("en", ROW("tokens"))).toBe("Tokens 65 (in: 10, out: 20, cache: 35)");
   });
 });
