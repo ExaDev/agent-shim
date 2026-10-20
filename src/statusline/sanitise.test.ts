@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ESCAPE } from "./ansi";
 import { MAX_DISPLAY_TEXT_CHARS } from "../config/statusline";
 import { graphemesOf } from "./graphemes";
-import { boundedDisplayText, sanitiseDisplayText } from "./sanitise";
+import { boundedDisplayText, sanitiseDisplayText, visibleDisplayText } from "./sanitise";
 
 const EXCESS_EMOJI = 5;
 
@@ -43,5 +43,42 @@ describe("boundedDisplayText", () => {
   it("cuts to the most characters allowed, counting a character outside the basic plane once", () => {
     const long = "\u{1F600}".repeat(MAX_DISPLAY_TEXT_CHARS + EXCESS_EMOJI);
     expect(graphemesOf(boundedDisplayText(long))).toHaveLength(MAX_DISPLAY_TEXT_CHARS);
+  });
+});
+
+describe("visibleDisplayText", () => {
+  const ENGLAND = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
+
+  it("leaves a name alone, including its letters, emoji and the joiners its script needs", () => {
+    expect(visibleDisplayText("Claude Opus 5")).toBe("Claude Opus 5");
+    expect(visibleDisplayText("Fa\u200Crsi")).toBe("Fa\u200Crsi");
+    expect(visibleDisplayText("\u{1F469}\u200D\u{1F4BB} dev")).toBe("\u{1F469}\u200D\u{1F4BB} dev");
+    expect(visibleDisplayText("\u2764\uFE0F ok")).toBe("\u2764\uFE0F ok");
+  });
+
+  it("turns a space of any width into a plain space rather than joining the words", () => {
+    expect(visibleDisplayText("Claude\u00A0Opus")).toBe("Claude Opus");
+    expect(visibleDisplayText("a\u2003b\u3000c")).toBe("a b c");
+    expect(visibleDisplayText("  padded \u00A0")).toBe("padded");
+  });
+
+  it("keeps the tag characters of a flag and removes tag characters that spell no flag", () => {
+    expect(visibleDisplayText(`${ENGLAND} team`)).toBe(`${ENGLAND} team`);
+    expect(visibleDisplayText("a\u{E0067}\u{E0062}b")).toBe("ab");
+  });
+
+  it("removes zero-width and invisible format characters and line separators from a name that has more", () => {
+    expect(visibleDisplayText("Fa\u200Bble\u2060\uFEFF\u00AD")).toBe("Fable");
+    expect(visibleDisplayText("two\u2028lines\u2029")).toBe("twolines");
+  });
+
+  it("is empty when nothing visible is left", () => {
+    for (const nothing of ["", "   ", "\u200B", "\u2060\u200B", "\u200D", "\u200C\u200D", "\uFE0F", "\u2800", "\u2800\u2800", "\u3164", "\u00A0\u2003", `${ESCAPE}]0;title`, "\u{E0067}\u{E007F}"]) {
+      expect(visibleDisplayText(nothing), JSON.stringify(nothing)).toBe("");
+    }
+  });
+
+  it("treats a blank cell inside a name as a space", () => {
+    expect(visibleDisplayText("a\u2800b")).toBe("a b");
   });
 });

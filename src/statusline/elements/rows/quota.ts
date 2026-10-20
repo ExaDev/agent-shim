@@ -1,9 +1,10 @@
-import { graphemesOf, MAX_STATUSLINE_LABEL_CHARS } from "../../../config/statusline";
+import { MAX_STATUSLINE_LABEL_COLUMNS } from "../../../config/statusline";
 import { FIVE_HOUR_WINDOW_MS, SEVEN_DAY_WINDOW_MS } from "../../../usage/pick";
+import { truncateToColumns } from "../../ansi";
 import type { BarCell } from "../../barGrid";
 import { packLines, SEPARATOR } from "../../headerLayout";
 import { formatResetTime } from "../../resetTime";
-import { sanitiseDisplayText } from "../../sanitise";
+import { visibleDisplayText } from "../../sanitise";
 import { barCell, FULL_PERCENT, statusColor, withColor, type BarStyle } from "../../style";
 import { barStyleOf, type RenderContext, type RowOutput } from "../context";
 
@@ -18,15 +19,9 @@ interface QuotaWindowView {
   readonly weekly: boolean;
 }
 
-/** Format characters (zero-width spaces, joiners, word joiners) and separators other than a plain space, except the zero-width joiner, which holds emoji sequences and conjuncts together. */
-const INVISIBLE = /(?![ \u200D])[\p{Cf}\p{Z}]/gu;
-
-const ZERO_WIDTH_JOINER = "\u200D";
-
-/** `label` as text a terminal draws as it stands and a person can read: the client's own text with its escape sequences, control characters and invisible characters removed, no more than a label's own width so a long name cannot crowd the bar out, and empty when nothing visible is left. A joiner that joins nothing is invisible and does not count as something left. */
+/** `label` as text a terminal draws as it stands and a person can read, cut to the columns a label may take so a long name cannot crowd the bar out; empty when nothing visible is left. */
 function safeLabel(label: string): string {
-  const visible = graphemesOf(sanitiseDisplayText(label).replace(INVISIBLE, "").trim()).filter((grapheme) => grapheme.replaceAll(ZERO_WIDTH_JOINER, "") !== "");
-  return visible.slice(0, MAX_STATUSLINE_LABEL_CHARS).join("").trim();
+  return truncateToColumns(visibleDisplayText(label), MAX_STATUSLINE_LABEL_COLUMNS).trim();
 }
 
 /** The per-model weekly windows the client's payload carries, read only for a session whose quota is the signed-in account's: a window with no name or no figure is not one to draw. */

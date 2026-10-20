@@ -1,4 +1,7 @@
+import stringWidth from "string-width";
 import { z } from "zod";
+
+import { graphemesOf } from "../statusline/graphemes";
 
 /** The segments of the statusline's header, in the order they are drawn unless a setting reorders them. */
 export const STATUSLINE_HEADER_SEGMENTS = ["model", "provider", "route", "account", "identity", "headroom", "project", "vcs", "effort", "advisor", "version", "outputStyle"] as const;
@@ -48,8 +51,8 @@ const MAX_PERCENT = 100;
 /** The highest index of the 256-colour palette. */
 export const MAX_STATUSLINE_PALETTE_INDEX = 255;
 
-/** The longest a window label may be: a label is padded into a column beside its bar, so a longer one crowds the bar out at narrow widths. */
-export const MAX_STATUSLINE_LABEL_CHARS = 12;
+/** The most terminal columns a window label may take (a wide character takes two): a label is padded into a column beside its bar, so a wider one crowds the bar out at narrow widths. */
+export const MAX_STATUSLINE_LABEL_COLUMNS = 12;
 
 /** The widest a bar's base size may be: bars grow to fill the line's spare width anyway, so a base beyond a wide terminal's usable columns only forces the layout to wrap. */
 const MAX_BAR_CELLS = 40;
@@ -74,21 +77,17 @@ function distinctList<T extends z.ZodType<string>>(member: T): z.ZodArray<T> {
 /** A colour: a named one, an index into the 256-colour palette, or a `#rrggbb` hex value. */
 const colourValue = z.union([z.enum(STATUSLINE_COLOUR_NAMES), z.number().int().min(0).max(MAX_STATUSLINE_PALETTE_INDEX), z.string().regex(/^#[0-9a-fA-F]{6}$/, "must be a colour name, a palette index from 0 to 255 or #rrggbb")]);
 
-const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
-/** `text` split into the characters a person sees (a letter with its accents, an emoji with its modifiers), which is what a width limit on a name counts. */
-export function graphemesOf(text: string): string[] {
-  return Array.from(GRAPHEMES.segment(text), ({ segment }) => segment);
-}
-
-/** Whether `text` is one grapheme that draws something: no control, format, separator or unassigned character, so a bar character cannot move the cursor or vanish. Wide glyphs pass and may misalign a bar, which the terminal decides. */
+/** Whether `text` is one grapheme that draws something in exactly one terminal column: no control, format, separator or unassigned character, so a bar character cannot move the cursor or vanish, and not a wide or zero-width one, because a bar is laid out in columns and repeats the glyph once per column. */
 function isSingleVisibleGrapheme(text: string): boolean {
-  return graphemesOf(text).length === 1 && !/[\p{C}\p{Z}]/u.test(text);
+  return graphemesOf(text).length === 1 && stringWidth(text) === 1 && !/[\p{C}\p{Z}]/u.test(text);
 }
 
-const barCharacter = z.string().refine(isSingleVisibleGrapheme, "must be a single visible character");
+const barCharacter = z.string().refine(isSingleVisibleGrapheme, "must be a single visible character that takes one terminal column");
 
-const labelText = z.string().max(MAX_STATUSLINE_LABEL_CHARS).regex(LABEL_RE, "must be visible text without control characters");
+const labelText = z
+  .string()
+  .refine((text) => stringWidth(text) <= MAX_STATUSLINE_LABEL_COLUMNS, `must take no more than ${String(MAX_STATUSLINE_LABEL_COLUMNS)} terminal columns`)
+  .regex(LABEL_RE, "must be visible text without control characters");
 /** Text that replaces something the statusline would otherwise work out; empty leaves the statusline to work it out. */
 const overrideText = z.string().max(MAX_DISPLAY_TEXT_CHARS).regex(OPTIONAL_LABEL_RE, "must be visible text without control characters");
 const wholePercent = z.number().int().min(1).max(MAX_PERCENT);
@@ -145,7 +144,7 @@ const SHAPES = {
     sevenDayThreshold: thresholdPercent.describe("The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden. A weekly window with no five-hour window beside it is always drawn, and 0 always draws it."),
   },
   clock: {
-    hourCycle: z.enum(STATUSLINE_HOUR_CYCLES).describe("The hour cycle of a wall-clock time: `auto` follows the system locale, `h23` forces 24-hour time and `h12` 12-hour time with am or pm."),
+    hourCycle: z.enum(STATUSLINE_HOUR_CYCLES).describe("The hour cycle of a wall-clock time: `auto` follows the system locale, `h23` and `h24` are 24-hour time (`h24` writes midnight as 24:00), and `h12` and `h11` are 12-hour time with am or pm (`h11` writes the hour after midnight as 0)."),
     seconds: z.boolean().describe("Whether a wall-clock time includes seconds (`14:30:07`)."),
   },
   colours: {

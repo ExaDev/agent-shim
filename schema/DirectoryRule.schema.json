@@ -299,13 +299,11 @@
               "properties": {
                 "fiveHour": {
                   "type": "string",
-                  "maxLength": 12,
                   "pattern": "^[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*$",
                   "description": "The name of the five-hour subscription window."
                 },
                 "sevenDay": {
                   "type": "string",
-                  "maxLength": 12,
                   "pattern": "^[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*$",
                   "description": "The name of the weekly subscription window."
                 }
@@ -397,7 +395,7 @@
                     "h23",
                     "h24"
                   ],
-                  "description": "The hour cycle of a wall-clock time: `auto` follows the system locale, `h23` forces 24-hour time and `h12` 12-hour time with am or pm."
+                  "description": "The hour cycle of a wall-clock time: `auto` follows the system locale, `h23` and `h24` are 24-hour time (`h24` writes midnight as 24:00), and `h12` and `h11` are 12-hour time with am or pm (`h11` writes the hour after midnight as 0)."
                 },
                 "seconds": {
                   "type": "boolean",
