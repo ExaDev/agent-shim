@@ -372,6 +372,15 @@ export const realRunPort: RunPort = {
   },
 };
 
+/** `realRunPort`'s `run` without blocking the calling thread: the exit status is the process's own, and null when it could not be started or was killed, as `spawnSync` reports it. */
+export async function realRunAsync(command: string, args: readonly string[]): Promise<{ readonly status: number | null; readonly stdout: string; readonly stderr: string }> {
+  return await new Promise((resolve) => {
+    execFile(command, [...args], { encoding: "utf8", timeout: PS_TIMEOUT_MS }, (error, stdout, stderr) => {
+      resolve({ status: error === null ? 0 : typeof error.code === "number" ? error.code : null, stdout, stderr });
+    });
+  });
+}
+
 /** Expands a leading `~` in a credential file path to the home directory; any other path is returned as written (the schema only admits absolute and `~`-rooted ones). */
 function expandHome(filePath: string): string {
   return filePath.startsWith("~/") ? path.join(os.homedir(), filePath.slice(1)) : filePath;

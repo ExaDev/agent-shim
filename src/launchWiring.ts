@@ -13,7 +13,8 @@ import { realFrontDoorPort } from "./frontdoor/realFrontDoorPort";
 import { prepareLaunch, resolveLaunch, type FarmRuntime, type LaunchPlan, type LaunchResolution, type PrepareLaunchParams } from "./launcher";
 import { resolveUpdateMode } from "./update/launchHook";
 import { loadCascadeInput, readDirectorySelections } from "./launcher/cascade";
-import type { LogPort, ProcPort } from "./launcher/ports";
+import type { LogPort, ProcPort, RunPort } from "./launcher/ports";
+import { resolveWithAsyncRuns, type AsyncRun } from "./replayRun";
 import { resolveClaudeHome, resolveLayoutPaths, type LayoutPaths } from "./paths";
 import { identitySignIn } from "./usage/signIn";
 import type { ClaudeBinaryResolver } from "./versionDiscovery";
@@ -26,6 +27,7 @@ import {
   realHoldPort,
   realIsProcessRunning,
   realResolveClaudeBinary,
+  realRunAsync,
   realRunPort,
   realSleepSync,
   resolveGitBranch,
@@ -35,7 +37,7 @@ import {
 } from "./realPorts";
 
 /** Builds the farm runtime the launcher's resync step needs for a launch in `cwd`, wired to real filesystem, clock, git, and process facilities, plus the directory-scoped selections the launcher needs before it can resync anything. */
-export function buildFarmRuntime(paths: LayoutPaths, cwd: string): {
+export function buildFarmRuntime(paths: LayoutPaths, cwd: string, run: RunPort = realRunPort): {
   runtime: FarmRuntime;
   directoryIdentity?: string;
   directoryConfigProfile?: string;
@@ -48,7 +50,7 @@ export function buildFarmRuntime(paths: LayoutPaths, cwd: string): {
   const classification = loadClassification(paths);
   const loaded = loadCascadeInput({ paths, home, cwd, read });
   const selections = readDirectorySelections(loaded);
-  const git = resolveGitBranch(realRunPort, cwd);
+  const git = resolveGitBranch(run, cwd);
   const updateMode = resolveUpdateMode(loaded.globalConfig);
 
   return {
@@ -91,6 +93,8 @@ export interface RealLaunchOptions {
   readonly log: LogPort;
   /** Starts the front door and headroom daemons when a launch needs them: the command line spawns itself, a library host names the agent-shim executable. */
   readonly spawnDaemon: DaemonSpawner;
+  /** Runs the auxiliary commands a launch decision asks for (the Keychain probe); the real, blocking one unless a caller that must not block supplies another. */
+  readonly run?: RunPort;
   readonly allowMissingConfigProfile?: boolean;
 }
 
@@ -113,7 +117,7 @@ export function realPrepareLaunchParams(paths: LayoutPaths, options: RealLaunchO
     frontdoor: realFrontDoorPort(paths, options.spawnDaemon),
     credentials: { ...realCredentialPort, cache: realCredentialCacheEnv(paths) },
     hold: realHoldPort,
-    hasStoredLogin: (identity) => identitySignIn(realFarmFs, { platform: process.platform, run: realRunPort }, { farmRoot: path.join(paths.identitiesDir, identity), hasCredentialBlock: false }).state !== "signed-out",
+    hasStoredLogin: (identity) => identitySignIn(realFarmFs, { platform: process.platform, run: options.run ?? realRunPort }, { farmRoot: path.join(paths.identitiesDir, identity), hasCredentialBlock: false }).state !== "signed-out",
     ...(farm.directoryIdentity === undefined ? {} : { directoryPinnedIdentity: farm.directoryIdentity }),
     ...(farm.directoryConfigProfile === undefined ? {} : { directoryRuleConfigProfile: farm.directoryConfigProfile }),
     ...(farm.globalDefaultConfigProfile === undefined ? {} : { globalDefaultConfigProfile: farm.globalDefaultConfigProfile }),
@@ -196,7 +200,7 @@ export interface ClaudeLaunchResolution {
  *
  * A launch that would be refused throws `LaunchRefusedError` carrying the launcher's own message, exactly as `prepareClaudeLaunch` does.
  */
-export function resolveClaudeLaunch(options: ResolveClaudeLaunchOptions): ClaudeLaunchResolution {
+export function resolveClaudeLaunch(options: ResolveClaudeLaunchOptions, run: RunPort = realRunPort): ClaudeLaunchResolution {
   const paths = options.paths ?? resolveLayoutPaths();
   const refusals: string[] = [];
   const warnings: string[] = [];
@@ -221,5 +225,12 @@ export function resolveClaudeLaunch(options: ResolveClaudeLaunchOptions): Claude
   const spawnDaemon: DaemonSpawner = () => {
     throw new Error("resolving a launch starts no daemon");
   };
-  return { resolution: resolveLaunch(realPrepareLaunchParams(paths, { proc, log, spawnDaemon, farm: buildFarmRuntime(paths, options.cwd) })), warnings };
+  return { resolution: resolveLaunch(realPrepareLaunchParams(paths, { proc, log, spawnDaemon, run, farm: buildFarmRuntime(paths, options.cwd, run) })), warnings };
+}
+
+/**
+ * `resolveClaudeLaunch` for a process whose event loop serves other processes (the front door): the same decision, with the commands it asks for (the git branch of the directory, the Keychain probe of an identity's login) run without blocking the calling thread and the decision started again once each has an answer. A resolution changes nothing, so starting it again is safe.
+ */
+export async function resolveClaudeLaunchAsync(options: ResolveClaudeLaunchOptions, runAsync: AsyncRun = realRunAsync): Promise<ClaudeLaunchResolution> {
+  return await resolveWithAsyncRuns((run) => resolveClaudeLaunch(options, run), runAsync);
 }

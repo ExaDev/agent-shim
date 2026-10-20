@@ -160,7 +160,8 @@ describe("the door's typed API with the control plane mounted beside Remote Cont
       sessionShow: () => {
         throw new Error("this test serves no sessions");
       },
-      resolveLaunch: (request) => ({
+      resolveLaunch: async (request) =>
+        await Promise.resolve({
         resolution: resolveLaunch({
           paths,
           fs: fakeFs({}),
