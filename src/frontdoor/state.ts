@@ -271,10 +271,14 @@ export function removeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, pid:
   fs.removeRecursive(path.join(sessionsDir, `${String(pid)}.json`));
 }
 
-/** Removes every entry whose launcher is no longer running, so a dead launch's capability stops being accepted and cannot keep the door awake. The predicate must be zombie-aware, as for headroom's. */
-export function pruneDeadFrontDoorSessions(fs: HeadroomFs, sessionsDir: string, isRunning: (pid: number) => boolean): readonly number[] {
+/**
+ * Removes every entry of `listed` whose launcher is no longer running, so a dead launch's capability stops being accepted and cannot keep the door awake. The predicate must be zombie-aware, as for headroom's.
+ *
+ * `listed` is the listing `isRunning` was computed over, never a fresh read of the directory: a launch that registered after that listing was taken has not been checked, so the predicate would call it dead and delete a live session's capability.
+ */
+export function pruneDeadFrontDoorSessions(fs: HeadroomFs, sessionsDir: string, listed: readonly FrontDoorSessionSummary[], isRunning: (pid: number) => boolean): readonly number[] {
   const removed: number[] = [];
-  for (const session of listFrontDoorSessions(fs, sessionsDir)) {
+  for (const session of listed) {
     if (!isRunning(session.pid)) {
       removeFrontDoorSession(fs, sessionsDir, session.pid);
       removed.push(session.pid);

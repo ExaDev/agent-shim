@@ -6,7 +6,7 @@ import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { isLiveCapability } from "./capability";
 import { CONNECT_INTERCEPT_HOST, generateCa, MAX_CONNECT_HEAD_BYTES, type CaMaterial } from "./connect";
-import { liveSessionTokens, pruneDeadFrontDoorSessions, writeFrontDoorSession } from "./state";
+import { listFrontDoorSessions, liveSessionTokens, pruneDeadFrontDoorSessions, writeFrontDoorSession } from "./state";
 import {
   connectHead,
   echoThrough,
@@ -355,7 +355,7 @@ describe("CONNECT authentication and limits over real sockets", () => {
         expect(await echoThrough(tunnel.socket, "while-live")).toContain("while-live");
 
         // The launcher dies; the supervisor's next tick prunes it, and the tunnel it opened goes at the next revalidation.
-        expect(pruneDeadFrontDoorSessions(registry, paths.frontdoorSessionsDir, () => false)).toEqual([launcherPid]);
+        expect(pruneDeadFrontDoorSessions(registry, paths.frontdoorSessionsDir, listFrontDoorSessions(registry, paths.frontdoorSessionsDir), () => false)).toEqual([launcherPid]);
         await tunnel.closed;
 
         const stale = rawAttempt(connectPort, head);
