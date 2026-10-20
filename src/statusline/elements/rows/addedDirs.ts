@@ -1,3 +1,4 @@
+import { writeAround } from "../../messages/around";
 import { addedDirNames } from "../../projectPath";
 import type { RenderContext, RowOutput } from "../context";
 
@@ -7,6 +8,7 @@ export function addedDirsRow({ payload, settings, palette, t }: RenderContext): 
   if (settings.project.addedDirsLayout !== "row" || names.length === 0) {
     return { kind: "text", lines: [] };
   }
-  const drawn = [...names, ...(more > 0 ? [t("more", { count: more })] : [])];
-  return { kind: "text", lines: [palette.paint("label", t("addedDirs.label", { dirs: drawn.join(t("list.separator")) }))] };
+  const label = (text: string): string => palette.paint("label", text);
+  const drawn = [...names, ...(more > 0 ? [t("more", { count: more })] : [])].map(label);
+  return { kind: "text", lines: [writeAround(t, "addedDirs.label", drawn.join(label(t("list.separator"))), label)] };
 }
