@@ -14,6 +14,7 @@ import {
   MAX_TRACKED_NAMES,
   MAX_TRACKED_TODOS,
   MAX_TRACKED_TOOL_CALLS,
+  MAX_UNMATCHED_RESULTS,
   type ActivityLatest,
   type ActivityState,
 } from "./activity";
@@ -147,6 +148,49 @@ describe("records that copy earlier ones", () => {
   it("are no reason to track a call whose id is already tracked, in a record of the right kind", () => {
     expect(factsAt([use("a", "Read"), result("a", SECOND), use("a", "Read", {}, STEP.third)]).tools).toEqual([{ name: "Read", target: undefined, status: "completed" }]);
     expect(factsAt([use("g", "Agent", {}), use("g", "Agent", {}, STEP.third)]).agents).toHaveLength(1);
+  });
+});
+
+describe("a result written to the file before its call", () => {
+  it("finishes the call when the call arrives, however late the call is stamped", () => {
+    const facts = factsAt([result("a", SECOND), use("a", "Edit", { file_path: "/x" }, 0)]);
+    expect(facts.tools).toEqual([{ name: "Edit", target: "/x", status: "completed" }]);
+    expect(activityFactsOf(fold([result("a", SECOND), use("a", "Edit")]), T0 + MANY_TIMES_THE_LIMIT * MAX_LIVE_TOOL_CALL_MS).tools).toHaveLength(1);
+  });
+
+  it("marks the call failed when the result was an error", () => {
+    expect(factsAt([result("a", SECOND, true), use("a", "Edit")]).tools[0]?.status).toBe("error");
+  });
+
+  it("ends an agent, and tells a background one, from the result that came first", () => {
+    const foreground = factsAt([result("g", SECOND, false, { toolUseResult: { resolvedModel: "claude-opus-4-8" } }), use("g", "Agent", { subagent_type: "x" })]).agents[0];
+    expect(foreground).toMatchObject({ status: "completed", model: "claude-opus-4-8" });
+    const background = factsAt([result("g", SECOND, false, { toolUseResult: { isAsync: true } }), use("g", "Agent", { subagent_type: "x" })]).agents[0];
+    expect(background).toMatchObject({ status: "running" });
+  });
+
+  it("is forgotten once its call has arrived", () => {
+    const state = fold([result("a", SECOND), use("a", "Edit")]);
+    expect(state.latest.unmatchedResults).toEqual([]);
+  });
+
+  it("is kept in the state between folds, so a result from one refresh finishes a call of the next", () => {
+    const first = fold([result("a", SECOND)]);
+    expect(ActivityStateSchema.parse(JSON.parse(JSON.stringify(first)))).toEqual(first);
+    expect(activityFactsOf(fold([use("a", "Read")], first), T0 + SECOND).tools[0]?.status).toBe("completed");
+  });
+
+  it("keeps only the latest few results that have no call", () => {
+    const records = Array.from({ length: MAX_UNMATCHED_RESULTS + EXTRA_CALLS }, (_, index) => result(`orphan${String(index)}`, SECOND));
+    const { unmatchedResults } = fold(records).latest;
+    expect(unmatchedResults).toHaveLength(MAX_UNMATCHED_RESULTS);
+    expect(unmatchedResults[0]?.id).toBe(`orphan${String(EXTRA_CALLS)}`);
+  });
+
+  it("takes a record's outcome (the model, whether it was started in the background) only when the record holds one result", () => {
+    const two = { type: "user", timestamp: at(SECOND), toolUseResult: { isAsync: true, resolvedModel: "claude-opus-4-8" }, message: { content: [{ type: "tool_result", tool_use_id: "g" }, { type: "tool_result", tool_use_id: "h" }] } };
+    const facts = factsAt([use("g", "Agent", {}), use("h", "Agent", {}), two]);
+    expect(facts.agents).toMatchObject([{ status: "completed", model: undefined }, { status: "completed", model: undefined }]);
   });
 });
 

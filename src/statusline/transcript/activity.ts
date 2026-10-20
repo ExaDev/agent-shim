@@ -13,6 +13,9 @@ export const MAX_TRACKED_AGENTS = 10;
 /** The most items of a todo list the state keeps. A session's list is a handful of items; the bound only stops a runaway one from growing the cache file the statusline rewrites at every refresh, and an item past it is forgotten oldest first. */
 export const MAX_TRACKED_TODOS = 200;
 
+/** The most results kept while they wait for their calls: a result is written ahead of its call by a few milliseconds, so only the latest few can be waiting. */
+export const MAX_UNMATCHED_RESULTS = 20;
+
 /** The most distinct skill names, and the most distinct MCP server names, the state keeps, for the same reason. */
 export const MAX_TRACKED_NAMES = 256;
 
@@ -71,6 +74,18 @@ const AgentCallSchema = z.strictObject({
   background: z.literal(true).optional(),
 });
 
+/** The outcome of a tool call whose call has not been read yet. A fast tool's result can be written to the file before its call, so the outcome is kept until the call arrives. */
+const CallResultSchema = z.strictObject({
+  id: z.string(),
+  atMs: z.number().optional(),
+  failed: z.literal(true).optional(),
+  /** The model an agent's result says it ran on. */
+  resolvedModel: z.string().optional(),
+  /** True when the result says the agent was started in the background. */
+  async: z.literal(true).optional(),
+});
+type CallResult = z.infer<typeof CallResultSchema>;
+
 const TodoStatusSchema = z.enum(["pending", "in_progress", "completed"]);
 
 const TodoSchema = z.strictObject({
@@ -90,6 +105,8 @@ export const ActivityLatestSchema = z.strictObject({
   todosReplaced: z.literal(true).optional(),
   /** True once a `TaskCreate` or `TaskUpdate` has been read: the list was edited in place, so a list read from before that is out of date. */
   todosEdited: z.literal(true).optional(),
+  /** Results read before their calls, oldest first. */
+  unmatchedResults: z.array(CallResultSchema),
 });
 export type ActivityLatest = z.infer<typeof ActivityLatestSchema>;
 
@@ -104,7 +121,7 @@ export const ActivityStateSchema = z.strictObject({ cumulative: ActivityCumulati
 export type ActivityState = z.infer<typeof ActivityStateSchema>;
 
 /** The latest-state activity before any record has been read. */
-export const EMPTY_ACTIVITY_LATEST: ActivityLatest = { tools: [], agents: [], todos: [] };
+export const EMPTY_ACTIVITY_LATEST: ActivityLatest = { tools: [], agents: [], todos: [], unmatchedResults: [] };
 
 /** The state before any record has been read. */
 export const EMPTY_ACTIVITY_STATE: ActivityState = { cumulative: { skills: [], mcpServers: [] }, latest: EMPTY_ACTIVITY_LATEST };
@@ -231,8 +248,18 @@ function isTracked(state: ActivityLatest, id: string): boolean {
   return state.tools.some((tool) => tool.id === id) || state.agents.some((agent) => agent.id === id);
 }
 
-/** The state after a tool call: an agent, an edit to the todo list, or a tool call to track. */
+/** The state after a tool call, and the result that was written ahead of it if there is one. */
 function foldToolUse(state: ActivityLatest, call: ToolUse, atMs: number | undefined): ActivityLatest {
+  const added = foldTrackedCall(state, call, atMs);
+  const waiting = added.unmatchedResults.find((result) => result.id === call.id);
+  if (waiting === undefined) {
+    return added;
+  }
+  return applyResult({ ...added, unmatchedResults: added.unmatchedResults.filter((result) => result !== waiting) }, waiting) ?? added;
+}
+
+/** The state after a tool call: an agent, an edit to the todo list, or a tool call to track. */
+function foldTrackedCall(state: ActivityLatest, call: ToolUse, atMs: number | undefined): ActivityLatest {
   if (AGENT_TOOLS.includes(call.name)) {
     const { input } = call;
     const model = stringField(input, "model");
@@ -255,19 +282,26 @@ function foldToolUse(state: ActivityLatest, call: ToolUse, atMs: number | undefi
   return { ...state, tools: [...state.tools, tool].slice(-MAX_TRACKED_TOOL_CALLS) };
 }
 
-/** The state after a tool call's result: the tracked call it answers is finished, and an agent's result may say which model it ran on and that it was started in the background, in which case it has not finished. */
-function foldToolResult(state: ActivityLatest, record: TranscriptRecord, toolUseId: string, failed: boolean, atMs: number | undefined): ActivityLatest {
-  const tools = state.tools.map((tool) => (tool.id === toolUseId ? { ...tool, ...(atMs === undefined ? {} : { endedAtMs: atMs }), ...(failed ? { failed: true as const } : {}) } : tool));
-  const result = record.toolUseResult;
+/** The state with `result` applied to the tracked call it answers: the call is finished, and an agent's result may say which model it ran on and that it was started in the background, in which case it has not finished. Undefined when no tracked call has the result's id. */
+function applyResult(state: ActivityLatest, result: Readonly<CallResult>): ActivityLatest | undefined {
+  if (!state.tools.some((tool) => tool.id === result.id) && !state.agents.some((agent) => agent.id === result.id)) {
+    return undefined;
+  }
+  const tools = state.tools.map((tool) => (tool.id === result.id ? { ...tool, ...(result.atMs === undefined ? {} : { endedAtMs: result.atMs }), ...(result.failed === true ? { failed: true as const } : {}) } : tool));
   const agents = state.agents.map((agent) => {
-    if (agent.id !== toolUseId) {
+    if (agent.id !== result.id) {
       return agent;
     }
-    const background = agent.background === true || result?.isAsync === true || result?.status === "async_launched";
-    const model = result?.resolvedModel === undefined ? agent.model : stored(result.resolvedModel);
-    return { ...agent, ...(model === undefined ? {} : { model }), ...(background ? { background: true as const } : {}), ...(!background && atMs !== undefined ? { endedAtMs: atMs } : {}) };
+    const background = agent.background === true || result.async === true;
+    const model = result.resolvedModel === undefined ? agent.model : stored(result.resolvedModel);
+    return { ...agent, ...(model === undefined ? {} : { model }), ...(background ? { background: true as const } : {}), ...(!background && result.atMs !== undefined ? { endedAtMs: result.atMs } : {}) };
   });
   return { ...state, tools, agents };
+}
+
+/** The state after a tool call's result: applied to its call, or kept until the call is read when the result was written first. */
+function foldToolResult(state: ActivityLatest, result: Readonly<CallResult>): ActivityLatest {
+  return applyResult(state, result) ?? { ...state, unmatchedResults: [...state.unmatchedResults, result].slice(-MAX_UNMATCHED_RESULTS) };
 }
 
 /** The state after the client announced a finished background agent. The result of the call that started it was written at launch, so the announcement is what says when it ended. */
@@ -293,11 +327,20 @@ export function foldActivityLatest(state: ActivityLatest, record: TranscriptReco
     return next;
   }
   // Calls are made in assistant records and answered in user records. Other records can carry copies of both (the client writes the requests it sends to the API as `api-request-blob` records, whose messages hold earlier calls and results again), and a copy is not a second call.
+  // The record's own outcome (the model an agent ran on, whether it was started in the background) is its result's only when it holds one result.
+  const resultCount = content.filter((block) => block.type === "tool_result").length;
   for (const block of content) {
     if (record.type === "assistant" && block.type === "tool_use" && block.id !== undefined && block.name !== undefined && !isTracked(next, block.id)) {
       next = foldToolUse(next, { id: block.id, name: block.name, input: block.input }, atMs);
     } else if (record.type === "user" && block.type === "tool_result" && block.tool_use_id !== undefined) {
-      next = foldToolResult(next, record, block.tool_use_id, block.is_error === true, atMs);
+      const outcome = resultCount === 1 ? record.toolUseResult : undefined;
+      next = foldToolResult(next, {
+        id: block.tool_use_id,
+        ...(atMs === undefined ? {} : { atMs }),
+        ...(block.is_error === true ? { failed: true as const } : {}),
+        ...(outcome?.resolvedModel === undefined ? {} : { resolvedModel: outcome.resolvedModel }),
+        ...(outcome?.isAsync === true || outcome?.status === "async_launched" ? { async: true as const } : {}),
+      });
     }
   }
   return next;
@@ -407,6 +450,7 @@ export function activityFactsOf(state: ActivityState, nowMs: number, newer?: Act
           tools: followedBy(state.latest.tools, newer.tools).slice(-MAX_TRACKED_TOOL_CALLS),
           agents: followedBy(state.latest.agents, newer.agents).slice(-MAX_TRACKED_AGENTS),
           todos: newer.todosReplaced === true ? newer.todos : newer.todosEdited === true ? [] : state.latest.todos,
+          unmatchedResults: [],
         };
   return {
     tools: latest.tools.flatMap((tool): ToolCallFact[] => {
