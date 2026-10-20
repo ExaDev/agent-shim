@@ -6,7 +6,12 @@ import { describe, expect, it } from "vitest";
 import { CATALOGUES, fillPlaceholders, translatorFor, type MessageId } from "./catalogues";
 import { STATUSLINE_LANGUAGES } from "./languages";
 
-const IDS = Object.keys(CATALOGUES.en);
+/** Whether `value` is the id of a message. */
+function isMessageId(value: string): value is MessageId {
+  return Object.hasOwn(CATALOGUES.en, value);
+}
+
+const IDS: readonly MessageId[] = Object.keys(CATALOGUES.en).filter(isMessageId);
 const PLACEHOLDER = /\{(\w+)\}/g;
 
 function placeholdersOf(text: string): string[] {
@@ -21,7 +26,7 @@ describe("the message catalogues", () => {
 
   for (const language of STATUSLINE_LANGUAGES) {
     describe(language, () => {
-      const messages: Readonly<Record<string, string>> = CATALOGUES[language];
+      const messages = CATALOGUES[language];
 
       it("has a text for every id English has, and no other", () => {
         expect(Object.keys(messages).sort()).toEqual([...IDS].sort());
@@ -29,22 +34,22 @@ describe("the message catalogues", () => {
 
       it("writes no id as nothing", () => {
         for (const id of IDS) {
-          expect(messages[id]?.trim(), id).not.toBe("");
+          expect(messages[id].trim(), id).not.toBe("");
         }
       });
 
       it("uses exactly the placeholders English uses for each id", () => {
         for (const id of IDS) {
-          expect(placeholdersOf(messages[id] ?? ""), id).toEqual(placeholdersOf(CATALOGUES.en[id as MessageId]));
+          expect(placeholdersOf(messages[id]), id).toEqual(placeholdersOf(CATALOGUES.en[id]));
         }
       });
     });
   }
 
-  it("write every language other than English in its own words, not English's", () => {
+  it("write every language other than English in its own words", () => {
     for (const language of STATUSLINE_LANGUAGES.filter((name) => name !== "en")) {
-      const same = IDS.filter((id) => CATALOGUES[language][id as MessageId] === CATALOGUES.en[id as MessageId]);
-      // Product names and abbreviations the languages keep (CC v1, headroom, the CLAUDE.md file) are the only texts allowed to match.
+      const same = IDS.filter((id) => CATALOGUES[language][id] === CATALOGUES.en[id]);
+      // The name of the proxy and the abbreviation of the client are the only texts the languages keep as they are.
       expect(same.sort(), language).toEqual(["headroom.label", "version.label"]);
     }
   });
@@ -68,29 +73,24 @@ describe("translatorFor", () => {
   });
 });
 
-/** The directories and files whose text reaches the screen, as the places a label could be written in place of a message. */
-const LABEL_SOURCES = ["elements", "style.ts", "resetTime.ts", "wallClock.ts"];
-
-function sourcesUnder(target: string): string[] {
-  const full = path.join(__dirname, "..", target);
-  if (fs.statSync(full).isFile()) {
-    return [full];
-  }
+/** Every module under `src/statusline` that is not a test, by its path from there. */
+function allModules(directory = ""): string[] {
+  const full = path.join(__dirname, "..", directory);
   return fs.readdirSync(full, { withFileTypes: true }).flatMap((entry) => {
-    const child = path.join(target, entry.name);
+    const child = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      return sourcesUnder(child);
+      return allModules(child);
     }
-    return entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") ? [path.join(__dirname, "..", child)] : [];
+    return entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") ? [child] : [];
   });
 }
 
-/** The text of every string and template piece in the label sources that holds a run of two letters, outside imports, exports and types, by the file it is in. */
+/** The text of every string and template piece in a module that holds a letter, outside imports, exports and types. */
 function literalsIn(file: string): string[] {
-  const source = ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  const source = ts.createSourceFile(file, fs.readFileSync(path.join(__dirname, "..", file), "utf8"), ts.ScriptTarget.Latest, true);
   const found: string[] = [];
   const visit = (node: ts.Node): void => {
-    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) && /[A-Za-z]{2,}/.test(node.text)) {
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) && /[A-Za-z]/.test(node.text)) {
       const parent = node.parent;
       if (!ts.isImportDeclaration(parent) && !ts.isExportDeclaration(parent) && !ts.isLiteralTypeNode(parent) && !ts.isPropertySignature(parent)) {
         found.push(node.text);
@@ -102,31 +102,92 @@ function literalsIn(file: string): string[] {
   return found;
 }
 
+/** The directories whose modules read or hold data and never write text for the screen, each with why. A module in one that started to draw words would have to move out of it. */
+const DATA_DIRECTORIES: Readonly<Record<string, string>> = {
+  messages: "the catalogues themselves",
+  parity: "the record of claude-hud's settings, read by tests and documents",
+  transcript: "reads the session transcript into facts; the elements draw them",
+  vcs: "reads git and Jujutsu into a status; the vcs segment draws it, and says a detached head in the catalogue's words",
+};
+
+/** The modules outside those directories that write no words for the screen, by why: they carry settings, talk to the machine or the network, or lay out and paint text others wrote. */
+const PLUMBING: Readonly<Record<string, readonly string[]>> = {
+  "carry the settings and the command line": ["change.ts", "commands.ts", "keys.ts", "settings.ts"],
+  "read the machine, the client's payload and the door": ["cacheFile.ts", "client.ts", "configCounts.ts", "dailyLedger.ts", "doorCost.ts", "enrich.ts", "headroom.ts", "identityTranscript.ts", "payload.ts", "ports.ts", "speed.ts"],
+  "lay out, measure, paint and clean text that others wrote": ["ansi.ts", "barGrid.ts", "blank.ts", "graphemes.ts", "headerLayout.ts", "palette.ts", "render.ts", "sanitise.ts", "width.ts"],
+  "stand in for the machine in tests": ["testing.ts"],
+};
+
 /**
- * Strings in the label sources that are not words shown to a person, by why. Anything else with letters in it is a label that bypasses the catalogue: write it as a message instead, or add it here with its reason.
+ * Strings in the modules that write words for the screen that are not words, by module and why. Anything else with a letter in it is a label that bypasses the catalogue: write it as a message instead, or add it here, in the module it is in. A string naming a message is not listed, because it is the catalogue being used.
  */
-const NOT_LABELS: ReadonlySet<string> = new Set([
-  // The names of colour roles, element kinds and setting values the code compares or passes on.
-  ...["label", "critical", "warning", "gitBranch", "git", "context", "model", "project", "usage", "usageWarning", "empty", "text", "bars", "row", "inline", "started", "remaining", "elapsed", "elapsedAndAbsolute", "absolute", "relative", "both", "full", "short", "symbol", "client", "transcript", "native", "string", "auto", "numeric", "never", "buffered", "shown", "percent", "tokens", "hidden"],
-  // The names of the effort levels the client reports, which are matched, and drawn through the catalogue.
-  ...["low", "medium", "high", "xhigh", "max"],
-  // Names of the products and plans the statusline reports, which no language translates, and the plan identifiers the account sends.
-  ...["Max", "Max ", "Pro", "Team", "Team Standard", "Team Premium", "Enterprise", "Free", "claude_max", "claude_pro", "claude_team", "claude_enterprise", "team_standard", "team_tier_1", "default_", "free"],
-  // Prefixes and file names of the models and settings the statusline reads, and a locale tag used as a key.
-  ...["claude-", "anthropic.", ".claude", "settings.json", "settings.local.json", "en-CA"],
-]);
+const NOT_WORDS: Readonly<Record<string, readonly string[]>> = {
+  // The names of the sources, settings and colour roles the code compares or passes on.
+  "cost.ts": ["native", "estimate", "anthropic.claude-"],
+  "elements/header/cost.ts": ["native"],
+  "elements/header/effort.ts": ["low", "medium", "high", "xhigh", "max", "string", "text", "symbol"],
+  "elements/header/model.ts": ["claude-", "anthropic.", "full", "short", "client", "transcript"],
+  "elements/header/project.ts": ["label", "inline"],
+  "elements/header/vcs.ts": ["critical", "warning", "gitBranch", "git", "context"],
+  "elements/registry.ts": ["model", "label", "project", "git"],
+  "elements/rows/addedDirs.ts": ["row", "text", "label"],
+  "elements/rows/compactions.ts": ["text", "label"],
+  "elements/rows/context.ts": ["context", "label", "bars", "text", "never", "buffered", "shown", "hidden", "both", "percent", "tokens", "remaining", "critical"],
+  "elements/rows/environment.ts": ["text", "label"],
+  "elements/rows/gitFiles.ts": ["context", "critical", "warning", "text", "label"],
+  "elements/rows/memory.ts": ["usage", "label", "bars"],
+  "elements/rows/promptCache.ts": ["text", "label", "warning", "context"],
+  "elements/rows/quota.ts": ["remaining", "usage", "label", "text", "bars"],
+  "elements/rows/tokens.ts": ["text", "label"],
+  "elements/rows/sessionTime.ts": ["started", "label", "text"],
+  "projectPath.ts": ["full"],
+  "resetTime.ts": ["relative", "absolute", "both", "elapsed", "elapsedAndAbsolute"],
+  "style.ts": ["usage", "usageWarning", "warning", "critical", "empty", "M", "k", "s", "d ", "h", "h ", "m"],
+  "wallClock.ts": ["en-CA", "medium", "short", "auto", "numeric"],
+  // Names of the products and plans the statusline reports, which no language translates, the identifiers the account sends, and the file names it reads.
+  "elements/header/account.ts": ["claude_max", "Max", "Max ", "claude_pro", "Pro", "claude_team", "team_standard", "Team Standard", "team_tier_1", "Team Premium", "Team", "claude_enterprise", "Enterprise", "default_", "free", "Free", "x"],
+  "elements/header/outputStyle.ts": [".claude", "settings.json", "settings.local.json"],
+  // The symbols that stand for units, which are the same in every language: durations, token counts and bytes.
+  "elements/sessionFormat.ts": ["<1m", "m", "h ", "s", "h", "d"],
+  "memoryUse.ts": ["B", "KB", "MB", "GB", "TB"],
+};
+
+/** The modules that are neither plumbing nor in a data directory, which are the ones that write words: any module that is added falls here until someone decides which it is. */
+function writingModules(): string[] {
+  const plumbing = new Set(Object.values(PLUMBING).flat());
+  return allModules().filter((file) => !Object.hasOwn(DATA_DIRECTORIES, file.split(path.sep)[0] ?? file) && !plumbing.has(file));
+}
 
 describe("the statusline's words", () => {
-  const messageIds = new Set(IDS);
-  const literals = LABEL_SOURCES.flatMap((target) => sourcesUnder(target)).flatMap((file) => literalsIn(file).map((text) => ({ text, file: path.basename(file) })));
+  const messageIds = new Set<string>(IDS);
+  const modules = writingModules();
 
-  it("are written through the catalogue: no element carries a label of its own", () => {
-    const bypassing = literals.filter(({ text }) => !messageIds.has(text) && !NOT_LABELS.has(text)).map(({ text, file }) => `${file}: ${JSON.stringify(text)}`);
+  it("are written through the catalogue: no module that writes for the screen carries a string of its own", () => {
+    const bypassing = modules.flatMap((file) =>
+      literalsIn(file)
+        .filter((text) => !messageIds.has(text) && !(NOT_WORDS[file] ?? []).includes(text))
+        .map((text) => `${file}: ${JSON.stringify(text)}`),
+    );
     expect(bypassing).toEqual([]);
   });
 
-  it("are all used: every message in the catalogue is asked for by some element", () => {
-    const used = new Set(literals.map(({ text }) => text));
+  it("leave no exemption unused: every string listed as not a word is in its module", () => {
+    const stale = Object.entries(NOT_WORDS).flatMap(([file, texts]) => {
+      const present = new Set(modules.includes(file) ? literalsIn(file) : []);
+      return texts.filter((text) => !present.has(text)).map((text) => `${file}: ${JSON.stringify(text)}`);
+    });
+    expect(stale).toEqual([]);
+  });
+
+  it("are all used: every message in the catalogue is asked for by some module", () => {
+    const used = new Set(modules.flatMap((file) => literalsIn(file)));
     expect(IDS.filter((id) => !used.has(id))).toEqual([]);
+  });
+
+  it("name only modules that exist among the data directories and the plumbing", () => {
+    const modulesOnDisk = new Set(allModules());
+    expect(Object.values(PLUMBING).flat().filter((file) => !modulesOnDisk.has(file))).toEqual([]);
+    expect(Object.keys(DATA_DIRECTORIES).filter((directory) => !fs.existsSync(path.join(__dirname, "..", directory)))).toEqual([]);
+    expect(Object.keys(NOT_WORDS).filter((file) => !modulesOnDisk.has(file))).toEqual([]);
   });
 });
