@@ -172,6 +172,14 @@ describe("session facts with the end of the transcript read on its own", () => {
     expect(facts.promptCache?.anchorAtMs).toBe(T0);
   });
 
+  it("keeps the tier the state's writes showed when the end holds a request but no write that names one, and takes the end's when it names one", () => {
+    const state = stateOf(prompt(0), reply(SECOND, write("ephemeral_1h_input_tokens")));
+    const withoutTier = endOf(prompt(AT.fiveMinutes), reply(AT.fiveMinutes + SECOND, { requestId: "req-2", message: { usage: { cache_read_input_tokens: 9 } } }));
+    expect(sessionFactsOf(state, withoutTier).promptCache).toEqual({ anchorAtMs: T0 + AT.fiveMinutes, ttlSeconds: PROMPT_CACHE_TTL_SECONDS.oneHour });
+    const withTier = endOf(prompt(AT.fiveMinutes), reply(AT.fiveMinutes + SECOND, { requestId: "req-2", ...write("ephemeral_5m_input_tokens") }));
+    expect(sessionFactsOf(state, withTier).promptCache?.ttlSeconds).toBe(PROMPT_CACHE_TTL_SECONDS.fiveMinutes);
+  });
+
   it("is what the state alone says when there is no end to read", () => {
     const state = stateOf(prompt(0), reply(SECOND));
     expect(sessionFactsOf(state, undefined)).toEqual(sessionFactsOf(state));
