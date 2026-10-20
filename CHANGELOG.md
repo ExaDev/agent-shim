@@ -1,3 +1,15 @@
+## [11.58.0](https://github.com/ExaDev/agent-shim/compare/v11.57.1...v11.58.0) (2026-10-20)
+
+### Features
+
+* **statusline:** draw the session from its transcript, as claude-hud does ([67a4f14](https://github.com/ExaDev/agent-shim/commit/67a4f1481197a2a3d2b0c389ae087492eef73cf1))
+* **statusline:** read the session transcript incrementally for the elements ([04a3d4c](https://github.com/ExaDev/agent-shim/commit/04a3d4c39cf2aa59c12a4f39a710a4a526737a20))
+
+### Bug Fixes
+
+* **statusline:** forget old session caches whichever kind of file is written first ([a3581aa](https://github.com/ExaDev/agent-shim/commit/a3581aa7f576de2036356945e86a264564b974f3))
+* **statusline:** write the session start under the clock settings ([df550b8](https://github.com/ExaDev/agent-shim/commit/df550b87a47fd799d6caeeea5e6d62df3adbae48))
+
 ## [11.57.1](https://github.com/ExaDev/agent-shim/compare/v11.57.0...v11.57.1) (2026-10-20)
 
 ### Bug Fixes
