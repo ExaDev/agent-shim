@@ -145,7 +145,7 @@ describe("the per-model weekly windows", () => {
 
   it("keep a name's emoji sequences whole when it is cut to a label's width", () => {
     const payload = { rate_limits: { model_scoped: [{ display_name: "\u{1F469}\u200D\u{1F4BB} code review assistant", utilization: 10, resets_at: "2026-10-19T09:00:00.000Z" }] } };
-    expect(quotaLines({ usage: { bar: false, modelScoped: true } }, { fiveHourUsed: undefined, sevenDayUsed: undefined }, payload)).toEqual(["\u{1F469}\u200D\u{1F4BB} code revie 10.0% (3d 0h)"]);
+    expect(quotaLines({ usage: { bar: false, modelScoped: true } }, { fiveHourUsed: undefined, sevenDayUsed: undefined }, payload)).toEqual(["\u{1F469}\u200D\u{1F4BB} code revi 10.0% (3d 0h)"]);
   });
 
   it("skip a window whose name is nothing a person can see, and strip what is invisible from one that has more", () => {
@@ -155,7 +155,17 @@ describe("the per-model weekly windows", () => {
       expect(lines(invisible), JSON.stringify(invisible)).toEqual([]);
     }
     expect(lines("Fa\u200Bble\u2028!")).toEqual(["Fable! 10.0% (3d 0h)"]);
+    expect(lines("Claude\u00A0Opus")).toEqual(["Claude Opus 10.0% (3d 0h)"]);
+    expect(lines("Fa\u200Crsi")).toEqual(["Fa\u200Crsi 10.0% (3d 0h)"]);
     expect(lines(`Fable${ESCAPE}]0;never terminated`)).toEqual(["Fable 10.0% (3d 0h)"]);
+  });
+
+  it("cut a name to the columns a label may take, so a wide character counts for two and a flag stays whole", () => {
+    const named = (display_name: string) => ({ rate_limits: { model_scoped: [{ display_name, utilization: 10, resets_at: "2026-10-19T09:00:00.000Z" }] } });
+    const lines = (name: string): string[] => quotaLines({ usage: { bar: false, modelScoped: true } }, { fiveHourUsed: undefined, sevenDayUsed: undefined }, named(name));
+    expect(lines("\u65E5\u672C\u8A9E\u65E5\u672C\u8A9E\u65E5\u672C")).toEqual(["\u65E5\u672C\u8A9E\u65E5\u672C\u8A9E 10.0% (3d 0h)"]);
+    const england = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
+    expect(lines(`${england} Opus`)).toEqual([`${england} Opus 10.0% (3d 0h)`]);
   });
 
   it("draw a name with its control characters stripped and cut to a label's width, and skip a window with no name or figure", () => {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_LABEL_CHARS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
+import { MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_LABEL_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
 
-const OVER_LONG_LABEL = "x".repeat(MAX_STATUSLINE_LABEL_CHARS + 1);
+const OVER_LONG_LABEL = "x".repeat(MAX_STATUSLINE_LABEL_COLUMNS + 1);
 const WARN_ABOVE_DEFAULT_CRITICAL = 95;
 const CRITICAL_ABOVE_WARN = 99;
 
@@ -45,6 +45,13 @@ describe("StatuslineSchema", () => {
       expect(StatuslineSchema.safeParse({ labels: { fiveHour: bad } }).success, JSON.stringify(bad)).toBe(false);
     }
     expect(StatuslineSchema.safeParse({ labels: { fiveHour: "5 hour" } }).success).toBe(true);
+  });
+
+  it("measures a label in terminal columns, so a wide character counts for two", () => {
+    const widestWide = "\u65E5".repeat(MAX_STATUSLINE_LABEL_COLUMNS / 2);
+    expect(StatuslineSchema.safeParse({ labels: { fiveHour: widestWide } }).success).toBe(true);
+    expect(StatuslineSchema.safeParse({ labels: { fiveHour: `${widestWide}\u65E5` } }).success).toBe(false);
+    expect(StatuslineSchema.safeParse({ labels: { fiveHour: "x".repeat(MAX_STATUSLINE_LABEL_COLUMNS) } }).success).toBe(true);
   });
 });
 
@@ -109,6 +116,16 @@ describe("StatuslineSchema colours and bar characters", () => {
   it("refuses a colour outside those forms", () => {
     for (const value of ["purple", MAX_STATUSLINE_PALETTE_INDEX + 1, -1, MAX_STATUSLINE_PALETTE_INDEX / 2, "#fff", "#gg0000", "00ff7f"]) {
       expect(StatuslineSchema.safeParse({ colours: { model: value } }).success, String(value)).toBe(false);
+    }
+  });
+
+  it("refuses a bar character that is wider or narrower than one terminal column", () => {
+    for (const value of ["\u65E5", "\u{1F7E9}", "\u0301"]) {
+      for (const key of ["filled", "empty"]) {
+        const result = StatuslineSchema.safeParse({ bar: { [key]: value } });
+        expect(result.success, `${key} ${JSON.stringify(value)}`).toBe(false);
+        expect(JSON.stringify(result.error?.issues)).toContain("one terminal column");
+      }
     }
   });
 
