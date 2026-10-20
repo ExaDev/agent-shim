@@ -15,8 +15,11 @@ const PADDED_COLUMN_FITS = 50;
 /** The context row, then five windows two to a row. */
 const ROOMY_ROWS = 4;
 const WINDOWS_ON_THE_ONE_ROW = 2;
+const WINDOWS_ON_THE_THREE_ROWS = 3;
 const CONTEXT_PREFIX = "Ctx 96k/1M ";
 const CONTEXT_SUFFIX = " 10.0% (Cache: 0%)";
+/** The width of one bar to a row with the context row's label, bar and figures: its prefix, a bar and its two brackets, and its suffix, the widest. */
+const ONE_BAR_TO_A_ROW_FITS = CONTEXT_PREFIX.length + BASE_BAR_CELLS + 2 + CONTEXT_SUFFIX.length;
 const WINDOW_SUFFIX = " 33.6% (6d 18h)";
 const SHORT_FILL_FRACTION = 0.5;
 
@@ -110,6 +113,18 @@ describe("layoutBarGrid", () => {
     const rows = layoutBarGrid([[CONTEXT], [WINDOWS.slice(0, 1)]], PADDED_COLUMN_FITS, SEPARATOR, BASE_BAR_CELLS);
     expect(rows).toHaveLength(2);
     expect(columnsOf(rows[1] ?? "", "[")[0]).toBe(CONTEXT_PREFIX.length);
+  });
+
+  it("pads units of their own to one column when one bar to a row fits and two do not, and aligns each group within itself once it does not", () => {
+    // The context bar, three quota windows and a lone bar, each a unit of its own: the widest label and figures are the context bar's, so one bar to a row needs exactly the context row's width.
+    const units = [[CONTEXT], [WINDOWS.slice(0, WINDOWS_ON_THE_THREE_ROWS)], [[cell("RAM ", " 50%")]]];
+    const padded = layoutBarGrid(units, ONE_BAR_TO_A_ROW_FITS, SEPARATOR, BASE_BAR_CELLS);
+    expect(padded).toHaveLength(1 + WINDOWS_ON_THE_THREE_ROWS + 1);
+    expect(new Set(padded.map((row) => columnsOf(row, "[")[0]))).toEqual(new Set([CONTEXT_PREFIX.length]));
+    const apart = layoutBarGrid(units, ONE_BAR_TO_A_ROW_FITS - 1, SEPARATOR, BASE_BAR_CELLS);
+    expect(columnsOf(apart[0] ?? "", "[")[0]).toBe(CONTEXT_PREFIX.length);
+    expect(columnsOf(apart[1] ?? "", "[")[0]).toBe("Gem Wk ".length);
+    expect(columnsOf(apart.at(-1) ?? "", "[")[0]).toBe("RAM ".length);
   });
 
   it("draws a bar whole, one to a row, when even that is wider than the line", () => {
