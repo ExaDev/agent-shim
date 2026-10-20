@@ -89,6 +89,7 @@ export function makeWorld(options: { readonly ownPid?: number; readonly fs?: Hea
       await Promise.resolve();
     },
     isRunning: (pid) => alive.has(pid),
+    runningAmong: async (pids) => await Promise.resolve(new Set(pids.filter((pid) => alive.has(pid)))),
     statOwnExecutable: () => ownExecutableStat,
     startProviderListener: async (preferred) => {
       if (failListener) {
