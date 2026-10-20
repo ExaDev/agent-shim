@@ -9,7 +9,7 @@ const EXCESS_EMOJI = 5;
 
 describe("sanitiseDisplayText", () => {
   it("leaves ordinary text, including non-ASCII letters and spaces, alone", () => {
-    expect(sanitiseDisplayText("feat/naïve branch")).toBe("feat/naïve branch");
+    expect(sanitiseDisplayText("feat/na\u00efve branch")).toBe("feat/na\u00efve branch");
   });
 
   it("removes colour, cursor and hyperlink sequences with the text they would have carried", () => {
@@ -26,8 +26,8 @@ describe("sanitiseDisplayText", () => {
 
   it("removes control characters and bidirectional overrides", () => {
     expect(sanitiseDisplayText("a\nb\tc\u0000d\u007fe")).toBe("abcde");
-    expect(sanitiseDisplayText("gpj‮txt.exe")).toBe("gpjtxt.exe");
-    expect(sanitiseDisplayText("a⁦b‎c")).toBe("abc");
+    expect(sanitiseDisplayText("gpj\u202etxt.exe")).toBe("gpjtxt.exe");
+    expect(sanitiseDisplayText("a\u2066b\u200ec")).toBe("abc");
   });
 });
 
@@ -43,6 +43,35 @@ describe("boundedDisplayText", () => {
   it("cuts to the most characters allowed, counting a character outside the basic plane once", () => {
     const long = "\u{1F600}".repeat(MAX_DISPLAY_TEXT_CHARS + EXCESS_EMOJI);
     expect(graphemesOf(boundedDisplayText(long))).toHaveLength(MAX_DISPLAY_TEXT_CHARS);
+  });
+});
+
+describe("sanitiseDisplayText on every code point", () => {
+  /** The characters the control and bidirectional class removes, as ranges written out apart from the expression that implements it: the control characters, the Arabic letter mark, the left-to-right and right-to-left marks, the embeddings and overrides, the isolates, and the deprecated format controls. */
+  const REMOVED_RANGES: readonly (readonly [string, string])[] = [
+    ["\u0000", "\u001f"],
+    ["\u007f", "\u009f"],
+    ["\u061c", "\u061c"],
+    ["\u200e", "\u200f"],
+    ["\u202a", "\u202e"],
+    ["\u2066", "\u2069"],
+    ["\u206a", "\u206f"],
+  ];
+  const HEX = 16;
+  const LAST_CODE_POINT = 0x10ffff;
+
+  it("removes exactly the code points listed, and leaves every other one alone", () => {
+    const wrong: string[] = [];
+    for (let codePoint = 0; codePoint <= LAST_CODE_POINT; codePoint += 1) {
+      const text = String.fromCodePoint(codePoint);
+      // Every range lies below the surrogates, so comparing single-character strings orders them by code point.
+      const expectedRemoved = REMOVED_RANGES.some(([low, high]) => text >= low && text <= high);
+      // An escape on its own is a control character, so it is removed with or without the sequence rule; every other code point stands alone and starts no sequence.
+      if ((sanitiseDisplayText(text) === "") !== expectedRemoved) {
+        wrong.push(codePoint.toString(HEX));
+      }
+    }
+    expect(wrong).toEqual([]);
   });
 });
 
@@ -89,6 +118,23 @@ describe("visibleDisplayText", () => {
   it("drops a mark that stands alone before a name and keeps a mark on a letter", () => {
     expect(visibleDisplayText("\u0301abc")).toBe("abc");
     expect(visibleDisplayText("e\u0301abc")).toBe("e\u0301abc");
+  });
+
+  it("keeps the word break when a shaping character is attached to a space", () => {
+    for (const shaping of ["\u200D", "\u200C", "\uFE0F", "\u0301", "\u034F"]) {
+      expect(visibleDisplayText(`Claude ${shaping}Opus`), JSON.stringify(shaping)).toBe("Claude Opus");
+    }
+    expect(visibleDisplayText("a \u0301b")).toBe("a b");
+    expect(visibleDisplayText("a\u00A0\u200Db")).toBe("a b");
+  });
+
+  it("leaves a Hangul filler that belongs to a decomposed syllable, and turns one that stands apart into a space", () => {
+    expect(visibleDisplayText("x\u115F\u1161")).toBe("x\u115F\u1161");
+    expect(visibleDisplayText("\u1100\u1160\u11A8")).toBe("\u1100\u1160\u11A8");
+    expect(visibleDisplayText("\uA960\u1160\uD7CB")).toBe("\uA960\u1160\uD7CB");
+    expect(visibleDisplayText("a\u115Fb")).toBe("a b");
+    expect(visibleDisplayText("a\u1160 b")).toBe("a  b");
+    expect(visibleDisplayText("a\u115F\u1160b")).toBe("a  b");
   });
 
   it("treats a blank cell inside a name as a space", () => {
