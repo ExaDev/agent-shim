@@ -261,6 +261,26 @@ describe("the width settings", () => {
   });
 });
 
+describe("the layout mode and rule settings", () => {
+  const accepts = (layout: unknown): boolean => StatuslineSchema.safeParse({ layout }).success;
+
+  it("accept each documented choice and refuse any other", () => {
+    for (const mode of ["expanded", "compact"]) {
+      expect(accepts({ mode }), mode).toBe(true);
+    }
+    for (const rule of ["none", "belowHeader"]) {
+      expect(accepts({ rule }), rule).toBe(true);
+    }
+    expect(accepts({ mode: "wide" })).toBe(false);
+    expect(accepts({ rule: "aboveActivity" })).toBe(false);
+    expect(accepts({ rule: true })).toBe(false);
+  });
+
+  it("default to the expanded layout with no rule", () => {
+    expect(STATUSLINE_DEFAULTS.layout).toMatchObject({ mode: "expanded", rule: "none" });
+  });
+});
+
 describe("the merge and right-align settings", () => {
   const accepts = (layout: unknown): boolean => StatuslineSchema.safeParse({ layout }).success;
 

@@ -111,3 +111,8 @@ export function layoutRows(rows: readonly DrawnRow[], settings: RowsLayoutSettin
   flushBars();
   return lines;
 }
+
+/** What the rows contribute to the compact layout, in order: each bar at its base size, and each line of text, as units of one line apiece. */
+export function compactUnits(rows: readonly DrawnRow[], barCells: number): string[] {
+  return rows.flatMap(({ output }) => (output.kind === "bars" ? output.cells.map((cell) => drawInline([cell], SEPARATOR, barCells)) : [...output.lines]));
+}

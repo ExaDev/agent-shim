@@ -39,6 +39,13 @@ const NARROW_BAR_CELLS = 4;
 const USED_AT_WARNING = 80;
 const USED_AT_CRITICAL = 95;
 const WIDE_BAR_CELLS = 30;
+/** Wide enough for the header, the context bar and both quota windows at their base size to share one line. */
+const COMPACT_ONE_LINE_TERMINAL = 300;
+const DEFAULT_BAR_CELLS = 10;
+const CONTEXT_FILL = 0.634;
+/** The least a rule is wide, in columns. */
+const MIN_RULE_COLUMNS = 20;
+const HEADER_RULE_AND_ROWS = 3;
 /** Wide enough for the context bar and both quota windows to share a line. */
 const ONE_ROW_TERMINAL = 220;
 
@@ -386,6 +393,47 @@ describe("statusline settings", () => {
     expect(line?.length).toBe(ONE_ROW_TERMINAL - RESERVED_COLUMNS);
     expect(line?.endsWith(")")).toBe(true);
     expect(line).toMatch(/\)\s+5h .* \| Wk /);
+  });
+
+  it("draws the header and every row on one line in the compact layout, wrapping only where the line is wider than the width", () => {
+    const wide = stripAnsi(render({ layout: { mode: "compact" } }, SUMMARY, COMPACT_ONE_LINE_TERMINAL)).split("\n");
+    expect(wide).toHaveLength(1);
+    expect(wide[0]).toContain("Sonnet 5.5");
+    expect(wide[0]).toContain("Ctx");
+    expect(wide[0]).toContain("5h");
+    expect(wide[0]).toContain("Wk");
+    const narrow = stripAnsi(render({ layout: { mode: "compact" } }, SUMMARY, ALIGNED_TERMINAL)).split("\n");
+    expect(narrow.length).toBeGreaterThan(1);
+    for (const line of narrow) {
+      expect(line.length).toBeLessThanOrEqual(ALIGNED_TERMINAL - RESERVED_COLUMNS);
+    }
+  });
+
+  it("draws the compact layout's bars at their base size, not stretched to fill the line", () => {
+    const [line] = stripAnsi(render({ layout: { mode: "compact", header: [] } }, SUMMARY, COMPACT_ONE_LINE_TERMINAL)).split("\n");
+    expect(line?.length).toBeLessThan(COMPACT_ONE_LINE_TERMINAL - RESERVED_COLUMNS);
+    const filled = Math.round(DEFAULT_BAR_CELLS * CONTEXT_FILL);
+    expect(line).toContain(`[${"\u2588".repeat(filled)}${"\u2591".repeat(DEFAULT_BAR_CELLS - filled)}]`);
+  });
+
+  it("draws a rule between the header and the rows when asked, as wide as the header's widest line", () => {
+    const lines = stripAnsi(render({ layout: { rule: "belowHeader" } }, SUMMARY, WIDE_TERMINAL)).split("\n");
+    expect(lines).toHaveLength(HEADER_RULE_AND_ROWS);
+    expect(lines[1]).toBe("\u2500".repeat((lines[0] ?? "").length));
+    expect(stripAnsi(render({}, SUMMARY, WIDE_TERMINAL)).split("\n")).toHaveLength(2);
+  });
+
+  it("draws no rule when the header or the rows are empty, or in the compact layout, and never one wider than the width", () => {
+    expect(stripAnsi(render({ layout: { rule: "belowHeader", header: [] } }))).not.toContain("\u2500");
+    expect(stripAnsi(render({ layout: { rule: "belowHeader", rows: [] } }))).not.toContain("\u2500");
+    expect(stripAnsi(render({ layout: { rule: "belowHeader", mode: "compact" } }, SUMMARY, WIDE_TERMINAL))).not.toContain("\u2500");
+    const narrowRule = stripAnsi(render({ layout: { rule: "belowHeader", header: ["model"] } }, SUMMARY, WIDE_TERMINAL)).split("\n")[1];
+    expect(narrowRule?.length).toBe(MIN_RULE_COLUMNS);
+    // A single segment wider than the width stays whole, and the rule above the rows is still no wider than the width.
+    const wideSegment = { model: { override: "m".repeat(NARROW_TERMINAL) }, layout: { rule: "belowHeader" as const, header: ["model" as const] } };
+    const cut = stripAnsi(render(wideSegment, SUMMARY, NARROW_TERMINAL)).split("\n");
+    expect(cut[0]?.length).toBe(NARROW_TERMINAL);
+    expect(cut[1]).toBe("\u2500".repeat(NARROW_TERMINAL - RESERVED_COLUMNS));
   });
 
   it("names the two subscription windows as set", () => {

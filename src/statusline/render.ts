@@ -4,11 +4,12 @@ import type { ClientPayload } from "./payload";
 import type { StatuslinePorts } from "./ports";
 import { ELEMENTS, HEADER_ROLES, type ElementRegistry } from "./elements/registry";
 import type { StatuslineSummary } from "./enrich";
-import { headerUnits, layoutHeader, SEPARATOR } from "./headerLayout";
+import { headerUnits, layoutHeader, packLines, SEPARATOR } from "./headerLayout";
 import { readTranscriptIdentity } from "./identityTranscript";
-import { colourEnabled, createPalette } from "./palette";
-import { layoutRows } from "./rowsLayout";
+import { colourEnabled, createPalette, type Palette } from "./palette";
+import { compactUnits, layoutRows } from "./rowsLayout";
 import { TWENTY } from "./style";
+import { visibleLength } from "./ansi";
 import { readTranscript, type TranscriptFacts } from "./transcript/reader";
 
 /** Claude Code indents the status line one column from the terminal edge and truncates at its own usable width, replacing the final column with an ellipsis. COLUMNS is correct in the child environment, but the usable width is four columns short of it, so a line as wide as COLUMNS minus two still loses its tail. */
@@ -33,6 +34,15 @@ function once<T>(read: () => T): () => T {
     kept ??= { value: read() };
     return kept.value;
   };
+}
+
+/** The character a rule between the header and the rows is drawn with. */
+const RULE_CHARACTER = "\u2500";
+
+/** A rule as wide as the header's widest line, at least twenty columns and at most `width`, in the label colour. */
+function ruleLine(headerLines: readonly string[], width: number, palette: Palette): string {
+  const widest = Math.max(TWENTY, ...headerLines.map(visibleLength));
+  return palette.paint("label", RULE_CHARACTER.repeat(Math.min(width, widest)));
 }
 
 /**
@@ -64,11 +74,14 @@ export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
   });
   const header = headerUnits(parts, settings.git.branchOverflow);
 
-  const lines: string[] = [];
-  if (header.length > 0) {
-    lines.push(layoutHeader(header, width, SEPARATOR));
-  }
   const drawn = settings.layout.rows.map((name) => ({ name, output: elements.rows[name](context) }));
-  lines.push(...layoutRows(drawn, { merge: settings.layout.merge, rightAlign: settings.layout.rightAlign, barCells: settings.bar.width }, width));
-  return lines.join("\n");
+  if (settings.layout.mode === "compact") {
+    return packLines([...header, ...compactUnits(drawn, settings.bar.width)], width, SEPARATOR)
+      .map((line) => line.join(SEPARATOR))
+      .join("\n");
+  }
+  const headerLines = header.length > 0 ? layoutHeader(header, width, SEPARATOR).split("\n") : [];
+  const rowLines = layoutRows(drawn, { merge: settings.layout.merge, rightAlign: settings.layout.rightAlign, barCells: settings.bar.width }, width);
+  const rule = settings.layout.rule === "belowHeader" && headerLines.length > 0 && rowLines.length > 0 ? [ruleLine(headerLines, width, context.palette)] : [];
+  return [...headerLines, ...rule, ...rowLines].join("\n");
 }
