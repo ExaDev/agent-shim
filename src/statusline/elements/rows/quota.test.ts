@@ -39,7 +39,6 @@ const SUMMARY: StatuslineSummary = {
   sevenDayResetAt: "2026-10-20T10:30:00.000Z",
 };
 
-/** The environment of a test that reads text, not colour. */
 /** The characters a bar is drawn with by default. */
 const FILLED = "\u2588";
 const EMPTY = "\u2591";
@@ -48,6 +47,7 @@ const FIVE_HOUR_FILLED = 16;
 const FIVE_HOUR_EMPTY = 46;
 const WEEK_FILLED = 25;
 const WEEK_EMPTY = 37;
+/** The environment of a test that reads text, not colour. */
 const PLAIN = { NO_COLOR: "1" };
 const COLOURED = {};
 
