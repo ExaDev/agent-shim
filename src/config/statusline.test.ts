@@ -236,6 +236,14 @@ describe("StatuslineSchema custom line and extra command", () => {
     expect(StatuslineSchema.safeParse({ extra: { command: tooMany.slice(1) } }).success).toBe(true);
   });
 
+  it("refuses a program that starts with a dash, which the system would read as an option, and accepts one named by an absolute path", () => {
+    const refused = StatuslineSchema.safeParse({ extra: { command: ["-nope", "x"] } });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.message).toContain("absolute path");
+    expect(StatuslineSchema.safeParse({ extra: { command: ["/usr/bin/tool", "-flag"] } }).success).toBe(true);
+    expect(StatuslineSchema.safeParse({ extra: { command: ["tool", "-flag"] } }).success).toBe(true);
+  });
+
   it("draws nothing by default: no custom text and no command", () => {
     expect(STATUSLINE_DEFAULTS.customLine.text).toBe("");
     expect(STATUSLINE_DEFAULTS.extra.command).toEqual([]);
