@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import type { Command } from "commander";
 
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
@@ -15,6 +15,7 @@ import { parseInstalledCommit } from "./source";
 import type { LayoutPaths } from "../paths";
 import type { FrontDoorLiveness } from "../frontdoor/state";
 import { realFarmFs, realFileSize, realFrontDoorLiveness, realHeadroomSocketTrust, realReadFileTail, realIsProcessRunning, realProcessCommandLine, realSleepSync } from "../realPorts";
+import { spawnSyncBlocking } from "../blockingSpawn";
 import { describeAllowlistDrift, diagnoseAllowlistDrift, type AllowlistDrift } from "./allowlistDrift";
 import { earlierReleaseDaemon } from "./earlierRelease";
 import {
@@ -250,7 +251,7 @@ const HEADROOM_TOOL_NAME = "headroom-ai";
  * The commit the `uv tool` install of headroom was built from, read from the `direct_url.json` in its dist-info, or undefined when `uv` cannot say, the tool is absent, or it was not installed from a git source.
  */
 function readInstalledHeadroomCommit(): string | undefined {
-  const toolDir = spawnSync("uv", ["tool", "dir"], { encoding: "utf8" });
+  const toolDir = spawnSyncBlocking("a headroom tool lookup", "uv", ["tool", "dir"], { encoding: "utf8" });
   if (toolDir.status !== 0) {
     return undefined;
   }
@@ -334,7 +335,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
     },
     ready: readyOverSocket,
     install: (spec) => {
-      const result = spawnSync("uv", ["tool", "install", spec], { encoding: "utf8", timeout: HEADROOM_INSTALL_TIMEOUT_MS });
+      const result = spawnSyncBlocking("a headroom install", "uv", ["tool", "install", spec], { encoding: "utf8", timeout: HEADROOM_INSTALL_TIMEOUT_MS });
       if (result.error !== undefined) {
         const timedOut = "code" in result.error && result.error.code === "ETIMEDOUT";
         return {
@@ -353,7 +354,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
       return result.status === 0 ? { ok: true } : { ok: false, error: `uv tool install exited ${String(result.status)}` };
     },
     headroomVersion: () => {
-      const result = spawnSync("headroom", ["--version"], { encoding: "utf8" });
+      const result = spawnSyncBlocking("a headroom version check", "headroom", ["--version"], { encoding: "utf8" });
       return result.status === 0 ? result.stdout.trim() : undefined;
     },
     installedCommit: readInstalledHeadroomCommit,

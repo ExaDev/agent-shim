@@ -1,7 +1,8 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { spawnSyncBlocking } from "./blockingSpawn";
 import type { CredentialCacheStore } from "./config/schema";
 import type { AsyncCredentialCacheEnv, CredentialCacheEnv } from "./credential";
 import type { LayoutPaths } from "./paths";
@@ -38,7 +39,7 @@ function requireKeychain(): void {
 
 /** Runs one `security` subcommand. `stdin`, when given, feeds `security -i` so a token never appears in the process list. */
 function security(args: readonly string[], stdin?: string): { status: number | null; stdout: string } {
-  const result = spawnSync("security", args, { encoding: "utf8", ...(stdin === undefined ? {} : { input: stdin }), stdio: ["pipe", "pipe", "ignore"] });
+  const result = spawnSyncBlocking("a keychain call", "security", args, { encoding: "utf8", ...(stdin === undefined ? {} : { input: stdin }), stdio: ["pipe", "pipe", "ignore"] });
   return { status: result.status, stdout: result.stdout };
 }
 

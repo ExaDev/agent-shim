@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 
 import type { Command } from "commander";
 
@@ -12,6 +11,7 @@ import { storeIdentityToken } from "./identityToken";
 import { ProviderNotFoundError, readProvider } from "./providersStore";
 import { realCredentialPort } from "./realPorts";
 import { cacheFileNameFor, createRealCredentialCache } from "./realCredentialCache";
+import { spawnSyncBlocking } from "./blockingSpawn";
 
 /** Reads all of standard input as UTF-8 text. */
 async function readStandardInput(): Promise<string> {
@@ -49,7 +49,7 @@ function realCommandPorts(deps: CommandDeps): CredentialCommandPorts {
     cache: createRealCredentialCache(deps.paths.root),
     platform: process.platform,
     now: () => Date.now(),
-    ssh: (host, remoteCommand, input) => spawnSync("ssh", ["--", host, remoteCommand], { input, stdio: ["pipe", "inherit", "inherit"] }).status,
+    ssh: (host, remoteCommand, input) => spawnSyncBlocking("an ssh run", "ssh", ["--", host, remoteCommand], { input, stdio: ["pipe", "inherit", "inherit"] }).status,
   };
 }
 

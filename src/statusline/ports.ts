@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSyncBlocking } from "../blockingSpawn";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -52,7 +52,7 @@ const RUN_MAX_BUFFER_BYTES = 1_048_576;
 /** A program run without a shell, as `StatuslinePorts.run` describes. */
 function runProgram(file: string, args: readonly string[], cwd: string): string | undefined {
   try {
-    return execFileSync(file, [...args], { cwd, encoding: "utf8", timeout: RUN_TIMEOUT_MS, maxBuffer: RUN_MAX_BUFFER_BYTES, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+    return execFileSyncBlocking("a statusline command", file, args, { cwd, encoding: "utf8", timeout: RUN_TIMEOUT_MS, maxBuffer: RUN_MAX_BUFFER_BYTES, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
   } catch {
     return undefined;
   }

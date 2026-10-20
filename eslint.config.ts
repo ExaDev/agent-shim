@@ -34,6 +34,23 @@ export default defineConfig([
     },
   },
   {
+    files: ["src/**/*.ts"],
+    ignores: ["src/blockingSpawn.ts", "src/**/*.test.ts", "src/**/*TestWorld.ts", "src/test-helpers.ts"],
+    rules: {
+      // A synchronous spawn holds the calling thread for as long as the machine takes to start the process, and in the front door that thread answers every session: a loaded host stalled the door's loop past its watchdog this way. src/blockingSpawn.ts is the one place that calls them, refusing inside the door.
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["node:child_process", "child_process"].map((name) => ({
+            name,
+            importNames: ["spawnSync", "execFileSync", "execSync"],
+            message: "Use spawnSyncBlocking or execFileSyncBlocking from src/blockingSpawn.ts: they refuse to run inside the front door, whose event loop a synchronous spawn would hold.",
+          })),
+        },
+      ],
+    },
+  },
+  {
     rules: {
       // exadev's own consistent-type-imports leaves fixStyle at the rule's default (separate-type-imports); this repo prefers the type keyword inline on the same import statement instead.
       "@typescript-eslint/consistent-type-imports": ["error", { fixStyle: "inline-type-imports" }],

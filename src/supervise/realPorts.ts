@@ -1,8 +1,9 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 
 import type { LogPort, SpawnResult, SupervisedSpawnPort } from "../launcher/ports";
 import { realFarmFs } from "../realPorts";
+import { spawnSyncBlocking } from "../blockingSpawn";
 import type { SignalPort, TimerPort } from "./supervise";
 
 /** The real `SupervisedSpawnPort`: the child keeps the terminal, and its exit is a promise that never rejects. */
@@ -84,5 +85,5 @@ export function resetTerminal(): void {
     return;
   }
   process.stdout.write(TERMINAL_RESET);
-  spawnSync("stty", ["sane"], { stdio: ["inherit", "ignore", "ignore"] });
+  spawnSyncBlocking("a terminal reset", "stty", ["sane"], { stdio: ["inherit", "ignore", "ignore"] });
 }
