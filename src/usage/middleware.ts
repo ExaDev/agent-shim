@@ -97,6 +97,7 @@ function buildRecord(event: RoutedResponseEvent, context: { readonly headAt: num
     ...(identity === undefined ? {} : { identity }),
     provider,
     ...(sessionId === undefined ? {} : { sessionId }),
+    ...(event.clientSessionId === undefined ? {} : { clientSessionId: event.clientSessionId }),
     ...(projectId === undefined ? {} : { project: projectId }),
     viaHeadroom: event.viaHeadroom,
     route: event.route,
