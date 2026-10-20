@@ -70,14 +70,14 @@ const JJ_OFF = { enabled: false, showDirty: true, showConflicts: true } as const
 const PRESET_BUNDLES: Readonly<Record<(typeof STATUSLINE_PRESETS)[number], PresetBundle>> = {
   standard: { layout: { header: DEFAULT_HEADER_SEGMENTS, rows: DEFAULT_ROWS }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: false }, context: { breakdown: "never" } },
   full: {
-    layout: { header: ["model", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "sessionName", "duration"], rows: ["context", "quota", "addedDirs", "memory", "environment", "tools", "skills", "mcp", "agents", "todos", "promptCache", "compactions", "tokens"] },
+    layout: { header: ["model", "project", "vcs", "effort", "advisor", "version", "extra", "outputStyle", "cost", "sessionName", "duration"], "rows": ["context", "quota", "addedDirs", "memory", "environment", "tools", "skills", "mcp", "agents", "todos", "promptCache", "compactions", "tokens"] },
     git: GIT_WITH_DIRTY_MARKER,
     jj: { enabled: true, showDirty: true, showConflicts: true },
     usage: { resetLabel: true },
     context: { breakdown: "critical" },
   },
-  essential: { layout: { header: ["model", "project", "vcs", "duration"], rows: ["context", "addedDirs", "tools", "agents", "todos"] }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: true }, context: { breakdown: "never" } },
-  minimal: { layout: { header: ["model", "project", "vcs"], rows: ["context", "addedDirs"] }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: true }, context: { breakdown: "never" } },
+  essential: { layout: { header: ["model", "project", "vcs", "extra", "duration"], rows: ["context", "addedDirs", "tools", "agents", "todos"] }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: true }, context: { breakdown: "never" } },
+  minimal: { layout: { header: ["model", "project", "vcs", "extra"], rows: ["context", "addedDirs"] }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: true }, context: { breakdown: "never" } },
 };
 
 /** How many directory levels the project path shows: one to three, or the whole path. Written as text so that every value of a setting is one of a closed set of choices. */
@@ -354,7 +354,7 @@ function canonicalLanguage(tag: (typeof LANGUAGE_TAGS)[number]): (typeof STATUSL
 /** The settings that are not part of a group. A layer's `language` is read in any of its tags and kept as the canonical one, so everything after the schema sees one value. */
 const TOP_LEVEL = {
   language: z.enum(STATUSLINE_LANGUAGES).describe(LANGUAGE_DESCRIPTION),
-  preset: z.enum(STATUSLINE_PRESETS).describe("A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts, usage.resetLabel and context.breakdown) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments and the context row; full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown at high use, essential adds the duration, the added directories row and the tools, agents and todos rows, and minimal adds the added directories row alone."),
+  preset: z.enum(STATUSLINE_PRESETS).describe("A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts, usage.resetLabel and context.breakdown) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments, the extra segment once extra.command is set, and the context row; full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown at high use, essential adds the duration, the added directories row and the tools, agents and todos rows, and minimal adds the added directories row alone."),
 };
 
 /** What a configuration layer may set: every group and every key optional, so a layer names only what it changes. */

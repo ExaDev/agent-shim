@@ -268,7 +268,7 @@ describe("phase one: launch statusline", () => {
       [layer(0, { launch: { statusline: { layout: { header: ["model", "account"] }, bar: { width: 6 } } } }), layer(1, { launch: { statusline: { preset: "minimal", git: { showDirty: false } } } }), layer(2, { launch: { statusline: { language: "zh-Hans" } } })],
       { home: FAKE_HOME },
     );
-    expect(flattened.launch.statusline).toMatchObject({ preset: "minimal", language: "zh-Hans", bar: { width: 6 }, layout: { header: ["model", "project", "vcs"], rows: ["context", "addedDirs"] }, git: { enabled: true, showDirty: false, showAheadBehind: false } });
+    expect(flattened.launch.statusline).toMatchObject({ preset: "minimal", language: "zh-Hans", bar: { width: 6 }, layout: { header: ["model", "project", "vcs", "extra"], rows: ["context", "addedDirs"] }, git: { enabled: true, showDirty: false, showAheadBehind: false } });
   });
 
   it("merges key by key in every group, so a deeper layer that sets one label leaves a shallower layer's thresholds and the other label alone", () => {

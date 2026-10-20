@@ -138,3 +138,26 @@ describe("the extra segment", () => {
     expect(text).toBe(`${ESCAPE}[36mlbl${ESCAPE}[0m`);
   });
 });
+
+describe("the extra segment in the presets", () => {
+  const CLAUDE_HUD_PRESETS = ["full", "essential", "minimal"] as const;
+
+  it.each(CLAUDE_HUD_PRESETS)("is drawn in %s once a command is set, as claude-hud draws its extra label under every preset", (preset) => {
+    expect(draw({ run: () => "from tool\n", payload: MODEL, settings: { preset, extra: { command: ["t"] } } })).toContain("from tool");
+  });
+
+  it.each(CLAUDE_HUD_PRESETS)("changes nothing in %s while no command is set", (preset) => {
+    const calls: string[] = [];
+    const run: StatuslinePorts["run"] = (file) => {
+      calls.push(file);
+      return "from tool\n";
+    };
+    const withoutExtra = resolveStatusline({ preset }).layout.header.filter((name) => name !== "extra");
+    expect(draw({ run, payload: MODEL, settings: { preset } })).toBe(draw({ run, payload: MODEL, settings: { preset, layout: { header: withoutExtra } } }));
+    expect(calls).not.toContain("t");
+  });
+
+  it("is left out of the statusline's own preset, which a command alone does not change", () => {
+    expect(draw({ run: () => "from tool\n", payload: MODEL, settings: { preset: "standard", extra: { command: ["t"] } } })).not.toContain("from tool");
+  });
+});
