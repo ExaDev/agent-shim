@@ -2,8 +2,8 @@ import { z } from "zod";
 
 import { isPlainObject, ResolvedStatuslineSchema, STATUSLINE_COLOUR_NAMES, STATUSLINE_DEFAULTS } from "../config/statusline";
 
-/** How a setting's value is written: `boolean` is `true` or `false`, `choice` is one of a closed set, `list` an ordered list of such choices, and `colour` a colour name, a palette index from 0 to 255 or `#rrggbb`. */
-type StatuslineKeyKind = "integer" | "boolean" | "text" | "choice" | "list" | "colour";
+/** How a setting's value is written: `boolean` is `true` or `false`, `choice` is one of a closed set, `list` an ordered list of such choices, `groups` a list of such lists, and `colour` a colour name, a palette index from 0 to 255 or `#rrggbb`. */
+type StatuslineKeyKind = "integer" | "boolean" | "text" | "choice" | "list" | "groups" | "colour";
 
 /** One statusline setting, as the schema declares it. */
 export interface StatuslineKey {
@@ -52,6 +52,9 @@ function keyOf(path: readonly string[], declared: z.ZodType): StatuslineKey {
   if (leaf instanceof z.ZodArray && leaf.element instanceof z.ZodEnum) {
     return { ...common, kind: "list", choices: Object.values(leaf.element.enum).map(String) };
   }
+  if (leaf instanceof z.ZodArray && leaf.element instanceof z.ZodArray && leaf.element.element instanceof z.ZodEnum) {
+    return { ...common, kind: "groups", choices: Object.values(leaf.element.element.enum).map(String) };
+  }
   throw new TypeError(`statusline setting ${path.join(".")} has a kind the key listing does not describe`);
 }
 
@@ -68,7 +71,7 @@ export function statuslineKeys(): readonly StatuslineKey[] {
 export function formatStatuslineKeys(keys: readonly StatuslineKey[]): string {
   return keys
     .map((key) => {
-      const takes = key.kind === "choice" || key.kind === "list" || key.kind === "colour" ? `${key.kind} of ${key.choices.join(", ")}` : key.kind;
+      const takes = key.kind === "choice" || key.kind === "list" || key.kind === "groups" || key.kind === "colour" ? `${key.kind} of ${key.choices.join(", ")}` : key.kind;
       return `${key.path}  (${takes}; ${key.optional ? "no default; none unsets it over shallower layers" : `default ${JSON.stringify(key.defaultValue)}`})\n    ${key.description}`;
     })
     .join("\n");

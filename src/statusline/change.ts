@@ -19,7 +19,7 @@ function keyNamed(path: string): StatuslineKey {
   return found;
 }
 
-/** The value a `<setting>=<value>` option names, written the way the setting's kind is written: a whole number, `true` or `false`, text, one choice, a colour (a name, a palette index or #rrggbb), or a comma-separated list of choices (an empty value is the empty list); an optional setting also takes `none`, which unsets it for the layers it is merged over. The value's own validity is the schema's to judge. */
+/** The value a `<setting>=<value>` option names, written the way the setting's kind is written: a whole number, `true` or `false`, text, one choice, a colour (a name, a palette index or #rrggbb), a comma-separated list of choices (an empty value is the empty list), or groups of choices (groups separated by semicolons, an empty value being no groups); an optional setting also takes `none`, which unsets it for the layers it is merged over. The value's own validity is the schema's to judge. */
 export function parseStatuslineAssignment(text: string): { readonly path: string; readonly value: unknown } {
   const split = text.indexOf("=");
   if (split < 1) {
@@ -52,6 +52,8 @@ export function parseStatuslineAssignment(text: string): { readonly path: string
       return { path, value: /^\d+$/.test(raw) ? Number(raw) : raw };
     case "list":
       return { path, value: raw === "" ? [] : raw.split(",") };
+    case "groups":
+      return { path, value: raw === "" ? [] : raw.split(";").map((group) => group.split(",")) };
     default:
       return key.kind satisfies never;
   }

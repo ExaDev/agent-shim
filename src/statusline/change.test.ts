@@ -15,6 +15,14 @@ describe("parseStatuslineAssignment", () => {
     expect(parseStatuslineAssignment("usage.bar=false")).toEqual({ path: "usage.bar", value: false });
     expect(parseStatuslineAssignment("usage.compact=true")).toEqual({ path: "usage.compact", value: true });
     expect(parseStatuslineAssignment("usage.timeFormat=elapsedAndAbsolute")).toEqual({ path: "usage.timeFormat", value: "elapsedAndAbsolute" });
+    expect(parseStatuslineAssignment("layout.maxWidth=120")).toEqual({ path: "layout.maxWidth", value: 120 });
+    expect(parseStatuslineAssignment("layout.forceMaxWidth=true")).toEqual({ path: "layout.forceMaxWidth", value: true });
+  });
+
+  it("writes groups of choices with commas inside a group and semicolons between groups", () => {
+    expect(parseStatuslineAssignment("layout.merge=context,quota;memory,environment")).toEqual({ path: "layout.merge", value: [["context", "quota"], ["memory", "environment"]] });
+    expect(parseStatuslineAssignment("layout.merge=context,quota")).toEqual({ path: "layout.merge", value: [["context", "quota"]] });
+    expect(parseStatuslineAssignment("layout.merge=")).toEqual({ path: "layout.merge", value: [] });
   });
 
   it("keeps a value that itself contains an equals sign", () => {
@@ -38,6 +46,12 @@ describe("applyStatuslineChange", () => {
     const first = applyStatuslineChange(undefined, { set: { "bar.width": 6, "bands.warnAt": 50 } });
     expect(first).toEqual({ bar: { width: 6 }, bands: { warnAt: 50 } });
     expect(applyStatuslineChange(first, { set: { "labels.sevenDay": "Week" }, unset: ["bar.width"] })).toEqual({ bands: { warnAt: 50 }, labels: { sevenDay: "Week" } });
+  });
+
+  it("applies groups of rows, and refuses a group of one or a row in two groups", () => {
+    expect(applyStatuslineChange(undefined, { set: { "layout.merge": [["context", "quota"]] } })).toEqual({ layout: { merge: [["context", "quota"]] } });
+    expect(() => applyStatuslineChange(undefined, { set: { "layout.merge": [["context"]] } })).toThrow(/layout\.merge/);
+    expect(() => applyStatuslineChange(undefined, { set: { "layout.merge": [["context", "quota"], ["quota", "memory"]] } })).toThrow(/more than one group/);
   });
 
   it("changes nothing it was given", () => {

@@ -101,6 +101,10 @@ Checked against claude-hud at commit `939eb66`.
 | `element:context` | `layout.rows`: the context row is drawn when the list names `context`, and the list sets where it sits among the other rows |
 | `maxWidth` | `layout.maxWidth`: the width drawn for when the client and the `COLUMNS` variable name none, as claude-hud's fallback is; 0 is claude-hud's null, and the width then falls to 80 where claude-hud draws without wrapping |
 | `forceMaxWidth` | `layout.forceMaxWidth`: uses `layout.maxWidth` whatever the client reports; a launch that forces a width without setting one is refused, where claude-hud ignores the flag |
+| `elementOrder` | `layout.rows`: the order of the rows below the header, and a row left out is hidden; claude-hud's `project` element is the header, whose segments `layout.header` orders |
+| `projectLineOrder` | `layout.header`: the header segments are drawn in the order the list gives, and one left out is hidden, where claude-hud keeps the segments a partial order does not name after the ones it does |
+| `display.mergeGroups` | `layout.merge`: groups of rows that share a line when they sit next to each other in `layout.rows` and fit; rows outside a group are on lines of their own, and the default group is the context and quota rows, as in claude-hud; a group may name only rows, since the header is a line of its own |
+| `display.rightAlign` | `layout.rightAlign`: starts the right-aligned part of a merged line at the first row named; a row named here must belong to a merge group, which a launch that names one outside every group refuses, where claude-hud ignores it |
 | `display.externalUsagePath` | Not applicable: claude-hud reads a usage snapshot a separate tool writes; agent-shim computes the usage windows itself and draws them |
 | `display.externalUsageWritePath` | Not applicable: claude-hud writes a snapshot for other tools to read; the built-in statusline is the consumer of agent-shim's usage data, not a producer for others |
 | `display.externalUsageFreshnessMs` | Not applicable: it bounds the age of the snapshot claude-hud reads, and agent-shim reads none |
