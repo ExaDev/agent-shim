@@ -28,15 +28,17 @@ const AT = {
   fifteenMinutes: 900_000,
   fortySevenMinutes: 2_820_000,
   fortyNineMinutes: 2_940_000,
+  thirtyMinutes: 1_800_000,
   fourHours: 14_400_000,
   /** Three days and four hours after the reply at thirty seconds. */
   threeDaysFourHoursAfterReply: 273_630_000,
 };
 const WIDE_TERMINAL = 170;
-/** The midnight that starts 20 October 2026 in the time zone of the fake ports, which is UTC. */
+const DAY = 86_400_000;
 /** Where `HH:MM` sits in an ISO timestamp. */
 const CLOCK_FROM = 11;
 const CLOCK_TO = 16;
+/** The midnight that starts 20 October 2026 in the time zone of the fake ports, which is UTC. */
 const MIDNIGHT = "2026-10-20T00:00:00Z";
 /** The bytes of a line of transcript filler, and how many times the filler repeats so the transcript outgrows a read. */
 const FILLER_BYTES = 1_000;
@@ -155,20 +157,34 @@ describe("the session elements", () => {
   });
 
   describe("the session time row", () => {
-    it("shows the start in local time and how long ago the last reply was, on one line", () => {
+    it("shows the start as a clock time and how long ago the last reply was, on one line", () => {
       const [only] = render(T0 + AT.fiveMinutes, rows("sessionTime")).lines;
-      expect(only).toMatch(/^Started: \d{4}-\d{2}-\d{2} \d{2}:\d{2} │ Last reply: 4m ago$/);
-      expect(only).toContain(clock(0));
+      expect(only).toBe("Started: 10:00 \u2502 Last reply: 4m ago");
     });
 
-    it("writes the start in the machine's time zone", () => {
-      expect(render(T0, rows("sessionTime"), { timeZone: "Asia/Tokyo" }).lines[0]).toMatch(/^Started: 2026-10-19 19:00 │/);
-      expect(render(T0, rows("sessionTime")).lines[0]).toMatch(/^Started: 2026-10-19 10:00 │/);
+    it("puts the day before the start when it was not today", () => {
+      expect(render(T0 + DAY, { ...rows("sessionTime"), sessionTime: { parts: ["started"] } }).lines).toEqual(["Started: 19 Oct 10:00"]);
+    });
+
+    it("writes the start in the machine's time zone, under the clock settings", () => {
+      const started = { sessionTime: { parts: ["started" as const] } };
+      expect(render(T0, { ...rows("sessionTime"), ...started }, { timeZone: "Asia/Tokyo" }).lines).toEqual(["Started: 19:00"]);
+      expect(render(T0, { ...rows("sessionTime"), ...started, clock: { hourCycle: "h12" } }).lines[0]).toMatch(/^Started: 10:00 (am|pm)$/i);
+      expect(render(T0, { ...rows("sessionTime"), ...started, clock: { seconds: true } }).lines).toEqual(["Started: 10:00:00"]);
+    });
+
+    it("writes a start in the hour after midnight as 00 with h23 and 24 with h24", () => {
+      const startedAfterMidnight = Date.parse(MIDNIGHT) - T0 + AT.thirtyMinutes;
+      const transcript = line({ type: "user", timestamp: at(startedAfterMidnight), message: { content: "hi" } });
+      const started = { sessionTime: { parts: ["started" as const] } };
+      const nowMs = T0 + startedAfterMidnight;
+      expect(render(nowMs, { ...rows("sessionTime"), ...started, clock: { hourCycle: "h23" } }, { transcript }).lines).toEqual(["Started: 00:30"]);
+      expect(render(nowMs, { ...rows("sessionTime"), ...started, clock: { hourCycle: "h24" } }, { transcript }).lines).toEqual(["Started: 24:30"]);
     });
 
     it("shows only the parts `sessionTime.parts` names, and nothing for an empty list", () => {
       expect(render(T0 + AT.fiveMinutes, { ...rows("sessionTime"), sessionTime: { parts: ["lastReply"] } }).lines).toEqual(["Last reply: 4m ago"]);
-      expect(render(T0 + AT.fiveMinutes, { ...rows("sessionTime"), sessionTime: { parts: ["started"] } }).lines[0]).toMatch(/^Started: \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+      expect(render(T0 + AT.fiveMinutes, { ...rows("sessionTime"), sessionTime: { parts: ["started"] } }).lines).toEqual(["Started: 10:00"]);
       expect(render(T0 + AT.fiveMinutes, { ...rows("sessionTime"), sessionTime: { parts: [] } }).text).toBe("");
     });
 
@@ -237,6 +253,11 @@ describe("the session elements", () => {
       expect(painted(T0 + MINUTE)).toContain(`${ESCAPE}[32m⏱ until`);
       expect(painted(T0 + AT.fourMinutes + AT.thirtySeconds)).toContain(`${ESCAPE}[33m⏱ until`);
       expect(render(T0 + AT.sixMinutes, { ...rows("promptCache"), colours: { label: "cyan" } }).text).toContain(`${ESCAPE}[36m⏱ expired${ESCAPE}[0m`);
+    });
+
+    it("warns from exactly the last fifth of the lifetime, and not a moment before", () => {
+      expect(render(T0 + AT.fourMinutes, rows("promptCache")).text).toContain(`${ESCAPE}[33m`);
+      expect(render(T0 + AT.fourMinutes - 1, rows("promptCache")).text).toContain(`${ESCAPE}[32m`);
     });
 
     it("warns for the last minute of a five-minute cache but the last fifth of a one-hour cache", () => {
