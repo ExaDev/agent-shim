@@ -36,20 +36,27 @@ function agentsShown(agents: readonly AgentFact[], nowMs: number): AgentFact[] {
   return [...running, ...(slots > 0 ? recent.slice(-slots) : [])];
 }
 
-/** An agent as one line: a marker, its type, its model, what it was asked to do and how long it ran or has been running. The description gets what the line has left, up to its own limit, and is left out when nothing is left. */
+/** The fewest columns worth giving a description: the ellipsis that ends it and one character before it. Below that the description is left out. */
+const DESCRIPTION_ELLIPSIS = "...";
+const MIN_DESCRIPTION_COLUMNS = DESCRIPTION_ELLIPSIS.length + 1;
+
+/** An agent as one line that fits the width: a marker, its type, its model, what it was asked to do and how long it ran or has been running. What does not fit is given up in turn, the description first (it gets what is left, up to its own limit), then the model, then the end of the type. */
 function agentLine(agent: AgentFact, context: RenderContext): string {
   const { palette, nowMs, width } = context;
   const marker = agent.status === "running" ? palette.paint("warning", RUNNING_MARK) : palette.paint("context", DONE_MARK);
-  const type = truncateWithEllipsis(agent.type, TYPE_COLUMNS, ELLIPSIS);
-  const model = modelLabel(agent.model);
   const elapsed = formatSpan(Math.max(0, (agent.endedAtMs ?? nowMs) - (agent.startedAtMs ?? nowMs)));
-  const modelText = model === undefined ? "" : ` ${palette.paint("label", `[${model}]`)}`;
-  const timeText = ` ${palette.paint("label", `(${elapsed})`)}`;
-  const fixed = visibleLength(`${marker} ${type}${modelText}${timeText}`);
+  const timeText = `(${elapsed})`;
+  // The marker and a space after it, and a space before the time.
+  const fixed = visibleLength(RUNNING_MARK) + 1 + 1 + visibleLength(timeText);
+  const type = truncateWithEllipsis(agent.type, Math.min(TYPE_COLUMNS, Math.max(1, width - fixed)), ELLIPSIS);
+  const model = modelLabel(agent.model);
+  const modelText = model === undefined ? "" : `[${model}]`;
+  const showModel = modelText !== "" && fixed + visibleLength(type) + 1 + visibleLength(modelText) <= width;
+  const used = fixed + visibleLength(type) + (showModel ? 1 + visibleLength(modelText) : 0);
   // The description is introduced by a colon and a space.
-  const room = Math.min(DESCRIPTION_COLUMNS, width - fixed - 2);
-  const description = agent.description === undefined || room < 1 ? "" : palette.paint("label", `: ${truncateWithEllipsis(agent.description, room, "...")}`);
-  return `${marker} ${palette.paint("agent", type)}${modelText}${description}${timeText}`;
+  const room = Math.min(DESCRIPTION_COLUMNS, width - used - 2);
+  const description = agent.description === undefined || room < MIN_DESCRIPTION_COLUMNS ? "" : palette.paint("label", `: ${truncateWithEllipsis(agent.description, room, DESCRIPTION_ELLIPSIS)}`);
+  return `${marker} ${palette.paint("agent", type)}${showModel ? ` ${palette.paint("label", modelText)}` : ""}${description} ${palette.paint("label", timeText)}`;
 }
 
 /** The session's agents, one line each: the running ones first, then those that finished in the last minute, at most three together. Nothing is drawn without a transcript to read or an agent to show. */
