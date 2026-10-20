@@ -443,10 +443,10 @@ export {
   setProfileMetadata,
   type ProfileListEntry,
 } from "./configProfilesStore";
+export { InvalidProviderNameError } from "./config/names";
 export {
   addProvider,
   describeProviderEndpoint,
-  InvalidProviderNameError,
   LegacyProviderFileError,
   listProviders,
   ProviderAlreadyExistsError,

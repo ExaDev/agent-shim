@@ -7,7 +7,8 @@ import { ConfigValidationError } from "./config/load";
 import { isRouterProvider, type Provider } from "./config/schema";
 import type { FsPort } from "./launcher/ports";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
-import { addProvider, InvalidProviderNameError, LEGACY_LITERAL_PLACEHOLDER, legacyProviderConversion, LegacyProviderFileError, listProviders, loadProvider, ProviderAlreadyExistsError, providerExists, ProviderKindMismatchError, ProviderNotFoundError, readProvider, removeProvider, resolveProvider, resolveRoutedProviderCredentials, updateProvider } from "./providersStore";
+import { InvalidProviderNameError } from "./config/names";
+import { addProvider, LEGACY_LITERAL_PLACEHOLDER, legacyProviderConversion, LegacyProviderFileError, listProviders, loadProvider, ProviderAlreadyExistsError, providerExists, ProviderKindMismatchError, ProviderNotFoundError, readProvider, removeProvider, resolveProvider, resolveRoutedProviderCredentials, updateProvider } from "./providersStore";
 import { renameProvider } from "./providerRename";
 import { realCredentialCacheEnv } from "./realCredentialCache";
 import { realFarmFs } from "./realPorts";
@@ -284,6 +285,28 @@ describe("providers", () => {
       expect(names).toEqual(["m", "z"]);
     });
 
+    it("lists, reads and removes a provider stored under an older, looser name, so one stray file never aborts a command", () => {
+      addProvider(paths, "z", zInput);
+      fs.renameSync(path.join(paths.providersDir, "z.json"), path.join(paths.providersDir, "_old.json"));
+      fs.copyFileSync(path.join(paths.providersDir, "_old.json"), path.join(paths.providersDir, "my provider.json"));
+      expect(listProviders(paths).map((entry) => entry.name)).toEqual(["_old", "my provider"]);
+      expect(readProvider(paths, "_old")?.displayName).toBe("GLM");
+      removeProvider(paths, "_old");
+      removeProvider(paths, "my provider");
+      expect(fs.readdirSync(paths.providersDir)).toEqual([]);
+    });
+
+    it("skips a file whose name cannot be used, and says so, instead of aborting the listing", () => {
+      addProvider(paths, "z", zInput);
+      fs.copyFileSync(path.join(paths.providersDir, "z.json"), path.join(paths.providersDir, ".json"));
+      const skipped: string[] = [];
+      expect(listProviders(paths, (name, message) => {
+        skipped.push(`${name}: ${message}`);
+      }).map((entry) => entry.name)).toEqual(["z"]);
+      expect(skipped).toHaveLength(1);
+      expect(skipped[0]).toContain("not a valid provider name");
+    });
+
     it("returns an empty list when no providers directory exists at all", () => {
       expect(listProviders(paths)).toEqual([]);
     });
@@ -312,7 +335,7 @@ describe("providers", () => {
       addProvider(paths, "z", zInput);
       const port = tempFsPort();
       fs.writeFileSync(path.join(path.dirname(paths.providersDir), "outside.json"), JSON.stringify({ kind: "http" }));
-      for (const name of ["../outside", "../../z", "z/../z", ".hidden"]) {
+      for (const name of ["../outside", "../../z", "z/../z", ".."]) {
         expect(() => loadProvider(paths.providersDir, name, port), name).toThrow(InvalidProviderNameError);
         expect(() => readProvider(paths, name), name).toThrow(InvalidProviderNameError);
       }

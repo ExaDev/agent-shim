@@ -5,7 +5,7 @@ import { CliError } from "./cliError";
 import { applyStatuslineChange, type StatuslineChange } from "./statusline/change";
 import { ConfigValidationError } from "./config/load";
 import type { LayoutPaths } from "./paths";
-import { namedFilePath } from "./config/names";
+import { FILE_NAME_RULE, isFileName, isStoredName, profileFilePath, UnsafeNameError } from "./config/names";
 
 /** Raised by any operation that requires a configuration profile to already exist, when it does not. */
 export class ProfileNotFoundError extends CliError {
@@ -32,7 +32,7 @@ export class InvalidCategoryNameError extends CliError {
 }
 
 function profileJsonPath(paths: LayoutPaths, name: string): string {
-  return namedFilePath(paths.configProfilesDir, name, ".json", "configuration profile");
+  return profileFilePath(paths.configProfilesDir, name);
 }
 
 /** True when a profile file exists for `name`, regardless of whether it validates. */
@@ -60,6 +60,9 @@ export function createProfile(
   extendsList?: readonly string[],
   description?: string,
 ): ConfigProfile {
+  if (!isFileName(name)) {
+    throw new UnsafeNameError(name, "configuration profile", FILE_NAME_RULE);
+  }
   if (profileExists(paths, name)) {
     throw new ProfileAlreadyExistsError(name);
   }
@@ -81,8 +84,13 @@ export interface ProfileListEntry {
   readonly profile: ConfigProfile;
 }
 
-/** Lists every configuration profile under `configProfilesDir` that has a valid `<name>.json`. */
-export function listProfiles(paths: LayoutPaths): readonly ProfileListEntry[] {
+/** Reports a profile file `listProfiles` skipped because its name cannot be used, on standard error. */
+function reportUnusableProfileName(name: string, message: string): void {
+  console.error(`agent-shim: config-profiles/${name}.json is skipped: ${message}`);
+}
+
+/** Lists every configuration profile under `configProfilesDir` that has a valid `<name>.json`. A file whose name cannot stay inside the directory (only one called just `.json` can be on disk) is skipped and reported through `onUnusable` (standard error by default). */
+export function listProfiles(paths: LayoutPaths, onUnusable: (name: string, message: string) => void = reportUnusableProfileName): readonly ProfileListEntry[] {
   if (!fs.existsSync(paths.configProfilesDir)) {
     return [];
   }
@@ -94,6 +102,10 @@ export function listProfiles(paths: LayoutPaths): readonly ProfileListEntry[] {
 
   const result: ProfileListEntry[] = [];
   for (const name of names) {
+    if (!isStoredName(name)) {
+      onUnusable(name, `its name ${JSON.stringify(name)} is not usable, so the file is ignored. Rename or remove it.`);
+      continue;
+    }
     const profile = readProfile(paths, name);
     if (profile !== undefined) {
       result.push({ name, profile });

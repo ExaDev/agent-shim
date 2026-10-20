@@ -9,7 +9,8 @@ import type { CachedCredential, CredentialCachePort } from "./credentialCache";
 import { buildLayoutPaths, type LayoutPaths } from "./paths";
 import { readProviderAliases } from "./providerAliases";
 import { renameModelRefs, renameProvider, type ProviderRenamePorts } from "./providerRename";
-import { addProvider, InvalidProviderNameError, ProviderAlreadyExistsError, ProviderNotFoundError, providerExists, readProvider } from "./providersStore";
+import { InvalidProviderNameError } from "./config/names";
+import { addProvider, ProviderAlreadyExistsError, ProviderNotFoundError, providerExists, readProvider } from "./providersStore";
 import { realFarmFs } from "./realPorts";
 import { USAGE_SCHEMA_VERSION } from "./usage/schema";
 

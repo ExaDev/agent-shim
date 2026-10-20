@@ -28,7 +28,7 @@ import type { FsPort } from "./launcher/ports";
 import { assembleCascade, type CascadeInput } from "./resolve/walk";
 import type { LayoutPaths } from "./paths";
 import { FAMILY_PREFIX, buildFamilies, expandFamilyMembers, type Family } from "./models/families";
-import { isFileName, namedFilePath } from "./config/names";
+import { providerFilePath, requireNewProviderName, UnsafeNameError } from "./config/names";
 
 /** Raised by any operation that requires a provider to already exist, when it does not. */
 export class ProviderNotFoundError extends CliError {
@@ -46,30 +46,8 @@ export class ProviderAlreadyExistsError extends CliError {
   }
 }
 
-/**
- * Raised by `addProvider` when `name` fails the provider naming rule: the same rule `IdentitySchema` applies to identity names (start with a letter or number, then letters, numbers, dots, hyphens, underscores, and at signs). Keeping the two rules identical means a name that works for one works for the other, and neither vocabulary can ever produce a path segment that escapes `providers/` or `identities/`.
- */
-export class InvalidProviderNameError extends CliError {
-  constructor(readonly attemptedName: string) {
-    super(
-      `"${attemptedName}" is not a valid provider name. Provider names must start with a letter or number ` +
-        `and may then contain letters, numbers, dots, hyphens, underscores, and at signs.`,
-    );
-    this.name = "InvalidProviderNameError";
-  }
-}
-
-
-/** Throws `InvalidProviderNameError` unless `name` satisfies the provider naming rule. */
-export function requireValidProviderName(name: string): void {
-  if (!isFileName(name)) {
-    throw new InvalidProviderNameError(name);
-  }
-}
-
 export function providerJsonPath(paths: LayoutPaths, name: string): string {
-  requireValidProviderName(name);
-  return namedFilePath(paths.providersDir, name, ".json", "provider");
+  return providerFilePath(paths.providersDir, name);
 }
 
 /** True when a provider file exists for `name`, regardless of whether it validates. */
@@ -175,8 +153,7 @@ export function readProvider(paths: LayoutPaths, name: string): Provider | undef
  * Reads and validates one provider definition through an injected `FsPort`, the same way `loadIdentity` reads an `identity.json`: the launcher never touches the real filesystem directly, so provider loading must flow through the port it is already handed.
  */
 export function loadProvider(providersDir: string, name: string, port: FsPort): Provider | undefined {
-  requireValidProviderName(name);
-  const filePath = namedFilePath(providersDir, name, ".json", "provider");
+  const filePath = providerFilePath(providersDir, name);
   const raw = port.readConfigFile(filePath);
   return raw === undefined ? undefined : parseProviderFile(filePath, raw);
 }
@@ -204,7 +181,7 @@ export function listProviders(paths: LayoutPaths, onInvalid: (name: string, mess
     try {
       provider = readProvider(paths, name);
     } catch (error) {
-      if (!(error instanceof ConfigValidationError || error instanceof LegacyProviderFileError)) {
+      if (!(error instanceof ConfigValidationError || error instanceof LegacyProviderFileError || error instanceof UnsafeNameError)) {
         throw error;
       }
       onInvalid(name, error.message);
@@ -300,7 +277,7 @@ export function addProvider(paths: LayoutPaths, name: string, input: AddProvider
   if (providerExists(paths, name)) {
     throw new ProviderAlreadyExistsError(name);
   }
-  requireValidProviderName(name);
+  requireNewProviderName(name);
   const kind = input.kind ?? "http";
   if (kind === "codex" && input.baseUrl !== undefined) {
     throw new ProviderKindMismatchError("A codex provider has no base URL: the launcher points its sessions at the front-door daemon. Drop --base-url.");

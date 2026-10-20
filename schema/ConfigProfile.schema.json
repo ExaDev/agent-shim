@@ -12,9 +12,7 @@
     "extends": {
       "type": "array",
       "items": {
-        "type": "string",
-        "minLength": 1,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
+        "type": "string"
       }
     },
     "categories": {
@@ -115,9 +113,7 @@
           "type": "boolean"
         },
         "provider": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]*$"
+          "type": "string"
         },
         "headroom": {
           "type": "boolean"

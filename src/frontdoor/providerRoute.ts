@@ -1,4 +1,5 @@
 import { ConfigValidationError } from "../config/load";
+import { InvalidProviderNameError, isFileName } from "../config/names";
 import { isAntigravityProvider, isCodexProvider, isHttpProvider, type AntigravityProvider, type CodexProvider, type HttpProvider, type Credential, isRouterProvider, type ModelsConfig } from "../config/schema";
 import { HTTP_STATUS } from "../codex/http";
 import type { CodexRoutePorts } from "../codex/route";
@@ -140,7 +141,7 @@ function resolveAccountTarget(model: string, models: ModelsConfig | undefined): 
     const ref = model.slice("acct:".length);
     const [identity, ...rest] = ref.split("/");
     const named = rest.join("/");
-    return identity === undefined || named === "" ? undefined : { identity, model: named };
+    return identity === undefined || !isFileName(identity) || named === "" ? undefined : { identity, model: named };
   }
   const virtual = models?.virtual?.[model];
   const first = virtual?.members.find((member) => member.startsWith("acct:"));
@@ -269,6 +270,9 @@ export function createProviderRouteResolver(deps: {
     try {
       definition = loadProvider(deps.providersDir, provider, deps.fs);
     } catch (error) {
+      if (error instanceof InvalidProviderNameError) {
+        return { ok: false, status: HTTP_STATUS.notFound, message: `no provider named ${JSON.stringify(provider)}` };
+      }
       if (error instanceof ConfigValidationError || error instanceof LegacyProviderFileError) {
         return { ok: false, status: HTTP_STATUS.internalServerError, message: `provider ${provider} is invalid: ${error instanceof Error ? error.message : String(error)}` };
       }
