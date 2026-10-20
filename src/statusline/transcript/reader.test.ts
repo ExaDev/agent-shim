@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { cacheFileFor } from "../cacheFile";
+import { CACHE_RETENTION_MS, cacheFileFor } from "../cacheFile";
 import type { StatuslinePorts } from "../ports";
 import { fakeStatuslineFilesystem, fakeStatuslinePorts, type FakeStatuslineFilesystem } from "../testing";
-import { FINGERPRINT_BYTES, MAX_TRANSCRIPT_READ_BYTES, readTranscript, TRANSCRIPT_CACHE_RETENTION_MS } from "./reader";
+import { FINGERPRINT_BYTES, MAX_TRANSCRIPT_READ_BYTES, readTranscript } from "./reader";
 
 const TRANSCRIPT = "/sessions/one.jsonl";
 const T0 = Date.parse("2026-10-19T10:00:00.000Z");
@@ -115,8 +115,8 @@ describe("readTranscript", () => {
     const recent = cacheFileFor(fakeStatuslinePorts(), "transcript", "/sessions/recent.jsonl");
     const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: boundary(0), [stale]: "{}", [recent]: "{}" });
     const modifiedAtMs = new Map([
-      [stale, T0 - TRANSCRIPT_CACHE_RETENTION_MS - 1],
-      [recent, T0 - TRANSCRIPT_CACHE_RETENTION_MS],
+      [stale, T0 - CACHE_RETENTION_MS - 1],
+      [recent, T0 - CACHE_RETENTION_MS],
     ]);
     readTranscript(fakeStatuslinePorts({ ...disk.ports, modifiedAtMs: (path) => modifiedAtMs.get(path) }), TRANSCRIPT, T0);
     expect(disk.files.has(stale)).toBe(false);

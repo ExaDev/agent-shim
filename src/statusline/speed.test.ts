@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cacheFileFor } from "./cacheFile";
+import { CACHE_RETENTION_MS, cacheFileFor } from "./cacheFile";
 import { MIN_SPEED_GAP_MS, SPEED_WINDOW_MS, speedBetween, TRANSCRIPT_BYTES_PER_TOKEN, trackSpeed, type SpeedSample } from "./speed";
 import { fakeStatuslineFilesystem, fakeStatuslinePorts } from "./testing";
 
@@ -78,6 +78,23 @@ describe("trackSpeed", () => {
     trackSpeed(ports, "/sessions/streaming.jsonl", tokens(T0, BASE_TOKENS));
     expect(trackSpeed(ports, "/sessions/streaming.jsonl", tokens(T0 + GAP_MS, BASE_TOKENS + TOKENS))).toBe(TOKENS);
     expect(trackSpeed(ports, "/sessions/idle.jsonl", tokens(T0 + GAP_MS, BASE_TOKENS))).toBeUndefined();
+  });
+
+  it("forgets the cache files not written to for long when a new speed file is first written, and not on later writes", () => {
+    const stale = cacheFileFor(fakeStatuslinePorts(), "speed", "/sessions/old.jsonl");
+    const recent = cacheFileFor(fakeStatuslinePorts(), "speed", "/sessions/recent.jsonl");
+    const disk = fakeStatuslineFilesystem({ [stale]: "{}", [recent]: "{}" });
+    const modifiedAtMs = new Map([
+      [stale, T0 - CACHE_RETENTION_MS - 1],
+      [recent, T0 - CACHE_RETENTION_MS],
+    ]);
+    const ports = fakeStatuslinePorts({ ...disk.ports, modifiedAtMs: (path) => modifiedAtMs.get(path) });
+    trackSpeed(ports, TRANSCRIPT, tokens(T0, BASE_TOKENS));
+    expect(disk.files.has(stale)).toBe(false);
+    expect(disk.files.has(recent)).toBe(true);
+    disk.files.set(stale, "{}");
+    trackSpeed(ports, TRANSCRIPT, tokens(T0 + GAP_MS, BASE_TOKENS + TOKENS));
+    expect(disk.files.has(stale)).toBe(true);
   });
 
   it("starts again when the kept sample is not one it wrote", () => {

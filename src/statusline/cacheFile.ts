@@ -16,8 +16,18 @@ export function cacheFileFor(ports: StatuslinePorts, kind: string, transcriptPat
   return path.join(cacheDirectory(ports), `${kind}-${createHash("sha256").update(transcriptPath).digest("hex")}.json`);
 }
 
+/** Thirty days: a transcript that has not grown for a month belongs to a session that is over, and each cache file is small enough that keeping one that long costs nothing worth a shorter limit. */
+const RETENTION_DAYS = 30;
+const HOURS_PER_DAY = 24;
+const MINUTES_PER_HOUR = 60;
+const SECONDS_PER_MINUTE = 60;
+const MS_PER_SECOND = 1_000;
+
+/** How long a cache file may go without a write before it is removed. A write happens whenever there is something new to keep, so a file this old belongs to a session that has been quiet for that long, and a session resumed after it simply learns again. */
+export const CACHE_RETENTION_MS = RETENTION_DAYS * HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND;
+
 /** Removes the cache files last written before `cutoffMs` (milliseconds since the epoch), the ones of sessions that are over. */
-export function pruneCache(ports: StatuslinePorts, cutoffMs: number): void {
+function pruneCache(ports: StatuslinePorts, cutoffMs: number): void {
   const directory = cacheDirectory(ports);
   const names = ports.listDirectory(directory);
   if (names === undefined) {
@@ -48,7 +58,11 @@ export function loadCache<T>(ports: StatuslinePorts, file: string, schema: z.Zod
   return result.success ? result.data : undefined;
 }
 
-/** Replaces a cache file with `value`. */
-export function saveCache(ports: StatuslinePorts, file: string, value: unknown): void {
+/** Replaces a cache file with `value`. Every kind of cache file goes through here, so the moment a new file first appears is the one place that forgets the files of sessions that are over: later writes of the same file would only repeat the directory scan. */
+export function saveCache(ports: StatuslinePorts, file: string, value: unknown, nowMs: number): void {
+  const isNew = ports.entryKind(file) === undefined;
   ports.writeText(file, JSON.stringify(value));
+  if (isNew) {
+    pruneCache(ports, nowMs - CACHE_RETENTION_MS);
+  }
 }
