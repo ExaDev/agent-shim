@@ -410,6 +410,38 @@ describe("statusline settings", () => {
     }
   });
 
+  it("keeps three bar rows of one bar each to a grid of their own, as they were drawn before rows could merge", () => {
+    // Drawn by the renderer before layout.merge and layout.mergeBars existed, with a context bar, a quota with only its five-hour window, and the memory bar.
+    const oneWindow = { ...SUMMARY, sevenDayUsed: undefined, sevenDayResetAt: undefined };
+    const cases = [
+      { barWidth: 10, width: 45, expected: [
+        "Ctx 634k/1M [######....] 63.4% (Cache: 99%)",
+        "5h [#........................] 3.6% (38m)",
+        "RAM [########.......] 50.0% (32 B / 64 B)",
+      ] },
+      { barWidth: 10, width: 60, expected: [
+        "Ctx 634k/1M [###############........] 63.4% (Cache: 99%)",
+        "5h [#.......................................] 3.6% (38m)",
+        "RAM [###############...............] 50.0% (32 B / 64 B)",
+      ] },
+      { barWidth: 10, width: 109, expected: [
+        "Ctx 634k/1M [##############################################..........................] 63.4% (Cache: 99%)",
+        "5h [###......................................................................................] 3.6% (38m)",
+        "RAM [########################################.......................................] 50.0% (32 B / 64 B)",
+      ] },
+      { barWidth: 4, width: 80, expected: [
+        "Ctx 634k/1M [###########################................] 63.4% (Cache: 99%)",
+        "5h [##..........................................................] 3.6% (38m)",
+        "RAM [#########################.........................] 50.0% (32 B / 64 B)",
+      ] },
+    ];
+    for (const { barWidth, width, expected } of cases) {
+      const settings = resolveStatusline({ bar: { width: barWidth }, layout: { header: [], rows: ["context", "quota", "memory"] } });
+      const drawn = renderBlock({ summary: oneWindow, view: VIEW, payload: parseClientPayload({}), terminalWidth: width, nowMs: NOW_MS, settings, ports: fakeStatuslinePorts({ memoryUse: () => ({ usedBytes: 32, totalBytes: 64 }) }) });
+      expect(stripAnsi(drawn).replaceAll("\u2588", "#").replaceAll("\u2591", ".").split("\n"), `bar width ${String(barWidth)} at ${String(width)}`).toEqual(expected);
+    }
+  });
+
   it("right-aligns the quota windows of a merged line at the right edge of the width", () => {
     const [line] = stripAnsi(render({ layout: { header: [], merge: [["context", "quota"]], rightAlign: ["quota"] } }, SUMMARY, ONE_ROW_TERMINAL)).split("\n");
     expect(line?.startsWith("Ctx")).toBe(true);

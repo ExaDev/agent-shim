@@ -12,7 +12,7 @@ export interface BarCell {
 }
 
 /** The measurements every row of a layout shares, one entry per column. */
-interface Grid {
+export interface Grid {
   readonly rows: readonly (readonly BarCell[])[];
   readonly columns: number;
   /** The widest prefix of any cell that starts in the column. */
@@ -36,7 +36,8 @@ function lastColumnOf(index: number, rowLength: number, columns: number): number
   return index === rowLength - 1 ? columns - 1 : index;
 }
 
-function measureGrid(rows: readonly (readonly BarCell[])[], separatorLength: number, baseBarCells: number): Grid {
+/** The measurements of `rows` as one grid, for `renderGrid` to draw. */
+export function measureGrid(rows: readonly (readonly BarCell[])[], separatorLength: number, baseBarCells: number): Grid {
   const columns = Math.max(...rows.map((row) => row.length));
   const prefixWidths = Array.from({ length: columns }, () => 0);
   const suffixWidths = Array.from({ length: columns }, () => 0);
@@ -55,7 +56,8 @@ function padTo(text: string, width: number): string {
   return text + " ".repeat(Math.max(0, width - visibleLength(text)));
 }
 
-function renderGrid(grid: Grid, maxWidth: number, separator: string, baseBarCells: number): string[] {
+/** `grid` drawn to `maxWidth`, one string a row. */
+export function renderGrid(grid: Grid, maxWidth: number, separator: string, baseBarCells: number): string[] {
   const separatorLength = visibleLength(separator);
   const spare = Math.max(0, maxWidth - grid.baseWidth);
   const barCells = Array.from({ length: grid.columns }, (_, column) => baseBarCells + Math.floor(spare / grid.columns) + (column < spare % grid.columns ? 1 : 0));
@@ -103,25 +105,22 @@ export function layoutBarGrid(units: readonly BarUnit[], maxWidth: number, separ
     return [];
   }
   const separatorLength = visibleLength(separator);
-  const widest = Math.max(...nonEmpty.map((unit) => unit.flat().length));
-  const layoutFor = (perRow: number): Grid =>
-    measureGrid(
-      nonEmpty.flatMap((unit) => (unit.flat().length <= perRow ? [unit.flat()] : unit.flatMap((group) => chunk(group, perRow)))),
-      separatorLength,
-      baseBarCells,
-    );
+  const groups = nonEmpty.flat();
+  // Each unit on a single row, then every group chunked to `perRow` bars, a group of a unit never sharing a row with another.
+  const candidates: Grid[] = [measureGrid(nonEmpty.map((unit) => unit.flat()), separatorLength, baseBarCells)];
+  const chunked = (perRow: number): Grid => measureGrid(groups.flatMap((group) => chunk(group, perRow)), separatorLength, baseBarCells);
   // One bar to a row pads every group's labels and figures to match, which a single unit's groups do not accept (they keep to their own alignment instead); units of their own are meant to line up, so they may.
   const fewest = nonEmpty.length > 1 ? 1 : 2;
-  for (let perRow = widest; perRow >= fewest; perRow -= 1) {
-    const grid = layoutFor(perRow);
-    if (grid.baseWidth <= maxWidth) {
-      return renderGrid(grid, maxWidth, separator, baseBarCells);
-    }
+  for (let perRow = Math.max(...groups.map((group) => group.length)); perRow >= fewest; perRow -= 1) {
+    candidates.push(chunked(perRow));
+  }
+  const fitting = candidates.find((grid) => grid.baseWidth <= maxWidth);
+  if (fitting !== undefined) {
+    return renderGrid(fitting, maxWidth, separator, baseBarCells);
   }
   // One bar to a row is too wide once every group's labels and figures are padded to match, so each group keeps to its own alignment; a lone group that still does not fit is drawn whole, one bar to a row.
-  const groups = nonEmpty.flat();
   if (groups.length > 1) {
     return groups.flatMap((group) => layoutBarGrid([[group]], maxWidth, separator, baseBarCells));
   }
-  return renderGrid(layoutFor(1), maxWidth, separator, baseBarCells);
+  return renderGrid(chunked(1), maxWidth, separator, baseBarCells);
 }

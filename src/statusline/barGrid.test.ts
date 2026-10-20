@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { drawInline, layoutBarGrid, type BarCell } from "./barGrid";
+import { visibleLength } from "./ansi";
+import { drawInline, layoutBarGrid, measureGrid, renderGrid, type BarCell } from "./barGrid";
 
 const SEPARATOR = " | ";
 const BASE_BAR_CELLS = 10;
@@ -147,5 +148,73 @@ describe("layoutBarGrid", () => {
 
   it("draws a bar at its base size on one line with the text around it", () => {
     expect(drawInline([cell("A ", " 1%"), cell("B ", " 2%")], SEPARATOR, BASE_BAR_CELLS)).toBe(`A [${"#".repeat(BASE_BAR_CELLS / 2)}${".".repeat(BASE_BAR_CELLS / 2)}] 1% | B [${"#".repeat(BASE_BAR_CELLS / 2)}${".".repeat(BASE_BAR_CELLS / 2)}] 2%`);
+  });
+});
+
+/** `items` in runs of at most `size`. */
+function chunksOf<T>(items: readonly T[], size: number): T[][] {
+  return Array.from({ length: Math.ceil(items.length / size) }, (_, index) => items.slice(index * size, (index + 1) * size));
+}
+
+/**
+ * The layout of groups that share one unit, as the grid drew them before units existed: the whole unit on one row, else every group chunked to the most bars to a row that fits, from the largest group down to two, else each group aligned within itself. Kept as the reference the unit-based layout must agree with for a single unit.
+ */
+function layoutBeforeUnits(groups: readonly (readonly BarCell[])[], maxWidth: number, separator: string, baseBarCells: number): string[] {
+  const nonEmpty = groups.filter((group) => group.length > 0);
+  if (nonEmpty.length === 0) {
+    return [];
+  }
+  const separatorLength = visibleLength(separator);
+  const widest = Math.max(...nonEmpty.map((group) => group.length));
+  const layoutFor = (perRow: number): ReturnType<typeof measureGrid> => measureGrid(nonEmpty.flatMap((group) => chunksOf(group, perRow)), separatorLength, baseBarCells);
+  const candidates = [measureGrid([nonEmpty.flat()], separatorLength, baseBarCells)];
+  for (let perRow = widest; perRow > 1; perRow -= 1) {
+    candidates.push(layoutFor(perRow));
+  }
+  const fitting = candidates.find((grid) => grid.baseWidth <= maxWidth);
+  if (fitting !== undefined) {
+    return renderGrid(fitting, maxWidth, separator, baseBarCells);
+  }
+  if (nonEmpty.length > 1) {
+    return nonEmpty.flatMap((group) => layoutBeforeUnits([group], maxWidth, separator, baseBarCells));
+  }
+  return renderGrid(layoutFor(1), maxWidth, separator, baseBarCells);
+}
+
+/** The groups of the given sizes, their cells labelled to different lengths so that padding to a shared column shows. */
+function groupsOfSizes(sizes: readonly number[]): BarCell[][] {
+  let labelLength = 0;
+  return sizes.map((size) => Array.from({ length: size }, () => cell(`${"L".repeat((labelLength += 1))} `, " 10%")));
+}
+
+describe("layoutBarGrid for a single unit", () => {
+  const SMALLEST_WIDTH = 20;
+  const WIDEST_WIDTH = 140;
+  const MOST_GROUPS = 4;
+  const MOST_CELLS = 3;
+
+  /** Every list of 1 to `MOST_GROUPS` group sizes of 1 to `MOST_CELLS` cells. */
+  function shapes(length: number): number[][] {
+    if (length === 0) {
+      return [[]];
+    }
+    return shapes(length - 1).flatMap((shorter) => Array.from({ length: MOST_CELLS }, (_, size) => [...shorter, size + 1]));
+  }
+  const allShapes = Array.from({ length: MOST_GROUPS }, (_, index) => shapes(index + 1)).flat();
+
+  it("draws groups of one bar each, each aligned within itself, when padding them to one column does not fit on a line together", () => {
+    const groups = groupsOfSizes([1, 1, 1]);
+    const rows = layoutBarGrid([groups], SMALLEST_WIDTH, SEPARATOR, BASE_BAR_CELLS);
+    expect(rows).toEqual(layoutBeforeUnits(groups, SMALLEST_WIDTH, SEPARATOR, BASE_BAR_CELLS));
+    expect(new Set(rows.map((row) => columnsOf(row, "[")[0])).size).toBe(rows.length);
+  });
+
+  it("agrees with the layout before units existed for every shape and width, so a unit of groups keeps its alignment", () => {
+    for (const sizes of allShapes) {
+      const groups = groupsOfSizes(sizes);
+      for (let width = SMALLEST_WIDTH; width <= WIDEST_WIDTH; width += 1) {
+        expect(layoutBarGrid([groups], width, SEPARATOR, BASE_BAR_CELLS), `${sizes.join(",")} at ${String(width)}`).toEqual(layoutBeforeUnits(groups, width, SEPARATOR, BASE_BAR_CELLS));
+      }
+    }
   });
 });
