@@ -17,7 +17,7 @@ export interface LaunchApiDeps {
   /** This generation's control token: the same value every router on the mount checks. */
   readonly expectedToken: string;
   /** Resolves one launch from a directory without performing it, returning the resolution and the warnings it raised. A refusal is thrown as the launcher raises it (a `CliError`). */
-  readonly resolveLaunch: (request: { readonly path: string; readonly argv: readonly string[]; readonly env: Readonly<Record<string, string>> }) => { readonly resolution: LaunchResolution; readonly warnings: readonly string[] };
+  readonly resolveLaunch: (request: { readonly path: string; readonly argv: readonly string[]; readonly env: Readonly<Record<string, string>> }) => Promise<{ readonly resolution: LaunchResolution; readonly warnings: readonly string[] }>;
 }
 
 /** The OpenAPI tag the launch routers group under in the document. */
@@ -41,9 +41,9 @@ export function createLaunchApiRouter(deps: LaunchApiDeps) {
         )
         .input(LaunchResolveInputSchema)
         .output(LaunchResolveOutputSchema)
-        .handler(({ input }) => {
+        .handler(async ({ input }) => {
           try {
-            const { resolution, warnings } = deps.resolveLaunch({ path: input.path, argv: input.argv ?? [], env: input.env ?? {} });
+            const { resolution, warnings } = await deps.resolveLaunch({ path: input.path, argv: input.argv ?? [], env: input.env ?? {} });
             return { ...resolution, warnings };
           } catch (error: unknown) {
             // A launch the launcher refuses (no such identity, a missing profile, an ambient credential, a usage error in the arguments) is the caller's described launch being impossible, answered with the launcher's own message; anything else is a bug and stays one.

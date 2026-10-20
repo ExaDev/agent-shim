@@ -78,11 +78,11 @@ describe("the door's launch resolution API", () => {
   let behaviour: () => { resolution: LaunchResolution; warnings: readonly string[] } = () => ({ resolution: RESOLUTION, warnings: [] });
   const deps: LaunchApiDeps = {
     expectedToken: CONTROL_TOKEN,
-    resolveLaunch: (request) => {
+    resolveLaunch: async (request) => {
       asked.path = request.path;
       asked.argv = request.argv;
       asked.env = request.env;
-      return behaviour();
+      return await Promise.resolve(behaviour());
     },
   };
   let client: LaunchClient;

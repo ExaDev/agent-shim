@@ -46,7 +46,7 @@ import { createCredentialCustody } from "./custody";
 import { collectCheckReport } from "../checkReport";
 import { collectDoctorReport } from "../doctorReport";
 import { collectPoolPick } from "../poolPickReport";
-import { resolveClaudeLaunch } from "../launchWiring";
+import { resolveClaudeLaunchAsync } from "../launchWiring";
 import { readPools } from "../poolStore";
 import { listUsageSnapshots, readUsageSnapshot } from "../usage/read";
 import type { UsageSnapshot } from "../usage/schema";import { createDoorApiNodeHandler } from "./controlApi";
@@ -457,7 +457,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         },
         poolNames: () => Object.keys(readPools(paths)).sort(),
         // A read-only resolution of what a launch from one directory would do: the launcher's own decision with its effects left out, so a read never recovers or resyncs a farm, starts a daemon, records a pool pick or runs a credential command.
-        resolveLaunch: (request: { readonly path: string; readonly argv: readonly string[]; readonly env: Readonly<Record<string, string>> }) => resolveClaudeLaunch({ argv: request.argv, cwd: request.path, env: request.env, paths }),
+        resolveLaunch: async (request: { readonly path: string; readonly argv: readonly string[]; readonly env: Readonly<Record<string, string>> }) => resolveClaudeLaunchAsync({ argv: request.argv, cwd: request.path, env: request.env, paths }),
         // The identities are read per call, like the pool table, so an identity added after the door started is listed the moment the CLI would see it.
         sessionList: (filters: { readonly identity?: string | undefined; readonly all?: boolean | undefined }) =>
           collectSessionList(realSessionFs, paths.identitiesDir, listIdentities(paths).map((entry) => entry.name), { ...(filters.identity === undefined ? {} : { identity: filters.identity }), ...(filters.all === undefined ? {} : { all: filters.all }) }),
