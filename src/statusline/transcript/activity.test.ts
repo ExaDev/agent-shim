@@ -9,7 +9,9 @@ import {
   foldActivity,
   foldActivityLatest,
   MAX_LIVE_AGENT_MS,
-  MAX_LIVE_TOOL_CALL_MS,
+  BASH_DEFAULT_TIMEOUT_MS,
+  BASH_MAX_TIMEOUT_MS,
+  bashLiveLimitMs,
   MAX_TRACKED_AGENTS,
   MAX_TRACKED_NAMES,
   MAX_TRACKED_TODOS,
@@ -45,7 +47,8 @@ function fold(records: readonly Record<string, unknown>[], from: ActivityState =
   }, from);
 }
 
-const factsAt = (records: readonly Record<string, unknown>[], nowMs = T0 + SECOND) => activityFactsOf(fold(records), nowMs);
+const LIMITS = { bashMs: BASH_MAX_TIMEOUT_MS };
+const factsAt = (records: readonly Record<string, unknown>[], nowMs = T0 + SECOND) => activityFactsOf(fold(records), nowMs, LIMITS);
 
 describe("tool calls", () => {
   it("tracks a call as running until its result, then as completed", () => {
@@ -77,17 +80,17 @@ describe("tool calls", () => {
 
   it("treats a call with no result as running for as long as a live call can take, and then as neither running nor finished", () => {
     const records = [use("a", "Bash", { command: "sleep 1" })];
-    expect(activityFactsOf(fold(records), T0 + MAX_LIVE_TOOL_CALL_MS).tools).toHaveLength(1);
-    expect(activityFactsOf(fold(records), T0 + MAX_LIVE_TOOL_CALL_MS + 1).tools).toEqual([]);
+    expect(activityFactsOf(fold(records), T0 + BASH_MAX_TIMEOUT_MS, LIMITS).tools).toHaveLength(1);
+    expect(activityFactsOf(fold(records), T0 + BASH_MAX_TIMEOUT_MS + 1, LIMITS).tools).toEqual([]);
   });
 
   it("keeps a call that has a result however long ago it ran", () => {
     const records = [use("a", "Read"), result("a", SECOND)];
-    expect(activityFactsOf(fold(records), T0 + MANY_TIMES_THE_LIMIT * MAX_LIVE_TOOL_CALL_MS).tools).toHaveLength(1);
+    expect(activityFactsOf(fold(records), T0 + MANY_TIMES_THE_LIMIT * BASH_MAX_TIMEOUT_MS, LIMITS).tools).toHaveLength(1);
   });
 
   it("does not age a call whose timestamp is in the future of the clock", () => {
-    expect(activityFactsOf(fold([use("a", "Read", {}, FEW_MINUTES * MINUTE)]), T0).tools).toHaveLength(1);
+    expect(activityFactsOf(fold([use("a", "Read", {}, FEW_MINUTES * MINUTE)]), T0, LIMITS).tools).toHaveLength(1);
   });
 
   it("keeps only the latest calls", () => {
@@ -155,7 +158,7 @@ describe("a result written to the file before its call", () => {
   it("finishes the call when the call arrives, however late the call is stamped", () => {
     const facts = factsAt([result("a", SECOND), use("a", "Edit", { file_path: "/x" }, 0)]);
     expect(facts.tools).toEqual([{ name: "Edit", target: "/x", status: "completed" }]);
-    expect(activityFactsOf(fold([result("a", SECOND), use("a", "Edit")]), T0 + MANY_TIMES_THE_LIMIT * MAX_LIVE_TOOL_CALL_MS).tools).toHaveLength(1);
+    expect(activityFactsOf(fold([result("a", SECOND), use("a", "Edit")]), T0 + MANY_TIMES_THE_LIMIT * BASH_MAX_TIMEOUT_MS, LIMITS).tools).toHaveLength(1);
   });
 
   it("marks the call failed when the result was an error", () => {
@@ -177,7 +180,7 @@ describe("a result written to the file before its call", () => {
   it("is kept in the state between folds, so a result from one refresh finishes a call of the next", () => {
     const first = fold([result("a", SECOND)]);
     expect(ActivityStateSchema.parse(JSON.parse(JSON.stringify(first)))).toEqual(first);
-    expect(activityFactsOf(fold([use("a", "Read")], first), T0 + SECOND).tools[0]?.status).toBe("completed");
+    expect(activityFactsOf(fold([use("a", "Read")], first), T0 + SECOND, LIMITS).tools[0]?.status).toBe("completed");
   });
 
   it("keeps only the latest few results that have no call", () => {
@@ -191,6 +194,86 @@ describe("a result written to the file before its call", () => {
     const two = { type: "user", timestamp: at(SECOND), toolUseResult: { isAsync: true, resolvedModel: "claude-opus-4-8" }, message: { content: [{ type: "tool_result", tool_use_id: "g" }, { type: "tool_result", tool_use_id: "h" }] } };
     const facts = factsAt([use("g", "Agent", {}), use("h", "Agent", {}), two]);
     expect(facts.agents).toMatchObject([{ status: "completed", model: undefined }, { status: "completed", model: undefined }]);
+  });
+});
+
+describe("whether a call is still running", () => {
+  const THREE_HOURS = 10_800_000;
+  const inResponse = (key: string, record: Record<string, unknown>): Record<string, unknown> => ({ ...record, message: { ...(record.message as Record<string, unknown>), id: key } });
+  const names = (records: readonly Record<string, unknown>[], nowMs = T0 + SECOND): string[] => factsAt(records, nowMs).tools.map((tool) => `${tool.name}:${tool.status}`);
+
+  it("keeps a call that waits for a person running for as long as the person takes", () => {
+    for (const name of ["AskUserQuestion", "ExitPlanMode", "Edit", "Read", "Write", "WebFetch"]) {
+      expect(names([use("a", name)], T0 + THREE_HOURS), name).toEqual([`${name}:running`]);
+    }
+  });
+
+  it("takes a Bash call with no result for running until the longest a Bash call can run, and then for cut off", () => {
+    expect(names([use("a", "Bash", { command: "sleep 1" })], T0 + BASH_MAX_TIMEOUT_MS)).toEqual(["Bash:running"]);
+    expect(names([use("a", "Bash", { command: "sleep 1" })], T0 + BASH_MAX_TIMEOUT_MS + 1)).toEqual([]);
+  });
+
+  it("follows a Bash timeout the environment raises, and ignores one that is not a positive whole number", () => {
+    const RAISED = 1_800_000;
+    expect(bashLiveLimitMs({})).toBe(BASH_MAX_TIMEOUT_MS);
+    expect(bashLiveLimitMs({ BASH_MAX_TIMEOUT_MS: String(RAISED) })).toBe(RAISED);
+    expect(bashLiveLimitMs({ BASH_DEFAULT_TIMEOUT_MS: String(RAISED) })).toBe(RAISED);
+    expect(bashLiveLimitMs({ BASH_MAX_TIMEOUT_MS: "1000" })).toBe(BASH_DEFAULT_TIMEOUT_MS);
+    for (const bad of ["", "abc", "-5", "0", "1.5"]) {
+      expect(bashLiveLimitMs({ BASH_MAX_TIMEOUT_MS: bad, BASH_DEFAULT_TIMEOUT_MS: bad }), bad).toBe(BASH_MAX_TIMEOUT_MS);
+    }
+    const state = fold([use("a", "Bash", { command: "sleep 1" })]);
+    expect(activityFactsOf(state, T0 + 2 * BASH_MAX_TIMEOUT_MS, { bashMs: bashLiveLimitMs({ BASH_MAX_TIMEOUT_MS: String(RAISED) }) }).tools).toHaveLength(1);
+  });
+
+  it("forgets a call with no result once the session writes its next response, whatever the call is", () => {
+    const records = [inResponse("r1", use("a", "AskUserQuestion")), inResponse("r1", use("b", "Edit")), inResponse("r2", { type: "assistant", timestamp: at(STEP.third), message: { content: [{ type: "text", text: "went on" }] } })];
+    expect(names(records, T0 + THREE_HOURS)).toEqual([]);
+  });
+
+  it("keeps the calls of a response that are still waiting while that response's other records are written, and one that has its result", () => {
+    const records = [inResponse("r1", use("a", "Read")), inResponse("r1", use("b", "Grep")), result("a", SECOND), inResponse("r1", use("c", "Edit", {}, 2))];
+    expect(names(records)).toEqual(["Read:completed", "Grep:running", "Edit:running"]);
+    expect(names([...records, inResponse("r2", use("d", "Bash", { command: "x" }, STEP.third))])).toEqual(["Read:completed", "Bash:running"]);
+  });
+
+  it("tells responses apart by the request when a record has no message id", () => {
+    const withRequest = (requestId: string, record: Record<string, unknown>): Record<string, unknown> => ({ ...record, requestId });
+    expect(names([withRequest("q1", use("a", "Read")), withRequest("q2", use("b", "Grep", {}, 2))])).toEqual(["Grep:running"]);
+  });
+
+  it("does not forget a call when records with no key come after it", () => {
+    expect(names([inResponse("r1", use("a", "Read")), use("b", "Grep", {}, 2)])).toEqual(["Read:running", "Grep:running"]);
+  });
+
+  it("forgets a foreground agent with no result when the next response begins, and keeps one started in the background", () => {
+    const records = [inResponse("r1", use("fg", "Agent", { subagent_type: "Plan" })), inResponse("r1", use("bg", "Agent", { subagent_type: "Explore", run_in_background: true })), inResponse("r2", use("x", "Read", {}, 2))];
+    expect(factsAt(records).agents.map((agent) => `${agent.type}:${agent.status}`)).toEqual(["Explore:running"]);
+  });
+
+  it("forgets a task whose creation never reported back when the next response begins", () => {
+    const records = [inResponse("r1", use("c", "TaskCreate", { subject: "x" })), inResponse("r2", use("x", "Read", {}, 2)), { type: "user", timestamp: at(STEP.third), message: { content: [{ type: "tool_result", tool_use_id: "c", content: "Task #1 created successfully" }] } }];
+    expect(factsAt(records).todos).toEqual([]);
+  });
+
+  it("applies to the facts of the end of a long transcript too: a call the state has with no result is forgotten when the end holds a later response", () => {
+    const state = fold([inResponse("r1", use("a", "Read")), inResponse("r1", use("b", "Agent", { subagent_type: "x" }))]);
+    const end = [inResponse("r9", use("c", "Grep", {}, STEP.ninth))].reduce<ActivityLatest>((latest, record) => {
+      const parsed = parseTranscriptRecord(JSON.stringify(record));
+      return parsed === undefined ? latest : foldActivityLatest(latest, parsed);
+    }, EMPTY_ACTIVITY_LATEST);
+    const facts = activityFactsOf(state, T0 + SECOND, LIMITS, end);
+    expect(facts.tools.map((tool) => tool.name)).toEqual(["Grep"]);
+    expect(facts.agents).toEqual([]);
+  });
+
+  it("keeps the unresolved calls the state has when the end holds the same response", () => {
+    const state = fold([inResponse("r1", use("a", "Read"))]);
+    const end = [inResponse("r1", use("c", "Grep", {}, 2))].reduce<ActivityLatest>((latest, record) => {
+      const parsed = parseTranscriptRecord(JSON.stringify(record));
+      return parsed === undefined ? latest : foldActivityLatest(latest, parsed);
+    }, EMPTY_ACTIVITY_LATEST);
+    expect(activityFactsOf(state, T0 + SECOND, LIMITS, end).tools.map((tool) => tool.name)).toEqual(["Read", "Grep"]);
   });
 });
 
@@ -267,8 +350,8 @@ describe("agents", () => {
   });
 
   it("drops an agent that has had no end for longer than a live one can run", () => {
-    expect(activityFactsOf(fold([launch()]), T0 + MAX_LIVE_AGENT_MS).agents).toHaveLength(1);
-    expect(activityFactsOf(fold([launch()]), T0 + MAX_LIVE_AGENT_MS + 1).agents).toEqual([]);
+    expect(activityFactsOf(fold([launch()]), T0 + MAX_LIVE_AGENT_MS, LIMITS).agents).toHaveLength(1);
+    expect(activityFactsOf(fold([launch()]), T0 + MAX_LIVE_AGENT_MS + 1, LIMITS).agents).toEqual([]);
   });
 
   it("keeps only the latest agents", () => {
@@ -431,36 +514,36 @@ describe("activityFactsOf with the facts folded from the end of the transcript",
 
   it("puts the end's calls after the state's, and keeps a call that both hold once", () => {
     const newer = end([use("b", "Grep", {}, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, newer).tools.map((tool) => `${tool.name}:${tool.status}`)).toEqual(["Read:completed", "Skill:running", "Grep:running"]);
+    expect(activityFactsOf(older, T0 + SECOND, LIMITS, newer).tools.map((tool) => `${tool.name}:${tool.status}`)).toEqual(["Read:completed", "Skill:running", "Grep:running"]);
   });
 
   it("takes a result the state read over the end's fold of the same call, which began after the call", () => {
     const overlapping = end([use("a", "Read", {}, 1), use("b", "Grep", {}, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, overlapping).tools.map((tool) => `${tool.name}:${tool.status}`)).toEqual(["Skill:running", "Read:completed", "Grep:running"]);
+    expect(activityFactsOf(older, T0 + SECOND, LIMITS, overlapping).tools.map((tool) => `${tool.name}:${tool.status}`)).toEqual(["Skill:running", "Read:completed", "Grep:running"]);
   });
 
   it("takes the end's result of a call over the state's, which has none", () => {
     const behind = fold([use("a", "Read", {}, 1)]);
     const overlapping = end([use("a", "Read", {}, 1), result("a", 2)]);
-    expect(activityFactsOf(behind, T0 + SECOND, overlapping).tools.map((tool) => tool.status)).toEqual(["completed"]);
+    expect(activityFactsOf(behind, T0 + SECOND, LIMITS, overlapping).tools.map((tool) => tool.status)).toEqual(["completed"]);
   });
 
   it("keeps the state's todo list while the end does not touch it", () => {
     const untouched = end([use("g", "Grep", {}, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, untouched).todos.map((todo) => todo.content)).toEqual(["old"]);
+    expect(activityFactsOf(older, T0 + SECOND, LIMITS, untouched).todos.map((todo) => todo.content)).toEqual(["old"]);
   });
 
   it("draws no list when the end edits it in place with no TodoWrite before, since the list the state has is out of date and the end holds only a part of the new one, and replaces it once the end holds a TodoWrite", () => {
     const created = end([use("c", "TaskCreate", { subject: "tail" }, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, created).todos).toEqual([]);
+    expect(activityFactsOf(older, T0 + SECOND, LIMITS, created).todos).toEqual([]);
     const updated = end([use("u", "TaskUpdate", { taskId: "9" }, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, updated).todos).toEqual([]);
+    expect(activityFactsOf(older, T0 + SECOND, LIMITS, updated).todos).toEqual([]);
     const written = end([use("w", "TodoWrite", { todos: [{ content: "fresh", status: "in_progress" }] }, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, written).todos.map((todo) => todo.content)).toEqual(["fresh"]);
+    expect(activityFactsOf(older, T0 + SECOND, LIMITS, written).todos.map((todo) => todo.content)).toEqual(["fresh"]);
   });
 
   it("leaves the skills and servers to the state, since they add up over the whole transcript", () => {
     const newer = end([use("s", "Skill", { skill: "late" }, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, newer).skills).toEqual(["early"]);
+    expect(activityFactsOf(older, T0 + SECOND, LIMITS, newer).skills).toEqual(["early"]);
   });
 });

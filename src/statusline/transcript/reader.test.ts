@@ -4,7 +4,7 @@ import { CACHE_RETENTION_MS, cacheFileFor } from "../cacheFile";
 import { PROMPT_CACHE_TTL_SECONDS } from "../../config/statusline";
 import type { StatuslinePorts } from "../ports";
 import { fakeStatuslineFilesystem, fakeStatuslinePorts, type FakeStatuslineFilesystem } from "../testing";
-import { MAX_LIVE_TOOL_CALL_MS } from "./activity";
+import { BASH_MAX_TIMEOUT_MS } from "./activity";
 import { FINGERPRINT_BYTES, MAX_TRANSCRIPT_READ_BYTES, readTranscript } from "./reader";
 
 const TRANSCRIPT = "/sessions/one.jsonl";
@@ -285,9 +285,18 @@ describe("readTranscript", () => {
     const answer = line({ type: "user", timestamp: at(SECOND_MS), message: { content: [{ type: "tool_result", tool_use_id: "x", content: "" }] } });
     const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: call });
     expect(readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0)?.activity.tools).toEqual([{ name: "Bash", target: "sleep 5", status: "running" }]);
-    expect(readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0 + MAX_LIVE_TOOL_CALL_MS + 1)?.activity.tools).toEqual([]);
+    expect(readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0 + BASH_MAX_TIMEOUT_MS + 1)?.activity.tools).toEqual([]);
     disk.files.set(TRANSCRIPT, call + answer);
-    expect(readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0 + MAX_LIVE_TOOL_CALL_MS + 1)?.activity.tools).toEqual([{ name: "Bash", target: "sleep 5", status: "completed" }]);
+    expect(readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0 + BASH_MAX_TIMEOUT_MS + 1)?.activity.tools).toEqual([{ name: "Bash", target: "sleep 5", status: "completed" }]);
+  });
+
+  it("takes the longest a Bash call can run from the statusline's environment", () => {
+    const call = line({ type: "assistant", timestamp: at(0), message: { id: "m", content: [{ type: "tool_use", id: "x", name: "Bash", input: { command: "make" } }] } });
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: call });
+    const later = T0 + 2 * BASH_MAX_TIMEOUT_MS;
+    expect(readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, later)?.activity.tools).toEqual([]);
+    const raised = fakeStatuslinePorts({ ...disk.ports, env: { BASH_MAX_TIMEOUT_MS: String(2 * BASH_MAX_TIMEOUT_MS) } });
+    expect(readTranscript(raised, TRANSCRIPT, later)?.activity.tools).toEqual([{ name: "Bash", target: "make", status: "running" }]);
   });
 
   it("reports the calls and todo list the end of a long transcript holds on the first refresh, and the skills only once it has caught up", () => {

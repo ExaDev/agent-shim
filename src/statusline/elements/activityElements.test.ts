@@ -6,7 +6,7 @@ import type { StatuslineSummary } from "../enrich";
 import { parseClientPayload } from "../payload";
 import { renderStatuslineBlock } from "../render";
 import { fakeStatuslineFilesystem, fakeStatuslinePorts } from "../testing";
-import { MAX_LIVE_TOOL_CALL_MS } from "../transcript/activity";
+import { BASH_MAX_TIMEOUT_MS } from "../transcript/activity";
 
 const TRANSCRIPT = "/sessions/activity.jsonl";
 const T0 = Date.parse("2026-10-20T09:00:00.000Z");
@@ -119,7 +119,7 @@ describe("the activity rows", () => {
   });
 
   it("stop showing a call as running once it has run for longer than a live call can", () => {
-    const [tools = ""] = render(rows("tools"), { nowMs: T0 + STEP.tenth * SECOND + MAX_LIVE_TOOL_CALL_MS + 1 }).map(plain);
+    const [tools = ""] = render(rows("tools"), { nowMs: T0 + STEP.tenth * SECOND + BASH_MAX_TIMEOUT_MS + 1 }).map(plain);
     expect(tools).not.toContain("\u25D0");
     expect(tools).toContain("\u2713 Read");
   });

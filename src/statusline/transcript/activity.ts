@@ -24,15 +24,34 @@ const MAX_STORED_TEXT_CHARS = 200;
 
 const MS_PER_SECOND = 1_000;
 const SECONDS_PER_MINUTE = 60;
-const TOOL_CALL_MINUTES = 10;
 const MINUTES_PER_HOUR = 60;
 const HOURS_PER_DAY = 24;
 
-/** The longest a tool call can be running and still be taken for live: ten minutes, the most a foreground Bash command may be given (Claude Code's `BASH_MAX_TIMEOUT_MS`), and the longest any other foreground tool call is expected to take. A call with no result after this long was cut off without one (an interrupted or crashed session), and would otherwise show as running for ever. */
-export const MAX_LIVE_TOOL_CALL_MS = TOOL_CALL_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND;
+/** How long Claude Code lets a Bash command run when the call names no timeout, and the most it lets one be given: two minutes and ten minutes, the defaults of `BASH_DEFAULT_TIMEOUT_MS` and `BASH_MAX_TIMEOUT_MS` (https://code.claude.com/docs/en/env-vars). Both can be set in the environment. */
+export const BASH_DEFAULT_TIMEOUT_MS = 120_000;
+export const BASH_MAX_TIMEOUT_MS = 600_000;
 
-/** The longest an agent can be running and still be taken for live: a day. An agent has no timeout (a foreground one holds the turn open for as long as it runs, and a background one runs until the client announces it finished), so the bound only releases the agents of a session that ended without hearing back from them. */
+/** The positive whole number the environment variable `name` holds, else `fallback`. */
+function timeoutFromEnv(env: Readonly<Record<string, string | undefined>>, name: string, fallback: number): number {
+  const value = Number(env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * The longest a Bash call can have run and still be taken for running: the larger of the default and the maximum timeout, as the statusline's own environment sets them (`BASH_DEFAULT_TIMEOUT_MS`, `BASH_MAX_TIMEOUT_MS`) or else the documented defaults. A Bash call with no result after that long was cut off without one. Other tools have no such limit: a call that waits for a person (a question, a plan to approve, a permission) is running for as long as the person takes, and what ends one that gets no result is the session going on without it.
+ */
+export function bashLiveLimitMs(env: Readonly<Record<string, string | undefined>>): number {
+  return Math.max(timeoutFromEnv(env, "BASH_DEFAULT_TIMEOUT_MS", BASH_DEFAULT_TIMEOUT_MS), timeoutFromEnv(env, "BASH_MAX_TIMEOUT_MS", BASH_MAX_TIMEOUT_MS));
+}
+
+/** The longest an agent can have run without an end and still be taken for running: a day. An agent has no timeout (a foreground one holds the turn open for as long as it runs, and a background one runs until the client announces it finished), so the bound only releases the agents of a session that ended without hearing back from them. */
 export const MAX_LIVE_AGENT_MS = HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND;
+
+/** What the facts need to know to tell a call that is running from one that is not. */
+export interface LiveLimits {
+  /** The longest a Bash call can have run without a result and still be running; see `bashLiveLimitMs`. */
+  readonly bashMs: number;
+}
 
 /** The names of the client's tools that start an agent, and that edit a todo list; every other tool is a tool call. */
 const AGENT_TOOLS: readonly string[] = ["Task", "Agent"];
@@ -40,6 +59,7 @@ const TODO_WRITE_TOOL = "TodoWrite";
 const TASK_CREATE_TOOL = "TaskCreate";
 const TASK_UPDATE_TOOL = "TaskUpdate";
 const SKILL_TOOL = "Skill";
+const BASH_TOOL = "Bash";
 
 /** The tool name the client gives a tool of an MCP server: `mcp__<server>__<tool>`. */
 const MCP_TOOL_NAME = /^mcp__(.+?)__(.+)$/;
@@ -111,6 +131,8 @@ export const ActivityLatestSchema = z.strictObject({
   todosEdited: z.literal(true).optional(),
   /** Results read before their calls, oldest first. */
   unmatchedResults: z.array(CallResultSchema),
+  /** The response of the session's latest assistant record, which the records of one response share. A call is made in one response and answered before the next is written, so a call with no result when a response of another key appears was abandoned (an interrupted tool call). */
+  responseKey: z.string().optional(),
 });
 export type ActivityLatest = z.infer<typeof ActivityLatestSchema>;
 
@@ -154,7 +176,7 @@ function targetOf(name: string, input: Readonly<Record<string, unknown>> | undef
       return stringField(input, "pattern");
     case SKILL_TOOL:
       return stringField(input, "skill");
-    case "Bash": {
+    case BASH_TOOL: {
       const command = stringField(input, "command")?.replace(/\s+/g, " ").trim();
       if (command === undefined || command === "") {
         return undefined;
@@ -326,6 +348,17 @@ function foldAgentAnnouncement(state: ActivityLatest, toolUseId: string, atMs: n
   return { ...state, agents: state.agents.map((agent) => (agent.id === toolUseId && agent.background === true ? { ...agent, endedAtMs: atMs } : agent)) };
 }
 
+/** The state when a new response begins: the calls of the earlier responses that have no result were abandoned, so they are forgotten, and so are the tasks whose creation never reported back. An agent started in the background is left, since its result came at launch and its end is announced. */
+function foldNewResponse(state: ActivityLatest, key: string): ActivityLatest {
+  return {
+    ...state,
+    responseKey: key,
+    tools: state.tools.filter((tool) => tool.endedAtMs !== undefined),
+    agents: state.agents.filter((agent) => agent.endedAtMs !== undefined || agent.background === true),
+    todos: state.todos.filter((item) => item.pendingCallId === undefined),
+  };
+}
+
 /** The latest-state activity after one more transcript record, read in file order. The records of a subagent are left out of all of it: they belong to a conversation of its own, whose calls and todo list are not the session's. */
 export function foldActivityLatest(state: ActivityLatest, record: TranscriptRecord): ActivityLatest {
   if (record.isSidechain === true) {
@@ -338,6 +371,10 @@ export function foldActivityLatest(state: ActivityLatest, record: TranscriptReco
     if (toolUseId !== undefined && QUEUED_TASK_ID.test(record.content)) {
       next = foldAgentAnnouncement(next, toolUseId, atMs);
     }
+  }
+  const responseKey = record.type === "assistant" ? (record.message?.id ?? record.requestId) : undefined;
+  if (responseKey !== undefined && responseKey !== next.responseKey) {
+    next = next.responseKey === undefined ? { ...next, responseKey } : foldNewResponse(next, responseKey);
   }
   const content = record.message?.content;
   if (!Array.isArray(content)) {
@@ -397,7 +434,7 @@ export function foldActivity(state: ActivityState, record: TranscriptRecord): Ac
   return { cumulative: foldActivityCumulative(state.cumulative, record), latest: foldActivityLatest(state.latest, record) };
 }
 
-/** A tool call as the line of tools draws it: finished, failed, or still running. A call that has had no result for longer than a live one can take is neither, and is not here. */
+/** A tool call as the line of tools draws it: finished, failed, or still running. A call that was abandoned, or that is a Bash call with no result after the longest a Bash call can run, is neither, and is not here. */
 export interface ToolCallFact {
   readonly name: string;
   readonly target: string | undefined;
@@ -435,7 +472,7 @@ export interface ActivityFacts {
 /** The facts of a session that has not done anything yet. */
 export const EMPTY_ACTIVITY_FACTS: ActivityFacts = { tools: [], skills: [], mcpServers: [], agents: [], todos: [] };
 
-/** Whether a call started at `startedAtMs` and not yet answered can still be running at `nowMs`, given the longest such a call can run. A call with no start time is given the benefit of the doubt, and one stamped after `nowMs` (clock skew) has run no time at all. */
+/** Whether a call started at `startedAtMs` and not yet ended can still be running at `nowMs`, given the longest such a call can run. A call with no start time is given the benefit of the doubt, and one stamped after `nowMs` (clock skew) has run no time at all. */
 function isLive(startedAtMs: number | undefined, nowMs: number, maxMs: number): boolean {
   return startedAtMs === undefined || nowMs - startedAtMs <= maxMs;
 }
@@ -461,13 +498,15 @@ function followedBy<T extends { readonly id: string; readonly endedAtMs?: number
 /**
  * The facts a state holds at `nowMs`. `newer`, when given, is the latest-state activity folded from the end of the transcript alone while the cumulative facts are still being caught up: its calls follow the state's, because the end of the transcript is later than anything the state has read, and its todo list replaces the state's once it holds a `TodoWrite`, since a list edited in place cannot be known from its end. A list the end edited in place with no `TodoWrite` before the edits is known to be out of date and not known to be anything else, so it is empty, where a list the end does not touch stands as the state has it.
  */
-export function activityFactsOf(state: ActivityState, nowMs: number, newer?: ActivityLatest): ActivityFacts {
+export function activityFactsOf(state: ActivityState, nowMs: number, limits: Readonly<LiveLimits>, newer?: ActivityLatest): ActivityFacts {
+  // The end of the transcript holds a later response than the state has read when its key differs, and the calls the state has with no result were abandoned by it.
+  const moved = newer?.responseKey !== undefined && newer.responseKey !== state.latest.responseKey;
   const latest: ActivityLatest =
     newer === undefined
       ? state.latest
       : {
-          tools: followedBy(state.latest.tools, newer.tools).slice(-MAX_TRACKED_TOOL_CALLS),
-          agents: followedBy(state.latest.agents, newer.agents).slice(-MAX_TRACKED_AGENTS),
+          tools: followedBy(moved ? state.latest.tools.filter((tool) => tool.endedAtMs !== undefined) : state.latest.tools, newer.tools).slice(-MAX_TRACKED_TOOL_CALLS),
+          agents: followedBy(moved ? state.latest.agents.filter((agent) => agent.endedAtMs !== undefined || agent.background === true) : state.latest.agents, newer.agents).slice(-MAX_TRACKED_AGENTS),
           todos: newer.todosReplaced === true ? newer.todos : newer.todosEdited === true ? [] : state.latest.todos,
           unmatchedResults: [],
         };
@@ -475,7 +514,7 @@ export function activityFactsOf(state: ActivityState, nowMs: number, newer?: Act
     tools: latest.tools.flatMap((tool): ToolCallFact[] => {
       const name = visibleDisplayText(tool.name);
       const resolved = tool.endedAtMs !== undefined;
-      if (name === "" || (!resolved && !isLive(tool.startedAtMs, nowMs, MAX_LIVE_TOOL_CALL_MS))) {
+      if (name === "" || (!resolved && tool.name === BASH_TOOL && !isLive(tool.startedAtMs, nowMs, limits.bashMs))) {
         return [];
       }
       const target = tool.target === undefined ? "" : visibleDisplayText(tool.target);
