@@ -79,32 +79,47 @@ function renderGrid(grid: Grid, maxWidth: number, separator: string, baseBarCell
   );
 }
 
+/** A run of related bars (the context window's, or the quota windows') that starts a fresh row. */
+export type BarGroup = readonly BarCell[];
+
+/** Groups that may share a row, as the rows merged into one line are: they are drawn on one row when that fits, and on rows of their own when it does not. */
+export type BarUnit = readonly BarGroup[];
+
+/** A bar drawn at its base size on one line with the text around it, with `separator` between a group's bars, for a row that is joined to others on a single line. */
+export function drawInline(group: BarGroup, separator: string, baseBarCells: number): string {
+  return group.map((cell) => `${cell.prefix}${cell.draw(baseBarCells)}${cell.suffix}`).join(separator);
+}
+
 /**
- * Lays bars out in rows that share their columns. Each group is a run of related bars (the context, then the quota windows) that starts a fresh row, and a group's bars are packed as many to a row as fit.
+ * Lays bars out in rows that share their columns. Each unit is a set of groups that may share a row; the units are drawn one after another, a group of a unit that does not fit beside the others starting a fresh row, and a unit's bars are packed as many to a row as fit.
  *
- * Every row is aligned to one grid: the bars of a column start at the same position and end at the same position, because each label is padded to the column's widest label and each bar draws the same number of cells; a row's last bar runs on across the columns the row does not use, so its end lines up with the last column's. The spare width left after the bars' base size is shared among the columns. Bars at their base size on a line too narrow for even one (a label wider than the line) are drawn whole rather than cut.
+ * Every row is aligned to one grid, across units too: the bars of a column start at the same position and end at the same position, because each label is padded to the column's widest label and each bar draws the same number of cells; a row's last bar runs on across the columns the row does not use, so its end lines up with the last column's. The spare width left after the bars' base size is shared among the columns. Bars at their base size on a line too narrow for even one (a label wider than the line) are drawn whole rather than cut.
  *
- * The layout is the widest one that fits: everything on one row when it fits, else the most bars to a row that still leaves every row within `maxWidth`, down to one. When not even that fits, the groups stop sharing columns and each is aligned within itself.
+ * The layout is the widest one that fits: each unit on one row when it fits, else the most bars to a row that still leaves every row within `maxWidth`, down to one. When not even that fits, the groups stop sharing columns and each is aligned within itself.
  */
-export function layoutBarGrid(groups: readonly (readonly BarCell[])[], maxWidth: number, separator: string, baseBarCells: number): string[] {
-  const nonEmpty = groups.filter((group) => group.length > 0);
+export function layoutBarGrid(units: readonly BarUnit[], maxWidth: number, separator: string, baseBarCells: number): string[] {
+  const nonEmpty = units.map((unit) => unit.filter((group) => group.length > 0)).filter((unit) => unit.length > 0);
   if (nonEmpty.length === 0) {
     return [];
   }
   const separatorLength = visibleLength(separator);
-  const widest = Math.max(...nonEmpty.map((group) => group.length));
-  const layoutFor = (perRow: number): Grid => measureGrid(nonEmpty.flatMap((group) => chunk(group, perRow)), separatorLength, baseBarCells);
-  const candidates = [measureGrid([nonEmpty.flat()], separatorLength, baseBarCells)];
-  for (let perRow = widest; perRow > 1; perRow -= 1) {
-    candidates.push(layoutFor(perRow));
-  }
-  const fitting = candidates.find((grid) => grid.baseWidth <= maxWidth);
-  if (fitting !== undefined) {
-    return renderGrid(fitting, maxWidth, separator, baseBarCells);
+  const widest = Math.max(...nonEmpty.map((unit) => unit.flat().length));
+  const layoutFor = (perRow: number): Grid =>
+    measureGrid(
+      nonEmpty.flatMap((unit) => (unit.flat().length <= perRow ? [unit.flat()] : unit.flatMap((group) => chunk(group, perRow)))),
+      separatorLength,
+      baseBarCells,
+    );
+  for (let perRow = widest; perRow >= 1; perRow -= 1) {
+    const grid = layoutFor(perRow);
+    if (grid.baseWidth <= maxWidth) {
+      return renderGrid(grid, maxWidth, separator, baseBarCells);
+    }
   }
   // One bar to a row is too wide once every group's labels and figures are padded to match, so each group keeps to its own alignment; a lone group that still does not fit is drawn whole, one bar to a row.
-  if (nonEmpty.length > 1) {
-    return nonEmpty.flatMap((group) => layoutBarGrid([group], maxWidth, separator, baseBarCells));
+  const groups = nonEmpty.flat();
+  if (groups.length > 1) {
+    return groups.flatMap((group) => layoutBarGrid([[group]], maxWidth, separator, baseBarCells));
   }
   return renderGrid(layoutFor(1), maxWidth, separator, baseBarCells);
 }

@@ -60,7 +60,7 @@ function draw(settings: StatuslineSettings, view: Partial<StatuslinePayloadView>
 }
 
 function linesOf(output: RowOutput): string[] {
-  return output.kind === "text" ? [...output.lines] : layoutBarGrid([output.cells], LINE_WIDTH, SEPARATOR, BAR_CELLS);
+  return output.kind === "text" ? [...output.lines] : layoutBarGrid([[output.cells]], LINE_WIDTH, SEPARATOR, BAR_CELLS);
 }
 
 describe("the context row's figure", () => {

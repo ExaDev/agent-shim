@@ -261,6 +261,35 @@ describe("the width settings", () => {
   });
 });
 
+describe("the merge and right-align settings", () => {
+  const accepts = (layout: unknown): boolean => StatuslineSchema.safeParse({ layout }).success;
+
+  it("accept groups of two or more distinct rows, none at all, and refuse a group of one, a repeated row or an unknown row", () => {
+    expect(accepts({ merge: [["context", "quota"], ["memory", "environment", "promptCache"]] })).toBe(true);
+    expect(accepts({ merge: [] })).toBe(true);
+    expect(accepts({ merge: [["context"]] })).toBe(false);
+    expect(accepts({ merge: [[]] })).toBe(false);
+    expect(accepts({ merge: [["context", "context"]] })).toBe(false);
+    expect(accepts({ merge: [["context", "project"]] })).toBe(false);
+  });
+
+  it("refuse a row in two groups, since it cannot join two lines", () => {
+    expect(accepts({ merge: [["context", "quota"], ["quota", "memory"]] })).toBe(false);
+  });
+
+  it("draw context and quota on one line by default, and nothing right-aligned", () => {
+    expect(STATUSLINE_DEFAULTS.layout.merge).toEqual([["context", "quota"]]);
+    expect(STATUSLINE_DEFAULTS.layout.rightAlign).toEqual([]);
+  });
+
+  it("refuse a right-aligned row that no merge group contains, whichever layer set which", () => {
+    expect(() => resolveStatusline({ layout: { rightAlign: ["memory"] } })).toThrow(/layout\.rightAlign names memory, which no group in layout\.merge contains/);
+    expect(() => resolveStatusline({ layout: { merge: [], rightAlign: ["quota"] } })).toThrow(RangeError);
+    expect(resolveStatusline({ layout: { rightAlign: ["quota"] } }).layout.rightAlign).toEqual(["quota"]);
+    expect(resolveStatusline({ layout: { merge: [["memory", "environment"]], rightAlign: ["environment"] } }).layout.merge).toEqual([["memory", "environment"]]);
+  });
+});
+
 describe("the usage and clock settings", () => {
   it("accept every documented choice and refuse any other", () => {
     for (const timeFormat of ["relative", "absolute", "both", "elapsed", "elapsedAndAbsolute"]) {

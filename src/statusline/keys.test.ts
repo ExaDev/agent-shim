@@ -23,6 +23,13 @@ describe("statuslineKeys", () => {
     expect(paths[0]).toBe("layout.header");
   });
 
+  it("describes groups of rows as such, with the rows they may name and the groups drawn by default", () => {
+    const merge = statuslineKeys().find((key) => key.path === "layout.merge");
+    expect(merge).toMatchObject({ kind: "groups", defaultValue: [["context", "quota"]] });
+    expect(merge?.choices).toContain("quota");
+    expect(formatStatuslineKeys(statuslineKeys())).toContain("layout.merge  (groups of ");
+  });
+
   it("names the kind and the choices of a setting", () => {
     const header = statuslineKeys().find((key) => key.path === "layout.header");
     expect(header).toMatchObject({ kind: "list" });

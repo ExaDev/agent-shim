@@ -84,6 +84,12 @@ function distinctList<T extends z.ZodType<string>>(member: T): z.ZodArray<T> {
   return z.array(member).refine((items) => new Set(items).size === items.length, "must not repeat an entry");
 }
 
+/** Groups of rows that may share a line: each names at least two distinct rows, and a row is in at most one group, since a row cannot join two lines at once. */
+const mergeGroups = z.array(distinctList(z.enum(STATUSLINE_ROWS)).min(2)).refine((groups) => {
+  const rows = groups.flat();
+  return new Set(rows).size === rows.length;
+}, "must not name a row in more than one group");
+
 /** A colour: a named one, an index into the 256-colour palette, or a `#rrggbb` hex value. */
 const colourValue = z.union([z.enum(STATUSLINE_COLOUR_NAMES), z.number().int().min(0).max(MAX_STATUSLINE_PALETTE_INDEX), z.string().regex(/^#[0-9a-fA-F]{6}$/, "must be a colour name, a palette index from 0 to 255 or #rrggbb")]);
 
@@ -127,6 +133,8 @@ const SHAPES = {
   layout: {
     header: distinctList(z.enum(STATUSLINE_HEADER_SEGMENTS)).describe("The header segments to draw, in drawing order; a segment left out is hidden, and an empty list hides the header."),
     rows: distinctList(z.enum(STATUSLINE_ROWS)).describe("The rows to draw below the header, in drawing order; a row left out is hidden, and an empty list hides every row."),
+    merge: mergeGroups.describe("Groups of rows that share a line when they sit next to each other in layout.rows and fit on one line together, and are drawn on lines of their own when they do not; each group names at least two rows, and no row belongs to two groups. An empty list gives every row its own line."),
+    rightAlign: distinctList(z.enum(STATUSLINE_ROWS)).describe("Rows that start the right-aligned part of a merged line: the first of them to appear on a line, and the rows after it, are pushed to the right edge, with the gap padded by spaces. A row named here must belong to a group in layout.merge, and it has no effect when it is the first row of its line."),
     maxWidth: z.number().int().min(0).max(MAX_STATUSLINE_COLUMNS).describe("The width in columns to draw for when the client reports none and the COLUMNS environment variable names none, in place of the 80 it would otherwise assume; 0 leaves it at that."),
     forceMaxWidth: z.boolean().describe("Whether maxWidth is the width drawn for whatever the client reports, even when the terminal is narrower or wider; it needs maxWidth to be set."),
   },
@@ -301,7 +309,7 @@ export type ResolvedStatusline = z.infer<typeof ResolvedStatuslineSchema>;
 
 /** What the statusline draws when no layer sets a key. */
 export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
-  layout: { header: [...DEFAULT_HEADER_SEGMENTS], rows: [...DEFAULT_ROWS], maxWidth: 0, forceMaxWidth: false },
+  layout: { header: [...DEFAULT_HEADER_SEGMENTS], rows: [...DEFAULT_ROWS], merge: [["context", "quota"]], rightAlign: [], maxWidth: 0, forceMaxWidth: false },
   model: { format: "full", override: "", source: "client" },
   provider: { name: "" },
   account: { parts: ["user", "organisation", "plan"], userLength: 0 },
@@ -361,7 +369,7 @@ export function contextBands({ bands, context }: Readonly<ResolvedStatusline>): 
   return { warnAt: context.warnAt ?? bands.warnAt, criticalAt: context.criticalAt ?? bands.criticalAt };
 }
 
-/** The statusline's settings with the defaults filled in, or a message naming what is wrong when the combination is not drawable (a warning threshold must sit below its critical one, and a forced width needs a width to force, which a per-key cascade cannot check layer by layer). */
+/** The statusline's settings with the defaults filled in, or a message naming what is wrong when the combination is not drawable (a warning threshold must sit below its critical one, a right-aligned row must be in a merge group, and a forced width needs a width to force, which a per-key cascade cannot check layer by layer). */
 export function resolveStatusline(settings: Readonly<StatuslineSettings> | undefined): ResolvedStatusline {
   const resolved = ResolvedStatuslineSchema.parse(mergeStatuslineSettings(STATUSLINE_DEFAULTS, settings));
   if (resolved.bands.warnAt >= resolved.bands.criticalAt) {
@@ -370,6 +378,11 @@ export function resolveStatusline(settings: Readonly<StatuslineSettings> | undef
   const forContext = contextBands(resolved);
   if (forContext.warnAt >= forContext.criticalAt) {
     throw new RangeError(`statusline context.warnAt (${String(forContext.warnAt)}) must be below context.criticalAt (${String(forContext.criticalAt)}), each following bands while it is unset`);
+  }
+  const merged = new Set(resolved.layout.merge.flat());
+  const unmerged = resolved.layout.rightAlign.filter((row) => !merged.has(row));
+  if (unmerged.length > 0) {
+    throw new RangeError(`statusline layout.rightAlign names ${unmerged.join(", ")}, which no group in layout.merge contains`);
   }
   if (resolved.layout.forceMaxWidth && resolved.layout.maxWidth === 0) {
     throw new RangeError("statusline layout.forceMaxWidth needs layout.maxWidth to be set");

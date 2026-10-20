@@ -1,6 +1,4 @@
 import { STATUSLINE_DEFAULTS, type ResolvedStatusline } from "../config/statusline";
-import type { BarCell } from "./barGrid";
-import { layoutBarGrid } from "./barGrid";
 import type { RenderContext, StatuslinePayloadView } from "./elements/context";
 import type { ClientPayload } from "./payload";
 import type { StatuslinePorts } from "./ports";
@@ -9,6 +7,7 @@ import type { StatuslineSummary } from "./enrich";
 import { headerUnits, layoutHeader, SEPARATOR } from "./headerLayout";
 import { readTranscriptIdentity } from "./identityTranscript";
 import { colourEnabled, createPalette } from "./palette";
+import { layoutRows } from "./rowsLayout";
 import { TWENTY } from "./style";
 import { readTranscript, type TranscriptFacts } from "./transcript/reader";
 
@@ -69,21 +68,7 @@ export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
   if (header.length > 0) {
     lines.push(layoutHeader(header, width, SEPARATOR));
   }
-  // Bars of neighbouring rows share one grid, so their columns line up; a text row ends the run.
-  let barGroups: (readonly BarCell[])[] = [];
-  const flushBars = (): void => {
-    lines.push(...layoutBarGrid(barGroups, width, SEPARATOR, settings.bar.width));
-    barGroups = [];
-  };
-  for (const name of settings.layout.rows) {
-    const output = elements.rows[name](context);
-    if (output.kind === "bars") {
-      barGroups.push(output.cells);
-    } else {
-      flushBars();
-      lines.push(...output.lines);
-    }
-  }
-  flushBars();
+  const drawn = settings.layout.rows.map((name) => ({ name, output: elements.rows[name](context) }));
+  lines.push(...layoutRows(drawn, { merge: settings.layout.merge, rightAlign: settings.layout.rightAlign, barCells: settings.bar.width }, width));
   return lines.join("\n");
 }

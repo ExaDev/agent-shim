@@ -199,6 +199,48 @@
                         },
                         "description": "The rows to draw below the header, in drawing order; a row left out is hidden, and an empty list hides every row."
                       },
+                      "merge": {
+                        "type": "array",
+                        "items": {
+                          "minItems": 2,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "context",
+                              "quota",
+                              "addedDirs",
+                              "gitFiles",
+                              "memory",
+                              "environment",
+                              "sessionTime",
+                              "promptCache",
+                              "compactions",
+                              "tokens"
+                            ]
+                          }
+                        },
+                        "description": "Groups of rows that share a line when they sit next to each other in layout.rows and fit on one line together, and are drawn on lines of their own when they do not; each group names at least two rows, and no row belongs to two groups. An empty list gives every row its own line."
+                      },
+                      "rightAlign": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "context",
+                            "quota",
+                            "addedDirs",
+                            "gitFiles",
+                            "memory",
+                            "environment",
+                            "sessionTime",
+                            "promptCache",
+                            "compactions",
+                            "tokens"
+                          ]
+                        },
+                        "description": "Rows that start the right-aligned part of a merged line: the first of them to appear on a line, and the rows after it, are pushed to the right edge, with the gap padded by spaces. A row named here must belong to a group in layout.merge, and it has no effect when it is the first row of its line."
+                      },
                       "maxWidth": {
                         "type": "integer",
                         "minimum": 0,

@@ -39,6 +39,8 @@ const NARROW_BAR_CELLS = 4;
 const USED_AT_WARNING = 80;
 const USED_AT_CRITICAL = 95;
 const WIDE_BAR_CELLS = 30;
+/** Wide enough for the context bar and both quota windows to share a line. */
+const ONE_ROW_TERMINAL = 220;
 
 /** The renderer with the arguments these tests vary, and an empty payload, an environment with no `NO_COLOR` and ports that read nothing. */
 function renderStatuslineBlock(summary: StatuslineSummary, view: RenderInput["view"], terminalWidth: number, nowMs: number, settings?: RenderInput["settings"], elements?: RenderInput["elements"], env: Readonly<Record<string, string | undefined>> = {}): string {
@@ -367,6 +369,23 @@ describe("statusline settings", () => {
     const quotaOnly = stripAnsi(render({ layout: { rows: ["quota"] } }));
     expect(quotaOnly).toContain("5h");
     expect(quotaOnly).not.toContain("Ctx");
+  });
+
+  it("draws the context and quota bars on one line by default, and on lines of their own when no group merges them", () => {
+    const together = stripAnsi(render({ layout: { header: [] } }, SUMMARY, ONE_ROW_TERMINAL)).split("\n");
+    expect(together).toHaveLength(1);
+    const apart = stripAnsi(render({ layout: { header: [], merge: [] } }, SUMMARY, ONE_ROW_TERMINAL)).split("\n");
+    expect(apart).toHaveLength(2);
+    expect(apart[0]).toContain("Ctx");
+    expect(apart[1]).toContain("5h");
+  });
+
+  it("right-aligns the quota windows of a merged line at the right edge of the width", () => {
+    const [line] = stripAnsi(render({ layout: { header: [], rightAlign: ["quota"] } }, SUMMARY, ONE_ROW_TERMINAL)).split("\n");
+    expect(line?.startsWith("Ctx")).toBe(true);
+    expect(line?.length).toBe(ONE_ROW_TERMINAL - RESERVED_COLUMNS);
+    expect(line?.endsWith(")")).toBe(true);
+    expect(line).toMatch(/\)\s+5h .* \| Wk /);
   });
 
   it("names the two subscription windows as set", () => {

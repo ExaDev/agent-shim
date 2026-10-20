@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { layoutBarGrid, type BarCell } from "./barGrid";
+import { drawInline, layoutBarGrid, type BarCell } from "./barGrid";
 
 const SEPARATOR = " | ";
 const BASE_BAR_CELLS = 10;
@@ -39,7 +39,7 @@ function columnsOf(line: string, character: string): number[] {
 
 describe("layoutBarGrid", () => {
   it("starts every row's first bar in one column and ends every row's last bar in one column, whatever the labels and figures", () => {
-    const rows = layoutBarGrid([CONTEXT, WINDOWS], ROOMY, SEPARATOR, BASE_BAR_CELLS);
+    const rows = layoutBarGrid([[CONTEXT, WINDOWS]], ROOMY, SEPARATOR, BASE_BAR_CELLS);
     expect(rows).toHaveLength(ROOMY_ROWS);
     const starts = rows.map((row) => columnsOf(row, "[")[0]);
     const ends = rows.map((row) => columnsOf(row, "]").at(-1));
@@ -48,7 +48,7 @@ describe("layoutBarGrid", () => {
   });
 
   it("puts the bars of a middle column in the same columns on every row that has one", () => {
-    const rows = layoutBarGrid([CONTEXT, WINDOWS], ROOMY, SEPARATOR, BASE_BAR_CELLS);
+    const rows = layoutBarGrid([[CONTEXT, WINDOWS]], ROOMY, SEPARATOR, BASE_BAR_CELLS);
     const pairs = rows.filter((row) => columnsOf(row, "[").length === 2);
     expect(pairs).toHaveLength(2);
     expect(columnsOf(pairs[0] ?? "", "[")).toEqual(columnsOf(pairs[1] ?? "", "["));
@@ -56,7 +56,7 @@ describe("layoutBarGrid", () => {
   });
 
   it("lets a row's last bar run on across the columns the row leaves empty", () => {
-    const rows = layoutBarGrid([CONTEXT, WINDOWS], ROOMY, SEPARATOR, BASE_BAR_CELLS);
+    const rows = layoutBarGrid([[CONTEXT, WINDOWS]], ROOMY, SEPARATOR, BASE_BAR_CELLS);
     const contextRow = rows[0] ?? "";
     const pairRow = rows[1] ?? "";
     expect(columnsOf(contextRow, "]")[0]).toBe(columnsOf(pairRow, "]")[1]);
@@ -64,7 +64,7 @@ describe("layoutBarGrid", () => {
   });
 
   it("fills the line to its width and shares the spare cells between the columns, never more than one cell apart", () => {
-    const rows = layoutBarGrid([CONTEXT, WINDOWS], ROOMY, SEPARATOR, BASE_BAR_CELLS);
+    const rows = layoutBarGrid([[CONTEXT, WINDOWS]], ROOMY, SEPARATOR, BASE_BAR_CELLS);
     const pairRow = rows[1] ?? "";
     expect(rows[0]?.length).toBe(ROOMY);
     const [firstOpen, secondOpen] = columnsOf(pairRow, "[");
@@ -73,13 +73,13 @@ describe("layoutBarGrid", () => {
   });
 
   it("draws everything on one row when it fits", () => {
-    const rows = layoutBarGrid([CONTEXT, WINDOWS.slice(0, WINDOWS_ON_THE_ONE_ROW)], ONE_ROW, SEPARATOR, BASE_BAR_CELLS);
+    const rows = layoutBarGrid([[CONTEXT, WINDOWS.slice(0, WINDOWS_ON_THE_ONE_ROW)]], ONE_ROW, SEPARATOR, BASE_BAR_CELLS);
     expect(rows).toHaveLength(1);
     expect(columnsOf(rows[0] ?? "", "[")).toHaveLength(CONTEXT.length + WINDOWS_ON_THE_ONE_ROW);
   });
 
   it("packs a group into as many columns as leave every row within the width", () => {
-    const rows = layoutBarGrid([CONTEXT, WINDOWS], ROOMY, SEPARATOR, BASE_BAR_CELLS);
+    const rows = layoutBarGrid([[CONTEXT, WINDOWS]], ROOMY, SEPARATOR, BASE_BAR_CELLS);
     for (const row of rows) {
       expect(row.length).toBeLessThanOrEqual(ROOMY);
     }
@@ -87,7 +87,7 @@ describe("layoutBarGrid", () => {
   });
 
   it("aligns each group within itself when padding every group to match would not fit, so a narrow line is not widened by another group's labels", () => {
-    const rows = layoutBarGrid([CONTEXT, WINDOWS], TIGHT, SEPARATOR, BASE_BAR_CELLS);
+    const rows = layoutBarGrid([[CONTEXT, WINDOWS]], TIGHT, SEPARATOR, BASE_BAR_CELLS);
     const windowRows = rows.slice(1);
     expect(windowRows).toHaveLength(WINDOWS.length);
     for (const row of windowRows) {
@@ -98,13 +98,13 @@ describe("layoutBarGrid", () => {
   });
 
   it("draws a bar whole, one to a row, when even that is wider than the line", () => {
-    const rows = layoutBarGrid([CONTEXT], NARROWER_THAN_ANY_BAR, SEPARATOR, BASE_BAR_CELLS);
+    const rows = layoutBarGrid([[CONTEXT]], NARROWER_THAN_ANY_BAR, SEPARATOR, BASE_BAR_CELLS);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toContain(`[${"#".repeat(BASE_BAR_CELLS * SHORT_FILL_FRACTION)}${".".repeat(BASE_BAR_CELLS * SHORT_FILL_FRACTION)}]`);
   });
 
   it("leaves no trailing space after a row's last figures", () => {
-    const rows = layoutBarGrid([CONTEXT, WINDOWS], ROOMY, SEPARATOR, BASE_BAR_CELLS);
+    const rows = layoutBarGrid([[CONTEXT, WINDOWS]], ROOMY, SEPARATOR, BASE_BAR_CELLS);
     for (const row of rows) {
       expect(row).toBe(row.trimEnd());
     }
@@ -112,6 +112,26 @@ describe("layoutBarGrid", () => {
 
   it("draws nothing for no bars", () => {
     expect(layoutBarGrid([], ROOMY, SEPARATOR, BASE_BAR_CELLS)).toEqual([]);
-    expect(layoutBarGrid([[], []], ROOMY, SEPARATOR, BASE_BAR_CELLS)).toEqual([]);
+    expect(layoutBarGrid([[[], []]], ROOMY, SEPARATOR, BASE_BAR_CELLS)).toEqual([]);
+  });
+
+  it("keeps units on rows of their own while aligning their bars to one grid", () => {
+    const rows = layoutBarGrid([[CONTEXT], [WINDOWS.slice(0, WINDOWS_ON_THE_ONE_ROW)]], ONE_ROW, SEPARATOR, BASE_BAR_CELLS);
+    expect(rows).toHaveLength(2);
+    expect(columnsOf(rows[0] ?? "", "[")).toHaveLength(CONTEXT.length);
+    expect(columnsOf(rows[1] ?? "", "[")).toHaveLength(WINDOWS_ON_THE_ONE_ROW);
+    expect(columnsOf(rows[0] ?? "", "[")[0]).toBe(columnsOf(rows[1] ?? "", "[")[0]);
+    expect((rows[0] ?? "").length).toBeLessThanOrEqual(ONE_ROW);
+  });
+
+  it("shares a row only between the groups of one unit", () => {
+    const merged = layoutBarGrid([[CONTEXT, WINDOWS.slice(0, WINDOWS_ON_THE_ONE_ROW)]], ONE_ROW, SEPARATOR, BASE_BAR_CELLS);
+    const apart = layoutBarGrid([[CONTEXT], [WINDOWS.slice(0, WINDOWS_ON_THE_ONE_ROW)]], ONE_ROW, SEPARATOR, BASE_BAR_CELLS);
+    expect(merged).toHaveLength(1);
+    expect(apart).toHaveLength(2);
+  });
+
+  it("draws a bar at its base size on one line with the text around it", () => {
+    expect(drawInline([cell("A ", " 1%"), cell("B ", " 2%")], SEPARATOR, BASE_BAR_CELLS)).toBe(`A [${"#".repeat(BASE_BAR_CELLS / 2)}${".".repeat(BASE_BAR_CELLS / 2)}] 1% | B [${"#".repeat(BASE_BAR_CELLS / 2)}${".".repeat(BASE_BAR_CELLS / 2)}] 2%`);
   });
 });
