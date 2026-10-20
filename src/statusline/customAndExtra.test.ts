@@ -107,7 +107,14 @@ describe("the extra segment", () => {
     const run = (output: string): StatuslinePorts["run"] => () => output;
     expect(draw({ run: run("\n\n  first  \nsecond\n"), settings: EXTRA_ONLY(["t"]) })).toBe("first");
     expect(draw({ run: run('{"label":"from json","other":1}'), settings: EXTRA_ONLY(["t"]) })).toBe("from json");
-    expect(draw({ run: run('{"nolabel":1}'), settings: EXTRA_ONLY(["t"]) })).toBe("");
+  });
+
+  it.each(["1234", "true", "null", '"quoted"', "[1,2]", '{"nolabel":1}', '{"label":1}', "{not json"])("draws output that is not an object with a string label, %s, as the line it is", (output) => {
+    expect(draw({ run: () => `${output}\nsecond\n`, settings: EXTRA_ONLY(["t"]) })).toBe(output);
+  });
+
+  it("takes the label of a JSON object even when it is not on the first line", () => {
+    expect(draw({ run: () => '{\n  "label": "multi line json"\n}\n', settings: EXTRA_ONLY(["t"]) })).toBe("multi line json");
   });
 
   it("draws nothing when the command fails, outruns its limit or prints nothing visible", () => {

@@ -6,16 +6,16 @@ import type { RenderContext } from "../context";
 /** What a command may print instead of plain text: a JSON object whose `label` is the text to draw. */
 const LabelObjectSchema = z.looseObject({ label: z.string() });
 
-/** The text a command printed: the `label` of a JSON object when the whole output is one, else the first line with something on it. */
+/** The text a command printed: the `label` of a JSON object when the whole output is an object with a string `label`, and otherwise (plain text, or output that merely parses as JSON, such as `1234`, `true` or `[1]`) the first line with something on it. */
 function labelOf(output: string): string {
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
   } catch {
-    return output.split(/\r?\n/).find((line) => line.trim() !== "") ?? "";
+    parsed = undefined;
   }
   const object = LabelObjectSchema.safeParse(parsed);
-  return object.success ? object.data.label : "";
+  return object.success ? object.data.label : (output.split(/\r?\n/).find((line) => line.trim() !== "") ?? "");
 }
 
 /**
