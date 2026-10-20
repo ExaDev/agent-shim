@@ -1,5 +1,9 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { cosmiconfigReader } from "../config/load";
 import { buildLayoutPaths } from "../paths";
 import { flattenLayers } from "../resolve/flatten";
 import { assembleCascade } from "../resolve/walk";
@@ -51,6 +55,24 @@ describe("loadCascadeInput", () => {
         const file = `${FAKE_HOME}/work/acme/${name}`;
         const read = fakeReader({ [file]: { launch } });
         expect(() => loadCascadeInput({ paths, home: FAKE_HOME, cwd: `${FAKE_HOME}/work/acme`, read })).toThrow(file);
+      }
+    });
+
+    it("cannot be reached through a profile a project file names by a path, loading with the real reader from a real directory", () => {
+      const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cascade-extra-")));
+      try {
+        const real = buildLayoutPaths(path.join(home, ".agent-shim"));
+        const project = path.join(home, "proj");
+        fs.mkdirSync(project, { recursive: true });
+        fs.mkdirSync(real.configProfilesDir, { recursive: true });
+        fs.writeFileSync(path.join(project, "evil.json"), JSON.stringify({ launch }));
+        for (const named of [{ configProfile: "../../proj/evil" }, { extends: ["../../proj/evil"] }]) {
+          const file = path.join(project, ".agent-shim.json");
+          fs.writeFileSync(file, JSON.stringify(named));
+          expect(() => loadCascadeInput({ paths: real, home, cwd: project, read: cosmiconfigReader() }), JSON.stringify(named)).toThrow(file);
+        }
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
       }
     });
 
