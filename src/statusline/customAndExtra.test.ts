@@ -52,6 +52,13 @@ describe("the custom line", () => {
     expect(draw({ payload: MODEL, settings: { ...MODEL_ONLY, customLine: { text, position: "first" } } }).split("\n")).toEqual([text, "Opus 5.5"]);
   });
 
+  it("keeps to a line of its own in the compact layout, above everything or below it", () => {
+    const text = "deploy: prod";
+    const compact = { layout: { header: ["model", "route"], rows: [], mode: "compact" } } satisfies StatuslineSettings;
+    expect(draw({ payload: MODEL, settings: { ...compact, customLine: { text } } }).split("\n")).toEqual(["Opus 5.5", text]);
+    expect(draw({ payload: MODEL, settings: { ...compact, customLine: { text, position: "first" } } }).split("\n")).toEqual([text, "Opus 5.5"]);
+  });
+
   it("draws on its own when nothing else does", () => {
     expect(draw({ settings: { layout: { header: [], rows: [] }, customLine: { text: "only" } } })).toBe("only");
   });
