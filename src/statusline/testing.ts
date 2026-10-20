@@ -142,8 +142,9 @@ export function fakeStatuslineFilesystem(initial: Readonly<Record<string, string
       },
       listDirectory: (target) => {
         const resolved = resolve(target);
+        const linked = Object.keys(links).filter((from) => path.dirname(from) === target);
         const below = beneath(resolved);
-        return below.length === 0 ? undefined : [...new Set(below.map((file) => file.slice(resolved.length + 1).split("/")[0] ?? ""))];
+        return below.length === 0 && linked.length === 0 ? undefined : [...new Set([...below.map((file) => file.slice(resolved.length + 1).split("/")[0] ?? ""), ...linked.map((from) => path.basename(from))])];
       },
       realPath: (target) => {
         const resolved = resolve(target);
