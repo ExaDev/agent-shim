@@ -26,11 +26,12 @@ describe("formatWallClock", () => {
     expect(formatWallClock(AFTERNOON_MS, NOW_MS, GERMAN_CLOCK, STATUSLINE_DEFAULTS.clock)).toBe("14:30");
   });
 
-  it("pads the hour of a 24-hour clock and not that of a 12-hour one", () => {
+  it("pads the hour as the locale does in the cycle in use", () => {
     expect(formatWallClock(MORNING_MS, NOW_MS, BRITISH_CLOCK, STATUSLINE_DEFAULTS.clock)).toBe("09:05");
     expect(formatWallClock(MORNING_MS, NOW_MS, AMERICAN_CLOCK, STATUSLINE_DEFAULTS.clock)).toBe("9:05 AM");
     expect(formatWallClock(MORNING_MS, NOW_MS, AMERICAN_CLOCK, clockSettings({ hourCycle: "h23" }))).toBe("09:05");
-    expect(formatWallClock(MORNING_MS, NOW_MS, BRITISH_CLOCK, clockSettings({ hourCycle: "h12" }))).toBe("9:05 am");
+    // British English pads the hour in a 12-hour cycle too, as its own short time form does.
+    expect(formatWallClock(MORNING_MS, NOW_MS, BRITISH_CLOCK, clockSettings({ hourCycle: "h12" }))).toBe("09:05 am");
   });
 
   it("adds the date to a time on another day", () => {
@@ -70,13 +71,30 @@ describe("formatWallClock", () => {
     expect(formatWallClock(Date.parse("2026-10-17T04:01:00.000Z"), lateNow, newYork, STATUSLINE_DEFAULTS.clock)).toBe("17 Oct 00:01");
   });
 
-  it("tells the repeated hour when the clocks go back, and the day around it, in the zone's own terms", () => {
+  it("tells the repeated hour the same way twice, and keeps the day of a 25-hour day whole", () => {
     const london = { locale: "en-GB", timeZone: "Europe/London" };
-    // Clocks go back at 02:00 BST on 25 October 2026, so 01:30 happens twice: at 00:30 UTC (BST) and 01:30 UTC (GMT).
-    const before = Date.parse("2026-10-24T22:00:00.000Z");
-    expect(formatWallClock(Date.parse("2026-10-25T00:30:00.000Z"), before, london, STATUSLINE_DEFAULTS.clock)).toBe("25 Oct 01:30");
-    expect(formatWallClock(Date.parse("2026-10-25T01:30:00.000Z"), before, london, STATUSLINE_DEFAULTS.clock)).toBe("25 Oct 01:30");
-    // An hour later in UTC terms, the wall clock reads 02:30 GMT, with the offset change absorbed.
-    expect(formatWallClock(Date.parse("2026-10-25T02:30:00.000Z"), before, london, STATUSLINE_DEFAULTS.clock)).toBe("25 Oct 02:30");
+    // The clocks go back at 02:00 BST on 25 October 2026, so 01:30 happens twice: at 00:30 UTC (BST) and again at 01:30 UTC (GMT).
+    const lateOnThe24th = Date.parse("2026-10-24T22:00:00.000Z");
+    expect(formatWallClock(Date.parse("2026-10-25T00:30:00.000Z"), lateOnThe24th, london, STATUSLINE_DEFAULTS.clock)).toBe("25 Oct 01:30");
+    expect(formatWallClock(Date.parse("2026-10-25T01:30:00.000Z"), lateOnThe24th, london, STATUSLINE_DEFAULTS.clock)).toBe("25 Oct 01:30");
+    // From 00:10 UTC (01:10 BST) on the 25th, 01:30 UTC (01:30 GMT) is the same day, and 23:30 UTC (23:30 GMT) is too, a full day of 24 hours and then some after the 24th's midnight in London.
+    const earlyOnThe25th = Date.parse("2026-10-25T00:10:00.000Z");
+    expect(formatWallClock(Date.parse("2026-10-25T01:30:00.000Z"), earlyOnThe25th, london, STATUSLINE_DEFAULTS.clock)).toBe("01:30");
+    expect(formatWallClock(Date.parse("2026-10-25T23:30:00.000Z"), earlyOnThe25th, london, STATUSLINE_DEFAULTS.clock)).toBe("23:30");
+    // The next local midnight is at 00:00 UTC on the 26th, not an hour earlier as on an ordinary day.
+    expect(formatWallClock(Date.parse("2026-10-25T23:59:00.000Z"), earlyOnThe25th, london, STATUSLINE_DEFAULTS.clock)).toBe("23:59");
+    expect(formatWallClock(Date.parse("2026-10-26T00:01:00.000Z"), earlyOnThe25th, london, STATUSLINE_DEFAULTS.clock)).toBe("26 Oct 00:01");
+  });
+
+  it("writes the time in the locale's own form: its padding, separator, digits and day period", () => {
+    const at = (locale: string, hourCycle: ResolvedStatusline["clock"]["hourCycle"] = "auto", seconds = false): string => formatWallClock(MORNING_MS, NOW_MS, { locale, timeZone: "UTC" }, clockSettings({ hourCycle, seconds }));
+    expect(at("ja-JP")).toBe("9:05");
+    expect(at("es")).toBe("9:05");
+    expect(at("cs")).toBe("9:05");
+    expect(at("fi")).toBe("9.05");
+    expect(at("fi", "auto", true)).toBe("9.05.00");
+    expect(at("gu-IN")).toBe("09:05 AM");
+    expect(at("de-DE")).toBe("09:05");
+    expect(at("ja-JP", "h12")).toBe("午前9:05");
   });
 });

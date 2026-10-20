@@ -18,19 +18,15 @@ function formatterFor(locale: string, options: Readonly<Intl.DateTimeFormatOptio
 }
 
 /**
- * `atMs` as a wall-clock time in the machine's locale and time zone, written under `settings.clock`: `14:30`, or `20 Oct 14:30` when the day is not `nowMs`'s own, so a time more than a day away is never mistaken for one today. The hour is written the way the locale writes it in the cycle in use (`09:30` in a 24-hour cycle, `9:30 AM` in a 12-hour one). The caller adds any wording around it.
+ * `atMs` as a wall-clock time in the machine's locale and time zone, written under `settings.clock`: `14:30`, or `20 Oct 14:30` when the day is not `nowMs`'s own, so a time more than a day away is never mistaken for one today. The time is the locale's own short time form (or its medium form with seconds) in the hour cycle in use, so its padding, separators, digits and day period are the locale's: `09:30` for British English, `9:30` for Japanese, `9.30` for Finnish, `9:30 AM` for American English. The caller adds any wording around it.
  */
 export function formatWallClock(atMs: number, nowMs: number, clock: StatuslinePorts["clock"], settings: ResolvedStatusline["clock"]): string {
   const { locale, timeZone } = clock;
-  const options: Intl.DateTimeFormatOptions = {
+  const time = formatterFor(locale, {
     timeZone,
-    minute: "2-digit",
-    ...(settings.seconds ? { second: "2-digit" } : {}),
+    timeStyle: settings.seconds ? "medium" : "short",
     ...(settings.hourCycle === "auto" ? {} : { hourCycle: settings.hourCycle }),
-  };
-  // Only the cycle in use says how the hour is written: a 24-hour clock pads it (`09:30`) and a 12-hour one does not (`9:30 AM`).
-  const cycle = formatterFor(locale, { ...options, hour: "numeric" }).resolvedOptions().hourCycle;
-  const time = formatterFor(locale, { ...options, hour: cycle === "h23" || cycle === "h24" ? "2-digit" : "numeric" }).format(atMs);
+  }).format(atMs);
   const dayKey = formatterFor(DAY_KEY_LOCALE, { timeZone, year: "numeric", month: "numeric", day: "numeric" });
   if (dayKey.format(atMs) === dayKey.format(nowMs)) {
     return time;
