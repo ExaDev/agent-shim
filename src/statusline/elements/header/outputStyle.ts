@@ -26,7 +26,9 @@ function outputStyleIn(file: string, readText: RenderContext["ports"]["readText"
 
 /** The output style the session's settings choose, or undefined when none does. The settings layers are read in the order the client applies them, each overriding the last: the user's settings, the user's local settings, the project's, and the project's local ones. */
 export function outputStyleSegment({ payload, ports }: RenderContext): string | undefined {
-  const configDirectory = ports.env.CLAUDE_CONFIG_DIR ?? path.join(ports.homeDirectory, ".claude");
+  // An empty `CLAUDE_CONFIG_DIR` is unset, as the launcher reads it: taken literally it would put the settings files in the working directory.
+  const pinned = ports.env.CLAUDE_CONFIG_DIR;
+  const configDirectory = pinned === undefined || pinned === "" ? path.join(ports.homeDirectory, ".claude") : pinned;
   const projectDirectory = payload.cwd ?? payload.workspace?.current_dir;
   const files = [
     path.join(configDirectory, "settings.json"),
