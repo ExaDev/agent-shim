@@ -43,30 +43,38 @@ export const STATUSLINE_COLOUR_NAMES = [
 const DEFAULT_HEADER_SEGMENTS: readonly (typeof STATUSLINE_HEADER_SEGMENTS)[number][] = ["model", "provider", "route", "account", "identity", "headroom"];
 const DEFAULT_ROWS: readonly (typeof STATUSLINE_ROWS)[number][] = ["context", "quota"];
 
-/** The named bundles of settings a layer can choose with `preset`: `standard` is what the statusline draws with no settings at all, and the other three are claude-hud's presets. */
+/** The named bundles of settings a layer can choose with `preset`: `standard` is what the statusline draws with no settings at all, and the rest are claude-hud's presets. */
 export const STATUSLINE_PRESETS = ["standard", "full", "essential", "minimal"] as const;
 
-/** The keys every preset sets, and no others, so that choosing a preset in a deeper layer leaves nothing of a shallower layer's preset behind. A key that a claude-hud preset leaves alone is not here. */
+/** The keys every preset sets, and no others, so that choosing a preset in a deeper layer leaves nothing of a shallower layer's preset behind. They are the keys claude-hud's presets are written in terms of. */
 interface PresetBundle {
   readonly layout: { readonly header: readonly (typeof STATUSLINE_HEADER_SEGMENTS)[number][]; readonly rows: readonly (typeof STATUSLINE_ROWS)[number][] };
-  readonly git: { readonly enabled: boolean; readonly showDirty: boolean; readonly showAheadBehind: boolean };
+  readonly git: { readonly enabled: boolean; readonly showDirty: boolean; readonly showAheadBehind: boolean; readonly showLineDiff: boolean };
   readonly jj: { readonly enabled: boolean; readonly showDirty: boolean; readonly showConflicts: boolean };
   readonly usage: { readonly resetLabel: boolean };
+  readonly context: { readonly breakdown: "never" | "critical" };
 }
 
-/** claude-hud's version control style for its Full and Essential presets and its default: git on, the dirty marker on, ahead and behind off. */
-const GIT_WITH_DIRTY_MARKER = { enabled: true, showDirty: true, showAheadBehind: false } as const;
+/** claude-hud's version control style for all of its presets: git on, with the dirty marker, without ahead and behind and without file statistics. */
+const GIT_WITH_DIRTY_MARKER = { enabled: true, showDirty: true, showAheadBehind: false, showLineDiff: false } as const;
 
+/** Jujutsu off, with the markers it shows once opted in left at claude-hud's defaults. */
 const JJ_OFF = { enabled: false, showDirty: true, showConflicts: true } as const;
 
 /**
- * What each preset sets. `full` draws every segment and row the statusline has, with the reset label on and Jujutsu opted in with its dirty and conflict markers (claude-hud's Full). `essential` is the model, the project, version control and the session's duration above the context bar (claude-hud's Essential: activity and git, with duration on and usage, counts and tokens off), and `minimal` is the same without the duration (claude-hud's Minimal: the model and the context bar, with git). A segment or a row added to the statusline is drawn by `full` as soon as it is in the name lists, and by the others only when their bundle names it.
+ * What each preset sets. All but `standard` are claude-hud's presets as its guided configuration (`commands/configure.md`) defines them, for the elements the statusline has: each is a claude-hud configuration with that preset applied, so a toggle the preset does not list stays at claude-hud's default (the reset label on, the added directories on, usage on). `full` is the model, project, version control, effort, advisor, version, output style, cost, session name and duration, over the context, quota, added directories, memory, environment, prompt cache, compactions and session tokens rows, with the token breakdown on the context row at high use and Jujutsu on. `essential` is the model, project, version control and duration over the context and added directories rows, and `minimal` is the same without the duration; neither adds the token breakdown. The segments and rows that are agent-shim's own (provider, route, account, identity, headroom, daily cost, speed, the changed files and the session times) are in none of them, because claude-hud's presets never turn them on.
  */
 const PRESET_BUNDLES: Readonly<Record<(typeof STATUSLINE_PRESETS)[number], PresetBundle>> = {
-  standard: { layout: { header: DEFAULT_HEADER_SEGMENTS, rows: DEFAULT_ROWS }, git: { enabled: true, showDirty: true, showAheadBehind: false }, jj: JJ_OFF, usage: { resetLabel: false } },
-  full: { layout: { header: STATUSLINE_HEADER_SEGMENTS, rows: STATUSLINE_ROWS }, git: GIT_WITH_DIRTY_MARKER, jj: { enabled: true, showDirty: true, showConflicts: true }, usage: { resetLabel: true } },
-  essential: { layout: { header: ["model", "project", "vcs", "duration"], rows: ["context"] }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: false } },
-  minimal: { layout: { header: ["model", "project", "vcs"], rows: ["context"] }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: false } },
+  standard: { layout: { header: DEFAULT_HEADER_SEGMENTS, rows: DEFAULT_ROWS }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: false }, context: { breakdown: "never" } },
+  full: {
+    layout: { header: ["model", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "sessionName", "duration"], rows: ["context", "quota", "addedDirs", "memory", "environment", "promptCache", "compactions", "tokens"] },
+    git: GIT_WITH_DIRTY_MARKER,
+    jj: { enabled: true, showDirty: true, showConflicts: true },
+    usage: { resetLabel: true },
+    context: { breakdown: "critical" },
+  },
+  essential: { layout: { header: ["model", "project", "vcs", "duration"], rows: ["context", "addedDirs"] }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: true }, context: { breakdown: "never" } },
+  minimal: { layout: { header: ["model", "project", "vcs"], rows: ["context", "addedDirs"] }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: true }, context: { breakdown: "never" } },
 };
 
 /** How many directory levels the project path shows: one to three, or the whole path. Written as text so that every value of a setting is one of a closed set of choices. */
@@ -301,15 +309,27 @@ function unsettable<T extends z.ZodType>(setting: z.ZodOptional<T>) {
   return setting.unwrap().nullable().optional().describe(`${setting.description ?? ""} ${UNSET_NOTE}`);
 }
 
-/** The settings that are not part of a group. */
+const LANGUAGE_DESCRIPTION = "The language of the words the statusline writes (labels, units of waiting such as `ago`, the names of effort levels): en, zh-Hans for Chinese in simplified characters, and zh-Hant for traditional; zh and zh-TW are read as zh-Hans and zh-Hant, and any other tag is refused. Durations, token counts, the dollar sign and clock times are written the same in every language, and a clock time follows the system locale and the clock settings.";
+
+/** The tags a layer may write for a language: the canonical ones, and the two shorter ones claude-hud also accepts, which mean Chinese in simplified and in traditional characters. */
+const LANGUAGE_TAGS = [...STATUSLINE_LANGUAGES, "zh", "zh-TW"] as const;
+
+/** The canonical tag each of the shorter ones means. */
+const LANGUAGE_ALIASES = { zh: "zh-Hans", "zh-TW": "zh-Hant" } as const;
+
+function canonicalLanguage(tag: (typeof LANGUAGE_TAGS)[number]): (typeof STATUSLINE_LANGUAGES)[number] {
+  return tag === "zh" || tag === "zh-TW" ? LANGUAGE_ALIASES[tag] : tag;
+}
+
+/** The settings that are not part of a group. A layer's `language` is read in any of its tags and kept as the canonical one, so everything after the schema sees one value. */
 const TOP_LEVEL = {
-  language: z.enum(STATUSLINE_LANGUAGES).describe("The language of the words the statusline writes (labels, units of waiting such as `ago`, the names of effort levels): en, zh-Hans for Chinese in simplified characters, zh-Hant for traditional. Durations, token counts, the dollar sign and clock times are written the same in every language, and a clock time follows the system locale and the clock settings."),
-  preset: z.enum(STATUSLINE_PRESETS).describe("A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, jj.enabled, jj.showDirty, jj.showConflicts and usage.resetLabel) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own, full draws every segment and row, essential is the model, project, version control and duration above the context bar, and minimal is the same without the duration."),
+  language: z.enum(STATUSLINE_LANGUAGES).describe(LANGUAGE_DESCRIPTION),
+  preset: z.enum(STATUSLINE_PRESETS).describe("A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts and usage.resetLabel) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments and the context row; full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, prompt cache and compactions rows, essential adds the duration and the added directories row, and minimal adds the added directories row alone."),
 };
 
 /** What a configuration layer may set: every group and every key optional, so a layer names only what it changes. */
 export const StatuslineSchema = z.strictObject({
-  language: TOP_LEVEL.language.optional(),
+  language: z.enum(LANGUAGE_TAGS).transform(canonicalLanguage).describe(LANGUAGE_DESCRIPTION).optional(),
   preset: TOP_LEVEL.preset.optional(),
   layout: z.strictObject(SHAPES.layout).partial().optional(),
   model: z.strictObject(SHAPES.model).partial().optional(),

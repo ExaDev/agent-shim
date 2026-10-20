@@ -147,13 +147,15 @@
           "type": "object",
           "properties": {
             "language": {
+              "description": "The language of the words the statusline writes (labels, units of waiting such as `ago`, the names of effort levels): en, zh-Hans for Chinese in simplified characters, and zh-Hant for traditional; zh and zh-TW are read as zh-Hans and zh-Hant, and any other tag is refused. Durations, token counts, the dollar sign and clock times are written the same in every language, and a clock time follows the system locale and the clock settings.",
               "type": "string",
               "enum": [
                 "en",
                 "zh-Hans",
-                "zh-Hant"
-              ],
-              "description": "The language of the words the statusline writes (labels, units of waiting such as `ago`, the names of effort levels): en, zh-Hans for Chinese in simplified characters, zh-Hant for traditional. Durations, token counts, the dollar sign and clock times are written the same in every language, and a clock time follows the system locale and the clock settings."
+                "zh-Hant",
+                "zh",
+                "zh-TW"
+              ]
             },
             "preset": {
               "type": "string",
@@ -163,7 +165,7 @@
                 "essential",
                 "minimal"
               ],
-              "description": "A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, jj.enabled, jj.showDirty, jj.showConflicts and usage.resetLabel) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own, full draws every segment and row, essential is the model, project, version control and duration above the context bar, and minimal is the same without the duration."
+              "description": "A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts and usage.resetLabel) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments and the context row; full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, prompt cache and compactions rows, essential adds the duration and the added directories row, and minimal adds the added directories row alone."
             },
             "layout": {
               "type": "object",

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { statuslineKeys } from "../statusline/keys";
-import { contextBands, STATUSLINE_HEADER_SEGMENTS, STATUSLINE_PRESETS, STATUSLINE_ROWS, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_COLUMNS, MAX_STATUSLINE_LABEL_COLUMNS, MIN_STATUSLINE_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
+import { contextBands, STATUSLINE_PRESETS, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_COLUMNS, MAX_STATUSLINE_LABEL_COLUMNS, MIN_STATUSLINE_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
 
 const A_CONFIGURED_WIDTH = 100;
 const OVER_LONG_LABEL = "x".repeat(MAX_STATUSLINE_LABEL_COLUMNS + 1);
@@ -400,7 +400,7 @@ describe("unsetting an optional setting from a layer", () => {
   it("lists exactly those settings as optional, with no default", () => {
     const keys = statuslineKeys().filter((key) => key.optional);
     expect(keys.map((key) => key.path)).toEqual(OPTIONAL.map(([group, name]) => `${group}.${name}`));
-    expect(JSON.stringify(z.toJSONSchema(StatuslineSchema))).toContain("A layer may write null to return it to unset");
+    expect(JSON.stringify(z.toJSONSchema(StatuslineSchema, { io: "input" }))).toContain("A layer may write null to return it to unset");
   });
 
   it("removes the key when merged over a layer that set it, or over nothing, and leaves no null behind", () => {
@@ -418,17 +418,20 @@ describe("unsetting an optional setting from a layer", () => {
 });
 
 describe("the language setting", () => {
-  it("accepts the catalogue's languages, and English is the default", () => {
-    for (const language of ["en", "zh-Hans", "zh-Hant"]) {
-      expect(StatuslineSchema.safeParse({ language }).success, language).toBe(true);
+  it("accepts the canonical tags and the shorter ones claude-hud also accepts, and keeps the canonical tag", () => {
+    for (const [written, kept] of [["en", "en"], ["zh-Hans", "zh-Hans"], ["zh-Hant", "zh-Hant"], ["zh", "zh-Hans"], ["zh-TW", "zh-Hant"]] as const) {
+      expect(StatuslineSchema.parse({ language: written }).language, written).toBe(kept);
     }
-    for (const language of ["zh", "zh-TW", "fr", "EN", ""]) {
-      expect(StatuslineSchema.safeParse({ language }).success, language).toBe(false);
-    }
-    expect(resolveStatusline(undefined).language).toBe("en");
   });
 
-  it("merges like any scalar: the deeper layer's choice wins", () => {
+  it("refuses any other tag, instead of falling back to English as claude-hud does", () => {
+    for (const language of ["fr", "EN", "zh-CN", "zh-hans", ""]) {
+      expect(StatuslineSchema.safeParse({ language }).success, language).toBe(false);
+    }
+  });
+
+  it("is English by default, and merges like any scalar: the deeper layer's choice wins", () => {
+    expect(resolveStatusline(undefined).language).toBe("en");
     expect(mergeStatuslineSettings({ language: "zh-Hans", bar: { width: 6 } }, { language: "zh-Hant" })).toEqual({ language: "zh-Hant", bar: { width: 6 } });
   });
 });
@@ -446,19 +449,64 @@ describe("presets", () => {
     expect(resolveStatusline({ preset: "standard" })).toEqual(resolveStatusline(undefined));
   });
 
-  it("make full draw every segment and row, with the reset label on and Jujutsu opted in", () => {
-    const full = resolveStatusline({ preset: "full" });
-    expect(full.layout).toMatchObject({ header: [...STATUSLINE_HEADER_SEGMENTS], rows: [...STATUSLINE_ROWS] });
-    expect(full.usage.resetLabel).toBe(true);
-    expect(full.jj).toEqual({ enabled: true, showDirty: true, showConflicts: true });
-    expect(full.git).toMatchObject({ enabled: true, showDirty: true, showAheadBehind: false });
+  /** What each preset sets, written out from claude-hud's definitions (commands/configure.md, "Preset Definitions" and "Git Style Mapping") rather than read back from the code: the elements the statusline has for what each preset turns on, git as branch and dirty marker alone, and the reset label on. */
+  const BUNDLES = {
+    full: {
+      layout: { header: ["model", "project", "vcs", "effort", "advisor", "version", "outputStyle", "cost", "sessionName", "duration"], rows: ["context", "quota", "addedDirs", "memory", "environment", "promptCache", "compactions", "tokens"] },
+      git: { enabled: true, showDirty: true, showAheadBehind: false, showLineDiff: false },
+      jj: { enabled: true, showDirty: true, showConflicts: true },
+      usage: { resetLabel: true },
+      context: { breakdown: "critical" },
+    },
+    essential: {
+      layout: { header: ["model", "project", "vcs", "duration"], rows: ["context", "addedDirs"] },
+      git: { enabled: true, showDirty: true, showAheadBehind: false, showLineDiff: false },
+      jj: { enabled: false, showDirty: true, showConflicts: true },
+      usage: { resetLabel: true },
+      context: { breakdown: "never" },
+    },
+    minimal: {
+      layout: { header: ["model", "project", "vcs"], rows: ["context", "addedDirs"] },
+      git: { enabled: true, showDirty: true, showAheadBehind: false, showLineDiff: false },
+      jj: { enabled: false, showDirty: true, showConflicts: true },
+      usage: { resetLabel: true },
+      context: { breakdown: "never" },
+    },
+    standard: {
+      layout: { header: ["model", "provider", "route", "account", "identity", "headroom"], rows: ["context", "quota"] },
+      git: { enabled: true, showDirty: true, showAheadBehind: false, showLineDiff: false },
+      jj: { enabled: false, showDirty: true, showConflicts: true },
+      usage: { resetLabel: false },
+      context: { breakdown: "never" },
+    },
+  } as const;
+
+  it("set exactly the keys claude-hud's definition of each gives them", () => {
+    for (const preset of STATUSLINE_PRESETS) {
+      const resolved = resolveStatusline({ preset });
+      const bundle = BUNDLES[preset];
+      expect(resolved.layout, preset).toMatchObject(bundle.layout);
+      expect(resolved.git, preset).toMatchObject(bundle.git);
+      expect(resolved.jj, preset).toEqual(bundle.jj);
+      expect(resolved.usage.resetLabel, preset).toBe(bundle.usage.resetLabel);
+      expect(resolved.context.breakdown, preset).toBe(bundle.context.breakdown);
+    }
   });
 
-  it("make essential the model, project, version control and duration above the context bar, and minimal the same without the duration", () => {
-    const essential = resolveStatusline({ preset: "essential" });
-    expect(essential.layout).toMatchObject({ header: ["model", "project", "vcs", "duration"], rows: ["context"] });
-    expect(essential.jj.enabled).toBe(false);
-    expect(resolveStatusline({ preset: "minimal" }).layout).toMatchObject({ header: ["model", "project", "vcs"], rows: ["context"] });
+  it("change nothing outside those keys", () => {
+    const defaults = resolveStatusline(undefined);
+    for (const preset of STATUSLINE_PRESETS) {
+      const resolved = resolveStatusline({ preset });
+      expect({ ...resolved, preset: defaults.preset, layout: defaults.layout, jj: defaults.jj, git: { ...resolved.git, ...BUNDLES.standard.git }, usage: { ...resolved.usage, resetLabel: defaults.usage.resetLabel }, context: { ...resolved.context, breakdown: defaults.context.breakdown } }, preset).toEqual(defaults);
+    }
+  });
+
+  it("draw none of agent-shim's own segments and rows except in standard, because claude-hud's presets never turn them on", () => {
+    const own = ["provider", "route", "account", "identity", "headroom", "dailyCost", "speed"];
+    for (const preset of ["full", "essential", "minimal"] as const) {
+      expect(resolveStatusline({ preset }).layout.header.filter((name) => own.includes(name)), preset).toEqual([]);
+      expect(resolveStatusline({ preset }).layout.rows.filter((name) => ["gitFiles", "sessionTime"].includes(name)), preset).toEqual([]);
+    }
   });
 
   it("sit beneath the keys the same layer sets", () => {
@@ -470,14 +518,14 @@ describe("presets", () => {
 
   it("sit above everything a shallower layer sets, so a deeper layer's preset replaces a shallower layer's own keys", () => {
     const merged = LAYERED({ layout: { header: ["model"] }, bar: { width: SHALLOWER_BAR_WIDTH } }, { preset: "full" });
-    expect(resolveStatusline(StatuslineSchema.parse(merged)).layout.header).toEqual([...STATUSLINE_HEADER_SEGMENTS]);
+    expect(resolveStatusline(StatuslineSchema.parse(merged)).layout.header).toEqual(BUNDLES.full.layout.header);
     expect(resolveStatusline(StatuslineSchema.parse(merged)).bar.width).toBe(SHALLOWER_BAR_WIDTH);
   });
 
   it("stay beneath what a deeper layer sets itself", () => {
     const merged = LAYERED({ preset: "minimal" }, { git: { showDirty: false } });
     const resolved = resolveStatusline(StatuslineSchema.parse(merged));
-    expect(resolved.layout.rows).toEqual(["context"]);
+    expect(resolved.layout.rows).toEqual(BUNDLES.minimal.layout.rows);
     expect(resolved.git.showDirty).toBe(false);
   });
 
