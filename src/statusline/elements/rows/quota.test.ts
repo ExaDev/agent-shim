@@ -5,7 +5,7 @@ import { ESCAPE, visibleLength } from "../../ansi";
 import type { StatuslineSummary } from "../../enrich";
 import { parseClientPayload } from "../../payload";
 import { renderStatuslineBlock, RESERVED_COLUMNS } from "../../render";
-import { TWENTY as MINIMUM_LINE_COLUMNS } from "../../style";
+import { MIN_STATUSLINE_COLUMNS as MINIMUM_LINE_COLUMNS } from "../../../config/statusline";
 import { fakeStatuslinePorts } from "../../testing";
 
 const NOW_MS = Date.parse("2026-10-16T09:00:00.000Z");

@@ -61,6 +61,9 @@ export const MAX_STATUSLINE_PALETTE_INDEX = 255;
 /** The most terminal columns a window label may take (a wide character takes two): a label is padded into a column beside its bar, so a wider one crowds the bar out at narrow widths. */
 export const MAX_STATUSLINE_LABEL_COLUMNS = 12;
 
+/** The fewest columns a line is drawn to: narrower than this a bar has no room beside its label and figures, so a line is never drawn to less, and a width set for the statusline is at least this. */
+export const MIN_STATUSLINE_COLUMNS = 20;
+
 /** The widest a terminal is taken to be: no terminal is wider, and a limit beyond it would only let a typing slip make every line unreadable. */
 export const MAX_STATUSLINE_COLUMNS = 1000;
 
@@ -138,8 +141,14 @@ const SHAPES = {
     mergeBars: z.boolean().describe("Whether bar rows that sit next to each other in layout.rows share a line, and one grid, when they fit (the context and quota bars do by default); when false each bar row is on a line of its own, its bars still aligned to its neighbours'. A row of text is never joined by this setting, whichever form the quota row takes: layout.merge does that."),
     merge: mergeGroups.describe("Groups of rows that share a line when they sit next to each other in layout.rows and fit on one line together, and are drawn on lines of their own when they do not; each group names at least two rows, and no row belongs to two groups. A group may mix bar rows and rows of text, which are joined with the separator when every member is a single line. Bar rows outside a group follow layout.mergeBars."),
     rightAlign: distinctList(z.enum(STATUSLINE_ROWS)).describe("Rows that start the right-aligned part of a merged line: the first of them to appear on a line, and the rows after it, are pushed to the right edge, with the gap padded by spaces. A row named here must belong to a group in layout.merge, and it has no effect when it is the first row of its line."),
-    maxWidth: z.number().int().min(0).max(MAX_STATUSLINE_COLUMNS).describe("The width in columns to draw for when the client reports none and the COLUMNS environment variable names none, in place of the 80 it would otherwise assume; 0 leaves it at that."),
-    forceMaxWidth: z.boolean().describe("Whether maxWidth is the width drawn for whatever the client reports, even when the terminal is narrower or wider; it needs maxWidth to be set."),
+    maxWidth: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_STATUSLINE_COLUMNS)
+      .refine((columns) => columns === 0 || columns >= MIN_STATUSLINE_COLUMNS, `must be 0, or at least ${String(MIN_STATUSLINE_COLUMNS)} columns`)
+      .describe("The exact width in columns lines are drawn to when the client reports none and the COLUMNS environment variable names none, in place of the width it would draw to for an assumed 80-column terminal; unlike a terminal's width, it is not reduced by the columns Claude Code keeps back for itself. It is 0, to leave it unset, or at least 20."),
+    forceMaxWidth: z.boolean().describe("Whether maxWidth is the exact width lines are drawn to for whatever the client reports, even when the terminal is narrower or wider; it needs maxWidth to be set."),
   },
   model: {
     format: z.enum(["full", "compact", "short"]).describe("How the model's name is written: full is the name as the client gives it, compact drops a context-window suffix such as (1M context), and short also drops a leading Claude."),

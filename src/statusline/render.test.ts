@@ -421,6 +421,13 @@ describe("statusline settings", () => {
     }
   });
 
+  it("draws to the line width it is given, not the terminal's less the client's reserve", () => {
+    const given = stripAnsi(renderBlock({ summary: SUMMARY, view: VIEW, payload: parseClientPayload({}), terminalWidth: COMPACT_ONE_LINE_TERMINAL, lineWidth: ALIGNED_TERMINAL, nowMs: NOW_MS, ports: fakeStatuslinePorts() })).split("\n");
+    expect(Math.max(...given.map((line) => line.length))).toBe(ALIGNED_TERMINAL);
+    const derived = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, ALIGNED_TERMINAL, NOW_MS)).split("\n");
+    expect(Math.max(...derived.map((line) => line.length))).toBe(ALIGNED_TERMINAL - RESERVED_COLUMNS);
+  });
+
   it("draws the compact layout's bars at their base size, not stretched to fill the line", () => {
     const [line] = stripAnsi(render({ layout: { mode: "compact", header: [] } }, SUMMARY, COMPACT_ONE_LINE_TERMINAL)).split("\n");
     expect(line?.length).toBeLessThan(COMPACT_ONE_LINE_TERMINAL - RESERVED_COLUMNS);
