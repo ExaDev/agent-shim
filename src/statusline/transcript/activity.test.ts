@@ -303,14 +303,15 @@ describe("the todo list", () => {
     expect(factsAt([todoWrite([{ content: "a", status: "pending" }]), use("x", "TodoWrite", {}, STEP.fifth)]).todos).toHaveLength(1);
   });
 
-  it("builds a list from TaskCreate calls and updates it by the task's number", () => {
-    const records = [
-      use("c1", "TaskCreate", { subject: "first" }, 1),
-      use("c2", "TaskCreate", { description: "second, in words" }, 2),
-      use("c3", "TaskCreate", {}, STEP.third),
-      use("u1", "TaskUpdate", { taskId: "1", status: "completed" }, STEP.fourth),
-      use("u2", "TaskUpdate", { taskId: "2", status: "in_progress", subject: "second" }, STEP.fifth),
-    ];
+  /** A TaskCreate call and its result, which names the task: in the text, as the client writes it, and in the outcome stamped on the record. */
+  const created = (callId: string, input: Record<string, unknown>, taskId: string, ms: number): Record<string, unknown>[] => [
+    use(callId, "TaskCreate", input, ms),
+    { type: "user", timestamp: at(ms), toolUseResult: { task: { id: taskId, subject: "x" } }, message: { content: [{ type: "tool_result", tool_use_id: callId, content: `Task #${taskId} created successfully: x` }] } },
+  ];
+  const update = (input: Record<string, unknown>, ms: number): Record<string, unknown> => use(`u${String(ms)}`, "TaskUpdate", input, ms);
+
+  it("builds a list from TaskCreate calls, named by the identifiers their results give, and updates it by them", () => {
+    const records = [...created("c1", { subject: "first" }, "1", 1), ...created("c2", { description: "second, in words" }, "2", 2), ...created("c3", {}, "3", STEP.third), update({ taskId: "1", status: "completed" }, STEP.fourth), update({ taskId: "2", status: "in_progress", subject: "second" }, STEP.fifth)];
     expect(factsAt(records).todos).toEqual([
       { content: "first", status: "completed" },
       { content: "second", status: "in_progress" },
@@ -318,37 +319,84 @@ describe("the todo list", () => {
     ]);
   });
 
-  it("finds a task by the identifier it was created with before it counts places", () => {
-    const records = [use("c1", "TaskCreate", { subject: "a", taskId: "7" }, 1), use("c2", "TaskCreate", { subject: "b", taskId: 8 }, 2), use("u", "TaskUpdate", { taskId: 8, status: "done" }, STEP.third)];
-    expect(factsAt(records).todos.map((todo) => todo.status)).toEqual(["pending", "completed"]);
+  it("names a task from the outcome stamped on the record when the result's text does not say", () => {
+    const stamped = { type: "user", timestamp: at(1), toolUseResult: { task: { id: 7 } }, message: { content: [{ type: "tool_result", tool_use_id: "c", content: [{ type: "text", text: "ok" }] }] } };
+    expect(factsAt([use("c", "TaskCreate", { subject: "a" }), stamped, update({ taskId: "7", status: "completed" }, 2)]).todos).toEqual([{ content: "a", status: "completed" }]);
   });
 
-  it("ignores an update to a task that is not there, or that names none, or that sets a status it does not know", () => {
-    const records = [use("c", "TaskCreate", { subject: "a" }, 1), use("u1", "TaskUpdate", { taskId: "9", status: "completed" }, 2), use("u2", "TaskUpdate", {}, STEP.third), use("u3", "TaskUpdate", { taskId: "1", status: "deleted" }, STEP.fourth)];
+  it("does not take the stamped outcome for a record that holds several results", () => {
+    const several = { type: "user", timestamp: at(1), toolUseResult: { task: { id: 7 } }, message: { content: [{ type: "tool_result", tool_use_id: "c", content: "ok" }, { type: "tool_result", tool_use_id: "d", content: "ok" }] } };
+    expect(factsAt([use("c", "TaskCreate", { subject: "a" }), several]).todos).toEqual([]);
+  });
+
+  it("keeps the items in the order their calls were made when the results come back in another order", () => {
+    const [useA = {}, resultA = {}] = created("ca", { subject: "A" }, "2", 1);
+    const [useB = {}, resultB = {}] = created("cb", { subject: "B" }, "1", 2);
+    const records = [useA, useB, resultB, resultA, update({ taskId: "1", status: "completed" }, STEP.third), update({ taskId: "2", status: "in_progress" }, STEP.fourth)];
+    expect(factsAt(records).todos).toEqual([
+      { content: "A", status: "in_progress" },
+      { content: "B", status: "completed" },
+    ]);
+  });
+
+  it("draws an item only once its result has named it", () => {
+    expect(factsAt([use("c", "TaskCreate", { subject: "a" })]).todos).toEqual([]);
+  });
+
+  it("leaves no item for a call that failed, so the items after it keep their identifiers", () => {
+    const failed = { type: "user", timestamp: at(1), message: { content: [{ type: "tool_result", tool_use_id: "bad", is_error: true, content: "InputValidationError" }] } };
+    const records = [use("bad", "TaskCreate", {}, 0), failed, ...created("c2", { subject: "kept" }, "1", 2), update({ taskId: "1", status: "completed" }, STEP.third)];
+    expect(factsAt(records).todos).toEqual([{ content: "kept", status: "completed" }]);
+  });
+
+  it("leaves no item for a call whose result is an error, whatever else the result says", () => {
+    const failed = { type: "user", timestamp: at(1), toolUseResult: { task: { id: "9" } }, message: { content: [{ type: "tool_result", tool_use_id: "bad", is_error: true, content: "Task #9 created" }] } };
+    expect(factsAt([use("bad", "TaskCreate", { subject: "x" }, 0), failed]).todos).toEqual([]);
+  });
+
+  it("removes a task whose status is set to deleted", () => {
+    const records = [...created("c1", { subject: "a" }, "1", 1), ...created("c2", { subject: "b" }, "2", 2), update({ taskId: "1", status: "deleted" }, STEP.third)];
+    expect(factsAt(records).todos).toEqual([{ content: "b", status: "pending" }]);
+  });
+
+  it("changes a task's title only with a subject: an update's description is a detail", () => {
+    const first = [...created("c1", { subject: "title", description: "detail" }, "1", 1), update({ taskId: "1", description: "more detail" }, 2)];
+    expect(factsAt(first).todos).toEqual([{ content: "title", status: "pending" }]);
+    expect(factsAt([...first, update({ taskId: "1", subject: "new title" }, STEP.third)]).todos).toEqual([{ content: "new title", status: "pending" }]);
+  });
+
+  it("uses a TaskCreate's description for the title only when it has no subject", () => {
+    expect(factsAt(created("c", { subject: "s", description: "d" }, "1", 1)).todos[0]?.content).toBe("s");
+    expect(factsAt(created("c", { description: "d" }, "1", 1)).todos[0]?.content).toBe("d");
+  });
+
+  it("does not find a task by its place in the list", () => {
+    const records = [...created("c1", { subject: "a" }, "5", 1), update({ taskId: "1", status: "completed" }, 2)];
     expect(factsAt(records).todos).toEqual([{ content: "a", status: "pending" }]);
   });
 
+  it("ignores an update to a task that is not there, or that names none, or that sets a status it does not know", () => {
+    const records = [...created("c", { subject: "a" }, "1", 1), update({ taskId: "9", status: "completed" }, 2), update({}, STEP.third), update({ taskId: "1", status: "blocked" }, STEP.fourth)];
+    expect(factsAt(records).todos).toEqual([{ content: "a", status: "pending" }]);
+  });
+
+  it("finishes an item from a result written before its call", () => {
+    const [useC = {}, resultC = {}] = created("c", { subject: "a" }, "4", 1);
+    expect(factsAt([resultC, useC]).todos).toEqual([{ content: "a", status: "pending" }]);
+  });
+
   it("lets a later update name a task by the identifier it had before a TodoWrite wrote the list again", () => {
-    const records = [
-      use("c1", "TaskCreate", { subject: "keep", taskId: "k" }, 1),
-      todoWrite([{ content: "keep", status: "pending" }, { content: "new", status: "pending" }], 2),
-      use("u", "TaskUpdate", { taskId: "k", status: "completed" }, STEP.third),
-    ];
+    const records = [...created("c1", { subject: "keep" }, "k", 1), todoWrite([{ content: "keep", status: "pending" }, { content: "new", status: "pending" }], 2), update({ taskId: "k", status: "completed" }, STEP.third)];
     expect(factsAt(records).todos.map((todo) => `${todo.content}:${todo.status}`)).toEqual(["keep:completed", "new:pending"]);
   });
 
   it("gives two items with the same words each their own identifier when the list is written again", () => {
-    const records = [
-      use("c1", "TaskCreate", { subject: "same", taskId: "a" }, 1),
-      use("c2", "TaskCreate", { subject: "same", taskId: "b" }, 2),
-      todoWrite([{ content: "same", status: "pending" }, { content: "same", status: "pending" }], STEP.third),
-      use("u", "TaskUpdate", { taskId: "b", status: "completed" }, STEP.fourth),
-    ];
+    const records = [...created("c1", { subject: "same" }, "a", 1), ...created("c2", { subject: "same" }, "b", 2), todoWrite([{ content: "same", status: "pending" }, { content: "same", status: "pending" }], STEP.third), update({ taskId: "b", status: "completed" }, STEP.fourth)];
     expect(factsAt(records).todos.map((todo) => todo.status)).toEqual(["pending", "completed"]);
   });
 
   it("keeps only the latest items of a very long list", () => {
-    const records = Array.from({ length: MAX_TRACKED_TODOS + EXTRA_TODOS }, (_, index) => use(`c${String(index)}`, "TaskCreate", { subject: `task ${String(index)}` }, index));
+    const records = Array.from({ length: MAX_TRACKED_TODOS + EXTRA_TODOS }, (_, index) => created(`c${String(index)}`, { subject: `task ${String(index)}` }, String(index), index)).flat();
     const { todos } = factsAt(records);
     expect(todos).toHaveLength(MAX_TRACKED_TODOS);
     expect(todos[0]?.content).toBe("task 3");
@@ -357,7 +405,7 @@ describe("the todo list", () => {
 
 describe("the state", () => {
   it("is plain JSON that its schema reads back unchanged", () => {
-    const state = fold([use("a", "Read", { file_path: "/x" }), result("a", SECOND), use("b", "Skill", { skill: "s" }), use("g", "Agent", { run_in_background: true }), use("t", "TaskCreate", { subject: "x" })]);
+    const state = fold([use("a", "Read", { file_path: "/x" }), result("a", SECOND), use("b", "Skill", { skill: "s" }), use("g", "Agent", { run_in_background: true }), use("t", "TaskCreate", { subject: "x" }), result("t", SECOND)]);
     expect(ActivityStateSchema.parse(JSON.parse(JSON.stringify(state)))).toEqual(state);
   });
 
@@ -375,7 +423,7 @@ describe("the state", () => {
 });
 
 describe("activityFactsOf with the facts folded from the end of the transcript", () => {
-  const older = fold([use("a", "Read", {}, 1), result("a", 2), use("t", "TaskCreate", { subject: "old" }, STEP.third), use("s", "Skill", { skill: "early" }, STEP.fourth)]);
+  const older = fold([use("a", "Read", {}, 1), result("a", 2), use("t", "TaskCreate", { subject: "old" }, STEP.third), { type: "user", timestamp: at(STEP.third), message: { content: [{ type: "tool_result", tool_use_id: "t", content: "Task #1 created successfully: old" }] } }, use("s", "Skill", { skill: "early" }, STEP.fourth)]);
   const end = (records: readonly Record<string, unknown>[]) => records.reduce<ActivityLatest>((state, record) => {
     const parsed = parseTranscriptRecord(JSON.stringify(record));
     return parsed === undefined ? state : foldActivityLatest(state, parsed);

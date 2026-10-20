@@ -271,7 +271,9 @@ describe("readTranscript", () => {
     const text =
       calls
         .map(([id, name, input], index) => line({ type: "assistant", timestamp: at(index * SECOND_MS), message: { content: [{ type: "tool_use", id, name, input }] } }))
-        .join("") + line({ type: "user", timestamp: at(calls.length * SECOND_MS), message: { content: [{ type: "tool_result", tool_use_id: "r", content: "ok" }] } });
+        .join("") +
+      line({ type: "user", timestamp: at(calls.length * SECOND_MS), message: { content: [{ type: "tool_result", tool_use_id: "r", content: "ok" }] } }) +
+      line({ type: "user", timestamp: at(calls.length * SECOND_MS), message: { content: [{ type: "tool_result", tool_use_id: "t", content: "Task #1 created successfully: Write it" }] } });
     const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: text });
     const facts = readTranscript(fakeStatuslinePorts(disk.ports), TRANSCRIPT, T0 + (calls.length + 1) * SECOND_MS);
     expect(facts?.activity.tools.map((tool) => `${tool.name}:${tool.status}`)).toEqual(["Read:completed", "Skill:running", "mcp__github__list_issues:running"]);
@@ -316,7 +318,9 @@ describe("readTranscript", () => {
 
   it("draws no todo list while the end of a long transcript edits it in place without rewriting it, and the right one once it has caught up", () => {
     const records = Math.ceil((OVER_TWO_WINDOWS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES);
-    const early = line({ type: "assistant", timestamp: at(0), message: { content: [{ type: "tool_use", id: "w", name: "TodoWrite", input: { todos: [{ content: "Early plan", status: "in_progress" }] } }] } });
+    const early =
+      line({ type: "assistant", timestamp: at(0), message: { content: [{ type: "tool_use", id: "w", name: "TaskCreate", input: { subject: "Early plan" } }] } }) +
+      line({ type: "user", timestamp: at(0), message: { content: [{ type: "tool_result", tool_use_id: "w", content: "Task #1 created successfully: Early plan" }] } });
     const filler = Array.from({ length: records }, (_, index) => oddLine({ type: "assistant", timestamp: at(0), message: { id: `f${String(index)}`, content: [] } })).join("");
     const late = line({ type: "assistant", timestamp: at(SECOND_MS), message: { content: [{ type: "tool_use", id: "u", name: "TaskUpdate", input: { taskId: "1", status: "completed" } }] } });
     const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: early + filler + late });

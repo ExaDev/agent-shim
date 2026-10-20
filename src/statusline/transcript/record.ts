@@ -36,8 +36,17 @@ const TranscriptRecordSchema = z
     /** What a `queue-operation` record did to the client's queue of notifications, and the notification's text: a background agent that has finished is announced by an `enqueue` naming its task and the tool call that started it. */
     operation: text,
     content: text,
-    /** The outcome the client stamps onto the record that carries a tool's result: for an agent call, the model it ran on and whether it was started in the background. */
-    toolUseResult: z.looseObject({ resolvedModel: text, isAsync: z.boolean().optional().catch(undefined), status: text }).optional().catch(undefined),
+    /** The outcome the client stamps onto the record that carries a tool's result: for an agent call, the model it ran on and whether it was started in the background, and for a `TaskCreate`, the task made. */
+    toolUseResult: z
+      .looseObject({
+        resolvedModel: text,
+        isAsync: z.boolean().optional().catch(undefined),
+        status: text,
+        /** The task a `TaskCreate` made, whose identifier the client assigns and only the result carries. */
+        task: z.looseObject({ id: z.union([z.string(), z.number()]).optional().catch(undefined) }).optional().catch(undefined),
+      })
+      .optional()
+      .catch(undefined),
     /** Shared by the records one API request produced. */
     requestId: text,
     message: z
