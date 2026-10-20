@@ -49,10 +49,14 @@ const RUN_TIMEOUT_MS = 2_000;
 /** The most standard output a program the statusline starts may produce before it is cut off. */
 const RUN_MAX_BUFFER_BYTES = 1_048_576;
 
-/** A program run without a shell, as `StatuslinePorts.run` describes. */
+/**
+ * A program run without a shell, as `StatuslinePorts.run` describes. It is killed with SIGKILL when it outruns `RUN_TIMEOUT_MS` or `RUN_MAX_BUFFER_BYTES`: `execFileSync` sends SIGTERM by default, which a program can trap or ignore, and it would then hold the statusline for as long as it chose to run.
+ *
+ * Only the program itself is killed. A process it started stays running after the program is killed or exits, and the synchronous API cannot reap it: `spawnSync` and `execFileSync` have no documented way to start the program as the leader of a process group (`detached` is neither a documented nor a typed option of either), and give the pid back only once the program has gone, so there is no group to signal. The leftover process does not hold the statusline, since the call returns as soon as the program is killed, even while a leftover still has its output open.
+ */
 function runProgram(file: string, args: readonly string[], cwd: string): string | undefined {
   try {
-    return execFileSyncBlocking("a statusline command", file, args, { cwd, encoding: "utf8", timeout: RUN_TIMEOUT_MS, maxBuffer: RUN_MAX_BUFFER_BYTES, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+    return execFileSyncBlocking("a statusline command", file, args, { cwd, encoding: "utf8", timeout: RUN_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: RUN_MAX_BUFFER_BYTES, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
   } catch {
     return undefined;
   }
