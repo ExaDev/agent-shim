@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { fakeCredentials, fakeFs, paths } from "../test-helpers";
+import { fakeAsyncCredentials, fakeFs, paths } from "../test-helpers";
 import { ANTHROPIC_PROVIDER } from "./middleware";
 import type { QuotaHttpGet } from "./providerQuota";
 import { createProviderLookup, createQuotaRefresher, QUOTA_REQUEST_TIMEOUT_MS, withQuotaRefresh, type QuotaProviderLookup, type QuotaRefresherDeps, type QuotaRefresher } from "./quotaRefresh";
@@ -48,7 +48,7 @@ interface Harness {
 
 function harness(overrides: Partial<QuotaRefresherDeps> = {}): Harness {
   const clock = { nowMs: NOW_MS };
-  const apiKey = vi.fn<QuotaProviderLookup["apiKey"]>().mockReturnValue(API_KEY);
+  const apiKey = vi.fn<QuotaProviderLookup["apiKey"]>().mockResolvedValue(API_KEY);
   const lookup = vi.fn<QuotaRefresherDeps["lookup"]>().mockReturnValue({ baseUrl: ZAI_BASE_URL, apiKey });
   const http = vi.fn<QuotaHttpGet>().mockResolvedValue({ status: HTTP_OK, text: zaiText });
   const readQuota = vi.fn<QuotaRefresherDeps["readQuota"]>().mockReturnValue(undefined);
@@ -290,20 +290,20 @@ describe("createProviderLookup", () => {
   const ENV_TOKEN = "env-token-value";
 
   function lookupOver(files: Readonly<Record<string, unknown>>, env: Readonly<Record<string, string | undefined>> = { [ENV_VARIABLE]: ENV_TOKEN }) {
-    return createProviderLookup({ fs: fakeFs(files), providersDir: paths.providersDir, env, credentials: fakeCredentials() });
+    return createProviderLookup({ fs: fakeFs(files), providersDir: paths.providersDir, env, credentials: fakeAsyncCredentials() });
   }
 
   const httpProvider = { displayName: "GLM", baseUrl: ZAI_BASE_URL, credential: { sources: [{ env: ENV_VARIABLE }] } };
 
-  it("resolves an http provider's base URL and, on demand, its env token", () => {
+  it("resolves an http provider's base URL and, on demand, its env token", async () => {
     const found = lookupOver({ [`${paths.providersDir}/${PROVIDER}.json`]: httpProvider })(PROVIDER);
 
     expect(found?.baseUrl).toBe(ZAI_BASE_URL);
-    expect(found?.apiKey()).toBe(ENV_TOKEN);
+    expect(await found?.apiKey()).toBe(ENV_TOKEN);
   });
 
   it("does not resolve the credential until apiKey is called", () => {
-    const credentials = fakeCredentials();
+    const credentials = fakeAsyncCredentials();
     const lookup = createProviderLookup({ fs: fakeFs({ [`${paths.providersDir}/${PROVIDER}.json`]: { ...httpProvider, credential: { sources: [{ command: ["op", "read", "ref"] }] } } }), providersDir: paths.providersDir, env: {}, credentials });
 
     lookup(PROVIDER);
@@ -321,10 +321,10 @@ describe("createProviderLookup", () => {
     expect(lookupOver({ [`${paths.providersDir}/codex.json`]: codex })("codex")).toBeUndefined();
   });
 
-  it("makes apiKey throw the resolver's message when no credential resolves, naming the provider and never a token", () => {
+  it("rejects apiKey with the resolver's message when no credential resolves, naming the provider and never a token", async () => {
     const found = lookupOver({ [`${paths.providersDir}/${PROVIDER}.json`]: httpProvider }, {})(PROVIDER);
 
-    expect(() => found?.apiKey()).toThrow(new RegExp(`provider ${PROVIDER} has no usable credential.*${ENV_VARIABLE}`));
+    await expect(found?.apiKey()).rejects.toThrow(new RegExp(`provider ${PROVIDER} has no usable credential.*${ENV_VARIABLE}`));
   });
 });
 

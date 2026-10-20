@@ -27,7 +27,7 @@ interface AntigravityProviderLookupFailure {
 type AntigravityProviderResolution = AntigravityProviderLookup | AntigravityProviderLookupFailure;
 
 export interface AntigravityRoutePorts {
-  readonly loadProvider: (name: string) => AntigravityProviderResolution;
+  readonly loadProvider: (name: string) => Promise<AntigravityProviderResolution>;
   readonly fallbackId?: () => string;
   readonly fetchFn?: typeof fetch;
   readonly localConnector?: (config: ResolvedAntigravityConfig, signal: AbortSignal) => AcpConnection;
@@ -71,7 +71,7 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
       };
     }
 
-    const lookup = ports.loadProvider(providerName);
+    const lookup = await ports.loadProvider(providerName);
     if (!lookup.ok) {
       return {
         status: lookup.status,
