@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { cacheFileFor, loadCache, saveCache } from "../cacheFile";
 import type { StatuslinePorts } from "../ports";
+import { activityFactsOf, ActivityLatestSchema, ActivityStateSchema, EMPTY_ACTIVITY_LATEST, EMPTY_ACTIVITY_STATE, foldActivity, foldActivityLatest, type ActivityFacts, type ActivityLatest, type ActivityState } from "./activity";
 import { parseTranscriptRecord, type TranscriptRecord } from "./record";
 import { EMPTY_TOKEN_STATE, foldTokens, TokenStateSchema, type SessionTokens, type TokenState } from "./tokens";
 import { EMPTY_LATEST_STATE, EMPTY_SESSION_STATE, foldLatest, foldSession, LatestStateSchema, SessionStateSchema, sessionFactsOf, type LatestState, type SessionFacts, type SessionState } from "./session";
@@ -18,7 +19,7 @@ const NEWLINE = 0x0a;
 
 /** The kind of cache file the reader keeps, and the version of what it holds: a file of another version is read as absent. */
 const CACHE_KIND = "transcript";
-const CACHE_VERSION = 5;
+const CACHE_VERSION = 6;
 
 const TranscriptCacheSchema = z.strictObject({
   version: z.literal(CACHE_VERSION),
@@ -32,8 +33,9 @@ const TranscriptCacheSchema = z.strictObject({
   skipping: z.literal(true).optional(),
   session: SessionStateSchema,
   tokens: TokenStateSchema,
+  activity: ActivityStateSchema,
   /** While the cumulative facts are being caught up, the latest-state facts folded from the end of the transcript, and where that fold has read to. Absent once the cumulative fold has reached the end, when it holds them itself. */
-  newer: z.strictObject({ offset: z.number().int().nonnegative(), state: LatestStateSchema }).optional(),
+  newer: z.strictObject({ offset: z.number().int().nonnegative(), state: LatestStateSchema, activity: ActivityLatestSchema }).optional(),
 });
 
 type TranscriptCache = z.infer<typeof TranscriptCacheSchema>;
@@ -42,7 +44,7 @@ type TranscriptCache = z.infer<typeof TranscriptCacheSchema>;
 type CumulativeCache = Omit<TranscriptCache, "newer">;
 
 /**
- * What the transcript says, as the statusline's elements read it. A reader of another kind of fact (the tools, agents and todos a session shows) adds its own key beside `session`, folded from the same lines, and `bytes` and `complete` describe the read for all of them.
+ * What the transcript says, as the statusline's elements read it. A reader of another kind of fact adds its own key beside `session`, folded from the same lines, and `bytes` and `complete` describe the read for all of them.
  */
 export interface TranscriptFacts {
   /** The transcript's size in bytes when it was read. */
@@ -52,6 +54,8 @@ export interface TranscriptFacts {
   readonly session: SessionFacts;
   /** The tokens the session has used, over every response read; short of the truth while `complete` is false. */
   readonly tokens: SessionTokens;
+  /** What the session is doing: its latest tool calls and agents, its todo list, and the skills and MCP servers it has used. The calls, agents and todos are the newest state and right at once when the last window holds them; the skills and servers add up over the whole transcript, so they are short of the truth while `complete` is false. */
+  readonly activity: ActivityFacts;
 }
 
 /** The records of the whole lines of `bytes`, in order, passed to `visit`, and how many bytes those lines took: only whole lines are taken, so a record the client is still writing is read at the next refresh. */
@@ -66,15 +70,15 @@ function eachRecord(bytes: Uint8Array, visit: (record: TranscriptRecord) => void
   return end;
 }
 
-/** The session facts and token totals after the whole lines of `bytes`, and how many bytes those lines took. */
-function foldLines(state: { readonly session: SessionState; readonly tokens: TokenState }, bytes: Uint8Array): { readonly session: SessionState; readonly tokens: TokenState; readonly consumed: number } {
-  let session = state.session;
-  let tokens = state.tokens;
+/** The session facts, token totals and activity after the whole lines of `bytes`, and how many bytes those lines took. */
+function foldLines(state: { readonly session: SessionState; readonly tokens: TokenState; readonly activity: ActivityState }, bytes: Uint8Array): { readonly session: SessionState; readonly tokens: TokenState; readonly activity: ActivityState; readonly consumed: number } {
+  let { session, tokens, activity } = state;
   const consumed = eachRecord(bytes, (record) => {
     session = foldSession(session, record);
     tokens = foldTokens(tokens, record);
+    activity = foldActivity(activity, record);
   });
-  return { session, tokens, consumed };
+  return { session, tokens, activity, consumed };
 }
 
 /** A digest of the transcript's first line, or of its first `FINGERPRINT_BYTES` when that line is longer. A cache is written only once a line is complete, so the digest of a first line still being written is never kept. */
@@ -86,8 +90,8 @@ function fingerprintOf(head: Uint8Array): string {
 }
 
 /** The facts of what the cache holds, whether or not the read that produced it reached the end of the transcript. Until it has, the cumulative facts lack what the rest of the transcript says, so the facts are not complete; the latest-state facts are the end's, which the cache holds separately. */
-function factsOf(size: number, cache: TranscriptCache, reachedEnd: boolean): TranscriptFacts {
-  return { bytes: size, complete: cache.complete && reachedEnd, session: sessionFactsOf(cache.session, cache.newer?.state), tokens: cache.tokens.totals };
+function factsOf(size: number, cache: TranscriptCache, reachedEnd: boolean, nowMs: number): TranscriptFacts {
+  return { bytes: size, complete: cache.complete && reachedEnd, session: sessionFactsOf(cache.session, cache.newer?.state), tokens: cache.tokens.totals, activity: activityFactsOf(cache.activity, nowMs, cache.newer?.activity) };
 }
 
 /** What the state holds when a line that may have shown the session's start was skipped. */
@@ -108,13 +112,13 @@ function advance(cache: CumulativeCache, window: Uint8Array, reachedEnd: boolean
     offset += lineEnd + 1;
     bytes = bytes.subarray(lineEnd + 1);
   }
-  const { session: folded, tokens, consumed } = foldLines(cache, bytes);
+  const { session: folded, tokens, activity, consumed } = foldLines(cache, bytes);
   if (consumed === 0 && bytes.length > 0 && !reachedEnd) {
     const { cumulative } = cache.session;
     const session = cumulative.startedAtMs === undefined ? { ...cache.session, cumulative: { ...cumulative, ...START_UNKNOWN } } : cache.session;
     return { ...cache, offset: offset + bytes.length, complete: false, skipping: true, session };
   }
-  return { version: cache.version, fingerprint: cache.fingerprint, offset: offset + consumed, complete: cache.complete, session: folded, tokens };
+  return { version: cache.version, fingerprint: cache.fingerprint, offset: offset + consumed, complete: cache.complete, session: folded, tokens, activity };
 }
 
 /**
@@ -131,7 +135,7 @@ export function readTranscript(ports: StatuslinePorts, transcriptPath: string, n
   if (window === undefined) {
     return undefined;
   }
-  const { newer: previousNewer, ...base }: TranscriptCache = cached ?? { version: CACHE_VERSION, fingerprint: "", offset: 0, complete: true, session: EMPTY_SESSION_STATE, tokens: EMPTY_TOKEN_STATE };
+  const { newer: previousNewer, ...base }: TranscriptCache = cached ?? { version: CACHE_VERSION, fingerprint: "", offset: 0, complete: true, session: EMPTY_SESSION_STATE, tokens: EMPTY_TOKEN_STATE, activity: EMPTY_ACTIVITY_STATE };
   const reachedEnd = window.size - from <= MAX_TRANSCRIPT_READ_BYTES;
   const advanced = advance(base, window.bytes, reachedEnd);
   // While the cumulative facts are behind, the latest-state ones are folded from the end of the transcript, so what the session last did is not hidden for as many refreshes as the catching up takes.
@@ -141,7 +145,7 @@ export function readTranscript(ports: StatuslinePorts, transcriptPath: string, n
     // A cache is written only once a line is complete, so the digest of a first line still being written is never kept.
     saveCache(ports, file, { ...next, fingerprint: cached === undefined ? fingerprintOf(window.bytes) : base.fingerprint }, nowMs);
   }
-  return factsOf(window.size, next, reachedEnd);
+  return factsOf(window.size, next, reachedEnd, nowMs);
 }
 
 /**
@@ -150,7 +154,7 @@ export function readTranscript(ports: StatuslinePorts, transcriptPath: string, n
 function newerFrom(ports: StatuslinePorts, transcriptPath: string, size: number, previous: TranscriptCache["newer"]): TranscriptCache["newer"] {
   if (previous !== undefined && previous.offset <= size && size - previous.offset <= MAX_TRANSCRIPT_READ_BYTES) {
     const appended = ports.readRange(transcriptPath, previous.offset, MAX_TRANSCRIPT_READ_BYTES);
-    return appended === undefined ? undefined : foldNewer(previous.state, appended.bytes, previous.offset);
+    return appended === undefined ? undefined : foldNewer(previous, appended.bytes, previous.offset);
   }
   // One byte more than the window is read, so a window that starts exactly on a line is not mistaken for one that starts inside a line.
   const from = Math.max(0, size - MAX_TRANSCRIPT_READ_BYTES - 1);
@@ -159,14 +163,15 @@ function newerFrom(ports: StatuslinePorts, transcriptPath: string, size: number,
     return undefined;
   }
   const firstLine = from === 0 ? 0 : tail.bytes.indexOf(NEWLINE) + 1;
-  return firstLine === 0 && from > 0 ? undefined : foldNewer(EMPTY_LATEST_STATE, tail.bytes.subarray(firstLine), from + firstLine);
+  return firstLine === 0 && from > 0 ? undefined : foldNewer({ state: EMPTY_LATEST_STATE, activity: EMPTY_ACTIVITY_LATEST }, tail.bytes.subarray(firstLine), from + firstLine);
 }
 
 /** The latest-state facts after the whole lines of `bytes`, which start at `offset`, with where they end. */
-function foldNewer(state: LatestState, bytes: Uint8Array, offset: number): NonNullable<TranscriptCache["newer"]> {
-  let folded = state;
+function foldNewer(from: { readonly state: LatestState; readonly activity: ActivityLatest }, bytes: Uint8Array, offset: number): NonNullable<TranscriptCache["newer"]> {
+  let { state, activity } = from;
   const consumed = eachRecord(bytes, (record) => {
-    folded = foldLatest(folded, record);
+    state = foldLatest(state, record);
+    activity = foldActivityLatest(activity, record);
   });
-  return { offset: offset + consumed, state: folded };
+  return { offset: offset + consumed, state, activity };
 }

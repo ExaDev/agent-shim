@@ -5,6 +5,7 @@ import { ESCAPE } from "../../ansi";
 import { createPalette } from "../../palette";
 import { fakeRenderContext } from "../../testing";
 import type { TranscriptFacts } from "../../transcript/reader";
+import { EMPTY_ACTIVITY_FACTS } from "../../transcript/activity";
 import type { SessionTokens } from "../../transcript/tokens";
 import { tokensRow } from "./tokens";
 
@@ -13,7 +14,7 @@ const NOTHING: SessionTokens = { inputTokens: 0, outputTokens: 0, cacheCreationT
 const TRANSCRIPT_BYTES = 1_000;
 
 function facts(tokens: Readonly<SessionTokens>, complete = true): TranscriptFacts {
-  return { bytes: TRANSCRIPT_BYTES, complete, session: { title: undefined, startedAtMs: undefined, lastResponseAtMs: undefined, compactions: 0, promptCache: undefined }, tokens };
+  return { bytes: TRANSCRIPT_BYTES, complete, session: { title: undefined, startedAtMs: undefined, lastResponseAtMs: undefined, compactions: 0, promptCache: undefined }, tokens, activity: EMPTY_ACTIVITY_FACTS };
 }
 
 /** The row drawn from the transcript facts given (none when the transcript cannot be read), with the label colour set when `label` is. */
