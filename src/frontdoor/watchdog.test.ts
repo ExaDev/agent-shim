@@ -13,6 +13,7 @@ import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV
 const TEST_RESPAWN_MAX_GENERATION = 3;
 /** Generations past the immediate ones that are far enough on for the cooldown to have reached its cap. */
 const GENERATIONS_PAST_THE_CAP = 100;
+const MS_PER_SECOND = 1000;
 
 /** The cooldown each generation past the immediate ones adds, and its cap: small, so a test that waits for the replacement is not slowed. */
 const TEST_COOLDOWN_STEP_MS = 30;
@@ -147,7 +148,7 @@ describe("startThreadWatchdog", () => {
     const MARKER = "respawned";
 
     /** Waits for the thread's report, then for the log, which the thread writes before it reports. */
-    async function stallWith(extra: { readonly respawnGeneration?: number; readonly respawnMaxGeneration?: number; readonly respawn?: ThreadWatchdogParams["respawn"] }): Promise<string> {
+    async function stallWith(extra: { readonly respawnGeneration?: number; readonly respawnMaxGeneration?: number; readonly respawn?: ThreadWatchdogParams["respawn"]; readonly nativeSample?: ThreadWatchdogParams["nativeSample"] }): Promise<string> {
       const logFile = path.join(directory, "frontdoor.log");
       await new Promise<void>((resolve) => {
         watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", logFile, respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: path.join(directory, LOCK_NAME), ...extra, onReport: () => {
@@ -245,6 +246,42 @@ describe("startThreadWatchdog", () => {
       expect(started).not.toBeNull();
       expect(lockHolder()).toBe(Number(started?.[1]));
       expect(lockHolder()).not.toBe(dead);
+    });
+
+    it("writes a native stack for a main thread that could not be paused, and keeps only the newest few", async () => {
+      const samples = path.join(directory, "stall-samples");
+      fs.mkdirSync(samples, { recursive: true });
+      for (const old of ["1.txt", "2.txt", "3.txt"]) {
+        fs.writeFileSync(path.join(samples, old), "older");
+        fs.utimesSync(path.join(samples, old), new Date(0), new Date(Number(old.slice(0, 1)) * MS_PER_SECOND));
+      }
+      const nativeSample = { command: process.execPath, args: ["-e", "require('node:fs').writeFileSync(process.argv[1], 'sampled ' + process.argv[2] + 's')", "{file}", "{seconds}"], directory: samples, seconds: 1, keep: 2 };
+      const log = await stallWith({ nativeSample });
+      await vi.waitFor(
+        () => {
+        expect(fs.readFileSync(path.join(samples, `${String(process.pid)}.txt`), "utf8")).toBe("sampled 1s");
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
+      expect(log).toMatch(/could not be paused/);
+      await vi.waitFor(
+        () => {
+        expect(fs.readdirSync(samples).sort()).toEqual(["3.txt", `${String(process.pid)}.txt`].sort());
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
+    });
+
+    it("says so when the native sampler cannot be run, and still ends the stall", async () => {
+      const nativeSample = { command: path.join(directory, "no-such-sampler"), args: [], directory: path.join(directory, "stall-samples"), seconds: 1, keep: 1 };
+      const log = await stallWith({ nativeSample });
+      await vi.waitFor(
+        () => {
+        expect(fs.readFileSync(path.join(directory, "frontdoor.log"), "utf8")).toMatch(/could not sample the main thread natively/);
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
+      expect(log).toMatch(/event loop did not run/);
     });
 
     it("starts a replacement past the immediate generations too, naming the cooldown it waits before binding", async () => {

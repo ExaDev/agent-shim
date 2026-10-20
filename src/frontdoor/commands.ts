@@ -87,6 +87,11 @@ import { createUsageStore } from "../usage/store";
 import type { UsageRecord } from "../usage/schema";
 
 /** How a door's watchdog starts a replacement: this very executable running the supervisor subcommand, pinned to this door's state root exactly as `spawnDetachedSupervisor` pins it. Every environment value is a string, as the watchdog thread's `spawn` requires. */
+/** macOS ships `sample` here: it samples a process's native stacks, the one tool that can say where a thread blocked inside a native call is held. */
+const MACOS_SAMPLER = "/usr/bin/sample";
+
+const MS_PER_SECOND = 1000;
+
 /** The cooldown this door was told to wait before binding (`DOOR_RESPAWN_DELAY_ENV`), or 0 for a door no watchdog started or one started with none. Read once at startup, with the generation. */
 function readRespawnDelayMs(): number {
   const delay = Number(process.env[DOOR_RESPAWN_DELAY_ENV]);
@@ -635,6 +640,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         cooldownStepMs: DOOR_STALL_BOUND_MS,
         cooldownCapMs: DOOR_RESPAWN_COOLDOWN_CAP_MS,
         startLockFile: paths.frontdoorLockFile,
+        ...(process.platform === "darwin"
+          ? { nativeSample: { command: MACOS_SAMPLER, args: ["{pid}", "{seconds}", "-file", "{file}"], directory: path.join(path.dirname(paths.frontdoorLogPath), "stall-samples"), seconds: Math.max(1, Math.ceil(DOOR_WATCHDOG_CHECK_MS / MS_PER_SECOND)), keep: DOOR_RESPAWN_MAX_GENERATIONS + 1 } }
+          : {}),
       }),
     // The launch lifecycle publisher over the same backbone the typed API serves: the tick's registry facts go in here, and the door's own register, prune and end moments come out as source-tagged events.
     observeLaunchRegistry: createLaunchEventPublisher(doorEvents, () => Date.now()).observe,
