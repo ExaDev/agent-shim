@@ -20,7 +20,10 @@ export const MAX_UNMATCHED_RESULTS = 20;
 
 const BYTES_PER_KIBIBYTE = 1024;
 
-/** The characters kept of the digest of a call id, and the radix a call's time is kept in (a millisecond clock fits in eight characters of it until the year 2058). Forty-eight bits of digest make a collision between two of the few thousand calls remembered about one in a billion. */
+/** The most characters of any one text the state keeps (a target, a description, a todo): all of them are cut to a few dozen columns when drawn, and a command or a prompt can be many kilobytes. */
+export const MAX_STORED_TEXT_CHARS = 200;
+
+/** The characters kept of the digest of a call id, and of the time of a call in base 36 (a millisecond clock fits in eight until the year 2058). Forty-eight bits of digest make a collision between two of the few thousand calls remembered about one in a billion. */
 const CALL_DIGEST_CHARS = 8;
 const CALL_TIME_RADIX = 36;
 
@@ -39,11 +42,15 @@ const CALL_MEMORY_BYTES = CALL_MEMORY_KIBIBYTES * BYTES_PER_KIBIBYTE;
  */
 export const MAX_REMEMBERED_CALLS = Math.floor(CALL_MEMORY_BYTES / REMEMBERED_CALL_BYTES);
 
-/** The most distinct skill names, and the most distinct MCP server names, the state keeps, for the same reason. */
-export const MAX_TRACKED_NAMES = 256;
+/** How much of the cache file the names of the skills used, and the names of the MCP servers used, may take each. */
+const NAME_MEMORY_KIBIBYTES = 16;
+const NAME_MEMORY_BYTES = NAME_MEMORY_KIBIBYTES * BYTES_PER_KIBIBYTE;
 
-/** The most characters of any one text the state keeps (a target, a description, a todo): all of them are cut to a few dozen columns when drawn, and a command or a prompt can be many kilobytes. */
-export const MAX_STORED_TEXT_CHARS = 200;
+/** The most names of each kind kept whole, for the rows to draw: they are cut to the cap on any stored text, so this many fit the budget at the most. Past it a name is only counted. */
+export const MAX_TRACKED_NAMES = Math.floor(NAME_MEMORY_BYTES / MAX_STORED_TEXT_CHARS);
+
+/** The most names of each kind counted after those kept whole, each by its digest. A session that used more has a count that is a floor, and says so. */
+export const MAX_COUNTED_NAMES = Math.floor(NAME_MEMORY_BYTES / (CALL_DIGEST_CHARS + QUOTES_AND_COMMA_BYTES));
 
 const MS_PER_SECOND = 1_000;
 const SECONDS_PER_MINUTE = 60;
@@ -94,9 +101,6 @@ const MCP_TOOL_NAME = /^mcp__(.+?)__(.+)$/;
 const QUEUED_TASK_ID = /<task-id>([^<]+)<\/task-id>/;
 const QUEUED_TOOL_USE_ID = /<tool-use-id>([^<]+)<\/tool-use-id>/;
 
-/** The characters of a tool call's command that identify it; a longer command is cut. */
-const COMMAND_TARGET_CHARS = 30;
-
 const ToolCallSchema = z.strictObject({
   id: z.string(),
   name: z.string(),
@@ -112,7 +116,8 @@ const ToolCallSchema = z.strictObject({
 
 const AgentCallSchema = z.strictObject({
   id: z.string(),
-  type: z.string(),
+  /** The kind of agent the call asked for; absent when the call names none, which the row draws as its own word. */
+  type: z.string().optional(),
   /** The model the agent asked to run on, replaced by the one it resolved to when the result says. */
   model: z.string().optional(),
   description: z.string().optional(),
@@ -174,21 +179,32 @@ export const ActivityLatestSchema = z.strictObject({
 });
 export type ActivityLatest = z.infer<typeof ActivityLatestSchema>;
 
+/** The distinct names of one kind used, in the order first used: the first few whole, for the rows to draw, and the digests of the rest, for the count. */
+const NameSetSchema = z.strictObject({
+  names: z.array(z.string()),
+  others: z.array(z.string()),
+  /** True once a name was used that the digests had no room for: the count is then a floor. */
+  overflowed: z.literal(true).optional(),
+});
+type NameSet = z.infer<typeof NameSetSchema>;
+
 /** The facts that add up over the whole transcript, so only a read of every record makes them exact: the skills and the MCP servers the session has used, each once, in the order first used. */
 const ActivityCumulativeSchema = z.strictObject({
-  skills: z.array(z.string()),
-  mcpServers: z.array(z.string()),
+  skills: NameSetSchema,
+  mcpServers: NameSetSchema,
 });
 
 /** Everything the activity facts are folded from, one transcript record at a time, in the two kinds the facts come in. It is JSON-serialisable, because the statusline is a new process at every refresh and keeps it between them. */
 export const ActivityStateSchema = z.strictObject({ cumulative: ActivityCumulativeSchema, latest: ActivityLatestSchema });
 export type ActivityState = z.infer<typeof ActivityStateSchema>;
 
+const EMPTY_NAME_SET: NameSet = { names: [], others: [] };
+
 /** The latest-state activity before any record has been read. */
 export const EMPTY_ACTIVITY_LATEST: ActivityLatest = { tools: [], agents: [], todos: [], unmatchedResults: [], rememberedCalls: [] };
 
 /** The state before any record has been read. */
-export const EMPTY_ACTIVITY_STATE: ActivityState = { cumulative: { skills: [], mcpServers: [] }, latest: EMPTY_ACTIVITY_LATEST };
+export const EMPTY_ACTIVITY_STATE: ActivityState = { cumulative: { skills: EMPTY_NAME_SET, mcpServers: EMPTY_NAME_SET }, latest: EMPTY_ACTIVITY_LATEST };
 
 /** `text` cut to the most characters the state keeps of a text, between characters a person sees. */
 function stored(text: string): string {
@@ -202,7 +218,7 @@ function stringField(input: Readonly<Record<string, unknown>> | undefined, key: 
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
-/** What a tool call acts on, from its input: a file for the tools that read or change one, the pattern of a search, the skill a `Skill` call runs, and the start of a command, with its white space collapsed. */
+/** What a tool call acts on, from its input: a file for the tools that read or change one, the pattern of a search, the skill a `Skill` call runs, and a command, with its white space collapsed. The row cuts what it draws to the width it has; the state keeps the text whole, up to the cap on any stored text. */
 function targetOf(name: string, input: Readonly<Record<string, unknown>> | undefined): string | undefined {
   switch (name) {
     case "Read":
@@ -219,7 +235,7 @@ function targetOf(name: string, input: Readonly<Record<string, unknown>> | undef
       if (command === undefined || command === "") {
         return undefined;
       }
-      return command.length > COMMAND_TARGET_CHARS ? `${command.slice(0, COMMAND_TARGET_CHARS).trimEnd()}...` : command;
+      return command;
     }
     default:
       return undefined;
@@ -286,7 +302,7 @@ function foldTodoCall(state: ActivityLatest, call: ToolUse): ActivityLatest {
     return Array.isArray(written) ? { ...state, todos: replacedTodos(state.todos, written), todosReplaced: true } : state;
   }
   if (call.name === TASK_CREATE_TOOL) {
-    const content = stored(stringField(input, "subject") ?? stringField(input, "description") ?? "Untitled task");
+    const content = stored(stringField(input, "subject") ?? stringField(input, "description") ?? "");
     const status = todoStatusOf(input?.status) ?? "pending";
     return { ...state, todos: [...state.todos, { content, status, pendingCallId: call.id }].slice(-MAX_TRACKED_TODOS), todosEdited: true };
   }
@@ -303,7 +319,7 @@ function foldTodoCall(state: ActivityLatest, call: ToolUse): ActivityLatest {
   return { ...state, todos: state.todos.map((item, at) => (at === index ? updated : item)), todosEdited: true };
 }
 
-/** The digest of a call id, which is all the state keeps of a call it only remembers. */
+/** The digest of a call id or a name, which is all the state keeps of one it only counts. */
 function digestOf(id: string): string {
   return createHash("sha256").update(id).digest("base64url").slice(0, CALL_DIGEST_CHARS);
 }
@@ -341,11 +357,12 @@ function foldToolUse(state: ActivityLatest, call: ToolUse, atMs: number | undefi
 function foldTrackedCall(state: ActivityLatest, call: ToolUse, atMs: number | undefined): ActivityLatest {
   if (AGENT_TOOLS.includes(call.name)) {
     const { input } = call;
+    const type = stringField(input, "subagent_type");
     const model = stringField(input, "model");
     const description = stringField(input, "description");
     const agent: z.infer<typeof AgentCallSchema> = {
       id: call.id,
-      type: stored(stringField(input, "subagent_type") ?? "agent"),
+      ...(type === undefined ? {} : { type: stored(type) }),
       ...(model === undefined ? {} : { model: stored(model) }),
       ...(description === undefined ? {} : { description: stored(description) }),
       ...(atMs === undefined ? {} : { startedAtMs: atMs }),
@@ -472,9 +489,22 @@ export function foldActivityLatest(state: ActivityLatest, record: TranscriptReco
   return next;
 }
 
-/** `names` with `name` after them, unless it is there already or the list is full. */
-function withName(names: readonly string[], name: string | undefined): readonly string[] {
-  return name === undefined || name === "" || names.includes(name) || names.length >= MAX_TRACKED_NAMES ? names : [...names, name];
+/** `set` with `name` counted: kept whole while there is room, else by its digest, and noted as overflowed when the digests are full too. A name used before changes nothing. */
+function withName(set: NameSet, name: string | undefined): NameSet {
+  if (name === undefined || name === "" || set.names.includes(name)) {
+    return set;
+  }
+  if (set.names.length < MAX_TRACKED_NAMES) {
+    return { ...set, names: [...set.names, name] };
+  }
+  const digest = digestOf(name);
+  if (set.others.includes(digest)) {
+    return set;
+  }
+  if (set.others.length >= MAX_COUNTED_NAMES) {
+    return set.overflowed === true ? set : { ...set, overflowed: true };
+  }
+  return { ...set, others: [...set.others, digest] };
 }
 
 /** The cumulative activity after one more transcript record, read in file order. */
@@ -483,8 +513,7 @@ function foldActivityCumulative(state: ActivityState["cumulative"], record: Tran
   if (record.isSidechain === true || record.type !== "assistant" || !Array.isArray(content)) {
     return state;
   }
-  let skills: readonly string[] = state.skills;
-  let mcpServers: readonly string[] = state.mcpServers;
+  let { skills, mcpServers } = state;
   for (const block of content) {
     if (block.type !== "tool_use" || block.name === undefined) {
       continue;
@@ -496,7 +525,7 @@ function foldActivityCumulative(state: ActivityState["cumulative"], record: Tran
     const server = MCP_TOOL_NAME.exec(block.name)?.[1];
     mcpServers = withName(mcpServers, server === undefined ? undefined : stored(server));
   }
-  return skills === state.skills && mcpServers === state.mcpServers ? state : { skills: [...skills], mcpServers: [...mcpServers] };
+  return skills === state.skills && mcpServers === state.mcpServers ? state : { skills, mcpServers };
 }
 
 /** `state` after one more transcript record, read in file order. */
@@ -512,7 +541,7 @@ export interface ToolCallFact {
 }
 
 export interface AgentFact {
-  readonly type: string;
+  readonly type: string | undefined;
   readonly model: string | undefined;
   readonly description: string | undefined;
   readonly status: "running" | "completed";
@@ -521,8 +550,15 @@ export interface AgentFact {
 }
 
 interface TodoFact {
-  readonly content: string;
+  readonly content: string | undefined;
   readonly status: z.infer<typeof TodoStatusSchema>;
+}
+
+/** The names of one kind used in a session, as many of the first as the state keeps whole, and how many there are: `exact` is false when the state had no room to count them all, so the total is a floor. */
+export interface NamesFact {
+  readonly names: readonly string[];
+  readonly total: number;
+  readonly exact: boolean;
 }
 
 /** What the session's transcript says about what the session is doing. Every text is reduced to what a person would see (escape sequences, control characters and characters that draw nothing removed, edge space trimmed), and one that is nothing after that is left out. */
@@ -530,9 +566,9 @@ export interface ActivityFacts {
   /** The latest tool calls, oldest first. */
   readonly tools: readonly ToolCallFact[];
   /** The skills the session has used, once each, in the order first used. */
-  readonly skills: readonly string[];
+  readonly skills: NamesFact;
   /** The MCP servers the session has used a tool of, once each, in the order first used. */
-  readonly mcpServers: readonly string[];
+  readonly mcpServers: NamesFact;
   /** The latest agents, oldest first; one that has had no end for longer than a live one can run is not here. */
   readonly agents: readonly AgentFact[];
   /** The todo list as it stands. */
@@ -540,16 +576,17 @@ export interface ActivityFacts {
 }
 
 /** The facts of a session that has not done anything yet. */
-export const EMPTY_ACTIVITY_FACTS: ActivityFacts = { tools: [], skills: [], mcpServers: [], agents: [], todos: [] };
+export const EMPTY_ACTIVITY_FACTS: ActivityFacts = { tools: [], skills: { names: [], total: 0, exact: true }, mcpServers: { names: [], total: 0, exact: true }, agents: [], todos: [] };
 
 /** Whether a call started at `startedAtMs` and not yet ended can still be running at `nowMs`, given the longest such a call can run. A call with no start time is given the benefit of the doubt, and one stamped after `nowMs` (clock skew) has run no time at all. */
 function isLive(startedAtMs: number | undefined, nowMs: number, maxMs: number): boolean {
   return startedAtMs === undefined || nowMs - startedAtMs <= maxMs;
 }
 
-/** The distinct, non-empty visible texts of `names`, in order. */
-function visibleNames(names: readonly string[]): string[] {
-  return [...new Set(names.map(visibleDisplayText).filter((name) => name !== ""))];
+/** The names of `set` as a person sees them, the distinct non-empty ones in order, with the count of all the names. */
+function visibleNames(set: NameSet): NamesFact {
+  const names = [...new Set(set.names.map(visibleDisplayText).filter((name) => name !== ""))];
+  return { names, total: names.length + set.others.length, exact: set.overflowed !== true };
 }
 
 /**
@@ -575,14 +612,14 @@ export function activityFactsOf(state: ActivityState, nowMs: number, limits: Rea
       if (!ended && (agent.abandoned === true || !isLive(agent.startedAtMs, nowMs, MAX_LIVE_AGENT_MS))) {
         return [];
       }
-      const type = visibleDisplayText(agent.type);
+      const type = agent.type === undefined ? "" : visibleDisplayText(agent.type);
       const model = agent.model === undefined ? "" : visibleDisplayText(agent.model);
       const description = agent.description === undefined ? "" : visibleDisplayText(agent.description);
-      return [{ type: type === "" ? "agent" : type, model: model === "" ? undefined : model, description: description === "" ? undefined : description, status: ended ? "completed" : "running", startedAtMs: agent.startedAtMs, endedAtMs: agent.endedAtMs }];
+      return [{ type: type === "" ? undefined : type, model: model === "" ? undefined : model, description: description === "" ? undefined : description, status: ended ? "completed" : "running", startedAtMs: agent.startedAtMs, endedAtMs: agent.endedAtMs }];
     }),
     todos: latest.todos.flatMap((todo) => {
       const content = visibleDisplayText(todo.content);
-      return content === "" || todo.pendingCallId !== undefined ? [] : [{ content, status: todo.status }];
+      return todo.pendingCallId !== undefined ? [] : [{ content: content === "" ? undefined : content, status: todo.status }];
     }),
   };
 }

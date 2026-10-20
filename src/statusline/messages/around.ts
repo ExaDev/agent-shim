@@ -23,40 +23,35 @@ export function aroundValue(message: string, value: string, paint: (text: string
   return `${paintCore(before, paint)}${value}${paintCore(after, paint)}`;
 }
 
-/** The messages whose words are painted around a value that keeps its own colour: each has a placeholder for that value, exactly one in every language, and the ones that name a count (`COUNTED_AROUND_VALUE_IDS`) have a second, for the count. */
+/** The messages whose words are painted around a value that keeps its own colour. */
 export const AROUND_VALUE_IDS = ["sessionTime.started", "sessionTime.lastReply", "addedDirs.label", "skills.label", "mcp.label"] as const;
 
 export type AroundValueId = (typeof AROUND_VALUE_IDS)[number];
 
-/** The messages written around a value that also name a count, which the caller supplies. */
-export const COUNTED_AROUND_VALUE_IDS: readonly AroundValueId[] = ["skills.label", "mcp.label"];
+/** How a message that has a value in it is written: the placeholders it holds (one for the value, which is `mark` here, and a second for the count when it names one), so what is counted is stated once, with the message that has it. */
+interface AroundMessage {
+  readonly counted: boolean;
+  readonly write: (t: Translate, mark: string, count: number | string) => string;
+}
 
-/** The count a counted message names; a defect in the caller when it is missing. */
-function requiredCount(id: AroundValueId, count: number | string | undefined): number | string {
-  if (count === undefined) {
+const AROUND_MESSAGES: Readonly<Record<AroundValueId, AroundMessage>> = {
+  "sessionTime.started": { counted: false, write: (t, mark) => t("sessionTime.started", { time: mark }) },
+  "sessionTime.lastReply": { counted: false, write: (t, mark) => t("sessionTime.lastReply", { ago: mark }) },
+  "addedDirs.label": { counted: false, write: (t, mark) => t("addedDirs.label", { dirs: mark }) },
+  "skills.label": { counted: true, write: (t, mark, count) => t("skills.label", { count, names: mark }) },
+  "mcp.label": { counted: true, write: (t, mark, count) => t("mcp.label", { count, names: mark }) },
+};
+
+/** Whether the message `id` names a count, which its caller then supplies. */
+export function namesCount(id: AroundValueId): boolean {
+  return AROUND_MESSAGES[id].counted;
+}
+
+/** The message `id` with `value` where its value goes and its words painted by `paint`; a message that names a count takes it as `count`, which is a defect in the caller when it is missing. */
+export function writeAround(t: Translate, id: AroundValueId, value: string, paint: (text: string) => string, count?: number | string): string {
+  const message = AROUND_MESSAGES[id];
+  if (message.counted && count === undefined) {
     throw new TypeError(`message "${id}" names a count, and none was given`);
   }
-  return count;
-}
-
-/** The message `id` written with the mark where its one value goes. */
-function marked(t: Translate, id: AroundValueId, count: number | string | undefined): string {
-  switch (id) {
-    case "sessionTime.started":
-      return t(id, { time: VALUE_MARK });
-    case "sessionTime.lastReply":
-      return t(id, { ago: VALUE_MARK });
-    case "addedDirs.label":
-      return t(id, { dirs: VALUE_MARK });
-    case "skills.label":
-    case "mcp.label":
-      return t(id, { count: requiredCount(id, count), names: VALUE_MARK });
-    default:
-      return id satisfies never;
-  }
-}
-
-/** The message `id` with `value` where its value goes and its words painted by `paint`; a message that names a count takes it as `count`. */
-export function writeAround(t: Translate, id: AroundValueId, value: string, paint: (text: string) => string, count?: number | string): string {
-  return aroundValue(marked(t, id, count), value, paint);
+  return aroundValue(message.write(t, VALUE_MARK, count ?? ""), value, paint);
 }

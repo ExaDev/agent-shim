@@ -4,6 +4,7 @@ import { ESCAPE } from "../ansi";
 import {
   activityFactsOf,
   ActivityStateSchema,
+  EMPTY_ACTIVITY_FACTS,
   EMPTY_ACTIVITY_LATEST,
   EMPTY_ACTIVITY_STATE,
   foldActivity,
@@ -15,6 +16,7 @@ import {
   MAX_REMEMBERED_CALLS,
   MAX_STORED_TEXT_CHARS,
   MAX_TRACKED_AGENTS,
+  MAX_COUNTED_NAMES,
   MAX_TRACKED_NAMES,
   MAX_TRACKED_TODOS,
   MAX_TRACKED_TOOL_CALLS,
@@ -30,7 +32,6 @@ const SECONDS_PER_MINUTE = 60;
 const MINUTE = SECONDS_PER_MINUTE * SECOND;
 /** Times after T0 that records are stamped, named by their order and not by how long they are. */
 const STEP = { third: 3, fourth: 4, fifth: 5, sixth: 6, ninth: 9 } as const;
-const COMMAND_TARGET_CHARS = 30;
 const LONG_COMMAND_CHARS = 40;
 const MANY_TIMES_THE_LIMIT = 10;
 const ONE_MEBIBYTE = 1_048_576;
@@ -77,7 +78,7 @@ describe("tool calls", () => {
     expect(target("Grep", { pattern: "needle" })).toBe("needle");
     expect(target("Skill", { skill: "commit" })).toBe("commit");
     expect(target("Bash", { command: "git   status \n --short" })).toBe("git status --short");
-    expect(target("Bash", { command: "a".repeat(LONG_COMMAND_CHARS) })).toBe(`${"a".repeat(COMMAND_TARGET_CHARS)}...`);
+    expect(target("Bash", { command: "a".repeat(LONG_COMMAND_CHARS) })).toBe("a".repeat(LONG_COMMAND_CHARS));
     expect(target("WebFetch", { url: "https://example.com" })).toBeUndefined();
     expect(target("Bash", {})).toBeUndefined();
   });
@@ -111,7 +112,7 @@ describe("tool calls", () => {
 
   it("reads nothing from the records of a subagent", () => {
     const records = [use("a", "Read", {}, 0, { isSidechain: true }), result("a", SECOND, false, { isSidechain: true }), use("b", "Skill", { skill: "s" }, 0, { isSidechain: true }), use("c", "mcp__srv__tool", {}, 0, { isSidechain: true }), use("d", "TaskCreate", { subject: "s" }, 0, { isSidechain: true }), use("e", "Agent", {}, 0, { isSidechain: true })];
-    expect(factsAt(records)).toEqual({ tools: [], skills: [], mcpServers: [], agents: [], todos: [] });
+    expect(factsAt(records)).toEqual(EMPTY_ACTIVITY_FACTS);
   });
 
   it("leaves out a call whose name is nothing once sanitised", () => {
@@ -252,7 +253,7 @@ describe("whether a call is still running", () => {
 
   it("forgets a foreground agent with no result when the next response begins, and keeps one started in the background", () => {
     const records = [inResponse("r1", use("fg", "Agent", { subagent_type: "Plan" })), inResponse("r1", use("bg", "Agent", { subagent_type: "Explore", run_in_background: true })), inResponse("r2", use("x", "Read", {}, 2))];
-    expect(factsAt(records).agents.map((agent) => `${agent.type}:${agent.status}`)).toEqual(["Explore:running"]);
+    expect(factsAt(records).agents.map((agent) => `${agent.type ?? ""}:${agent.status}`)).toEqual(["Explore:running"]);
   });
 
   it("finishes a call, an agent and a task whose result is written after the next response, as results are not always written in order", () => {
@@ -342,25 +343,34 @@ describe("skills and MCP servers", () => {
       use("f", "mcp__github__create_issue"),
     ];
     const facts = factsAt(records);
-    expect(facts.skills).toEqual(["commit", "journal"]);
-    expect(facts.mcpServers).toEqual(["plugin_playwright_playwright", "github"]);
+    expect(facts.skills).toEqual({ names: ["commit", "journal"], total: 2, exact: true });
+    expect(facts.mcpServers).toEqual({ names: ["plugin_playwright_playwright", "github"], total: 2, exact: true });
   });
 
   it("takes a Skill call with no skill name, and a tool name that is not an MCP tool's, for neither", () => {
     const facts = factsAt([use("a", "Skill", {}), use("b", "mcp__only"), use("c", "Read")]);
-    expect(facts.skills).toEqual([]);
-    expect(facts.mcpServers).toEqual([]);
+    expect(facts.skills.names).toEqual([]);
+    expect(facts.mcpServers.names).toEqual([]);
   });
 
-  it("keeps the names it has been given after it is full, and no more", () => {
-    const records = Array.from({ length: MAX_TRACKED_NAMES + EXTRA_NAMES }, (_, index) => use(`s${String(index)}`, "Skill", { skill: `skill-${String(index)}` }));
+  it("keeps the first names whole and counts every other one, once, by a digest", () => {
+    const distinct = MAX_TRACKED_NAMES + EXTRA_NAMES;
+    const records = [...Array.from({ length: distinct }, (_, index) => use(`s${String(index)}`, "Skill", { skill: `skill-${String(index)}` })), use("again", "Skill", { skill: "skill-0" }), use("later", "Skill", { skill: `skill-${String(distinct - 1)}` })];
     const { skills } = factsAt(records);
-    expect(skills).toHaveLength(MAX_TRACKED_NAMES);
-    expect(skills[0]).toBe("skill-0");
+    expect(skills.names).toHaveLength(MAX_TRACKED_NAMES);
+    expect(skills.names[0]).toBe("skill-0");
+    expect(skills).toMatchObject({ total: distinct, exact: true });
+  });
+
+  it("counts the servers past the names kept whole too, and says when it can count no more", () => {
+    const distinct = MAX_TRACKED_NAMES + MAX_COUNTED_NAMES + EXTRA_NAMES;
+    const records = Array.from({ length: distinct }, (_, index) => use(`m${String(index)}`, `mcp__server${String(index)}__tool`));
+    expect(factsAt(records.slice(0, MAX_TRACKED_NAMES + EXTRA_NAMES)).mcpServers).toMatchObject({ total: MAX_TRACKED_NAMES + EXTRA_NAMES, exact: true });
+    expect(factsAt(records).mcpServers).toMatchObject({ total: MAX_TRACKED_NAMES + MAX_COUNTED_NAMES, exact: false });
   });
 
   it("reduces a name to the text a person would see, and counts two names that look the same as one", () => {
-    expect(factsAt([use("a", "Skill", { skill: `co${ESCAPE}[31mmmit` }), use("b", "Skill", { skill: "commit" })]).skills).toEqual(["commit"]);
+    expect(factsAt([use("a", "Skill", { skill: `co${ESCAPE}[31mmmit` }), use("b", "Skill", { skill: "commit" })]).skills.names).toEqual(["commit"]);
   });
 });
 
@@ -372,8 +382,9 @@ describe("agents", () => {
     expect(factsAt([launch(), result("ag", STEP.third * SECOND)]).agents[0]).toMatchObject({ status: "completed", startedAtMs: T0, endedAtMs: T0 + STEP.third * SECOND });
   });
 
-  it("reads a call to the Task tool as an agent too, and a missing type as agent", () => {
-    expect(factsAt([use("t", "Task", {})]).agents[0]?.type).toBe("agent");
+  it("reads a call to the Task tool as an agent too, and a missing type as none, which the row writes in the language's words", () => {
+    expect(factsAt([use("t", "Task", {})]).agents).toMatchObject([{ type: undefined, status: "running" }]);
+    expect(factsAt([use("t", "Task", { subagent_type: "Explore" })]).agents[0]?.type).toBe("Explore");
   });
 
   it("takes the model the result says the agent ran on over the one it asked for", () => {
@@ -472,7 +483,7 @@ describe("the todo list", () => {
     expect(factsAt(records).todos).toEqual([
       { content: "first", status: "completed" },
       { content: "second", status: "in_progress" },
-      { content: "Untitled task", status: "pending" },
+      { content: undefined, status: "pending" },
     ]);
   });
 
@@ -552,7 +563,7 @@ describe("the todo list", () => {
 
   it("lets a later update name a task by the identifier it had before a TodoWrite wrote the list again", () => {
     const records = [...created("c1", { subject: "keep" }, "k", 1), todoWrite([{ content: "keep", status: "pending" }, { content: "new", status: "pending" }], 2), update({ taskId: "k", status: "completed" }, STEP.third)];
-    expect(factsAt(records).todos.map((todo) => `${todo.content}:${todo.status}`)).toEqual(["keep:completed", "new:pending"]);
+    expect(factsAt(records).todos.map((todo) => `${todo.content ?? ""}:${todo.status}`)).toEqual(["keep:completed", "new:pending"]);
   });
 
   it("gives two items with the same words each their own identifier when the list is written again", () => {
@@ -586,9 +597,9 @@ describe("the text the state keeps", () => {
     expect(facts.agents[0]?.type).toHaveLength(MAX_STORED_TEXT_CHARS);
     expect(facts.agents[0]?.description).toHaveLength(MAX_STORED_TEXT_CHARS);
     expect(facts.agents[0]?.model).toHaveLength(MAX_STORED_TEXT_CHARS);
-    expect(facts.todos.map((todo) => todo.content.length)).toEqual([MAX_STORED_TEXT_CHARS, MAX_STORED_TEXT_CHARS]);
-    expect(facts.skills[0]).toHaveLength(MAX_STORED_TEXT_CHARS);
-    expect(facts.mcpServers[0]).toHaveLength(MAX_STORED_TEXT_CHARS);
+    expect(facts.todos.map((todo) => todo.content?.length)).toEqual([MAX_STORED_TEXT_CHARS, MAX_STORED_TEXT_CHARS]);
+    expect(facts.skills.names[0]).toHaveLength(MAX_STORED_TEXT_CHARS);
+    expect(facts.mcpServers.names[0]).toHaveLength(MAX_STORED_TEXT_CHARS);
   });
 
   it("keeps the state, which is rewritten to the cache file at every refresh, under a mebibyte when every list is full of texts far longer than any row draws", () => {
@@ -673,7 +684,7 @@ describe("activityFactsOf with the facts folded from the end of the transcript",
 
   it("leaves the skills and servers to the state, since they add up over the whole transcript", () => {
     const newer = end([use("s", "Skill", { skill: "late" }, STEP.ninth)]);
-    expect(activityFactsOf(older, T0 + SECOND, LIMITS, newer).skills).toEqual(["early"]);
+    expect(activityFactsOf(older, T0 + SECOND, LIMITS, newer).skills.names).toEqual(["early"]);
   });
 });
 
@@ -696,9 +707,9 @@ describe("a transcript read in growing steps", () => {
     use("w2", "TodoWrite", { todos: [{ content: "one", status: "completed" }, { content: "two", status: "in_progress" }] }, STEP.ninth + 1),
     use("b1", "Bash", { command: "ls" }, STEP.ninth + 2),
     result("b1", STEP.ninth + STEP.third),
-  ].map((record, index) => withResponse(`resp${String(index)}`, record));
+  ].map((record, index) => inResponse(`resp${String(index)}`, record));
 
-  function withResponse(key: string, record: Record<string, unknown>): Record<string, unknown> {
+  function inResponse(key: string, record: Record<string, unknown>): Record<string, unknown> {
     return { ...record, message: { ...(isRecord(record.message) ? record.message : {}), id: key } };
   }
 
@@ -720,6 +731,6 @@ describe("a transcript read in growing steps", () => {
 
   it("shows the whole transcript's facts once the end is the whole transcript", () => {
     const whole = activityFactsOf(fold(SESSION), T0 + SECOND, LIMITS);
-    expect(activityFactsOf(fold([]), T0 + SECOND, LIMITS, endOf(SESSION))).toEqual({ ...whole, skills: [], mcpServers: [] });
+    expect(activityFactsOf(fold([]), T0 + SECOND, LIMITS, endOf(SESSION))).toEqual({ ...whole, skills: EMPTY_ACTIVITY_FACTS.skills, mcpServers: EMPTY_ACTIVITY_FACTS.mcpServers });
   });
 });

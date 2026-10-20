@@ -3,7 +3,7 @@ import { packLines, SEPARATOR } from "../../headerLayout";
 import { paintCore } from "../../messages/around";
 import type { ToolCallFact } from "../../transcript/activity";
 import type { RenderContext, RowOutput } from "../context";
-import { DONE_MARK, ELLIPSIS, NO_LINES, RUNNING_MARK } from "./activityParts";
+import { columnsLeft, DONE_MARK, ELLIPSIS, fitToWidth, markColumns, markedLine, NO_LINES, RUNNING_MARK } from "./activityParts";
 
 /** The most running calls the row names: a session runs a few at once, and the newest are the ones a person is waiting on. */
 const MAX_RUNNING_SHOWN = 2;
@@ -12,30 +12,32 @@ const MAX_RUNNING_SHOWN = 2;
 const TARGET_COLUMNS = 20;
 const FILE_TOOLS: readonly string[] = ["Read", "Write", "Edit"];
 
+/** What stands for the directories of a path whose file is drawn alone, and the ellipsis that ends a file name cut to fit. */
+const DIRECTORY_ELLIPSIS = ".../";
+const FILE_ELLIPSIS = "...";
+
 /** The tool name of an MCP server's tool: `mcp__<server>__<tool>`, whose last part is the tool's own name. */
 const MCP_TOOL_NAME = /^mcp__.+__.+$/;
 
-/** A tool's name for a limit of `maxColumns` columns (0 for none): a tool of an MCP server is shown by its own name once a limit is set, and a name wider than the limit ends in an ellipsis within it. */
-function shortToolName(name: string, maxColumns: number): string {
-  if (maxColumns === 0) {
-    return name;
-  }
-  const own = MCP_TOOL_NAME.test(name) ? (name.split("__").pop() ?? name) : name;
-  return truncateWithEllipsis(own, maxColumns, ELLIPSIS);
+/** A tool's name for a limit of `maxColumns` columns (0 for none) and the `available` columns the line has for it: a tool of an MCP server is shown by its own name once a limit is set, and a name wider than the limit or the columns available ends in an ellipsis within them. */
+function shortToolName(name: string, maxColumns: number, available: number): string {
+  const own = maxColumns !== 0 && MCP_TOOL_NAME.test(name) ? (name.split("__").pop() ?? name) : name;
+  return truncateWithEllipsis(own, maxColumns === 0 ? available : Math.min(maxColumns, available), ELLIPSIS);
 }
 
-/** What a running call acts on, for the width the row gives it: a file by its name when its whole path does not fit, anything else cut. */
-function targetText(tool: ToolCallFact): string {
+/** What a running call acts on, cut to the `columns` it has (its own limit at the most): a file by its name when its whole path does not fit, anything else cut. */
+function targetText(tool: ToolCallFact, columns: number): string {
   const target = tool.target ?? "";
+  const room = Math.min(TARGET_COLUMNS, columns);
   if (!FILE_TOOLS.includes(tool.name)) {
-    return truncateWithEllipsis(target, TARGET_COLUMNS, ELLIPSIS);
+    return truncateWithEllipsis(target, room, ELLIPSIS);
   }
   const path = target.replaceAll("\\", "/");
-  if (visibleLength(path) <= TARGET_COLUMNS) {
+  if (visibleLength(path) <= room) {
     return path;
   }
   const file = path.split("/").pop() ?? path;
-  return visibleLength(file) >= TARGET_COLUMNS ? truncateWithEllipsis(file, TARGET_COLUMNS, "...") : `.../${file}`;
+  return visibleLength(DIRECTORY_ELLIPSIS) + visibleLength(file) > room ? truncateWithEllipsis(file, room, FILE_ELLIPSIS) : `${DIRECTORY_ELLIPSIS}${file}`;
 }
 
 /** The kinds of finished call with how many of each there are, the most used first, ties in the order first seen. */
@@ -58,16 +60,24 @@ export function toolsRow(context: RenderContext): RowOutput {
   const hideSkills = settings.layout.rows.includes("skills");
   const tools = (context.transcript()?.activity.tools ?? []).filter((tool) => !(hideSkills && tool.name === "Skill"));
   const { nameMaxLength, maxVisible } = settings.tools;
+  const available = columnsLeft(width, markColumns(t));
   const running = tools.filter((tool) => tool.status === "running").slice(-MAX_RUNNING_SHOWN);
   const parts = running.map((tool) => {
-    const target = targetText(tool);
-    return `${palette.paint("warning", RUNNING_MARK)} ${palette.paint("activity", shortToolName(tool.name, nameMaxLength))}${target === "" ? "" : palette.paint("label", t("tools.target", { target }))}`;
+    const name = shortToolName(tool.name, nameMaxLength, available);
+    const room = available - visibleLength(name) - visibleLength(t("tools.target", { target: "" }));
+    const target = tool.target === undefined || room < 1 ? "" : targetText(tool, room);
+    return markedLine(t, palette.paint("warning", RUNNING_MARK), `${palette.paint("activity", name)}${target === "" ? "" : label(t("tools.target", { target }))}`);
   });
   const kinds = finishedByKind(tools);
   const named = maxVisible === 0 ? kinds : kinds.slice(0, maxVisible);
-  parts.push(...named.map(([name, count]) => `${palette.paint("context", DONE_MARK)} ${shortToolName(name, nameMaxLength)}${paintCore(t("tools.count", { count }), label)}`));
+  parts.push(
+    ...named.map(([name, count]) => {
+      const countText = t("tools.count", { count });
+      return markedLine(t, palette.paint("context", DONE_MARK), `${shortToolName(name, nameMaxLength, columnsLeft(available, visibleLength(countText)))}${paintCore(countText, label)}`);
+    }),
+  );
   if (named.length < kinds.length) {
-    parts.push(palette.paint("label", t("more", { count: kinds.length - named.length })));
+    parts.push(label(t("more", { count: kinds.length - named.length })));
   }
-  return parts.length === 0 ? NO_LINES : { kind: "text", lines: packLines(parts, width, SEPARATOR).map((line) => line.join(SEPARATOR)) };
+  return parts.length === 0 ? NO_LINES : { kind: "text", lines: packLines(parts.map((part) => fitToWidth(part, width)), width, SEPARATOR).map((line) => line.join(SEPARATOR)) };
 }

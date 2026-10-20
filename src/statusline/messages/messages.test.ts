@@ -49,8 +49,8 @@ describe("the message catalogues", () => {
   it("write every language other than English in its own words", () => {
     for (const language of STATUSLINE_LANGUAGES.filter((name) => name !== "en")) {
       const same = IDS.filter((id) => CATALOGUES[language][id] === CATALOGUES.en[id]);
-      // The name of the proxy and the abbreviation of the client are the only texts the languages keep as they are.
-      expect(same.sort(), language).toEqual(["headroom.label", "version.label"]);
+      // The name of the proxy, the abbreviation of the client and the space after a mark are the only texts the languages keep as they are.
+      expect(same.sort(), language).toEqual(["headroom.label", "mark.line", "version.label"]);
     }
   });
 });
@@ -102,11 +102,10 @@ function literalsIn(file: string, withoutLetters = false): string[] {
   return found;
 }
 
-/** The directories whose modules read or hold data and never write text for the screen, each with why. A module in one that started to draw words would have to move out of it. */
+/** The directories whose modules read or hold data and never write text for the screen, each with why. A module in one that started to draw words would have to move out of it. The transcript reader is not one: it reads the client's own wording, and what it keeps for the screen (a missing title, an unnamed agent) is a fact for the elements to write in a language's words, so it is held to the same rule as they are, with the names it compares listed below. */
 const DATA_DIRECTORIES: Readonly<Record<string, string>> = {
   messages: "the catalogues themselves",
   parity: "the record of claude-hud's settings, read by tests and documents",
-  transcript: "reads the session transcript into facts; the elements draw them",
   vcs: "reads git and Jujutsu into a status; the vcs segment draws it, and says a detached head in the catalogue's words",
 };
 
@@ -148,6 +147,12 @@ const NOT_WORDS: Readonly<Record<string, readonly string[]>> = {
   "resetTime.ts": ["relative", "absolute", "both", "elapsed", "elapsedAndAbsolute"],
   "style.ts": ["usage", "usageWarning", "warning", "critical", "empty", "M", "k", "s", "d ", "h", "h ", "m"],
   "wallClock.ts": ["en-CA", "medium", "short", "auto", "numeric"],
+  // The names the client's transcript is written in (record types, tool names, input fields and statuses), the environment variables it reads and the markers it leaves in a user's text, which the reader compares and never draws; and the results of `typeof` and the digest algorithms.
+  "transcript/activity.ts": ["BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS", "Task", "Agent", "TodoWrite", "TaskCreate", "TaskUpdate", "Skill", "Bash", "async_launched", "teammate_spawned", "pending", "in_progress", "completed", "string", "Read", "Write", "Edit", "file_path", "path", "Glob", "Grep", "pattern", "skill", "command", "not_started", "running", "complete", "done", "object", "content", "status", "number", "subject", "description", "deleted", "sha256", "base64url", "subagent_type", "model", "true", "queue-operation", "enqueue", "assistant", "tool_result", "tool_use", "user", "error"],
+  "transcript/reader.ts": ["transcript", "sha256", "hex"],
+  "transcript/record.ts": ["object"],
+  "transcript/session.ts": ["<command-name>", "<command-message>", "<local-command-", "[Request interrupted by user", "string", "tool_result", "text", "assistant", "user", "system", "compact_boundary", "custom-title", "ai-title"],
+  "transcript/tokens.ts": ["assistant"],
   // Names of the products and plans the statusline reports, which no language translates, the identifiers the account sends, and the file names it reads.
   "elements/header/account.ts": ["claude_max", "Max", "Max ", "claude_pro", "Pro", "claude_team", "team_standard", "Team Standard", "team_tier_1", "Team Premium", "Team", "claude_enterprise", "Enterprise", "default_", "free", "Free", "x"],
   "elements/header/outputStyle.ts": [".claude", "settings.json", "settings.local.json"],
