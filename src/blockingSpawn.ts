@@ -1,8 +1,5 @@
 import {
-  execFileSync,
   spawnSync,
-  type ExecFileSyncOptionsWithStringEncoding,
-  type ExecFileSyncOptions,
   type SpawnSyncOptions,
   type SpawnSyncOptionsWithBufferEncoding,
   type SpawnSyncOptionsWithStringEncoding,
@@ -20,12 +17,4 @@ export function spawnSyncBlocking(operation: string, command: string, args: read
 export function spawnSyncBlocking(operation: string, command: string, args: readonly string[], options?: SpawnSyncOptions): SpawnSyncReturns<string | Buffer> {
   refuseToBlockInRole(operation);
   return spawnSync(command, args, options ?? {});
-}
-
-/** `execFileSync`, refused in a process whose event loop serves other processes, for the same reason as `spawnSyncBlocking`. */
-export function execFileSyncBlocking(operation: string, file: string, args: readonly string[], options: ExecFileSyncOptionsWithStringEncoding): string;
-export function execFileSyncBlocking(operation: string, file: string, args: readonly string[], options?: ExecFileSyncOptions): string | Buffer;
-export function execFileSyncBlocking(operation: string, file: string, args: readonly string[], options?: ExecFileSyncOptions): string | Buffer {
-  refuseToBlockInRole(operation);
-  return execFileSync(file, args, options ?? {});
 }
