@@ -1,59 +1,35 @@
 import { describe, expect, it } from "vitest";
 
 import { ESCAPE } from "../ansi";
+
 import {
   activityFactsOf,
   ActivityStateSchema,
   EMPTY_ACTIVITY_FACTS,
   EMPTY_ACTIVITY_LATEST,
   EMPTY_ACTIVITY_STATE,
-  foldActivity,
   foldActivityLatest,
   MAX_LIVE_AGENT_MS,
   BASH_DEFAULT_TIMEOUT_MS,
   BASH_MAX_TIMEOUT_MS,
   bashLiveLimitMs,
-  MAX_REMEMBERED_CALLS,
   MAX_STORED_TEXT_CHARS,
   MAX_TRACKED_AGENTS,
   MAX_COUNTED_NAMES,
-  MAX_TRACKED_NAMES,
   MAX_TRACKED_TODOS,
   MAX_TRACKED_TOOL_CALLS,
   type ActivityLatest,
-  type ActivityState,
 } from "./activity";
+
+import { T0, SECOND, MINUTE, STEP, MANY_TIMES_THE_LIMIT, EXTRA_CALLS, BYTES_PER_KIBIBYTE, QUOTES_AND_COMMA_BYTES, NAMES_THAT_OVERFILL, NAME_MEMORY_KIBIBYTES, isRecord, at, use, result, fold, LIMITS, factsAt } from "./activityTesting";
+
 import { parseTranscriptRecord } from "./record";
 
-const T0 = Date.parse("2026-10-20T09:00:00.000Z");
-const SECOND = 1_000;
-const SECONDS_PER_MINUTE = 60;
-const MINUTE = SECONDS_PER_MINUTE * SECOND;
-/** Times after T0 that records are stamped, named by their order and not by how long they are. */
-const STEP = { third: 3, fourth: 4, fifth: 5, sixth: 6, ninth: 9 } as const;
 const LONG_COMMAND_CHARS = 40;
-const MANY_TIMES_THE_LIMIT = 10;
 const ONE_MEBIBYTE = 1_048_576;
-const EXTRA_CALLS = 5;
 const EXTRA_NAMES = 3;
 const EXTRA_TODOS = 3;
 const FEW_MINUTES = 5;
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
-const at = (ms: number): string => new Date(T0 + ms).toISOString();
-
-const use = (id: string, name: string, input: Record<string, unknown> = {}, ms = 0, extra: Record<string, unknown> = {}): Record<string, unknown> => ({ type: "assistant", timestamp: at(ms), message: { content: [{ type: "tool_use", id, name, input }] }, ...extra });
-const result = (id: string, ms: number, isError = false, extra: Record<string, unknown> = {}): Record<string, unknown> => ({ type: "user", timestamp: at(ms), message: { content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content: "done" }] }, ...extra });
-
-function fold(records: readonly Record<string, unknown>[], from: ActivityState = EMPTY_ACTIVITY_STATE): ActivityState {
-  return records.reduce<ActivityState>((state, record) => {
-    const parsed = parseTranscriptRecord(JSON.stringify(record));
-    return parsed === undefined ? state : foldActivity(state, parsed);
-  }, from);
-}
-
-const LIMITS = { bashMs: BASH_MAX_TIMEOUT_MS };
-const factsAt = (records: readonly Record<string, unknown>[], nowMs = T0 + SECOND) => activityFactsOf(fold(records), nowMs, LIMITS);
-
 describe("tool calls", () => {
   it("tracks a call as running until its result, then as completed", () => {
     expect(factsAt([use("a", "Read", { file_path: "/x/y.ts" })]).tools).toEqual([{ name: "Read", target: "/x/y.ts", status: "running" }]);
@@ -280,76 +256,6 @@ describe("whether a call is still running", () => {
 
 });
 
-describe("history written again by a resumed session", () => {
-  it("adds no call that left the tracked window and is written again, with its result, in the same order", () => {
-    const history = Array.from({ length: MAX_TRACKED_TOOL_CALLS + EXTRA_CALLS }, (_, index) => [use(`h${String(index)}`, `Tool${String(index)}`, {}, index), result(`h${String(index)}`, index)]).flat();
-    const once = factsAt(history).tools;
-    expect(factsAt([...history, ...history.slice(0, EXTRA_CALLS * 2)]).tools).toEqual(once);
-    expect(factsAt([...history, ...history.slice(0, EXTRA_CALLS * 2), use("new", "Fresh", {}, MINUTE)]).tools.at(-1)).toMatchObject({ name: "Fresh", status: "running" });
-  });
-
-  it("adds no agent that left the tracked window and is written again, as running", () => {
-    const history = Array.from({ length: MAX_TRACKED_AGENTS + EXTRA_CALLS }, (_, index) => [use(`g${String(index)}`, "Agent", { subagent_type: `T${String(index)}`, run_in_background: true }, index), result(`g${String(index)}`, index, false, { toolUseResult: { isAsync: true } })]).flat();
-    const once = factsAt(history).agents;
-    expect(factsAt([...history, ...history.slice(0, EXTRA_CALLS * 2)]).agents).toEqual(once);
-  });
-
-  it("adds no task written again, so the list is not rebuilt from its own copy", () => {
-    const history = [...Array.from({ length: 3 }, (_, index) => [use(`c${String(index)}`, "TaskCreate", { subject: `task ${String(index)}` }, index), { type: "user", timestamp: at(index), message: { content: [{ type: "tool_result", tool_use_id: `c${String(index)}`, content: `Task #${String(index + 1)} created` }] } }]).flat()];
-    expect(factsAt([...history, ...history.slice(0, 2)]).todos).toEqual(factsAt(history).todos);
-  });
-
-  it("remembers the latest calls only, so a bounded number of them are kept in the state", () => {
-    const records = Array.from({ length: MAX_REMEMBERED_CALLS + EXTRA_CALLS }, (_, index) => use(`s${String(index)}`, "Read", {}, index));
-    const { rememberedCalls, forgottenUpToMs } = fold(records).latest;
-    expect(rememberedCalls).toHaveLength(MAX_REMEMBERED_CALLS);
-    expect(forgottenUpToMs).toBe(T0 + EXTRA_CALLS - 1);
-  });
-
-  it("adds no call written again after the memory has forgotten it, and leaves a newer todo list alone", () => {
-    const list = (subject: string, ms: number): Record<string, unknown> => use(`w${subject}`, "TodoWrite", { todos: [{ content: subject, status: "pending", activeForm: subject }] }, ms);
-    const history = [list("old", 0), ...Array.from({ length: MAX_REMEMBERED_CALLS + EXTRA_CALLS }, (_, index) => use(`f${String(index)}`, "Read", {}, index + 1)), list("new", MAX_REMEMBERED_CALLS + EXTRA_CALLS + 1)];
-    const once = factsAt(history);
-    expect(once.todos.map((item) => item.content)).toEqual(["new"]);
-    const again = factsAt([...history, list("old", 0), use("f0", "Read", {}, 1)]);
-    expect(again.todos).toEqual(once.todos);
-    expect(again.tools).toEqual(once.tools);
-  });
-
-  it("is not blinded by one call stamped far ahead of the rest: calls written after it are still new once it is forgotten", () => {
-    const ahead = use("ahead", "Read", {}, MANY_TIMES_THE_LIMIT * MAX_LIVE_AGENT_MS);
-    const history = Array.from({ length: MAX_REMEMBERED_CALLS + EXTRA_CALLS }, (_, index) => use(`k${String(index)}`, "Glob", {}, (index + 1) * SECOND));
-    const fresh = [use("fresh1", "Grep", {}, MAX_REMEMBERED_CALLS * SECOND + MINUTE), use("write", "TodoWrite", { todos: [{ content: "now", status: "in_progress" }] }, MAX_REMEMBERED_CALLS * SECOND + MINUTE + SECOND)];
-    const state = fold([ahead, ...history]);
-    expect(state.latest.forgottenUpToMs).toBeLessThan(T0 + MANY_TIMES_THE_LIMIT * MAX_LIVE_AGENT_MS);
-    const facts = activityFactsOf(fold(fresh, state), T0 + SECOND, LIMITS);
-    expect(facts.tools.map((tool) => tool.name)).toContain("Grep");
-    expect(facts.todos.map((todo) => todo.content)).toEqual(["now"]);
-  });
-
-  it("reads a call never written before as history when it is no newer than the newest call forgotten, and as new when it is newer", () => {
-    const history = Array.from({ length: MAX_REMEMBERED_CALLS + EXTRA_CALLS }, (_, index) => use(`k${String(index)}`, "Glob", {}, index));
-    const newestForgotten = EXTRA_CALLS - 1;
-    const names = (ms: number): string[] => activityFactsOf(fold([use("stray", "Grep", {}, ms)], fold(history)), T0 + SECOND, LIMITS).tools.map((tool) => tool.name);
-    expect(names(newestForgotten)).not.toContain("Grep");
-    expect(names(newestForgotten + 1)).toContain("Grep");
-  });
-
-  it("reads a call that was never written, and is no older than the newest forgotten, as new while the memory holds it", () => {
-    const records = [use("a", "Read", {}, MINUTE), use("b", "Grep", {}, 0)];
-    expect(factsAt(records).tools.map((tool) => tool.name)).toEqual(["Read", "Grep"]);
-  });
-
-  it("keeps no result for a call that was read and has left the tracked window, and applies every result waiting for a call", () => {
-    const history = Array.from({ length: MAX_TRACKED_TOOL_CALLS + EXTRA_CALLS }, (_, index) => use(`k${String(index)}`, "Read", {}, index));
-    expect(fold([...history, result("k0", STEP.fifth)]).latest.unmatchedResults).toEqual([]);
-    const launch = result("j", 1, false, { toolUseResult: { isAsync: true } });
-    const ended = { type: "queue-operation", operation: "enqueue", timestamp: at(STEP.third), content: "<task-notification><task-id>t</task-id><tool-use-id>j</tool-use-id></task-notification>" };
-    const [agent] = factsAt([launch, ended, use("j", "Agent", { subagent_type: "x", run_in_background: true }, 0)]).agents;
-    expect(agent).toMatchObject({ status: "completed", endedAtMs: T0 + STEP.third });
-  });
-});
-
 describe("skills and MCP servers", () => {
   it("collects each skill and each server once, in the order first used", () => {
     const records = [
@@ -371,20 +277,49 @@ describe("skills and MCP servers", () => {
     expect(facts.mcpServers.names).toEqual([]);
   });
 
-  it("keeps the first names whole and counts every other one, once, by a digest", () => {
-    const distinct = MAX_TRACKED_NAMES + EXTRA_NAMES;
-    const records = [...Array.from({ length: distinct }, (_, index) => use(`s${String(index)}`, "Skill", { skill: `skill-${String(index)}` })), use("again", "Skill", { skill: "skill-0" }), use("later", "Skill", { skill: `skill-${String(distinct - 1)}` })];
-    const { skills } = factsAt(records);
-    expect(skills.names).toHaveLength(MAX_TRACKED_NAMES);
-    expect(skills.names[0]).toBe("skill-0");
-    expect(skills).toMatchObject({ total: distinct, exact: true });
+  /** The bytes a name takes in the cache file as an element of a JSON array, and the room each of the two lists of names of a kind has there. */
+  const nameBytes = (name: string): number => Buffer.byteLength(`${JSON.stringify(name)},`);
+  const NAME_ROOM_BYTES = NAME_MEMORY_KIBIBYTES * BYTES_PER_KIBIBYTE;
+  const skillRecords = (names: readonly string[]): Record<string, unknown>[] => names.map((name, index) => use(`s${String(index)}`, "Skill", { skill: name }));
+  const WIDE_NAME_CHARS = 50;
+  const CJK_CHARACTER = "\u5B57";
+  const LONGEST_NAME_CHARS = 200;
+  const INDEX_DIGITS = 6;
+  const distinctNames = (count: number, width: number, filler: string): string[] => Array.from({ length: count }, (_, index) => `${filler.repeat(width - INDEX_DIGITS)}${String(index).padStart(INDEX_DIGITS, "0")}`);
+
+  it("keeps the first names whole within their byte budget and counts every other one, once, by a digest", () => {
+    const names = distinctNames(Math.ceil(NAME_ROOM_BYTES / WIDE_NAME_CHARS) + EXTRA_NAMES, WIDE_NAME_CHARS, "n");
+    const wholeCapacity = Math.floor(NAME_ROOM_BYTES / nameBytes(names[0] ?? ""));
+    const { skills } = factsAt([...skillRecords(names), use("again", "Skill", { skill: names[0] }), use("later", "Skill", { skill: names.at(-1) })]);
+    expect(skills.names).toEqual(names.slice(0, wholeCapacity));
+    expect(skills).toMatchObject({ total: names.length, exact: true });
   });
 
-  it("counts the servers past the names kept whole too, and says when it can count no more", () => {
-    const distinct = MAX_TRACKED_NAMES + MAX_COUNTED_NAMES + EXTRA_NAMES;
-    const records = Array.from({ length: distinct }, (_, index) => use(`m${String(index)}`, `mcp__server${String(index)}__tool`));
-    expect(factsAt(records.slice(0, MAX_TRACKED_NAMES + EXTRA_NAMES)).mcpServers).toMatchObject({ total: MAX_TRACKED_NAMES + EXTRA_NAMES, exact: true });
-    expect(factsAt(records).mcpServers).toMatchObject({ total: MAX_TRACKED_NAMES + MAX_COUNTED_NAMES, exact: false });
+  it("counts the bytes of a name, not its characters, when it keeps names whole", () => {
+    const names = distinctNames(NAMES_THAT_OVERFILL, LONGEST_NAME_CHARS, CJK_CHARACTER);
+    const kept = fold(skillRecords(names)).cumulative.skills.names;
+    const bytes = kept.reduce((total, name) => total + nameBytes(name), 0);
+    expect(bytes).toBeLessThanOrEqual(NAME_ROOM_BYTES);
+    expect(bytes + nameBytes(names[kept.length] ?? "")).toBeGreaterThan(NAME_ROOM_BYTES);
+    expect(kept.length).toBeGreaterThan(0);
+  });
+
+  it("keeps the digests of the names counted after them within their byte budget, uses all of it, and says when it can count no more", () => {
+    const wholeCapacity = Math.ceil(NAME_ROOM_BYTES / WIDE_NAME_CHARS);
+    const names = distinctNames(wholeCapacity + MAX_COUNTED_NAMES + EXTRA_NAMES, WIDE_NAME_CHARS, "n");
+    const { others, names: kept, overflowed } = fold(skillRecords(names)).cumulative.skills;
+    expect(overflowed).toBe(true);
+    expect(others).toHaveLength(MAX_COUNTED_NAMES);
+    const digestBytes = (others[0]?.length ?? 0) + QUOTES_AND_COMMA_BYTES;
+    expect(MAX_COUNTED_NAMES * digestBytes).toBeLessThanOrEqual(NAME_ROOM_BYTES);
+    expect((MAX_COUNTED_NAMES + 1) * digestBytes).toBeGreaterThan(NAME_ROOM_BYTES);
+    expect(Buffer.byteLength(JSON.stringify(others))).toBeLessThanOrEqual(NAME_ROOM_BYTES);
+    expect(factsAt(skillRecords(names)).skills).toMatchObject({ total: kept.length + MAX_COUNTED_NAMES, exact: false });
+  });
+
+  it("counts the servers past the names kept whole too", () => {
+    const records = Array.from({ length: Math.ceil(NAME_ROOM_BYTES / WIDE_NAME_CHARS) + EXTRA_NAMES }, (_, index) => use(`m${String(index)}`, `mcp__server${String(index)}__tool`));
+    expect(factsAt(records).mcpServers).toMatchObject({ total: records.length, exact: true });
   });
 
   it("reduces a name to the text a person would see, and counts two names that look the same as one", () => {
@@ -626,7 +561,7 @@ describe("the text the state keeps", () => {
     for (let index = 0; index < MAX_TRACKED_TODOS; index += 1) {
       records.push(use(`c${String(index)}`, "TaskCreate", { subject: huge }), { type: "user", timestamp: at(1), message: { content: [{ type: "tool_result", tool_use_id: `c${String(index)}`, content: `Task #${String(index)} created` }] } });
     }
-    for (let index = 0; index < MAX_TRACKED_NAMES; index += 1) {
+    for (let index = 0; index < NAMES_THAT_OVERFILL; index += 1) {
       records.push(use(`s${String(index)}`, "Skill", { skill: `${String(index)}${huge}` }), use(`m${String(index)}`, `mcp__${String(index)}${huge}__tool`));
     }
     for (let index = 0; index < MAX_TRACKED_TOOL_CALLS; index += 1) {
