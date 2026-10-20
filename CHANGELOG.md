@@ -1,3 +1,34 @@
+## [11.55.0](https://github.com/ExaDev/agent-shim/compare/v11.54.1...v11.55.0) (2026-10-20)
+
+### Features
+
+* **statusline:** configure how the quota row shows usage and resets ([c7c88ee](https://github.com/ExaDev/agent-shim/commit/c7c88eee0c27325c9fa701bf3bbecf94beb3adfc))
+
+### Bug Fixes
+
+* **statusline:** decide that text draws nothing by its width, in one shared definition ([5959dc8](https://github.com/ExaDev/agent-shim/commit/5959dc827ab3da201941a9424cc20433887c7397))
+* **statusline:** drop model names a person cannot see and test the quota row's wrapping by columns ([6a7e28c](https://github.com/ExaDev/agent-shim/commit/6a7e28ca428e76ec4bf924f08be4fe46c9f396a4))
+* **statusline:** keep escape sequences whole when cutting text to a width ([98f894f](https://github.com/ExaDev/agent-shim/commit/98f894f40cbfef0aa606f550d889f7292af7cfe1))
+* **statusline:** keep legitimate names whole and measure labels and bar glyphs in columns ([69ae32b](https://github.com/ExaDev/agent-shim/commit/69ae32b25ebcca1d9270f9fab73e0dd121363e0c))
+* **statusline:** keep word breaks and Hangul clusters when cleaning a name ([41876d4](https://github.com/ExaDev/agent-shim/commit/41876d4dfbe3bc4fc055412acf1438a2672f0673))
+* **statusline:** measure a line in terminal columns, not UTF-16 units ([37ba6ab](https://github.com/ExaDev/agent-shim/commit/37ba6ab7e4e731f085a60a7dd5837730564730a8))
+* **statusline:** show seconds for a reset less than a minute away ([1fafce5](https://github.com/ExaDev/agent-shim/commit/1fafce5a6236d4bcedd3f9d9214215f4bfffaa04))
+* **statusline:** wrap the quota row's text forms and tell wall-clock times as the locale does ([eb91151](https://github.com/ExaDev/agent-shim/commit/eb91151ce711009909f74239512ebafdf38d3dae))
+* **statusline:** write wall-clock times in the locale's own short time form ([b50d5ea](https://github.com/ExaDev/agent-shim/commit/b50d5eab0993d5d63e5f999f24feb66d46e4aaca))
+
+### Code Refactoring
+
+* **frontdoor:** take the subscription window lengths from the pool ranking ([e39078e](https://github.com/ExaDev/agent-shim/commit/e39078e5300c19de56111a566279e06081d83aa0))
+* **statusline:** drop unused state from the width cut and write glyphs as escapes ([e2ab29b](https://github.com/ExaDev/agent-shim/commit/e2ab29b1a88cfcb9a87f3312761556721a27232f))
+
+### Documentation
+
+* **statusline:** state the duration form by what it writes ([5e24ea1](https://github.com/ExaDev/agent-shim/commit/5e24ea143120bb715556ed272b4e639a459c95c1))
+
+### Tests
+
+* **statusline:** pin the Hangul jamo ranges that keep a filler in its cluster ([5576549](https://github.com/ExaDev/agent-shim/commit/557654912e3f8591106c75bad3d40b7ca7de41e6))
+
 ## [11.54.1](https://github.com/ExaDev/agent-shim/compare/v11.54.0...v11.54.1) (2026-10-20)
 
 ### Bug Fixes
