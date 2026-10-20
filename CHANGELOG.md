@@ -1,3 +1,13 @@
+## [11.56.0](https://github.com/ExaDev/agent-shim/compare/v11.55.0...v11.56.0) (2026-10-20)
+
+### Features
+
+* **credential:** resolve a credential without blocking the calling thread ([36fa5c7](https://github.com/ExaDev/agent-shim/commit/36fa5c79f41aaaaf20a2986090b1272272be1422))
+
+### Bug Fixes
+
+* **frontdoor:** resolve provider credentials without blocking the event loop ([2be1a14](https://github.com/ExaDev/agent-shim/commit/2be1a14ba173ad780816a052ca782e1332d2a89f))
+
 ## [11.55.0](https://github.com/ExaDev/agent-shim/compare/v11.54.1...v11.55.0) (2026-10-20)
 
 ### Features
