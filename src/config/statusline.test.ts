@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { statuslineKeys } from "../statusline/keys";
-import { contextBands, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_COLUMNS, MAX_STATUSLINE_LABEL_COLUMNS, MIN_STATUSLINE_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
+import { contextBands, STATUSLINE_HEADER_SEGMENTS, STATUSLINE_PRESETS, STATUSLINE_ROWS, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_STATUSLINE_COLUMNS, MAX_STATUSLINE_LABEL_COLUMNS, MIN_STATUSLINE_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
 
 const A_CONFIGURED_WIDTH = 100;
 const OVER_LONG_LABEL = "x".repeat(MAX_STATUSLINE_LABEL_COLUMNS + 1);
@@ -10,6 +10,7 @@ const WARN_ABOVE_DEFAULT_CRITICAL = 95;
 const CRITICAL_ABOVE_WARN = 99;
 const OWN_WINDOW = 100_000;
 const OWN_PAIR = { warnAt: 40, criticalAt: 50 };
+const SHALLOWER_BAR_WIDTH = 6;
 
 describe("StatuslineSchema", () => {
   it("accepts every group and none", () => {
@@ -429,5 +430,77 @@ describe("the language setting", () => {
 
   it("merges like any scalar: the deeper layer's choice wins", () => {
     expect(mergeStatuslineSettings({ language: "zh-Hans", bar: { width: 6 } }, { language: "zh-Hant" })).toEqual({ language: "zh-Hant", bar: { width: 6 } });
+  });
+});
+
+describe("presets", () => {
+  const LAYERED = (...layers: readonly unknown[]): unknown => layers.reduce<unknown>((merged, layer) => mergeStatuslineSettings(merged, layer), {});
+
+  it("name the bundles a layer can choose, with the statusline's own first, and refuse any other", () => {
+    expect(STATUSLINE_PRESETS).toEqual(["standard", "full", "essential", "minimal"]);
+    expect(StatuslineSchema.safeParse({ preset: "maximal" }).success).toBe(false);
+    expect(resolveStatusline(undefined).preset).toBe("standard");
+  });
+
+  it("make standard the statusline with no settings at all", () => {
+    expect(resolveStatusline({ preset: "standard" })).toEqual(resolveStatusline(undefined));
+  });
+
+  it("make full draw every segment and row, with the reset label on and Jujutsu opted in", () => {
+    const full = resolveStatusline({ preset: "full" });
+    expect(full.layout).toMatchObject({ header: [...STATUSLINE_HEADER_SEGMENTS], rows: [...STATUSLINE_ROWS] });
+    expect(full.usage.resetLabel).toBe(true);
+    expect(full.jj).toEqual({ enabled: true, showDirty: true, showConflicts: true });
+    expect(full.git).toMatchObject({ enabled: true, showDirty: true, showAheadBehind: false });
+  });
+
+  it("make essential the model, project, version control and duration above the context bar, and minimal the same without the duration", () => {
+    const essential = resolveStatusline({ preset: "essential" });
+    expect(essential.layout).toMatchObject({ header: ["model", "project", "vcs", "duration"], rows: ["context"] });
+    expect(essential.jj.enabled).toBe(false);
+    expect(resolveStatusline({ preset: "minimal" }).layout).toMatchObject({ header: ["model", "project", "vcs"], rows: ["context"] });
+  });
+
+  it("sit beneath the keys the same layer sets", () => {
+    const resolved = resolveStatusline({ preset: "minimal", layout: { rows: ["context", "quota"] }, git: { showDirty: false } });
+    expect(resolved.layout).toMatchObject({ header: ["model", "project", "vcs"], rows: ["context", "quota"] });
+    expect(resolved.git.showDirty).toBe(false);
+    expect(resolved.preset).toBe("minimal");
+  });
+
+  it("sit above everything a shallower layer sets, so a deeper layer's preset replaces a shallower layer's own keys", () => {
+    const merged = LAYERED({ layout: { header: ["model"] }, bar: { width: SHALLOWER_BAR_WIDTH } }, { preset: "full" });
+    expect(resolveStatusline(StatuslineSchema.parse(merged)).layout.header).toEqual([...STATUSLINE_HEADER_SEGMENTS]);
+    expect(resolveStatusline(StatuslineSchema.parse(merged)).bar.width).toBe(SHALLOWER_BAR_WIDTH);
+  });
+
+  it("stay beneath what a deeper layer sets itself", () => {
+    const merged = LAYERED({ preset: "minimal" }, { git: { showDirty: false } });
+    const resolved = resolveStatusline(StatuslineSchema.parse(merged));
+    expect(resolved.layout.rows).toEqual(["context"]);
+    expect(resolved.git.showDirty).toBe(false);
+  });
+
+  it("leave nothing of a shallower layer's preset behind when a deeper layer chooses another", () => {
+    for (const shallower of STATUSLINE_PRESETS) {
+      for (const deeper of STATUSLINE_PRESETS) {
+        const merged = LAYERED({ preset: shallower }, { preset: deeper });
+        expect(resolveStatusline(StatuslineSchema.parse(merged)), `${shallower} then ${deeper}`).toEqual(resolveStatusline({ preset: deeper }));
+      }
+    }
+  });
+
+  it("resolve to the same settings when the merged result is resolved again, which is what a launch exports", () => {
+    const merged = StatuslineSchema.parse(LAYERED({ preset: "full" }, { preset: "essential", layout: { rows: ["context", "quota"] } }));
+    expect(resolveStatusline(merged)).toEqual(resolveStatusline(StatuslineSchema.parse(mergeStatuslineSettings(undefined, merged))));
+  });
+
+  it("keep a layer's own keys when it names no preset, and change neither argument", () => {
+    const base = { layout: { header: ["model"] } };
+    const over = { preset: "full" };
+    mergeStatuslineSettings(base, over);
+    expect(base).toEqual({ layout: { header: ["model"] } });
+    expect(over).toEqual({ preset: "full" });
+    expect(mergeStatuslineSettings({ bar: { width: 6 } }, { bar: { filled: "#" } })).toEqual({ bar: { width: 6, filled: "#" } });
   });
 });

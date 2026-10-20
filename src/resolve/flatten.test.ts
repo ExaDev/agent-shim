@@ -263,6 +263,14 @@ const OWN_WARN_AT = 50;
 const LATER_WARN_AT = 65;
 
 describe("phase one: launch statusline", () => {
+  it("lays a layer's preset beneath that layer's own keys and over the shallower layers' settings", () => {
+    const flattened = flattenLayers(
+      [layer(0, { launch: { statusline: { layout: { header: ["model", "account"] }, bar: { width: 6 } } } }), layer(1, { launch: { statusline: { preset: "minimal", git: { showDirty: false } } } }), layer(2, { launch: { statusline: { language: "zh-Hans" } } })],
+      { home: FAKE_HOME },
+    );
+    expect(flattened.launch.statusline).toMatchObject({ preset: "minimal", language: "zh-Hans", bar: { width: 6 }, layout: { header: ["model", "project", "vcs"], rows: ["context"] }, git: { enabled: true, showDirty: false, showAheadBehind: false } });
+  });
+
   it("merges key by key in every group, so a deeper layer that sets one label leaves a shallower layer's thresholds and the other label alone", () => {
     const flattened = flattenLayers(
       [

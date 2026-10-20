@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { STATUSLINE_PRESETS } from "../../config/statusline";
 import { statuslineKeys } from "../keys";
 import { CLAUDE_HUD_COMMIT } from "./inventory";
 import { inventoryKeys, PARITY, parityGaps } from "./map";
@@ -33,5 +34,12 @@ describe("the claude-hud parity map", () => {
     const doc = fs.readFileSync(PARITY_DOC, "utf8");
     expect(doc).toContain(CLAUDE_HUD_COMMIT);
     expect(Object.keys(PARITY).filter((key) => !doc.includes(`\`${key}\``))).toEqual([]);
+  });
+
+  it("says in the parity document how each preset is reproduced", () => {
+    const doc = fs.readFileSync(PARITY_DOC, "utf8");
+    for (const preset of STATUSLINE_PRESETS) {
+      expect(doc, preset).toContain(`\`preset: ${preset}\``);
+    }
   });
 });

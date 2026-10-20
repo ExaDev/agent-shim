@@ -130,3 +130,15 @@ The environment row reads a configuration file only up to a fixed size (a global
 ## Language
 
 The words the statusline writes live in one catalogue, keyed by stable ids, in `src/statusline/messages/`: English is the default and the reference, and Chinese is written in simplified and in traditional characters. A test refuses a catalogue that lacks an id English has or uses other placeholders, and another refuses a label written in an element instead of the catalogue. The wording is agent-shim's own, written for its labels, not claude-hud's translations. What stays the same in every language is deliberate: durations (`1h 30m`), token counts (`634k`), money (`$1.25`) and product names. A wall-clock time follows the system locale and `clock.hourCycle` and `clock.seconds`, so it is not the language's to decide.
+
+## Presets
+
+claude-hud's presets exist only in its guided configuration flow, which applies a bundle of its display toggles. agent-shim has them as a setting: `preset` names a bundle of `layout.header`, `layout.rows`, `git.*`, `jj.*` and `usage.resetLabel` that the layer sets beneath the keys it names itself and above everything the shallower layers set, so any key still overrides a preset and a deeper layer's preset replaces what a shallower layer chose. Every preset sets the same keys, so choosing one leaves nothing of another behind. `preset: standard` is the statusline's own default, and is there so a deeper layer can go back to it.
+
+| claude-hud preset | agent-shim |
+|---|---|
+| Full | `preset: full`: every header segment and row the statusline has, `usage.resetLabel` on, git with the dirty marker and without ahead and behind, Jujutsu on with dirty and conflict markers |
+| Essential | `preset: essential`: the model, project, version control and duration segments above the context row; git as in Full and Jujutsu off. Usage, counts and tokens are not drawn. The activity lines claude-hud's Essential names (tools, agents, todos) join the bundle when the statusline has them |
+| Minimal | `preset: minimal`: the model, project and version control segments above the context row, git as in Full and Jujutsu off |
+
+The account, provider, route, identity and headroom segments are agent-shim's own and have no claude-hud counterpart, so only `preset: standard` and `preset: full` draw them.
