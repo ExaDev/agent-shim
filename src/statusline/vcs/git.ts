@@ -113,14 +113,14 @@ function parseNumstat(output: string): { readonly total: LineDiff; readonly byPa
   return { total: { added, deleted }, byPath };
 }
 
-/** A detached HEAD's name: the tag that points at it exactly, else `detached:` and its abbreviated commit. */
-function detachedName(ports: StatuslinePorts, cwd: string): string | undefined {
+/** What a detached HEAD is called: the tag that points at it exactly, else its abbreviated commit, marked as one so the segment can say it in words. */
+function detachedName(ports: StatuslinePorts, cwd: string): { readonly name: string; readonly detached: boolean } | undefined {
   const tag = ports.run(GIT, ["describe", "--tags", "--exact-match", "HEAD"], cwd)?.trim();
   if (tag !== undefined && tag !== "") {
-    return tag;
+    return { name: tag, detached: false };
   }
   const commit = ports.run(GIT, ["rev-parse", "--short", "HEAD"], cwd)?.trim();
-  return commit === undefined || commit === "" ? undefined : `detached:${commit}`;
+  return commit === undefined || commit === "" ? undefined : { name: commit, detached: true };
 }
 
 /** Changed files with the most recently modified first. The paths git prints are relative to the repository root, not to the working directory, so the root is asked for once; a file whose time cannot be read sorts last. */
@@ -137,16 +137,16 @@ function byRecency(ports: StatuslinePorts, cwd: string, files: ParsedStatus["tra
 export function readGitStatus(ports: StatuslinePorts, cwd: string, query: Readonly<GitQuery>): VcsStatus | undefined {
   if (!query.workingTree) {
     const abbreviated = ports.run(GIT, ["rev-parse", "--abbrev-ref", "HEAD"], cwd)?.trim();
-    const branch = abbreviated === DETACHED_ABBREV ? detachedName(ports, cwd) : abbreviated;
-    return branch === undefined || branch === "" ? undefined : { kind: "git", branch: sanitiseDisplayText(branch), dirty: false, conflict: false, ahead: 0, behind: 0, lineDiff: undefined, files: undefined };
+    const head = abbreviated === DETACHED_ABBREV ? detachedName(ports, cwd) : { name: abbreviated, detached: false };
+    return head?.name === undefined || head.name === "" ? undefined : { kind: "git", branch: sanitiseDisplayText(head.name), detached: head.detached, dirty: false, conflict: false, ahead: 0, behind: 0, lineDiff: undefined, files: undefined };
   }
   const output = ports.run(GIT, ["--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z"], cwd);
   if (output === undefined) {
     return undefined;
   }
   const status = parseStatus(output);
-  const branch = status.head === DETACHED_HEAD ? detachedName(ports, cwd) : status.head;
-  if (status.noCommitYet || branch === undefined || branch === "") {
+  const head = status.head === DETACHED_HEAD ? detachedName(ports, cwd) : { name: status.head, detached: false };
+  if (status.noCommitYet || head?.name === undefined || head.name === "") {
     return undefined;
   }
   const numstat = query.lineDiff && status.dirty ? ports.run(GIT, ["--no-optional-locks", "diff", "--numstat", "-z", "HEAD"], cwd) : undefined;
@@ -154,7 +154,8 @@ export function readGitStatus(ports: StatuslinePorts, cwd: string, query: Readon
   const tracked = query.files && status.tracked.length > 0 ? byRecency(ports, cwd, status.tracked) : status.tracked;
   return {
     kind: "git",
-    branch: sanitiseDisplayText(branch),
+    branch: sanitiseDisplayText(head.name),
+    detached: head.detached,
     dirty: status.dirty,
     conflict: false,
     ahead: status.ahead,

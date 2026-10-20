@@ -72,7 +72,7 @@ function parse(output: string): VcsStatus | undefined {
     return undefined;
   }
   const branch = label(bookmarks[0] ?? changeId);
-  return branch === undefined ? undefined : { kind: "jj", branch, dirty: dirtyFlag === "1", conflict: conflictFlag === "1", ahead: 0, behind: 0, lineDiff: undefined, files: undefined };
+  return branch === undefined ? undefined : { kind: "jj", branch, detached: false, dirty: dirtyFlag === "1", conflict: conflictFlag === "1", ahead: 0, behind: 0, lineDiff: undefined, files: undefined };
 }
 
 /** The status of the Jujutsu repository `cwd` is in, from one `jj log` call, or undefined when jj is missing, `cwd` is not in a repository, or the output is not the shape the template makes (an incompatible jj). */

@@ -41,7 +41,7 @@ const entry = (code: string, path: string): string => `1 ${code} N... 100644 100
 describe("readGitStatus branch only", () => {
   it("runs one command for a branch", () => {
     const { ports, calls } = gitPorts({ "rev-parse --abbrev-ref HEAD": "feat/x\n" });
-    expect(readGitStatus(ports, CWD, BRANCH_ONLY)).toEqual({ kind: "git", branch: "feat/x", dirty: false, conflict: false, ahead: 0, behind: 0, lineDiff: undefined, files: undefined });
+    expect(readGitStatus(ports, CWD, BRANCH_ONLY)).toEqual({ kind: "git", branch: "feat/x", detached: false, dirty: false, conflict: false, ahead: 0, behind: 0, lineDiff: undefined, files: undefined });
     expect(calls).toEqual(["rev-parse --abbrev-ref HEAD"]);
   });
 
@@ -50,8 +50,8 @@ describe("readGitStatus branch only", () => {
   });
 
   it("names a detached head by its exact tag, else by its short commit", () => {
-    expect(readGitStatus(gitPorts({ "rev-parse --abbrev-ref HEAD": "HEAD\n", "describe --tags --exact-match HEAD": "v1.2.3\n" }).ports, CWD, BRANCH_ONLY)?.branch).toBe("v1.2.3");
-    expect(readGitStatus(gitPorts({ "rev-parse --abbrev-ref HEAD": "HEAD\n", "rev-parse --short HEAD": "abc1234\n" }).ports, CWD, BRANCH_ONLY)?.branch).toBe("detached:abc1234");
+    expect(readGitStatus(gitPorts({ "rev-parse --abbrev-ref HEAD": "HEAD\n", "describe --tags --exact-match HEAD": "v1.2.3\n" }).ports, CWD, BRANCH_ONLY)).toMatchObject({ branch: "v1.2.3", detached: false });
+    expect(readGitStatus(gitPorts({ "rev-parse --abbrev-ref HEAD": "HEAD\n", "rev-parse --short HEAD": "abc1234\n" }).ports, CWD, BRANCH_ONLY)).toMatchObject({ branch: "abc1234", detached: true });
     expect(readGitStatus(gitPorts({ "rev-parse --abbrev-ref HEAD": "HEAD\n" }).ports, CWD, BRANCH_ONLY)).toBeUndefined();
   });
 
@@ -84,7 +84,7 @@ describe("readGitStatus working tree", () => {
 
   it("names a detached head", () => {
     const detached = status(["# branch.oid 0123", "# branch.head (detached)"]);
-    expect(readGitStatus(gitPorts({ [STATUS_KEY]: detached, "rev-parse --short HEAD": "0123abc\n" }).ports, CWD, TREE)?.branch).toBe("detached:0123abc");
+    expect(readGitStatus(gitPorts({ [STATUS_KEY]: detached, "rev-parse --short HEAD": "0123abc\n" }).ports, CWD, TREE)).toMatchObject({ branch: "0123abc", detached: true });
   });
 
   it("does not count lines unless asked, and not for a clean tree", () => {

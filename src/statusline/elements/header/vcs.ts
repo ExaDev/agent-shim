@@ -22,7 +22,7 @@ export function vcsSegment(context: RenderContext): string | undefined {
   const { settings, palette } = context;
   const isGit = status.kind === "git";
   const showDirty = isGit ? settings.git.showDirty : settings.jj.showDirty;
-  const inner = [palette.paint("gitBranch", status.branch + (showDirty && status.dirty ? "*" : ""))];
+  const inner = [palette.paint("gitBranch", (status.detached ? context.t("vcs.detached", { commit: status.branch }) : status.branch) + (showDirty && status.dirty ? "*" : ""))];
   if (isGit && settings.git.showAheadBehind) {
     if (status.ahead > 0) {
       inner.push(aheadText(status.ahead, context));

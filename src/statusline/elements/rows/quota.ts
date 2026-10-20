@@ -72,27 +72,20 @@ function visibleWindows(context: RenderContext): readonly QuotaWindowView[] {
   return hidesWeekly ? candidates.filter((window) => !window.weekly) : candidates;
 }
 
-/** A window's figure and reset as the row's settings write them. The share is coloured by the window's use whichever way it is written. `reset` is empty when the window has nothing to say about its reset. */
-function figuresOf(window: QuotaWindowView, context: RenderContext, style: BarStyle): { readonly value: string; readonly reset: string; readonly pending: boolean } {
+/** A window's figure and reset as the row's settings write them. The share is coloured by the window's use whichever way it is written. `reset` is empty when the window has nothing to say about its reset, and `plainReset` is the same reset without the words that introduce it, which the compact form draws. */
+function figuresOf(window: QuotaWindowView, context: RenderContext, style: BarStyle): { readonly value: string; readonly reset: string; readonly plainReset: string } {
   const { settings, nowMs, ports } = context;
   const clamped = Math.max(0, Math.min(1, window.fraction));
   const used = window.fraction * FULL_PERCENT;
   const shown = settings.usage.value === "remaining" ? Math.max(0, FULL_PERCENT - used) : used;
-  const { text, pending } = formatResetTime(window, nowMs, settings, ports.clock, context.t);
-  return { value: withColor(statusColor(clamped, true, style), `${shown.toFixed(1)}%`), reset: text, pending };
+  const reset = formatResetTime(window, nowMs, settings, ports.clock, context.t, settings.usage.resetLabel).text;
+  const plainReset = settings.usage.resetLabel ? formatResetTime(window, nowMs, settings, ports.clock, context.t, false).text : reset;
+  return { value: withColor(statusColor(clamped, true, style), `${shown.toFixed(1)}%`), reset, plainReset };
 }
 
-/** The reset in parentheses, introduced by `resets in` (`resets` before a wall-clock time) when `usage.resetLabel` asks and there is a reset still to come to introduce. */
-function resetSuffix(reset: string, pending: boolean, context: RenderContext): string {
-  if (reset === "") {
-    return "";
-  }
-  const { usage } = context.settings;
-  const elapsedForm = usage.timeFormat === "elapsed" || usage.timeFormat === "elapsedAndAbsolute";
-  if (!usage.resetLabel || !pending || elapsedForm) {
-    return `(${reset})`;
-  }
-  return `(${context.t(usage.timeFormat === "absolute" ? "quota.resets" : "quota.resetsIn")} ${reset})`;
+/** A reset in parentheses, or nothing when there is none to tell. */
+function parenthesised(reset: string): string {
+  return reset === "" ? "" : `(${reset})`;
 }
 
 /** The windows of a row drawn as text, a separator between neighbours on a line, broken into as many lines as the width needs. */
@@ -106,11 +99,11 @@ export function quotaRow(context: RenderContext): RowOutput {
   const style = barStyleOf(context, "usage");
   const windows = visibleWindows(context);
   const parts = windows.map((window) => {
-    const { value, reset, pending } = figuresOf(window, context, style);
-    return { window, value, reset, suffix: resetSuffix(reset, pending, context) };
+    const { value, reset, plainReset } = figuresOf(window, context, style);
+    return { window, value, plainReset, suffix: parenthesised(reset) };
   });
   if (settings.usage.compact) {
-    const lines = parts.map(({ window, value, reset }) => `${palette.paint("label", `${window.label}:`)} ${value}${reset === "" ? "" : ` ${palette.paint("label", `(${reset})`)}`}`);
+    const lines = parts.map(({ window, value, plainReset }) => `${palette.paint("label", `${window.label}:`)} ${value}${plainReset === "" ? "" : ` ${palette.paint("label", `(${plainReset})`)}`}`);
     return { kind: "text", lines: wrapped(lines, context.width) };
   }
   if (!settings.usage.bar) {

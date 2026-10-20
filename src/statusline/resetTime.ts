@@ -26,29 +26,36 @@ function elapsedPercent(resetMs: number, periodMs: number | undefined, nowMs: nu
 }
 
 /**
- * Tells when `window` resets, in the words of `t`, under `settings.usage.timeFormat`: `1h 30m` (relative, the statusline's own duration form), `at 14:30` (absolute, with the day added when it is not today), both joined by a comma, `53% elapsed`, or that and the absolute time. A reset that is unknown or already past is `available` in every form that tells a time; the elapsed forms say nothing when the window's length is not known, and so can be empty.
+ * Tells when `window` resets, in the words of `t`, under `settings.usage.timeFormat`: `1h 30m` (relative, the statusline's own duration form), `at 14:30` (absolute, with the day added when it is not today), both joined by a comma, `53% elapsed`, or that and the absolute time. With `labelled`, a reset still to come is introduced by `resets in` or `resets at`; the elapsed forms are never introduced. A reset that is unknown or already past is `available` in every form that tells a time; the elapsed forms say nothing when the window's length is not known, and so can be empty.
  */
-export function formatResetTime(window: ResetWindow, nowMs: number, settings: ResolvedStatusline, clock: StatuslinePorts["clock"], t: Translate): ResetText {
+export function formatResetTime(window: ResetWindow, nowMs: number, settings: ResolvedStatusline, clock: StatuslinePorts["clock"], t: Translate, labelled: boolean): ResetText {
   const resetMs = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
   const secondsLeft = secondsUntil(window.resetsAt, nowMs);
   // A reset less than half a second away rounds to no time left, and is said to be available rather than "resets in available".
   const pending = secondsLeft !== undefined && secondsLeft > 0;
-  const relative = formatDuration(secondsLeft, t);
   const available = t("quota.available");
-  const absolute = pending ? t("quota.at", { time: formatWallClock(resetMs, nowMs, clock, settings.clock) }) : available;
+  if (!pending && settings.usage.timeFormat !== "elapsed" && settings.usage.timeFormat !== "elapsedAndAbsolute") {
+    return { text: settings.usage.timeFormat === "relative" ? formatDuration(secondsLeft, t) : available, pending };
+  }
+  const introduced = labelled && pending;
+  const relative = formatDuration(secondsLeft, t);
+  const time = pending ? formatWallClock(resetMs, nowMs, clock, settings.clock) : "";
   const elapsed = elapsedPercent(resetMs, window.periodMs, nowMs);
   const elapsedText = elapsed === undefined ? undefined : t("quota.elapsed", { percent: elapsed });
   switch (settings.usage.timeFormat) {
     case "relative":
-      return { text: relative, pending };
+      return { text: introduced ? t("quota.resetsIn", { time: relative }) : relative, pending };
     case "absolute":
-      return { text: absolute, pending };
+      return { text: introduced ? t("quota.resetsAt", { time }) : t("quota.at", { time }), pending };
     case "both":
-      return { text: pending ? `${relative}, ${absolute}` : available, pending };
+      return { text: introduced ? t("quota.resetsInAt", { relative, time }) : t("quota.relativeAt", { relative, time }), pending };
     case "elapsed":
       return { text: elapsedText ?? "", pending };
     case "elapsedAndAbsolute":
-      return { text: [elapsedText, pending ? absolute : undefined].filter((part) => part !== undefined).join(", "), pending };
+      if (elapsedText === undefined) {
+        return { text: pending ? t("quota.at", { time }) : "", pending };
+      }
+      return { text: pending ? t("quota.elapsedAt", { elapsed: elapsedText, time }) : elapsedText, pending };
     default:
       return settings.usage.timeFormat satisfies never;
   }
