@@ -153,6 +153,15 @@
               "statusline": {
                 "type": "object",
                 "properties": {
+                  "language": {
+                    "type": "string",
+                    "enum": [
+                      "en",
+                      "zh-Hans",
+                      "zh-Hant"
+                    ],
+                    "description": "The language of the words the statusline writes (labels, units of waiting such as `ago`, the names of effort levels): en, zh-Hans for Chinese in simplified characters, zh-Hant for traditional. Durations, token counts, the dollar sign and clock times are written the same in every language, and a clock time follows the system locale and the clock settings."
+                  },
                   "layout": {
                     "type": "object",
                     "properties": {
@@ -472,13 +481,11 @@
                     "properties": {
                       "fiveHour": {
                         "type": "string",
-                        "pattern": "^[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*$",
-                        "description": "The name of the five-hour subscription window."
+                        "description": "The name of the five-hour subscription window; empty uses the language's own name for it."
                       },
                       "sevenDay": {
                         "type": "string",
-                        "pattern": "^[^\\p{C}\\p{Z}]+(?: [^\\p{C}\\p{Z}]+)*$",
-                        "description": "The name of the weekly subscription window."
+                        "description": "The name of the weekly subscription window; empty uses the language's own name for it."
                       }
                     },
                     "additionalProperties": false

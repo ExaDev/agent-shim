@@ -17,7 +17,7 @@ const KIND_MARKS: Readonly<Record<ChangedFile["kind"], { readonly mark: string; 
 
 /** The git working tree's changed files on one line: up to six tracked files, the most recently modified first, each marked `+` added, `~` modified or `-` deleted with its own lines changed when counted, then how many more there are and how many files are untracked. Draws nothing in a Jujutsu repository, outside a repository, with no changes, or in a terminal narrower than the line is worth. */
 export function gitFilesRow(context: RenderContext): RowOutput {
-  const { palette, terminalWidth } = context;
+  const { palette, terminalWidth, t } = context;
   const none: RowOutput = { kind: "text", lines: [] };
   const files = terminalWidth < MIN_COLUMNS ? undefined : vcsStatusOf(context)?.files;
   if (files === undefined || (files.tracked.length === 0 && files.untracked === 0)) {
@@ -33,7 +33,7 @@ export function gitFilesRow(context: RenderContext): RowOutput {
   });
   const overflow = files.tracked.length - shown.length;
   if (overflow > 0) {
-    entries.push(palette.paint("label", `+${String(overflow)} more`));
+    entries.push(palette.paint("label", t("more", { count: overflow })));
   }
   if (files.untracked > 0) {
     entries.push(palette.paint("label", `?${String(files.untracked)}`));

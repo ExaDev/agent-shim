@@ -39,7 +39,7 @@ export function vcsSegment(context: RenderContext): string | undefined {
     }
   }
   if (!isGit && settings.jj.showConflicts && status.conflict) {
-    inner.push(palette.paint("critical", "!conflict"));
+    inner.push(palette.paint("critical", context.t("vcs.conflict")));
   }
   return `${status.kind}:(${inner.join(" ")}${palette.paint("git", ")")}`;
 }

@@ -6,5 +6,5 @@ export function compactionsRow(context: RenderContext): RowOutput {
   if (transcript === undefined || transcript.session.compactions === 0) {
     return { kind: "text", lines: [] };
   }
-  return { kind: "text", lines: [context.palette.paint("label", `Compactions: ${String(transcript.session.compactions)}${transcript.complete ? "" : "+"}`)] };
+  return { kind: "text", lines: [context.palette.paint("label", context.t("compactions.label", { count: `${String(transcript.session.compactions)}${transcript.complete ? "" : "+"}` }))] };
 }

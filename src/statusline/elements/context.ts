@@ -2,6 +2,7 @@ import type { ResolvedStatusline } from "../../config/statusline";
 import type { StatuslineSummary } from "../enrich";
 import type { BarCell } from "../barGrid";
 import type { TranscriptIdentity } from "../identityTranscript";
+import type { Translate } from "../messages/catalogues";
 import type { Palette } from "../palette";
 import type { ClientPayload } from "../payload";
 import type { StatuslinePorts } from "../ports";
@@ -31,6 +32,8 @@ export interface RenderContext {
   /** The columns a line may use: a row of text that is wider than this is broken into lines that fit. */
   readonly width: number;
   readonly settings: ResolvedStatusline;
+  /** Writes the statusline's words in the language `settings.language` names. */
+  readonly t: Translate;
   readonly palette: Palette;
   /** What the statusline may read from the machine. */
   readonly ports: StatuslinePorts;

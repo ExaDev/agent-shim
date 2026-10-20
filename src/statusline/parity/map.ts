@@ -11,6 +11,7 @@ export type ParityEntry =
  * Every claude-hud setting, element, first-line segment and flag that agent-shim's built-in statusline has dealt with: keys of the form `display.showModel`, `element:project`, `segment:model` and `flag:--extra-cmd`. One entry per key; the keys of `CLAUDE_HUD_INVENTORY` with no entry are the work still to do (`parityGaps`).
  */
 export const PARITY: Readonly<Record<string, ParityEntry>> = {
+  language: { setting: "language", note: "en, zh-Hans and zh-Hant, the three catalogues claude-hud ships, written as those canonical tags; claude-hud's aliases zh and zh-TW are not accepted, and the guided flow of claude-hud writes the canonical tags too. Every word the statusline writes is a message in the catalogue, the window names follow the language until labels.fiveHour or labels.sevenDay names them, and durations, token counts, money and clock times are written the same in every language" },
   "display.showModel": { setting: "layout.header", note: "the model segment is drawn when the list names `model`" },
   "display.showProvider": { setting: "layout.header", note: "the provider segment is drawn when the list names `provider`" },
   "display.showUsage": { setting: "layout.rows", note: "the quota row is drawn when the list names `quota`" },
