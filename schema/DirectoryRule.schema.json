@@ -493,7 +493,7 @@
                     "first",
                     "last"
                   ],
-                  "description": "Where the custom line sits: first draws it above the header, and last below the last row."
+                  "description": "Where the custom line sits: first draws it above the header, and last below the last row, as a line of its own in either layout mode."
                 }
               },
               "additionalProperties": false
