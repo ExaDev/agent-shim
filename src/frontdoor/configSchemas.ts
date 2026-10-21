@@ -15,11 +15,12 @@ import {
   PROVIDER_KINDS,
   RemoteCredentialSourceSchema,
 } from "../config/schema";
+import { STATUSLINE_EXTRA_GROUP } from "../config/statusline";
 
 /**
  * The Zod schemas of the door's configuration-management procedures: the inputs `config.identity.*`, `config.profile.*`, `config.pool.*`, `config.provider.*` and `config.rule.*` accept and the stored objects they answer with, one shape each so the API's contract and the stores it writes through validate against the same definitions.
  *
- * Three rules shape the inputs. A credential source of the `command` kind is not accepted (`RemoteCredentialSourceSchema`), because it runs a program as the user at every launch. A provider's `env` block is not accepted, because an entry such as `NODE_OPTIONS` or `PATH` changes what code a launch runs. And a removal states `confirm: true`, the API's form of the CLI's `--yes`.
+ * Four rules shape the inputs. A credential source of the `command` kind is not accepted (`RemoteCredentialSourceSchema`), because it runs a program as the user at every launch. A provider's `env` block is not accepted, because an entry such as `NODE_OPTIONS` or `PATH` changes what code a launch runs. A statusline patch may not set the `extra` group, whose `command` likewise runs a program as the user at every launch. And a removal states `confirm: true`, the API's form of the CLI's `--yes`.
  */
 
 /** The confirmation a removal carries, the API's form of `--yes`: a removal that omits it or states `false` is refused rather than defaulted, so deleting is always something the caller said. */
@@ -99,6 +100,17 @@ export const ConfigIdentitySetOutputSchema = storedMutationOutput("identity", "u
 export const ConfigIdentityRemoveInputSchema = z.strictObject({ name: z.string().min(1), confirm: RemovalConfirmationSchema });
 export const ConfigIdentityRemoveOutputSchema = mutationOutput("identity", "removed");
 
+/**
+ * The statusline settings a config write through the API may set: any dotted key except the `extra` group. The extra segment's command runs a program the caller chooses with the person's privileges at every refresh, so a delegated writer (an MCP agent or the web client with the writes grant) must not be able to store one in a profile; the person sets it in their own files, the same boundary the project-file refusal in `schema.ts` draws. The refusal is on setting, not unsetting: removing an extra command through the API is safe, because it takes a program away.
+ */
+const ConfigStatuslineSetSchema = z.record(z.string(), z.unknown()).superRefine((settings, context) => {
+  for (const key of Object.keys(settings)) {
+    if (key === STATUSLINE_EXTRA_GROUP || key.startsWith(`${STATUSLINE_EXTRA_GROUP}.`)) {
+      context.addIssue({ code: "custom", path: [key], message: `a config write through the API cannot set "${key}": the extra segment's command runs a program, so only your own configuration (the global config, a profile you edit yourself, a directory rule or a command-line assignment) may set it` });
+    }
+  }
+});
+
 export const ConfigIdentityUseOutputSchema = mutationOutput("identity", "selected");
 
 export const ConfigProfileAddInputSchema = z.strictObject({
@@ -129,7 +141,7 @@ export const ConfigProfileSetInputSchema = z.strictObject({
       proxyBypass: z.union([z.array(z.string().min(1)), z.literal(false)]).optional(),
       statusline: z
         .strictObject({
-          set: z.record(z.string(), z.unknown()).optional(),
+          set: ConfigStatuslineSetSchema.optional(),
           unset: z.array(z.string()).optional(),
         })
         .optional(),

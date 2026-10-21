@@ -1,6 +1,6 @@
 import { proxyBypassSyntaxProblem } from "./proxyBypass";
 import { FILE_NAME_PATTERN, FileNameSchema, StoredNameSchema } from "./names";
-import { StatuslineSchema } from "./statusline";
+import { STATUSLINE_EXTRA_GROUP, StatuslineSchema } from "./statusline";
 import path from "node:path";
 
 import { z } from "zod";
@@ -719,8 +719,8 @@ export const PortableConfigSchema = ConfigProfileSchema.omit({ description: true
 })
   .superRefine((config, context) => {
     // A project file arrives with a clone, from whoever wrote the repository, and the extra segment's command runs a program with the person's privileges on every refresh: only the person's own layers (the global config, a profile, a directory rule, a command-line assignment) may set it. The file is refused, never silently stripped, so a repository cannot ask for it and be believed to have been ignored.
-    if (config.launch?.statusline?.extra !== undefined) {
-      context.addIssue({ code: "custom", path: ["launch", "statusline", "extra"], message: "a project file cannot set the statusline's extra command: it runs a program, so only your own configuration (the global config, a profile, a directory rule) may set it" });
+    if (config.launch?.statusline?.[STATUSLINE_EXTRA_GROUP] !== undefined) {
+      context.addIssue({ code: "custom", path: ["launch", "statusline", STATUSLINE_EXTRA_GROUP], message: "a project file cannot set the statusline's extra command: it runs a program, so only your own configuration (the global config, a profile, a directory rule) may set it" });
     }
   });
 export type PortableConfig = z.infer<typeof PortableConfigSchema>;
