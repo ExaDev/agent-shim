@@ -4,6 +4,7 @@ import { truncateToColumns } from "../../ansi";
 import type { BarCell } from "../../barGrid";
 import { packLines, SEPARATOR } from "../../headerLayout";
 import { paintCore } from "../../messages/around";
+import { hidesSubscriptionWindows } from "../../platform";
 import { formatResetTime } from "../../resetTime";
 import { visibleDisplayText } from "../../sanitise";
 import { barCell, FULL_PERCENT, statusColor, withColor, type BarStyle } from "../../style";
@@ -64,6 +65,9 @@ function candidateWindows(context: RenderContext): readonly QuotaWindowView[] {
 /** The windows to draw: none when no window has used `usage.threshold` yet, and without the weekly window when a five-hour one is drawn beside it and the weekly use is below `usage.sevenDayThreshold`. */
 function visibleWindows(context: RenderContext): readonly QuotaWindowView[] {
   const { summary, settings } = context;
+  if (hidesSubscriptionWindows(context.ports.env, context.payload.model?.id)) {
+    return [];
+  }
   const candidates = candidateWindows(context);
   const mostUsed = Math.max(0, ...candidates.map((window) => window.fraction * FULL_PERCENT));
   if (mostUsed < settings.usage.threshold) {

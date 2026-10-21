@@ -88,6 +88,14 @@ describe("the quota row's usage settings", () => {
     expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 79 })).toEqual(["5h 25.0% (resets in 1h 30m)"]);
   });
 
+  it("draws no window for a session served through Amazon Bedrock, by the environment switch or by the model id", () => {
+    // The subscription's windows do not apply to a session billed by use, and a window drawn from the identity's recorded usage would describe quota the session does not spend.
+    expect(defaultQuotaLines({ usage: { bar: false } }, {}, {}, { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual([]);
+    expect(defaultQuotaLines({ usage: { bar: false } }, {}, { model: { id: "us.anthropic.claude-opus-4-5-v1:0" } })).toEqual([]);
+    expect(defaultQuotaLines({ usage: { bar: false } }, {}, { model: { id: "claude-opus-4-5" } })).toEqual(["5h 25.0% (resets in 1h 30m)"]);
+    expect(defaultQuotaLines({ usage: { bar: false } }, {}, {}, { ...PLAIN, CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["5h 25.0% (resets in 1h 30m)"]);
+  });
+
   it("by default draws the per-model weekly windows after the account's own", () => {
     expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 80 }, MODEL_SCOPED_PAYLOAD)).toEqual(["5h 25.0% (resets in 1h 30m) | Wk 80.0% (resets in 4d 1h) | Fable 60.0% (resets in 3d 0h)"]);
     expect(defaultQuotaLines({}, {}, MODEL_SCOPED_PAYLOAD)[0]).toMatch(/^5h \[.*\] 25\.0% \(resets in 1h 30m\) \| Fable \[.*\] 60\.0% \(resets in 3d 0h\)$/u);

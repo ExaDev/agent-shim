@@ -144,6 +144,7 @@ The default header is `model`, `project`, `vcs`, `provider`, `route`, `account`,
 - `context.estimate: buffered`, from `display.autocompactBuffer: 'enabled'`.
 - `context.breakdown: critical`, from `display.showTokenBreakdown: true`.
 - `model.platform: true`: the platform after the model (`Opus 4.5 | Vertex`), which claude-hud's `formatModelDisplay` draws under every configuration, detected from `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, a MiniMax base URL and an enterprise planning model id as its `getProviderLabel` detects it.
+- No subscription window for a Bedrock session: the quota row draws nothing when the environment switch is on or the model id carries `anthropic.claude-`, as claude-hud hides its usage line (`shouldHideUsage`). The windows describe a subscription, which a session billed by use does not spend, and agent-shim could otherwise draw the signed-in identity's recorded windows beside it.
 
 These differences are kept:
 

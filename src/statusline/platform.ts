@@ -40,3 +40,15 @@ export function modelPlatformOf(env: Readonly<Record<string, string | undefined>
   }
   return undefined;
 }
+
+/** The text a Bedrock model id carries, which a session routed through Amazon Bedrock reports even when no environment switch says so. */
+const BEDROCK_MODEL_ID_MARK = "anthropic.claude-";
+
+/**
+ * Whether the subscription windows do not apply to the session, as claude-hud decides it: it is served through Amazon Bedrock, by the environment switch or by the model id the client reports, and Bedrock is billed by use with no five-hour or weekly window to draw.
+ * @param env - The environment the statusline runs in, which is the client's.
+ * @param modelId - The model id the client's payload reports, or undefined when it reports none.
+ */
+export function hidesSubscriptionWindows(env: Readonly<Record<string, string | undefined>>, modelId: string | undefined): boolean {
+  return modelPlatformOf(env, modelId) === "Bedrock" || (modelId?.toLowerCase().includes(BEDROCK_MODEL_ID_MARK) ?? false);
+}

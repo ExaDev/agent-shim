@@ -157,7 +157,7 @@ const NOT_WORDS: Readonly<Record<string, readonly string[]>> = {
   // Names of the products and plans the statusline reports, which no language translates, the identifiers the account sends, the endpoints and model ids a platform is known by, and the file names it reads.
   "elements/header/account.ts": ["claude_max", "Max", "Max ", "claude_pro", "Pro", "claude_team", "team_standard", "Team Standard", "team_tier_1", "Team Premium", "Team", "claude_enterprise", "Enterprise", "default_", "free", "Free", "x"],
   "elements/header/outputStyle.ts": [".claude", "settings.json", "settings.local.json"],
-  "platform.ts": ["Bedrock", "Vertex", "MiniMax", "Enterprise", "https://api.minimax.io/anthropic", "https://api.minimaxi.com/anthropic", "opusplan", "sonnetplan", "haikuplan"],
+  "platform.ts": ["Bedrock", "Vertex", "MiniMax", "Enterprise", "https://api.minimax.io/anthropic", "https://api.minimaxi.com/anthropic", "opusplan", "sonnetplan", "haikuplan", "anthropic.claude-"],
   // The symbols that stand for units, which are the same in every language: durations, token counts and bytes.
   "elements/sessionFormat.ts": ["<1m", "<1s", "m", "m ", "h ", "s", "h", "d"],
   "memoryUse.ts": ["B", "KB", "MB", "GB", "TB"],
