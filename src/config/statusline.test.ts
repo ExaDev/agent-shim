@@ -513,7 +513,7 @@ describe("presets", () => {
   /** What each preset sets, written out from claude-hud's definitions (commands/configure.md, "Preset Definitions" and "Git Style Mapping") rather than read back from the code, with `extra` added to each header because claude-hud draws its extra label under every preset once a command is given and it draws nothing here until `extra.command` is set: the elements the statusline has for what each preset turns on, git as branch and dirty marker alone, and the reset label on. */
   const BUNDLES = {
     full: {
-      layout: { header: ["model", "project", "vcs", "effort", "advisor", "version", "extra", "outputStyle", "cost", "sessionName", "duration"], "rows": ["context", "quota", "addedDirs", "memory", "environment", "tools", "skills", "mcp", "agents", "todos", "promptCache", "compactions", "tokens"] },
+      layout: { header: ["model", "project", "vcs", "effort", "advisor", "version", "extra", "outputStyle", "cost", "sessionName", "duration"], rows: ["context", "quota", "addedDirs", "memory", "environment", "tools", "skills", "mcp", "agents", "todos", "promptCache", "compactions", "tokens"] },
       git: { enabled: true, showDirty: true, showAheadBehind: false, showLineDiff: false },
       jj: { enabled: true, showDirty: true, showConflicts: true },
       usage: { resetLabel: true },
