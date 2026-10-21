@@ -345,11 +345,11 @@ describe("the words the facts leave out", () => {
   it("are written in the language's words: an agent with no type and a task with no title", () => {
     const untyped = [agent({ type: undefined })];
     const untitled = [{ content: undefined, status: "in_progress" as const }];
-    expect(linesOf(agentsRow(contextOf(facts({ agents: untyped }))))).toEqual(["◐ agent (12s)"]);
-    expect(linesOf(agentsRow(contextOf(facts({ agents: untyped }), { settings: ZH_HANS })))).toEqual(["◐ 智能体（12s）"]);
-    expect(linesOf(agentsRow(contextOf(facts({ agents: untyped }), { settings: ZH_HANT })))).toEqual(["◐ 代理程式（12s）"]);
-    expect(linesOf(todosRow(contextOf(facts({ todos: untitled }))))).toEqual(["▸ Untitled task (0/1)"]);
-    expect(linesOf(todosRow(contextOf(facts({ todos: untitled }), { settings: ZH_HANS })))).toEqual(["▸ 未命名任务（0/1）"]);
+    expect(linesOf(agentsRow(contextOf(facts({ agents: untyped }))))).toEqual(["\u25D0 agent (12s)"]);
+    expect(linesOf(agentsRow(contextOf(facts({ agents: untyped }), { settings: ZH_HANS })))).toEqual(["\u25D0 \u667A\u80FD\u4F53\uFF0812s\uFF09"]);
+    expect(linesOf(agentsRow(contextOf(facts({ agents: untyped }), { settings: ZH_HANT })))).toEqual(["\u25D0 \u4EE3\u7406\u7A0B\u5F0F\uFF0812s\uFF09"]);
+    expect(linesOf(todosRow(contextOf(facts({ todos: untitled }))))).toEqual(["\u25B8 Untitled task (0/1)"]);
+    expect(linesOf(todosRow(contextOf(facts({ todos: untitled }), { settings: ZH_HANS })))).toEqual(["\u25B8 \u672A\u547D\u540D\u4EFB\u52A1\uFF080/1\uFF09"]);
   });
 });
 
@@ -360,7 +360,7 @@ describe("a name or a command that is wider than the line", () => {
   it("gives the first name what the line has left after the title and count, in every language", () => {
     const names = { names: ["d".repeat(LONG)], total: 1, exact: true };
     const [en = ""] = linesOf(skillsRow(contextOf(facts({ skills: names }), { width: WIDTH })));
-    expect(en).toBe(`✓ Skills (1): ${"d".repeat(WIDTH - "✓ Skills (1): ".length - 1)}${ELLIPSIS}`);
+    expect(en).toBe(`\u2713 Skills (1): ${"d".repeat(WIDTH - "\u2713 Skills (1): ".length - 1)}${ELLIPSIS}`);
     expect(visibleLength(en)).toBe(WIDTH);
     for (const language of ["zh-Hans", "zh-Hant"] as const) {
       const [line = ""] = linesOf(mcpRow(contextOf(facts({ mcpServers: names }), { width: WIDTH, settings: { language } })));
@@ -372,11 +372,90 @@ describe("a name or a command that is wider than the line", () => {
   it("gives a running call's name and target what the line has left", () => {
     const [line = ""] = linesOf(toolsRow(contextOf(facts({ tools: [tool("Bash", "running", "x".repeat(LONG))] }), { width: WIDTH })));
     expect(visibleLength(line)).toBeLessThanOrEqual(WIDTH);
-    expect(line.startsWith("◐ Bash: ")).toBe(true);
+    expect(line.startsWith("\u25D0 Bash: ")).toBe(true);
   });
 
   it("cuts a finished call's name so its count stays", () => {
     const [line = ""] = linesOf(toolsRow(contextOf(facts({ tools: [tool("n".repeat(LONG))] }), { width: WIDTH })));
-    expect(line).toBe(`✓ ${"n".repeat(WIDTH - "✓ ".length - " ×1".length - 1)}${ELLIPSIS} ×1`);
+    expect(line).toBe(`\u2713 ${"n".repeat(WIDTH - "\u2713 ".length - " \u00D71".length - 1)}${ELLIPSIS} \u00D71`);
+  });
+});
+
+describe("the edges of the rows", () => {
+  const toolLines = (tools: readonly ToolCallFact[], drawing?: Drawing): readonly string[] => linesOf(toolsRow(contextOf(facts({ tools }), drawing)));
+  const agentLines = (agents: readonly AgentFact[], drawing?: Drawing): readonly string[] => linesOf(agentsRow(contextOf(facts({ agents }), drawing)));
+  const todoLines = (todos: ActivityFacts["todos"], drawing?: Drawing): readonly string[] => linesOf(todosRow(contextOf(facts({ todos }), drawing)));
+  const MARK_AND_SPACE = 2;
+  const TIME_TEXT = " (12s)";
+
+  it("lists the kinds of finished call by how many calls each had, the most first", () => {
+    expect(toolLines([tool("A"), tool("B"), tool("B")])).toEqual(["\u2713 B \u00D72 | \u2713 A \u00D71"]);
+  });
+
+  it("shows a running file whole when its path just fits, and by its name when it is one column longer", () => {
+    const whole = `/d/${"p".repeat(TARGET_COLUMNS - "/d/".length)}`;
+    expect(toolLines([tool("Read", "running", whole)])).toEqual([`\u25D0 Read: ${whole}`]);
+    expect(toolLines([tool("Read", "running", "p".repeat(TARGET_COLUMNS + 1))])).toEqual([`\u25D0 Read: ${"p".repeat(TARGET_COLUMNS - "...".length)}...`]);
+  });
+
+  it("shows the directories of a running file as `.../` when the name and that just fit, and cuts the name when they do not", () => {
+    const directories = "/some/long/directory/";
+    const fits = "f".repeat(TARGET_COLUMNS - ".../".length);
+    expect(toolLines([tool("Read", "running", `${directories}${fits}`)])).toEqual([`\u25D0 Read: .../${fits}`]);
+    const longer = "f".repeat(TARGET_COLUMNS - ".../".length + 1);
+    expect(toolLines([tool("Read", "running", `${directories}${longer}`)])).toEqual([`\u25D0 Read: ${longer}`]);
+  });
+
+  it("draws the directory mark alone for a running file that ends in the separator and does not fit", () => {
+    const endsInSeparator = `/${"d".repeat(TARGET_COLUMNS)}/`;
+    expect(toolLines([tool("Read", "running", endsInSeparator)])).toEqual([`\u25D0 Read: .../`]);
+  });
+
+  it("gives a running call's target the room that is left, drawing none when there is none, and the figure of the room in colour", () => {
+    const command = tool("Bash", "running", "x".repeat(TARGET_COLUMNS));
+    const exact = "\u25D0 Bash: ".length;
+    expect(toolLines([command], { width: exact })).toEqual(["\u25D0 Bash"]);
+    expect(toolLines([command], { width: exact + 1 })).toEqual([`\u25D0 Bash: ${ELLIPSIS}`]);
+    expect(toolLines([command], { width: exact - 1 })).toEqual(["\u25D0 Bash"]);
+    const settings: StatuslineSettings = { colours: { warning: "yellow", activity: "cyan", label: "blue" } };
+    const [coloured = ""] = toolLines([command], { width: exact + MARK_AND_SPACE * 2 + 1, settings, colour: true });
+    expect(coloured).toBe(`${ESCAPE}[33m\u25D0${ESCAPE}[0m ${ESCAPE}[36mBash${ESCAPE}[0m${ESCAPE}[34m: ${"x".repeat(MARK_AND_SPACE * 2 + 1 - 1)}${ELLIPSIS}${ESCAPE}[0m`);
+  });
+
+  it("draws at most the two newest finished agents when none is running", () => {
+    const finished = (type: string, endedAgoMs: number): AgentFact => agent({ type, status: "completed", startedAtMs: NOW_MS - 2 * MINUTE, endedAtMs: NOW_MS - endedAgoMs });
+    expect(agentLines([finished("One", TEN_SECONDS), finished("Two", TWENTY_SECONDS), finished("Three", THIRTY_SECONDS)]).map((line) => line.slice(MARK_AND_SPACE, MARK_AND_SPACE + "Three".length))).toEqual(["Two (", "Three"]);
+  });
+
+  it("draws an agent that ended at this very moment, and leaves out a model that is empty or only a bracketed suffix", () => {
+    expect(agentLines([agent({ status: "completed", endedAtMs: NOW_MS })])).toHaveLength(1);
+    for (const model of ["", " ", "[1m]"]) {
+      expect(agentLines([agent({ model })]), model).toEqual([`\u25D0 Explore${TIME_TEXT}`]);
+    }
+  });
+
+  it("gives an agent's type a column when the line has no room for it", () => {
+    const fixed = MARK_AND_SPACE + TIME_TEXT.length;
+    expect(agentLines([agent()], { width: fixed + 1 })).toEqual([`\u25D0 ${ELLIPSIS}${TIME_TEXT}`]);
+  });
+
+  it("draws the model when it just fits and not when one column is missing", () => {
+    const line = "\u25D0 Explore [opus-4.8] (12s)";
+    expect(agentLines([agent({ model: "claude-opus-4-8" })], { width: line.length })).toEqual([line]);
+    expect(agentLines([agent({ model: "claude-opus-4-8" })], { width: line.length - 1 })).toEqual([`\u25D0 Explore${TIME_TEXT}`]);
+  });
+
+  it("draws the description when it has the fewest columns worth cutting it to, and leaves it out with one less", () => {
+    const described = agent({ description: "d".repeat(FIFTY_ONE) });
+    const base = MARK_AND_SPACE + "Explore".length + TIME_TEXT.length + ": ".length;
+    expect(agentLines([described], { width: base + "...".length + 1 })).toEqual([`\u25D0 Explore: d...${TIME_TEXT}`]);
+    expect(agentLines([described], { width: base + "...".length })).toEqual([`\u25D0 Explore${TIME_TEXT}`]);
+  });
+
+  it("draws the active todo's words when they have the fewest columns worth cutting them to, and leaves them out with one less", () => {
+    const todos = [{ content: "Write the tests", status: "in_progress" as const }];
+    const base = MARK_AND_SPACE + " (0/1)".length;
+    expect(todoLines(todos, { width: base + "...".length + 1 })).toEqual(["\u25B8 W... (0/1)"]);
+    expect(todoLines(todos, { width: base + "...".length })).toEqual(["\u25B8 (0/1)"]);
   });
 });
