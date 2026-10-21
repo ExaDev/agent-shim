@@ -54,7 +54,7 @@ export function makeWorld(options: { readonly ownPid?: number; readonly fs?: Hea
   const closes: number[] = [];
   /** Every stop in the order it happened, so a test can prove what the shutdown sequence closes before what. */
   const stopOrder: string[] = [];
-  /** The same stops with the watchdog's start, beats and stop among them, so a test can prove where in the sequence the watchdog was ended. */
+  /** The same stops with the watchdog's start and stop among them, so a test can prove where in the sequence the watchdog was ended. */
   const timeline: string[] = [];
   let hubCloses = 0;
   const logs: string[] = [];
@@ -166,9 +166,6 @@ export function makeWorld(options: { readonly ownPid?: number; readonly fs?: Hea
     startWatchdog: () => {
       timeline.push("watchdog-start");
       return {
-        beat: () => {
-          timeline.push("beat");
-        },
         stop: () => {
           timeline.push("watchdog-stop");
         },

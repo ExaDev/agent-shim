@@ -198,15 +198,13 @@ describe("runFrontDoorSupervisor", () => {
     expect(readFrontDoorState(world.fs, paths.frontdoorStateFile)).toEqual({ lastPort: STICKY_PORT, lastConnectPort: FRESH_PORT, lastDirectPort: FRESH_PORT });
   });
 
-  it("starts the watchdog once the listeners are bound, beats it every tick, and stops it before the first listener closes", async () => {
+  it("starts the watchdog once the listeners are bound and stops it before the first listener closes", async () => {
     const world = makeWorld();
     writeFrontDoorState(world.fs, paths.frontdoorStateFile, { lastPort: STICKY_PORT });
     await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS });
     expect(world.timeline[0]).toBe("watchdog-start");
     expect(world.timeline.filter((entry) => entry === "watchdog-start")).toHaveLength(1);
-    expect(world.timeline.filter((entry) => entry === "beat").length).toBeGreaterThan(0);
     const stopAt = world.timeline.indexOf("watchdog-stop");
-    expect(stopAt).toBeGreaterThan(world.timeline.lastIndexOf("beat"));
     expect(stopAt).toBeLessThan(world.timeline.indexOf("direct"));
     expect(world.timeline.filter((entry) => entry === "watchdog-stop")).toHaveLength(1);
   });
