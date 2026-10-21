@@ -102,7 +102,7 @@ describe("the context row without its bar", () => {
 
   it("keeps the cache share beside the figure, and draws nothing when there is no percentage", () => {
     expect(draw({ context: { bar: "hidden" } }, { cacheHitRatio: 0.93 }).map(stripAnsi)).toEqual(["Ctx 90k/200k 45.0% (Cache: 93%)"]);
-    expect(draw({ context: { bar: "hidden" } }, { contextUsedPercentage: undefined })).toEqual([]);
+    expect(draw({ context: { bar: "hidden", estimate: "never" } }, { contextUsedPercentage: undefined })).toEqual([]);
   });
 
   it("is a row of text, so it ends a run of bars rather than joining their grid", () => {
@@ -172,8 +172,10 @@ describe("the context row measured against a window", () => {
 describe("the context row when the client reports no percentage", () => {
   const unreported = { contextUsedPercentage: undefined };
 
-  it("draws nothing by default, even beside tokens and a window", () => {
-    expect(draw({}, unreported)).toEqual([]);
+  it("estimates with the compaction reserve by default, as claude-hud's default does, and draws nothing for never, even beside tokens and a window", () => {
+    expect(draw({}, unreported)).toEqual(draw({ context: { estimate: "buffered" } }, unreported));
+    expect(draw({}, unreported)).toHaveLength(1);
+    expect(draw({ context: { estimate: "never" } }, unreported)).toEqual([]);
   });
 
   it("estimates from the tokens held for raw", () => {
@@ -201,7 +203,8 @@ describe("the context row when the client reports no percentage", () => {
 
   it("treats a reported 0 beside tokens already held as not yet worked out when asked to estimate, and as 0 when not", () => {
     expect(stripAnsi(draw({ context: { estimate: "raw" } }, { contextUsedPercentage: 0 })[0] ?? "")).toMatch(/\] 45\.0%$/);
-    expect(stripAnsi(draw({}, { contextUsedPercentage: 0 })[0] ?? "")).toMatch(/\] 0\.0%$/);
+    expect(stripAnsi(draw({ context: { estimate: "never" } }, { contextUsedPercentage: 0 })[0] ?? "")).toMatch(/\] 0\.0%$/);
+    expect(draw({}, { contextUsedPercentage: 0 })).toEqual(draw({ context: { estimate: "buffered" } }, { contextUsedPercentage: 0 }));
   });
 
   it("keeps a reported 0 when no estimate can be made from the tokens and the window", () => {
@@ -229,8 +232,12 @@ describe("the context row's breakdown at high use", () => {
 
   it("adds nothing below the threshold, when not asked, or when the client reports no last request", () => {
     expect(stripAnsi(draw({ context: { breakdown: "critical" } }, { contextUsedPercentage: 80 }, usage)[0] ?? "")).not.toContain("in:");
-    expect(stripAnsi(draw({}, high, usage)[0] ?? "")).not.toContain("in:");
+    expect(stripAnsi(draw({ context: { breakdown: "never" } }, high, usage)[0] ?? "")).not.toContain("in:");
     expect(stripAnsi(draw({ context: { breakdown: "critical" } }, high)[0] ?? "")).not.toContain("in:");
+  });
+
+  it("adds the breakdown at high use by default, as claude-hud's default does", () => {
+    expect(stripAnsi(draw({}, high, usage)[0] ?? "")).toContain("in:");
   });
 
   it("adds the breakdown at exactly the critical threshold, and not a hair below it", () => {

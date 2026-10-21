@@ -135,8 +135,8 @@ describe("StatuslineSchema cost and environment", () => {
     }
   });
 
-  it("leaves the segments and rows that were drawn before them as the default layout", () => {
-    expect(STATUSLINE_DEFAULTS.layout).toMatchObject({ header: ["model", "provider", "route", "account", "identity", "headroom"], rows: ["context", "quota"] });
+  it("leaves the cost segments and the environment row out of the default layout, as claude-hud's default does", () => {
+    expect(STATUSLINE_DEFAULTS.layout).toMatchObject({ header: ["model", "project", "vcs", "provider", "route", "account", "identity", "headroom", "extra"], rows: ["context", "quota", "addedDirs"] });
     expect(STATUSLINE_DEFAULTS.cost).toEqual({ routed: false });
     expect(STATUSLINE_DEFAULTS.environment).toEqual({ threshold: 0 });
   });
@@ -205,8 +205,10 @@ describe("StatuslineSchema project and version control settings", () => {
     }
   });
 
-  it("keeps the segments and rows drawn by default to the ones drawn before the project and version control elements existed", () => {
-    expect(STATUSLINE_DEFAULTS.layout).toMatchObject({ header: ["model", "provider", "route", "account", "identity", "headroom"], rows: ["context", "quota"] });
+  it("draws the project and version control segments by default, after the model and before agent-shim's own segments, as claude-hud's default draws its project line", () => {
+    const projectLine = ["model", "project", "vcs"];
+    expect(STATUSLINE_DEFAULTS.layout.header.slice(0, projectLine.length)).toEqual(projectLine);
+    expect(STATUSLINE_DEFAULTS.project.addedDirsLayout).toBe("inline");
   });
 
   it("defaults git on and jj off, as claude-hud does", () => {
@@ -244,10 +246,10 @@ describe("StatuslineSchema custom line and extra command", () => {
     expect(StatuslineSchema.safeParse({ extra: { command: ["tool", "-flag"] } }).success).toBe(true);
   });
 
-  it("draws nothing by default: no custom text and no command", () => {
+  it("draws nothing by default: no custom text and no command, though the extra segment is listed for a command to fill, as claude-hud's default draws its extra label once given one", () => {
     expect(STATUSLINE_DEFAULTS.customLine.text).toBe("");
     expect(STATUSLINE_DEFAULTS.extra.command).toEqual([]);
-    expect(STATUSLINE_DEFAULTS.layout.header).not.toContain("extra");
+    expect(STATUSLINE_DEFAULTS.layout.header.at(-1)).toBe("extra");
   });
 });
 
@@ -378,6 +380,10 @@ describe("the usage and clock settings", () => {
     expect(StatuslineSchema.safeParse({ clock: { seconds: 1 } }).success).toBe(false);
   });
 
+  it("default to claude-hud's own usage defaults: the reset label, the per-model windows and the weekly window from 80%", () => {
+    expect(STATUSLINE_DEFAULTS.usage).toEqual({ value: "used", bar: true, compact: false, resetLabel: true, modelScoped: true, timeFormat: "relative", threshold: 0, sevenDayThreshold: 80 });
+  });
+
   it("merge key by key with the other groups", () => {
     expect(mergeStatuslineSettings({ usage: { compact: true, threshold: 50 } }, { usage: { threshold: 10 } })).toEqual({ usage: { compact: true, threshold: 10 } });
   });
@@ -405,6 +411,10 @@ describe("the context group", () => {
     expect(resolveStatusline({ context: OWN_PAIR }).context.criticalAt).toBe(OWN_PAIR.criticalAt);
   });
 
+  it("defaults to the estimate with the compaction reserve and the breakdown at high use, as claude-hud's default does", () => {
+    expect(STATUSLINE_DEFAULTS.context).toEqual({ bar: "shown", value: "both", estimate: "buffered", breakdown: "critical" });
+  });
+
   it("has no default for the keys that stay unset", () => {
     expect(STATUSLINE_DEFAULTS.context.warnAt).toBeUndefined();
     expect(STATUSLINE_DEFAULTS.context.criticalAt).toBeUndefined();
@@ -413,7 +423,7 @@ describe("the context group", () => {
   });
 
   it("leaves the token totals out of the rows drawn by default", () => {
-    expect(STATUSLINE_DEFAULTS.layout.rows).toEqual(["context", "quota"]);
+    expect(STATUSLINE_DEFAULTS.layout.rows).toEqual(["context", "quota", "addedDirs"]);
     expect(StatuslineSchema.parse({ layout: { rows: ["context", "tokens"] } })).toEqual({ layout: { rows: ["context", "tokens"] } });
   });
 });
@@ -534,11 +544,11 @@ describe("presets", () => {
       context: { breakdown: "never" },
     },
     standard: {
-      layout: { header: ["model", "provider", "route", "account", "identity", "headroom"], rows: ["context", "quota"] },
+      layout: { header: ["model", "project", "vcs", "provider", "route", "account", "identity", "headroom", "extra"], rows: ["context", "quota", "addedDirs"] },
       git: { enabled: true, showDirty: true, showAheadBehind: false, showLineDiff: false },
       jj: { enabled: false, showDirty: true, showConflicts: true },
-      usage: { resetLabel: false },
-      context: { breakdown: "never" },
+      usage: { resetLabel: true },
+      context: { breakdown: "critical" },
     },
   } as const;
 

@@ -59,8 +59,8 @@ describe("statuslineKeys", () => {
     const rows = statuslineKeys().find((key) => key.path === "layout.rows");
     expect(header?.choices).toEqual(expect.arrayContaining(["sessionName", "duration", "speed"]));
     expect(rows?.choices).toEqual(expect.arrayContaining(["sessionTime", "promptCache", "compactions"]));
-    expect(header?.defaultValue).toEqual(["model", "provider", "route", "account", "identity", "headroom"]);
-    expect(rows?.defaultValue).toEqual(["context", "quota"]);
+    expect(header?.defaultValue).toEqual(["model", "project", "vcs", "provider", "route", "account", "identity", "headroom", "extra"]);
+    expect(rows?.defaultValue).toEqual(["context", "quota", "addedDirs"]);
   });
 
   it("describes the session settings", () => {

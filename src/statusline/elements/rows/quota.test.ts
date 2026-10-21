@@ -53,7 +53,11 @@ const COLOURED = {};
 
 const MODEL_SCOPED_PAYLOAD = { rate_limits: { model_scoped: [{ display_name: "Fable", utilization: 60, resets_at: "2026-10-19T09:00:00.000Z" }] } };
 
-function quotaLines(settings: StatuslineSettings, summary: Partial<StatuslineSummary> = {}, payload: unknown = {}, env: Readonly<Record<string, string | undefined>> = PLAIN, terminalWidth: number = TERMINAL): string[] {
+/** The usage settings the tests of one setting hold fixed beneath the settings they name, so each exercises that setting alone: the reset time bare, the weekly window drawn whatever its use, and no per-model windows. The defaults themselves are pinned by the tests of the default row. */
+const HELD_USAGE = { resetLabel: false, sevenDayThreshold: 0, modelScoped: false } as const;
+
+/** The quota row's lines under exactly the settings given, over the defaults. */
+function defaultQuotaLines(settings: StatuslineSettings, summary: Partial<StatuslineSummary> = {}, payload: unknown = {}, env: Readonly<Record<string, string | undefined>> = PLAIN, terminalWidth: number = TERMINAL): string[] {
   const output = renderStatuslineBlock({
     summary: { ...SUMMARY, ...summary },
     view: NO_VIEW,
@@ -66,11 +70,27 @@ function quotaLines(settings: StatuslineSettings, summary: Partial<StatuslineSum
   return output === "" ? [] : output.split("\n");
 }
 
+/** The quota row's lines under the settings given, laid over `HELD_USAGE`. */
+function quotaLines(settings: StatuslineSettings, summary: Partial<StatuslineSummary> = {}, payload: unknown = {}, env: Readonly<Record<string, string | undefined>> = PLAIN, terminalWidth: number = TERMINAL): string[] {
+  return defaultQuotaLines({ ...settings, usage: { ...HELD_USAGE, ...settings.usage } }, summary, payload, env, terminalWidth);
+}
+
 describe("the quota row's usage settings", () => {
-  it("draws a bar per window with the figure and the time left by default", () => {
+  it("draws a bar per window with the figure and the bare time left under the held usage settings", () => {
     const lines = quotaLines({});
     expect(lines).toHaveLength(1);
     expect(lines[0]).toBe(`5h [${FILLED.repeat(FIVE_HOUR_FILLED)}${EMPTY.repeat(FIVE_HOUR_EMPTY)}] 25.0% (1h 30m) | Wk [${FILLED.repeat(WEEK_FILLED)}${EMPTY.repeat(WEEK_EMPTY)}] 40.0% (4d 1h)`);
+  });
+
+  it("by default introduces the reset with its words and hides a weekly window below claude-hud's weekly threshold", () => {
+    expect(defaultQuotaLines({ usage: { bar: false } })).toEqual(["5h 25.0% (resets in 1h 30m)"]);
+    expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 80 })).toEqual(["5h 25.0% (resets in 1h 30m) | Wk 80.0% (resets in 4d 1h)"]);
+    expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 79 })).toEqual(["5h 25.0% (resets in 1h 30m)"]);
+  });
+
+  it("by default draws the per-model weekly windows after the account's own", () => {
+    expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 80 }, MODEL_SCOPED_PAYLOAD)).toEqual(["5h 25.0% (resets in 1h 30m) | Wk 80.0% (resets in 4d 1h) | Fable 60.0% (resets in 3d 0h)"]);
+    expect(defaultQuotaLines({}, {}, MODEL_SCOPED_PAYLOAD)[0]).toMatch(/^5h \[.*\] 25\.0% \(resets in 1h 30m\) \| Fable \[.*\] 60\.0% \(resets in 3d 0h\)$/u);
   });
 
   it("writes the share left instead of the share used with usage.value, and keeps the bar and colour on the share used", () => {

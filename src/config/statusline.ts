@@ -42,11 +42,21 @@ export const STATUSLINE_COLOUR_NAMES = [
   "brightWhite",
 ] as const;
 
-/** The segments and rows drawn when no layer sets `layout`: the ones the statusline has always drawn, so a segment or row added later stays hidden until a layer lists it. */
-const DEFAULT_HEADER_SEGMENTS: readonly (typeof STATUSLINE_HEADER_SEGMENTS)[number][] = ["model", "provider", "route", "account", "identity", "headroom"];
-const DEFAULT_ROWS: readonly (typeof STATUSLINE_ROWS)[number][] = ["context", "quota"];
+/**
+ * The segments and rows drawn when no layer sets `layout`: every element stock claude-hud draws under its own default configuration, then agent-shim's own. claude-hud's default draws the model, the project path with its added directories inline and its git status, the extra label once a command is given, and the context and usage bars (its `DEFAULT_CONFIG` and `DEFAULT_ELEMENT_ORDER` in `src/config.ts`, at the commit `src/statusline/parity/inventory.ts` names); here that is the model, project and vcs segments, the extra segment (which draws nothing until `extra.command` is set) and the context and quota rows. The `addedDirs` row is listed because claude-hud's default element order holds its added directories line, which it draws once `addedDirsLayout` is `line`; it draws nothing while `project.addedDirsLayout` is `inline`. The provider, route, account, identity and headroom segments are agent-shim's own and sit between the version control and the extra segment, in the order they have always had. A segment or row added later stays hidden until a layer lists it.
+ */
+const DEFAULT_HEADER_SEGMENTS: readonly (typeof STATUSLINE_HEADER_SEGMENTS)[number][] = ["model", "project", "vcs", "provider", "route", "account", "identity", "headroom", "extra"];
+const DEFAULT_ROWS: readonly (typeof STATUSLINE_ROWS)[number][] = ["context", "quota", "addedDirs"];
 
-/** The named bundles of settings a layer can choose with `preset`: `standard` is what the statusline draws with no settings at all, and the rest are claude-hud's presets. */
+/**
+ * The defaults that follow stock claude-hud's own, so the default shows at least what claude-hud's default does (each is a value of claude-hud's `DEFAULT_CONFIG.display`, at the commit `src/statusline/parity/inventory.ts` names): the reset label is `showResetLabel: true`, the per-model windows are `showModelScopedUsage: true`, the weekly window's threshold is `sevenDayThreshold: 80`, the estimate when the client reports no percentage is `autocompactBuffer: 'enabled'`, which adds the reserve, and the breakdown at the critical threshold is `showTokenBreakdown: true`.
+ */
+const CLAUDE_HUD_DEFAULTS = {
+  usage: { resetLabel: true, modelScoped: true, sevenDayThreshold: 80 },
+  context: { estimate: "buffered", breakdown: "critical" },
+} as const;
+
+/** The named bundles of settings a layer can choose with `preset`: `standard` is what the statusline draws with no settings at all (claude-hud's default display and agent-shim's own segments), and the rest are claude-hud's presets. */
 export const STATUSLINE_PRESETS = ["standard", "full", "essential", "minimal"] as const;
 
 /** The keys every preset sets, and no others, so that choosing a preset in a deeper layer leaves nothing of a shallower layer's preset behind. They are the keys claude-hud's presets are written in terms of. */
@@ -65,10 +75,10 @@ const GIT_WITH_DIRTY_MARKER = { enabled: true, showDirty: true, showAheadBehind:
 const JJ_OFF = { enabled: false, showDirty: true, showConflicts: true } as const;
 
 /**
- * What each preset sets. All but `standard` are claude-hud's presets as its guided configuration (`commands/configure.md`) defines them, for the elements the statusline has: each is a claude-hud configuration with that preset applied, so a toggle the preset does not list stays at claude-hud's default (the reset label on, the added directories on, usage on). `full` is the model, project, version control, effort, advisor, version, output style, cost, session name and duration, over the context, quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown on the context row at high use and Jujutsu on. `essential` is the model, project, version control and duration over the context, added directories, tools, agents and todos rows, and `minimal` is the same without the duration; neither adds the token breakdown. The segments and rows that are agent-shim's own (provider, route, account, identity, headroom, daily cost, speed, the changed files and the session times) are in none of them, because claude-hud's presets never turn them on.
+ * What each preset sets. `standard` is the default: everything claude-hud's own default configuration draws (the model, project, version control and extra segments over the context, quota and added directories rows, with the reset label and the token breakdown at high use), and agent-shim's provider, route, account, identity and headroom segments. All the others are claude-hud's presets as its guided configuration (`commands/configure.md`) defines them, for the elements the statusline has: each is a claude-hud configuration with that preset applied, so a toggle the preset does not list stays at claude-hud's default (the reset label on, the added directories on, usage on). `full` is the model, project, version control, effort, advisor, version, output style, cost, session name and duration, over the context, quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown on the context row at high use and Jujutsu on. `essential` is the model, project, version control and duration over the context, added directories, tools, agents and todos rows, and `minimal` is the same without the duration; neither adds the token breakdown. The segments and rows that are agent-shim's own (provider, route, account, identity, headroom, daily cost, speed, the changed files and the session times) are in none of claude-hud's three, because claude-hud's presets never turn them on.
  */
 const PRESET_BUNDLES: Readonly<Record<(typeof STATUSLINE_PRESETS)[number], PresetBundle>> = {
-  standard: { layout: { header: DEFAULT_HEADER_SEGMENTS, rows: DEFAULT_ROWS }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: false }, context: { breakdown: "never" } },
+  standard: { layout: { header: DEFAULT_HEADER_SEGMENTS, rows: DEFAULT_ROWS }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: CLAUDE_HUD_DEFAULTS.usage.resetLabel }, context: { breakdown: CLAUDE_HUD_DEFAULTS.context.breakdown } },
   full: {
     layout: { header: ["model", "project", "vcs", "effort", "advisor", "version", "extra", "outputStyle", "cost", "sessionName", "duration"], rows: ["context", "quota", "addedDirs", "memory", "environment", "tools", "skills", "mcp", "agents", "todos", "promptCache", "compactions", "tokens"] },
     git: GIT_WITH_DIRTY_MARKER,
@@ -359,7 +369,7 @@ function canonicalLanguage(tag: (typeof LANGUAGE_TAGS)[number]): (typeof STATUSL
 /** The settings that are not part of a group. A layer's `language` is read in any of its tags and kept as the canonical one, so everything after the schema sees one value. */
 const TOP_LEVEL = {
   language: z.enum(STATUSLINE_LANGUAGES).describe(LANGUAGE_DESCRIPTION),
-  preset: z.enum(STATUSLINE_PRESETS).describe("A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts, usage.resetLabel and context.breakdown) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments, the extra segment once extra.command is set, and the context row; full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown at high use, essential adds the duration, the added directories row and the tools, agents and todos rows, and minimal adds the added directories row alone."),
+  preset: z.enum(STATUSLINE_PRESETS).describe("A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts, usage.resetLabel and context.breakdown) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own default, everything claude-hud's default configuration draws plus agent-shim's own segments; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments, the extra segment once extra.command is set, and the context row; standard adds the provider, route, account, identity and headroom segments and the quota and added directories rows, with the reset label and the token breakdown at high use, full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown at high use, essential adds the duration, the added directories row and the tools, agents and todos rows, and minimal adds the added directories row alone."),
 };
 
 /** What a configuration layer may set: every group and every key optional, so a layer names only what it changes. */
@@ -435,13 +445,13 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   account: { parts: ["user", "organisation", "plan"], userLength: 0 },
   effort: { format: "full" },
   advisor: { override: "" },
-  context: { bar: "shown", value: "both", estimate: "never", breakdown: "never" },
+  context: { bar: "shown", value: "both", estimate: CLAUDE_HUD_DEFAULTS.context.estimate, breakdown: CLAUDE_HUD_DEFAULTS.context.breakdown },
   customLine: { text: "", position: "last" },
   extra: { command: [] },
   bands: { warnAt: 70, criticalAt: 90 },
   labels: { fiveHour: "", sevenDay: "" },
   bar: { width: 10, filled: "\u2588", empty: "\u2591" },
-  usage: { value: "used", bar: true, compact: false, resetLabel: false, modelScoped: false, timeFormat: "relative", threshold: 0, sevenDayThreshold: 0 },
+  usage: { value: "used", bar: true, compact: false, resetLabel: CLAUDE_HUD_DEFAULTS.usage.resetLabel, modelScoped: CLAUDE_HUD_DEFAULTS.usage.modelScoped, timeFormat: "relative", threshold: 0, sevenDayThreshold: CLAUDE_HUD_DEFAULTS.usage.sevenDayThreshold },
   clock: { hourCycle: "auto", seconds: false },
   cost: { routed: false },
   environment: { threshold: 0 },

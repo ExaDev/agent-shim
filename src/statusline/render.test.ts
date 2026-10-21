@@ -96,6 +96,9 @@ const VIEW = {
   freshInputTokens: 34_000,
 };
 
+/** Draws the weekly window whatever its use, for a test of the layout that needs both subscription windows while the summary's weekly use is below the default weekly threshold. */
+const WEEKLY_ALWAYS: StatuslineSettings = { usage: { sevenDayThreshold: 0 } };
+
 const ESCAPE_CHAR_CODE = 27;
 const ANSI_ESCAPE = new RegExp(`${String.fromCharCode(ESCAPE_CHAR_CODE)}\\[[0-9;]*[a-zA-Z]`, "g");
 
@@ -116,10 +119,12 @@ describe("renderStatuslineBlock", () => {
     expect(lines[1]).toContain("63.4%");
     expect(lines[1]).toContain("Cache: 99%");
     expect(lines[1]).toContain("5h ");
-    expect(lines[1]).toContain("3.6% (38m)");
-    expect(lines[1]).toContain("Wk ");
-    expect(lines[1]).toContain("28.2% (6d 13h)");
+    expect(lines[1]).toContain("3.6% (resets in 38m)");
+    // The weekly window is below claude-hud's weekly threshold, which the default follows, so only the five-hour window is drawn.
+    expect(lines[1]).not.toContain("Wk ");
     expect(lines[1]).not.toContain("Antigravity");
+    const weeklyHigh = stripAnsi(renderStatuslineBlock({ ...SUMMARY, sevenDayUsed: 80 }, VIEW, WIDE_TERMINAL, NOW_MS)).split("\n");
+    expect(weeklyHigh.join("\n")).toContain("80.0% (resets in 6d 13h)");
     const bars = lines[1];
     if (bars !== undefined) {
       expect(bars.length).toBeLessThanOrEqual(WIDE_TERMINAL_MAX);
@@ -127,7 +132,8 @@ describe("renderStatuslineBlock", () => {
   });
 
   it("wraps when the segments do not fit one line, each segment never wider than the terminal", () => {
-    const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, NARROW_TERMINAL, NOW_MS)).split("\n");
+    // The reset time is held bare: introduced with its words, a window at its base bar width is wider than this terminal and renders whole, as the segments excused below do.
+    const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, NARROW_TERMINAL, NOW_MS, resolveStatusline({ usage: { ...WEEKLY_ALWAYS.usage, resetLabel: false } }))).split("\n");
     expect(lines.length).toBeGreaterThan(1);
     const joined = lines.join("\n");
     expect(joined).toContain("Ctx");
@@ -228,7 +234,7 @@ describe("renderStatuslineBlock", () => {
     ).split("\n");
     const bars = lines.join("\n");
     expect(bars).toContain("tokens [");
-    expect(bars).toContain("50.0% (38m)");
+    expect(bars).toContain("50.0% (resets in 38m)");
     expect(bars).toContain("tool-calls [");
     expect(bars).toContain("4.0%");
     expect(bars).not.toContain("5h [");
@@ -252,7 +258,7 @@ describe("renderStatuslineBlock", () => {
         NOW_MS,
       ),
     );
-    expect(bars).toContain("Gem 5h [");
+    expect(bars).toMatch(/Gem 5h +\[/u);
     expect(bars).toContain("3P 5h [");
     expect(bars).toContain("3P Wk [");
     expect(bars).toContain("1.5%");
@@ -373,7 +379,7 @@ describe("statusline settings", () => {
 
   it("draws the rows in the order listed, and none when the list is empty", () => {
     const quotaFirst = stripAnsi(render({ layout: { header: [], rows: ["quota", "context"] } }, SUMMARY, ALIGNED_TERMINAL)).split("\n");
-    expect(quotaFirst.findIndex((line) => line.includes("5h"))).toBeLessThan(quotaFirst.findIndex((line) => line.includes("Ctx")));
+    expect(quotaFirst.join("\n").indexOf("5h")).toBeLessThan(quotaFirst.join("\n").indexOf("Ctx"));
     expect(render({ layout: { header: [], rows: [] } })).toBe("");
     const quotaOnly = stripAnsi(render({ layout: { rows: ["quota"] } }));
     expect(quotaOnly).toContain("5h");
@@ -436,14 +442,15 @@ describe("statusline settings", () => {
       ] },
     ];
     for (const { barWidth, width, expected } of cases) {
-      const settings = resolveStatusline({ bar: { width: barWidth }, layout: { header: [], rows: ["context", "quota", "memory"] } });
+      // The reset time is held bare, as it was drawn then.
+      const settings = resolveStatusline({ bar: { width: barWidth }, usage: { resetLabel: false }, layout: { header: [], rows: ["context", "quota", "memory"] } });
       const drawn = renderBlock({ summary: oneWindow, view: VIEW, payload: parseClientPayload({}), terminalWidth: width, nowMs: NOW_MS, settings, ports: fakeStatuslinePorts({ memoryUse: () => ({ usedBytes: 32, totalBytes: 64 }) }) });
       expect(stripAnsi(drawn).replaceAll("\u2588", "#").replaceAll("\u2591", ".").split("\n"), `bar width ${String(barWidth)} at ${String(width)}`).toEqual(expected);
     }
   });
 
   it("right-aligns the quota windows of a merged line at the right edge of the width", () => {
-    const [line] = stripAnsi(render({ layout: { header: [], merge: [["context", "quota"]], rightAlign: ["quota"] } }, SUMMARY, ONE_ROW_TERMINAL)).split("\n");
+    const [line] = stripAnsi(render({ ...WEEKLY_ALWAYS, layout: { header: [], merge: [["context", "quota"]], rightAlign: ["quota"] } }, SUMMARY, ONE_ROW_TERMINAL)).split("\n");
     expect(line?.startsWith("Ctx")).toBe(true);
     expect(line?.length).toBe(ONE_ROW_TERMINAL - RESERVED_COLUMNS);
     expect(line?.endsWith(")")).toBe(true);
@@ -451,7 +458,7 @@ describe("statusline settings", () => {
   });
 
   it("draws the header and every row on one line in the compact layout, wrapping only where the line is wider than the width", () => {
-    const wide = stripAnsi(render({ layout: { mode: "compact" } }, SUMMARY, COMPACT_ONE_LINE_TERMINAL)).split("\n");
+    const wide = stripAnsi(render({ ...WEEKLY_ALWAYS, layout: { mode: "compact" } }, SUMMARY, COMPACT_ONE_LINE_TERMINAL)).split("\n");
     expect(wide).toHaveLength(1);
     expect(wide[0]).toContain("Sonnet 5.5");
     expect(wide[0]).toContain("Ctx");
@@ -499,7 +506,7 @@ describe("statusline settings", () => {
   });
 
   it("names the two subscription windows as set", () => {
-    const text = stripAnsi(render({ labels: { fiveHour: "Session", sevenDay: "Week" } }));
+    const text = stripAnsi(render({ ...WEEKLY_ALWAYS, labels: { fiveHour: "Session", sevenDay: "Week" } }));
     expect(text).toContain("Session ");
     expect(text).toContain("Week ");
     expect(text).not.toContain("5h ");

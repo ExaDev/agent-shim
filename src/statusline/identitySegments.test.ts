@@ -332,11 +332,11 @@ describe("the output style segment", () => {
 });
 
 describe("the segments' defaults", () => {
-  it("draw none of the added segments, and leave the established ones as they were, whatever the payload and transcript hold", () => {
-    expect(STATUSLINE_DEFAULTS.layout.header).toEqual(["model", "provider", "route", "account", "identity", "headroom"]);
+  it("draw none of the added segments, which claude-hud's default leaves off too, whatever the payload and transcript hold", () => {
+    expect(STATUSLINE_DEFAULTS.layout.header).toEqual(["model", "project", "vcs", "provider", "route", "account", "identity", "headroom", "extra"]);
     const payload = { version: "2.1.81", effort: "high", cwd: "/work", transcript_path: TRANSCRIPT };
     const ports = { ...transcriptOf(assistant("glm-5.3", "claude-opus-4-7")), readText: () => explanatoryStyle() };
-    expect(segments({ payload, ports })).toEqual(["Claude Opus 4.7 (1M context)", "ada.lovelace@example.com · Max 20x"]);
+    expect(segments({ payload, ports })).toEqual(["Claude Opus 4.7 (1M context)", `${ESCAPE}[33mwork${ESCAPE}[0m`, "ada.lovelace@example.com · Max 20x"]);
   });
 });
 
