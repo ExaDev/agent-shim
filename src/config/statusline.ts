@@ -70,7 +70,7 @@ const JJ_OFF = { enabled: false, showDirty: true, showConflicts: true } as const
 const PRESET_BUNDLES: Readonly<Record<(typeof STATUSLINE_PRESETS)[number], PresetBundle>> = {
   standard: { layout: { header: DEFAULT_HEADER_SEGMENTS, rows: DEFAULT_ROWS }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: false }, context: { breakdown: "never" } },
   full: {
-    layout: { header: ["model", "project", "vcs", "effort", "advisor", "version", "extra", "outputStyle", "cost", "sessionName", "duration"], "rows": ["context", "quota", "addedDirs", "memory", "environment", "tools", "skills", "mcp", "agents", "todos", "promptCache", "compactions", "tokens"] },
+    layout: { header: ["model", "project", "vcs", "effort", "advisor", "version", "extra", "outputStyle", "cost", "sessionName", "duration"], rows: ["context", "quota", "addedDirs", "memory", "environment", "tools", "skills", "mcp", "agents", "todos", "promptCache", "compactions", "tokens"] },
     git: GIT_WITH_DIRTY_MARKER,
     jj: { enabled: true, showDirty: true, showConflicts: true },
     usage: { resetLabel: true },
