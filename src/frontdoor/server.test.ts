@@ -466,6 +466,68 @@ describe("draining the listener", () => {
     }
   });
 
+  /** Opens a raw connection to `port` and resolves once it is accepted, with what it receives and when it closes. */
+  const openRaw = async (port: number): Promise<{ readonly socket: net.Socket; readonly received: () => string; readonly closed: Promise<void> }> => {
+    const socket = net.connect(port, "127.0.0.1");
+    socket.on("error", () => undefined);
+    let buffer = "";
+    socket.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf8");
+    });
+    const closed = new Promise<void>((resolve) => {
+      socket.once("close", () => {
+        resolve();
+      });
+    });
+    await new Promise<void>((resolve) => {
+      socket.once("connect", () => {
+        resolve();
+      });
+    });
+    await new Promise((resolve) => {
+      setTimeout(resolve, SETTLE_MS);
+    });
+    return { socket, received: () => buffer, closed };
+  };
+
+  it("answers a connection accepted before the drain whose first request arrives after it began, telling it to close, and resolves once it has", async () => {
+    const door = await startDoor(refuses(HTTP_STATUS.notFound, "unrouted"));
+    try {
+      const late = await openRaw(door.port);
+      let drained = false;
+      const draining = door.drain().then(() => {
+        drained = true;
+      });
+      expect(await refusedConnection(door.port)).toBe("ECONNREFUSED");
+      expect(drained).toBe(false);
+      late.socket.write("GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n\r\n");
+      await late.closed;
+      const [statusLine, ...headerLines] = late.received().split("\r\n\r\n")[0]?.split("\r\n") ?? [];
+      expect(statusLine).toBe(`HTTP/1.1 ${String(HTTP_STATUS.ok)} OK`);
+      expect(headerLines.map((line) => line.toLowerCase())).toContain("connection: close");
+      await draining;
+      expect(drained).toBe(true);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("ends a connection accepted before the drain that makes no request within the server's allowance for a request's headers, so it cannot hold the drain open", async () => {
+    const server = createFrontDoorServer(async () => {
+      await Promise.resolve();
+    }, () => undefined);
+    server.headersTimeout = SETTLE_MS;
+    const handle = await listenFrontDoor(server);
+    try {
+      const silent = await openRaw(handle.port);
+      await handle.drain();
+      await silent.closed;
+      expect(silent.received()).toBe("");
+    } finally {
+      await handle.close();
+    }
+  });
+
   it("closes a keep-alive connection that is idle, so its client reconnects to whatever now holds the port", async () => {
     const door = await startDoor(refuses(HTTP_STATUS.notFound, "unrouted"));
     try {

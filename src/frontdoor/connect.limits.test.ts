@@ -1,4 +1,5 @@
 import net from "node:net";
+import tls from "node:tls";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -19,6 +20,7 @@ import {
   makeTlsWorld,
   proxyAuthorizationFor,
   rawAttempt,
+  requestOn,
   SETTLE_MS,
   settle,
   TEST_CAPABILITY,
@@ -305,6 +307,113 @@ describe("CONNECT authentication and limits over real sockets", () => {
             });
           });
           expect(successor).toBe(true);
+        } finally {
+          await close();
+          await world.stop();
+        }
+      },
+      KEYGEN_TIMEOUT_MS,
+    );
+
+    it(
+      "still answers a connection accepted before the drain whose head arrives after it began: a blind tunnel runs, and the drain waits for it",
+      async () => {
+        const world = makeTlsWorld(ca, upstreamCa);
+        const { connectPort, drain, close } = await world.start();
+        try {
+          const late = rawAttempt(connectPort, "");
+          await late.connected;
+          await settle();
+          let drained = false;
+          const draining = drain().then(() => {
+            drained = true;
+          });
+          await settle();
+          late.socket.write(connectHead("mcp-proxy.anthropic.com", [proxyAuthorizationFor(TEST_CAPABILITY)]));
+          expect(await late.answer).toContain(String(HTTP_OK));
+          expect(await echoThrough(late.socket, "late")).toContain("late");
+          expect(drained).toBe(false);
+          late.socket.destroy();
+          await draining;
+          expect(drained).toBe(true);
+        } finally {
+          await close();
+          await world.stop();
+        }
+      },
+      KEYGEN_TIMEOUT_MS,
+    );
+
+    it(
+      "serves one request on a terminated session whose head arrived after the drain began, then ends the session so the client's next request reaches the successor",
+      async () => {
+        const world = makeTlsWorld(ca, upstreamCa);
+        const { connectPort, drain, close } = await world.start();
+        try {
+          const raw = net.connect(connectPort, "127.0.0.1");
+          raw.on("error", () => undefined);
+          await new Promise<void>((resolve) => {
+            raw.once("connect", () => {
+              resolve();
+            });
+          });
+          await settle();
+          let drained = false;
+          const draining = drain().then(() => {
+            drained = true;
+          });
+          await settle();
+          raw.write(connectHead(CONNECT_INTERCEPT_HOST, [proxyAuthorizationFor(TEST_CAPABILITY)]));
+          const head = await new Promise<string>((resolve) => {
+            let buffer = "";
+            const onData = (chunk: Buffer): void => {
+              buffer += chunk.toString("utf8");
+              if (buffer.includes("\r\n\r\n")) {
+                raw.off("data", onData);
+                resolve(buffer);
+              }
+            };
+            raw.on("data", onData);
+          });
+          expect(head).toContain(String(HTTP_OK));
+          const secure = tls.connect({ socket: raw, servername: CONNECT_INTERCEPT_HOST, ca: ca.certPem, rejectUnauthorized: true });
+          secure.on("error", () => undefined);
+          await new Promise<void>((resolve) => {
+            secure.once("secureConnect", () => {
+              resolve();
+            });
+          });
+          const ended = new Promise<void>((resolve) => {
+            secure.once("close", () => {
+              resolve();
+            });
+          });
+          const response = await requestOn(secure, `POST /v1/messages HTTP/1.1\r\nHost: ${CONNECT_INTERCEPT_HOST}\r\ncontent-length: 2\r\n\r\n{}`);
+          expect(response.statusLine).toContain(String(HTTP_OK));
+          await ended;
+          await draining;
+          expect(drained).toBe(true);
+          expect(world.routedRequests.map((seen) => seen.url)).toEqual(["/v1/messages"]);
+        } finally {
+          await close();
+          await world.stop();
+        }
+      },
+      KEYGEN_TIMEOUT_MS,
+    );
+
+    it(
+      "refuses a connection accepted before the drain that never sends its head once the head deadline passes, so it cannot hold the drain open",
+      async () => {
+        const world = makeTlsWorld(ca, upstreamCa, { limits: { headDeadlineMs: TEST_HEAD_DEADLINE_MS } });
+        const { connectPort, drain, close } = await world.start();
+        try {
+          const silent = rawAttempt(connectPort, "");
+          await silent.connected;
+          await settle();
+          const draining = drain();
+          expect((await silent.answer).split("\r\n")[0]).toBe(`HTTP/1.1 ${String(HTTP_REQUEST_TIMEOUT)} Request Timeout`);
+          await draining;
         } finally {
           await close();
           await world.stop();
