@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
+import type net from "node:net";
 import type { Command } from "commander";
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { HTTP_STATUS } from "../codex/http";
@@ -35,7 +36,7 @@ import { runWindowKeeper } from "../usage/windowKeeper";
 import { realAsyncCredentialCacheEnv } from "../realCredentialCache";
 import { createDoorPipelines } from "./assembly";
 import { appendDoorLog } from "./doorLog";
-import { retireOnSignals } from "./replacement";
+import { handOverOnSignal, retireOnSignals, type DoorExitFacts } from "./replacement";
 import { createRoutingSettingReader } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
 import { isLiveCapability } from "./capability";
@@ -58,6 +59,9 @@ import { createLaunchEventPublisher } from "./launchEvents";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
 import { readModels } from "../modelsStore";
+import { FRONTDOOR_START_TIMEOUT_MS } from "./ensure";
+import type { ListenSource, Predecessor } from "./handover";
+import { predecessorOfThisProcess, realHandOverListeners } from "./realHandover";
 import { realRestartFrontDoor } from "./realFrontDoorPort";
 import { MINTED_TOKEN_RANDOM_BYTES, registerRcCommand } from "./rcCommands";
 import { createRcControlHandler } from "./rcControl";
@@ -140,11 +144,37 @@ export function realStatOwnExecutable(watchPath: string): () => OwnExecutableSta
   };
 }
 
+/** `listenFrontDoor`'s options for one listener source: the socket to adopt, or the sticky port to prefer when there is one. */
+function listenOptionsOf(source: ListenSource): { readonly inherit: () => Promise<net.Server> } | { readonly preferredPort?: number } {
+  if ("inherit" in source) {
+    return { inherit: source.inherit };
+  }
+  return source.preferredPort === undefined ? {} : { preferredPort: source.preferredPort };
+}
+
+/** The control token the door being replaced by a handover wrote, which its successor serves under too (see the token's minting below). Throws when there is none, which fails the successor's start and so the handover, leaving the old door to drain the ordinary way. */
+function inheritedControlToken(paths: LayoutPaths): string {
+  const token = realFarmFs.readFileUtf8(paths.frontdoorControlTokenFile)?.trim();
+  if (token === undefined || token === "") {
+    throw new Error(`the door being replaced has no control token at ${paths.frontdoorControlTokenFile}`);
+  }
+  return token;
+}
+
+/** How a door is asked to stop serving, and the door it replaces when it was started by a handover, read once by `__frontdoor-supervisor` before the ports are built. */
+interface DoorLifecycle {
+  /** Aborted on the first `SIGTERM` or `SIGINT` (see `FrontDoorSupervisorPorts.retire`). */
+  readonly retire: AbortSignal;
+  /** Aborted on the first `SIGUSR2` (see `FrontDoorSupervisorPorts.handover`). */
+  readonly handoverRequested: AbortSignal;
+  readonly predecessor: Predecessor | undefined;
+}
+
 /**
  * The real supervisor ports. The three listener starts are where the whole routing assembly is built: the codex translation's real ports, the provider route resolver over them, both pipelines (see `createDoorPipelines`), the three listeners that feed them, and the CA that signs both TLS-serving listeners' leaves.
  */
 /** `respawnGeneration` is the generation this door was started as (see `readRespawnGeneration`), threaded in because the env it came from is scrubbed before the supervisor's lazy `startWatchdog` closure would read it. */
-function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: number, retire: AbortSignal, trackTunnels: (count: () => number) => void): FrontDoorSupervisorPorts {
+function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: number, lifecycle: DoorLifecycle, trackTunnels: (count: () => number) => void): FrontDoorSupervisorPorts {
   const log = (line: string): void => {
     appendDoorLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
   };
@@ -221,12 +251,13 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       appendDoorLog(paths, `frontdoor ${String(process.pid)}: ${line}`);
     },
   });
-  // This generation's control token, minted per door start and written owner-only: the value the door's control routes demand and only this user's CLI can read. A crashed door's stale file never authenticates, because the next generation mints a fresh one over it.
   // The per-target observations a virtual model's selection ranks on: seeded from the usage log at door start, then kept live by every record the store writes below.
   const observations = createTargetObservationStore(realFarmFs, paths);
   // The routing layer's snapshot cache, kept fresh by the usage store's publish below: a route condition reading a target's quota sees the state this process last wrote without a file read, and a cold cache (a door just started) falls back to the snapshot on disk once before the store's next write makes it live.
   const routingSnapshots = new Map<string, UsageSnapshot>();
-  const rcControlToken = randomUUID();
+  // This generation's control token, minted per door start and written owner-only: the value the door's control routes demand and only this user's CLI can read. A crashed door's stale file never authenticates, because the next generation mints a fresh one over it.
+  // A successor started by a handover keeps the token of the door it replaces instead of minting one: both doors accept on the same addresses until the old one drains, so a control request made with the token file's value must be admitted by whichever of them takes it. The old door wrote the file before its provider listener first accepted, so it is there for as long as that door serves.
+  const rcControlToken = lifecycle.predecessor === undefined ? randomUUID() : inheritedControlToken(paths);
   const resolveRoute = rcObservingResolver(
     createProviderRouteResolver({
       // Read live so a models-block edit reaches the next request without a door restart.
@@ -428,7 +459,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     runningAmong: realRunningAmong,
     // The turnover check's file identity, over the installed entry resolved once at door start: re-resolving per tick would re-run the PATH scan every second and could theoretically flip between two files, while the entry itself is fixed for as long as this door lives. The existence check prefers the agent-shim sibling only when it is really there (see watchedInstallEntry).
     statOwnExecutable: realStatOwnExecutable(watchedInstallEntry(realOwnExecutablePath(), (candidate) => fs.existsSync(candidate))),
-    startProviderListener: async (preferredPort) => {
+    startProviderListener: async (source) => {
       const authority = loadCa();
       // The write operations the control routes and the typed API both carry out: the door itself dials the real API host over its interception-proof agent, using the observed credential, which is why the CLI never dials the API directly. A confirmed write advances the session's sequence cursor through the tracker, so a stream resume continues after the door's own events too. In the self-hosted mode the dial's target is resolved per call so it names the door's own surface once that has bound.
       const rcDial = rcSelfHost ? lateRcEventDial(rcSelfHostDialTarget) : realRcEventDial();
@@ -527,9 +558,10 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
           createRcClientPage(rcControlToken),
         ],
       );
-      const handle = await listenFrontDoor(server, { ...(preferredPort === undefined ? {} : { preferredPort }), ca: authority.certPem, onError: onListenerError("provider") });
+      const handle = await listenFrontDoor(server, { ...listenOptionsOf(source), ca: authority.certPem, onError: onListenerError("provider") });
       return {
         port: handle.port,
+        listening: server,
         close: async () => {
           realFarmFs.removeRecursive(paths.frontdoorControlTokenFile);
           await handle.close();
@@ -538,7 +570,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         drain: handle.drain,
       };
     },
-    startConnectListener: async (preferredPort) => {
+    startConnectListener: async (source) => {
       // The transparent surface exists only when something asked for it (AGENT_SHIM_TRANSPARENT_SURFACE naming the port an operating-system redirect sends the API host's address to): the door then mints its own registered session for redirect-arriving traffic, keyed by its own pid so the session lives exactly as long as the door does and the idle pruner never reaps it while the door serves.
       const wantedTransparentPort = process.env.AGENT_SHIM_TRANSPARENT_SURFACE === undefined ? undefined : Number(process.env.AGENT_SHIM_TRANSPARENT_SURFACE);
       const transparentCapability = wantedTransparentPort === undefined || Number.isNaN(wantedTransparentPort) ? undefined : randomUUID();
@@ -591,13 +623,14 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
           ...(capture === undefined ? {} : { capture }),
         },
         realConnectEffects(),
-        preferredPort,
+        source,
       );
       // The bound transparent port is what the self-hosted mode's client-half dials name; recorded the moment it exists, exactly when the direct port is.
       transparentPort = server.transparentPort;
       trackTunnels(server.openTunnels);
       return {
         port: server.port,
+        listening: server.listening,
         close: async () => {
           rcSelfHostSurface?.close();
           await server.close();
@@ -612,18 +645,18 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         },
       };
     },
-    startDirectListener: async (preferredPort) => {
+    startDirectListener: async (source) => {
       const server = createFrontDoorServer(async (request) => {
         await serveRouted(request, pipelines.direct);
       }, log);
       const handle = await listenFrontDoor(server, {
-        ...(preferredPort === undefined ? {} : { preferredPort }),
+        ...listenOptionsOf(source),
         onBound: (port) => {
           directPort = port;
         },
         onError: onListenerError("direct"),
       });
-      return { port: handle.port, close: handle.close, drain: handle.drain };
+      return { port: handle.port, listening: server, close: handle.close, drain: handle.drain };
     },
     closeRcStreamHub: rcHub.close,
     startWatchdog: () =>
@@ -648,7 +681,13 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     // The launch lifecycle publisher over the same backbone the typed API serves: the tick's registry facts go in here, and the door's own register, prune and end moments come out as source-tagged events.
     observeLaunchRegistry: createLaunchEventPublisher(doorEvents, () => Date.now()).observe,
     doorHealth,
-    retire,
+    retire: lifecycle.retire,
+    handover: {
+      requested: lifecycle.handoverRequested,
+      // The successor is this very executable at its installed path, so a door replaced after an update hands over to the new release. It gets as long to serve as a launch gives any door to start.
+      run: async (sockets) => await realHandOverListeners(paths, selfInvocation(["__frontdoor-supervisor"]), sockets, FRONTDOOR_START_TIMEOUT_MS),
+    },
+    ...(lifecycle.predecessor === undefined ? {} : { predecessor: lifecycle.predecessor }),
     stopBackgroundWork: () => {
       for (const timer of keeperTimers) {
         clearInterval(timer);
@@ -692,7 +731,7 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
     frontdoor
       .command("restart")
       .description(
-        "Replace the serving front door with one started from the installed binary, in place: it binds the same ports, so running sessions reach it on their next request. The old door releases its addresses and keeps carrying the tunnels and responses already open until they end; the sessions it terminates reconnect to the new one. Does nothing when no door is serving.",
+        "Replace the serving front door with one started from the installed binary, in place: it serves the same ports, so running sessions reach it on their next request. A door that supports it hands its listening sockets to the new one, so no connection is refused during the swap; an older door releases its addresses first. The old door keeps carrying the tunnels and responses already open until they end; the sessions it terminates reconnect to the new one. Does nothing when no door is serving.",
       )
       .option("--json", "Print the result as JSON.")
       .action((options: Readonly<{ json?: boolean }>) => {
@@ -725,15 +764,25 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
       Reflect.deleteProperty(process.env, DOOR_RESPAWN_GENERATION_ENV);
       Reflect.deleteProperty(process.env, DOOR_RESPAWN_DELAY_ENV);
       const retire = new AbortController();
+      const handover = new AbortController();
+      // Read before anything else can use the channel: a door started by a handover has one to the door it replaces, and no other start does.
+      const predecessor = predecessorOfThisProcess();
       // What the door can say about itself when it is told to exit: how many tunnels it carries, read from the connect surface once it is up (none before).
       let openTunnels = (): number => 0;
-      const supervisorPorts = realFrontDoorSupervisorPorts(paths, respawnGeneration, retire.signal, (count) => {
+      const supervisorPorts = realFrontDoorSupervisorPorts(paths, respawnGeneration, { retire: retire.signal, handoverRequested: handover.signal, predecessor }, (count) => {
         openTunnels = count;
       });
       const ownPid = process.pid;
       // Every way this process can end writes its reason to the log first, because the log is the only record that outlives it: a door that exits silently looks, from outside, like one that was never there.
       process.on("exit", (code) => {
         supervisorPorts.log(`frontdoor ${String(ownPid)}: exiting with code ${String(code)}`);
+      });
+      // What the door can say about itself when a signal asks it to retire or hand over.
+      const exitFacts = (): DoorExitFacts => ({
+        tunnels: openTunnels(),
+        liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => session.pid !== ownPid && realIsProcessAlive(session.pid)).length,
+        protocol: FRONT_DOOR_PROTOCOL,
+        uptimeSeconds: Math.round(process.uptime()),
       });
       // The first signal starts a drain rather than an exit: the supervisor releases the listening addresses and stays up for what its listeners still carry (see `FrontDoorSupervisorPorts.retire`); a further signal exits at once.
       retireOnSignals(process, {
@@ -743,12 +792,16 @@ export function registerFrontDoorCommand(program: Command, deps: CommandDeps): v
           retire.abort();
         },
         exit: deps.exit,
-        facts: () => ({
-          tunnels: openTunnels(),
-          liveSessions: listFrontDoorSessions(realFarmFs, paths.frontdoorSessionsDir).filter((session) => session.pid !== ownPid && realIsProcessAlive(session.pid)).length,
-          protocol: FRONT_DOOR_PROTOCOL,
-          uptimeSeconds: Math.round(process.uptime()),
-        }),
+        facts: exitFacts,
+      });
+      // A launcher's request to hand the listeners to a successor (see `FrontDoorSupervisorPorts.handover`).
+      handOverOnSignal(process, {
+        doorPid: ownPid,
+        log: supervisorPorts.log,
+        handOver: () => {
+          handover.abort();
+        },
+        facts: exitFacts,
       });
       // A door started by its watchdog's stall handling names the stalled door's pid and waits for it to be gone before binding (see `awaitPidExit`), and carries the respawn generation it was started as, so its own watchdog knows how much of the chain is left.
       if (Number.isInteger(awaited) && awaited > 0) {

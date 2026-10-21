@@ -4,11 +4,13 @@ import { CliError } from "../cliError";
 import type { LayoutPaths } from "../paths";
 import { readStartLock, type HeadroomFs, type HeadroomLock } from "../headroom/state";
 import type { ListenerVerdict } from "./probe";
-import { replacementLine, type ReplacementReason, type RequestedReplacementReason } from "./replacement";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, recordOf, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorSessionDetails } from "./state";
+import { replacementLine, type ReplacementReason, type ReplacementSignal, type RequestedReplacementReason } from "./replacement";
+import { FRONT_DOOR_HANDOVER_PROTOCOL, FRONT_DOOR_PROTOCOL, listFrontDoorSessions, readFrontDoorState, recordOf, removeFrontDoorSession, writeFrontDoorSession, type FrontDoorSessionDetails } from "./state";
 
-/** How long one launch waits for the front door. The listener is this same binary binding one loopback port, so a cold start takes a second or two; the bound only bites when something is genuinely broken. */
-const FRONTDOOR_START_TIMEOUT_MS = 30_000;
+/**
+ * How long one launch waits for the front door. The listener is this same binary binding one loopback port, so a cold start takes a second or two; the bound only bites when something is genuinely broken. It is also how long a door handing its listeners over waits for its successor to serve them before it gives up and drains the ordinary way, since a successor not serving by then has failed the launch that asked for it.
+ */
+export const FRONTDOOR_START_TIMEOUT_MS = 30_000;
 
 /** The launcher's poll rate while waiting for the door. */
 const FRONTDOOR_LAUNCHER_POLL_MS = 100;
@@ -40,6 +42,10 @@ export interface EnsureFrontDoorPorts {
   readonly verifyListener: (port: number) => ListenerVerdict;
   /** Asks a running front-door supervisor to exit, without waiting for it to: the caller polls `isRunning`. Only ever called for a pid whose recorded listener has just authenticated as agent-shim's own, or whose process is agent-shim's front-door supervisor (`isFrontDoorSupervisor`). */
   readonly stopSupervisor: (pid: number) => void;
+  /**
+   * Asks a running front-door supervisor to hand its listening sockets to a successor it starts itself (see `./handover.ts`), without waiting for it to: the caller polls the state file for the successor. Only ever called for a pid whose listener has just authenticated, whose recorded protocol is `FRONT_DOOR_HANDOVER_PROTOCOL` or later, and whose process is agent-shim's own front-door supervisor, the process that installs the handler for the request. Absent where the platform has no way to deliver the request (Windows, which has no user signals), so every replacement there takes the stop-and-start path.
+   */
+  readonly requestHandover?: (pid: number) => void;
   /** Appends one line to the front door's own log. Called before every signal sent to a door, so the door's log names the cause of its own exit. */
   readonly recordReplacement: (line: string) => void;
   /** Ends a supervisor that did not exit when asked to, without giving it the chance to refuse: a door whose event loop is blocked never runs its signal handler. Called only for a pid `isFrontDoorSupervisor` has just confirmed, after `stopSupervisor` and a grace period. */
@@ -63,7 +69,9 @@ export function ensureFrontDoor(params: {
   readonly session?: FrontDoorSessionDetails;
 }): { readonly port: number; readonly connectPort: number; readonly token: string } {
   const { paths, ports } = params;
-  const deadline = ports.now() + FRONTDOOR_START_TIMEOUT_MS;
+  // Extended once by a handover's wait (see `handOverAndAwait`), so a handover that fails late still leaves the launch the time to start a door the ordinary way.
+  const startedAt = ports.now();
+  let deadline = startedAt + FRONTDOOR_START_TIMEOUT_MS;
   let spawned = false;
   let replaced = false;
   const distrusted = new Set<number>();
@@ -93,7 +101,7 @@ export function ensureFrontDoor(params: {
   };
 
   /** Appends the line that names why `doorPid` is about to be signalled, to the door's own log and before the signal, so the door's last words are never the only record of its cause. */
-  const recordReplacement = (doorPid: number, doorProtocol: number, reason: ReplacementReason, signal: "SIGTERM" | "SIGKILL"): void => {
+  const recordReplacement = (doorPid: number, doorProtocol: number, reason: ReplacementReason, signal: ReplacementSignal): void => {
     ports.recordReplacement(
       replacementLine({ reason, signal, launcherPid: params.launcherPid, launcherProtocol: FRONT_DOOR_PROTOCOL, doorPid, doorProtocol, liveSessions: liveSessionsOn(doorPid) }),
     );
@@ -121,6 +129,23 @@ export function ensureFrontDoor(params: {
     }
   };
 
+  /**
+   * Asks `supervisorPid` to hand its listeners to a successor it starts itself, and waits until the state file names another door. The door keeps accepting until its successor does, so nothing this launch waits through is refused. A door that cannot complete the handover drains by itself within `FRONTDOOR_START_TIMEOUT_MS`, clearing the state file's owner, and the loop then starts a successor the ordinary way; one still recorded as the owner once that budget and the exit grace have passed never acted on the request (its event loop is blocked), and is stopped through `stopAndAwaitExit`.
+   */
+  const handOverAndAwait = (supervisorPid: number, doorProtocol: number, reason: RequestedReplacementReason, request: (pid: number) => void): void => {
+    recordReplacement(supervisorPid, doorProtocol, reason, "SIGUSR2");
+    request(supervisorPid);
+    const waitEnds = ports.now() + FRONTDOOR_START_TIMEOUT_MS + FRONTDOOR_EXIT_GRACE_MS;
+    deadline += FRONTDOOR_START_TIMEOUT_MS + FRONTDOOR_EXIT_GRACE_MS;
+    while (ports.isRunning(supervisorPid) && readFrontDoorState(ports.fs, paths.frontdoorStateFile)?.supervisorPid === supervisorPid) {
+      if (ports.now() >= waitEnds) {
+        stopAndAwaitExit(supervisorPid, doorProtocol, reason, `the front door (pid ${String(supervisorPid)}) did not act on a request to hand its listeners over, and did not exit when asked to`);
+        return;
+      }
+      ports.sleep(FRONTDOOR_LAUNCHER_POLL_MS);
+    }
+  };
+
   for (;;) {
     const state = readFrontDoorState(ports.fs, paths.frontdoorStateFile);
     const supervisorPid = state?.supervisorPid;
@@ -136,12 +161,17 @@ export function ensureFrontDoor(params: {
         const doorProtocol = state.protocol ?? 0;
         if (verdict.ok && !replaced && !spawned && (params.replace !== undefined || doorProtocol < FRONT_DOOR_PROTOCOL)) {
           // A door older than this launcher speaks a protocol this launcher's sessions cannot use (a door from before the protocol field is protocol 0). It is replaced, never joined: the registry is on disk and the replacement binds the same sticky ports, so sessions already running reach it on the addresses they froze. The listener has authenticated as this tool's own, which is what makes the recorded pid safe to stop.
-          stopAndAwaitExit(
-            supervisorPid,
-            doorProtocol,
-            params.replace ?? "protocol-older",
-            `the front door (pid ${String(supervisorPid)}, protocol ${String(doorProtocol)}; this launcher speaks protocol ${String(FRONT_DOOR_PROTOCOL)}) was asked to be replaced and did not exit`,
-          );
+          // A requested replacement of a door that can hand its listeners over takes that path, so the addresses keep accepting throughout. An older door cannot, and a protocol-older replacement keeps the stop-and-start path too: the successor a handover starts is the door's own installed binary, which need not be this launcher's.
+          if (params.replace !== undefined && doorProtocol >= FRONT_DOOR_HANDOVER_PROTOCOL && ports.requestHandover !== undefined && ports.isFrontDoorSupervisor(supervisorPid)) {
+            handOverAndAwait(supervisorPid, doorProtocol, params.replace, ports.requestHandover);
+          } else {
+            stopAndAwaitExit(
+              supervisorPid,
+              doorProtocol,
+              params.replace ?? "protocol-older",
+              `the front door (pid ${String(supervisorPid)}, protocol ${String(doorProtocol)}; this launcher speaks protocol ${String(FRONT_DOOR_PROTOCOL)}) was asked to be replaced and did not exit`,
+            );
+          }
           replaced = true;
           continue;
         }
@@ -198,7 +228,7 @@ export function ensureFrontDoor(params: {
     if (ports.now() >= deadline) {
       const lastError = state?.lastError;
       throw new FrontDoorStartError(
-        `the front door did not become ready within ${String(FRONTDOOR_START_TIMEOUT_MS)}ms` +
+        `the front door did not become ready within ${String(deadline - startedAt)}ms` +
           (lastError === undefined ? "" : ` (last error: ${lastError})`) +
           (lastRejection === undefined ? "" : ` (${lastRejection})`) +
           (busyDoor === undefined
@@ -215,7 +245,7 @@ export function ensureFrontDoor(params: {
 export type RestartFrontDoorResult = { readonly action: "not-running" } | { readonly action: "restarted"; readonly previousPid: number; readonly pid: number };
 
 /**
- * Replaces the serving front door in place: the running supervisor is asked to exit and a fresh one from the installed binary binds the same sticky ports, and the session registry is on disk, so every session already running reaches the new door on its next request. The old door drains (see `FrontDoorSupervisorPorts.retire`): tunnels and responses already open finish on it, while the sessions it terminates, Remote Control attachments among them, reconnect to the new door and resume from their persisted cursors. A door from before the drain exits at once and drops everything it carried.
+ * Replaces the serving front door in place, and the session registry is on disk, so every session already running reaches the new door on its next request. A door that can hand its listeners over (protocol `FRONT_DOOR_HANDOVER_PROTOCOL` or later, on a platform that can deliver the request) starts its successor from the installed binary itself and passes it the listening sockets, so the sticky addresses never stop accepting; an older door is asked to exit and a fresh one binds the same sticky ports once it has let them go, and connections made in between are refused. Either way the old door drains (see `FrontDoorSupervisorPorts.retire`): tunnels and responses already open finish on it, while the sessions it terminates, Remote Control attachments among them, reconnect to the new door and resume from their persisted cursors. A door from before the drain exits at once and drops everything it carried.
  *
  * Nothing is started when no door is serving. The restart's own registry entry is removed again before returning, so it never keeps the new door awake.
  */

@@ -390,7 +390,8 @@ export function realConnectEffects(ports: SourcePortRange = DOOR_SOURCE_PORTS): 
   const plainAgent = new ExemptHttpAgent(ports);
   const tlsAgent = new ExemptTlsAgent(ports);
 
-  const listenOnce = async (port: number, onSocket: (socket: net.Socket) => void): Promise<ConnectListenerHandle> =>
+  /** Binds `target` when it is a port, or takes over the listening socket it is (Node's `listen(handle)`), in the same turn either way. */
+  const listenOnce = async (target: number | net.Server, onSocket: (socket: net.Socket) => void): Promise<ConnectListenerHandle> =>
     await new Promise((resolve, reject) => {
       const accepted = new Set<net.Socket>();
       const server = net.createServer((socket) => {
@@ -401,7 +402,7 @@ export function realConnectEffects(ports: SourcePortRange = DOOR_SOURCE_PORTS): 
         onSocket(socket);
       });
       server.once("error", reject);
-      server.listen(port, "127.0.0.1", () => {
+      const onListening = (): void => {
         const address = server.address();
         // A listening TCP server's address is always the object form; the string form is for pipes and unix sockets only.
         const bound = typeof address === "object" && address !== null ? address.port : 0;
@@ -411,6 +412,7 @@ export function realConnectEffects(ports: SourcePortRange = DOOR_SOURCE_PORTS): 
         }
         resolve({
           port: bound,
+          listening: server,
           // The listening socket is released by `close` at once; the connections already accepted are untouched and keep the server's `close` callback pending until they end.
           stopAccepting: () => {
             server.close();
@@ -427,11 +429,21 @@ export function realConnectEffects(ports: SourcePortRange = DOOR_SOURCE_PORTS): 
             });
           },
         });
-      });
+      };
+      if (typeof target === "number") {
+        server.listen(target, "127.0.0.1", onListening);
+      } else {
+        server.listen(target, onListening);
+      }
     });
 
   return {
-    listenLoopback: async (preferredPort, onSocket) => {
+    listenLoopback: async (source, onSocket) => {
+      if ("inherit" in source) {
+        // No await between the socket arriving and `listen` taking it over: a connection it accepted before then would reach no handler (see `./handover.ts`).
+        return await listenOnce(await source.inherit(), onSocket);
+      }
+      const { preferredPort } = source;
       if (preferredPort !== undefined) {
         try {
           return await listenOnce(preferredPort, onSocket);

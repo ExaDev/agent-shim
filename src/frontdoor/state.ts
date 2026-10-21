@@ -13,9 +13,14 @@ import type { HeadroomFs } from "../headroom/state";
  *
  * Protocol 5: the door resolves a request's model name through the models block for every session, with no launch opting in. A protocol 4 door resolves only the sessions whose launch stated the choice in a session header this release no longer sends, so its sessions would reach their own provider with a name it does not serve; the door is replaced rather than joined.
  *
+ * Protocol 6: the door hands its listening sockets to a successor it starts itself when a launcher sends it `SIGUSR2` (see `./handover.ts`), so a requested replacement keeps every address accepting. A protocol 5 door has no handler for that signal, whose default action ends the process outright, so a launcher must know the door's protocol before it sends one; such a door is replaced the stop-and-start way, which its drain already makes safe for the connections it carries.
+ *
  * The rule that makes a bump safe: a door accepts every lower protocol's launches (protocol 1 accepts the former `x-claude-use-*` header names), and a launcher replaces a door whose protocol is lower than its own, never one that is higher. Replacing is safe because restarts are what the door is designed for: the capability registry is on disk and the listeners keep their sticky ports, so launches already running reach the replacement on the addresses they froze at launch.
  */
-export const FRONT_DOOR_PROTOCOL = 5;
+export const FRONT_DOOR_PROTOCOL = 6;
+
+/** The first protocol whose door hands its listeners over on `SIGUSR2` (see protocol 6 above): a launcher sends that request only to a door recording this protocol or a later one. */
+export const FRONT_DOOR_HANDOVER_PROTOCOL = 6;
 
 /**
  * The record held in one front-door session-registry file: the launcher's pid plus the per-launch capability token its child presents on every request, and the supervisor of the door the launch was sent to. `sessionId` is the id the launch's requests carry in their session header, and `models` the models block this launch resolved when its directory, profile or committed file added definitions of its own to the global block (absent otherwise, so the door follows the global block live). `supervisorPid` is absent on a record written before it existed and on a door's own transparent-surface record; such a launch cannot be attributed to a door, so a superseded door treats it as its own.

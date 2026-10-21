@@ -134,9 +134,21 @@ export async function frontDoorHealthy(port: number, ca?: string): Promise<boole
 }
 
 /** How a listener is bound. */
-interface ListenOptions {
-  /** The sticky port to try first; any free port is used when it is taken or absent. */
-  readonly preferredPort?: number;
+type ListenOptions = ListenOptionsCommon &
+  (
+    | {
+        /** The sticky port to try first; any free port is used when it is taken or absent. */
+        readonly preferredPort?: number;
+        readonly inherit?: never;
+      }
+    | {
+        /** Adopts the listening socket the door being replaced hands over (see `./handover.ts`) instead of binding: the server takes it over in the turn it arrives, so no connection the socket accepts can reach anything else first. */
+        readonly inherit: () => Promise<net.Server>;
+        readonly preferredPort?: never;
+      }
+  );
+
+interface ListenOptionsCommon {
   /** Receives the actual port the moment the bind succeeds, before the health probe. */
   readonly onBound?: (port: number) => void;
   /** The CA a TLS listener's leaf chains to, so its own start-up probe verifies the handshake a child will make; omitted for a plain-HTTP listener. */
@@ -148,19 +160,19 @@ interface ListenOptions {
 }
 
 /**
- * Binds the listener on `preferredPort` when it is free and any free port otherwise (bind, do not probe: check-then-bind races), probing its own health endpoint before resolving.
+ * Binds the listener on `preferredPort` when it is free and any free port otherwise (bind, do not probe: check-then-bind races), or adopts the socket `inherit` hands over, probing its own health endpoint before resolving. An adopted socket is still accepting in the door that handed it over until that door drains, so the probe can be answered by either process: it proves the address accepts and serves, which is what a launch needs, not which door answered.
  */
 export async function listenFrontDoor(server: FrontDoorServer, options: Readonly<ListenOptions> = {}): Promise<{ readonly port: number; readonly close: () => Promise<void>; readonly drain: () => Promise<void> }> {
   const { preferredPort, ca } = options;
   const connections = trackConnections(server);
-  const tryListen = async (port: number): Promise<number> =>
+  const tryListen = async (target: number | net.Server): Promise<number> =>
     await new Promise<number>((resolve, reject) => {
       const onError = (error: Error): void => {
         server.off("error", onError);
         reject(error);
       };
       server.once("error", onError);
-      server.listen(port, "127.0.0.1", () => {
+      const onListening = (): void => {
         server.off("error", onError);
         const address = server.address();
         // A listening TCP server's address is always the object form; the string form is for pipes and unix sockets only.
@@ -170,9 +182,19 @@ export async function listenFrontDoor(server: FrontDoorServer, options: Readonly
           return;
         }
         resolve(bound);
-      });
+      };
+      // Node's `listen(handle)` takes over a server's underlying handle: this server becomes the one its connections are delivered to.
+      if (typeof target === "number") {
+        server.listen(target, "127.0.0.1", onListening);
+      } else {
+        server.listen(target, onListening);
+      }
     });
   const bindListener = async (): Promise<number> => {
+    if (options.inherit !== undefined) {
+      // No await between the socket arriving and `listen` taking it over (see `inherit`).
+      return await tryListen(await options.inherit());
+    }
     if (preferredPort === undefined) {
       return await tryListen(0);
     }

@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 
-import { REPLACEMENT_REASONS, alreadyRetiringLine, exitNowLine, replacementLine, retireLine, retireOnSignals, type DoorExitFacts } from "./replacement";
+import { REPLACEMENT_REASONS, alreadyHandingOverLine, alreadyRetiringLine, exitNowLine, handOverOnSignal, handoverLine, replacementLine, retireLine, retireOnSignals, type DoorExitFacts } from "./replacement";
 
 const FACTS: DoorExitFacts = { tunnels: 7, liveSessions: 3, protocol: 5, uptimeSeconds: 120 };
 const DOOR_PID = 22;
@@ -31,6 +31,14 @@ describe("the door's signal lines", () => {
 
   it("names the tunnels a second interrupt drops", () => {
     expect(exitNowLine(DOOR_PID, FACTS)).toBe("frontdoor 22: received SIGINT again; exiting now; tunnelsDropped=7 liveSessions=3");
+  });
+
+  it("names a handover request with the same counts as a retirement", () => {
+    expect(handoverLine(DOOR_PID, FACTS)).toBe("frontdoor 22: received SIGUSR2; handing the listeners to a successor; tunnelsOpen=7 liveSessions=3 protocol=5 uptimeSeconds=120");
+  });
+
+  it("says a repeated handover request changed nothing", () => {
+    expect(alreadyHandingOverLine(DOOR_PID)).toBe("frontdoor 22: received SIGUSR2 again; already handing over or retiring");
   });
 
   it("says a repeated SIGTERM changed nothing", () => {
@@ -87,5 +95,36 @@ describe("retireOnSignals", () => {
     tunnels = TUNNELS_AT_SIGNAL;
     source.emit("SIGTERM");
     expect(events[0]).toContain(`tunnelsOpen=${String(TUNNELS_AT_SIGNAL)}`);
+  });
+});
+
+describe("handOverOnSignal", () => {
+  function harness() {
+    const source = new EventEmitter();
+    const events: string[] = [];
+    handOverOnSignal(source, {
+      doorPid: DOOR_PID,
+      facts: () => FACTS,
+      log: (line) => {
+        events.push(`log ${line}`);
+      },
+      handOver: () => {
+        events.push("hand over");
+      },
+    });
+    return { source, events };
+  }
+
+  it("logs and starts the handover on the first SIGUSR2", () => {
+    const { source, events } = harness();
+    source.emit("SIGUSR2");
+    expect(events).toEqual([`log ${handoverLine(DOOR_PID, FACTS)}`, "hand over"]);
+  });
+
+  it("starts one handover however many requests arrive, since two launchers that read the state before the successor rewrote it each send one", () => {
+    const { source, events } = harness();
+    source.emit("SIGUSR2");
+    source.emit("SIGUSR2");
+    expect(events).toEqual([`log ${handoverLine(DOOR_PID, FACTS)}`, "hand over", `log ${alreadyHandingOverLine(DOOR_PID)}`]);
   });
 });
