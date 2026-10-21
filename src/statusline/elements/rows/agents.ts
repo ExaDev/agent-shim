@@ -45,10 +45,12 @@ const MIN_DESCRIPTION_COLUMNS = DESCRIPTION_ELLIPSIS.length + 1;
 function agentLine(agent: AgentFact, context: RenderContext): string {
   const { palette, nowMs, width, t } = context;
   const marker = agent.status === "running" ? palette.paint("warning", RUNNING_MARK) : palette.paint("context", DONE_MARK);
+  // A span below a second is written the same however far below, so the floor of zero could as well be a millisecond. The times here are absent or within the spans that kept the agent in the facts (a start within the day, an end within the minute), so a time of zero never falls back and either way reads the same.
   const elapsed = formatSpan(Math.max(0, (agent.endedAtMs ?? nowMs) - (agent.startedAtMs ?? nowMs)));
   const timeText = t("agents.elapsed", { time: elapsed });
   // The marker and what sets it apart; the time and the model hold the space before them themselves, where the language writes one.
   const fixed = markColumns(t) + visibleLength(timeText);
+  // A type that draws nothing was left out of the facts, so the type here is absent or words, and either way of falling back reads the same.
   const type = truncateWithEllipsis(agent.type ?? t("agents.defaultType"), Math.min(TYPE_COLUMNS, Math.max(1, width - fixed)), ELLIPSIS);
   const model = modelLabel(agent.model);
   const modelText = model === undefined ? "" : t("agents.model", { model });

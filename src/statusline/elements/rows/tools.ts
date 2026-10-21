@@ -21,12 +21,14 @@ const MCP_TOOL_NAME = /^mcp__.+__.+$/;
 
 /** A tool's name for a limit of `maxColumns` columns (0 for none) and the `available` columns the line has for it: a tool of an MCP server is shown by its own name once a limit is set, and a name wider than the limit or the columns available ends in an ellipsis within them. */
 function shortToolName(name: string, maxColumns: number, available: number): string {
+  // The pattern has the last part at least one character, so the name split off is never empty and either way of falling back reads the same.
   const own = maxColumns !== 0 && MCP_TOOL_NAME.test(name) ? (name.split("__").pop() ?? name) : name;
   return truncateWithEllipsis(own, maxColumns === 0 ? available : Math.min(maxColumns, available), ELLIPSIS);
 }
 
 /** What a running call acts on, cut to the `columns` it has (its own limit at the most): a file by its name when its whole path does not fit, anything else cut. */
 function targetText(tool: ToolCallFact, columns: number): string {
+  // A target that draws nothing was left out of the facts, so the target here is absent or words, and either way of falling back reads the same.
   const target = tool.target ?? "";
   const room = Math.min(TARGET_COLUMNS, columns);
   if (!FILE_TOOLS.includes(tool.name)) {
@@ -45,6 +47,7 @@ function finishedByKind(tools: readonly ToolCallFact[]): [string, number][] {
   const counts = new Map<string, number>();
   for (const tool of tools) {
     if (tool.status !== "running") {
+      // A count of zero falls back to the same zero, so either way of falling back adds one.
       counts.set(tool.name, (counts.get(tool.name) ?? 0) + 1);
     }
   }
@@ -58,6 +61,7 @@ export function toolsRow(context: RenderContext): RowOutput {
   const { palette, settings, width, t } = context;
   const label = (text: string): string => palette.paint("label", text);
   const hideSkills = settings.layout.rows.includes("skills");
+  // The list is an array or nothing, and an array is true however empty, so either way of falling back reads the same.
   const tools = (context.transcript()?.activity.tools ?? []).filter((tool) => !(hideSkills && tool.name === "Skill"));
   const { nameMaxLength, maxVisible } = settings.tools;
   const available = columnsLeft(width, markColumns(t));

@@ -35,7 +35,7 @@ export function fitToWidth(line: string, width: number): string {
   return truncateWithEllipsis(line, width, ELLIPSIS);
 }
 
-/** The columns left on a line of `width` after `used`, never fewer than one. */
+/** The columns left on a line of `width` after `used`, never fewer than one. A larger least would draw the same line, since the cut to the width that follows takes the extra column off again. */
 export function columnsLeft(width: number, used: number): number {
   return Math.max(1, width - used);
 }

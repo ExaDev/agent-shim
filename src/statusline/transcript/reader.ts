@@ -130,11 +130,13 @@ export function readTranscript(ports: StatuslinePorts, transcriptPath: string, n
   const head = loaded === undefined ? undefined : ports.readRange(transcriptPath, 0, FINGERPRINT_BYTES);
   // A cache is for the file it was written from: a shorter file, or one that begins differently, has taken the path's place.
   const cached = loaded !== undefined && head !== undefined && head.size >= loaded.offset && fingerprintOf(head.bytes) === loaded.fingerprint ? loaded : undefined;
+  // An offset of zero falls back to the same zero, so either way of falling back reads the same.
   const from = cached?.offset ?? 0;
   const window = ports.readRange(transcriptPath, from, MAX_TRANSCRIPT_READ_BYTES);
   if (window === undefined) {
     return undefined;
   }
+  // A cache is an object or nothing, and an object is always true, so either way of falling back reads the same.
   const { newer: previousNewer, ...base }: TranscriptCache = cached ?? { version: CACHE_VERSION, fingerprint: "", offset: 0, complete: true, session: EMPTY_SESSION_STATE, tokens: EMPTY_TOKEN_STATE, activity: EMPTY_ACTIVITY_STATE };
   const reachedEnd = window.size - from <= MAX_TRANSCRIPT_READ_BYTES;
   const advanced = advance(base, window.bytes, reachedEnd);
@@ -158,6 +160,7 @@ function newerFrom(ports: StatuslinePorts, transcriptPath: string, size: number,
   }
   // One byte more than the window is read, so a window that starts exactly on a line is not mistaken for one that starts inside a line.
   const from = Math.max(0, size - MAX_TRANSCRIPT_READ_BYTES - 1);
+  // The length is one past the window; a read beyond the end of the file is cut to it, so any longer length reads the same bytes.
   const tail = ports.readRange(transcriptPath, from, MAX_TRANSCRIPT_READ_BYTES + 1);
   if (tail === undefined) {
     return undefined;

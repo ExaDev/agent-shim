@@ -24,6 +24,12 @@ const ODD_LINE_BYTES = 997;
 const BOUNDARY_EVERY = 7;
 /** How many reads a transcript is a little over, three days in milliseconds, and the bytes of a line that are not its filler. */
 const OVER_TWO_WINDOWS = 2.5;
+const HALF_A_READ = 0.5;
+const LAST_BYTE_ROW = 10;
+const A_SMALL_GROWTH = 0.3;
+const BEFORE_THE_CALL = 0.9;
+const MOST_REFRESHES = 10;
+const FINGERPRINT_BYTES_DOCUMENTED = 4_096;
 /** Reads of filler before and after two calls, so the transcript is between one and two reads long and the last read starts before the first one ends, with the calls in both. */
 const OVERLAP_BEFORE = 0.6;
 const OVERLAP_AFTER = 0.9;
@@ -552,6 +558,77 @@ describe("readTranscript", () => {
     disk.files.set(TRANSCRIPT, first + boundary(0) + appended);
     expect(readTranscript(ports, TRANSCRIPT, T0)?.session.compactions).toBe(2);
     expect(bytesRead() - afterFirst).toBe(bytesOf(appended));
+  });
+
+  it("tells a replaced file by every byte of its first line, whatever the length of the line", () => {
+    const filler = `${"x".repeat(bytesOf(boundary(0)) - 1)}\n`;
+    const replacedBy = (before: string, after: string): number | undefined => {
+      const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: before + boundary(0) });
+      const ports = fakeStatuslinePorts(disk.ports);
+      expect(readTranscript(ports, TRANSCRIPT, T0)?.session.compactions).toBe(1);
+      disk.files.set(TRANSCRIPT, after + filler + boundary(MINUTE));
+      return readTranscript(ports, TRANSCRIPT, T0)?.session.compactions;
+    };
+    expect(replacedBy(line({ k: "v1" }), `X${line({ k: "v1" }).slice(1)}`)).toBe(1);
+    expect(replacedBy(`${"a".repeat(LAST_BYTE_ROW)}1\n`, `${"a".repeat(LAST_BYTE_ROW)}2\n`)).toBe(1);
+    const long = (marker: string): string => line({ type: "mode", note: `${marker}${"x".repeat(LONG_FIRST_LINE)}` });
+    expect(replacedBy(long("a"), long("b"))).toBe(1);
+    expect(replacedBy(long("a"), long("a"))).toBe(2);
+  });
+
+  it("folds the end of a transcript one byte longer than a read from its very first line, since a line that ends with the extra byte is whole only there", () => {
+    const call = line({ type: "assistant", timestamp: at(1), message: { id: "m1", content: [{ type: "tool_use", id: "e1", name: "Read", input: {} }] } });
+    const answer = line({ type: "user", timestamp: at(MINUTE), message: { content: [{ type: "tool_result", tool_use_id: "e1", content: "" }] } });
+    const filler = line({ type: "user", timestamp: at(MINUTE), message: { content: "x".repeat(MAX_TRANSCRIPT_READ_BYTES + 1 - call.length - answer.length - bytesOf(line({ type: "user", timestamp: at(MINUTE), message: { content: "" } }))) } });
+    const text = call + filler + answer;
+    expect(text).toHaveLength(MAX_TRANSCRIPT_READ_BYTES + 1);
+    const first = readTranscript(fakeStatuslinePorts(fakeStatuslineFilesystem({ [TRANSCRIPT]: text }).ports), TRANSCRIPT, T0);
+    expect(first?.complete).toBe(false);
+    expect(first?.activity.tools.map((tool) => `${tool.name}:${tool.status}`)).toEqual(["Read:completed"]);
+  });
+
+  it("keeps the end it carries when nothing has been appended since, and when a little has", () => {
+    const answered = line({ type: "assistant", timestamp: at(1), message: { id: "m1", content: [{ type: "tool_use", id: "x1", name: "Read", input: {} }] } }) + line({ type: "user", timestamp: at(1), message: { content: [{ type: "tool_result", tool_use_id: "x1", content: "done" }] } });
+    const filler = (reads: number): string => oddLine({ type: "user", timestamp: at(MINUTE), message: { content: "x" } }).repeat(Math.ceil((reads * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES));
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: filler(OVER_TWO_WINDOWS) + answered + filler(BEFORE_THE_CALL) });
+    const ports = fakeStatuslinePorts(disk.ports);
+    const tools = (): string[] | undefined => readTranscript(ports, TRANSCRIPT, T0)?.activity.tools.map((tool) => tool.name);
+    expect(tools()).toEqual(["Read"]);
+    disk.files.set(TRANSCRIPT, (disk.files.get(TRANSCRIPT) ?? "") + filler(A_SMALL_GROWTH));
+    expect(tools()).toEqual(["Read"]);
+    expect(tools()).toEqual(["Read"]);
+  });
+
+  it("carries the end of a transcript on when it grew by exactly a read, so a call only the earlier end held is still shown", () => {
+    const answered = line({ type: "assistant", timestamp: at(1), message: { id: "m1", content: [{ type: "tool_use", id: "x1", name: "Read", input: {} }] } }) + line({ type: "user", timestamp: at(1), message: { content: [{ type: "tool_result", tool_use_id: "x1", content: "done" }] } });
+    const filler = (reads: number): string => oddLine({ type: "user", timestamp: at(MINUTE), message: { content: "x" } }).repeat(Math.ceil((reads * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES));
+    const empty = line({ type: "user", timestamp: at(MINUTE), message: { content: "" } });
+    const grown = line({ type: "user", timestamp: at(MINUTE), message: { content: "x".repeat(MAX_TRANSCRIPT_READ_BYTES - empty.length) } });
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: filler(OVER_TWO_WINDOWS) + answered + filler(HALF_A_READ) });
+    const ports = fakeStatuslinePorts(disk.ports);
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.activity.tools.map((tool) => tool.name)).toEqual(["Read"]);
+    disk.files.set(TRANSCRIPT, (disk.files.get(TRANSCRIPT) ?? "") + grown);
+    const second = readTranscript(ports, TRANSCRIPT, T0);
+    expect(second?.complete).toBe(false);
+    expect(second?.activity.tools.map((tool) => tool.name)).toEqual(["Read"]);
+  });
+
+  it("carries on with the line after a skipped one that ends exactly where a read ends, and not as if that were skipped too", () => {
+    const empty = line({ type: "user", timestamp: at(MINUTE), message: { content: "" } });
+    const skipped = line({ type: "user", timestamp: at(MINUTE), message: { content: "x".repeat(2 * MAX_TRANSCRIPT_READ_BYTES - empty.length) } });
+    expect(skipped).toHaveLength(2 * MAX_TRANSCRIPT_READ_BYTES);
+    const filler = oddLine({ type: "user", timestamp: at(MINUTE), message: { content: "x" } }).repeat(Math.ceil((OVER_TWO_WINDOWS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES));
+    const ports = fakeStatuslinePorts(fakeStatuslineFilesystem({ [TRANSCRIPT]: skipped + boundary(0) + filler }).ports);
+    let facts = readTranscript(ports, TRANSCRIPT, T0);
+    for (let refresh = 0; refresh < MOST_REFRESHES && facts?.session.compactions !== 1; refresh += 1) {
+      facts = readTranscript(ports, TRANSCRIPT, T0);
+    }
+    expect(facts?.session.compactions).toBe(1);
+    expect(facts?.complete).toBe(false);
+  });
+
+  it("identifies a transcript by the first four thousand and ninety-six bytes of its first line", () => {
+    expect(FINGERPRINT_BYTES).toBe(FINGERPRINT_BYTES_DOCUMENTED);
   });
 
   it("writes no cache while the first line is still being written", () => {
