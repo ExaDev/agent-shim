@@ -1,3 +1,10 @@
+## [11.63.0](https://github.com/ExaDev/agent-shim/compare/v11.62.3...v11.63.0) (2026-10-21)
+
+### Features
+
+* **frontdoor:** answer connections a draining listener accepted before it stopped ([03123fe](https://github.com/ExaDev/agent-shim/commit/03123fe34ddf9fdb0406ad49443a1a32738981b2))
+* **frontdoor:** hand the listening sockets to the successor on a planned replacement ([ffb437d](https://github.com/ExaDev/agent-shim/commit/ffb437dd75fb9dc8090daf69cc54ca0659789de6)), references [#561](https://github.com/ExaDev/agent-shim/issues/561)
+
 ## [11.62.3](https://github.com/ExaDev/agent-shim/compare/v11.62.2...v11.62.3) (2026-10-21)
 
 ### Bug Fixes
