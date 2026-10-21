@@ -223,6 +223,12 @@ describe("the agents row", () => {
     expect(draw([finished])).toEqual(["\u2713 Explore (2m 50s)"]);
   });
 
+  it("draws a finished agent whose start is the epoch instant as a span from the epoch", () => {
+    // A start of zero is the boundary no record carries, and the one value on which the `||` mutant of the `??` fallback reads differently, as `<1s` instead of the span the stamps say; this pins the span, so the mutant is killed.
+    const stampedAtTheEpoch = agent({ status: "completed", startedAtMs: 0, endedAtMs: NOW_MS - TEN_SECONDS });
+    expect(draw([stampedAtTheEpoch])).toEqual(["\u2713 Explore (497913h 59m)"]);
+  });
+
   it("writes a model as a short label", () => {
     const label = (model: string): string => draw([agent({ model })])[0] ?? "";
     expect(label("claude-haiku-4-5-20251001")).toContain("[haiku-4.5]");
