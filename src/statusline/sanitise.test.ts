@@ -300,6 +300,24 @@ describe("what a limit lets it leave unread", () => {
     expect(cut(visibleDisplayText("\u1161\u115f\u200c\u1161", 1), 1)).toBe("\u1161\u1161");
   });
 
+  it("keeps, at a limit the words so far land on, the characters of the next word that merge into one grapheme of the joined text", () => {
+    // Two regional indicators pair once the lone surrogate between them is dropped, so the second character of the unbounded result holds the pair whole; a word asked for only the one character that is left of the limit stops one short of the pair.
+    const torn = "\u{11A84}\t\u093e\u{1F1EC}\ud800\u{1F1E7}";
+    expect(cut(visibleWords(torn, 2), 2)).toBe(cut(visibleWords(torn), 2));
+    // The same shape at the production limit: the letters take the limit less the space and the letter of the second word (two) less one, so the word of the mark and the indicators would be asked for the one that is left, and stop inside the pair.
+    const AT_THE_LIMIT = MAX_DISPLAY_TEXT_CHARS - 2 - 1;
+    const atTheLimit = "x".repeat(AT_THE_LIMIT) + "\t\u0d4e\t\u093e\u{1F1EC}\ud800\u{1F1E7}";
+    expect(boundedVisibleWords(atTheLimit)).toBe(boundedDisplayText(visibleWords(atTheLimit)));
+  });
+
+  it("keeps the whole of a run of marks that merge into the grapheme before them, at a limit of one", () => {
+    /** How many pairs of a mark and a default-ignorable precede the last mark of the run: a run of some length, so that a stop at its first mark falls short of the unbounded result by more than the mark alone. */
+    const MARK_PAIRS = 19;
+    // The Prepend letter takes the space and every mark of the word after it into one character of the unbounded result; a word asked for nothing hands back the first mark alone.
+    const chain = "\u0d4e\t" + "\u093e\u2065".repeat(MARK_PAIRS) + "\u093e";
+    expect(cut(visibleWords(chain, 1), 1)).toBe(cut(visibleWords(chain), 1));
+  });
+
   it.each(Object.entries({ ...SHAPES, ...WORD_SHAPES }))("cleans, without a limit, each piece between the separators that could show something, once and as it stands (%s)", (_shape, make) => {
     const { pieces, clean } = counting();
     const text = make(REPEATS);
@@ -311,10 +329,10 @@ describe("what a limit lets it leave unread", () => {
   it("hands the cleaner exactly the pieces that bring the result to the limit, each with what is left of it", () => {
     const { pieces, limits, clean } = counting();
     boundedVisibleWords("a\t".repeat(MAX_DISPLAY_TEXT_CHARS * SEVERAL), clean);
-    // Each word of one character, and the space before every word but the first, takes two; the limit is reached on the word that brings the total to it or past it. Each word is asked for what is still wanted of the joined text, which is the limit less what the words so far, with their spaces, come to: one less than twice the number of words.
+    // Each word of one character, and the space before every word but the first, takes two; the limit is reached on the word that brings the total to it or past it. Each word is asked for one more than what is still wanted of the joined text, which is the limit plus one less what the words so far, with their spaces, come to: twice their number less one, and nothing before the first.
     const needed = Math.ceil((MAX_DISPLAY_TEXT_CHARS + 1) / 2);
     expect(pieces).toHaveLength(needed);
-    expect(limits).toEqual(Array.from({ length: needed }, (_, index) => (index === 0 ? MAX_DISPLAY_TEXT_CHARS : MAX_DISPLAY_TEXT_CHARS - (2 * index - 1))));
+    expect(limits).toEqual(Array.from({ length: needed }, (_, index) => (index === 0 ? MAX_DISPLAY_TEXT_CHARS + 1 : MAX_DISPLAY_TEXT_CHARS + 2 - 2 * index)));
   });
 
   it("draws as many characters as the limit asks for from words that each begin with a spacing mark, which join the space before them", () => {
@@ -344,14 +362,14 @@ describe("what a limit lets it leave unread", () => {
   });
 
   it("reads as many graphemes from a text as the limit needs, and no more however much follows", () => {
-    // A word of more than the limit is read by the cleaner up to one past the limit and again to count them, then counted once more as the words joined so far, and the cut reads the limit's worth again; the pieces are exact numbers, so that reading more than needed shows.
-    const PAST_THE_LIMIT = MAX_DISPLAY_TEXT_CHARS + 1;
+    // A word of more than the limit, read by `visibleDisplayText` itself, is read up to one past the limit and again to count them. Through `visibleWords` it is asked for one more than the limit (never nothing, so that it reads past a run that merges into one grapheme), read up to one past the ask and again to count them, then counted once more as the words joined so far, and the cut reads the limit's worth again; the pieces are exact numbers, so that reading more than needed shows.
+    const PAST_THE_ASK = MAX_DISPLAY_TEXT_CHARS + 2;
     const READS_OF_A_WORD_WITH_ITS_COUNT = 3;
     const reading: readonly (readonly [string, (text: string) => unknown, number, boolean])[] = [
       ["boundedDisplayText", boundedDisplayText, MAX_DISPLAY_TEXT_CHARS, false],
-      ["visibleDisplayText", (text) => visibleDisplayText(text, MAX_DISPLAY_TEXT_CHARS), 2 * PAST_THE_LIMIT, false],
-      ["visibleWords", (text) => visibleWords(text, MAX_DISPLAY_TEXT_CHARS), READS_OF_A_WORD_WITH_ITS_COUNT * PAST_THE_LIMIT, true],
-      ["boundedVisibleWords", (text) => boundedVisibleWords(text), READS_OF_A_WORD_WITH_ITS_COUNT * PAST_THE_LIMIT + MAX_DISPLAY_TEXT_CHARS, true],
+      ["visibleDisplayText", (text) => visibleDisplayText(text, MAX_DISPLAY_TEXT_CHARS), 2 * (MAX_DISPLAY_TEXT_CHARS + 1), false],
+      ["visibleWords", (text) => visibleWords(text, MAX_DISPLAY_TEXT_CHARS), READS_OF_A_WORD_WITH_ITS_COUNT * PAST_THE_ASK, true],
+      ["boundedVisibleWords", (text) => boundedVisibleWords(text), READS_OF_A_WORD_WITH_ITS_COUNT * PAST_THE_ASK + MAX_DISPLAY_TEXT_CHARS, true],
     ];
     const few = MAX_DISPLAY_TEXT_CHARS * SEVERAL;
     const many = few * MANY_TIMES_THAT;

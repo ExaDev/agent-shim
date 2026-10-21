@@ -167,8 +167,8 @@ export function visibleWords(text: string, limit = Number.POSITIVE_INFINITY, cle
     if (!couldShowSomething(piece)) {
       continue;
     }
-    // The word is asked for as many characters as are still wanted, which is more than it adds to the joined text whenever it joins the space before it, so it always brings the joined text past the limit unless it is the whole of the piece.
-    const word = clean(piece, limit - used);
+    // The word is asked for one more character than is still wanted, which is more than it adds to the joined text whenever it joins the space before it, so it always brings the joined text past the limit unless it is the whole of the piece. The one more is needed as well: a word asked for only what is left can stop before characters that, once what draws nothing between them is dropped, merge into a grapheme of the joined text (two regional indicators round a lone surrogate, a run of marks after the space a Prepend letter takes in), and the result would then fall short of the first characters of the unbounded one. The cleaner counts what it has kept by re-segmenting it, and a run that keeps merging keeps that count from passing the ask, so an ask of at least one reads on to the end of such a run.
+    const word = clean(piece, limit - used + 1);
     if (word !== "") {
       // Without a limit nothing is counted, so that a text of many words is not segmented for nothing.
       if (Number.isFinite(limit)) {
