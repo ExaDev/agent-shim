@@ -132,7 +132,7 @@ describe("renderStatuslineBlock", () => {
   });
 
   it("wraps when the segments do not fit one line, each segment never wider than the terminal", () => {
-    // The reset time is held bare: introduced with its words, a window at its base bar width is wider than this terminal and renders whole, as the segments excused below do.
+    // The reset time is held bare so every quota window fits this terminal and the wrapping is seen alone; the default, with the reset introduced by its words, is the next test's.
     const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, NARROW_TERMINAL, NOW_MS, resolveStatusline({ usage: { ...WEEKLY_ALWAYS.usage, resetLabel: false } }))).split("\n");
     expect(lines.length).toBeGreaterThan(1);
     const joined = lines.join("\n");
@@ -144,6 +144,20 @@ describe("renderStatuslineBlock", () => {
         // A single segment whose base is already longer than the terminal (the provider account email, the context tokens) renders whole, exactly as the Antigravity statusline's own fallback does; the bars are the segments that flex.
         continue;
       }
+      expect(line.length).toBeLessThanOrEqual(NARROW_MAX_LINE);
+    }
+  });
+
+  it("draws the default's bars whole at their base width on a terminal too narrow for a bar with its figures, never shrinking the bar or shortening the reset", () => {
+    // The bar grid's rule (`layoutBarGrid` in barGrid.ts): a bar is never drawn below `bar.width` cells, and one whose label, bar and figures are wider than the line is drawn whole rather than cut. The default introduces each reset with its words, so at this width the weekly window is such a bar.
+    const lines = stripAnsi(renderStatuslineBlock(SUMMARY, VIEW, NARROW_TERMINAL, NOW_MS, resolveStatusline(WEEKLY_ALWAYS))).split("\n");
+    const baseBar = `\\[[█░]{${String(DEFAULT_BAR_CELLS)}}\\]`;
+    const fiveHour = lines.find((line) => line.startsWith("5h "));
+    const weekly = lines.find((line) => line.startsWith("Wk "));
+    expect(fiveHour).toMatch(new RegExp(`^5h ${baseBar} 3\\.6% \\(resets in 38m\\)$`));
+    expect(weekly).toMatch(new RegExp(`^Wk ${baseBar} 28\\.2% \\(resets in 6d 13h\\)$`));
+    expect(weekly?.length).toBeGreaterThan(NARROW_MAX_LINE);
+    for (const line of lines.filter((text) => !text.includes("["))) {
       expect(line.length).toBeLessThanOrEqual(NARROW_MAX_LINE);
     }
   });
