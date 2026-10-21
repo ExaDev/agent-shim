@@ -304,7 +304,7 @@ describe("renderStatuslineBlock", () => {
     expect(new Set(rows.map((row) => row.lastIndexOf("]"))).size).toBe(1);
   });
 
-  it("shows what headroom saved the session at the end of the first line, and nothing when there are no figures", () => {
+  it("shows what headroom saved the session after the identity, ending the first line while no extra command is set, and nothing when there are no figures", () => {
     const withSavings = stripAnsi(renderStatuslineBlock({ ...SUMMARY, headroom: { tokensSaved: HEADROOM_TOKENS_SAVED, savingsPercent: HEADROOM_SAVINGS_PERCENT, savingsUsd: HEADROOM_SAVINGS_USD } }, VIEW, WIDE_TERMINAL, NOW_MS)).split("\n");
     expect(withSavings[0]?.endsWith("headroom 42k saved · 3.5% overall · $0.13")).toBe(true);
     const tiny = stripAnsi(renderStatuslineBlock({ ...SUMMARY, headroom: { tokensSaved: HEADROOM_TOKENS_SAVED, savingsPercent: HEADROOM_TINY_PERCENT, savingsUsd: undefined } }, VIEW, WIDE_TERMINAL, NOW_MS));
