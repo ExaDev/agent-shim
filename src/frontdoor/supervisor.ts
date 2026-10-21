@@ -69,7 +69,7 @@ export interface FrontDoorSupervisorPorts {
    */
   readonly closeRcStreamHub: () => void;
   /**
-   * Starts the watchdog that ends this process when its main event loop stops running: it lives on its own thread, so a loop that is blocked cannot stall it. The supervisor beats it every tick and stops it before it begins to retire, so it only ever judges a door that is meant to be serving. Optional because ending the process is only right when the process is the door: the CLI's `__frontdoor-supervisor` supplies it, and a library host that runs the door inside its own process does not get its application killed by default.
+   * Starts the watchdog that ends this process when its main event loop stops running: it lives on its own thread, so a loop that is blocked cannot stall it. It beats from its own timer on the main loop rather than from the tick, so a tick waiting on a slow `ps` is never taken for a loop that stopped, and the supervisor stops it before it begins to retire, so it only ever judges a door that is meant to be serving. Optional because ending the process is only right when the process is the door: the CLI's `__frontdoor-supervisor` supplies it, and a library host that runs the door inside its own process does not get its application killed by default.
    */
   readonly startWatchdog?: () => DoorWatchdog;
   /**
@@ -289,8 +289,6 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     return 0;
   };
   for (;;) {
-    // The tick only runs while the main loop does, which is exactly what the watchdog thread is waiting to see.
-    watchdog?.beat();
     if (ports.retire?.aborted === true) {
       return await retireByDrain();
     }

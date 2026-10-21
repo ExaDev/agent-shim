@@ -40,31 +40,42 @@ const CHECKS_PER_PROBE_DEADLINE = 2;
 /** How often the watchdog thread looks at the beat counter. */
 export const DOOR_WATCHDOG_CHECK_MS = PROBE_TIMEOUT_MS / CHECKS_PER_PROBE_DEADLINE;
 
-/** What the supervisor holds: a beat from each tick of its main loop, and a stop when it begins to retire. */
+/** What the supervisor holds: a stop for when it begins to retire. The beat that tells the watchdog the main event loop ran comes from the watchdog's own timer on that loop (see `startThreadWatchdog`), not from the supervisor's tick, so nothing a tick awaits (a `ps` run a loaded machine is slow to finish) is taken for a loop that did not run. */
 export interface DoorWatchdog {
-  /** Records that the main event loop ran. Called from the supervisor's tick, which only runs while the loop serves. */
-  readonly beat: () => void;
   /** Ends the watchdog before the door begins an orderly retirement, so a slow close is never taken for a stall. Idempotent. */
   readonly stop: () => void;
+}
+
+/** A fixed reading of the machine's load in place of the real one (`os.loadavg()` and `os.cpus()`), for a host whose judgement must not depend on the machine it runs on: the tests, which would otherwise see a loaded machine's starvation as a reason not to report. */
+export interface MachineLoadReading {
+  readonly loadAverage: number;
+  readonly cpus: number;
 }
 
 /** What the thread does when the counter has not moved for the bound: end the process (production) or only report to its parent (tests, which must not kill the test run). */
 type StallAction = "kill-process" | "report";
 
 /**
- * The watchdog thread: its own event loop, which a blocked main loop cannot stall. It compares a shared beat counter against its previous reading on a fixed cadence, and when the counter has not moved for `boundMs` it records the stall in the state file (the existing `lastError` field, so no reader of the file sees a new key) and in the door's log (the next generation's first state write replaces `lastError`, and a SIGKILL runs no handler, so the log line is the only record that outlives the replacement), logs the machine's load and where the main thread was (see `describeMainThread`, so a stall that was the door's own code is told apart from one the machine caused), starts a replacement door (as long as this door's own generation has not reached the respawn ceiling, so a stall that recurs through consecutive doors ends the chain rather than looping) and ends the process. A thread that was itself descheduled for longer than its cadence (the machine was suspended or starved) restarts its clock instead of judging, since the main loop stalled by the same pause is not a hung one.
+ * The watchdog thread: its own event loop, which a blocked main loop cannot stall. It compares a shared beat counter (moved by a timer on the main loop) against its previous reading on a fixed cadence, and counts the time the counter stays still at the share of a processor the machine's load leaves a runnable thread (all of one while the one-minute load average is within the processor count, the processor count over the load average beyond it): a main loop the machine did not schedule has not had the time to run, and replacing the door would only drop every in-flight request into a door just as starved. When that counted time reaches `boundMs` it records the stall in the state file (the existing `lastError` field, so no reader of the file sees a new key) and in the door's log (the next generation's first state write replaces `lastError`, and a SIGKILL runs no handler, so the log line is the only record that outlives the replacement), logs the machine's load and where the main thread was (see `describeMainThread`, so a stall that was the door's own code is told apart from one the machine caused), starts a replacement door (as long as this door's own generation has not reached the respawn ceiling, so a stall that recurs through consecutive doors ends the chain rather than looping) and ends the process. A thread that was itself descheduled for longer than its cadence (the machine was suspended or starved) restarts its clock instead of judging, since the main loop stalled by the same pause is not a hung one.
  */
 const WATCHDOG_SOURCE = `
 const { workerData, parentPort } = require("node:worker_threads");
 const fs = require("node:fs");
 const os = require("node:os");
 const inspector = require("node:inspector");
-const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnGeneration, respawnMaxGeneration, cooldownStepMs, cooldownCapMs, startLockFile, awaitPidEnv, respawnGenerationEnv, delayEnv, nativeSample } = workerData;
+const { shared, boundMs, checkEveryMs, pauseWaitMs, stateFile, ownPid, action, logFile, respawn, respawnGeneration, respawnMaxGeneration, cooldownStepMs, cooldownCapMs, startLockFile, awaitPidEnv, respawnGenerationEnv, delayEnv, nativeSample, machineLoad } = workerData;
 const counter = new Int32Array(shared);
 let lastValue = Atomics.load(counter, 0);
 let lastChangeAt = Date.now();
 let lastCheckAt = Date.now();
+// The processor time the machine's load left the main thread since the counter last moved: what the bound is judged against.
+let scheduledMs = 0;
+// Set once a silence has outlasted the bound in wall time while the counted time has not, so the wait is logged once and its end is logged too.
+let waitingOutStarvation = false;
 let stopped = false;
+const readLoad = () => machineLoad === undefined ? { loadAverage: os.loadavg()[0], cpus: os.cpus().length } : machineLoad;
+const processorShare = (reading) => reading.loadAverage <= reading.cpus ? 1 : reading.cpus / reading.loadAverage;
+const describeLoad = (reading) => reading.loadAverage.toFixed(1) + " across " + String(reading.cpus) + " cpus";
 const record = (message) => {
   try {
     const existing = JSON.parse(fs.readFileSync(stateFile, "utf8"));
@@ -208,29 +219,40 @@ const timer = setInterval(() => {
   lastCheckAt = now;
   const value = Atomics.load(counter, 0);
   if (value !== lastValue || sinceLastCheck > checkEveryMs * 2) {
+    if (waitingOutStarvation && value !== lastValue) log("the front door's event loop ran again after " + String(now - lastChangeAt) + "ms; the machine's load had starved it, so the watchdog kept the door");
+    waitingOutStarvation = false;
     lastValue = value;
     lastChangeAt = now;
+    scheduledMs = 0;
     return;
   }
-  if (now - lastChangeAt >= boundMs) {
-    const message = "the front door's event loop did not run for " + String(now - lastChangeAt) + "ms; its watchdog ended the process so the next launch starts a fresh door on the same ports";
-    stopped = true;
-    clearInterval(timer);
-    record(message);
-    log(message);
-    const [oneMinute, fiveMinutes, fifteenMinutes] = os.loadavg();
-    log("machine load at the stall: " + oneMinute.toFixed(1) + " (1m), " + fiveMinutes.toFixed(1) + " (5m), " + fifteenMinutes.toFixed(1) + " (15m) across " + String(os.cpus().length) + " cpus");
-    spawnReplacement();
-    describeMainThread(pauseWaitMs, action !== "kill-process").then(async (where) => {
-      log(where);
-      if (where.startsWith("the main thread could not be paused")) await takeNativeSample();
-      if (action === "kill-process") {
-        process.kill(ownPid, "SIGKILL");
-      } else {
-        parentPort.postMessage({ stalled: true, message });
-      }
-    });
+  const reading = readLoad();
+  scheduledMs += sinceLastCheck * processorShare(reading);
+  const silentMs = now - lastChangeAt;
+  if (scheduledMs < boundMs) {
+    if (silentMs >= boundMs && !waitingOutStarvation) {
+      waitingOutStarvation = true;
+      log("the front door's event loop has not run for " + String(silentMs) + "ms, but the machine's load (" + describeLoad(reading) + ") left it only " + String(Math.round(scheduledMs)) + "ms of processor time, so the watchdog waits until it has had " + String(boundMs) + "ms rather than replacing a door the machine did not schedule");
+    }
+    return;
   }
+  const message = "the front door's event loop did not run for " + String(silentMs) + "ms, " + String(Math.round(scheduledMs)) + "ms of it with a processor to run on; its watchdog ended the process so the next launch starts a fresh door on the same ports";
+  stopped = true;
+  clearInterval(timer);
+  record(message);
+  log(message);
+  const [oneMinute, fiveMinutes, fifteenMinutes] = os.loadavg();
+  log("machine load at the stall: " + oneMinute.toFixed(1) + " (1m), " + fiveMinutes.toFixed(1) + " (5m), " + fifteenMinutes.toFixed(1) + " (15m) across " + String(os.cpus().length) + " cpus");
+  spawnReplacement();
+  describeMainThread(pauseWaitMs, action !== "kill-process").then(async (where) => {
+    log(where);
+    if (where.startsWith("the main thread could not be paused")) await takeNativeSample();
+    if (action === "kill-process") {
+      process.kill(ownPid, "SIGKILL");
+    } else {
+      parentPort.postMessage({ stalled: true, message });
+    }
+  });
 }, checkEveryMs);
 parentPort.on("message", (message) => {
   if (message === "stop") {
@@ -241,7 +263,7 @@ parentPort.on("message", (message) => {
 });
 `;
 
-/** What `startThreadWatchdog` needs: where the state file is, which process to end, and the two derived time constants (parameters so a test can use small ones). */
+/** What `startThreadWatchdog` needs: where the state file is, which process to end, and the two derived time constants (parameters so a test can use small ones). `checkEveryMs` is also the cadence of the main loop's beat. */
 export interface ThreadWatchdogParams {
   readonly stateFile: string;
   readonly ownPid: number;
@@ -268,19 +290,25 @@ export interface ThreadWatchdogParams {
    * How to capture the native stack of a main thread the inspector could not pause (it was blocked inside a native call, which no JavaScript frame names): a command run with `{pid}`, `{seconds}` and `{file}` replaced in its arguments, its output written to `directory` as `<pid>.txt`, keeping the newest `keep` files. Omitted where the platform has no such tool (production sets it on macOS only).
    */
   readonly nativeSample?: { readonly command: string; readonly args: readonly string[]; readonly directory: string; readonly seconds: number; readonly keep: number };
+  /** A fixed load reading in place of the machine's own; omitted in production, where the thread reads the machine each check. */
+  readonly machineLoad?: MachineLoadReading;
   /** Called on the main thread with the recorded message when `action` is `report` and the stall was seen. */
   readonly onReport?: (message: string) => void;
 }
 
-/** Starts the watchdog thread and returns the supervisor's two handles on it. The thread never keeps the process alive: it is unref'd, and `stop` ends it. */
+/** Starts the watchdog thread and the main loop's beat, and returns the supervisor's handle on them. The beat is a timer on the calling thread's event loop, so it moves exactly when that loop runs, whatever the code the loop serves is waiting on. Neither keeps the process alive: both are unref'd, and `stop` ends both. */
 export function startThreadWatchdog(params: Readonly<ThreadWatchdogParams>): DoorWatchdog {
   const shared = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
   const counter = new Int32Array(shared);
   const worker = new Worker(WATCHDOG_SOURCE, {
     eval: true,
-    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, cooldownStepMs: params.cooldownStepMs, cooldownCapMs: params.cooldownCapMs, startLockFile: params.startLockFile, awaitPidEnv: DOOR_AWAIT_PID_ENV, respawnGenerationEnv: DOOR_RESPAWN_GENERATION_ENV, delayEnv: DOOR_RESPAWN_DELAY_ENV, nativeSample: params.nativeSample },
+    workerData: { shared, boundMs: params.boundMs, checkEveryMs: params.checkEveryMs, pauseWaitMs: params.pauseWaitMs, stateFile: params.stateFile, ownPid: params.ownPid, action: params.action, logFile: params.logFile, respawn: params.respawn, respawnGeneration: params.respawnGeneration, respawnMaxGeneration: params.respawnMaxGeneration, cooldownStepMs: params.cooldownStepMs, cooldownCapMs: params.cooldownCapMs, startLockFile: params.startLockFile, awaitPidEnv: DOOR_AWAIT_PID_ENV, respawnGenerationEnv: DOOR_RESPAWN_GENERATION_ENV, delayEnv: DOOR_RESPAWN_DELAY_ENV, nativeSample: params.nativeSample, machineLoad: params.machineLoad },
   });
   worker.unref();
+  const beat = setInterval(() => {
+    Atomics.add(counter, 0, 1);
+  }, params.checkEveryMs);
+  beat.unref();
   worker.on("message", (message: unknown) => {
     if (typeof message === "object" && message !== null && "message" in message && typeof message.message === "string") {
       params.onReport?.(message.message);
@@ -288,14 +316,12 @@ export function startThreadWatchdog(params: Readonly<ThreadWatchdogParams>): Doo
   });
   let stopped = false;
   return {
-    beat: () => {
-      Atomics.add(counter, 0, 1);
-    },
     stop: () => {
       if (stopped) {
         return;
       }
       stopped = true;
+      clearInterval(beat);
       worker.postMessage("stop");
       void worker.terminate();
     },

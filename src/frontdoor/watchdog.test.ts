@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FRONTDOOR_PROBE_ATTEMPTS } from "./ensure";
 import { PROBE_TIMEOUT_MS } from "./probe";
-import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_MAX_GENERATIONS, respawnDelayMs, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog, type DoorWatchdog, type ThreadWatchdogParams } from "./watchdog";
+import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_MAX_GENERATIONS, respawnDelayMs, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog, type DoorWatchdog, type MachineLoadReading, type ThreadWatchdogParams } from "./watchdog";
 
 /** The respawn ceiling the tests run at: small so the chain-end case needs no real doors, and one above the middle generation so the stepping case can observe a spawn that is not the last. */
 const TEST_RESPAWN_MAX_GENERATION = 3;
@@ -21,20 +21,48 @@ const TEST_COOLDOWN_CAP_MS = 60;
 
 /** The start lock's file name inside each test's own directory. */
 const LOCK_NAME = "start.lock";
+/** The door log's file name inside each test's own directory. */
+const LOG_NAME = "frontdoor.log";
 
 /** The check cadence the thread tests run at: far shorter than the production one so a stall is seen in a few checks. */
 const TEST_CHECK_MS = 20;
 /** Cadences in the stall bound the thread tests run at, so beating once per cadence is comfortably inside it. */
 const CHECKS_IN_TEST_BOUND = 10;
 const TEST_BOUND_MS = TEST_CHECK_MS * CHECKS_IN_TEST_BOUND;
-/** How many bounds a test waits for a report that should arrive, or for one that should not, and how long the blocked-main-thread test blocks. */
-const BOUNDS_TO_WAIT_FOR_REPORT = 10;
+/** How many bounds a test waits for a report that should not arrive, and how long the stopped-watchdog test holds the main thread. */
 const BOUNDS_TO_WAIT_FOR_SILENCE = 4;
 const BOUNDS_TO_BLOCK = 3;
 /** The wait for the main thread to pause for the tests that do not read its frames: none, so a stall is reported as soon as it is seen. */
 const NO_PAUSE_WAIT_MS = 0;
 /** The wait for the test that does read them: a guard against a pause that never comes, not an expectation of how long one takes, so a loaded machine cannot make it flaky. */
 const PAUSE_WAIT_GUARD_MS = 60_000;
+
+/** The processor count of the fixed load readings the thread tests judge by, so the machine running the tests (which may itself be loaded) never decides whether a stall is reported. */
+const TEST_CPUS = 4;
+/** A machine with no more runnable threads than processors: a silent loop's time counts in full. */
+const UNLOADED: MachineLoadReading = { loadAverage: 0, cpus: TEST_CPUS };
+/** A machine whose run queue leaves a runnable thread so small a share that the bound's worth of processor time is not reached within the longest any test holds the main thread. */
+const STARVED: MachineLoadReading = { loadAverage: TEST_CPUS * (PAUSE_WAIT_GUARD_MS / TEST_BOUND_MS), cpus: TEST_CPUS };
+/** A machine loaded enough to stretch the bound, though not so much that a held loop is never judged. */
+const LOADED_RUN_QUEUE_PER_CPU = 2;
+const LOADED: MachineLoadReading = { loadAverage: TEST_CPUS * LOADED_RUN_QUEUE_PER_CPU, cpus: TEST_CPUS };
+
+/** What the thread logs once a silence has outlasted the bound in wall time but not in processor time. */
+const WAITING_OUT_STARVATION = "rather than replacing a door the machine did not schedule";
+
+/** Blocks this thread, the way a synchronous call in the door would, in short waits between which it checks `done`, until `done` holds or the guard runs out: the main loop's beat cannot run meanwhile, and the outcome waited for decides how long the hold lasts rather than a guessed duration. */
+function holdTheMainThreadUntil(done: () => boolean): void {
+  const sleeper = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  const deadline = Date.now() + PAUSE_WAIT_GUARD_MS;
+  while (Date.now() < deadline && !done()) {
+    Atomics.wait(sleeper, 0, 0, TEST_CHECK_MS);
+  }
+}
+
+/** The text of `file`, or nothing while it does not exist. */
+function textOf(file: string): string {
+  return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+}
 
 describe("the watchdog's derived constants", () => {
   it("is more patient than a launcher is with a door, so a door a launcher still calls busy is never acted on", () => {
@@ -64,11 +92,13 @@ describe("respawnDelayMs", () => {
 describe("startThreadWatchdog", () => {
   let directory: string;
   let stateFile: string;
+  let logFile: string;
   let watchdog: DoorWatchdog | undefined;
 
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-watchdog-"));
     stateFile = path.join(directory, "state.json");
+    logFile = path.join(directory, LOG_NAME);
     fs.writeFileSync(stateFile, `${JSON.stringify({ supervisorPid: 4242, port: 4100, connectPort: 4200 })}\n`);
   });
 
@@ -78,83 +108,95 @@ describe("startThreadWatchdog", () => {
     fs.rmSync(directory, { recursive: true, force: true });
   });
 
-  /** Resolves with the report the thread posts, or undefined when none arrives within `waitMs`. */
-  async function reportWithin(waitMs: number, beatEveryMs: number | undefined): Promise<string | undefined> {
-    return await new Promise<string | undefined>((resolve) => {
-      let timer: NodeJS.Timeout | undefined;
-      watchdog = startThreadWatchdog({
-        stateFile,
-        ownPid: process.pid,
-        boundMs: TEST_BOUND_MS,
-        checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS,
-        action: "report",
-        respawnGeneration: 0,
-        respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: path.join(directory, LOCK_NAME),
-        onReport: (message) => {
-          if (timer !== undefined) clearInterval(timer);
-          resolve(message);
-        },
-      });
-      if (beatEveryMs !== undefined) {
-        const beat = watchdog.beat;
-        timer = setInterval(beat, beatEveryMs);
-      }
-      setTimeout(() => {
-        if (timer !== undefined) clearInterval(timer);
-        resolve(undefined);
-      }, waitMs);
-    });
-  }
-
-  it("reports a main loop that never beats, recording it in the state file's lastError and keeping the rest of the record", async () => {
-    const message = await reportWithin(TEST_BOUND_MS * BOUNDS_TO_WAIT_FOR_REPORT, undefined);
-    expect(message).toMatch(/event loop did not run/);
-    const recorded: unknown = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-    expect(recorded).toMatchObject({ supervisorPid: 4242, port: 4100, connectPort: 4200, lastError: message });
-  });
-
-  it("leaves a loop alone that beats within the bound", async () => {
-    expect(await reportWithin(TEST_BOUND_MS * BOUNDS_TO_WAIT_FOR_SILENCE, TEST_CHECK_MS)).toBeUndefined();
-    expect(JSON.parse(fs.readFileSync(stateFile, "utf8"))).not.toHaveProperty("lastError");
-  });
-
-  it("acts while the main thread is blocked, which is the case it exists for", async () => {
-    const reported = new Promise<string>((resolve) => {
-      watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: path.join(directory, LOCK_NAME), onReport: (message) => {
+  /** Starts a watchdog at the test cadence and bound, judging by an unloaded machine unless `extra` says otherwise, and resolves with its report. */
+  async function startReporting(extra: Partial<Pick<ThreadWatchdogParams, "pauseWaitMs" | "logFile" | "respawnGeneration" | "respawn" | "nativeSample" | "machineLoad">>): Promise<string> {
+    // The executor runs before this function first yields, so `watchdog` is set by the time a caller goes on to hold the main thread.
+    return await new Promise<string>((resolve) => {
+      watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: path.join(directory, LOCK_NAME), machineLoad: UNLOADED, ...extra, onReport: (message) => {
           resolve(message);
         } });
     });
-    // Blocks this thread, the way a synchronous wait in the door would, for several bounds: only a thread with its own loop can notice.
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)), 0, 0, TEST_BOUND_MS * BOUNDS_TO_BLOCK);
-    // The state file was written by the other thread while this one was blocked, before this line ran.
-    expect(JSON.parse(fs.readFileSync(stateFile, "utf8"))).toHaveProperty("lastError");
-    await expect(reported).resolves.toMatch(/event loop did not run/);
+  }
+
+  it("leaves a loop alone that is free to run, however long the code it serves waits on something else", async () => {
+    // Nothing here beats on the watchdog's behalf: this thread only awaits a timer for several bounds, the way the supervisor's tick awaits a `ps` run a loaded machine is slow to finish, and the loop itself runs throughout.
+    const report = await Promise.race([
+      startReporting({}),
+      new Promise<undefined>((resolve) => {
+        setTimeout(() => {
+          resolve(undefined);
+        }, TEST_BOUND_MS * BOUNDS_TO_WAIT_FOR_SILENCE);
+      }),
+    ]);
+    expect(report).toBeUndefined();
+    expect(JSON.parse(fs.readFileSync(stateFile, "utf8"))).not.toHaveProperty("lastError");
+  });
+
+  it("acts while the main thread is blocked, which is the case it exists for, recording it in the state file's lastError and keeping the rest of the record", async () => {
+    const reported = startReporting({});
+    // Only a thread with its own loop can notice while this one is held; the state file is written by that thread before this hold ends.
+    holdTheMainThreadUntil(() => textOf(stateFile).includes("lastError"));
+    const message = await reported;
+    expect(message).toMatch(/event loop did not run/);
+    expect(JSON.parse(fs.readFileSync(stateFile, "utf8"))).toMatchObject({ supervisorPid: 4242, port: 4100, connectPort: 4200, lastError: message });
   });
 
   it("does nothing once stopped, so a slow orderly retirement is never taken for a stall", async () => {
     const reported: string[] = [];
-    watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: path.join(directory, LOCK_NAME), onReport: (message) => {
-        reported.push(message);
-      } });
-    watchdog.stop();
+    void startReporting({}).then((message) => {
+      reported.push(message);
+    });
+    watchdog?.stop();
+    // Held for several bounds with nothing able to beat, which a running watchdog would report.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)), 0, 0, TEST_BOUND_MS * BOUNDS_TO_BLOCK);
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, TEST_BOUND_MS * BOUNDS_TO_BLOCK);
+      setTimeout(resolve, TEST_BOUND_MS);
     });
     expect(reported).toEqual([]);
     expect(JSON.parse(fs.readFileSync(stateFile, "utf8"))).not.toHaveProperty("lastError");
   });
 
+  describe("on a machine starved of processors", () => {
+    it("keeps a door whose loop the machine did not schedule, saying why, and says when the loop ran again", async () => {
+      const reported: string[] = [];
+      void startReporting({ logFile, machineLoad: STARVED }).then((message) => {
+        reported.push(message);
+      });
+      // Held past the bound in wall time, which an unloaded machine would report, until the thread says it is waiting the starvation out.
+      holdTheMainThreadUntil(() => textOf(logFile).includes(WAITING_OUT_STARVATION));
+      expect(textOf(logFile)).toMatch(new RegExp(`the front door's event loop has not run for \\d+ms, but the machine's load \\(\\d+\\.\\d across ${String(TEST_CPUS)} cpus\\) left it only \\d+ms of processor time`));
+      await vi.waitFor(
+        () => {
+          expect(textOf(logFile)).toMatch(/the front door's event loop ran again after \d+ms; the machine's load had starved it, so the watchdog kept the door/);
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
+      expect(reported).toEqual([]);
+      expect(textOf(logFile)).not.toMatch(/did not run for/);
+      expect(JSON.parse(fs.readFileSync(stateFile, "utf8"))).not.toHaveProperty("lastError");
+    });
+
+    it("still ends a loop held for the bound's worth of processor time, once the load has stretched the bound", async () => {
+      const reported = startReporting({ logFile, machineLoad: LOADED });
+      holdTheMainThreadUntil(() => textOf(logFile).includes("the main thread"));
+      const message = await reported;
+      const log = textOf(logFile);
+      // The wait came first: at this load the bound passed in wall time before the loop had had the bound's worth of processor time.
+      expect(log).toContain(WAITING_OUT_STARVATION);
+      expect(log.indexOf(WAITING_OUT_STARVATION)).toBeLessThan(log.indexOf("did not run for"));
+      const scheduled = /did not run for \d+ms, (\d+)ms of it with a processor to run on/.exec(message);
+      expect(Number(scheduled?.[1])).toBeGreaterThanOrEqual(TEST_BOUND_MS);
+    });
+  });
+
   describe("on a stall", () => {
     const MARKER = "respawned";
 
-    /** Waits for the thread's report, then for the log, which the thread writes before it reports. */
-    async function stallWith(extra: { readonly respawnGeneration?: number; readonly respawnMaxGeneration?: number; readonly respawn?: ThreadWatchdogParams["respawn"]; readonly nativeSample?: ThreadWatchdogParams["nativeSample"] }): Promise<string> {
-      const logFile = path.join(directory, "frontdoor.log");
-      await new Promise<void>((resolve) => {
-        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, action: "report", logFile, respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: path.join(directory, LOCK_NAME), ...extra, onReport: () => {
-            resolve();
-          } });
-      });
+    /** Holds the main thread until the thread has logged where it found it (its last line before it samples and reports), then waits for the report and returns the log. */
+    async function stallWith(extra: Partial<Pick<ThreadWatchdogParams, "respawnGeneration" | "respawn" | "nativeSample" | "machineLoad">>): Promise<string> {
+      const reported = startReporting({ logFile, ...extra });
+      holdTheMainThreadUntil(() => textOf(logFile).includes("the main thread"));
+      await reported;
       return fs.readFileSync(logFile, "utf8");
     }
 
@@ -174,17 +216,12 @@ describe("startThreadWatchdog", () => {
     });
 
     it("names the function a blocked main thread was held in", async () => {
-      const logFile = path.join(directory, "frontdoor.log");
-      const reported = new Promise<void>((resolve) => {
-        watchdog = startThreadWatchdog({ stateFile, ownPid: process.pid, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: PAUSE_WAIT_GUARD_MS, action: "report", logFile, respawnGeneration: 0, respawnMaxGeneration: TEST_RESPAWN_MAX_GENERATION, cooldownStepMs: TEST_COOLDOWN_STEP_MS, cooldownCapMs: TEST_COOLDOWN_CAP_MS, startLockFile: path.join(directory, LOCK_NAME), onReport: () => {
-            resolve();
-          } });
-      });
+      const reported = startReporting({ logFile, pauseWaitMs: PAUSE_WAIT_GUARD_MS });
       const sleeper = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
       // Holds this thread until the watchdog has logged where it found it, so the test depends on no timing: the pause interrupts the wait, the thread logs the frames and resumes it, and the log then holds the line this loop is waiting for.
       function holdTheLoopHere(): void {
         const deadline = Date.now() + PAUSE_WAIT_GUARD_MS;
-        while (Date.now() < deadline && !(fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : "").includes("the main thread")) {
+        while (Date.now() < deadline && !textOf(logFile).includes("the main thread")) {
           Atomics.wait(sleeper, 0, 0, TEST_CHECK_MS);
         }
       }
@@ -198,9 +235,12 @@ describe("startThreadWatchdog", () => {
       const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_AWAIT_PID_ENV} + " gen " + process.env.${DOOR_RESPAWN_GENERATION_ENV})`], env: { PATH: process.env.PATH ?? "" } };
       const log = await stallWith({ respawn });
       expect(log).toMatch(/started replacement door \d+ of generation 1/);
-      await vi.waitFor(() => {
-        expect(fs.readFileSync(markerFile, "utf8")).toBe(`${String(process.pid)} gen 1`);
-      });
+      await vi.waitFor(
+        () => {
+          expect(textOf(markerFile)).toBe(`${String(process.pid)} gen 1`);
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
     });
 
     it("steps the generation a replacement is started as", async () => {
@@ -208,9 +248,12 @@ describe("startThreadWatchdog", () => {
       const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_RESPAWN_GENERATION_ENV})`], env: { PATH: process.env.PATH ?? "" } };
       const log = await stallWith({ respawnGeneration: 1, respawn });
       expect(log).toMatch(/started replacement door \d+ of generation 2/);
-      await vi.waitFor(() => {
-        expect(fs.readFileSync(markerFile, "utf8")).toBe("2");
-      });
+      await vi.waitFor(
+        () => {
+          expect(textOf(markerFile)).toBe("2");
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
     });
 
     /** The pid the start lock currently names. */
@@ -259,14 +302,14 @@ describe("startThreadWatchdog", () => {
       const log = await stallWith({ nativeSample });
       await vi.waitFor(
         () => {
-        expect(fs.readFileSync(path.join(samples, `${String(process.pid)}.txt`), "utf8")).toBe("sampled 1s");
+          expect(fs.readFileSync(path.join(samples, `${String(process.pid)}.txt`), "utf8")).toBe("sampled 1s");
         },
         { timeout: PAUSE_WAIT_GUARD_MS },
       );
       expect(log).toMatch(/could not be paused/);
       await vi.waitFor(
         () => {
-        expect(fs.readdirSync(samples).sort()).toEqual(["3.txt", `${String(process.pid)}.txt`].sort());
+          expect(fs.readdirSync(samples).sort()).toEqual(["3.txt", `${String(process.pid)}.txt`].sort());
         },
         { timeout: PAUSE_WAIT_GUARD_MS },
       );
@@ -277,7 +320,7 @@ describe("startThreadWatchdog", () => {
       const log = await stallWith({ nativeSample });
       await vi.waitFor(
         () => {
-        expect(fs.readFileSync(path.join(directory, "frontdoor.log"), "utf8")).toMatch(/could not sample the main thread natively/);
+          expect(textOf(logFile)).toMatch(/could not sample the main thread natively/);
         },
         { timeout: PAUSE_WAIT_GUARD_MS },
       );
@@ -290,7 +333,7 @@ describe("startThreadWatchdog", () => {
       const log = await stallWith({ respawnGeneration: TEST_RESPAWN_MAX_GENERATION, respawn });
       await vi.waitFor(
         () => {
-        expect(fs.existsSync(markerFile)).toBe(true);
+          expect(fs.existsSync(markerFile)).toBe(true);
         },
         { timeout: PAUSE_WAIT_GUARD_MS },
       );
@@ -304,7 +347,7 @@ describe("startThreadWatchdog", () => {
       await stallWith({ respawnGeneration: 0, respawn });
       await vi.waitFor(
         () => {
-        expect(fs.existsSync(markerFile)).toBe(true);
+          expect(fs.existsSync(markerFile)).toBe(true);
         },
         { timeout: PAUSE_WAIT_GUARD_MS },
       );
@@ -317,7 +360,7 @@ describe("startThreadWatchdog", () => {
       await stallWith({ respawnGeneration: TEST_RESPAWN_MAX_GENERATION + GENERATIONS_PAST_THE_CAP, respawn });
       await vi.waitFor(
         () => {
-        expect(fs.existsSync(markerFile)).toBe(true);
+          expect(fs.existsSync(markerFile)).toBe(true);
         },
         { timeout: PAUSE_WAIT_GUARD_MS },
       );
