@@ -74,6 +74,7 @@ import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcSt
 import type { RoutedRequest } from "./route";
 import { createFrontDoorServer, listenFrontDoor } from "./server";
 import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_MAX_GENERATIONS, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog } from "./watchdog";
+import { PROBE_TIMEOUT_MS } from "./probe";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
 import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, liveSessionTokens, removeFrontDoorSession, writeFrontDoorSession, readFrontDoorSessionModels } from "./state";
@@ -641,7 +642,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
         cooldownCapMs: DOOR_RESPAWN_COOLDOWN_CAP_MS,
         startLockFile: paths.frontdoorLockFile,
         ...(process.platform === "darwin"
-          ? { nativeSample: { command: MACOS_SAMPLER, args: ["{pid}", "{seconds}", "-file", "{file}"], directory: path.join(path.dirname(paths.frontdoorLogPath), "stall-samples"), seconds: Math.max(1, Math.ceil(DOOR_WATCHDOG_CHECK_MS / MS_PER_SECOND)), keep: DOOR_RESPAWN_MAX_GENERATIONS + 1 } }
+          ? { nativeSample: { command: MACOS_SAMPLER, args: ["{pid}", "{seconds}", "-file", "{file}"], directory: path.join(path.dirname(paths.frontdoorLogPath), "stall-samples"), seconds: Math.max(1, Math.ceil(DOOR_WATCHDOG_CHECK_MS / MS_PER_SECOND)), overheadMs: PROBE_TIMEOUT_MS, keep: DOOR_RESPAWN_MAX_GENERATIONS + 1 } }
           : {}),
       }),
     // The launch lifecycle publisher over the same backbone the typed API serves: the tick's registry facts go in here, and the door's own register, prune and end moments come out as source-tagged events.
