@@ -1,6 +1,7 @@
 import http from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import https from "node:https";
+import net from "node:net";
 
 import { HTTP_STATUS } from "../codex/http";
 import { aliasLegacyWireHeaders } from "../legacy";
@@ -151,6 +152,7 @@ interface ListenOptions {
  */
 export async function listenFrontDoor(server: FrontDoorServer, options: Readonly<ListenOptions> = {}): Promise<{ readonly port: number; readonly close: () => Promise<void>; readonly drain: () => Promise<void> }> {
   const { preferredPort, ca } = options;
+  const connections = trackConnections(server);
   const tryListen = async (port: number): Promise<number> =>
     await new Promise<number>((resolve, reject) => {
       const onError = (error: Error): void => {
@@ -207,10 +209,10 @@ export async function listenFrontDoor(server: FrontDoorServer, options: Readonly
             server.closeAllConnections();
           });
         },
-        // The port is released as `server.close` runs, before the first await. From Node 19 `close` also ends the connections that are idle, and a connection that finishes its last response while the server is closing is ended with it, so a request already being served finishes and its client then reconnects to whatever now holds the port.
+        // The port is released as the close runs, before the first await (see `trackConnections` for what happens to the connections already accepted).
         drain: async () => {
           await new Promise<void>((resolve) => {
-            server.close(() => {
+            connections.drain(() => {
               resolve(undefined);
             });
           });
@@ -224,6 +226,86 @@ export async function listenFrontDoor(server: FrontDoorServer, options: Readonly
       setTimeout(resolve, HEALTH_RETRY_MS);
     });
   }
+}
+
+/** How one connection the HTTP layer holds has been used: requests made, and responses still open. */
+interface ConnectionUse {
+  requests: number;
+  open: number;
+}
+
+/**
+ * Tracks every connection `server`'s HTTP layer takes, for a drain that ends what a successor should take over and answers what the listener already accepted. `drain` stops accepting (releasing this process's hold on the port at once) and then: an idle keep-alive connection is ended, so its client reconnects to whatever holds the port next; a response in progress finishes and its connection ends after it; and a connection that has not made its first request yet is served that request and then ended, since the listener accepted it before it stopped and its client is owed an answer (one that makes no request within the server's own `headersTimeout` is ended). `done` runs once every connection has closed.
+ *
+ * The HTTP server's own `close` is not used for the stop: it also ends every connection with no request in progress, which includes one accepted a moment before the listener stopped whose first request is still on its way, and its client would see a reset rather than an answer.
+ */
+function trackConnections(server: FrontDoorServer): { readonly drain: (done: () => void) => void } {
+  const connections = new Map<net.Socket, ConnectionUse>();
+  let draining = false;
+  /** Ends a connection that has still made no request once the server's own allowance for a request's headers has passed, so a client that connects and says nothing cannot hold a drain open. */
+  const awaitFirstRequest = (socket: net.Socket, use: Readonly<ConnectionUse>): void => {
+    const deadline = setTimeout(() => {
+      if (use.requests === 0) {
+        socket.destroy();
+      }
+    }, server.headersTimeout);
+    deadline.unref();
+    socket.once("close", () => {
+      clearTimeout(deadline);
+    });
+  };
+  const track = (socket: net.Socket): void => {
+    const use: ConnectionUse = { requests: 0, open: 0 };
+    connections.set(socket, use);
+    socket.once("close", () => {
+      connections.delete(socket);
+    });
+    if (draining) {
+      awaitFirstRequest(socket, use);
+    }
+  };
+  const onRequest = (request: IncomingMessage, response: ServerResponse): void => {
+    const { socket } = request;
+    const use = connections.get(socket);
+    if (use === undefined) {
+      // The HTTP layer delivers every connection through the event `track` listens to before it parses a request on it, so a request on an untracked connection means that wiring changed under this code.
+      throw new Error("a front-door request arrived on a connection the listener never saw");
+    }
+    use.requests += 1;
+    use.open += 1;
+    if (draining && !response.headersSent) {
+      response.setHeader("Connection", "close");
+    }
+    response.once("close", () => {
+      use.open -= 1;
+      if (draining && use.open === 0) {
+        socket.end();
+      }
+    });
+  };
+  // A TLS listener hands the HTTP layer the secure socket once its handshake completes; a plain one hands it the accepted socket. The request listener runs before the server's own handler, so a response written synchronously still carries the drain's header.
+  if (server instanceof https.Server) {
+    server.on("secureConnection", track);
+    server.prependListener("request", onRequest);
+  } else {
+    server.on("connection", track);
+    server.prependListener("request", onRequest);
+  }
+  return {
+    drain: (done) => {
+      draining = true;
+      net.Server.prototype.close.call(server, () => {
+        done();
+      });
+      for (const [socket, use] of connections) {
+        if (use.requests === 0) {
+          awaitFirstRequest(socket, use);
+        } else if (use.open === 0) {
+          socket.destroy();
+        }
+      }
+    },
+  };
 }
 
 /**

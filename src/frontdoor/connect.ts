@@ -370,7 +370,7 @@ export interface ConnectServerHandle {
   /** How many authenticated connections (blind tunnels and terminated sessions together) are open now: what closing this surface, or exiting its process, drops. */
   readonly openTunnels: () => number;
   /**
-   * Retires the surface without cutting off the tunnels it carries: the port is released at once so a successor can bind it, every connection that is not a blind tunnel (the terminated sessions, which carry this door's own routing state, and connections still waiting for their head) is ended, and the blind tunnels, which are byte pumps to hosts the door never looks into, keep running until they end by themselves or their launch ends. Resolves when the last has, with the surface fully closed.
+   * Retires the surface without cutting off the tunnels it carries: the port is released at once so a successor can bind it, the terminated sessions (which carry this door's own routing state) are ended so their clients reconnect to the successor, and the blind tunnels, which are byte pumps to hosts the door never looks into, keep running until they end by themselves or their launch ends. A connection the listener accepted before it stopped but whose head has not arrived yet is still answered: its blind tunnel runs like any other, its terminated session serves one request and ends, and one whose head never comes is refused at its deadline. Resolves when the last connection has closed, with the surface fully closed.
    */
   readonly drain: () => Promise<void>;
   /** Stops the listener, drops every live tunnel and terminated session, and resolves once the port is released. */
@@ -400,6 +400,9 @@ const TAP_ALPN_PROTOCOLS: readonly string[] = ["h2", "http/1.1"];
 export async function startConnectServer(config: ConnectServerConfig, effects: ConnectEffects, preferredPort: number | undefined): Promise<ConnectServerHandle> {
   // The capability each terminated session's tunnel authenticated with, keyed by the TLS session the acceptor handed over. A request riding that session is admitted by this token when its own headers carry none: the pipeline's per-request admission exists for listeners with no transport auth (a loopback process spending a session's credentials through the provider listener), while a CONNECT surface session already authenticated at the tunnel, and a client inside the child that never sees the launcher's headers (Claude Code's Remote Control bridge is exactly this, and its requests were refused with a 401 Claude Code misreports as a rejected login) has nothing else to present.
   const tunnelTokens = new WeakMap<net.Socket, string>();
+  const ledger = createConnectionLedger(config.limits, config.isLiveCapability);
+  /** The deadline of each terminated session a retiring surface took on, disarmed by its first request (see `serveSecure`). */
+  const lateSessionDeadlines = new WeakMap<net.Socket, NodeJS.Timeout>();
   // One HTTP parser per intercept host, so each handler knows by closure which host's session it serves and therefore which upstream a non-routed path is piped to. No socket-to-host bookkeeping to get wrong: the only path into a session's handler is that host's acceptor.
   // An upgrade request is relayed, never parsed: the client wants a 101 and a raw byte channel after it (Remote Control's websocket to the API host is exactly this), which no request/response forwarding can carry. The relay splices the client's TLS session to a fresh TLS connection to the session's real host, byte for byte, using the same pump a tap host uses; the capture records the upgrade's head, and the frames after it flow unrecorded.
   const onUpgrade = (host: string) => (request: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -425,6 +428,13 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
 
     // The local surface is consulted first and awaited, because serving a path it owns means the whole response has been written by the time it resolves; a miss falls through to routing or piping unchanged. The parser's handler shape returns void, so the awaited body runs as its own helper.
     const handleHostRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+      if (ledger.retiring()) {
+        // A session the retiring surface took on serves this one request and then ends, so its client's next request opens a connection the successor takes.
+        clearTimeout(lateSessionDeadlines.get(request.socket));
+        response.once("close", () => {
+          request.socket.end();
+        });
+      }
       if (config.localSurface !== undefined && (await config.localSurface.serve(host, request, response))) {
         return;
       }
@@ -444,13 +454,19 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
     const httpSession = effects.createHttpSession(handler, onUpgrade(host));
     const serveSecure = (secure: net.Socket, capability: string): void => {
       tunnelTokens.set(secure, capability);
+      if (ledger.retiring()) {
+        // A session that reached a retiring surface was accepted before the listener stopped: it is served one request (see `handleHostRequest`), and one that makes none within the time a CONNECT head is given is ended, so it cannot hold the retirement open.
+        const deadline = setTimeout(() => {
+          secure.destroy();
+        }, config.limits.headDeadlineMs);
+        deadline.unref();
+        lateSessionDeadlines.set(secure, deadline);
+      }
       httpSession.serve(secure);
     };
     const tlsAcceptor = effects.createTlsAcceptor(config.leafFor(host), serveSecure);
     return { host, serveSecure, httpSession, tlsAcceptor };
   });
-  const ledger = createConnectionLedger(config.limits, config.isLiveCapability);
-
   // The listener owns teardown of everything it accepted: destroying the raw CONNECT socket ends both the blind tunnels and the TLS sessions layered on top of them.
   const listener = await effects.listenLoopback(preferredPort, (socket) => {
     handleConnect(socket, { config, effects, sessions, ledger });
@@ -530,8 +546,12 @@ interface ConnectionLedger {
   readonly establish: (socket: net.Socket, capability: string, kind: ConnectionKind) => boolean;
   /** How many authenticated connections are open. */
   readonly openTunnels: () => number;
-  /** Ends every pending connection and every authenticated connection that is not a blind tunnel, and resolves once no blind tunnel is open. The revalidation timer keeps running, so a launch that ends still takes its tunnels with it. */
+  /**
+   * Ends every authenticated connection that is not a blind tunnel and resolves once every connection the surface accepted has closed. A connection still waiting for its head is not ended: the listener accepted it before it stopped, so its client is owed an answer, and it is served as it would have been (a blind tunnel runs to its end, a terminated session serves one request; see `retiring`) or refused at its head deadline. The revalidation timer keeps running, so a launch that ends still takes its tunnels with it.
+   */
   readonly retire: () => Promise<void>;
+  /** Whether `retire` has begun: a terminated session established from then on serves one request and ends. */
+  readonly retiring: () => boolean;
   /** Stops the revalidation timer and disarms every deadline; the listener's own close destroys the sockets. */
   readonly close: () => void;
 }
@@ -547,8 +567,11 @@ function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token:
   let tunnels = 0;
   /** The authenticated connections that are blind tunnels, which a retirement lets run to their end. */
   const blind = new Set<net.Socket>();
-  /** Resolves a retirement waiting on the last blind tunnel. */
-  let onNoBlindTunnels: (() => void) | undefined;
+  /** Every connection accepted and not yet closed, whatever its stage: what a retirement waits on. */
+  const live = new Set<net.Socket>();
+  let retiring = false;
+  /** Resolves a retirement waiting on the last connection. */
+  let onNoConnections: (() => void) | undefined;
 
   const leavePending = (socket: net.Socket): void => {
     const deadline = pending.get(socket);
@@ -585,20 +608,19 @@ function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token:
           refuse(socket, REFUSAL.requestTimeout);
         }, limits.headDeadlineMs),
       );
+      live.add(socket);
       socket.once("close", () => {
         leavePending(socket);
+        live.delete(socket);
+        if (live.size === 0) {
+          onNoConnections?.();
+        }
       });
     },
     headReceived: leavePending,
     openTunnels: () => tunnels,
     retire: async () => {
-      for (const socket of pending.keys()) {
-        socket.destroy();
-      }
-      for (const deadline of pending.values()) {
-        clearTimeout(deadline);
-      }
-      pending.clear();
+      retiring = true;
       for (const sockets of authenticated.values()) {
         for (const socket of sockets) {
           if (!blind.has(socket)) {
@@ -606,12 +628,13 @@ function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token:
           }
         }
       }
-      if (blind.size > 0) {
+      if (live.size > 0) {
         await new Promise<void>((resolve) => {
-          onNoBlindTunnels = resolve;
+          onNoConnections = resolve;
         });
       }
     },
+    retiring: () => retiring,
     establish: (socket, capability, kind) => {
       if (tunnels >= limits.maxTunnels) {
         return false;
@@ -626,9 +649,6 @@ function createConnectionLedger(limits: ConnectLimits, isLiveCapability: (token:
       socket.once("close", () => {
         tunnels -= 1;
         blind.delete(socket);
-        if (blind.size === 0) {
-          onNoBlindTunnels?.();
-        }
         sockets.delete(socket);
         if (sockets.size === 0 && authenticated.get(capability) === sockets) {
           authenticated.delete(capability);
