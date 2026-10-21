@@ -154,9 +154,10 @@ const NOT_WORDS: Readonly<Record<string, readonly string[]>> = {
   "transcript/record.ts": ["object"],
   "transcript/session.ts": ["<command-name>", "<command-message>", "<local-command-", "[Request interrupted by user", "string", "tool_result", "text", "assistant", "user", "system", "compact_boundary", "custom-title", "ai-title"],
   "transcript/tokens.ts": ["assistant"],
-  // Names of the products and plans the statusline reports, which no language translates, the identifiers the account sends, and the file names it reads.
+  // Names of the products and plans the statusline reports, which no language translates, the identifiers the account sends, the endpoints and model ids a platform is known by, and the file names it reads.
   "elements/header/account.ts": ["claude_max", "Max", "Max ", "claude_pro", "Pro", "claude_team", "team_standard", "Team Standard", "team_tier_1", "Team Premium", "Team", "claude_enterprise", "Enterprise", "default_", "free", "Free", "x"],
   "elements/header/outputStyle.ts": [".claude", "settings.json", "settings.local.json"],
+  "platform.ts": ["Bedrock", "Vertex", "MiniMax", "Enterprise", "https://api.minimax.io/anthropic", "https://api.minimaxi.com/anthropic", "opusplan", "sonnetplan", "haikuplan"],
   // The symbols that stand for units, which are the same in every language: durations, token counts and bytes.
   "elements/sessionFormat.ts": ["<1m", "<1s", "m", "m ", "h ", "s", "h", "d"],
   "memoryUse.ts": ["B", "KB", "MB", "GB", "TB"],
@@ -165,6 +166,7 @@ const NOT_WORDS: Readonly<Record<string, readonly string[]>> = {
 /** The strings with a comma, colon or semicolon in them that the catalogue does not hold, by module and why: the colon that names the version control in `git:(main)`, which is the syntax of the segment and not a sentence. */
 const PUNCTUATION_KEPT: Readonly<Record<string, readonly string[]>> = {
   "elements/header/vcs.ts": [":("],
+  "platform.ts": ["https://api.minimax.io/anthropic", "https://api.minimaxi.com/anthropic"],
 };
 
 /** The modules that are neither plumbing nor in a data directory, which are the ones that write words: any module that is added falls here until someone decides which it is. */

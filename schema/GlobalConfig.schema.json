@@ -332,6 +332,10 @@
                     "auto"
                   ],
                   "description": "Where the model's name comes from: client is the name the client reports, transcript is the model the session's last reply came from (what a proxy actually served), and auto uses the transcript's model only when it is not a Claude model, which is what a proxy redirect looks like."
+                },
+                "platform": {
+                  "type": "boolean",
+                  "description": "Whether the model segment ends with the platform the client reaches the model through, as claude-hud detects it from the client's environment and model id: Bedrock when CLAUDE_CODE_USE_BEDROCK is 1, Vertex when CLAUDE_CODE_USE_VERTEX is 1, MiniMax when the Anthropic base URL is a MiniMax endpoint, and Enterprise for an enterprise planning model id (opusplan, sonnetplan, haikuplan). It is not the provider segment, which names the agent-shim provider the launch selected and the door routes to; the platform is how the client itself reaches Anthropic's models, and nothing is drawn for Anthropic's own API."
                 }
               },
               "additionalProperties": false

@@ -1,5 +1,7 @@
 import type { ResolvedStatusline } from "../../../config/statusline";
 import type { StatuslineSummary } from "../../enrich";
+import { SEPARATOR } from "../../headerLayout";
+import { modelPlatformOf } from "../../platform";
 import type { RenderContext } from "../context";
 
 /** Whether a dynamic mode's choice names its provider beside the served model: the choice could cross providers, or routing by name left the launch's provider. */
@@ -39,8 +41,18 @@ function modelNameOf({ view, settings, transcriptIdentity }: RenderContext): { r
   return view.modelDisplayName === undefined || view.modelDisplayName === "" ? undefined : { name: formatModelName(view.modelDisplayName, settings.model.format), isServed: false };
 }
 
-/** The model the session is on, or undefined when no name is known. */
+/** The model the session is on, followed by the platform serving it (Bedrock, Vertex, MiniMax or an enterprise planning mode) when one is detected and `model.platform` is on, as claude-hud draws it: after the name, with the separator the header puts between its segments. Undefined when no name is known. */
 export function modelSegment(context: RenderContext): string | undefined {
+  const name = modelName(context);
+  if (name === undefined || !context.settings.model.platform) {
+    return name;
+  }
+  const platform = modelPlatformOf(context.ports.env, context.payload.model?.id);
+  return platform === undefined ? name : `${name}${SEPARATOR}${platform}`;
+}
+
+/** The model's name as the segment draws it, with a dynamic mode's choice beside it, or undefined when no name is known. */
+function modelName(context: RenderContext): string | undefined {
   // A dynamic mode's selection draws the model that answered beside the name the session typed (`auto -> glm-5.3`), because the client's own model name alone says nothing about what is actually serving. The provider joins the arrow when the choice could have landed on more than one, or when it left the launch's provider: exactly the cases where the provider is part of the answer.
   const { summary } = context;
   const model = modelNameOf(context);

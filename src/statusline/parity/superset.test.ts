@@ -43,6 +43,8 @@ const CLAUDE_HUD_DEFAULT_OPTIONS: readonly { readonly key: string; readonly show
   { key: "display.contextValue", showsAsMuch: (settings) => settings.context.value === "both" || settings.context.value === "percent" },
   { key: "display.addedDirsLayout", showsAsMuch: (settings) => settings.project.addedDirsLayout === "inline" },
   { key: "gitStatus.showDirty", showsAsMuch: (settings) => settings.git.enabled && settings.git.showDirty },
+  // claude-hud's model segment ends with the platform it detects (Bedrock, Vertex, MiniMax, Enterprise) under every configuration, so its default draws it too.
+  { key: "segment:model", showsAsMuch: (settings) => settings.model.platform },
 ];
 
 const DEFAULTS_BY_ROUTE: readonly (readonly [string, ResolvedStatusline])[] = [
@@ -86,10 +88,10 @@ describe("the default render of a stand-in session", () => {
   };
   const QUOTA = { fiveHourUsed: 42, fiveHourResetAt: "2026-10-21T13:30:00.000Z", sevenDayUsed: 85, sevenDayResetAt: "2026-10-24T14:00:00.000Z" };
 
-  function draw(payloadFields: Readonly<Record<string, unknown>>): string {
+  function draw(payloadFields: Readonly<Record<string, unknown>>, env: Readonly<Record<string, string>> = {}): string {
     const payload = parseClientPayload(payloadFields);
     const run = (file: string, args: readonly string[]): string | undefined => (file === "git" && args.includes("status") ? STATUS : undefined);
-    return renderStatuslineBlock({ summary: fakeStatuslineSummary(QUOTA), view: viewOf(payload), payload, terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, ports: fakeStatuslinePorts({ env: { NO_COLOR: "1" }, run }) }).replace(ANSI, "");
+    return renderStatuslineBlock({ summary: fakeStatuslineSummary(QUOTA), view: viewOf(payload), payload, terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, ports: fakeStatuslinePorts({ env: { NO_COLOR: "1", ...env }, run }) }).replace(ANSI, "");
   }
 
   it("draws each piece claude-hud's default draws for the same session", () => {
@@ -98,6 +100,13 @@ describe("the default render of a stand-in session", () => {
     for (const piece of ["Opus 4.5", "demo-project +extra-dir git:(main*)", "92.0%", "(in: 1.2k, cache: 183k)", "42.0% (resets in 1h 30m)", "85.0% (resets in 3d 2h)", "Opus [", "37.0% (resets in 2d 0h)"]) {
       expect(drawn, piece).toContain(piece);
     }
+  });
+
+  it("ends the model with the platform the session reaches it through, as claude-hud's default does", () => {
+    // claude-hud: `[Opus 4.5 | Vertex]` under CLAUDE_CODE_USE_VERTEX=1, `[Opus 4.5 | Bedrock]` under CLAUDE_CODE_USE_BEDROCK=1.
+    expect(draw(SESSION, { CLAUDE_CODE_USE_VERTEX: "1" })).toContain("Opus 4.5 | Vertex");
+    expect(draw(SESSION, { CLAUDE_CODE_USE_BEDROCK: "1" })).toContain("Opus 4.5 | Bedrock");
+    expect(draw(SESSION)).not.toMatch(/Opus 4\.5 \| (Bedrock|Vertex|MiniMax|Enterprise)/);
   });
 
   it("estimates the context with the compaction reserve when the client reports no percentage, as claude-hud's default does", () => {

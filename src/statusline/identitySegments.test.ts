@@ -138,6 +138,31 @@ describe("the model segment", () => {
   });
 });
 
+describe("the platform beside the model", () => {
+  const vertex = { env: { CLAUDE_CODE_USE_VERTEX: "1" } };
+
+  it("follows the model's name with the platform claude-hud detects, after the header's separator", () => {
+    expect(segments({ settings: onlyHeader("model"), ports: { env: { CLAUDE_CODE_USE_BEDROCK: "1" } } })).toEqual(["Claude Opus 4.7 (1M context)", "Bedrock"]);
+    expect(segments({ settings: onlyHeader("model"), ports: vertex })).toEqual(["Claude Opus 4.7 (1M context)", "Vertex"]);
+    expect(segments({ settings: onlyHeader("model"), ports: { env: { ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic" } } })).toEqual(["Claude Opus 4.7 (1M context)", "MiniMax"]);
+    expect(segments({ settings: onlyHeader("model"), payload: { model: { id: "opusplan", display_name: "Opus Plan" } }, view: { modelDisplayName: "Opus Plan" } })).toEqual(["Opus Plan", "Enterprise"]);
+  });
+
+  it("draws the name alone when no platform is detected", () => {
+    expect(segments({ settings: onlyHeader("model"), payload: { model: { id: "claude-opus-4-7", display_name: "Claude Opus 4.7 (1M context)" } } })).toEqual(["Claude Opus 4.7 (1M context)"]);
+  });
+
+  it("draws the name alone when model.platform is off", () => {
+    expect(segments({ settings: { ...onlyHeader("model"), model: { platform: false } }, ports: vertex })).toEqual(["Claude Opus 4.7 (1M context)"]);
+  });
+
+  it("follows an overridden name and a dynamic mode's served model too, and draws nothing without a name", () => {
+    const modelChoice = { requested: "auto", served: "glm-5.3", provider: "zai", providers: ["zai"] };
+    expect(segments({ settings: { ...onlyHeader("model"), model: { override: "Work model" } }, summary: { modelChoice }, ports: vertex })).toEqual(["Work model -> glm-5.3", "Vertex"]);
+    expect(segments({ settings: onlyHeader("model"), view: { modelDisplayName: undefined }, ports: vertex })).toEqual([]);
+  });
+});
+
 describe("the provider segment", () => {
   const withProvider: Partial<StatuslineSummary> = { provider: "Z.ai", providerAccountEmail: "grace@example.com", providerPlan: "Pro" };
 
@@ -337,6 +362,11 @@ describe("the segments' defaults", () => {
     const payload = { version: "2.1.81", effort: "high", cwd: "/work", transcript_path: TRANSCRIPT };
     const ports = { ...transcriptOf(assistant("glm-5.3", "claude-opus-4-7")), readText: () => explanatoryStyle() };
     expect(segments({ payload, ports })).toEqual(["Claude Opus 4.7 (1M context)", `${ESCAPE}[33mwork${ESCAPE}[0m`, "ada.lovelace@example.com · Max 20x"]);
+  });
+
+  it("draw the platform beside the model, as claude-hud's default does", () => {
+    expect(STATUSLINE_DEFAULTS.model.platform).toBe(true);
+    expect(segments({ payload: { cwd: "/work" }, ports: { env: { CLAUDE_CODE_USE_VERTEX: "1" } } })).toEqual(["Claude Opus 4.7 (1M context)", "Vertex", `${ESCAPE}[33mwork${ESCAPE}[0m`, "ada.lovelace@example.com · Max 20x"]);
   });
 });
 
