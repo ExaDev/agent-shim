@@ -165,6 +165,12 @@ describe("realStatuslinePorts", () => {
       }
     });
 
+    it.skipIf(process.platform === "win32")("goes to a file only its owner may read and write", () => {
+      // The program states the mode of its own standard output, which is the file the port made; the permission bits mean nothing on Windows, which is why the test is skipped there.
+      const mode = withStateDirectory((withFiles) => withFiles.run(process.execPath, ["-p", `require("node:fs").fstatSync(1).mode & ${String(OWNER_ONLY_MASK)}`], os.tmpdir(), { outputInFile: true }));
+      expect(mode).toBe(`${String(OWNER_READ_WRITE)}\n`);
+    });
+
     it("keeps its arguments as they are, whatever characters they hold", () => {
       const awkward = "a b; $HOME 'q' \"d\" *";
       for (const options of [{}, { outputInFile: true }]) {
