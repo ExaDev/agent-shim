@@ -61,6 +61,7 @@ function opensRequest(record: TranscriptRecord): boolean {
     return !isLocalOnlyUserText(content);
   }
   if (Array.isArray(content)) {
+    // A text of nothing is the same nothing either way, so the fallback on it reads the same.
     return content.some((block) => block.type === "tool_result") || !content.some((block) => block.type === "text" && isLocalOnlyUserText(block.text ?? ""));
   }
   return true;
@@ -69,6 +70,7 @@ function opensRequest(record: TranscriptRecord): boolean {
 /** The tier a request's cache writes used, from its per-tier write counters. A request that wrote nothing (a pure cache read) says nothing, so the tier seen earlier stands. A request that wrote to both tiers takes the shorter, which is the first part of the prefix to lapse. */
 function ttlOf(record: TranscriptRecord): LatestState["cache"]["ttlSeconds"] {
   const writes = record.message?.usage?.cache_creation;
+  // The counters are never negative, so a counter of zero falls back to the same zero and either way reads the same.
   if ((writes?.ephemeral_5m_input_tokens ?? 0) > 0) {
     return PROMPT_CACHE_TTL_SECONDS.fiveMinutes;
   }
@@ -85,7 +87,7 @@ function foldPromptCache(cache: LatestState["cache"], record: TranscriptRecord, 
     // A record with no request id is a request of its own, anchored to the record before it: later than the true start of the request, never later than the response.
     const startsRequest = record.requestId === undefined || record.requestId !== cache.requestId;
     const requestAnchorAtMs = startsRequest ? cache.previousMainAtMs : cache.requestAnchorAtMs;
-    // With no record before it, or one stamped after the response it led to, the response itself is the latest defensible anchor.
+    // With no record before it, or one stamped after the response it led to, the response itself is the latest defensible anchor. An anchor stamped at the response gives the same time either way of comparing, and a tier named is never a zero, so both fallbacks read the same.
     const anchorAtMs = requestAnchorAtMs !== undefined && requestAnchorAtMs <= atMs ? requestAnchorAtMs : atMs;
     const ttlSeconds = ttlOf(record) ?? cache.ttlSeconds;
     next = { ...cache, requestId: startsRequest ? record.requestId : cache.requestId, requestAnchorAtMs, anchorAtMs, ttlSeconds, pendingAtMs: undefined };
@@ -156,6 +158,7 @@ function hasRequest(cache: LatestState["cache"]): boolean {
  */
 export function sessionFactsOf(state: SessionState, newer?: LatestState): SessionFacts {
   const { cumulative } = state;
+  // A tier named is never a zero, and a pending request stamped at the anchor gives the same anchor either way of comparing, so both fallbacks read the same.
   const latest: LatestState = newer === undefined ? state.latest : { ...state.latest, ...newer, cache: hasRequest(newer.cache) ? { ...newer.cache, ttlSeconds: newer.cache.ttlSeconds ?? state.latest.cache.ttlSeconds } : state.latest.cache };
   const { cache } = latest;
   // A request still waiting for its response has already refreshed the cache, so it is the live anchor once it is later than the last response's. A pending request stamped earlier than that response is clock skew, and the earlier anchor is the one that cannot overstate the lifetime left.
