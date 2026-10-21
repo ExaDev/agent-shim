@@ -690,7 +690,7 @@ function isLive(startedAtMs: number | undefined, nowMs: number, maxMs: number): 
 
 /** The names of `set` as a person sees them, the distinct non-empty ones in order, with the count of all the names. */
 function visibleNames(set: NameSet): NamesFact {
-  const names = [...new Set(set.names.map(visibleDisplayText).filter((name) => name !== ""))];
+  const names = [...new Set(set.names.map((name) => visibleDisplayText(name)).filter((name) => name !== ""))];
   return { names, total: names.length + set.others.length, exact: set.overflowed !== true };
 }
 
