@@ -1,3 +1,38 @@
+## [11.64.0](https://github.com/ExaDev/agent-shim/compare/v11.63.0...v11.64.0) (2026-10-21)
+
+### Features
+
+* **statusline:** draw what the session is doing as tools, skills, mcp, agents and todos rows ([6dbcd55](https://github.com/ExaDev/agent-shim/commit/6dbcd553bfcd2fa7f4ff2921a41fc28139812d60))
+* **statusline:** fold a session's tool calls, agents, todos, skills and servers from its transcript ([6fc9a73](https://github.com/ExaDev/agent-shim/commit/6fc9a730a7c808a307a2c4de8124b77064129b13))
+* **statusline:** turn the activity rows on in the presets that claude-hud's turn them on in ([82fa94f](https://github.com/ExaDev/agent-shim/commit/82fa94fc6874f91ec16da8e1a5753aa45bcf64a6))
+* **statusline:** write the activity rows' words from the message catalogue ([3b800dd](https://github.com/ExaDev/agent-shim/commit/3b800ddd589970caf2f3c42485e448bb83012ec4))
+
+### Bug Fixes
+
+* **statusline:** do not count history a resumed session writes again, and keep a queued announcement ([b979bcc](https://github.com/ExaDev/agent-shim/commit/b979bcc4f0d9b507295111082e7adb4a8a7c0b37))
+* **statusline:** finish a tool call from a result written to the file before it ([74441f6](https://github.com/ExaDev/agent-shim/commit/74441f687a095cfbd3cfd168ddb4a02181673149))
+* **statusline:** finish late results, restart a reused task list and keep teammates running ([948000e](https://github.com/ExaDev/agent-shim/commit/948000e0ded1cc04c7671021f6486e5d39aa1637))
+* **statusline:** fit the activity rows to the width, count every name, keep English out of the facts ([3a9905f](https://github.com/ExaDev/agent-shim/commit/3a9905f3f4d6ed730c93e3236171b039b50378ba))
+* **statusline:** fit the agents and todos rows to the width ([1d1b8dd](https://github.com/ExaDev/agent-shim/commit/1d1b8ddead71344e7c3338bdf3f2fc01a86d7eba))
+* **statusline:** keep a mis-stamped call from blinding the activity rows, and seed the end fold ([6538455](https://github.com/ExaDev/agent-shim/commit/65384554eef69c300a523264848ac9b94ba5610e))
+* **statusline:** leave out a todo list the end of a long transcript has edited in place ([08c2191](https://github.com/ExaDev/agent-shim/commit/08c21914ed2dc764d2a72e5a290def59f365b174))
+* **statusline:** name a task by the identifier its TaskCreate result gives ([d1a790c](https://github.com/ExaDev/agent-shim/commit/d1a790c808d50a84023bdd1aedaf4085931d8269))
+* **statusline:** read tool calls only from the records that make and answer them ([d005498](https://github.com/ExaDev/agent-shim/commit/d005498427dbf7dc54b7b305d6dc467829ee0397))
+* **statusline:** stop one late call from freezing the replay floor, and keep skipped calls ([0192aa1](https://github.com/ExaDev/agent-shim/commit/0192aa1f273492bdfd2934fa23c4f318038d8e79))
+* **statusline:** tell a replayed call from a new one by its time, and keep catch-up lists whole ([24b810c](https://github.com/ExaDev/agent-shim/commit/24b810c20e7016ad116a6b11256bc3cc346b1780))
+* **statusline:** tell a running call from an abandoned one by what the transcript shows ([3c21caf](https://github.com/ExaDev/agent-shim/commit/3c21caff48a31ab99181168674fe2bf215057046))
+
+### Code Refactoring
+
+* **statusline:** share the Claude model ID reader, ellipsis cutting and span formatting ([5776979](https://github.com/ExaDev/agent-shim/commit/5776979685236331cb9407f489b9cbc289a6dd96))
+
+### Tests
+
+* **statusline:** pin a finished agent's start of zero, and correct the time fallback's note ([59cc116](https://github.com/ExaDev/agent-shim/commit/59cc11658690dfa65f93515ca238c7717436f2d8))
+* **statusline:** pin the boundaries of the transcript reader, the rows' fit and the span formats ([d7c7c0f](https://github.com/ExaDev/agent-shim/commit/d7c7c0fda13c50bc62eaea474a223c8afe9f54f2))
+* **statusline:** pin the cap on the text the activity state keeps ([71311c6](https://github.com/ExaDev/agent-shim/commit/71311c6d82aeae154d669c4ac55b053eb88933c1))
+* **statusline:** pin the session fold's unrecognised shapes, and mark its equivalents ([9befd09](https://github.com/ExaDev/agent-shim/commit/9befd097084052cadd385616689465b49605c912))
+
 ## [11.63.0](https://github.com/ExaDev/agent-shim/compare/v11.62.3...v11.63.0) (2026-10-21)
 
 ### Features
