@@ -95,6 +95,7 @@ const log = (line) => {
     // Nowhere left to report a failed log write to; the process still has to end.
   }
 };
+const MS_PER_SECOND = 1000;
 // Enough of the stack to read the caller chain from the timer or socket callback down to the call that held the loop.
 const STACK_FRAMES_LOGGED = 12;
 // Asks the main thread where it is, through the inspector: a pause request interrupts JavaScript that is running (a loop, or a synchronous call that can be interrupted), so the top frames name what held the loop. A main thread that cannot be paused within the wait is not at such a point (it is idle in the event loop, which means it was not scheduled, or blocked inside a native call), and the answer says so rather than guessing. \`resume\` lets a thread that is not about to be killed run on again.
@@ -190,22 +191,37 @@ const spawnReplacement = () => {
     log("could not start a replacement door: " + (error instanceof Error ? error.message : String(error)));
   }
 };
-// Captures where a main thread that could not be paused is held natively, with the platform's own sampler, so a stall the inspector cannot name still leaves a stack to read. The wait is bounded by the sampling time plus its start-up, and the capture never delays the process ending beyond that.
+// Captures where a main thread that could not be paused is held natively, with the platform's own sampler, so a stall the inspector cannot name still leaves a stack to read. The wait is the sampling time plus the sampler's start-up and symbolication, stretched by the processor share the machine's load leaves it, and the capture never delays the process ending beyond that. The sampler writes its report only once it has finished, so one ended at the deadline, or one that failed, leaves no file, and the log says which rather than naming a file that is not there.
 const takeNativeSample = () => new Promise((resolve) => {
   if (nativeSample === undefined) { resolve(); return; }
   try {
     fs.mkdirSync(nativeSample.directory, { recursive: true });
     const file = require("node:path").join(nativeSample.directory, String(ownPid) + ".txt");
     const args = nativeSample.args.map((arg) => arg.replace("{pid}", String(ownPid)).replace("{seconds}", String(nativeSample.seconds)).replace("{file}", file));
-    const child = require("node:child_process").spawn(nativeSample.command, args, { stdio: "ignore" });
-    const giveUp = setTimeout(() => { child.kill(); log("the native sampler did not finish in time"); resolve(); }, (nativeSample.seconds + 2) * 1000);
-    child.once("error", (error) => { clearTimeout(giveUp); log("could not sample the main thread natively: " + error.message); resolve(); });
-    child.once("close", () => {
+    const child = require("node:child_process").spawn(nativeSample.command, args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    let settled = false;
+    const settle = (line) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(giveUp);
-      log("native stack of the blocked main thread written to " + file);
+      log(line);
+      resolve();
+    };
+    const deadlineMs = Math.ceil((nativeSample.seconds * MS_PER_SECOND + nativeSample.overheadMs) / processorShare(readLoad()));
+    const giveUp = setTimeout(() => { child.kill(); settle("the native sampler did not finish within " + String(deadlineMs) + "ms, so no native stack was written"); }, deadlineMs);
+    child.once("error", (error) => { settle("could not sample the main thread natively: " + error.message); });
+    child.once("close", (code, signal) => {
+      if (code !== 0 || !fs.existsSync(file)) {
+        const detail = stderr.trim();
+        settle("the native sampler " + (signal === null ? "exited with status " + String(code) : "was ended by " + signal) + " and wrote no native stack" + (detail === "" ? "" : ": " + detail));
+        return;
+      }
       const kept = fs.readdirSync(nativeSample.directory).filter((name) => name.endsWith(".txt")).map((name) => ({ name, at: fs.statSync(require("node:path").join(nativeSample.directory, name)).mtimeMs })).sort((a, b) => b.at - a.at);
       for (const old of kept.slice(nativeSample.keep)) fs.rmSync(require("node:path").join(nativeSample.directory, old.name), { force: true });
-      resolve();
+      settle("native stack of the blocked main thread written to " + file);
     });
   } catch (error) {
     log("could not sample the main thread natively: " + (error instanceof Error ? error.message : String(error)));
@@ -287,9 +303,9 @@ export interface ThreadWatchdogParams {
   /** How to start a replacement door on a stall: the invocation and environment of a door, to which the thread adds `DOOR_AWAIT_PID_ENV` and `DOOR_RESPAWN_GENERATION_ENV`. Omitted by a host that does not respawn. */
   readonly respawn?: { readonly command: string; readonly args: readonly string[]; readonly env: Readonly<Record<string, string>> };
   /**
-   * How to capture the native stack of a main thread the inspector could not pause (it was blocked inside a native call, which no JavaScript frame names): a command run with `{pid}`, `{seconds}` and `{file}` replaced in its arguments, its output written to `directory` as `<pid>.txt`, keeping the newest `keep` files. Omitted where the platform has no such tool (production sets it on macOS only).
+   * How to capture the native stack of a main thread the inspector could not pause (it was blocked inside a native call, which no JavaScript frame names): a command run with `{pid}`, `{seconds}` and `{file}` replaced in its arguments, its output written to `directory` as `<pid>.txt`, keeping the newest `keep` files. It is given `seconds` plus `overheadMs` (one probe deadline, `PROBE_TIMEOUT_MS`, in production: the time a launcher allows the door itself to answer, spent here on the sampler's start-up and symbolication), stretched by the processor share the machine's load leaves it, before it is ended with nothing written. Omitted where the platform has no such tool (production sets it on macOS only).
    */
-  readonly nativeSample?: { readonly command: string; readonly args: readonly string[]; readonly directory: string; readonly seconds: number; readonly keep: number };
+  readonly nativeSample?: { readonly command: string; readonly args: readonly string[]; readonly directory: string; readonly seconds: number; readonly overheadMs: number; readonly keep: number };
   /** A fixed load reading in place of the machine's own; omitted in production, where the thread reads the machine each check. */
   readonly machineLoad?: MachineLoadReading;
   /** Called on the main thread with the recorded message when `action` is `report` and the stall was seen. */

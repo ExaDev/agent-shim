@@ -298,7 +298,7 @@ describe("startThreadWatchdog", () => {
         fs.writeFileSync(path.join(samples, old), "older");
         fs.utimesSync(path.join(samples, old), new Date(0), new Date(Number(old.slice(0, 1)) * MS_PER_SECOND));
       }
-      const nativeSample = { command: process.execPath, args: ["-e", "require('node:fs').writeFileSync(process.argv[1], 'sampled ' + process.argv[2] + 's')", "{file}", "{seconds}"], directory: samples, seconds: 1, keep: 2 };
+      const nativeSample = { command: process.execPath, args: ["-e", "require('node:fs').writeFileSync(process.argv[1], 'sampled ' + process.argv[2] + 's')", "{file}", "{seconds}"], directory: samples, seconds: 1, overheadMs: PROBE_TIMEOUT_MS, keep: 2 };
       const log = await stallWith({ nativeSample });
       await vi.waitFor(
         () => {
@@ -313,10 +313,59 @@ describe("startThreadWatchdog", () => {
         },
         { timeout: PAUSE_WAIT_GUARD_MS },
       );
+      await vi.waitFor(
+        () => {
+          expect(textOf(logFile)).toContain(`native stack of the blocked main thread written to ${path.join(samples, `${String(process.pid)}.txt`)}`);
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
+    });
+
+    it("says the sampler wrote nothing when it fails, passing on what it said, rather than naming a file that is not there", async () => {
+      const samples = path.join(directory, "stall-samples");
+      const nativeSample = { command: process.execPath, args: ["-e", "process.stderr.write('cannot examine process'); process.exit(1)"], directory: samples, seconds: 1, overheadMs: PROBE_TIMEOUT_MS, keep: 1 };
+      await stallWith({ nativeSample });
+      await vi.waitFor(
+        () => {
+          expect(textOf(logFile)).toMatch(/the native sampler exited with status 1 and wrote no native stack: cannot examine process/);
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
+      expect(textOf(logFile)).not.toMatch(/written to/);
+      expect(fs.readdirSync(samples)).toEqual([]);
+    });
+
+    it("says no stack was written when the sampler is ended at its deadline, and says it once", async () => {
+      // A sampler that never finishes on its own, given no sampling time and one check of overhead, so its deadline is that check.
+      const nativeSample = { command: process.execPath, args: ["-e", `setTimeout(() => undefined, ${String(PAUSE_WAIT_GUARD_MS)})`], directory: path.join(directory, "stall-samples"), seconds: 0, overheadMs: TEST_CHECK_MS, keep: 1 };
+      await stallWith({ nativeSample });
+      await vi.waitFor(
+        () => {
+          expect(textOf(logFile)).toMatch(new RegExp(`the native sampler did not finish within ${String(TEST_CHECK_MS)}ms, so no native stack was written`));
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
+      // The ended sampler's close comes after the deadline's line, and must not add a second account of the same run.
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, TEST_BOUND_MS);
+      });
+      expect(textOf(logFile)).not.toMatch(/written to/);
+      expect(textOf(logFile).match(/the native sampler/g)).toHaveLength(1);
+    });
+
+    it("stretches the sampler's deadline by the share of a processor the machine's load leaves it", async () => {
+      const nativeSample = { command: process.execPath, args: ["-e", `setTimeout(() => undefined, ${String(PAUSE_WAIT_GUARD_MS)})`], directory: path.join(directory, "stall-samples"), seconds: 0, overheadMs: TEST_CHECK_MS, keep: 1 };
+      await stallWith({ nativeSample, machineLoad: LOADED });
+      await vi.waitFor(
+        () => {
+          expect(textOf(logFile)).toMatch(new RegExp(`did not finish within ${String(TEST_CHECK_MS * LOADED_RUN_QUEUE_PER_CPU)}ms`));
+        },
+        { timeout: PAUSE_WAIT_GUARD_MS },
+      );
     });
 
     it("says so when the native sampler cannot be run, and still ends the stall", async () => {
-      const nativeSample = { command: path.join(directory, "no-such-sampler"), args: [], directory: path.join(directory, "stall-samples"), seconds: 1, keep: 1 };
+      const nativeSample = { command: path.join(directory, "no-such-sampler"), args: [], directory: path.join(directory, "stall-samples"), seconds: 1, overheadMs: PROBE_TIMEOUT_MS, keep: 1 };
       const log = await stallWith({ nativeSample });
       await vi.waitFor(
         () => {
