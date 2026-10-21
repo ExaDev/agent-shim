@@ -61,12 +61,14 @@ export function foldTokens(state: TokenState, record: TranscriptRecord): TokenSt
   if (record.type !== "assistant" || usage === undefined) {
     return state;
   }
+  // The counters are never negative, so a counter of zero falls back to the same zero and either way reads the same.
   const counts: SessionTokens = {
     inputTokens: usage.input_tokens ?? 0,
     outputTokens: usage.output_tokens ?? 0,
     cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
     cacheReadTokens: usage.cache_read_input_tokens ?? 0,
   };
+  // The schema's least message id is one character, so an empty one is already absent and the fallback reads the same.
   const key = record.message?.id ?? `${String(counts.inputTokens)}|${String(counts.outputTokens)}|${String(counts.cacheCreationTokens)}|${String(counts.cacheReadTokens)}`;
   if (state.open?.key === key) {
     return { totals: sum(state.totals, increase(state.open.usage, counts)), open: { key, usage: larger(state.open.usage, counts) } };

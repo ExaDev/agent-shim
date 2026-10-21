@@ -48,6 +48,8 @@ describe("session facts from the transcript", () => {
     expect(factsOf({ type: "custom-title", customTitle: "my-name" }, { type: "user", slug: "zesty-prancing-umbrella" }).title).toBe("my-name");
     expect(factsOf({ type: "user", slug: "zesty-prancing-umbrella" }, { type: "custom-title", customTitle: "my-name" }).title).toBe("my-name");
     expect(factsOf({ type: "custom-title", customTitle: "first" }, { type: "custom-title", customTitle: "second" }).title).toBe("second");
+    expect(factsOf({ type: "custom-title", customTitle: "first" }, { type: "custom-title" }).title).toBe("first");
+    expect(factsOf({ type: "ai-title", aiTitle: "generated title" }, { type: "ai-title" }).title).toBe("generated title");
     expect(factsOf({ type: "user" }).title).toBeUndefined();
   });
 
@@ -110,6 +112,11 @@ describe("the prompt cache's clock", () => {
   it("counts a request still waiting for its response, because it has already refreshed the cache", () => {
     expect(factsOf(prompt(0), reply(AT.tenSeconds), prompt(AT.fiveMinutes)).promptCache?.anchorAtMs).toBe(T0 + AT.fiveMinutes);
     expect(factsOf(prompt(0)).promptCache?.anchorAtMs).toBe(T0);
+  });
+
+  it("takes a user record of an unrecognised shape for a prompt, being far likelier a message than a client-side aside", () => {
+    const unrecognised = { type: "user", timestamp: at(AT.fiveMinutes) };
+    expect(factsOf(prompt(0), reply(AT.tenSeconds), unrecognised).promptCache?.anchorAtMs).toBe(T0 + AT.fiveMinutes);
   });
 
   it("does not count a pending request stamped before the response it follows, which is clock skew", () => {
