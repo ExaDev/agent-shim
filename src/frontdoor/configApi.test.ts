@@ -156,6 +156,9 @@ describe("config API: configuration profiles", () => {
     expect(merged.value.launch?.statusline).toEqual({ layout: { header: ["model"] }, bands: { warnAt: 50 } });
     expect(await codeOf(api.profile.set({ name: "client", launch: { statusline: { set: { "bar.width": 0 } } } }))).toBe("BAD_REQUEST");
     expect(await codeOf(api.profile.set({ name: "client", launch: { statusline: { set: { "bar.colour": 1 } } } }))).toBe("BAD_REQUEST");
+    expect(await codeOf(api.profile.set({ name: "client", launch: { statusline: { set: { "extra.command": ["git", "describe", "--tags"] } } } }))).toBe("BAD_REQUEST");
+    expect(await codeOf(api.profile.set({ name: "client", launch: { statusline: { set: { "layout.header": ["model", "extra"], extra: { command: ["git"] } } } } }))).toBe("BAD_REQUEST");
+    expect((await api.profile.set({ name: "client", launch: { statusline: { unset: ["extra.command"] } } })).value.launch?.statusline).toEqual({ layout: { header: ["model"] }, bands: { warnAt: 50 } });
     expect((await api.profile.set({ name: "client", launch: { statusline: { unset: ["layout.header", "bands.warnAt"] } } })).value.launch?.statusline).toBeUndefined();
 
     const cleared = await api.profile.set({ name: "client", extends: false, description: false, launch: { provider: false } });
