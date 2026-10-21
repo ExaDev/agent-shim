@@ -45,7 +45,7 @@ const MIN_DESCRIPTION_COLUMNS = DESCRIPTION_ELLIPSIS.length + 1;
 function agentLine(agent: AgentFact, context: RenderContext): string {
   const { palette, nowMs, width, t } = context;
   const marker = agent.status === "running" ? palette.paint("warning", RUNNING_MARK) : palette.paint("context", DONE_MARK);
-  // A span below a second is written the same however far below, so the floor of zero could as well be a millisecond. The times here are absent or within the spans that kept the agent in the facts (a start within the day, an end within the minute), so a time of zero never falls back and either way reads the same.
+  // A span below a second is written the same however far below, so the floor of zero could as well be a millisecond. Only absence falls back: an end is absent exactly while the agent runs and otherwise within the minute of now, and a start is either absent, which stays absence through the fold, the schema and the cache, or the call record's own stamp, written by the same host clock whose reading is the render's now, so a stamp of zero, the epoch instant, is not a value the fold produces. The two fallbacks read the same on everything it does; the zero a hand-built fact alone can carry is drawn as a span from the epoch, which the row's test pins.
   const elapsed = formatSpan(Math.max(0, (agent.endedAtMs ?? nowMs) - (agent.startedAtMs ?? nowMs)));
   const timeText = t("agents.elapsed", { time: elapsed });
   // The marker and what sets it apart; the time and the model hold the space before them themselves, where the language writes one.
