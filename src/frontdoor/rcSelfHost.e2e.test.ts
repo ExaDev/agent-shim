@@ -225,7 +225,7 @@ describe("the self-hosted Remote Control mode end to end", () => {
         limits: { headDeadlineMs: 10_000, maxPendingHeads: 64, maxTunnels: 1024, revalidateMs: 1_000 },
       },
       realConnectEffects(),
-      undefined,
+      { preferredPort: undefined },
     );
     transparentPort = connectHandle.transparentPort ?? 0;
     dialTarget = { host: "127.0.0.1", port: transparentPort, servername: CONNECT_INTERCEPT_HOST, ca: [ca.certPem] };

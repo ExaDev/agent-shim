@@ -374,7 +374,7 @@ export function makeTlsWorld(
           ...(options.capture === undefined ? {} : { capture: options.capture }),
         },
         effects,
-        undefined,
+        { preferredPort: undefined },
       );
       return { connectPort: server.port, ...(server.transparentPort === undefined ? {} : { transparentPort: server.transparentPort }), upstreamPort: portOf(fakeUpstream), rcDial, rcStreamDial, openTunnels: server.openTunnels, drain: server.drain, close: async () => { await server.close(); } };
     },

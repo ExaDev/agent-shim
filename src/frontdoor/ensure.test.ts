@@ -4,9 +4,9 @@ import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { enterProcessRole, BlockingInEventLoopError } from "../processRole";
 import { realSleepSync } from "../realPorts";
-import { ensureFrontDoor, FrontDoorStartError, restartFrontDoor } from "./ensure";
+import { FRONTDOOR_START_TIMEOUT_MS, ensureFrontDoor, FrontDoorStartError, restartFrontDoor } from "./ensure";
 import type { ListenerVerdict } from "./probe";
-import { FRONT_DOOR_PROTOCOL, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { FRONT_DOOR_HANDOVER_PROTOCOL, FRONT_DOOR_PROTOCOL, writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -21,6 +21,8 @@ const CONNECT_PORT = 4200;
 const DEAD_SUPERVISOR_PID = 999;
 /** A second door that is alive in the test that names it, serving launches of its own. */
 const OTHER_DOOR_PID = 888;
+/** The successor a door that hands its listeners over starts for itself, on the same port. */
+const HANDOVER_SUCCESSOR_PID = 502;
 /** Polls before a lazily-written ready state appears, so the waiting path is exercised rather than the first-poll hit. */
 const SLEEPS_BEFORE_READY = 2;
 /** A launcher pid holding a start lock in the dead-holder test, distinct from every live fake. */
@@ -52,6 +54,10 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
   const ignoresStop = new Set<number>();
   /** Pids that answer a stop request by draining: they release their addresses and stop naming themselves as the owner at once, and stay running. */
   const drainsOnStop = new Set<number>();
+  /** Pids that answer a handover request by starting a successor that records itself as the owner on the same port, and stay running to drain. */
+  const handsOver = new Set<number>();
+  /** Pids whose handover fails, so they drain the ordinary way: they stop naming themselves as the owner and stay running. Any other pid ignores the request, the way a door whose event loop is blocked does. */
+  const failsHandover = new Set<number>();
   /** Ports whose listener authenticates; every other port fails the probe, the way a listener without a leaf from agent-shim's CA does. */
   const authentic = new Set<number>([PORT]);
   const probed: number[] = [];
@@ -71,6 +77,8 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
     events,
     ignoresStop,
     drainsOnStop,
+    handsOver,
+    failsHandover,
     authentic,
     probed,
     ownSupervisors,
@@ -132,6 +140,15 @@ function makeWorld(options: { readonly spawnWritesReadyState?: boolean; readonly
         events.push(`SIGKILL ${String(pid)}`);
         kills.push(pid);
         alive.delete(pid);
+      },
+      requestHandover: (pid: number) => {
+        events.push(`SIGUSR2 ${String(pid)}`);
+        if (handsOver.has(pid)) {
+          alive.add(HANDOVER_SUCCESSOR_PID);
+          world.writeReadyState(PORT, HANDOVER_SUCCESSOR_PID);
+        } else if (failsHandover.has(pid)) {
+          writeFrontDoorState(fs, paths.frontdoorStateFile, { lastPort: PORT, lastConnectPort: CONNECT_PORT });
+        }
       },
       isFrontDoorSupervisor: (pid: number) => ownSupervisors.has(pid),
       verifyListener: (port: number): ListenerVerdict => {
@@ -623,7 +640,8 @@ describe("naming the cause of a door's exit in the door's own log", () => {
   it("records the escalation to SIGKILL as its own line before the kill", () => {
     const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT });
     world.ownSupervisors.add(SUPERVISOR_PID);
-    world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+    // From before the handover protocol, so the restart takes the stop-and-start path whose escalation this covers.
+    world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_HANDOVER_PROTOCOL - 1);
     world.ignoresStop.add(SUPERVISOR_PID);
     restartFrontDoor({ paths, pid: LAUNCHER_PID, reason: "restart-command", ports: world.ports });
     expect(world.events.map((event) => (event.startsWith("log") ? "log" : event))).toEqual(["log", `SIGTERM ${String(SUPERVISOR_PID)}`, "log", `SIGKILL ${String(SUPERVISOR_PID)}`]);
@@ -657,5 +675,87 @@ describe("replacing a door that drains", () => {
     world.ignoresStop.add(SUPERVISOR_PID);
     restartFrontDoor({ paths, pid: LAUNCHER_PID, reason: "restart-command", ports: world.ports });
     expect(world.kills).toEqual([SUPERVISOR_PID]);
+  });
+});
+
+describe("replacing a door that hands its listeners over", () => {
+  /** A serving door of the current protocol whose process is this tool's own supervisor: the one a requested replacement asks to hand over. */
+  function handoverWorld() {
+    const world = makeWorld({ spawnedPid: REPLACEMENT_PID, spawnedPort: PORT });
+    world.ownSupervisors.add(SUPERVISOR_PID);
+    world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL);
+    return world;
+  }
+  const signalsSent = (world: ReturnType<typeof makeWorld>): readonly string[] => world.events.filter((event) => !event.startsWith("log"));
+
+  it("asks the door to hand over instead of stopping it, records why first, and joins the successor the door started without starting one itself", () => {
+    const world = handoverWorld();
+    world.handsOver.add(SUPERVISOR_PID);
+    const result = restartFrontDoor({ paths, pid: LAUNCHER_PID, reason: "restart-command", ports: world.ports });
+    expect(result).toEqual({ action: "restarted", previousPid: SUPERVISOR_PID, pid: HANDOVER_SUCCESSOR_PID });
+    expect(world.events).toEqual([
+      `log launcher ${String(LAUNCHER_PID)}: replacing front door; reason=restart-command signal=SIGUSR2 door=${String(SUPERVISOR_PID)} doorProtocol=${String(FRONT_DOOR_PROTOCOL)} launcherProtocol=${String(FRONT_DOOR_PROTOCOL)} liveSessions=0`,
+      `SIGUSR2 ${String(SUPERVISOR_PID)}`,
+    ]);
+    expect(world.spawns).toEqual([]);
+    expect(world.stops).toEqual([]);
+    expect(world.sessionToken(LAUNCHER_PID)).toBeUndefined();
+  });
+
+  it("hands over for the restart a binary update makes too", () => {
+    const world = handoverWorld();
+    world.handsOver.add(SUPERVISOR_PID);
+    expect(restartFrontDoor({ paths, pid: LAUNCHER_PID, reason: "update-restart", ports: world.ports })).toEqual({ action: "restarted", previousPid: SUPERVISOR_PID, pid: HANDOVER_SUCCESSOR_PID });
+  });
+
+  it("starts the successor the ordinary way when the door's handover fails and it drains instead", () => {
+    const world = handoverWorld();
+    world.failsHandover.add(SUPERVISOR_PID);
+    const result = restartFrontDoor({ paths, pid: LAUNCHER_PID, reason: "restart-command", ports: world.ports });
+    expect(result).toEqual({ action: "restarted", previousPid: SUPERVISOR_PID, pid: REPLACEMENT_PID });
+    expect(world.spawns).toEqual([REPLACEMENT_PID]);
+    expect(signalsSent(world)).toEqual([`SIGUSR2 ${String(SUPERVISOR_PID)}`]);
+  });
+
+  it("stops a door that never acts on the request once the door's own handover budget and the exit grace have passed, and the launch still completes", () => {
+    const world = handoverWorld();
+    const result = restartFrontDoor({ paths, pid: LAUNCHER_PID, reason: "restart-command", ports: world.ports });
+    expect(result).toEqual({ action: "restarted", previousPid: SUPERVISOR_PID, pid: REPLACEMENT_PID });
+    expect(signalsSent(world)).toEqual([`SIGUSR2 ${String(SUPERVISOR_PID)}`, `SIGTERM ${String(SUPERVISOR_PID)}`]);
+    // The stop came only after the door had had its whole budget to hand over or fall back by itself.
+    expect(world.clock()).toBeGreaterThanOrEqual(FRONTDOOR_START_TIMEOUT_MS);
+  });
+
+  it("stops a door from before the handover protocol the ordinary way, since the request would end it outright", () => {
+    const world = handoverWorld();
+    world.handsOver.add(SUPERVISOR_PID);
+    world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_HANDOVER_PROTOCOL - 1);
+    restartFrontDoor({ paths, pid: LAUNCHER_PID, reason: "restart-command", ports: world.ports });
+    expect(signalsSent(world)).toEqual([`SIGTERM ${String(SUPERVISOR_PID)}`]);
+  });
+
+  it("stops a door whose process is not confirmed as this tool's supervisor the ordinary way, since only that process handles the request", () => {
+    const world = handoverWorld();
+    world.handsOver.add(SUPERVISOR_PID);
+    world.ownSupervisors.delete(SUPERVISOR_PID);
+    restartFrontDoor({ paths, pid: LAUNCHER_PID, reason: "restart-command", ports: world.ports });
+    expect(signalsSent(world)).toEqual([`SIGTERM ${String(SUPERVISOR_PID)}`]);
+  });
+
+  it("stops the door the ordinary way where the platform cannot deliver the request", () => {
+    const world = handoverWorld();
+    world.handsOver.add(SUPERVISOR_PID);
+    const { requestHandover, ...withoutHandover } = world.ports;
+    expect(requestHandover).toBeDefined();
+    restartFrontDoor({ paths, pid: LAUNCHER_PID, reason: "restart-command", ports: withoutHandover });
+    expect(signalsSent(world)).toEqual([`SIGTERM ${String(SUPERVISOR_PID)}`]);
+  });
+
+  it("never asks a door to hand over for a launch that finds an older protocol, which keeps the stop-and-start path", () => {
+    const world = handoverWorld();
+    world.handsOver.add(SUPERVISOR_PID);
+    world.writeReadyState(PORT, SUPERVISOR_PID, FRONT_DOOR_PROTOCOL - 1);
+    ensureFrontDoor({ paths, launcherPid: LAUNCHER_PID, ports: world.ports });
+    expect(signalsSent(world)).toEqual([`SIGTERM ${String(SUPERVISOR_PID)}`]);
   });
 });

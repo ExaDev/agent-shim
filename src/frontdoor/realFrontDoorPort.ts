@@ -42,6 +42,14 @@ function realEnsurePorts(paths: LayoutPaths, spawnDaemon: DaemonSpawner): Ensure
     killSupervisor: (pid) => {
       process.kill(pid, "SIGKILL");
     },
+    // Windows has no user signals (Node refuses to send one), so a replacement there keeps the stop-and-start path.
+    ...(process.platform === "win32"
+      ? {}
+      : {
+          requestHandover: (pid: number) => {
+            process.kill(pid, "SIGUSR2");
+          },
+        }),
     // Read fresh for each probe: a replacement supervisor may have regenerated an unparseable CA, and the probe must trust exactly what the serving door's leaf chains to.
     verifyListener: (port) => probeFrontDoorSync(port, fs.readFileSync(paths.frontdoorCaCertFile, "utf8")),
   };

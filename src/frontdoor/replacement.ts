@@ -9,11 +9,13 @@ export type ReplacementReason = (typeof REPLACEMENT_REASONS)[number];
 /** The reasons a caller may ask for a deliberate replacement with, as opposed to the ones a launch finds for itself. */
 export type RequestedReplacementReason = Extract<ReplacementReason, "restart-command" | "update-restart">;
 
+/** The signals a launcher sends a door: `SIGUSR2` asks it to hand its listeners to a successor it starts itself (see `./handover.ts`), `SIGTERM` asks it to exit, and `SIGKILL` is the escalation after the grace period. */
+export type ReplacementSignal = "SIGUSR2" | "SIGTERM" | "SIGKILL";
+
 /** What a launcher knows when it signals a door. Numbers and a closed-set reason only: nothing here can carry a credential, a path or a name. */
 export interface ReplacementFacts {
   readonly reason: ReplacementReason;
-  /** `SIGTERM` for the request to exit, `SIGKILL` for the escalation after the grace period. */
-  readonly signal: "SIGTERM" | "SIGKILL";
+  readonly signal: ReplacementSignal;
   readonly launcherPid: number;
   readonly launcherProtocol: number;
   readonly doorPid: number;
@@ -53,9 +55,35 @@ export function alreadyRetiringLine(doorPid: number): string {
   return `frontdoor ${String(doorPid)}: received SIGTERM again; already retiring`;
 }
 
+/** The line a door appends when it is asked to hand its listeners over, in the same `key=value` form as `retireLine`. */
+export function handoverLine(doorPid: number, facts: DoorExitFacts): string {
+  return `frontdoor ${String(doorPid)}: received SIGUSR2; handing the listeners to a successor; tunnelsOpen=${String(facts.tunnels)} liveSessions=${String(facts.liveSessions)} protocol=${String(facts.protocol)} uptimeSeconds=${String(facts.uptimeSeconds)}`;
+}
+
+/** The line a door appends when a further request to hand over arrives once it is already handing over or retiring, and nothing changes. */
+export function alreadyHandingOverLine(doorPid: number): string {
+  return `frontdoor ${String(doorPid)}: received SIGUSR2 again; already handing over or retiring`;
+}
+
 /** The part of a process this needs: a way to subscribe to a signal. */
 interface SignalSource {
-  readonly on: (signal: "SIGTERM" | "SIGINT", listener: () => void) => unknown;
+  readonly on: (signal: "SIGTERM" | "SIGINT" | "SIGUSR2", listener: () => void) => unknown;
+}
+
+/**
+ * Makes the door hand its listeners to a successor on its first `SIGUSR2` (see `FrontDoorSupervisorPorts.handover`) and log any repeat without acting on it: two launchers that read the state file before the successor rewrote it each send one, and a second successor would only fail to take sockets the first already holds. The log line comes first, for the reason `retireOnSignals` gives.
+ */
+export function handOverOnSignal(source: SignalSource, params: { readonly doorPid: number; readonly facts: () => DoorExitFacts; readonly log: (line: string) => void; readonly handOver: () => void }): void {
+  let requested = false;
+  source.on("SIGUSR2", () => {
+    if (requested) {
+      params.log(alreadyHandingOverLine(params.doorPid));
+      return;
+    }
+    requested = true;
+    params.log(handoverLine(params.doorPid, params.facts()));
+    params.handOver();
+  });
 }
 
 /**

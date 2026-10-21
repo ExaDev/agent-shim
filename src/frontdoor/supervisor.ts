@@ -1,15 +1,19 @@
 import { enterProcessRole } from "../processRole";
 import type { DoorWatchdog } from "./watchdog";
+import type net from "node:net";
 import path from "node:path";
 
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
 import type { DoorHealthPublisher } from "./doorHealthEvents";
+import type { HandoverOutcome, HandoverSockets, ListenSource, Predecessor } from "./handover";
 import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorDirectRecord, writeFrontDoorDirectRecord, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState, markFrontDoorDraining, unmarkFrontDoorDraining } from "./state";
 
 /** A bound front-door listener in this process, and how to stop it. */
 interface FrontDoorListenerHandle {
   readonly port: number;
+  /** The listening socket itself, which a planned replacement hands to the successor door (see `./handover.ts`). */
+  readonly listening: net.Server;
   /** Stops accepting, ends every live connection, and resolves once the port is released. */
   readonly close: () => Promise<void>;
   /** Releases the port at once (before the first await) and leaves the work already in progress to finish; resolves when the listener has nothing left to carry. */
@@ -53,17 +57,17 @@ export interface FrontDoorSupervisorPorts {
    */
   readonly runningAmong: (pids: readonly number[]) => Promise<ReadonlySet<number>>;
   /**
-   * Starts the provider listener in this process on `preferredPort` (falling back to any free port when the sticky one is taken, decided at bind time rather than by a racy check-then-bind probe) and resolves once it has bound and answered its own health probe over TLS. This is the HTTPS listener every provider session's base URL points at, serving a loopback leaf signed by agent-shim's CA.
+   * Starts the provider listener in this process from `source`: bound on its preferred port (falling back to any free port when the sticky one is taken, decided at bind time rather than by a racy check-then-bind probe), or adopted from the door this one replaces. Resolves once it accepts and has answered its own health probe over TLS. This is the HTTPS listener every provider session's base URL points at, serving a loopback leaf signed by agent-shim's CA.
    */
-  readonly startProviderListener: (preferredPort: number | undefined) => Promise<FrontDoorListenerHandle>;
+  readonly startProviderListener: (source: ListenSource) => Promise<FrontDoorListenerHandle>;
   /**
-   * Starts the CONNECT surface in this process on `preferredPort` (same bind-time fallback): the TLS-terminating listener an OAuth session's HTTPS_PROXY points at. Bound before any state names it, so an OAuth launch never finds one listener up without the other.
+   * Starts the CONNECT surface in this process from `source` (same bind-time fallback, or adopted): the TLS-terminating listener an OAuth session's HTTPS_PROXY points at. Bound before any state names it, so an OAuth launch never finds one listener up without the other.
    */
-  readonly startConnectListener: (preferredPort: number | undefined) => Promise<FrontDoorListenerHandle>;
+  readonly startConnectListener: (source: ListenSource) => Promise<FrontDoorListenerHandle>;
   /**
-   * Starts the direct listener on `preferredPort` (same bind-time fallback): the same routes as the provider listener, minus the headroom hop, over plain HTTP because headroom is what connects to it. Headroom forwards routed traffic back here, which is what keeps the hop from looping, and the port is sticky like the others because headroom's allowlist admits its exact origin. It admits only the hop's own requests and holds no credential until it redeems one from the hop's custody.
+   * Starts the direct listener from `source` (same bind-time fallback, or adopted): the same routes as the provider listener, minus the headroom hop, over plain HTTP because headroom is what connects to it. Headroom forwards routed traffic back here, which is what keeps the hop from looping, and the port is sticky like the others because headroom's allowlist admits its exact origin. It admits only the hop's own requests and holds no credential until it redeems one from the hop's custody.
    */
-  readonly startDirectListener: (preferredPort: number | undefined) => Promise<FrontDoorListenerHandle>;
+  readonly startDirectListener: (source: ListenSource) => Promise<FrontDoorListenerHandle>;
   /**
    * Stops the Remote Control stream hub: persists every live attachment's sequence cursor synchronously, then frees the dials. Called exactly once on every exit the supervisor owns, after every listener has stopped accepting. A closing exit has every listener down by then; a drain still has responses settling, which is safe because the hub refuses to attach once it is closed (otherwise the reconcile after an observed exchange would re-attach a stream the close had just ended).
    */
@@ -76,6 +80,14 @@ export interface FrontDoorSupervisorPorts {
    * Aborted when the process is asked to exit (the CLI's `__frontdoor-supervisor` aborts it on its first SIGTERM or SIGINT). The door then retires by draining: it releases its listening addresses at once, so a successor can bind the same sticky ports, ends what holds its own routing state, and stays up only as long as the connections it still carries (blind tunnels, a response being streamed) take to end. Optional for a host that decides when the door stops by other means.
    */
   readonly retire?: AbortSignal;
+  /**
+   * A planned replacement that keeps every address accepting (see `./handover.ts`): `requested` is aborted when a launcher asks this door to hand its listeners to a successor (the CLI's `__frontdoor-supervisor` aborts it on `SIGUSR2`), and `run` starts the successor, hands it the three listening sockets and resolves once it serves them or with why it did not. The door keeps accepting throughout and drains afterwards either way, so a failed handover still ends in the ordinary replacement. Optional because only a door whose process can start a successor of itself can offer it.
+   */
+  readonly handover?: { readonly requested: AbortSignal; readonly run: (sockets: HandoverSockets) => Promise<HandoverOutcome> };
+  /**
+   * The door this one replaces through a handover, when it was started for one: its listeners are adopted from that door's sockets instead of bound, the state file is not written until this door accepts on all three (the old door owns it and keeps serving until then), and the old door is told once this door serves. Absent for every other start.
+   */
+  readonly predecessor?: Predecessor;
   /** Stops the work the door runs on its own account rather than for a request (the usage, window, job and catalogue keepers), called once when a drain begins so the successor's are the only ones acting. Optional because a host without such work has nothing to stop. */
   readonly stopBackgroundWork?: () => void;
   /**
@@ -156,21 +168,32 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     ...(lastDirectPort === undefined ? {} : { lastDirectPort }),
   });
 
+  const { predecessor } = ports;
+  /** Where each listener comes from: the old door's socket when this door replaces it by a handover, else a bind on its sticky port. */
+  const sourceOf = (listener: "provider" | "connect" | "direct", preferredPort: number | undefined): ListenSource =>
+    predecessor === undefined ? { preferredPort } : { inherit: async () => await predecessor.take(listener) };
+
   const fail = (message: string): number => {
     // A startup failure exits this process exactly as the idle shutdown does, so the hub's final cursor save belongs here too: a session whose frozen base URL still names the sticky port could have delivered an observed exchange between the first listener's bind and this failure, and its attachment would otherwise lose the one save the exit could still make.
     ports.closeRcStreamHub();
-    writeFrontDoorState(fs, paths.frontdoorStateFile, { lastError: message, ...sticky() });
-    fs.removeRecursive(paths.frontdoorLockFile);
+    // A successor that fails leaves the state file and the start lock alone: the door it was replacing still owns the one and serves every address, and the other belongs to whichever launcher holds it.
+    if (predecessor === undefined) {
+      writeFrontDoorState(fs, paths.frontdoorStateFile, { lastError: message, ...sticky() });
+      fs.removeRecursive(paths.frontdoorLockFile);
+    }
     ports.log(`agent-shim frontdoor supervisor: ${message}`);
     return 1;
   };
 
-  writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: ports.ownPid, ...sticky() });
+  // Claimed before the binds so concurrent launches wait on this start rather than spawning another. A successor makes no such claim: the door it replaces is still the owner, serving the same addresses, until this one serves them too.
+  if (predecessor === undefined) {
+    writeFrontDoorState(fs, paths.frontdoorStateFile, { supervisorPid: ports.ownPid, ...sticky() });
+  }
 
   const previousSticky = lastPort;
   let http;
   try {
-    http = await ports.startProviderListener(lastPort);
+    http = await ports.startProviderListener(sourceOf("provider", lastPort));
   } catch (error) {
     ports.doorHealth.listenerFailed("provider", error instanceof Error ? error.message : String(error));
     return fail(`could not start the provider listener: ${error instanceof Error ? error.message : String(error)}`);
@@ -183,7 +206,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
   const previousStickyConnect = lastConnectPort;
   let connect;
   try {
-    connect = await ports.startConnectListener(lastConnectPort);
+    connect = await ports.startConnectListener(sourceOf("connect", lastConnectPort));
   } catch (error) {
     await http.close();
     ports.doorHealth.listenerFailed("connect", error instanceof Error ? error.message : String(error));
@@ -197,7 +220,7 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
   const previousStickyDirect = lastDirectPort;
   let direct;
   try {
-    direct = await ports.startDirectListener(lastDirectPort);
+    direct = await ports.startDirectListener(sourceOf("direct", lastDirectPort));
   } catch (error) {
     await connect.close();
     await http.close();
@@ -213,9 +236,14 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
 
   writeFrontDoorState(fs, paths.frontdoorStateFile, { protocol: FRONT_DOOR_PROTOCOL, supervisorPid: ports.ownPid, port: http.port, connectPort: connect.port, directPort: direct.port, ...sticky() });
   ports.doorHealth.generation({ providerPort: http.port, connectPort: connect.port, directPort: direct.port });
-  // The start lock has done its job: state now names a live supervisor, so every future launcher finds it there instead.
-  fs.removeRecursive(paths.frontdoorLockFile);
-  ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: front door on 127.0.0.1:${String(http.port)}, CONNECT surface on 127.0.0.1:${String(connect.port)}`);
+  if (predecessor === undefined) {
+    // The start lock has done its job: state now names a live supervisor, so every future launcher finds it there instead.
+    fs.removeRecursive(paths.frontdoorLockFile);
+  } else {
+    // The state file names this door from the write above, so the old door, told it may stop accepting, finds a live owner and leaves the record as written.
+    predecessor.serving();
+  }
+  ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: front door on 127.0.0.1:${String(http.port)}, CONNECT surface on 127.0.0.1:${String(connect.port)}${predecessor === undefined ? "" : ", taken over from the door it replaced"}`);
 
   // Started only now that every listener is bound and the serving state is written, so the watchdog never judges a door that is still starting, and stopped by `closeServing` before any retirement begins.
   const watchdog = ports.startWatchdog?.();
@@ -245,15 +273,17 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
         resolve();
       };
       ports.retire?.addEventListener("abort", wake, { once: true });
+      ports.handover?.requested.addEventListener("abort", wake, { once: true });
       void ports.sleep(FRONTDOOR_POLL_MS).then(() => {
         ports.retire?.removeEventListener("abort", wake);
+        ports.handover?.requested.removeEventListener("abort", wake);
         resolve();
       });
     });
   };
   // The retirement a request to exit asks for, in place of `closeServing`: every address is released first, before anything slow, then the state file stops naming this door as the owner so a launch starts a successor on those addresses instead of joining a door that no longer accepts, and the process lives on only for what its listeners still carry. The stream hub is closed once the listeners stop accepting; it refuses to attach again, so a response that settles during the drain cannot start a stream that the successor also attaches.
   const retireByDrain = async (): Promise<number> => {
-    ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: asked to exit; releasing the front door's addresses and finishing the connections it carries`);
+    ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: releasing the front door's addresses and finishing the connections it carries`);
     watchdog?.stop();
     // The successor's keepers take over: a draining door that kept running its own would act on the same usage stamps, windows and jobs beside them.
     ports.stopBackgroundWork?.();
@@ -268,6 +298,18 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     removeFrontDoorDirectRecord(fs, paths.frontdoorDirectRecordsDir, ports.ownPid);
     ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: the connections this door carried have ended; exiting`);
     return 0;
+  };
+  // The planned replacement that keeps every address accepting: the successor takes the listening sockets while this door still accepts on them, so a connection made at any moment of the swap is queued on a socket one of the two doors is serving, and only then does this door drain. A handover that fails is logged and ends in the same drain, which clears the state file's owner so the launcher waiting on it starts a successor the ordinary way.
+  const handOverThenDrain = async (run: (sockets: HandoverSockets) => Promise<HandoverOutcome>): Promise<number> => {
+    ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: asked to hand the front door's listeners to a successor; accepting on them until it serves`);
+    const outcome = await run({ provider: http.listening, connect: connect.listening, direct: direct.listening });
+    if (outcome.ok) {
+      ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: successor ${String(outcome.successorPid)} serves the front door's listeners`);
+      ports.doorHealth.superseded(outcome.successorPid);
+    } else {
+      ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: the handover failed (${outcome.reason}); retiring by drain so a successor is started on the released addresses`);
+    }
+    return await retireByDrain();
   };
   // The graceful stop every retirement shares: listeners down in the established order, the RC stream hub's cursor save last.
   const closeServing = async (): Promise<void> => {
@@ -290,7 +332,12 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
   };
   for (;;) {
     if (ports.retire?.aborted === true) {
+      ports.log(`agent-shim frontdoor supervisor ${String(ports.ownPid)}: asked to exit`);
       return await retireByDrain();
+    }
+    // Only the owner hands over: a superseded door no longer serves the addresses launches are sent to, so a request reaching it has nothing to hand.
+    if (ports.handover?.requested.aborted === true && supersededBy === undefined) {
+      return await handOverThenDrain(ports.handover.run);
     }
     if (options.tickLimit !== undefined && ticks >= options.tickLimit) {
       watchdog?.stop();

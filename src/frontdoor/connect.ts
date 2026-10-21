@@ -8,6 +8,7 @@ import { issueCaCertificate, issueLeafCertificate } from "./x509";
 import type { ConnectCapture, PassthroughObserver } from "./capture";
 import { pumpTapSession } from "./tap";
 import { CONNECT_PROXY_REALM, capabilityFromProxyAuthorization } from "./capability";
+import type { ListenSource } from "./handover";
 import { AUTH_HEADER } from "./route";
 import { MAX_TCP_PORT } from "./state";
 import { FRONTDOOR_POLL_MS } from "./supervisor";
@@ -276,6 +277,8 @@ type ConnectRequestHandler = (request: IncomingMessage, response: ServerResponse
 /** A bound loopback listener and how to stop it. */
 export interface ConnectListenerHandle {
   readonly port: number;
+  /** The listening socket itself, which a planned replacement hands to the successor door (see `./handover.ts`). */
+  readonly listening: net.Server;
   /** Stops accepting and releases the port at once, leaving every connection already accepted open: a successor can bind the same port while they finish. */
   readonly stopAccepting: () => void;
   /** Stops accepting, ends every live connection, and resolves once the port is released. */
@@ -308,8 +311,8 @@ interface HttpParserSession {
  * Every effect the MITM proxy performs, injected so the routing decisions and lifecycle run against fakes in unit tests (the SupervisorPorts pattern): TCP listening, TLS termination, HTTP parsing, plain TCP tunnels, and request forwarding. The real implementation is `realConnectEffects`; the TLS round-trip test uses it with redirected targets.
  */
 export interface ConnectEffects {
-  /** Binds a loopback TCP listener; `preferredPort` is tried first and any free port used when it is taken (bind, do not probe: check-then-bind races). Resolves with the bound port and a close handle. */
-  readonly listenLoopback: (preferredPort: number | undefined, onSocket: (socket: net.Socket) => void) => Promise<ConnectListenerHandle>;
+  /** Binds a loopback TCP listener, or adopts the one `source` inherits from the door being replaced; a bound one tries the preferred port first and uses any free port when it is taken (bind, do not probe: check-then-bind races). Resolves with the bound port and a close handle. */
+  readonly listenLoopback: (source: ListenSource, onSocket: (socket: net.Socket) => void) => Promise<ConnectListenerHandle>;
   /** Builds the TLS terminator for one leaf, handing each successfully handshaked session to `onSecure` together with the context its `accept` call carried. `alpnProtocols`, when given, is advertised during the handshake, which is how a tap host's session can offer HTTP/2 the way its real server does. */
   readonly createTlsAcceptor: (leaf: LeafCert, onSecure: (secure: net.Socket, context: string) => void, alpnProtocols?: readonly string[]) => TlsAcceptor;
   /** Builds the transparent surface's TLS terminator: one handshake whose SNI name selects which served host's leaf answers it, so a connection redirected from any of the hosts sharing the redirected address is terminated as the host it named. A name the surface does not serve is answered with no certificate at all (a client that sends no SNI never reaches the selection and finds no default certificate either), because the only leaf that could answer such a name is another host's, which the client's own hostname check would reject anyway. No ALPN is offered: node's TLS server negotiates ALPN from the listener's own options and ignores protocols named on an SNI-selected secure context, and the API host's terminated session is parsed as HTTP/1.1, which a negotiated `h2` would strand. */
@@ -365,6 +368,8 @@ export interface ConnectServerConfig {
 /** A running connect surface. */
 export interface ConnectServerHandle {
   readonly port: number;
+  /** The CONNECT listener's listening socket, which a planned replacement hands to the successor door (see `./handover.ts`). The transparent listener is not handed over: it exists only when the door's own environment asks for it, which a successor decides for itself. */
+  readonly listening: net.Server;
   /** The transparent listener's port, when one was requested: what an operating-system redirect should point at. */
   readonly transparentPort?: number;
   /** How many authenticated connections (blind tunnels and terminated sessions together) are open now: what closing this surface, or exiting its process, drops. */
@@ -397,7 +402,7 @@ const TAP_ALPN_PROTOCOLS: readonly string[] = ["h2", "http/1.1"];
  *
  * The connection flow: read the CONNECT head within the deadline (never more of the stream than that, so an early ClientHello glued to the head is pushed back with `unshift` and still seen by whatever consumes the socket next), authenticate it, then either blind-tunnel the target or terminate its TLS and parse HTTP on the session. Every network effect flows through `effects`; nothing here touches the network or filesystem itself.
  */
-export async function startConnectServer(config: ConnectServerConfig, effects: ConnectEffects, preferredPort: number | undefined): Promise<ConnectServerHandle> {
+export async function startConnectServer(config: ConnectServerConfig, effects: ConnectEffects, source: ListenSource): Promise<ConnectServerHandle> {
   // The capability each terminated session's tunnel authenticated with, keyed by the TLS session the acceptor handed over. A request riding that session is admitted by this token when its own headers carry none: the pipeline's per-request admission exists for listeners with no transport auth (a loopback process spending a session's credentials through the provider listener), while a CONNECT surface session already authenticated at the tunnel, and a client inside the child that never sees the launcher's headers (Claude Code's Remote Control bridge is exactly this, and its requests were refused with a 401 Claude Code misreports as a rejected login) has nothing else to present.
   const tunnelTokens = new WeakMap<net.Socket, string>();
   const ledger = createConnectionLedger(config.limits, config.isLiveCapability);
@@ -468,7 +473,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
     return { host, serveSecure, httpSession, tlsAcceptor };
   });
   // The listener owns teardown of everything it accepted: destroying the raw CONNECT socket ends both the blind tunnels and the TLS sessions layered on top of them.
-  const listener = await effects.listenLoopback(preferredPort, (socket) => {
+  const listener = await effects.listenLoopback(source, (socket) => {
     handleConnect(socket, { config, effects, sessions, ledger });
   });
 
@@ -487,7 +492,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
   const transparent =
     config.transparentPort === undefined || apiSession === undefined
       ? undefined
-      : await effects.listenLoopback(config.transparentPort, (socket) => {
+      : await effects.listenLoopback({ preferredPort: config.transparentPort }, (socket) => {
           // A redirected connection is the session of whatever host its TLS SNI names, the moment it arrives: no head to parse, no credential to read, straight into the SNI acceptor, and the session then handles routing, piped forwarding and relayed upgrades exactly as a CONNECT-tunnelled one does.
           sniAcceptor.accept(socket);
         });
@@ -506,6 +511,7 @@ export async function startConnectServer(config: ConnectServerConfig, effects: C
 
   return {
     port: listener.port,
+    listening: listener.listening,
     ...(transparent === undefined ? {} : { transparentPort: transparent.port }),
     openTunnels: ledger.openTunnels,
     drain: async () => {
