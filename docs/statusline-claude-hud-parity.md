@@ -143,6 +143,7 @@ The default header is `model`, `project`, `vcs`, `provider`, `route`, `account`,
 - `usage.sevenDayThreshold: 80`, from `display.sevenDayThreshold: 80`.
 - `context.estimate: buffered`, from `display.autocompactBuffer: 'enabled'`.
 - `context.breakdown: critical`, from `display.showTokenBreakdown: true`.
+- `model.platform: true`: the platform after the model (`Opus 4.5 | Vertex`), which claude-hud's `formatModelDisplay` draws under every configuration, detected from `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, a MiniMax base URL and an enterprise planning model id as its `getProviderLabel` detects it.
 
 These differences are kept:
 
@@ -155,7 +156,7 @@ These differences are kept:
 - The project path, the added directories and the branch are plain text, where claude-hud wraps them in terminal hyperlinks; see [Project and version control](#project-and-version-control).
 - The provider, route, account, identity and headroom segments are agent-shim's own, drawn after the version control segment.
 
-A statusline configured by someone relying on the default before it became a superset draws more now, and hides a weekly window below 80% of its use beside a five-hour one. The previous output is `layout.header` set to `model`, `provider`, `route`, `account`, `identity` and `headroom`, `layout.rows` set to `context` and `quota`, `usage.resetLabel` and `usage.modelScoped` set to `false`, `usage.sevenDayThreshold` set to 0, and `context.estimate` and `context.breakdown` set to `never`.
+A statusline configured by someone relying on the default before it became a superset draws more now, and hides a weekly window below 80% of its use beside a five-hour one. The previous output is `layout.header` set to `model`, `provider`, `route`, `account`, `identity` and `headroom`, `layout.rows` set to `context` and `quota`, `usage.resetLabel`, `usage.modelScoped` and `model.platform` set to `false`, `usage.sevenDayThreshold` set to 0, and `context.estimate` and `context.breakdown` set to `never`.
 
 ## Project and version control
 
@@ -184,7 +185,7 @@ claude-hud's presets exist only in its guided configuration flow (`commands/conf
 
 | claude-hud preset | agent-shim |
 |---|---|
-| (no preset: claude-hud's default) | `preset: standard`. Header: model, project (with the added directories inline), version control, then agent-shim's provider, route, account, identity and headroom, then the extra segment. Rows: context (with the token breakdown at high use, `context.breakdown: critical`, and an estimate when the client reports no percentage), quota (with the reset label, the per-model weekly windows and the weekly window from 80% of its use) and added directories. Git as in Full and Jujutsu off |
+| (no preset: claude-hud's default) | `preset: standard`. Header: model (with the platform it is served through, as every preset draws it), project (with the added directories inline), version control, then agent-shim's provider, route, account, identity and headroom, then the extra segment. Rows: context (with the token breakdown at high use, `context.breakdown: critical`, and an estimate when the client reports no percentage), quota (with the reset label, the per-model weekly windows and the weekly window from 80% of its use) and added directories. Git as in Full and Jujutsu off |
 | Full | `preset: full`. Header: model, project (with the added directories inline), version control, effort, advisor, Claude Code version, the extra segment, output style, cost, session name, duration. Rows: context (with the token breakdown at high use, `context.breakdown: critical`), quota, added directories, memory, environment counts, the activity rows (tools, skills, mcp, agents, todos), prompt cache, compactions, session tokens. `usage.resetLabel` on; git with the dirty marker, without ahead and behind and without file statistics; Jujutsu on with dirty and conflict markers |
 | Essential | `preset: essential`. Header: model, project, version control, the extra segment, duration. Rows: context (no token breakdown), added directories and the activity rows it turns on (tools, agents, todos). Git as in Full and Jujutsu off; no quota row, no counts, no session name, no session tokens |
 | Minimal | `preset: minimal`. Header: model, project, version control, the extra segment. Rows: context (no token breakdown) and added directories. Git as in Full and Jujutsu off; no quota row, no counts, no duration, no session name, no session tokens |
