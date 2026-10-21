@@ -1,3 +1,10 @@
+## [11.62.3](https://github.com/ExaDev/agent-shim/compare/v11.62.2...v11.62.3) (2026-10-21)
+
+### Bug Fixes
+
+* **frontdoor:** keep a door the machine did not schedule instead of replacing it ([1005316](https://github.com/ExaDev/agent-shim/commit/100531683ed0bf8aa40e4dcb7c7fdea98573f9ef)), references [#557](https://github.com/ExaDev/agent-shim/issues/557)
+* **frontdoor:** log a stall sample only when the sampler wrote one ([b20fc0f](https://github.com/ExaDev/agent-shim/commit/b20fc0f40129474ef2ccf8046ef2cdb74a7a8255)), references [#557](https://github.com/ExaDev/agent-shim/issues/557)
+
 ## [11.62.2](https://github.com/ExaDev/agent-shim/compare/v11.62.1...v11.62.2) (2026-10-20)
 
 ### Bug Fixes
