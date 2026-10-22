@@ -5,9 +5,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { isLiveCapability } from "./capability";
 import { CONNECT_INTERCEPT_HOST, generateCa, MAX_CONNECT_HEAD_BYTES, type CaMaterial } from "./connect";
-import { listFrontDoorSessions, liveSessionTokens, pruneDeadFrontDoorSessions, writeFrontDoorSession } from "./state";
+import { createLiveSessionRegistry } from "./liveSessionRegistry";
+import { pruneDeadFrontDoorSessions, writeFrontDoorSession } from "./state";
 import {
   connectHead,
   echoThrough,
@@ -451,10 +451,12 @@ describe("CONNECT authentication and limits over real sockets", () => {
       const registry = createFakeFarmFs({});
       const launcherPid = 4242;
       writeFrontDoorSession(registry, paths.frontdoorSessionsDir, { pid: launcherPid, startedAt: 0, token: TEST_CAPABILITY });
-      // The production check: constant-time membership in the registry's live tokens, read fresh on every call.
+      // The production check: constant-time membership in the registry's in-memory live tokens, which the supervisor's tick refreshes and whose prune forgets the launches it removed.
+      const live = createLiveSessionRegistry({ fs: registry, sessionsDir: paths.frontdoorSessionsDir });
+      live.rescan();
       const world = makeTlsWorld(ca, upstreamCa, {
         limits: { revalidateMs: TEST_REVALIDATE_MS },
-        isLiveCapability: (token) => isLiveCapability(token, liveSessionTokens(registry, paths.frontdoorSessionsDir)),
+        isLiveCapability: (token) => live.admits(token),
       });
       const { connectPort, close } = await world.start();
       try {
@@ -464,7 +466,9 @@ describe("CONNECT authentication and limits over real sockets", () => {
         expect(await echoThrough(tunnel.socket, "while-live")).toContain("while-live");
 
         // The launcher dies; the supervisor's next tick prunes it, and the tunnel it opened goes at the next revalidation.
-        expect(pruneDeadFrontDoorSessions(registry, paths.frontdoorSessionsDir, listFrontDoorSessions(registry, paths.frontdoorSessionsDir), () => false)).toEqual([launcherPid]);
+        const pruned = pruneDeadFrontDoorSessions(registry, paths.frontdoorSessionsDir, live.rescan(), () => false);
+        expect(pruned).toEqual([launcherPid]);
+        live.forget(pruned);
         await tunnel.closed;
 
         const stale = rawAttempt(connectPort, head);

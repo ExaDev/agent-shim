@@ -7,6 +7,7 @@ import { createDoorEventHub } from "./eventHub";
 import { createDoorHealthPublisher } from "./doorHealthEvents";
 import type { HandoverListenerName, HandoverOutcome, HandoverSockets, ListenSource, Predecessor } from "./handover";
 import { createLaunchEventPublisher } from "./launchEvents";
+import { createLiveSessionRegistry } from "./liveSessionRegistry";
 import { FRONT_DOOR_PROTOCOL, readFrontDoorState } from "./state";
 import { FRONTDOOR_POLL_MS, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 
@@ -108,9 +109,11 @@ export function makeWorld(options: { readonly ownPid?: number; readonly fs?: Hea
     return await Promise.resolve(preferred !== undefined && !occupied.has(preferred) ? preferred : FRESH_PORT);
   };
 
+  const registry = createLiveSessionRegistry({ fs, sessionsDir: paths.frontdoorSessionsDir });
   const ports: FrontDoorSupervisorPorts = {
     fs,
     paths,
+    registry,
     ownPid,
     now: () => clock,
     sleep: async (ms) => {
@@ -236,6 +239,8 @@ export function makeWorld(options: { readonly ownPid?: number; readonly fs?: Hea
   return {
     fs,
     ports,
+    /** The registry view the supervisor's tick refreshes: what the world's listeners would admit launches against. */
+    registry,
     alive,
     occupied,
     binds,

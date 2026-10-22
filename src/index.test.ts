@@ -283,6 +283,7 @@ describe("library surface", () => {
       "createLaunchEventPublisher",
       "createLeafCache",
       "createLifecycleApiRouter",
+      "createLiveSessionRegistry",
       "createProfile",
       "createQuotaExpiringPublisher",
       "createRcApiNodeHandler",

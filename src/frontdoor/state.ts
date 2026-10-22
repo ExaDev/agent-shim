@@ -244,11 +244,36 @@ export function recordOf(details: FrontDoorSessionDetails | undefined): Pick<Fro
  */
 export function writeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, session: Readonly<FrontDoorSession>): void {
   fs.mkdirPrivate(sessionsDir);
-  fs.writeFilePrivate(path.join(sessionsDir, `${String(session.pid)}.json`), `${JSON.stringify(session, null, 2)}\n`);
+  fs.writeFilePrivate(path.join(sessionsDir, sessionRecordName(session.pid)), `${JSON.stringify(session, null, 2)}\n`);
 }
 
 /** A registered launch as status and the idle decision see it: the pid and start time, never the token, so nothing that prints or serialises a session can leak the capability. */
 export type FrontDoorSessionSummary = Pick<FrontDoorSession, "pid" | "startedAt" | "supervisorPid">;
+
+/** The name of the file that holds launcher `pid`'s registry record. */
+export function sessionRecordName(pid: number): string {
+  return `${String(pid)}.json`;
+}
+
+/** Whether `name` is a registry entry's file name, as opposed to anything else a directory listing returns. */
+export function isSessionRecordName(name: string): boolean {
+  return name.endsWith(".json");
+}
+
+/** What a registry record shows without its capability: the one projection every listing uses, so a token can never ride along into something that prints or serialises a session. */
+export function summaryOf(session: Readonly<FrontDoorSession>): FrontDoorSessionSummary {
+  return { pid: session.pid, startedAt: session.startedAt, ...(session.supervisorPid === undefined ? {} : { supervisorPid: session.supervisorPid }) };
+}
+
+/** Reads one registry file, or undefined when it is unreadable or not a record: one bad file must not stop a listing, so this never throws. */
+export function readFrontDoorSessionRecord(fs: HeadroomFs, sessionsDir: string, name: string): FrontDoorSession | undefined {
+  try {
+    const parsed = FrontDoorSessionSchema.safeParse(JSON.parse(fs.readFileUtf8(path.join(sessionsDir, name)) ?? ""));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Every registered launch, unreadable or malformed files skipped, sorted by pid. Read through `FrontDoorSessionSchema`, which carries the token: headroom's token-less `listSessions` is strict and rejects every front-door record, which would make a live session invisible to the supervisor's idle decision and close the listeners (releasing the sticky ports) under a running child.
@@ -256,16 +281,9 @@ export type FrontDoorSessionSummary = Pick<FrontDoorSession, "pid" | "startedAt"
 export function listFrontDoorSessions(fs: HeadroomFs, sessionsDir: string): readonly FrontDoorSessionSummary[] {
   const sessions: FrontDoorSessionSummary[] = [];
   for (const name of fs.readdir(sessionsDir)) {
-    if (!name.endsWith(".json")) {
-      continue;
-    }
-    try {
-      const parsed = FrontDoorSessionSchema.safeParse(JSON.parse(fs.readFileUtf8(path.join(sessionsDir, name)) ?? ""));
-      if (parsed.success) {
-        sessions.push({ pid: parsed.data.pid, startedAt: parsed.data.startedAt, ...(parsed.data.supervisorPid === undefined ? {} : { supervisorPid: parsed.data.supervisorPid }) });
-      }
-    } catch {
-      continue;
+    const record = isSessionRecordName(name) ? readFrontDoorSessionRecord(fs, sessionsDir, name) : undefined;
+    if (record !== undefined) {
+      sessions.push(summaryOf(record));
     }
   }
   return sessions.sort((a, b) => a.pid - b.pid);
@@ -273,7 +291,7 @@ export function listFrontDoorSessions(fs: HeadroomFs, sessionsDir: string): read
 
 /** Removes one launcher's registry entry, and with it that launch's capability. Idempotent. */
 export function removeFrontDoorSession(fs: HeadroomFs, sessionsDir: string, pid: number): void {
-  fs.removeRecursive(path.join(sessionsDir, `${String(pid)}.json`));
+  fs.removeRecursive(path.join(sessionsDir, sessionRecordName(pid)));
 }
 
 /**
@@ -292,40 +310,12 @@ export function pruneDeadFrontDoorSessions(fs: HeadroomFs, sessionsDir: string, 
   return removed;
 }
 
-/**
- * Every live session's token, read fresh: what a client-facing listener checks a request's capability against. Malformed files are skipped for the same reason `readFrontDoorState` tolerates them.
- */
-export function liveSessionTokens(fs: HeadroomFs, sessionsDir: string): ReadonlySet<string> {
-  const tokens = new Set<string>();
-  for (const name of fs.readdir(sessionsDir)) {
-    if (!name.endsWith(".json")) {
-      continue;
-    }
-    try {
-      const parsed = FrontDoorSessionSchema.safeParse(JSON.parse(fs.readFileUtf8(path.join(sessionsDir, name)) ?? ""));
-      if (parsed.success) {
-        tokens.add(parsed.data.token);
-      }
-    } catch {
-      continue;
-    }
-  }
-  return tokens;
-}
-
 /** The models block a launch resolved for itself, found by the session id its requests carry, or undefined when no live launch carries one by that id or the launch added nothing to the global block. Read from the registry the launch wrote, so it lives and is pruned with the launch. */
 export function readFrontDoorSessionModels(fs: HeadroomFs, sessionsDir: string, sessionId: string): ModelsConfig | undefined {
   for (const name of fs.readdir(sessionsDir)) {
-    if (!name.endsWith(".json")) {
-      continue;
-    }
-    try {
-      const parsed = FrontDoorSessionSchema.safeParse(JSON.parse(fs.readFileUtf8(path.join(sessionsDir, name)) ?? ""));
-      if (parsed.success && parsed.data.sessionId === sessionId) {
-        return parsed.data.models;
-      }
-    } catch {
-      continue;
+    const record = isSessionRecordName(name) ? readFrontDoorSessionRecord(fs, sessionsDir, name) : undefined;
+    if (record?.sessionId === sessionId) {
+      return record.models;
     }
   }
   return undefined;

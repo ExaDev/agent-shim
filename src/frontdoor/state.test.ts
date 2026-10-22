@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { HeadroomFs } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
-import { listFrontDoorDirectRecords, listFrontDoorSessions, liveSessionTokens, MAX_TCP_PORT, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorSessionModels, readFrontDoorState, recordOf, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { createLiveSessionRegistry } from "./liveSessionRegistry";
+import { listFrontDoorDirectRecords, listFrontDoorSessions, MAX_TCP_PORT, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorSessionModels, readFrontDoorState, recordOf, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -25,7 +26,7 @@ describe("front-door session registry", () => {
     const fs = createFakeFarmFs({});
     writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 7, token: SECRET_CAPABILITY });
     expect(JSON.stringify(listFrontDoorSessions(fs, paths.frontdoorSessionsDir))).not.toContain(SECRET_CAPABILITY);
-    expect(liveSessionTokens(fs, paths.frontdoorSessionsDir).has(SECRET_CAPABILITY)).toBe(true);
+    expect(createLiveSessionRegistry({ fs, sessionsDir: paths.frontdoorSessionsDir }).admits(SECRET_CAPABILITY)).toBe(true);
   });
 
   it("skips malformed and token-less records instead of counting them as launches", () => {
@@ -43,7 +44,9 @@ describe("front-door session registry", () => {
     writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: DEAD, startedAt: 0, token: "dead-token" });
     expect(pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listFrontDoorSessions(fs, paths.frontdoorSessionsDir), (pid) => pid === LIVE)).toEqual([DEAD]);
     expect(listFrontDoorSessions(fs, paths.frontdoorSessionsDir).map((session) => session.pid)).toEqual([LIVE]);
-    expect([...liveSessionTokens(fs, paths.frontdoorSessionsDir)]).toEqual(["live-token"]);
+    const registry = createLiveSessionRegistry({ fs, sessionsDir: paths.frontdoorSessionsDir });
+    expect(registry.admits("live-token")).toBe(true);
+    expect(registry.admits("dead-token")).toBe(false);
   });
 
   it("keeps a launch that registered after the listing the liveness check covered, since it was never checked", () => {
@@ -52,7 +55,9 @@ describe("front-door session registry", () => {
     const listed = listFrontDoorSessions(fs, paths.frontdoorSessionsDir);
     writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 1, token: "late-token" });
     expect(pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listed, () => false)).toEqual([DEAD]);
-    expect([...liveSessionTokens(fs, paths.frontdoorSessionsDir)]).toEqual(["late-token"]);
+    const registry = createLiveSessionRegistry({ fs, sessionsDir: paths.frontdoorSessionsDir });
+    expect(registry.admits("late-token")).toBe(true);
+    expect(registry.admits("dead-token")).toBe(false);
   });
 
   it("finds the models block a launch resolved by the session id its requests carry, and loses it with the launch", () => {

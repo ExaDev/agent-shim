@@ -6,8 +6,9 @@ import path from "node:path";
 import type { HeadroomFs } from "../headroom/state";
 import type { LayoutPaths } from "../paths";
 import type { DoorHealthPublisher } from "./doorHealthEvents";
+import type { LiveSessionRegistry } from "./liveSessionRegistry";
 import type { HandoverOutcome, HandoverSockets, ListenSource, Predecessor } from "./handover";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorDirectRecord, writeFrontDoorDirectRecord, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState, markFrontDoorDraining, unmarkFrontDoorDraining } from "./state";
+import { FRONT_DOOR_PROTOCOL, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorDirectRecord, writeFrontDoorDirectRecord, writeFrontDoorState, type FrontDoorSessionSummary, type FrontDoorState, markFrontDoorDraining, unmarkFrontDoorDraining } from "./state";
 
 /** A bound front-door listener in this process, and how to stop it. */
 interface FrontDoorListenerHandle {
@@ -46,6 +47,10 @@ export function watchedInstallEntry(resolvedOwnExecutablePath: string, siblingEx
 export interface FrontDoorSupervisorPorts {
   readonly fs: HeadroomFs;
   readonly paths: LayoutPaths;
+  /**
+   * The door's view of the session registry (see `LiveSessionRegistry`), shared with the listeners' admission check. The tick lists the registry through it, so the capabilities the listeners admit are refreshed by the read the tick makes anyway, and the launches the tick prunes are forgotten by it in the same tick.
+   */
+  readonly registry: LiveSessionRegistry;
   readonly ownPid: number;
   readonly now: () => number;
   /** An event-loop-yielding wait, for the same reason headroom's is: nothing else would ever run between ticks. */
@@ -345,9 +350,11 @@ async function serveFrontDoor(idleShutdownMinutes: number, ports: FrontDoorSuper
     }
     ticks += 1;
     // The listing precedes the prune so the launch lifecycle publisher sees each pruned launch's record with its start time; the prune's removals are handed to it beside the listing, and the idle decision reads the same listing minus those removals rather than listing again.
-    const listed = listFrontDoorSessions(fs, paths.frontdoorSessionsDir);
+    const listed = ports.registry.rescan();
     const running = await ports.runningAmong(listed.map((session) => session.pid));
     const pruned = pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listed, (pid) => running.has(pid));
+    // Synchronous with the prune above, so a pruned launch's capability is refused from the next request on, not from the next tick.
+    ports.registry.forget(pruned);
     ports.observeLaunchRegistry(listed, pruned);
     ports.checkQuotaExpiry();
     const prunedPids = new Set(pruned);
