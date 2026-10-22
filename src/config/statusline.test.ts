@@ -380,7 +380,7 @@ describe("the usage and clock settings", () => {
     expect(StatuslineSchema.safeParse({ clock: { seconds: 1 } }).success).toBe(false);
   });
 
-  it("default to claude-hud's own usage defaults: the reset label, the per-model windows and the weekly window from 80%", () => {
+  it("default to claude-hud's own usage defaults: the reset label, the per-model windows and the weekly window from 80% beside a five-hour one", () => {
     expect(STATUSLINE_DEFAULTS.usage).toEqual({ value: "used", bar: true, compact: false, resetLabel: true, modelScoped: true, timeFormat: "relative", threshold: 0, sevenDayThreshold: 80 });
   });
 

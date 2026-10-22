@@ -137,7 +137,7 @@ describe("the documented restore of the default before it became a superset", ()
   /** A weekly use above claude-hud's weekly threshold and one below it, which the default before drew alike. */
   const WEEKLY_HIGH = 85;
   const WEEKLY_LOW = 30;
-  /** What the default drew for `SESSION` before it became a superset, as the statusline at that commit rendered it, with the weekly use at `WEEKLY_HIGH` and at `WEEKLY_LOW`. */
+  /** What the default drew for `SESSION` before it became a superset, as the statusline rendered it before that change, with the weekly use at `WEEKLY_HIGH` and at `WEEKLY_LOW`. */
   const BEFORE = {
     weeklyHigh: "Opus 4.5\nCtx [███████████████████████████████████████░░░] 92.0% (Cache: 99%) | 5h [██████████████████░░░░░░░░░░░░░░░░░░░░░░░░] 42.0% (1h 30m) | Wk [████████████████████████████████████░░░░░░] 85.0% (3d 2h)",
     weeklyLow: "Opus 4.5\nCtx [███████████████████████████████████████░░░] 92.0% (Cache: 99%) | 5h [██████████████████░░░░░░░░░░░░░░░░░░░░░░░░] 42.0% (1h 30m) | Wk [█████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 30.0% (3d 2h)",
@@ -166,7 +166,7 @@ describe("the documented restore of the default before it became a superset", ()
     expect(draw({ ...SESSION, model: { id: "claude-opus-4-5" } }, WEEKLY_HIGH)).toBe(BEFORE.weeklyHigh.replace("Opus 4.5", "claude-opus-4-5"));
   });
 
-  it("draws a display name padded with spaces without its padding and treats a blank one as absent, which the restore does not undo", () => {
+  it("draws a display name padded with white space without its padding and treats a blank one as absent, which the restore does not undo", () => {
     // The default before drew the padding as sent and an empty model segment for a blank name.
     expect(draw({ ...SESSION, model: { id: "claude-opus-4-5", display_name: "  Opus 4.5  " } }, WEEKLY_HIGH)).toBe(BEFORE.weeklyHigh);
     expect(draw({ ...SESSION, model: { id: "claude-opus-4-5", display_name: "   " } }, WEEKLY_HIGH)).toBe(BEFORE.weeklyHigh.replace("Opus 4.5", "claude-opus-4-5"));

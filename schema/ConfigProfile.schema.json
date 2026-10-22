@@ -620,7 +620,7 @@
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 100,
-                  "description": "The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden. A weekly window with no five-hour window beside it is always drawn, and 0 always draws it."
+                  "description": "The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden. A weekly window with no five-hour window beside it is always drawn, and 0 always draws it, except in a Bedrock session, which draws none of the account's windows."
                 }
               },
               "additionalProperties": false

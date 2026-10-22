@@ -286,7 +286,7 @@ const SHAPES = {
     modelScoped: z.boolean().describe("Whether the per-model weekly windows the client reports (rate_limits.model_scoped) are drawn after the account's own windows; they describe the signed-in account, so a session that selected a provider never shows them, nor does a Bedrock session, whose subscription windows do not apply."),
     timeFormat: z.enum(STATUSLINE_TIME_FORMATS).describe("How a window's reset is shown: the time left (`1h 30m`), the wall-clock time (`at 14:30`), both, the share of the window already gone (`53% elapsed`), or that share and the wall-clock time. A window whose length is not known shows no share."),
     threshold: thresholdPercent.describe("The whole percentage of use that at least one quota window must reach for the quota row to be drawn at all; 0 always draws it."),
-    sevenDayThreshold: thresholdPercent.describe("The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden. A weekly window with no five-hour window beside it is always drawn, and 0 always draws it."),
+    sevenDayThreshold: thresholdPercent.describe("The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden. A weekly window with no five-hour window beside it is always drawn, and 0 always draws it, except in a Bedrock session, which draws none of the account's windows."),
   },
   clock: {
     hourCycle: z.enum(STATUSLINE_HOUR_CYCLES).describe("The hour cycle of a wall-clock time: `auto` follows the system locale, `h23` and `h24` are 24-hour time (`h24` writes midnight as 24:00), and `h12` and `h11` are 12-hour time with am or pm (`h11` writes the hour after midnight as 0)."),
