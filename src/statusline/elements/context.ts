@@ -11,7 +11,7 @@ import type { TranscriptFacts } from "../transcript/reader";
 
 /** The payload fields the built-in statusline shows: the model, the context window's use, and the prompt cache's effectiveness. */
 export interface StatuslinePayloadView {
-  /** The model's name as the client gives it, before `model.override`, the transcript's name and `model.format` apply: its display name, else its model id, each trimmed and read as absent when blank, or undefined when neither has any text. */
+  /** The model's name as the client gives it, before `model.override`, the transcript's name and `model.format` apply: its display name, else its model id, each trimmed and read as absent when blank, or undefined when neither has any text or when the Antigravity CLI stacks this line under its own, which already names the model. */
   readonly clientModelName: string | undefined;
   readonly contextUsedPercentage: number | undefined;
   readonly contextTotalTokens: number | undefined;
