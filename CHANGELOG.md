@@ -1,3 +1,52 @@
+## [11.65.0](https://github.com/ExaDev/agent-shim/compare/v11.64.1...v11.65.0) (2026-10-22)
+
+### Features
+
+* **statusline:** draw a line of your own text and the output of a program ([83a6622](https://github.com/ExaDev/agent-shim/commit/83a66227f16956436bf04b1f39344de2a6ac8022))
+* **statusline:** list the extra segment in claude-hud's presets ([638c36b](https://github.com/ExaDev/agent-shim/commit/638c36bcab6944e3d5ef4cc3ef3f1fcf6d3539c6))
+
+### Bug Fixes
+
+* **config:** refuse a dash-led program for the extra command ([2b9fda0](https://github.com/ExaDev/agent-shim/commit/2b9fda00bb9aa3f2077cb013a6e2d4d29e845f46))
+* **config:** refuse the statusline's extra command in a project file ([9c957b4](https://github.com/ExaDev/agent-shim/commit/9c957b48b9533eb0dd786a7cf3ccdf0f4bfb1b07))
+* **frontdoor:** refuse the extra command in a delegated config write ([7dd9c1f](https://github.com/ExaDev/agent-shim/commit/7dd9c1fd25796698cf72d80d0283b7a35ebb3016))
+* **statusline:** ask a word for one more character than is left of the limit ([c2c1c12](https://github.com/ExaDev/agent-shim/commit/c2c1c12c4c3b6a376079579d1772fa2f63530cfc))
+* **statusline:** call the display-text cleaner with the name alone ([50a6132](https://github.com/ExaDev/agent-shim/commit/50a61322e2fcbc6e56e94730164bc236e97b2cc9))
+* **statusline:** draw the first line of output that only happens to parse as JSON ([392b8eb](https://github.com/ExaDev/agent-shim/commit/392b8ebab7f17eea2f54ffa2aeb1388738c4f0f6))
+* **statusline:** keep apart the words an extra command's output separates with a tab ([912c083](https://github.com/ExaDev/agent-shim/commit/912c083c56adc69f2bc5ca43a0a00ddb8aa75498))
+* **statusline:** kill a program that outruns its limit with a signal it cannot trap ([edca4d9](https://github.com/ExaDev/agent-shim/commit/edca4d920e24b38ba7c473a3e035974b786724e1))
+* **statusline:** refuse output that reaches the size limit under every shell ([917ad7e](https://github.com/ExaDev/agent-shim/commit/917ad7ece26e5e03a506cbef96521d5740564af1))
+* **statusline:** run the size-limited command in a form dash accepts, for the extra command only ([97467a1](https://github.com/ExaDev/agent-shim/commit/97467a118f6532b133eeb9db7fcf6677d7ee9c63))
+* **statusline:** sweep each stale run directory on its own ([aa355b4](https://github.com/ExaDev/agent-shim/commit/aa355b434a94180789ac98f89be622fc1a783390))
+* **statusline:** write a program's output to a file so a leftover process cannot hold the call ([f81693f](https://github.com/ExaDev/agent-shim/commit/f81693f652b82230605c7872f0c04491baacb02e))
+
+### Code Refactoring
+
+* drop execFileSyncBlocking, which nothing calls now ([b1f52b0](https://github.com/ExaDev/agent-shim/commit/b1f52b0eb44c2d5f360e851de40f75cd4f20efae))
+
+### Documentation
+
+* **frontdoor:** name the extra group wherever the API's refusals are listed ([dfc39c4](https://github.com/ExaDev/agent-shim/commit/dfc39c499a9684658018dd33d261e51f1bfeec3f))
+* **statusline:** name the runs that merge into one grapheme as read whole ([9ddf159](https://github.com/ExaDev/agent-shim/commit/9ddf159f198658674ea6049f4548778c3c1ce0b5))
+* **statusline:** say exactly which layers can set the extra command ([ca91ae0](https://github.com/ExaDev/agent-shim/commit/ca91ae0c7e90b3ab6f8be05fa40ef62ac2adba01))
+* **statusline:** say how colourised JSON and an unterminated operating system command are read ([9a749e6](https://github.com/ExaDev/agent-shim/commit/9a749e69e4500d02e59868d9c5fccb23364cdac1))
+* **statusline:** say the custom line is a line of its own in the compact layout ([2c5ee2d](https://github.com/ExaDev/agent-shim/commit/2c5ee2dba29e1d38f3c5c2627fb97ca404a8aed8))
+* **statusline:** say what the extra command inherits and where it may be set from ([ddd9e41](https://github.com/ExaDev/agent-shim/commit/ddd9e4122eaf4fbcf2d7a11864bc9c47aa7b5da1))
+* **statusline:** say where a relative extra command resolves and how control characters are drawn ([a7e7877](https://github.com/ExaDev/agent-shim/commit/a7e787755611c238e3399e6c519627524ebcda1d))
+* **statusline:** state what the custom line refuses and how an extra command's output is read ([6a7edf0](https://github.com/ExaDev/agent-shim/commit/6a7edf07fb78da876c59b978d7f48c9ff6322b13))
+
+### Tests
+
+* **config:** prove the extra command is refused in every project file through the real loader ([7f55191](https://github.com/ExaDev/agent-shim/commit/7f55191d23348f4b86c2a43eae839233b609d294))
+* **config:** show a project file cannot reach a profile outside the profiles directory by path ([dd7acb8](https://github.com/ExaDev/agent-shim/commit/dd7acb8797c88814c7a4b971b0b9d23f203bd0bc))
+* **statusline:** keep git and Jujutsu on a pipe ([e417be5](https://github.com/ExaDev/agent-shim/commit/e417be58ae820d9e3c5adccff6edb32006ceaa6d))
+* **statusline:** pin the custom line to a line of its own in the compact layout ([2711ed6](https://github.com/ExaDev/agent-shim/commit/2711ed6bc3d84c9e5bc85cc788ac732a107d32b4))
+* **statusline:** pin the owner-only mode of a program's output file ([43b5c71](https://github.com/ExaDev/agent-shim/commit/43b5c71cba28434d4b71c359917c6f22ba870ba3))
+
+### Styles
+
+* **config:** write the full preset's rows key bare, as its siblings are ([5b04776](https://github.com/ExaDev/agent-shim/commit/5b04776dbc57297a83bb6ceaef8a2ca828b697c7))
+
 ## [11.64.1](https://github.com/ExaDev/agent-shim/compare/v11.64.0...v11.64.1) (2026-10-22)
 
 ### Bug Fixes
