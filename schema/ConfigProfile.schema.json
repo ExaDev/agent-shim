@@ -427,13 +427,13 @@
                   "description": "The context figure: both (the tokens held against the window, then the percentage), percent, tokens, or remaining (the percentage of the window left)."
                 },
                 "warnAt": {
-                  "description": "The whole percentage of the context window at which the context bar turns yellow; it must be below context.criticalAt. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextWarningThreshold. A layer may write null to return it to its default when a shallower layer sets it.",
+                  "description": "The whole percentage of the context window at which the context bar turns yellow; it must be below context.criticalAt. The percentage is rounded to a whole number before it is compared with this, as claude-hud rounds it, so a reading within half a point below counts as at it. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextWarningThreshold. A layer may write null to return it to its default when a shallower layer sets it.",
                   "anyOf": [
                     {
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 100,
-                      "description": "The whole percentage of the context window at which the context bar turns yellow; it must be below context.criticalAt. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextWarningThreshold."
+                      "description": "The whole percentage of the context window at which the context bar turns yellow; it must be below context.criticalAt. The percentage is rounded to a whole number before it is compared with this, as claude-hud rounds it, so a reading within half a point below counts as at it. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextWarningThreshold."
                     },
                     {
                       "type": "null"
@@ -441,13 +441,13 @@
                   ]
                 },
                 "criticalAt": {
-                  "description": "The whole percentage of the context window at which the context bar turns red, and from which the token breakdown appears while context.breakdownAt is unset. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown. A layer may write null to return it to its default when a shallower layer sets it.",
+                  "description": "The whole percentage of the context window at which the context bar turns red, and from which the token breakdown appears while context.breakdownAt is unset. The percentage is rounded to a whole number before it is compared with this, as claude-hud rounds it, so a reading within half a point below counts as at it. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown. A layer may write null to return it to its default when a shallower layer sets it.",
                   "anyOf": [
                     {
                       "type": "integer",
                       "minimum": 1,
                       "maximum": 100,
-                      "description": "The whole percentage of the context window at which the context bar turns red, and from which the token breakdown appears while context.breakdownAt is unset. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown."
+                      "description": "The whole percentage of the context window at which the context bar turns red, and from which the token breakdown appears while context.breakdownAt is unset. The percentage is rounded to a whole number before it is compared with this, as claude-hud rounds it, so a reading within half a point below counts as at it. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown."
                     },
                     {
                       "type": "null"
@@ -455,7 +455,7 @@
                   ]
                 },
                 "breakdownAt": {
-                  "description": "The whole percentage of the context window from which the token breakdown appears, with context.breakdown set to critical; while it is unset the breakdown appears from context.criticalAt. It need not relate to context.warnAt or context.criticalAt, since it decides when a piece of information is shown and not a colour, so it may sit below, at or above either. A layer may write null to return it to unset when a shallower layer sets it.",
+                  "description": "The whole percentage of the context window from which the token breakdown appears, with context.breakdown set to critical; while it is unset the breakdown appears from context.criticalAt. The percentage is rounded to a whole number before it is compared with this, as claude-hud rounds it, so a reading within half a point below counts as at it. It need not relate to context.warnAt or context.criticalAt, since it decides when a piece of information is shown and not a colour, so it may sit below, at or above either. A layer may write null to return it to unset when a shallower layer sets it.",
                   "anyOf": [
                     {
                       "type": "integer",
