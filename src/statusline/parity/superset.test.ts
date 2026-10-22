@@ -165,4 +165,11 @@ describe("the documented restore of the default before it became a superset", ()
   it("names the model by its id when the client sends no display name, where the default before drew no model", () => {
     expect(draw({ ...SESSION, model: { id: "claude-opus-4-5" } }, WEEKLY_HIGH)).toBe(BEFORE.weeklyHigh.replace("Opus 4.5", "claude-opus-4-5"));
   });
+
+  it("draws a display name padded with spaces without its padding and treats a blank one as absent, which the restore does not undo", () => {
+    // The default before drew the padding as sent and an empty model segment for a blank name.
+    expect(draw({ ...SESSION, model: { id: "claude-opus-4-5", display_name: "  Opus 4.5  " } }, WEEKLY_HIGH)).toBe(BEFORE.weeklyHigh);
+    expect(draw({ ...SESSION, model: { id: "claude-opus-4-5", display_name: "   " } }, WEEKLY_HIGH)).toBe(BEFORE.weeklyHigh.replace("Opus 4.5", "claude-opus-4-5"));
+    expect(draw({ ...SESSION, model: { display_name: "   " } }, WEEKLY_HIGH).startsWith("Ctx ")).toBe(true);
+  });
 });
