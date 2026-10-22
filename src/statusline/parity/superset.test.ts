@@ -162,7 +162,7 @@ describe("the documented restore of the default before it became a superset", ()
     }
   });
 
-  it("names the model by its id when the client sends no display name or a blank one, where the default before drew no model for the first", () => {
+  it("names the model by its id when the client sends no display name, where the default before drew no model", () => {
     expect(draw({ ...SESSION, model: { id: "claude-opus-4-5" } }, WEEKLY_HIGH)).toBe(BEFORE.weeklyHigh.replace("Opus 4.5", "claude-opus-4-5"));
   });
 

@@ -56,7 +56,7 @@ function unifiedWindows(context: RenderContext): { readonly unified: readonly Qu
   return { unified, modelScoped: settings.usage.modelScoped && summary.provider === undefined ? modelScopedWindows(context) : [] };
 }
 
-/** Every window the quota row can draw, before the thresholds choose among them: every model family's window for an account whose limits are per family, else the unified windows (`unifiedWindows`: none for a Bedrock session that selected no provider) with, when there is no unified pair, a provider's own windows. A Bedrock session still draws a model family's windows and a provider's own, which are not subscription windows. */
+/** Every window the quota row can draw, before the thresholds choose among them: every model family's window for an account whose limits are per family, else the unified windows (`unifiedWindows`: none for a Bedrock session that selected no provider) with, when neither the five-hour nor the weekly window is reported, a provider's own windows. A Bedrock session still draws a model family's windows and a provider's own, which are not subscription windows. */
 function candidateWindows(context: RenderContext): readonly QuotaWindowView[] {
   const { summary } = context;
   if (summary.quotaFamilies.length > 0) {
@@ -64,7 +64,7 @@ function candidateWindows(context: RenderContext): readonly QuotaWindowView[] {
     return summary.quotaFamilies.map((window) => ({ label: window.measures, fraction: window.utilization, resetsAt: window.resetsAt, periodMs: undefined, weekly: false }));
   }
   const { unified, modelScoped } = unifiedWindows(context);
-  // A provider outside Anthropic's unified rate-limit family (z.ai) reports its usage only through its own quota windows, which are drawn when there is no unified pair.
+  // A provider outside Anthropic's unified rate-limit family (z.ai) reports its usage only through its own quota windows, which are drawn when neither the five-hour nor the weekly window is reported.
   const providerWindows = unified.length > 0 ? [] : summary.providerQuotaWindows.map((window) => ({ label: window.measures, fraction: window.utilization, resetsAt: window.resetsAt, periodMs: window.periodMs, weekly: false }));
   return [...unified, ...providerWindows, ...modelScoped];
 }
@@ -102,7 +102,7 @@ function wrapped(windows: readonly string[], width: number): string[] {
   return packLines(windows, width, SEPARATOR).map((line) => line.join(SEPARATOR));
 }
 
-/** The quota windows' row: the five-hour and weekly windows, the per-model weekly windows when asked for in a session that selected no provider, every model family's window for an account whose limits are per family, or a provider's own windows when there is no unified pair. A Bedrock session (the Bedrock switch on, or a Bedrock model id, for a client that is not the Antigravity CLI) draws no subscription window (the five-hour, weekly and per-model windows of a session that selected no provider) whatever the settings, and still draws a model family's, and the windows of a provider the session selected, in whatever form that provider reports them. Drawn as bars, as text alone, or as one compact line of text, under `settings.usage`. */
+/** The quota windows' row: the five-hour and weekly windows, the per-model weekly windows when asked for in a session that selected no provider, every model family's window for an account whose limits are per family, or a provider's own windows when neither the five-hour nor the weekly window is reported. A Bedrock session (the Bedrock switch on, or a Bedrock model id, for a client that is not the Antigravity CLI) draws no subscription window (the five-hour, weekly and per-model windows of a session that selected no provider) whatever the settings, and still draws a model family's, and the windows of a provider the session selected, in whatever form that provider reports them. Drawn as bars, as text alone, or as one compact line of text, under `settings.usage`. */
 export function quotaRow(context: RenderContext): RowOutput {
   const { palette, settings } = context;
   const style = barStyleOf(context, "usage");
