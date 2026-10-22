@@ -309,14 +309,3 @@ export function pruneDeadFrontDoorSessions(fs: HeadroomFs, sessionsDir: string, 
   }
   return removed;
 }
-
-/** The models block a launch resolved for itself, found by the session id its requests carry, or undefined when no live launch carries one by that id or the launch added nothing to the global block. Read from the registry the launch wrote, so it lives and is pruned with the launch. */
-export function readFrontDoorSessionModels(fs: HeadroomFs, sessionsDir: string, sessionId: string): ModelsConfig | undefined {
-  for (const name of fs.readdir(sessionsDir)) {
-    const record = isSessionRecordName(name) ? readFrontDoorSessionRecord(fs, sessionsDir, name) : undefined;
-    if (record?.sessionId === sessionId) {
-      return record.models;
-    }
-  }
-  return undefined;
-}

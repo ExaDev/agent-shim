@@ -4,7 +4,7 @@ import type { HeadroomFs } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { createLiveSessionRegistry } from "./liveSessionRegistry";
-import { listFrontDoorDirectRecords, listFrontDoorSessions, MAX_TCP_PORT, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorSessionModels, readFrontDoorState, recordOf, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
+import { listFrontDoorDirectRecords, listFrontDoorSessions, MAX_TCP_PORT, pruneMalformedFrontDoorDirectFiles, pruneDeadFrontDoorSessions, readFrontDoorState, removeFrontDoorSession, writeFrontDoorSession, writeFrontDoorState } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 
@@ -58,17 +58,6 @@ describe("front-door session registry", () => {
     const registry = createLiveSessionRegistry({ fs, sessionsDir: paths.frontdoorSessionsDir });
     expect(registry.admits("late-token")).toBe(true);
     expect(registry.admits("dead-token")).toBe(false);
-  });
-
-  it("finds the models block a launch resolved by the session id its requests carry, and loses it with the launch", () => {
-    const fs = createFakeFarmFs({});
-    writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: LIVE, startedAt: 0, token: "a", ...recordOf({ sessionId: "s-live", models: { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } } }) });
-    writeFrontDoorSession(fs, paths.frontdoorSessionsDir, { pid: DEAD, startedAt: 0, token: "b", ...recordOf({ sessionId: "s-plain" }) });
-    expect(readFrontDoorSessionModels(fs, paths.frontdoorSessionsDir, "s-live")).toEqual({ virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } });
-    expect(readFrontDoorSessionModels(fs, paths.frontdoorSessionsDir, "s-plain")).toBeUndefined();
-    expect(readFrontDoorSessionModels(fs, paths.frontdoorSessionsDir, "unknown")).toBeUndefined();
-    pruneDeadFrontDoorSessions(fs, paths.frontdoorSessionsDir, listFrontDoorSessions(fs, paths.frontdoorSessionsDir), (pid) => pid === DEAD);
-    expect(readFrontDoorSessionModels(fs, paths.frontdoorSessionsDir, "s-live")).toBeUndefined();
   });
 
   it("removes one launcher's record idempotently", () => {

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import type { ModelsConfig } from "../config/schema";
 import type { HeadroomFs } from "../headroom/state";
 import { buildLayoutPaths } from "../paths";
 import { createFakeFarmFs } from "../test-helpers";
 import { createLiveSessionRegistry } from "./liveSessionRegistry";
-import { listFrontDoorSessions, pruneDeadFrontDoorSessions, removeFrontDoorSession, writeFrontDoorSession } from "./state";
+import { listFrontDoorSessions, pruneDeadFrontDoorSessions, recordOf, removeFrontDoorSession, writeFrontDoorSession } from "./state";
 
 const paths = buildLayoutPaths("/home/testuser/.agent-shim");
 const dir = paths.frontdoorSessionsDir;
@@ -195,5 +196,50 @@ describe("live session registry", () => {
     const listed = registry.rescan();
     expect(listed).toEqual(listFrontDoorSessions(fs, dir));
     expect(JSON.stringify(listed)).not.toContain("capability-that-must-never-be-listed");
+  });
+
+  describe("models block by session id", () => {
+    const BLOCK: ModelsConfig = { virtual: { fast: { mode: "ordered", members: ["z/glm-5.3"] } } };
+
+    it("answers a session id it has already read from memory, and answers a launch that added nothing with undefined", () => {
+      const { fs, counts, reset } = countedWorld();
+      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 0, token: "a", ...recordOf({ sessionId: "s-live", models: BLOCK }) });
+      writeFrontDoorSession(fs, dir, { pid: DEAD, startedAt: 0, token: "b", ...recordOf({ sessionId: "s-plain" }) });
+      const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+      registry.rescan();
+      reset();
+      expect(registry.modelsOf("s-live")).toEqual(BLOCK);
+      expect(registry.modelsOf("s-plain")).toBeUndefined();
+      expect(counts).toEqual({ readdirs: 0, stats: 0, reads: [] });
+    });
+
+    it("finds the block of a launch that registered since the last rescan on its first lookup", () => {
+      const { fs } = countedWorld();
+      const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+      registry.rescan();
+      writeFrontDoorSession(fs, dir, { pid: LATE, startedAt: 1, token: "late-token", ...recordOf({ sessionId: "s-late", models: BLOCK }) });
+      expect(registry.modelsOf("s-late")).toEqual(BLOCK);
+    });
+
+    it("looks an unknown session id up with one listing and a stat per record but no record read", () => {
+      const { fs, counts, reset } = countedWorld();
+      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 0, token: "a", ...recordOf({ sessionId: "s-live" }) });
+      const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+      registry.rescan();
+      reset();
+      for (let request = 0; request < PRESENTATIONS; request += 1) {
+        expect(registry.modelsOf("unknown")).toBeUndefined();
+      }
+      expect(counts).toEqual({ readdirs: PRESENTATIONS, stats: PRESENTATIONS, reads: [] });
+    });
+
+    it("loses a launch's block with the launch", () => {
+      const { fs } = countedWorld();
+      writeFrontDoorSession(fs, dir, { pid: LIVE, startedAt: 0, token: "a", ...recordOf({ sessionId: "s-live", models: BLOCK }) });
+      const registry = createLiveSessionRegistry({ fs, sessionsDir: dir });
+      const listed = registry.rescan();
+      registry.forget(pruneDeadFrontDoorSessions(fs, dir, listed, () => false));
+      expect(registry.modelsOf("s-live")).toBeUndefined();
+    });
   });
 });

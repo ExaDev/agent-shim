@@ -81,7 +81,7 @@ import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_DELAY_EN
 import { PROBE_TIMEOUT_MS } from "./probe";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, removeFrontDoorSession, writeFrontDoorSession, readFrontDoorSessionModels } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, removeFrontDoorSession, writeFrontDoorSession } from "./state";
 import { declareThisProcessTheFrontDoor } from "./selfIdentity";
 import { awaitPidExit, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 import { createAccountReader } from "../usage/account";
@@ -258,11 +258,13 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   // This generation's control token, minted per door start and written owner-only: the value the door's control routes demand and only this user's CLI can read. A crashed door's stale file never authenticates, because the next generation mints a fresh one over it.
   // A successor started by a handover keeps the token of the door it replaces instead of minting one: both doors accept on the same addresses until the old one drains, so a control request made with the token file's value must be admitted by whichever of them takes it. The old door wrote the file before its provider listener first accepted, so it is there for as long as that door serves.
   const rcControlToken = lifecycle.predecessor === undefined ? randomUUID() : inheritedControlToken(paths);
+  // The door's in-memory view of the session registry, which the listeners' admission and the route resolver's per-launch models lookup both answer from: the supervisor's tick refreshes it, and only an id the view does not hold is looked up in the registry directory.
+  const sessionRegistry = createLiveSessionRegistry({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir });
   const resolveRoute = rcObservingResolver(
     createProviderRouteResolver({
       // Read live so a models-block edit reaches the next request without a door restart.
       // The block this session launched with when its directory, profile or committed file added definitions of its own; otherwise the global block, read live so an edit applies to the next request with no relaunch.
-      models: (session) => (session.sessionId === undefined ? undefined : readFrontDoorSessionModels(realFarmFs, paths.frontdoorSessionsDir, session.sessionId)) ?? readModels(paths),
+      models: (session) => (session.sessionId === undefined ? undefined : sessionRegistry.modelsOf(session.sessionId)) ?? readModels(paths),
       targets: () => targetRefs(paths),
       fs: realFsPort,
       providersDir: paths.providersDir,
@@ -287,8 +289,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     rcHub,
   );
 
-  // One check for every listener that admits launches: the provider listener's and the CONNECT surface's routed paths (the capability header), and the CONNECT surface's own CONNECT requests (the proxy credential). It answers from memory: the supervisor's tick refreshes the view, and only a token the view does not hold (a launch that registered since) is looked up in the registry directory.
-  const sessionRegistry = createLiveSessionRegistry({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir });
+  // One check for every listener that admits launches: the provider listener's and the CONNECT surface's routed paths (the capability header), and the CONNECT surface's own CONNECT requests (the proxy credential). It answers from the registry view above.
   const isLiveToken = (token: string): boolean => sessionRegistry.admits(token);
 
   // Usage tracking: one store per door process, its log segments named by this pid, written on a deferred turn so recording never sits in a response's path. Every snapshot it writes is published on the backbone's usage source, the durable fact the expiring-quota checker and any quota consumer reads; the routing layer's snapshot cache rides the same publish, so a route condition reading a target's quota sees the state this process last wrote without a file read.

@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import type { ModelsConfig } from "../config/schema";
 import type { HeadroomFs } from "../headroom/state";
 import type { FarmStat } from "../launcher/ports";
 import { isLiveCapability } from "./capability";
@@ -21,6 +22,10 @@ export interface LiveSessionRegistry {
    * Re-reads every record in the directory, replacing what the view holds, and returns the listing it saw (sorted by pid, malformed files skipped, no token in it). The supervisor's tick calls this as its listing, so the registry is read once per tick for both the idle decision and the capabilities.
    */
   readonly rescan: () => readonly FrontDoorSessionSummary[];
+  /**
+   * The models block the launch carrying `sessionId` resolved for itself, or undefined when no live launch carries that id or the launch added nothing to the global block. A session id the view does not hold is looked up as `admits` looks up a token (one listing, a stat per record, a read of only what is new or changed), so a launch is found on its first request and an unknown id costs no record read.
+   */
+  readonly modelsOf: (sessionId: string) => ModelsConfig | undefined;
   /** Drops the launches `pids` from the view, for the records the caller has just removed (the tick's prune), so their capabilities are refused at once rather than at the next `rescan`. */
   readonly forget: (pids: readonly number[]) => void;
 }
@@ -44,11 +49,15 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
   /** Every record file the view has read, by file name, with the stat the file had just before it was read: a later stat that differs means the file was rewritten. The record is undefined for a file that is not one, so a listing for an unknown token never parses it again. */
   const known = new Map<string, { readonly stat: Pick<FarmStat, "mtimeMs" | "sizeBytes">; readonly record: FrontDoorSession | undefined }>();
   let tokens: ReadonlySet<string> = new Set();
+  /** The records by the session id their requests carry; a record with none is not in it. */
+  let bySessionId: ReadonlyMap<string, FrontDoorSession> = new Map();
 
   const recordNames = (): readonly string[] => fs.readdir(sessionsDir).filter(isSessionRecordName);
 
-  const rebuildTokens = (): void => {
-    tokens = new Set([...known.values()].flatMap(({ record }) => (record === undefined ? [] : [record.token])));
+  const rebuildIndexes = (): void => {
+    const records = [...known.values()].flatMap(({ record }) => (record === undefined ? [] : [record]));
+    tokens = new Set(records.map((record) => record.token));
+    bySessionId = new Map(records.flatMap((record) => (record.sessionId === undefined ? [] : [[record.sessionId, record] as const])));
   };
 
   /** Reads one file into the view under `stat`, which the caller took first: a write landing between the stat and the read leaves the view holding newer content under an older stat, which the next look reads again, never older content under a newer stat. */
@@ -80,7 +89,7 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
       }
     }
     if (changed) {
-      rebuildTokens();
+      rebuildIndexes();
     }
     return changed;
   };
@@ -92,6 +101,10 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
       }
       return reconcile() && isLiveCapability(token, tokens);
     },
+    modelsOf: (sessionId) => {
+      const held = bySessionId.get(sessionId) ?? (reconcile() ? bySessionId.get(sessionId) : undefined);
+      return held?.models;
+    },
     rescan: () => {
       known.clear();
       for (const name of recordNames()) {
@@ -100,14 +113,14 @@ export function createLiveSessionRegistry(ports: LiveSessionRegistryPorts): Live
           load(name, stat);
         }
       }
-      rebuildTokens();
+      rebuildIndexes();
       return [...known.values()].flatMap(({ record }) => (record === undefined ? [] : [summaryOf(record)])).sort((a, b) => a.pid - b.pid);
     },
     forget: (pids) => {
       for (const pid of pids) {
         known.delete(sessionRecordName(pid));
       }
-      rebuildTokens();
+      rebuildIndexes();
     },
   };
 }
