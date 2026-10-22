@@ -614,13 +614,13 @@
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 100,
-                  "description": "The whole percentage of use that at least one quota window must reach for the quota row to be drawn at all; 0 never hides it. A Bedrock session draws none of the account's windows, whatever this is."
+                  "description": "The whole percentage of use that at least one quota window must reach for the quota row to be drawn at all; 0 never hides it. A Bedrock session that selected no provider draws no five-hour, weekly or per-model window, whatever this is."
                 },
                 "sevenDayThreshold": {
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 100,
-                  "description": "The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden, and 0 never hides it. A weekly window with no five-hour window beside it is never hidden by this setting. A Bedrock session draws none of the account's windows, so this setting governs nothing there, and usage.threshold can still hide the whole row."
+                  "description": "The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden, and 0 never hides it. A weekly window with no five-hour window beside it is never hidden by this setting. A Bedrock session that selected no provider draws no five-hour, weekly or per-model window, so this setting has nothing to hide there, and usage.threshold can still hide the whole row."
                 }
               },
               "additionalProperties": false

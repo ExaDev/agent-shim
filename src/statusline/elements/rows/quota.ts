@@ -17,7 +17,7 @@ interface QuotaWindowView {
   readonly resetsAt: string | undefined;
   /** The window's length, when it is known: the share of it already gone needs it. */
   readonly periodMs: number | undefined;
-  /** Whether this is the account's own weekly window, the one `usage.sevenDayThreshold` can hide. */
+  /** Whether this is the weekly window of the unified pair (the account's, or a selected provider's), the one `usage.sevenDayThreshold` can hide. */
   readonly weekly: boolean;
 }
 
@@ -37,11 +37,11 @@ function modelScopedWindows({ payload }: RenderContext): readonly QuotaWindowVie
   });
 }
 
-/** The windows of the account the session is signed in as: the five-hour and weekly windows, with the per-model weekly ones when asked for and the session selected no provider. None for a Bedrock session that selected no provider (`hidesSubscriptionWindows`: the Bedrock switch on, or a Bedrock model id, for a client that is not the Antigravity CLI), which spends none of them; the windows a provider session holds are that provider's. */
+/** The subscription windows: the five-hour and weekly windows (the account's, or a selected provider's when it reports them in the unified form), with the per-model weekly ones when asked for and the session selected no provider. None for a Bedrock session that selected no provider (`hidesSubscriptionWindows`: the Bedrock switch on, or a Bedrock model id, for a client that is not the Antigravity CLI), which spends none of them; the windows a provider session holds are that provider's. */
 function subscriptionWindows(context: RenderContext): { readonly unified: readonly QuotaWindowView[]; readonly modelScoped: readonly QuotaWindowView[] } {
   const { summary, settings } = context;
   const inputs = platformInputsOf(context.payload, context.ports.env, context.payload.model?.id);
-  // A session that selected a provider holds that provider's own windows (a codex provider reports its five-hour and weekly ones in the unified form), which are not the signed-in account's and so are not the ones a Bedrock session has none of.
+  // A session that selected a provider holds that provider's own windows (a codex provider reports its five-hour and weekly ones in the unified form), so the hide does not reach them: a Bedrock session has no subscription window only when it selected no provider.
   if (summary.provider === undefined && hidesSubscriptionWindows(inputs.env, inputs.modelId)) {
     return { unified: [], modelScoped: [] };
   }
@@ -56,7 +56,7 @@ function subscriptionWindows(context: RenderContext): { readonly unified: readon
   return { unified, modelScoped: settings.usage.modelScoped && summary.provider === undefined ? modelScopedWindows(context) : [] };
 }
 
-/** Every window the quota row can draw, before the thresholds choose among them: every model family's window for an account whose limits are per family, else the subscription windows (`subscriptionWindows`, none for a Bedrock session) with, when neither the five-hour nor the weekly window is drawn, a provider's own windows. A Bedrock session still draws a model family's windows and a provider's own, which are not the signed-in account's. */
+/** Every window the quota row can draw, before the thresholds choose among them: every model family's window for an account whose limits are per family, else the subscription windows (`subscriptionWindows`, none for a Bedrock session) with, when neither the five-hour nor the weekly window is drawn, a provider's own windows. A Bedrock session still draws a model family's windows and a provider's own, which are not subscription windows. */
 function candidateWindows(context: RenderContext): readonly QuotaWindowView[] {
   const { summary } = context;
   if (summary.quotaFamilies.length > 0) {
@@ -102,7 +102,7 @@ function wrapped(windows: readonly string[], width: number): string[] {
   return packLines(windows, width, SEPARATOR).map((line) => line.join(SEPARATOR));
 }
 
-/** The quota windows' row: the five-hour and weekly windows, the per-model weekly windows when asked for, every model family's window for an account whose limits are per family, or a provider's own windows when no unified one is drawn. A Bedrock session (the Bedrock switch on, or a Bedrock model id, for a client that is not the Antigravity CLI) draws none of the signed-in account's windows (the five-hour, weekly and per-model ones) whatever the settings, and still draws a model family's, and the windows of a provider the session selected, in whatever form that provider reports them. Drawn as bars, as text alone, or as one compact line of text, under `settings.usage`. */
+/** The quota windows' row: the five-hour and weekly windows, the per-model weekly windows when asked for, every model family's window for an account whose limits are per family, or a provider's own windows when no unified one is drawn. A Bedrock session (the Bedrock switch on, or a Bedrock model id, for a client that is not the Antigravity CLI) draws no subscription window (the five-hour, weekly and per-model windows of a session that selected no provider) whatever the settings, and still draws a model family's, and the windows of a provider the session selected, in whatever form that provider reports them. Drawn as bars, as text alone, or as one compact line of text, under `settings.usage`. */
 export function quotaRow(context: RenderContext): RowOutput {
   const { palette, settings } = context;
   const style = barStyleOf(context, "usage");

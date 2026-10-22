@@ -55,7 +55,7 @@ export function isBedrockModelId(modelId: string | undefined): boolean {
 }
 
 /**
- * Whether the subscription windows (the signed-in account's five-hour, weekly and per-model weekly windows) do not apply to the session, as claude-hud's `shouldHideUsage` decides it: it is a Bedrock session of a Claude Code client, by the Bedrock switch (`modelPlatformOf` choosing Bedrock) or by a Bedrock model id (`isBedrockModelId`), and Bedrock is billed by use with none of those windows to spend. The windows of a provider the session selected and a model family's are not the account's, and this says nothing about them: the caller applies it to a session that selected no provider.
+ * Whether the subscription windows (the five-hour, weekly and per-model windows of a session that selected no provider, from the client's payload or the identity's recorded usage) do not apply to the session, as claude-hud's `shouldHideUsage` decides it: it is a Bedrock session of a Claude Code client, by the Bedrock switch (`modelPlatformOf` choosing Bedrock) or by a Bedrock model id (`isBedrockModelId`), and Bedrock is billed by use with none of those windows to spend. The windows of a provider the session selected and a model family's are not subscription windows, and this says nothing about them: the caller applies it to a session that selected no provider.
  * @param env - The environment the statusline runs in, as `platformInputsOf` hands it over: the client's for a Claude Code client, empty for an Antigravity one.
  * @param modelId - The model id the client's payload reports, as `platformInputsOf` hands it over, or undefined when it reports none.
  */

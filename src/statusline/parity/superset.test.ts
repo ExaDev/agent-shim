@@ -155,7 +155,7 @@ describe("the documented restore of the default before it became a superset", ()
     expect(draw(SESSION, WEEKLY_HIGH, { CLAUDE_CODE_USE_VERTEX: "1" })).toBe(BEFORE.weeklyHigh);
   });
 
-  it("still draws none of the signed-in account's windows for a Bedrock session, which the restore does not undo", () => {
+  it("still draws no subscription window for a Bedrock session that selected no provider, which the restore does not undo", () => {
     // The default before drew the five-hour and weekly windows here; they do not apply to a Bedrock session whatever the settings say.
     for (const drawn of [draw(SESSION, WEEKLY_HIGH, { CLAUDE_CODE_USE_BEDROCK: "1" }), draw({ ...SESSION, model: { id: "us.anthropic.claude-opus-4-5-20251101-v1:0", display_name: "Opus 4.5" } }, WEEKLY_HIGH)]) {
       expect(drawn).toMatch(/^Opus 4\.5\nCtx \[[\u2588\u2591]+\] 92\.0% \(Cache: 99%\)$/u);
