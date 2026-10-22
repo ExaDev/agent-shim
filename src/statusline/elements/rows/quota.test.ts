@@ -103,6 +103,8 @@ describe("the quota row's usage settings", () => {
     const providerWindows = [{ measures: "tokens", utilization: 0.5, resetsAt: "2026-10-16T10:30:00.000Z", periodMs: 18_000_000 }];
     expect(defaultQuotaLines({ usage: { bar: false } }, { quotaFamilies: families, fiveHourUsed: undefined, sevenDayUsed: undefined }, {}, bedrock)).toEqual(["Gemini 50.0% (resets in 1h 30m)"]);
     expect(defaultQuotaLines({ usage: { bar: false } }, { providerQuotaWindows: providerWindows, provider: "z.ai", fiveHourUsed: undefined, sevenDayUsed: undefined }, {}, bedrock)).toEqual(["tokens 50.0% (resets in 1h 30m)"]);
+    // The provider's windows stand in whenever no five-hour or weekly window is drawn, so the account's hidden windows do not keep them out.
+    expect(defaultQuotaLines({ usage: { bar: false } }, { providerQuotaWindows: providerWindows, provider: "z.ai" }, {}, bedrock)).toEqual(["tokens 50.0% (resets in 1h 30m)"]);
   });
 
   it("by default draws the per-model weekly windows after the account's own", () => {
