@@ -39,11 +39,14 @@ describe("a launch planned inside the front door's process, through the helper t
     const stub = path.join(binDirectory, "claude");
     fs.writeFileSync(stub, "#!/bin/sh\nexit 0\n");
     fs.chmodSync(stub, EXECUTABLE_MODE);
+    // A suite run from inside a routed session inherits that session's trust bundle, which the launch would then combine with a CA file this throwaway root never generated.
+    vi.stubEnv("NODE_EXTRA_CA_CERTS", "");
     originalPath = process.env.PATH;
     process.env.PATH = `${binDirectory}${path.delimiter}${originalPath ?? ""}`;
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     leave?.();
     leave = undefined;
     if (originalPath === undefined) {
