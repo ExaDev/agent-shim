@@ -97,14 +97,15 @@ describe("the quota row's usage settings", () => {
     expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 80 }, MODEL_SCOPED_PAYLOAD, { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual([]);
   });
 
-  it("still draws a model family's windows and a provider's own for a Bedrock session, since neither is the signed-in account's", () => {
+  it("still draws a model family's windows and a selected provider's own for a Bedrock session, in whatever form the provider reports them, since none is the signed-in account's", () => {
     const bedrock = { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" };
     const families = [{ measures: "Gemini", utilization: 0.5, resetsAt: "2026-10-16T10:30:00.000Z" }];
     const providerWindows = [{ measures: "tokens", utilization: 0.5, resetsAt: "2026-10-16T10:30:00.000Z", periodMs: 18_000_000 }];
     expect(defaultQuotaLines({ usage: { bar: false } }, { quotaFamilies: families, fiveHourUsed: undefined, sevenDayUsed: undefined }, {}, bedrock)).toEqual(["Gemini 50.0% (resets in 1h 30m)"]);
     expect(defaultQuotaLines({ usage: { bar: false } }, { providerQuotaWindows: providerWindows, provider: "z.ai", fiveHourUsed: undefined, sevenDayUsed: undefined }, {}, bedrock)).toEqual(["tokens 50.0% (resets in 1h 30m)"]);
-    // The provider's windows stand in whenever no five-hour or weekly window is drawn, so the account's hidden windows do not keep them out.
-    expect(defaultQuotaLines({ usage: { bar: false } }, { providerQuotaWindows: providerWindows, provider: "z.ai" }, {}, bedrock)).toEqual(["tokens 50.0% (resets in 1h 30m)"]);
+    // A provider that reports its five-hour and weekly windows in the unified form (a codex provider does) holds them in the summary's five-hour and weekly fields; they are the provider's, not the account's, so the Bedrock hide leaves them.
+    expect(defaultQuotaLines({ usage: { bar: false } }, { provider: "codexprov" }, {}, bedrock)).toEqual(["5h 25.0% (resets in 1h 30m)"]);
+    expect(defaultQuotaLines({ usage: { bar: false } }, {}, {}, bedrock)).toEqual([]);
   });
 
   it("hides the account's windows for a Bedrock session only when the client is Claude Code, not for an Antigravity client", () => {
@@ -160,7 +161,7 @@ describe("the quota row's usage settings", () => {
     expect(quotaLines({ usage: { bar: false, sevenDayThreshold: 40 } })).toEqual(["5h 25.0% (1h 30m) | Wk 40.0% (4d 1h)"]);
   });
 
-  it("always draws a weekly window that has no five-hour window beside it, whatever usage.sevenDayThreshold is", () => {
+  it("never hides a weekly window that has no five-hour window beside it by usage.sevenDayThreshold, whatever that is", () => {
     expect(quotaLines({ usage: { bar: false, sevenDayThreshold: 90 } }, { fiveHourUsed: undefined })).toEqual(["Wk 40.0% (4d 1h)"]);
   });
 
