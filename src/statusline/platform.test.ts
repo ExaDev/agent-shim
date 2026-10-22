@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hidesSubscriptionWindows, isBedrockModelId, modelPlatformOf } from "./platform";
+import { hidesSubscriptionWindows, isBedrockModelId, modelPlatformOf, platformEnvOf } from "./platform";
 
 describe("the platform label claude-hud draws beside the model", () => {
   it("is Bedrock when the client's Bedrock switch is on", () => {
@@ -68,5 +68,20 @@ describe("whether a model id is a Bedrock one", () => {
     expect(isBedrockModelId("claude-opus-4-5")).toBe(false);
     expect(isBedrockModelId("anthropic.titan")).toBe(false);
     expect(isBedrockModelId(undefined)).toBe(false);
+  });
+});
+
+describe("the environment the platform checks read", () => {
+  const SWITCHES = { CLAUDE_CODE_USE_BEDROCK: "1", CLAUDE_CODE_USE_VERTEX: "1" };
+
+  it("is the statusline's own for a Claude Code client, with or without a product", () => {
+    expect(platformEnvOf({}, SWITCHES)).toBe(SWITCHES);
+    expect(platformEnvOf({ product: "claude-code" }, SWITCHES)).toBe(SWITCHES);
+    expect(platformEnvOf(undefined, SWITCHES)).toBe(SWITCHES);
+  });
+
+  it("holds none of Claude Code's switches for an Antigravity client, so no platform is detected there", () => {
+    expect(platformEnvOf({ product: "antigravity" }, SWITCHES)).toEqual({});
+    expect(modelPlatformOf(platformEnvOf({ product: "antigravity" }, SWITCHES), "gemini-3-pro")).toBeUndefined();
   });
 });

@@ -107,6 +107,12 @@ describe("the quota row's usage settings", () => {
     expect(defaultQuotaLines({ usage: { bar: false } }, { providerQuotaWindows: providerWindows, provider: "z.ai" }, {}, bedrock)).toEqual(["tokens 50.0% (resets in 1h 30m)"]);
   });
 
+  it("hides the account's windows for a Bedrock session only when the client is Claude Code, not for an Antigravity client", () => {
+    // The switch is Claude Code's; an Antigravity client's own quota windows still draw whatever is exported for Claude Code.
+    expect(defaultQuotaLines({ usage: { bar: false } }, {}, { product: "antigravity" }, { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual(["5h 25.0% (resets in 1h 30m)"]);
+    expect(defaultQuotaLines({ usage: { bar: false } }, {}, {}, { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual([]);
+  });
+
   it("by default draws the per-model weekly windows after the account's own", () => {
     expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 80 }, MODEL_SCOPED_PAYLOAD)).toEqual(["5h 25.0% (resets in 1h 30m) | Wk 80.0% (resets in 4d 1h) | Fable 60.0% (resets in 3d 0h)"]);
     expect(defaultQuotaLines({}, {}, MODEL_SCOPED_PAYLOAD)[0]).toMatch(/^5h \[.*\] 25\.0% \(resets in 1h 30m\) \| Fable \[.*\] 60\.0% \(resets in 3d 0h\)$/u);

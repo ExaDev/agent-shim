@@ -4,7 +4,7 @@ import { truncateToColumns } from "../../ansi";
 import type { BarCell } from "../../barGrid";
 import { packLines, SEPARATOR } from "../../headerLayout";
 import { paintCore } from "../../messages/around";
-import { hidesSubscriptionWindows } from "../../platform";
+import { hidesSubscriptionWindows, platformEnvOf } from "../../platform";
 import { formatResetTime } from "../../resetTime";
 import { visibleDisplayText } from "../../sanitise";
 import { barCell, FULL_PERCENT, statusColor, withColor, type BarStyle } from "../../style";
@@ -40,7 +40,7 @@ function modelScopedWindows({ payload }: RenderContext): readonly QuotaWindowVie
 /** The windows of the account the session is signed in as: the five-hour and weekly windows, with the per-model weekly ones when asked for and the session selected no provider. None for a Bedrock session (`hidesSubscriptionWindows`: the Bedrock switch on, or a Bedrock model id), which spends none of them. */
 function subscriptionWindows(context: RenderContext): { readonly unified: readonly QuotaWindowView[]; readonly modelScoped: readonly QuotaWindowView[] } {
   const { summary, settings } = context;
-  if (hidesSubscriptionWindows(context.ports.env, context.payload.model?.id)) {
+  if (hidesSubscriptionWindows(platformEnvOf(context.payload, context.ports.env), context.payload.model?.id)) {
     return { unified: [], modelScoped: [] };
   }
   const unified: QuotaWindowView[] = [];

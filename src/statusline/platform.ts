@@ -1,3 +1,5 @@
+import { isAntigravityPayload } from "./client";
+
 /** The labels claude-hud draws beside the model name (`getProviderLabel` in its `src/stdin.ts`), each under the condition `modelPlatformOf` states: the names of products, which no language translates. */
 export type ModelPlatform = "Bedrock" | "Vertex" | "MiniMax" | "Enterprise";
 
@@ -59,4 +61,16 @@ export function isBedrockModelId(modelId: string | undefined): boolean {
  */
 export function hidesSubscriptionWindows(env: Readonly<Record<string, string | undefined>>, modelId: string | undefined): boolean {
   return modelPlatformOf(env, modelId) === "Bedrock" || isBedrockModelId(modelId);
+}
+
+/** The environment of a client that sets none of Claude Code's switches. */
+const NO_SWITCHES: Readonly<Record<string, string | undefined>> = {};
+
+/**
+ * The environment the platform checks read: the statusline's own when the client is Claude Code, whose switches (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, the Anthropic base URL) they are, and none when the client is the Antigravity CLI, which those switches say nothing about even when they are exported for Claude Code.
+ * @param payload - The client's statusline payload, whose `product` names an Antigravity client.
+ * @param env - The environment the statusline runs in.
+ */
+export function platformEnvOf(payload: unknown, env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string | undefined>> {
+  return isAntigravityPayload(payload) ? NO_SWITCHES : env;
 }

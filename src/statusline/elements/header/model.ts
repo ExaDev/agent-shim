@@ -1,7 +1,7 @@
 import type { ResolvedStatusline } from "../../../config/statusline";
 import type { StatuslineSummary } from "../../enrich";
 import { SEPARATOR } from "../../headerLayout";
-import { modelPlatformOf } from "../../platform";
+import { modelPlatformOf, platformEnvOf } from "../../platform";
 import type { RenderContext } from "../context";
 
 /** Whether a dynamic mode's choice names its provider beside the served model: the choice could cross providers, or routing by name left the launch's provider. */
@@ -44,7 +44,7 @@ function modelNameOf({ view, settings, transcriptIdentity }: RenderContext): { r
 /** The model the session is on, followed by the platform label claude-hud draws beside it (`modelPlatformOf`) when one is detected and `model.platform` is on: after the name, with the separator the header puts between its segments, or the label alone when no name is known, as claude-hud still draws it beside its placeholder. Undefined when there is neither a name nor a label to draw. */
 export function modelSegment(context: RenderContext): string | undefined {
   const name = modelName(context);
-  const platform = context.settings.model.platform ? modelPlatformOf(context.ports.env, context.payload.model?.id) : undefined;
+  const platform = context.settings.model.platform ? modelPlatformOf(platformEnvOf(context.payload, context.ports.env), context.payload.model?.id) : undefined;
   if (platform === undefined) {
     return name;
   }

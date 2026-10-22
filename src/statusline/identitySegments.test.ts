@@ -194,6 +194,14 @@ describe("the model segment for a client that sends no display name", () => {
     expect(modelParts(undefined, { CLAUDE_CODE_USE_VERTEX: "1" }, { model: { platform: false } })).toEqual([]);
   });
 
+  it("reads Claude Code's switches only for a Claude Code client, so an Antigravity client draws no platform", () => {
+    const antigravity = { product: "antigravity", model: { id: "gemini-3-pro", display_name: "Gemini 3 Pro" } };
+    const drawn = (payload: Readonly<Record<string, unknown>>, env: Readonly<Record<string, string>>): string[] => segments({ settings: onlyHeader("model"), payload, view: { clientModelName: viewOf(parseClientPayload(payload)).clientModelName }, ports: { env } });
+    expect(drawn(antigravity, { CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["Gemini 3 Pro"]);
+    expect(drawn(antigravity, { CLAUDE_CODE_USE_BEDROCK: "1", ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic" })).toEqual(["Gemini 3 Pro"]);
+    expect(drawn({ model: { id: "claude-opus-4-5", display_name: "Opus 4.5" } }, { CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["Opus 4.5", "Vertex"]);
+  });
+
   it("draws a dynamic mode's served model after the id, then the platform", () => {
     const modelChoice = { requested: "auto", served: "glm-5.3", provider: "zai", providers: ["zai"] };
     expect(modelParts({ id: "auto" }, { CLAUDE_CODE_USE_VERTEX: "1" }, {}, { modelChoice })).toEqual(["auto -> glm-5.3", "Vertex"]);
