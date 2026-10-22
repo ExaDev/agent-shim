@@ -163,7 +163,7 @@ const NOT_WORDS: Readonly<Record<string, readonly string[]>> = {
   "memoryUse.ts": ["B", "KB", "MB", "GB", "TB"],
 };
 
-/** The strings with a comma, colon or semicolon in them that the catalogue does not hold, by module and why: the colon that names the version control in `git:(main)`, which is the syntax of the segment and not a sentence. */
+/** The strings with a comma, colon or semicolon in them that the catalogue does not hold, by module and why: the colon that names the version control in `git:(main)`, which is the syntax of the segment and not a sentence, and the colon in the two MiniMax endpoint URLs the platform check compares a base URL with, which are addresses and not sentences. */
 const PUNCTUATION_KEPT: Readonly<Record<string, readonly string[]>> = {
   "elements/header/vcs.ts": [":("],
   "platform.ts": ["https://api.minimax.io/anthropic", "https://api.minimaxi.com/anthropic"],
