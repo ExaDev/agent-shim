@@ -1,3 +1,9 @@
+## [11.64.1](https://github.com/ExaDev/agent-shim/compare/v11.64.0...v11.64.1) (2026-10-22)
+
+### Bug Fixes
+
+* **deps:** move vitest and its coverage provider to the release that patches the mocker advisory ([7e1c0e4](https://github.com/ExaDev/agent-shim/commit/7e1c0e453713c4a43e036dc117c812dc7b9d27b4))
+
 ## [11.64.0](https://github.com/ExaDev/agent-shim/compare/v11.63.0...v11.64.0) (2026-10-21)
 
 ### Features
