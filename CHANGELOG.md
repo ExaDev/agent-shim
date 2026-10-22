@@ -1,3 +1,14 @@
+## [11.65.1](https://github.com/ExaDev/agent-shim/compare/v11.65.0...v11.65.1) (2026-10-22)
+
+### Performance Improvements
+
+* **frontdoor:** admit requests from an in-memory view of the session registry ([a9f77f5](https://github.com/ExaDev/agent-shim/commit/a9f77f565777418b7008ceabe61b2fae35d9a771))
+* **frontdoor:** answer a launch's models block from the registry view ([1cf5478](https://github.com/ExaDev/agent-shim/commit/1cf5478cf949904d449f7236de98a81d49db3cb1))
+
+### Tests
+
+* **usage:** isolate the in-door launch test from an inherited trust bundle ([0c07d18](https://github.com/ExaDev/agent-shim/commit/0c07d1802dd6b7ea3e79107256fcf753f7397755))
+
 ## [11.65.0](https://github.com/ExaDev/agent-shim/compare/v11.64.1...v11.65.0) (2026-10-22)
 
 ### Features
