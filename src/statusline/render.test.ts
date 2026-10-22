@@ -375,7 +375,7 @@ describe("statusline settings", () => {
   const render = (settings: StatuslineSettings, summary: StatuslineSummary = SUMMARY, terminalWidth = WIDE_TERMINAL): string =>
     renderStatuslineBlock(summary, VIEW, terminalWidth, NOW_MS, resolveStatusline(settings));
 
-  it("draws exactly what it drew before settings existed when every setting is the default", () => {
+  it("draws the same for the default settings as for none given", () => {
     expect(render({})).toBe(renderStatuslineBlock(SUMMARY, VIEW, WIDE_TERMINAL, NOW_MS));
   });
 

@@ -333,11 +333,11 @@
                     "transcript",
                     "auto"
                   ],
-                  "description": "Where the model's name comes from: client is the name the client reports, transcript is the model the session's last reply came from (what a proxy actually served), and auto uses the transcript's model only when it is not a Claude model, which is what a proxy redirect looks like."
+                  "description": "Where the model's name comes from: client is the name the client reports, else its model id, transcript is the model the session's last reply came from (what a proxy actually served), and auto uses the transcript's model only when it is not a Claude model, which is what a proxy redirect looks like."
                 },
                 "platform": {
                   "type": "boolean",
-                  "description": "Whether the model segment ends with the label claude-hud draws beside the model name, chosen from the client's environment and model id as claude-hud chooses it, the first that holds: Bedrock when CLAUDE_CODE_USE_BEDROCK is 1, Vertex when CLAUDE_CODE_USE_VERTEX is 1, MiniMax when ANTHROPIC_BASE_URL (else ANTHROPIC_API_BASE_URL) is https://api.minimax.io/anthropic or https://api.minimaxi.com/anthropic, and Enterprise when the model id is opusplan, sonnetplan or haikuplan. Nothing is drawn when none holds, and the label stands alone when the client names no model. It is not the provider segment, which names the agent-shim provider the launch selected and the door routes to."
+                  "description": "Whether the model segment ends with the label claude-hud draws beside the model name, chosen from the client's environment and model id as claude-hud chooses it, the first that holds: Bedrock when CLAUDE_CODE_USE_BEDROCK is 1, Vertex when CLAUDE_CODE_USE_VERTEX is 1, MiniMax when ANTHROPIC_BASE_URL (else ANTHROPIC_API_BASE_URL) is https://api.minimax.io/anthropic or https://api.minimaxi.com/anthropic, and Enterprise when the model id is opusplan, sonnetplan or haikuplan. Nothing is drawn when none holds, and the label stands alone when no name is known: the client sends neither a display name nor a model id, no override is set and the transcript gives none. It is not the provider segment, which names the agent-shim provider the launch selected and the door routes to."
                 }
               },
               "additionalProperties": false
@@ -614,13 +614,13 @@
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 100,
-                  "description": "The whole percentage of use that at least one quota window must reach for the quota row to be drawn at all; 0 always draws it."
+                  "description": "The whole percentage of use that at least one quota window must reach for the quota row to be drawn at all; 0 never hides it. A Bedrock session draws none of the account's windows, whatever this is."
                 },
                 "sevenDayThreshold": {
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 100,
-                  "description": "The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden. A weekly window with no five-hour window beside it is always drawn, and 0 always draws it, except in a Bedrock session, which draws none of the account's windows."
+                  "description": "The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden, and 0 never hides it. A weekly window with no five-hour window beside it is never hidden by this setting. Neither setting draws anything in a Bedrock session, which draws none of the account's windows, and usage.threshold can still hide the whole row."
                 }
               },
               "additionalProperties": false

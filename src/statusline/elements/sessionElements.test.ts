@@ -109,7 +109,7 @@ const header = (...names: readonly ("sessionName" | "duration" | "speed" | "mode
 const rows = (...names: readonly ("sessionTime" | "promptCache" | "compactions")[]): StatuslineSettings => ({ layout: { header: [], rows: [...names] } });
 
 describe("the session elements", () => {
-  it("draw nothing and read no transcript by default, so a default statusline is what it was", () => {
+  it("draw nothing and read no transcript by default, since the default layout does not list them", () => {
     const unreadable = fakeStatuslinePorts({
       readRange: () => {
         throw new Error("the transcript was read");

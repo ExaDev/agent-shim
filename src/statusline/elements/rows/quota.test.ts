@@ -82,7 +82,7 @@ describe("the quota row's usage settings", () => {
     expect(lines[0]).toBe(`5h [${FILLED.repeat(FIVE_HOUR_FILLED)}${EMPTY.repeat(FIVE_HOUR_EMPTY)}] 25.0% (1h 30m) | Wk [${FILLED.repeat(WEEK_FILLED)}${EMPTY.repeat(WEEK_EMPTY)}] 40.0% (4d 1h)`);
   });
 
-  it("by default introduces the reset with its words and hides a weekly window below claude-hud's weekly threshold", () => {
+  it("by default introduces the reset with its words and hides a weekly window below claude-hud's weekly threshold when a five-hour window is drawn beside it", () => {
     expect(defaultQuotaLines({ usage: { bar: false } })).toEqual(["5h 25.0% (resets in 1h 30m)"]);
     expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 80 })).toEqual(["5h 25.0% (resets in 1h 30m) | Wk 80.0% (resets in 4d 1h)"]);
     expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 79 })).toEqual(["5h 25.0% (resets in 1h 30m)"]);

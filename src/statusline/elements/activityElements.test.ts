@@ -82,7 +82,7 @@ function render(settings: StatuslineSettings, options: { readonly nowMs?: number
 const rows = (...names: readonly ("tools" | "skills" | "mcp" | "agents" | "todos")[]): StatuslineSettings => ({ layout: { header: [], rows: [...names] } });
 
 describe("the activity rows", () => {
-  it("draw nothing and read no transcript by default, so a default statusline is what it was", () => {
+  it("draw nothing and read no transcript by default, since the default layout does not list them", () => {
     expect(render({}, { env: {} }).map(plain)).toEqual([]);
     const unreadable = fakeStatuslinePorts({
       readRange: () => {
