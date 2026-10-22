@@ -149,7 +149,7 @@ describe("the documented restore of the default before it became a superset", ()
     return renderStatuslineBlock({ summary: fakeStatuslineSummary({ ...QUOTA, sevenDayUsed }), view: viewOf(payload), payload, terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, settings: resolveStatusline(RESTORE), ports: fakeStatuslinePorts({ env: { NO_COLOR: "1", ...env } }) }).replace(ANSI, "");
   }
 
-  it("draws what the default drew before for a session that is not a Bedrock one and has a display name, whatever the weekly use", () => {
+  it("draws what the default drew before for a session that is not a Bedrock one and has an unpadded display name, whatever the weekly use", () => {
     expect(draw(SESSION, WEEKLY_HIGH)).toBe(BEFORE.weeklyHigh);
     expect(draw(SESSION, WEEKLY_LOW)).toBe(BEFORE.weeklyLow);
     expect(draw(SESSION, WEEKLY_HIGH, { CLAUDE_CODE_USE_VERTEX: "1" })).toBe(BEFORE.weeklyHigh);
@@ -162,7 +162,7 @@ describe("the documented restore of the default before it became a superset", ()
     }
   });
 
-  it("names the model by its id when the client sends no display name, where the default before drew no model", () => {
+  it("names the model by its id when the client sends no display name or a blank one, where the default before drew no model for the first", () => {
     expect(draw({ ...SESSION, model: { id: "claude-opus-4-5" } }, WEEKLY_HIGH)).toBe(BEFORE.weeklyHigh.replace("Opus 4.5", "claude-opus-4-5"));
   });
 

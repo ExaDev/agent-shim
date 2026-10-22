@@ -115,7 +115,7 @@ describe("the quota row's usage settings", () => {
     expect(defaultQuotaLines({ usage: { bar: false } }, {}, {}, { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual([]);
   });
 
-  it("by default draws the per-model weekly windows after the account's own", () => {
+  it("by default draws the per-model weekly windows after the five-hour and weekly ones", () => {
     expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 80 }, MODEL_SCOPED_PAYLOAD)).toEqual(["5h 25.0% (resets in 1h 30m) | Wk 80.0% (resets in 4d 1h) | Fable 60.0% (resets in 3d 0h)"]);
     expect(defaultQuotaLines({}, {}, MODEL_SCOPED_PAYLOAD)[0]).toMatch(/^5h \[.*\] 25\.0% \(resets in 1h 30m\) \| Fable \[.*\] 60\.0% \(resets in 3d 0h\)$/u);
   });
@@ -179,7 +179,7 @@ describe("the quota row's usage settings", () => {
 });
 
 describe("the per-model weekly windows", () => {
-  it("draw only when usage.modelScoped is on, after the account's own windows", () => {
+  it("draw only when usage.modelScoped is on, after the five-hour and weekly windows", () => {
     expect(quotaLines({ usage: { bar: false } }, {}, MODEL_SCOPED_PAYLOAD)).toEqual(["5h 25.0% (1h 30m) | Wk 40.0% (4d 1h)"]);
     expect(quotaLines({ usage: { bar: false, modelScoped: true } }, {}, MODEL_SCOPED_PAYLOAD)).toEqual(["5h 25.0% (1h 30m) | Wk 40.0% (4d 1h) | Fable 60.0% (3d 0h)"]);
   });
@@ -238,7 +238,7 @@ describe("the per-model weekly windows", () => {
   });
 });
 
-describe("the quota row for windows other than the account's own", () => {
+describe("the quota row for windows other than the five-hour and weekly pair", () => {
   const FAMILIES = [
     { measures: "Gemini", utilization: 0.5, resetsAt: "2026-10-16T10:30:00.000Z" },
     { measures: "Argon", utilization: 0.2, resetsAt: undefined },

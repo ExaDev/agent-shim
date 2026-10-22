@@ -548,11 +548,11 @@
                     "properties": {
                       "fiveHour": {
                         "type": "string",
-                        "description": "The name of the five-hour subscription window; empty uses the language's own name for it."
+                        "description": "The name of the five-hour window; empty uses the language's own name for it."
                       },
                       "sevenDay": {
                         "type": "string",
-                        "description": "The name of the weekly subscription window; empty uses the language's own name for it."
+                        "description": "The name of the weekly window; empty uses the language's own name for it."
                       }
                     },
                     "additionalProperties": false
@@ -602,7 +602,7 @@
                       },
                       "modelScoped": {
                         "type": "boolean",
-                        "description": "Whether the per-model weekly windows the client reports (rate_limits.model_scoped) are drawn after the account's own windows; they describe the signed-in account, so a session that selected a provider never shows them, nor does a Bedrock session, whose subscription windows do not apply."
+                        "description": "Whether the per-model weekly windows the client reports (rate_limits.model_scoped) are drawn after the five-hour and weekly windows; they describe the signed-in account, so a session that selected a provider never shows them, nor does a Bedrock session, whose subscription windows do not apply."
                       },
                       "timeFormat": {
                         "type": "string",

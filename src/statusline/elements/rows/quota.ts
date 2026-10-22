@@ -17,7 +17,7 @@ interface QuotaWindowView {
   readonly resetsAt: string | undefined;
   /** The window's length, when it is known: the share of it already gone needs it. */
   readonly periodMs: number | undefined;
-  /** Whether this is the weekly window of the unified pair (the account's, or a selected provider's), the one `usage.sevenDayThreshold` can hide. */
+  /** Whether this is the weekly window of the unified pair, whoever reports it, the one `usage.sevenDayThreshold` can hide. */
   readonly weekly: boolean;
 }
 
@@ -37,7 +37,7 @@ function modelScopedWindows({ payload }: RenderContext): readonly QuotaWindowVie
   });
 }
 
-/** The subscription windows: the five-hour and weekly windows (the account's, or a selected provider's when it reports them in the unified form), with the per-model weekly ones when asked for and the session selected no provider. None for a Bedrock session that selected no provider (`hidesSubscriptionWindows`: the Bedrock switch on, or a Bedrock model id, for a client that is not the Antigravity CLI), which spends none of them; the windows a provider session holds are that provider's. */
+/** The five-hour and weekly windows of the unified pair, whoever reports them (the client's payload, the identity's recorded usage or a selected provider), with the per-model weekly ones when asked for and the session selected no provider. None for a Bedrock session that selected no provider (`hidesSubscriptionWindows`: the Bedrock switch on, or a Bedrock model id, for a client that is not the Antigravity CLI), which spends none of them; the windows a provider session holds are that provider's. */
 function subscriptionWindows(context: RenderContext): { readonly unified: readonly QuotaWindowView[]; readonly modelScoped: readonly QuotaWindowView[] } {
   const { summary, settings } = context;
   const inputs = platformInputsOf(context.payload, context.ports.env, context.payload.model?.id);

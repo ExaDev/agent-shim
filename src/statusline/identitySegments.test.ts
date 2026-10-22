@@ -163,7 +163,7 @@ describe("the platform beside the model", () => {
   });
 });
 
-describe("the model segment for a client that sends no display name", () => {
+describe("the model segment for a client that sends no usable display name", () => {
   /** The model segment's parts for a payload whose `model` is `model`, with the view read from that payload as the statusline reads it. */
   function modelParts(model: Readonly<Record<string, string>> | undefined, env: Readonly<Record<string, string>> = {}, settings: StatuslineSettings = {}, summary: Partial<StatuslineSummary> = {}): string[] {
     const payload = model === undefined ? {} : { model };
@@ -176,7 +176,7 @@ describe("the model segment for a client that sends no display name", () => {
     expect(modelParts({ id: "claude-opus-4-5" })).toEqual(["claude-opus-4-5"]);
   });
 
-  it("draws the id as it stands, where claude-hud rewrites a Bedrock or enterprise id into a readable name", () => {
+  it("draws the id trimmed and otherwise as it stands, where claude-hud rewrites a Bedrock or enterprise id into a readable name", () => {
     expect(modelParts({ id: "us.anthropic.claude-opus-4-5-20251101-v1:0" }, { CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual(["us.anthropic.claude-opus-4-5-20251101-v1:0", "Bedrock"]);
     expect(modelParts({ id: "opusplan" })).toEqual(["opusplan", "Enterprise"]);
   });

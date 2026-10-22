@@ -270,8 +270,8 @@ const SHAPES = {
     criticalAt: wholePercent.describe("The whole percentage of use at which a bar turns red."),
   },
   labels: {
-    fiveHour: windowLabel.describe("The name of the five-hour subscription window; empty uses the language's own name for it."),
-    sevenDay: windowLabel.describe("The name of the weekly subscription window; empty uses the language's own name for it."),
+    fiveHour: windowLabel.describe("The name of the five-hour window; empty uses the language's own name for it."),
+    sevenDay: windowLabel.describe("The name of the weekly window; empty uses the language's own name for it."),
   },
   bar: {
     width: z.number().int().min(1).max(MAX_BAR_CELLS).describe("A bar's width in cells before the line's spare width is shared out among the bars."),
@@ -283,7 +283,7 @@ const SHAPES = {
     bar: z.boolean().describe("Whether each quota window is drawn as a bar, or as text alone."),
     compact: z.boolean().describe("Whether the quota windows are drawn as one short line of text (`5h: 25.0% (1h 30m)`) in place of bars; it takes precedence over usage.bar."),
     resetLabel: z.boolean().describe("Whether a window's reset time is introduced with `resets in` (`resets` for a wall-clock time), as in `(resets in 1h 30m)`, rather than the bare `(1h 30m)`."),
-    modelScoped: z.boolean().describe("Whether the per-model weekly windows the client reports (rate_limits.model_scoped) are drawn after the account's own windows; they describe the signed-in account, so a session that selected a provider never shows them, nor does a Bedrock session, whose subscription windows do not apply."),
+    modelScoped: z.boolean().describe("Whether the per-model weekly windows the client reports (rate_limits.model_scoped) are drawn after the five-hour and weekly windows; they describe the signed-in account, so a session that selected a provider never shows them, nor does a Bedrock session, whose subscription windows do not apply."),
     timeFormat: z.enum(STATUSLINE_TIME_FORMATS).describe("How a window's reset is shown: the time left (`1h 30m`), the wall-clock time (`at 14:30`), both, the share of the window already gone (`53% elapsed`), or that share and the wall-clock time. A window whose length is not known shows no share."),
     threshold: thresholdPercent.describe("The whole percentage of use that at least one quota window must reach for the quota row to be drawn at all; 0 never hides it. A Bedrock session that selected no provider draws no five-hour, weekly or per-model window, whatever this is."),
     sevenDayThreshold: thresholdPercent.describe("The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden, and 0 never hides it. A weekly window with no five-hour window beside it is never hidden by this setting. A Bedrock session that selected no provider draws no five-hour, weekly or per-model window, so this setting has nothing to hide there, and usage.threshold can still hide the whole row."),
