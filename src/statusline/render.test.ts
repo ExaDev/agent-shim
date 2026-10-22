@@ -96,7 +96,7 @@ const VIEW = {
   freshInputTokens: 34_000,
 };
 
-/** Draws the weekly window whatever its use, for a test of the layout that needs both subscription windows while the summary's weekly use is below the default weekly threshold. */
+/** Draws the weekly window whatever its use, for a test of the layout that needs both the five-hour and weekly windows while the summary's weekly use is below the default weekly threshold. */
 const WEEKLY_ALWAYS: StatuslineSettings = { usage: { sevenDayThreshold: 0 } };
 
 const ESCAPE_CHAR_CODE = 27;
@@ -519,7 +519,7 @@ describe("statusline settings", () => {
     expect(cut[1]).toBe("\u2500".repeat(NARROW_TERMINAL - RESERVED_COLUMNS));
   });
 
-  it("names the two subscription windows as set", () => {
+  it("names the five-hour and weekly windows as set", () => {
     const text = stripAnsi(render({ ...WEEKLY_ALWAYS, labels: { fiveHour: "Session", sevenDay: "Week" } }));
     expect(text).toContain("Session ");
     expect(text).toContain("Week ");

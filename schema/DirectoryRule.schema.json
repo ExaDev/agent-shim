@@ -330,7 +330,7 @@
                     "transcript",
                     "auto"
                   ],
-                  "description": "Where the model's name comes from: client is the name the client reports, else its model id, transcript is the model the session's last reply came from (what a proxy actually served), and auto uses the transcript's model only when it is not a Claude model, which is what a proxy redirect looks like."
+                  "description": "Where the model's name comes from: client is the name the client reports (its display name, else its model id, each trimmed and read as absent when blank), transcript is the model the session's last reply came from (what a proxy actually served), and auto uses the transcript's model only when it is not a Claude model, which is what a proxy redirect looks like."
                 },
                 "platform": {
                   "type": "boolean",

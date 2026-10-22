@@ -98,7 +98,7 @@ const EVERYTHING: StatuslineSettings = {
   project: { addedDirsLayout: "row" },
 };
 
-/** The usage settings every scene holds fixed beneath the settings it names, so the words of both subscription windows and of a bare reset time are drawn whatever the defaults are: the reset time bare unless a scene asks for the label, and the weekly window drawn whatever its use. */
+/** The usage settings every scene holds fixed beneath the settings it names, so the words of the five-hour and weekly windows and of a bare reset time are drawn whatever the defaults are: the reset time bare unless a scene asks for the label, and the weekly window drawn whatever its use. */
 const HELD_USAGE = { resetLabel: false, sevenDayThreshold: 0 } as const;
 
 interface Draw {

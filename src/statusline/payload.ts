@@ -71,7 +71,7 @@ function nonBlank(value: string | undefined): string | undefined {
   return trimmed === "" ? undefined : trimmed;
 }
 
-/** The payload fields the context row and the model segment draw, as the renderer takes them. The model's name is the client's display name, else its model id as it stands, as claude-hud's `getModelName` falls back; each is trimmed and read as absent when blank. */
+/** The payload fields the context row and the model segment draw, as the renderer takes them. The model's name is the client's display name, else its model id, each trimmed and read as absent when blank: claude-hud's `getModelName` falls back the same way but also rewrites an enterprise or Bedrock id into a readable name, which is not done here. */
 export function viewOf(payload: ClientPayload): StatuslinePayloadView {
   return {
     clientModelName: nonBlank(payload.model?.display_name) ?? nonBlank(payload.model?.id),
