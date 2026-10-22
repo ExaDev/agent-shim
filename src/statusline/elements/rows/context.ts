@@ -1,4 +1,4 @@
-import { AUTOCOMPACT_RESERVE_FRACTION, AUTOCOMPACT_RESERVE_RAMP_END, AUTOCOMPACT_RESERVE_RAMP_START, contextBands } from "../../../config/statusline";
+import { AUTOCOMPACT_RESERVE_FRACTION, AUTOCOMPACT_RESERVE_RAMP_END, AUTOCOMPACT_RESERVE_RAMP_START, contextBreakdownAt } from "../../../config/statusline";
 import type { Translate } from "../../messages/catalogues";
 import { barCell, formatTokens, FULL_PERCENT, statusColor, withColor, type BarStyle } from "../../style";
 import { barStyleOf, type RenderContext, type RowOutput, type StatuslinePayloadView } from "../context";
@@ -54,7 +54,7 @@ function estimateOf(kind: "raw" | "buffered", tokens: number, windowTokens: numb
   return kind === "buffered" ? bufferedPercent(tokens, windowTokens) : Math.min(FULL_PERCENT, (tokens / windowTokens) * FULL_PERCENT);
 }
 
-/** The tokens the last request held, over the input and the cache, as the breakdown at high use writes them, or nothing when the client did not report the last request. */
+/** The tokens the last request held, over the input and the cache, as the breakdown writes them, or nothing when the client did not report the last request. */
 function breakdownText({ payload, t }: RenderContext): string | undefined {
   const usage = payload.context_window?.current_usage;
   if (usage === undefined) {
@@ -64,7 +64,7 @@ function breakdownText({ payload, t }: RenderContext): string | undefined {
   return ` (${t("context.breakdown", { input: formatTokens(usage.input_tokens ?? 0), cached: formatTokens(cached) })})`;
 }
 
-/** The context window's bar, or its figures alone, written as the settings ask: the tokens held and the percentage in use, the prompt cache's hit share, and at high use the breakdown of the last request. */
+/** The context window's bar, or its figures alone, written as the settings ask: the tokens held and the percentage in use, the prompt cache's hit share, and from the breakdown threshold (`contextBreakdownAt`) the breakdown of the last request. */
 export function contextRow(context: RenderContext): RowOutput {
   const { view, palette, settings } = context;
   const percent = usedPercentOf(context);
@@ -72,7 +72,7 @@ export function contextRow(context: RenderContext): RowOutput {
     return settings.context.bar === "shown" ? { kind: "bars", cells: [] } : { kind: "text", lines: [] };
   }
   const style = barStyleOf(context, "context");
-  const bands = contextBands(settings);
+  const bands = { warnAt: settings.context.warnAt, criticalAt: settings.context.criticalAt };
   const fraction = Math.max(0, Math.min(1, percent / FULL_PERCENT));
   const color = statusColor(fraction, true, { ...style, bands });
   const windowTokens = windowTokensOf(context);
@@ -105,7 +105,7 @@ export function contextRow(context: RenderContext): RowOutput {
     default:
       return settings.context.value satisfies never;
   }
-  const high = settings.context.breakdown === "critical" && percent >= bands.criticalAt ? breakdownText(context) : undefined;
+  const high = settings.context.breakdown === "critical" && percent >= contextBreakdownAt(settings) ? breakdownText(context) : undefined;
   if (settings.context.bar === "hidden" && afterBar.length === 0) {
     return { kind: "text", lines: [] };
   }

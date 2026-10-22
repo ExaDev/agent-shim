@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { statuslineKeys } from "../statusline/keys";
-import { contextBands, STATUSLINE_PRESETS, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_EXTRA_COMMAND_ARGUMENT_CHARS, MAX_EXTRA_COMMAND_ARGUMENTS, MAX_STATUSLINE_COLUMNS, MAX_STATUSLINE_LABEL_COLUMNS, MIN_STATUSLINE_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
+import { contextBreakdownAt, STATUSLINE_PRESETS, MAX_ACCOUNT_USER_CHARS, MAX_DISPLAY_TEXT_CHARS, MAX_EXTRA_COMMAND_ARGUMENT_CHARS, MAX_EXTRA_COMMAND_ARGUMENTS, MAX_STATUSLINE_COLUMNS, MAX_STATUSLINE_LABEL_COLUMNS, MIN_STATUSLINE_COLUMNS, MAX_STATUSLINE_PALETTE_INDEX, mergeStatuslineSettings, resolveStatusline, STATUSLINE_DEFAULTS, StatuslineSchema } from "./statusline";
 
 const A_CONFIGURED_WIDTH = 100;
 /** The character code of the escape that starts a terminal control sequence. */
@@ -12,6 +12,13 @@ const WARN_ABOVE_DEFAULT_CRITICAL = 95;
 const CRITICAL_ABOVE_WARN = 99;
 const OWN_WINDOW = 100_000;
 const OWN_PAIR = { warnAt: 40, criticalAt: 50 };
+/** claude-hud's context bar thresholds (`display.contextWarningThreshold` and `display.contextCriticalThreshold` in its `DEFAULT_CONFIG`, `src/config.ts`, at the commit `src/statusline/parity/inventory.ts` names), recorded here apart from the statusline's own constant so that the defaults are checked against claude-hud rather than against themselves. */
+const CLAUDE_HUD_CONTEXT_WARNING_THRESHOLD = 70;
+const CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD = 85;
+/** The critical threshold the context bar had before it took claude-hud's, which restores the earlier red and breakdown. */
+const EARLIER_CONTEXT_CRITICAL_AT = 90;
+/** The highest whole percentage a threshold may take. */
+const LAST_PERCENT = 100;
 const SHALLOWER_BAR_WIDTH = 6;
 
 describe("StatuslineSchema", () => {
@@ -391,33 +398,51 @@ describe("the usage and clock settings", () => {
 
 describe("the context group", () => {
   it("accepts each key with its values and refuses a value outside them", () => {
-    const good = { context: { bar: "hidden", value: "remaining", warnAt: 60, criticalAt: 85, autoCompactWindow: 160_000, estimate: "buffered", breakdown: "critical" } };
+    const good = { context: { bar: "hidden", value: "remaining", warnAt: 60, criticalAt: 85, breakdownAt: 95, autoCompactWindow: 160_000, estimate: "buffered", breakdown: "critical" } };
     expect(StatuslineSchema.parse(good)).toEqual(good);
-    const bad = [{ bar: "off" }, { value: "ratio" }, { warnAt: 0 }, { warnAt: -1 }, { criticalAt: 101 }, { warnAt: 50.5 }, { autoCompactWindow: 0 }, { autoCompactWindow: -1 }, { autoCompactWindow: 1.5 }, { estimate: "always" }, { breakdown: "always" }];
+    const bad = [{ bar: "off" }, { value: "ratio" }, { warnAt: 0 }, { warnAt: -1 }, { criticalAt: 101 }, { warnAt: 50.5 }, { breakdownAt: 0 }, { breakdownAt: 101 }, { breakdownAt: 87.5 }, { breakdownAt: "90" }, { autoCompactWindow: 0 }, { autoCompactWindow: -1 }, { autoCompactWindow: 1.5 }, { estimate: "always" }, { breakdown: "always" }];
     for (const context of bad) {
       expect(StatuslineSchema.safeParse({ context }).success, JSON.stringify(context)).toBe(false);
     }
   });
 
-  it("follows the bands for a threshold left unset, and uses its own where one is set", () => {
-    expect(contextBands(resolveStatusline({ bands: { warnAt: 60, criticalAt: 80 } }))).toEqual({ warnAt: 60, criticalAt: 80 });
-    expect(contextBands(resolveStatusline({ context: { warnAt: 50 } }))).toEqual({ warnAt: 50, criticalAt: STATUSLINE_DEFAULTS.bands.criticalAt });
-    expect(contextBands(resolveStatusline({ bands: { warnAt: 60, criticalAt: 80 }, context: { warnAt: 70, criticalAt: 85 } }))).toEqual({ warnAt: 70, criticalAt: 85 });
+  it("defaults the context bar's thresholds to claude-hud's context thresholds, apart from the bands the other bars follow", () => {
+    expect(STATUSLINE_DEFAULTS.context.warnAt).toBe(CLAUDE_HUD_CONTEXT_WARNING_THRESHOLD);
+    expect(STATUSLINE_DEFAULTS.context.criticalAt).toBe(CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD);
+    expect(STATUSLINE_DEFAULTS.bands).toEqual({ warnAt: 70, criticalAt: 90 });
+    expect(resolveStatusline({ bands: { warnAt: 60, criticalAt: 95 } }).context).toMatchObject({ warnAt: CLAUDE_HUD_CONTEXT_WARNING_THRESHOLD, criticalAt: CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD });
+    expect(resolveStatusline({ bands: { warnAt: 60, criticalAt: 80 }, context: { warnAt: 50, criticalAt: EARLIER_CONTEXT_CRITICAL_AT } }).context).toMatchObject({ warnAt: 50, criticalAt: EARLIER_CONTEXT_CRITICAL_AT });
   });
 
-  it("refuses a context warning threshold at or above the critical one, whichever of the two comes from the bands", () => {
-    expect(() => resolveStatusline({ context: { warnAt: 95 } })).toThrow(/context\.warnAt \(95\) must be below context\.criticalAt \(90\)/);
-    expect(() => resolveStatusline({ context: { criticalAt: 60 } })).toThrow(/context\.warnAt \(70\) must be below context\.criticalAt \(60\)/);
+  it("starts the breakdown at context.breakdownAt, and at the context bar's critical threshold while that is unset", () => {
+    expect(contextBreakdownAt(STATUSLINE_DEFAULTS)).toBe(CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD);
+    expect(contextBreakdownAt(resolveStatusline({ context: { criticalAt: EARLIER_CONTEXT_CRITICAL_AT } }))).toBe(EARLIER_CONTEXT_CRITICAL_AT);
+    const separate = resolveStatusline({ context: { breakdownAt: EARLIER_CONTEXT_CRITICAL_AT } });
+    expect(contextBreakdownAt(separate)).toBe(EARLIER_CONTEXT_CRITICAL_AT);
+    expect(separate.context.criticalAt).toBe(CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD);
+    expect(contextBreakdownAt(resolveStatusline({ bands: { criticalAt: 95 } }))).toBe(CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD);
+  });
+
+  it("lets the breakdown threshold sit below, at or above either colour threshold", () => {
+    for (const breakdownAt of [1, OWN_PAIR.warnAt, CLAUDE_HUD_CONTEXT_WARNING_THRESHOLD, CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD, CRITICAL_ABOVE_WARN, LAST_PERCENT]) {
+      expect(contextBreakdownAt(resolveStatusline({ context: { breakdownAt } })), String(breakdownAt)).toBe(breakdownAt);
+    }
+  });
+
+  it("refuses a context warning threshold at or above the critical one, and checks the bands apart from it", () => {
+    expect(() => resolveStatusline({ context: { warnAt: 95 } })).toThrow(/^statusline context\.warnAt \(95\) must be below context\.criticalAt \(85\)$/);
+    expect(() => resolveStatusline({ context: { warnAt: CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD } })).toThrow(/context\.warnAt \(85\) must be below context\.criticalAt \(85\)/);
+    expect(() => resolveStatusline({ context: { criticalAt: 60 } })).toThrow(/^statusline context\.warnAt \(70\) must be below context\.criticalAt \(60\)$/);
+    expect(resolveStatusline({ bands: { warnAt: 88, criticalAt: 95 } }).context).toMatchObject({ warnAt: CLAUDE_HUD_CONTEXT_WARNING_THRESHOLD, criticalAt: CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD });
     expect(resolveStatusline({ context: OWN_PAIR }).context.criticalAt).toBe(OWN_PAIR.criticalAt);
   });
 
-  it("defaults to the estimate with the compaction reserve and the breakdown at high use, as claude-hud's default does", () => {
-    expect(STATUSLINE_DEFAULTS.context).toEqual({ bar: "shown", value: "both", estimate: "buffered", breakdown: "critical" });
+  it("defaults to claude-hud's context thresholds, the estimate with the compaction reserve and the breakdown, as claude-hud's default does", () => {
+    expect(STATUSLINE_DEFAULTS.context).toEqual({ bar: "shown", value: "both", warnAt: CLAUDE_HUD_CONTEXT_WARNING_THRESHOLD, criticalAt: CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD, estimate: "buffered", breakdown: "critical" });
   });
 
   it("has no default for the keys that stay unset", () => {
-    expect(STATUSLINE_DEFAULTS.context.warnAt).toBeUndefined();
-    expect(STATUSLINE_DEFAULTS.context.criticalAt).toBeUndefined();
+    expect(STATUSLINE_DEFAULTS.context.breakdownAt).toBeUndefined();
     expect(STATUSLINE_DEFAULTS.context.autoCompactWindow).toBeUndefined();
     expect(resolveStatusline({ context: { autoCompactWindow: OWN_WINDOW } }).context.autoCompactWindow).toBe(OWN_WINDOW);
   });
@@ -451,15 +476,18 @@ describe("the activity settings", () => {
   });
 });
 
-describe("unsetting an optional setting from a layer", () => {
-  const OPTIONAL = [
+describe("writing null for a setting from a layer", () => {
+  const RESETTABLE = [
     ["context", "warnAt", OWN_PAIR.warnAt],
     ["context", "criticalAt", OWN_PAIR.criticalAt],
+  ] as const;
+  const OPTIONAL = [
+    ["context", "breakdownAt", EARLIER_CONTEXT_CRITICAL_AT],
     ["context", "autoCompactWindow", OWN_WINDOW],
   ] as const;
 
-  it("accepts null for exactly the optional settings in a layer", () => {
-    for (const [group, name, value] of OPTIONAL) {
+  it("accepts null for exactly the optional settings and the context bar's thresholds in a layer", () => {
+    for (const [group, name, value] of [...RESETTABLE, ...OPTIONAL]) {
       expect(StatuslineSchema.safeParse({ [group]: { [name]: null } }).success, `${name} null`).toBe(true);
       expect(StatuslineSchema.safeParse({ [group]: { [name]: value } }).success, `${name} value`).toBe(true);
     }
@@ -468,10 +496,12 @@ describe("unsetting an optional setting from a layer", () => {
     }
   });
 
-  it("lists exactly those settings as optional, with no default", () => {
-    const keys = statuslineKeys().filter((key) => key.optional);
-    expect(keys.map((key) => key.path)).toEqual(OPTIONAL.map(([group, name]) => `${group}.${name}`));
-    expect(JSON.stringify(z.toJSONSchema(StatuslineSchema, { io: "input" }))).toContain("A layer may write null to return it to unset");
+  it("lists the optional settings as optional, with no default, and every setting that takes null as such", () => {
+    expect(statuslineKeys().filter((key) => key.optional).map((key) => key.path)).toEqual(OPTIONAL.map(([group, name]) => `${group}.${name}`));
+    expect(statuslineKeys().filter((key) => key.unsettable).map((key) => key.path)).toEqual([...RESETTABLE, ...OPTIONAL].map(([group, name]) => `${group}.${name}`));
+    const described = JSON.stringify(z.toJSONSchema(StatuslineSchema, { io: "input" }));
+    expect(described).toContain("A layer may write null to return it to unset");
+    expect(described).toContain("A layer may write null to return it to its default");
   });
 
   it("removes the key when merged over a layer that set it, or over nothing, and leaves no null behind", () => {
@@ -480,11 +510,18 @@ describe("unsetting an optional setting from a layer", () => {
     expect(mergeStatuslineSettings({ bar: { width: 6 } }, { context: { warnAt: null } })).toEqual({ bar: { width: 6 }, context: {} });
   });
 
-  it("resolves a null to the setting unset, following the bands again", () => {
-    const resolved = resolveStatusline({ bands: { warnAt: 55, criticalAt: 80 }, context: { warnAt: null, autoCompactWindow: null } });
-    expect(resolved.context).not.toHaveProperty("warnAt");
+  it("resolves a null to the default of a setting that has one, and to unset for one that has none", () => {
+    const resolved = resolveStatusline({ bands: { warnAt: 55, criticalAt: 80 }, context: { warnAt: null, criticalAt: null, breakdownAt: null, autoCompactWindow: null } });
+    expect(resolved.context).toMatchObject({ warnAt: CLAUDE_HUD_CONTEXT_WARNING_THRESHOLD, criticalAt: CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD });
+    expect(resolved.context).not.toHaveProperty("breakdownAt");
     expect(resolved.context).not.toHaveProperty("autoCompactWindow");
-    expect(contextBands(resolved)).toEqual({ warnAt: 55, criticalAt: 80 });
+    expect(contextBreakdownAt(resolved)).toBe(CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD);
+  });
+
+  it("returns a context threshold a shallower layer set to its default when a deeper layer writes null", () => {
+    const layered = mergeStatuslineSettings({ context: { criticalAt: EARLIER_CONTEXT_CRITICAL_AT, breakdownAt: EARLIER_CONTEXT_CRITICAL_AT } }, { context: { criticalAt: null, breakdownAt: null } });
+    expect(layered).toEqual({ context: {} });
+    expect(resolveStatusline(StatuslineSchema.parse(layered)).context.criticalAt).toBe(CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD);
   });
 });
 

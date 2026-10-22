@@ -51,6 +51,11 @@ const WEEK_EMPTY = 37;
 const PLAIN = { NO_COLOR: "1" };
 const COLOURED = {};
 
+/** The bands' default critical threshold, which colours the quota bars, a use at the context bar's default critical threshold (claude-hud's), and how far under a threshold a use still counts as under it. */
+const QUOTA_CRITICAL_AT = 90;
+const QUOTA_AT_CONTEXT_CRITICAL = 85;
+const JUST_BELOW_CRITICAL = 0.1;
+
 const MODEL_SCOPED_PAYLOAD = { rate_limits: { model_scoped: [{ display_name: "Fable", utilization: 60, resets_at: "2026-10-19T09:00:00.000Z" }] } };
 
 /** The usage settings the tests of one setting hold fixed beneath the settings they name, so each exercises that setting alone: the reset time bare, the weekly window drawn whatever its use, and no per-model windows. The defaults themselves are pinned by the tests of the default row. */
@@ -169,6 +174,14 @@ describe("the quota row's usage settings", () => {
     expect(quotaLines({ usage: { threshold: 41 } })).toEqual([]);
     expect(quotaLines({ usage: { threshold: 41, bar: false, sevenDayThreshold: 90 } })).toEqual([]);
     expect(quotaLines({ usage: { threshold: 40, bar: false, sevenDayThreshold: 90 } })).toEqual(["5h 25.0% (1h 30m)"]);
+  });
+
+  it("turns a window red from bands.criticalAt by default, which the context bar's own critical threshold does not move", () => {
+    const at = (used: number, settings: StatuslineSettings = {}): string => quotaLines(settings, { fiveHourUsed: used }, {}, COLOURED)[0] ?? "";
+    expect(at(QUOTA_AT_CONTEXT_CRITICAL)).toContain(`${ESCAPE}[33m85.0%`);
+    expect(at(QUOTA_CRITICAL_AT - JUST_BELOW_CRITICAL)).toContain(`${ESCAPE}[33m89.9%`);
+    expect(at(QUOTA_CRITICAL_AT)).toContain(`${ESCAPE}[31m90.0%`);
+    expect(at(QUOTA_AT_CONTEXT_CRITICAL, { context: { criticalAt: 80 } })).toContain(`${ESCAPE}[33m85.0%`);
   });
 
   it("keeps the colour bands independent of the thresholds that decide what is drawn", () => {

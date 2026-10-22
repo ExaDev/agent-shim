@@ -10,7 +10,7 @@ const MILLION = 1_000_000;
 const TEN = 10;
 export const FULL_PERCENT = 100;
 export const ONE_PERCENT = 1;
-/** The colour bands on a used fraction: red from `criticalAt`, yellow from `warnAt` (whole percentages), green under it. The defaults are the Antigravity statusline's own (red from 90%, yellow from 70%). */
+/** The colour bands on a used fraction: red from `criticalAt`, yellow from `warnAt` (whole percentages), green under it. The defaults of `bands` are the Antigravity statusline's own (red from 90%, yellow from 70%), and the context bar's (`context.warnAt`, `context.criticalAt`) are claude-hud's. */
 interface ColourBands {
   readonly warnAt: number;
   readonly criticalAt: number;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveStatusline, STATUSLINE_DEFAULTS, type ResolvedStatusline, type StatuslineSettings, type STATUSLINE_HEADER_SEGMENTS, type STATUSLINE_ROWS } from "../../config/statusline";
+import { contextBreakdownAt, resolveStatusline, STATUSLINE_DEFAULTS, type ResolvedStatusline, type StatuslineSettings, type STATUSLINE_HEADER_SEGMENTS, type STATUSLINE_ROWS } from "../../config/statusline";
 import { ESCAPE } from "../ansi";
 import { parseClientPayload, viewOf } from "../payload";
 import { renderStatuslineBlock } from "../render";
@@ -9,6 +9,8 @@ import { inventoryKeys } from "./map";
 
 /** claude-hud's default share of the weekly window from which it draws that window (`display.sevenDayThreshold` in its `DEFAULT_CONFIG`, `src/config.ts`, at the commit `inventory.ts` names), recorded here apart from the statusline's own constant so that a change to the default is checked against claude-hud rather than against itself. */
 const CLAUDE_HUD_SEVEN_DAY_THRESHOLD = 80;
+/** claude-hud's default context critical threshold (`display.contextCriticalThreshold` in its `DEFAULT_CONFIG`), from which its context bar turns red and its token breakdown appears, recorded apart from the statusline's own constant for the same reason. */
+const CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD = 85;
 
 /**
  * Every element stock claude-hud draws under its own default configuration (its `DEFAULT_CONFIG` and `DEFAULT_ELEMENT_ORDER`, at the commit `inventory.ts` names), keyed as the parity map keys it, with the header segment or row that draws it here. The added directories ride on the project segment while they are inline, as claude-hud's default draws them, and the row is listed for its other layout.
@@ -39,6 +41,8 @@ const CLAUDE_HUD_DEFAULT_OPTIONS: readonly { readonly key: string; readonly show
   { key: "display.usageBarEnabled", showsAsMuch: (settings) => settings.usage.bar && !settings.usage.compact },
   { key: "display.usageValue", showsAsMuch: (settings) => settings.usage.value === "used" },
   { key: "display.showTokenBreakdown", showsAsMuch: (settings) => settings.context.breakdown === "critical" },
+  // claude-hud draws its breakdown from its context critical threshold, so a breakdown starting any later shows less.
+  { key: "display.contextCriticalThreshold", showsAsMuch: (settings) => contextBreakdownAt(settings) <= CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD },
   { key: "display.autocompactBuffer", showsAsMuch: (settings) => settings.context.estimate === "buffered" },
   { key: "display.contextValue", showsAsMuch: (settings) => settings.context.value === "both" || settings.context.value === "percent" },
   { key: "display.addedDirsLayout", showsAsMuch: (settings) => settings.project.addedDirsLayout === "inline" },
@@ -102,6 +106,13 @@ describe("the default render of a stand-in session", () => {
     }
   });
 
+  it("draws the token breakdown from claude-hud's context critical threshold, as claude-hud's default does, and not below it", () => {
+    const at = (used: number): string => draw({ ...SESSION, context_window: { ...SESSION.context_window, used_percentage: used } });
+    // claude-hud: `Context ... 85% (in: 1k, cache: 183k)` at 85%, and no breakdown at 84%.
+    expect(at(CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD)).toContain("85.0% (Cache: 99%) (in: 1.2k, cache: 183k)");
+    expect(at(CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD - 1)).not.toContain("(in: ");
+  });
+
   it("ends the model with the platform label claude-hud's default draws beside it", () => {
     // claude-hud: `[Opus 4.5 | Vertex]` under CLAUDE_CODE_USE_VERTEX=1, `[Opus 4.5 | Bedrock]` under CLAUDE_CODE_USE_BEDROCK=1.
     expect(draw(SESSION, { CLAUDE_CODE_USE_VERTEX: "1" })).toContain("Opus 4.5 | Vertex");
@@ -125,7 +136,7 @@ describe("the documented restore of the default before it became a superset", ()
     layout: { header: ["model", "provider", "route", "account", "identity", "headroom"], rows: ["context", "quota"] },
     usage: { resetLabel: false, modelScoped: false, sevenDayThreshold: 0 },
     model: { platform: false },
-    context: { estimate: "never", breakdown: "never" },
+    context: { estimate: "never", breakdown: "never", criticalAt: 90 },
   };
   const SESSION = {
     cwd: "/work/demo-project",
@@ -143,11 +154,27 @@ describe("the documented restore of the default before it became a superset", ()
     weeklyLow: "Opus 4.5\nCtx [███████████████████████████████████████░░░] 92.0% (Cache: 99%) | 5h [██████████████████░░░░░░░░░░░░░░░░░░░░░░░░] 42.0% (1h 30m) | Wk [█████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 30.0% (3d 2h)",
   };
   const QUOTA = { fiveHourUsed: 42, fiveHourResetAt: "2026-10-21T13:30:00.000Z", sevenDayResetAt: "2026-10-24T14:00:00.000Z" };
+  /** A context use between claude-hud's context critical threshold and the earlier one, where the default before drew the bar yellow and no breakdown. */
+  const BETWEEN_CRITICAL_THRESHOLDS = 87;
+  /** What the default drew before, in colour, for `SESSION` at `BETWEEN_CRITICAL_THRESHOLDS` and at its own use, with the weekly use at `WEEKLY_HIGH`, as the statusline rendered it before that change: the context bar yellow below 90% and red from it, and the weekly bar at 85% yellow, as the quota bars still are. */
+  const BEFORE_COLOURED = {
+    between: "Opus 4.5\nCtx [\u001b[33m█████████████████████████████████████\u001b[90m░░░░░\u001b[0m] \u001b[33m87.0%\u001b[0m (Cache: \u001b[32m99%\u001b[0m) | 5h [\u001b[32m██████████████████\u001b[90m░░░░░░░░░░░░░░░░░░░░░░░░\u001b[0m] \u001b[32m42.0%\u001b[0m (1h 30m) | Wk [\u001b[33m████████████████████████████████████\u001b[90m░░░░░░\u001b[0m] \u001b[33m85.0%\u001b[0m (3d 2h)",
+    high: "Opus 4.5\nCtx [\u001b[31m███████████████████████████████████████\u001b[90m░░░\u001b[0m] \u001b[31m92.0%\u001b[0m (Cache: \u001b[32m99%\u001b[0m) | 5h [\u001b[32m██████████████████\u001b[90m░░░░░░░░░░░░░░░░░░░░░░░░\u001b[0m] \u001b[32m42.0%\u001b[0m (1h 30m) | Wk [\u001b[33m████████████████████████████████████\u001b[90m░░░░░░\u001b[0m] \u001b[33m85.0%\u001b[0m (3d 2h)",
+  };
+
+  function render(payloadFields: Readonly<Record<string, unknown>>, sevenDayUsed: number, env: Readonly<Record<string, string>>): string {
+    const payload = parseClientPayload(payloadFields);
+    return renderStatuslineBlock({ summary: fakeStatuslineSummary({ ...QUOTA, sevenDayUsed }), view: viewOf(payload), payload, terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, settings: resolveStatusline(RESTORE), ports: fakeStatuslinePorts({ env }) });
+  }
 
   function draw(payloadFields: Readonly<Record<string, unknown>>, sevenDayUsed: number, env: Readonly<Record<string, string>> = {}): string {
-    const payload = parseClientPayload(payloadFields);
-    return renderStatuslineBlock({ summary: fakeStatuslineSummary({ ...QUOTA, sevenDayUsed }), view: viewOf(payload), payload, terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, settings: resolveStatusline(RESTORE), ports: fakeStatuslinePorts({ env: { NO_COLOR: "1", ...env } }) }).replace(ANSI, "");
+    return render(payloadFields, sevenDayUsed, { NO_COLOR: "1", ...env }).replace(ANSI, "");
   }
+
+  it("draws what the default drew before in colour, the context bar yellow until 90% and no breakdown, including between claude-hud's critical threshold and that", () => {
+    expect(render({ ...SESSION, context_window: { ...SESSION.context_window, used_percentage: BETWEEN_CRITICAL_THRESHOLDS } }, WEEKLY_HIGH, {})).toBe(BEFORE_COLOURED.between);
+    expect(render(SESSION, WEEKLY_HIGH, {})).toBe(BEFORE_COLOURED.high);
+  });
 
   it("draws what the default drew before for a session that is not a Bedrock one and has an unpadded display name, whatever the weekly use", () => {
     expect(draw(SESSION, WEEKLY_HIGH)).toBe(BEFORE.weeklyHigh);

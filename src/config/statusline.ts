@@ -49,12 +49,12 @@ const DEFAULT_HEADER_SEGMENTS: readonly (typeof STATUSLINE_HEADER_SEGMENTS)[numb
 const DEFAULT_ROWS: readonly (typeof STATUSLINE_ROWS)[number][] = ["context", "quota", "addedDirs"];
 
 /**
- * The defaults that follow stock claude-hud's own, so the default shows at least what claude-hud's default does (each is a value of claude-hud's `DEFAULT_CONFIG.display`, at the commit `src/statusline/parity/inventory.ts` names): the reset label is `showResetLabel: true`, the per-model windows are `showModelScopedUsage: true`, the weekly window's threshold is `sevenDayThreshold: 80`, the estimate when the client reports no percentage, or zero while tokens are held, is `autocompactBuffer: 'enabled'`, which adds the reserve, and the breakdown at the critical threshold is `showTokenBreakdown: true`. The platform label beside the model is drawn because claude-hud's `formatModelDisplay` (`src/render/model-display.ts`) appends the label `getProviderLabel` detects whatever its configuration says, so no value of its own turns it off.
+ * The defaults that follow stock claude-hud's own, so the default shows at least what claude-hud's default does (each is a value of claude-hud's `DEFAULT_CONFIG.display`, at the commit `src/statusline/parity/inventory.ts` names): the reset label is `showResetLabel: true`, the per-model windows are `showModelScopedUsage: true`, the weekly window's threshold is `sevenDayThreshold: 80`, the estimate when the client reports no percentage, or zero while tokens are held, is `autocompactBuffer: 'enabled'`, which adds the reserve, the breakdown is `showTokenBreakdown: true`, and the context bar's thresholds are `contextWarningThreshold: 70` and `contextCriticalThreshold: 85`, the latter also where claude-hud's breakdown starts (its `src/render/session-line.ts` and `src/render/lines/identity.ts` draw the breakdown from that same threshold). The platform label beside the model is drawn because claude-hud's `formatModelDisplay` (`src/render/model-display.ts`) appends the label `getProviderLabel` detects whatever its configuration says, so no value of its own turns it off.
  */
 const CLAUDE_HUD_DEFAULTS = {
   model: { platform: true },
   usage: { resetLabel: true, modelScoped: true, sevenDayThreshold: 80 },
-  context: { estimate: "buffered", breakdown: "critical" },
+  context: { estimate: "buffered", breakdown: "critical", warnAt: 70, criticalAt: 85 },
 } as const;
 
 /** The named bundles of settings a layer can choose with `preset`: `standard` is what the statusline draws with no settings at all (claude-hud's default display and agent-shim's own segments), and the rest are claude-hud's presets. */
@@ -241,8 +241,13 @@ const SHAPES = {
   context: {
     bar: z.enum(["shown", "hidden"]).describe("Whether the context row draws its bar, or only its figures on one line of text."),
     value: z.enum(STATUSLINE_CONTEXT_VALUES).describe("The context figure: both (the tokens held against the window, then the percentage), percent, tokens, or remaining (the percentage of the window left)."),
-    warnAt: wholePercent.optional().describe("The whole percentage of the context window at which the context bar turns yellow; while it is unset the context bar follows bands.warnAt."),
-    criticalAt: wholePercent.optional().describe("The whole percentage of the context window at which the context bar turns red and, with context.breakdown set to critical, the token breakdown appears; while it is unset the context bar follows bands.criticalAt."),
+    warnAt: wholePercent.describe("The whole percentage of the context window at which the context bar turns yellow; it must be below context.criticalAt. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars, and its default is claude-hud's contextWarningThreshold."),
+    criticalAt: wholePercent.describe("The whole percentage of the context window at which the context bar turns red, and from which the token breakdown appears while context.breakdownAt is unset. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown."),
+    breakdownAt: wholePercent
+      .optional()
+      .describe(
+        "The whole percentage of the context window from which the token breakdown appears, with context.breakdown set to critical; while it is unset the breakdown appears from context.criticalAt. It need not relate to context.warnAt or context.criticalAt, since it decides when a piece of information is shown and not a colour, so it may sit below, at or above either.",
+      ),
     autoCompactWindow: z
       .number()
       .int()
@@ -250,7 +255,11 @@ const SHAPES = {
       .optional()
       .describe("A window in tokens to measure the context against instead of the model's, matching the figure /context gives once Claude Code compacts before the window is full. While it is set, the row draws nothing until the client reports the tokens held, since without them there is nothing to measure against it; while it is unset the model's own window is used."),
     estimate: z.enum(STATUSLINE_CONTEXT_ESTIMATES).describe(`What to draw when the client reports no percentage of the window in use, or reports 0 while tokens are already held (which is how a client says it has not worked it out yet): never (nothing is estimated: a percentage reported, 0 included, is drawn as it is, and none reported draws nothing), raw (the tokens held over the window), or buffered (that, plus the ${String(AUTOCOMPACT_RESERVE_FRACTION * MAX_PERCENT)}% of the window Claude Code reserves for compaction, rising from nothing at ${String(AUTOCOMPACT_RESERVE_RAMP_START * MAX_PERCENT)}% of the window held to the whole reserve at ${String(AUTOCOMPACT_RESERVE_RAMP_END * MAX_PERCENT)}%).`),
-    breakdown: z.enum(["never", "critical"]).describe("Whether to add the input and cache tokens of the last request to the context row once its use reaches context.criticalAt."),
+    breakdown: z
+      .enum(["never", "critical"])
+      .describe(
+        "Whether to add the input and cache tokens of the last request to the context row: critical adds them once the percentage the row draws (the one the client reports, or the estimate context.estimate makes) reaches the breakdown threshold, which is context.breakdownAt, or context.criticalAt while that is unset, and never leaves them off. With no percentage to draw the row draws nothing, and when the client does not report the last request's tokens there is no breakdown to add.",
+      ),
   },
   customLine: {
     text: overrideText.describe(`A line of your own text to draw, in colours.custom; empty draws nothing. It is refused when longer than ${String(MAX_DISPLAY_TEXT_CHARS)} characters or when it holds control, format or separator characters, and words are separated by single spaces. A character that passes but draws nothing, such as a braille blank, is removed, and the line is cut to the usable width.`),
@@ -266,8 +275,8 @@ const SHAPES = {
       ),
   },
   bands: {
-    warnAt: wholePercent.describe("The whole percentage of use at which a bar turns yellow; it must be below criticalAt."),
-    criticalAt: wholePercent.describe("The whole percentage of use at which a bar turns red."),
+    warnAt: wholePercent.describe("The whole percentage of use at which a bar other than the context bar turns yellow (the context bar has context.warnAt); it must be below criticalAt."),
+    criticalAt: wholePercent.describe("The whole percentage of use at which a bar other than the context bar turns red (the context bar has context.criticalAt)."),
   },
   labels: {
     fiveHour: windowLabel.describe("The name of the five-hour window; empty uses the language's own name for it."),
@@ -315,9 +324,9 @@ const SHAPES = {
   colours: {
     context: colourValue.describe("The colour of the context bar and its figures below the warning threshold."),
     usage: colourValue.describe("The colour of the quota bars and their figures below the warning threshold."),
-    warning: colourValue.describe("The colour of the context bar at or above bands.warnAt, and of a cache hit share that is middling."),
+    warning: colourValue.describe("The colour of the context bar at or above context.warnAt, and of a cache hit share that is middling."),
     usageWarning: colourValue.describe("The colour of a quota bar at or above bands.warnAt."),
-    critical: colourValue.describe("The colour of a bar at or above bands.criticalAt, and of a cache hit share that is nearly nothing."),
+    critical: colourValue.describe("The colour of the context bar at or above context.criticalAt, of any other bar at or above bands.criticalAt, and of a cache hit share that is nearly nothing."),
     model: colourValue.describe("The colour of the model and provider segments."),
     label: colourValue.describe("The colour of labels and secondary text: row labels, and the route, account, identity and headroom segments."),
     empty: colourValue.describe("The colour of the unused part of a bar."),
@@ -351,9 +360,17 @@ const SHAPES = {
 /** What a layer writes to return an optional setting to unset even though a shallower layer sets it. Merging a layer drops the key, so what the layers above see is the setting absent, as if no layer had set it. */
 const UNSET_NOTE = "A layer may write null to return it to unset when a shallower layer sets it.";
 
+/** What a layer writes to return a setting that has a default to that default even though a shallower layer sets it. Merging a layer drops the key, and a key no layer sets takes its default. */
+const RESET_NOTE = "A layer may write null to return it to its default when a shallower layer sets it.";
+
 /** An optional setting as a layer may write it: the value, or null to unset it for the layers it is merged over. The resolved settings never hold null, since merging removes it. */
 function unsettable<T extends z.ZodType>(setting: z.ZodOptional<T>) {
   return setting.unwrap().nullable().optional().describe(`${setting.description ?? ""} ${UNSET_NOTE}`);
+}
+
+/** A setting with a default as a layer may write it: the value, or null to return it to its default for the layers it is merged over. The resolved settings never hold null, since merging removes it. */
+function resettable<T extends z.ZodType>(setting: T) {
+  return setting.nullable().optional().describe(`${setting.description ?? ""} ${RESET_NOTE}`);
 }
 
 const LANGUAGE_DESCRIPTION = "The language of the words the statusline writes (labels, units of waiting such as `ago`, the names of effort levels): en, zh-Hans for Chinese in simplified characters, and zh-Hant for traditional; zh and zh-TW are read as zh-Hans and zh-Hant, and any other tag is refused. Durations, token counts, the dollar sign and clock times are written the same in every language, and a clock time follows the system locale and the clock settings.";
@@ -385,7 +402,7 @@ export const StatuslineSchema = z.strictObject({
   effort: z.strictObject(SHAPES.effort).partial().optional(),
   advisor: z.strictObject(SHAPES.advisor).partial().optional(),
   context: z
-    .strictObject({ ...SHAPES.context, warnAt: unsettable(SHAPES.context.warnAt), criticalAt: unsettable(SHAPES.context.criticalAt), autoCompactWindow: unsettable(SHAPES.context.autoCompactWindow) })
+    .strictObject({ ...SHAPES.context, warnAt: resettable(SHAPES.context.warnAt), criticalAt: resettable(SHAPES.context.criticalAt), breakdownAt: unsettable(SHAPES.context.breakdownAt), autoCompactWindow: unsettable(SHAPES.context.autoCompactWindow) })
     .partial()
     .optional(),
   customLine: z.strictObject(SHAPES.customLine).partial().optional(),
@@ -407,7 +424,7 @@ export const StatuslineSchema = z.strictObject({
 });
 export type StatuslineSettings = z.infer<typeof StatuslineSchema>;
 
-/** The statusline with every setting decided, except the optional ones (`context.warnAt`, `context.criticalAt` and `context.autoCompactWindow`), which stay absent until a layer sets them. */
+/** The statusline with every setting decided, except the optional ones (`context.breakdownAt` and `context.autoCompactWindow`), which stay absent until a layer sets them. */
 export const ResolvedStatuslineSchema = z.strictObject({
   language: TOP_LEVEL.language,
   preset: TOP_LEVEL.preset,
@@ -447,7 +464,7 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   account: { parts: ["user", "organisation", "plan"], userLength: 0 },
   effort: { format: "full" },
   advisor: { override: "" },
-  context: { bar: "shown", value: "both", estimate: CLAUDE_HUD_DEFAULTS.context.estimate, breakdown: CLAUDE_HUD_DEFAULTS.context.breakdown },
+  context: { bar: "shown", value: "both", warnAt: CLAUDE_HUD_DEFAULTS.context.warnAt, criticalAt: CLAUDE_HUD_DEFAULTS.context.criticalAt, estimate: CLAUDE_HUD_DEFAULTS.context.estimate, breakdown: CLAUDE_HUD_DEFAULTS.context.breakdown },
   customLine: { text: "", position: "last" },
   extra: { command: [] },
   bands: { warnAt: 70, criticalAt: 90 },
@@ -486,7 +503,7 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** `over` laid on `base`, key by key: objects merge, anything else (a scalar, a list) in `over` replaces what `base` has, and a null in `over` removes the key, which is how a layer unsets an optional setting a shallower layer set. The result holds no null, whatever `base` was. Neither argument is changed. */
+/** `over` laid on `base`, key by key: objects merge, anything else (a scalar, a list) in `over` replaces what `base` has, and a null in `over` removes the key, which is how a layer unsets an optional setting a shallower layer set, or returns one with a default to that default. The result holds no null, whatever `base` was. Neither argument is changed. */
 function mergeKeys(base: unknown, over: unknown): unknown {
   if (!isPlainObject(over)) {
     return over === undefined ? base : over;
@@ -502,9 +519,9 @@ function mergeKeys(base: unknown, over: unknown): unknown {
   return merged;
 }
 
-/** The colour bands of the context bar: its own thresholds where the settings give them, `bands` while it leaves one unset. */
-export function contextBands({ bands, context }: Readonly<ResolvedStatusline>): { readonly warnAt: number; readonly criticalAt: number } {
-  return { warnAt: context.warnAt ?? bands.warnAt, criticalAt: context.criticalAt ?? bands.criticalAt };
+/** The percentage of the context window from which the context row adds the token breakdown (with `context.breakdown` set to `critical`): `context.breakdownAt` where a layer sets it, the context bar's critical threshold while none does. */
+export function contextBreakdownAt({ context }: Readonly<ResolvedStatusline>): number {
+  return context.breakdownAt ?? context.criticalAt;
 }
 
 function isPresetName(value: unknown): value is (typeof STATUSLINE_PRESETS)[number] {
@@ -512,7 +529,7 @@ function isPresetName(value: unknown): value is (typeof STATUSLINE_PRESETS)[numb
 }
 
 /**
- * `over` laid on `base`, key by key: objects merge, and anything else (a scalar, a list) in `over` replaces what `base` has. A null in `over` removes the key it names, which is how a layer unsets an optional setting. A `preset` in `over` first lays its bundle on `base`, so the layer's own keys sit above the preset and the preset above every shallower layer; the result keeps the preset's name and the keys it set, which makes laying it again on the defaults change nothing. Neither argument is changed.
+ * `over` laid on `base`, key by key: objects merge, and anything else (a scalar, a list) in `over` replaces what `base` has. A null in `over` removes the key it names, which is how a layer unsets an optional setting, or returns one with a default to that default. A `preset` in `over` first lays its bundle on `base`, so the layer's own keys sit above the preset and the preset above every shallower layer; the result keeps the preset's name and the keys it set, which makes laying it again on the defaults change nothing. Neither argument is changed.
  */
 export function mergeStatuslineSettings(base: unknown, over: unknown): unknown {
   const preset = isPlainObject(over) ? over.preset : undefined;
@@ -521,13 +538,13 @@ export function mergeStatuslineSettings(base: unknown, over: unknown): unknown {
 
 /** The statusline's settings with the defaults filled in, or a message naming what is wrong when the combination is not drawable (a warning threshold must sit below its critical one, a right-aligned row must be in a merge group, and a forced width needs a width to force, which a per-key cascade cannot check layer by layer). */
 export function resolveStatusline(settings: Readonly<StatuslineSettings> | undefined): ResolvedStatusline {
-  const resolved = ResolvedStatuslineSchema.parse(mergeStatuslineSettings(STATUSLINE_DEFAULTS, settings));
+  // The nulls in the settings are removed before they are laid on the defaults, so a null returns a key with a default to that default, as merging the layers does, and leaves an optional key absent.
+  const resolved = ResolvedStatuslineSchema.parse(mergeStatuslineSettings(STATUSLINE_DEFAULTS, mergeKeys(undefined, settings)));
   if (resolved.bands.warnAt >= resolved.bands.criticalAt) {
     throw new RangeError(`statusline bands.warnAt (${String(resolved.bands.warnAt)}) must be below bands.criticalAt (${String(resolved.bands.criticalAt)})`);
   }
-  const forContext = contextBands(resolved);
-  if (forContext.warnAt >= forContext.criticalAt) {
-    throw new RangeError(`statusline context.warnAt (${String(forContext.warnAt)}) must be below context.criticalAt (${String(forContext.criticalAt)}), each following bands while it is unset`);
+  if (resolved.context.warnAt >= resolved.context.criticalAt) {
+    throw new RangeError(`statusline context.warnAt (${String(resolved.context.warnAt)}) must be below context.criticalAt (${String(resolved.context.criticalAt)})`);
   }
   const merged = new Set(resolved.layout.merge.flat());
   const unmerged = resolved.layout.rightAlign.filter((row) => !merged.has(row));
