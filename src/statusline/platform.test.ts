@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { hidesSubscriptionWindows, isBedrockModelId, modelPlatformOf } from "./platform";
 
-describe("the platform a session's model is served through", () => {
+describe("the platform label claude-hud draws beside the model", () => {
   it("is Bedrock when the client's Bedrock switch is on", () => {
     expect(modelPlatformOf({ CLAUDE_CODE_USE_BEDROCK: "1" }, "claude-opus-4-7")).toBe("Bedrock");
   });
@@ -34,13 +34,13 @@ describe("the platform a session's model is served through", () => {
     expect(modelPlatformOf({ ANTHROPIC_BASE_URL: "api.minimax.io/anthropic" }, undefined)).toBeUndefined();
   });
 
-  it("is Enterprise for an enterprise planning model id, whatever its case", () => {
+  it("is Enterprise for the model ids opusplan, sonnetplan and haikuplan, whatever their case", () => {
     expect(modelPlatformOf({}, "opusplan")).toBe("Enterprise");
     expect(modelPlatformOf({}, "SonnetPlan")).toBe("Enterprise");
     expect(modelPlatformOf({}, "haikuplan")).toBe("Enterprise");
   });
 
-  it("is undefined for Anthropic's own API: no switch on, no MiniMax base URL and an ordinary model id", () => {
+  it("is undefined when none holds: no switch on, no MiniMax base URL and any other model id", () => {
     expect(modelPlatformOf({}, "claude-opus-4-7")).toBeUndefined();
     expect(modelPlatformOf({}, undefined)).toBeUndefined();
     expect(modelPlatformOf({ CLAUDE_CODE_USE_BEDROCK: "0", CLAUDE_CODE_USE_VERTEX: "true" }, "opus")).toBeUndefined();
@@ -48,7 +48,7 @@ describe("the platform a session's model is served through", () => {
 });
 
 describe("whether the subscription windows apply to a session", () => {
-  it("does not apply to a session served through Amazon Bedrock, by the switch or by a Bedrock model id in any case", () => {
+  it("does not apply to a Bedrock session, by the switch or by a Bedrock model id in any case", () => {
     expect(hidesSubscriptionWindows({ CLAUDE_CODE_USE_BEDROCK: "1" }, undefined)).toBe(true);
     expect(hidesSubscriptionWindows({}, "us.anthropic.claude-opus-4-5-v1:0")).toBe(true);
     expect(hidesSubscriptionWindows({}, "EU.Anthropic.Claude-Sonnet-4-5")).toBe(true);

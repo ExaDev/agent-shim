@@ -102,7 +102,7 @@ describe("the default render of a stand-in session", () => {
     }
   });
 
-  it("ends the model with the platform the session reaches it through, as claude-hud's default does", () => {
+  it("ends the model with the platform label claude-hud's default draws beside it", () => {
     // claude-hud: `[Opus 4.5 | Vertex]` under CLAUDE_CODE_USE_VERTEX=1, `[Opus 4.5 | Bedrock]` under CLAUDE_CODE_USE_BEDROCK=1.
     expect(draw(SESSION, { CLAUDE_CODE_USE_VERTEX: "1" })).toContain("Opus 4.5 | Vertex");
     expect(draw(SESSION, { CLAUDE_CODE_USE_BEDROCK: "1" })).toContain("Opus 4.5 | Bedrock");

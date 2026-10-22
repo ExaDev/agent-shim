@@ -88,7 +88,7 @@ describe("the quota row's usage settings", () => {
     expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 79 })).toEqual(["5h 25.0% (resets in 1h 30m)"]);
   });
 
-  it("draws no window for a session served through Amazon Bedrock, by the environment switch or by the model id", () => {
+  it("draws no window of the signed-in account's for a Bedrock session, by the environment switch or by the model id", () => {
     // The subscription's windows do not apply to a session billed by use, and a window drawn from the identity's recorded usage would describe quota the session does not spend.
     expect(defaultQuotaLines({ usage: { bar: false } }, {}, {}, { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual([]);
     expect(defaultQuotaLines({ usage: { bar: false } }, {}, { model: { id: "us.anthropic.claude-opus-4-5-v1:0" } })).toEqual([]);
@@ -97,7 +97,7 @@ describe("the quota row's usage settings", () => {
     expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 80 }, MODEL_SCOPED_PAYLOAD, { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual([]);
   });
 
-  it("still draws a model family's windows and a provider's own for a session served through Amazon Bedrock, since neither is the signed-in account's", () => {
+  it("still draws a model family's windows and a provider's own for a Bedrock session, since neither is the signed-in account's", () => {
     const bedrock = { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" };
     const families = [{ measures: "Gemini", utilization: 0.5, resetsAt: "2026-10-16T10:30:00.000Z" }];
     const providerWindows = [{ measures: "tokens", utilization: 0.5, resetsAt: "2026-10-16T10:30:00.000Z", periodMs: 18_000_000 }];

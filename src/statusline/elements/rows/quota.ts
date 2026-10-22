@@ -37,7 +37,7 @@ function modelScopedWindows({ payload }: RenderContext): readonly QuotaWindowVie
   });
 }
 
-/** The windows of the account the session is signed in as: the five-hour and weekly windows, with the per-model weekly ones when asked for and the session selected no provider. None for a session served through Amazon Bedrock (`hidesSubscriptionWindows`), which spends none of them. */
+/** The windows of the account the session is signed in as: the five-hour and weekly windows, with the per-model weekly ones when asked for and the session selected no provider. None for a Bedrock session (`hidesSubscriptionWindows`: the Bedrock switch on, or a Bedrock model id), which spends none of them. */
 function subscriptionWindows(context: RenderContext): { readonly unified: readonly QuotaWindowView[]; readonly modelScoped: readonly QuotaWindowView[] } {
   const { summary, settings } = context;
   if (hidesSubscriptionWindows(context.ports.env, context.payload.model?.id)) {
@@ -100,7 +100,7 @@ function wrapped(windows: readonly string[], width: number): string[] {
   return packLines(windows, width, SEPARATOR).map((line) => line.join(SEPARATOR));
 }
 
-/** The quota windows' row: the five-hour and weekly windows, the per-model weekly windows when asked for, every model family's window for an account whose limits are per family, or a provider's own windows when no unified one is drawn. A session served through Amazon Bedrock draws none of the signed-in account's windows (the five-hour, weekly and per-model ones) whatever the settings, and still draws a model family's or a provider's own. Drawn as bars, as text alone, or as one compact line of text, under `settings.usage`. */
+/** The quota windows' row: the five-hour and weekly windows, the per-model weekly windows when asked for, every model family's window for an account whose limits are per family, or a provider's own windows when no unified one is drawn. A Bedrock session (the Bedrock switch on, or a Bedrock model id) draws none of the signed-in account's windows (the five-hour, weekly and per-model ones) whatever the settings, and still draws a model family's or a provider's own. Drawn as bars, as text alone, or as one compact line of text, under `settings.usage`. */
 export function quotaRow(context: RenderContext): RowOutput {
   const { palette, settings } = context;
   const style = barStyleOf(context, "usage");
