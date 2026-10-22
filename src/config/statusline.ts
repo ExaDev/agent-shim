@@ -86,6 +86,9 @@ export const STATUSLINE_PATH_LEVELS = ["1", "2", "3", "full"] as const;
 /** How the quota row writes a window's figure: the share of the window used, or the share still left. */
 const STATUSLINE_USAGE_VALUES = ["used", "remaining"] as const;
 
+/** How a bar's used part is coloured: the band's single colour, or a gradient that blends it with the use or across the width. */
+const STATUSLINE_BAR_GRADIENTS = ["off", "use", "width"] as const;
+
 /** How the quota row tells when a window resets: the time left, the wall-clock time, both, the share of the window already gone, or that share and the wall-clock time. */
 const STATUSLINE_TIME_FORMATS = ["relative", "absolute", "both", "elapsed", "elapsedAndAbsolute"] as const;
 
@@ -263,6 +266,11 @@ const SHAPES = {
   },
   bar: {
     width: z.number().int().min(1).max(MAX_BAR_CELLS).describe("A bar's width in cells before the line's spare width is shared out among the bars."),
+    gradient: z
+      .enum(STATUSLINE_BAR_GRADIENTS)
+      .describe(
+        "How a bar's used part is coloured: off (the default) draws the band's single colour, the bar's own colour below the warning threshold, the warning colour from there and the critical one from the critical threshold; use blends the bar's colour with its use, from its own colour at none in use to the warning colour at the warning threshold and the critical one at the critical threshold, holding exactly the colour the bands draw at each threshold and the critical colour above it; and width colours each cell of the used part across the bar's width, from the bar's own colour at the first cell to the critical one at the last, whatever the use. A bar's thresholds are bands.warnAt and bands.criticalAt, the context bar's own where it sets them, and the figures beside a bar and its unused part (colours.empty) keep their colours in every mode. A gradient blends RGB values, so a colour name is blended at the default RGB the xterm scheme gives it rather than the shade a themed terminal draws it in, and a role set to default or dim, which names no colour of its own, leaves that bar the band's single colour.",
+      ),
     filled: barCharacter.describe("The character that draws the used part of a bar."),
     empty: barCharacter.describe("The character that draws the unused part of a bar."),
   },
@@ -440,7 +448,7 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   extra: { command: [] },
   bands: { warnAt: 70, criticalAt: 90 },
   labels: { fiveHour: "", sevenDay: "" },
-  bar: { width: 10, filled: "\u2588", empty: "\u2591" },
+  bar: { width: 10, gradient: "off", filled: "\u2588", empty: "\u2591" },
   usage: { value: "used", bar: true, compact: false, resetLabel: false, modelScoped: false, timeFormat: "relative", threshold: 0, sevenDayThreshold: 0 },
   clock: { hourCycle: "auto", seconds: false },
   cost: { routed: false },

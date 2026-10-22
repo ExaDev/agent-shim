@@ -45,7 +45,7 @@ export interface RenderContext {
 
 /** How a bar is coloured and drawn under the settings, for the row whose bar is below its warning threshold in `okRole`'s colour. */
 export function barStyleOf({ settings, palette }: RenderContext, okRole: BarStyle["okRole"]): BarStyle {
-  return { bands: settings.bands, palette, okRole, filled: settings.bar.filled, empty: settings.bar.empty };
+  return { bands: settings.bands, palette, okRole, gradient: settings.bar.gradient, filled: settings.bar.filled, empty: settings.bar.empty };
 }
 
 /** What a row draws: bars, which are laid out on one grid with the bars of the rows beside them, or lines of text, which are drawn as they are. A row with nothing to show returns no cells or no lines. */
