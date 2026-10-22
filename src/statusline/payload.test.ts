@@ -71,6 +71,9 @@ describe("viewOf", () => {
     expect(nameOf({ id: " claude-opus-4-5 " })).toBe("claude-opus-4-5");
     expect(nameOf({ id: "claude-opus-4-5", display_name: " " })).toBe("claude-opus-4-5");
     expect(nameOf({ id: " ", display_name: "" })).toBeUndefined();
+    // Trimming strips every kind of white space, not only the space: a tab, a line break, a no-break space, an em space and an ideographic space.
+    expect(nameOf({ display_name: "\t\u00a0Opus 4.5\u2003\u3000\n" })).toBe("Opus 4.5");
+    expect(nameOf({ id: "\tclaude-opus-4-5\n", display_name: "\u00a0\u2003\u3000" })).toBe("claude-opus-4-5");
   });
 
   it("leaves every figure absent for an empty payload", () => {
