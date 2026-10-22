@@ -1,3 +1,9 @@
+## [11.65.2](https://github.com/ExaDev/agent-shim/compare/v11.65.1...v11.65.2) (2026-10-22)
+
+### Build System
+
+* **deps:** align the remaining orpc packages with the server bump ([2c59f44](https://github.com/ExaDev/agent-shim/commit/2c59f445df04f0d3e2aca8eb96f6c6f3f065aaa3))
+
 ## [11.65.1](https://github.com/ExaDev/agent-shim/compare/v11.65.0...v11.65.1) (2026-10-22)
 
 ### Performance Improvements
