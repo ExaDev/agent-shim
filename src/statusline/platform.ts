@@ -45,10 +45,18 @@ export function modelPlatformOf(env: Readonly<Record<string, string | undefined>
 const BEDROCK_MODEL_ID_MARK = "anthropic.claude-";
 
 /**
+ * Whether a model id is a Bedrock one, as claude-hud's `isBedrockModelId` decides it: it contains `anthropic.claude-` in any case.
+ * @param modelId - The model id the client's payload reports, or undefined when it reports none.
+ */
+export function isBedrockModelId(modelId: string | undefined): boolean {
+  return modelId?.toLowerCase().includes(BEDROCK_MODEL_ID_MARK) === true;
+}
+
+/**
  * Whether the subscription windows do not apply to the session, as claude-hud decides it: it is served through Amazon Bedrock, by the environment switch or by the model id the client reports, and Bedrock is billed by use with no five-hour or weekly window to draw.
  * @param env - The environment the statusline runs in, which is the client's.
  * @param modelId - The model id the client's payload reports, or undefined when it reports none.
  */
 export function hidesSubscriptionWindows(env: Readonly<Record<string, string | undefined>>, modelId: string | undefined): boolean {
-  return modelPlatformOf(env, modelId) === "Bedrock" || (modelId?.toLowerCase().includes(BEDROCK_MODEL_ID_MARK) ?? false);
+  return modelPlatformOf(env, modelId) === "Bedrock" || isBedrockModelId(modelId);
 }

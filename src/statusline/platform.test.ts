@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hidesSubscriptionWindows, modelPlatformOf } from "./platform";
+import { hidesSubscriptionWindows, isBedrockModelId, modelPlatformOf } from "./platform";
 
 describe("the platform a session's model is served through", () => {
   it("is Bedrock when the client's Bedrock switch is on", () => {
@@ -58,5 +58,15 @@ describe("whether the subscription windows apply to a session", () => {
     expect(hidesSubscriptionWindows({ CLAUDE_CODE_USE_VERTEX: "1" }, "claude-opus-4-5")).toBe(false);
     expect(hidesSubscriptionWindows({}, undefined)).toBe(false);
     expect(hidesSubscriptionWindows({}, "claude-opus-4-5")).toBe(false);
+  });
+});
+
+describe("whether a model id is a Bedrock one", () => {
+  it("is one when it carries anthropic.claude- in any case, wherever it sits, and no other id or none is", () => {
+    expect(isBedrockModelId("us.anthropic.claude-opus-4-5-v1:0")).toBe(true);
+    expect(isBedrockModelId("Anthropic.Claude-Sonnet-4-5")).toBe(true);
+    expect(isBedrockModelId("claude-opus-4-5")).toBe(false);
+    expect(isBedrockModelId("anthropic.titan")).toBe(false);
+    expect(isBedrockModelId(undefined)).toBe(false);
   });
 });
