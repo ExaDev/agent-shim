@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hidesSubscriptionWindows, isBedrockModelId, modelPlatformOf, platformEnvOf } from "./platform";
+import { hidesSubscriptionWindows, isBedrockModelId, modelPlatformOf, platformInputsOf } from "./platform";
 
 describe("the platform label claude-hud draws beside the model", () => {
   it("is Bedrock when the client's Bedrock switch is on", () => {
@@ -71,17 +71,21 @@ describe("whether a model id is a Bedrock one", () => {
   });
 });
 
-describe("the environment the platform checks read", () => {
+describe("what the platform checks read of a session", () => {
   const SWITCHES = { CLAUDE_CODE_USE_BEDROCK: "1", CLAUDE_CODE_USE_VERTEX: "1" };
 
-  it("is the statusline's own for a Claude Code client, with or without a product", () => {
-    expect(platformEnvOf({}, SWITCHES)).toBe(SWITCHES);
-    expect(platformEnvOf({ product: "claude-code" }, SWITCHES)).toBe(SWITCHES);
-    expect(platformEnvOf(undefined, SWITCHES)).toBe(SWITCHES);
+  it("is the statusline's own environment and the payload's model id for a Claude Code client, with or without a product", () => {
+    expect(platformInputsOf({}, SWITCHES, "opusplan")).toEqual({ env: SWITCHES, modelId: "opusplan" });
+    expect(platformInputsOf({ product: "claude-code" }, SWITCHES, undefined)).toEqual({ env: SWITCHES, modelId: undefined });
+    expect(platformInputsOf(undefined, SWITCHES, "claude-opus-4-5")).toEqual({ env: SWITCHES, modelId: "claude-opus-4-5" });
   });
 
-  it("holds none of Claude Code's switches for an Antigravity client, so no platform is detected there", () => {
-    expect(platformEnvOf({ product: "antigravity" }, SWITCHES)).toEqual({});
-    expect(modelPlatformOf(platformEnvOf({ product: "antigravity" }, SWITCHES), "gemini-3-pro")).toBeUndefined();
+  it("is nothing for an Antigravity client, so it draws no platform and is never a Bedrock session whatever its id", () => {
+    expect(platformInputsOf({ product: "antigravity" }, SWITCHES, "opusplan")).toEqual({ env: {}, modelId: undefined });
+    for (const id of ["opusplan", "us.anthropic.claude-opus-4-5-v1:0", "gemini-3-pro"]) {
+      const { env, modelId } = platformInputsOf({ product: "antigravity" }, SWITCHES, id);
+      expect(modelPlatformOf(env, modelId)).toBeUndefined();
+      expect(hidesSubscriptionWindows(env, modelId)).toBe(false);
+    }
   });
 });

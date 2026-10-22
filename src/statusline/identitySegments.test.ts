@@ -199,6 +199,7 @@ describe("the model segment for a client that sends no display name", () => {
     const drawn = (payload: Readonly<Record<string, unknown>>, env: Readonly<Record<string, string>>): string[] => segments({ settings: onlyHeader("model"), payload, view: { clientModelName: viewOf(parseClientPayload(payload)).clientModelName }, ports: { env } });
     expect(drawn(antigravity, { CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["Gemini 3 Pro"]);
     expect(drawn(antigravity, { CLAUDE_CODE_USE_BEDROCK: "1", ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic" })).toEqual(["Gemini 3 Pro"]);
+    expect(drawn({ product: "antigravity", model: { id: "opusplan", display_name: "Opus Plan" } }, {})).toEqual(["Opus Plan"]);
     expect(drawn({ model: { id: "claude-opus-4-5", display_name: "Opus 4.5" } }, { CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["Opus 4.5", "Vertex"]);
   });
 

@@ -110,6 +110,7 @@ describe("the quota row's usage settings", () => {
   it("hides the account's windows for a Bedrock session only when the client is Claude Code, not for an Antigravity client", () => {
     // The switch is Claude Code's; an Antigravity client's own quota windows still draw whatever is exported for Claude Code.
     expect(defaultQuotaLines({ usage: { bar: false } }, {}, { product: "antigravity" }, { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual(["5h 25.0% (resets in 1h 30m)"]);
+    expect(defaultQuotaLines({ usage: { bar: false } }, {}, { product: "antigravity", model: { id: "us.anthropic.claude-opus-4-5-v1:0" } })).toEqual(["5h 25.0% (resets in 1h 30m)"]);
     expect(defaultQuotaLines({ usage: { bar: false } }, {}, {}, { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual([]);
   });
 

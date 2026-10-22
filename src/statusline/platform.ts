@@ -24,8 +24,8 @@ function isMiniMaxEndpoint(env: Readonly<Record<string, string | undefined>>): b
 
 /**
  * The label claude-hud draws beside the model name, as its `getProviderLabel` chooses it, or undefined when none applies: Bedrock when `CLAUDE_CODE_USE_BEDROCK` is on, else Vertex when `CLAUDE_CODE_USE_VERTEX` is on, else MiniMax when the Anthropic base URL is one of `MINIMAX_ENDPOINTS`, else Enterprise when the client's model id is one of `ENTERPRISE_MODEL_IDS` in any case. The first that holds wins.
- * @param env - The environment the statusline runs in, which is the client's.
- * @param modelId - The model id the client's payload reports, or undefined when it reports none.
+ * @param env - The environment the statusline runs in, as `platformInputsOf` hands it over: the client's for a Claude Code client, empty for an Antigravity one.
+ * @param modelId - The model id the client's payload reports, as `platformInputsOf` hands it over, or undefined when it reports none.
  */
 export function modelPlatformOf(env: Readonly<Record<string, string | undefined>>, modelId: string | undefined): ModelPlatform | undefined {
   if (env.CLAUDE_CODE_USE_BEDROCK === SWITCH_ON) {
@@ -55,22 +55,29 @@ export function isBedrockModelId(modelId: string | undefined): boolean {
 }
 
 /**
- * Whether the subscription windows (the signed-in account's five-hour, weekly and per-model weekly windows) do not apply to the session, as claude-hud's `shouldHideUsage` decides it: it is a Bedrock session, by the Bedrock switch (`modelPlatformOf` choosing Bedrock) or by a Bedrock model id (`isBedrockModelId`), and Bedrock is billed by use with none of those windows to spend. A provider's own windows and a model family's are not subscription windows and this says nothing about them.
- * @param env - The environment the statusline runs in, which is the client's.
- * @param modelId - The model id the client's payload reports, or undefined when it reports none.
+ * Whether the subscription windows (the signed-in account's five-hour, weekly and per-model weekly windows) do not apply to the session, as claude-hud's `shouldHideUsage` decides it: it is a Bedrock session of a Claude Code client, by the Bedrock switch (`modelPlatformOf` choosing Bedrock) or by a Bedrock model id (`isBedrockModelId`), and Bedrock is billed by use with none of those windows to spend. A provider's own windows and a model family's are not subscription windows and this says nothing about them.
+ * @param env - The environment the statusline runs in, as `platformInputsOf` hands it over: the client's for a Claude Code client, empty for an Antigravity one.
+ * @param modelId - The model id the client's payload reports, as `platformInputsOf` hands it over, or undefined when it reports none.
  */
 export function hidesSubscriptionWindows(env: Readonly<Record<string, string | undefined>>, modelId: string | undefined): boolean {
   return modelPlatformOf(env, modelId) === "Bedrock" || isBedrockModelId(modelId);
 }
 
-/** The environment of a client that sets none of Claude Code's switches. */
-const NO_SWITCHES: Readonly<Record<string, string | undefined>> = {};
+/** What the platform checks read of a session: the environment's switches and the model id the client reports. */
+export interface PlatformInputs {
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly modelId: string | undefined;
+}
+
+/** What a client that is not Claude Code gives the platform checks: no switches and no model id. */
+const NONE: PlatformInputs = { env: {}, modelId: undefined };
 
 /**
- * The environment the platform checks read: the statusline's own when the client is Claude Code, whose switches (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, the Anthropic base URL) they are, and none when the client is the Antigravity CLI, which those switches say nothing about even when they are exported for Claude Code.
+ * What the platform checks read of a session: the statusline's own environment and the payload's model id when the client is Claude Code, whose switches (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, the Anthropic base URL) and model-id aliases (`opusplan` and its siblings, a Bedrock model id) they read, and nothing when the client is the Antigravity CLI, which none of those say anything about even when they are exported for Claude Code. So an Antigravity client draws no platform label and is never a Bedrock session.
  * @param payload - The client's statusline payload, whose `product` names an Antigravity client.
  * @param env - The environment the statusline runs in.
+ * @param modelId - The model id the client's payload reports, or undefined when it reports none.
  */
-export function platformEnvOf(payload: unknown, env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string | undefined>> {
-  return isAntigravityPayload(payload) ? NO_SWITCHES : env;
+export function platformInputsOf(payload: unknown, env: Readonly<Record<string, string | undefined>>, modelId: string | undefined): PlatformInputs {
+  return isAntigravityPayload(payload) ? NONE : { env, modelId };
 }
