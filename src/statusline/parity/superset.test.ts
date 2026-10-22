@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveStatusline, STATUSLINE_DEFAULTS, type ResolvedStatusline, type STATUSLINE_HEADER_SEGMENTS, type STATUSLINE_ROWS } from "../../config/statusline";
+import { resolveStatusline, STATUSLINE_DEFAULTS, type ResolvedStatusline, type StatuslineSettings, type STATUSLINE_HEADER_SEGMENTS, type STATUSLINE_ROWS } from "../../config/statusline";
 import { ESCAPE } from "../ansi";
 import { parseClientPayload, viewOf } from "../payload";
 import { renderStatuslineBlock } from "../render";
@@ -113,5 +113,56 @@ describe("the default render of a stand-in session", () => {
     const drawn = draw({ ...SESSION, context_window: { context_window_size: SESSION.context_window.context_window_size, current_usage: SESSION.context_window.current_usage, total_input_tokens: 90_000 } });
     // claude-hud draws `Context ... 60%` here: the tokens held over the window with the reserve added in part.
     expect(drawn).toContain("59.7%");
+  });
+});
+
+describe("the documented restore of the default before it became a superset", () => {
+  const NOW_MS = Date.parse("2026-10-21T12:00:00.000Z");
+  const WIDE_TERMINAL = 200;
+  const ANSI = new RegExp(`${ESCAPE}\\[[0-9;]*m`, "g");
+  /** The settings `docs/statusline-claude-hud-parity.md` and `docs/configuration-model.md` give for drawing what the default drew before. */
+  const RESTORE: StatuslineSettings = {
+    layout: { header: ["model", "provider", "route", "account", "identity", "headroom"], rows: ["context", "quota"] },
+    usage: { resetLabel: false, modelScoped: false, sevenDayThreshold: 0 },
+    model: { platform: false },
+    context: { estimate: "never", breakdown: "never" },
+  };
+  const SESSION = {
+    cwd: "/work/demo-project",
+    workspace: { added_dirs: ["/work/extra-dir"] },
+    model: { id: "claude-opus-4-5", display_name: "Opus 4.5" },
+    context_window: { used_percentage: 92, context_window_size: 200_000, current_usage: { input_tokens: 1200, output_tokens: 300, cache_creation_input_tokens: 5000, cache_read_input_tokens: 177_800 } },
+    rate_limits: { model_scoped: [{ display_name: "Opus", utilization: 37, resets_at: "2026-10-23T12:00:00.000Z" }] },
+  };
+  /** A weekly use above claude-hud's weekly threshold and one below it, which the default before drew alike. */
+  const WEEKLY_HIGH = 85;
+  const WEEKLY_LOW = 30;
+  /** What the default drew for `SESSION` before it became a superset, as the statusline at that commit rendered it, with the weekly use at `WEEKLY_HIGH` and at `WEEKLY_LOW`. */
+  const BEFORE = {
+    weeklyHigh: "Opus 4.5\nCtx [███████████████████████████████████████░░░] 92.0% (Cache: 99%) | 5h [██████████████████░░░░░░░░░░░░░░░░░░░░░░░░] 42.0% (1h 30m) | Wk [████████████████████████████████████░░░░░░] 85.0% (3d 2h)",
+    weeklyLow: "Opus 4.5\nCtx [███████████████████████████████████████░░░] 92.0% (Cache: 99%) | 5h [██████████████████░░░░░░░░░░░░░░░░░░░░░░░░] 42.0% (1h 30m) | Wk [█████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 30.0% (3d 2h)",
+  };
+  const QUOTA = { fiveHourUsed: 42, fiveHourResetAt: "2026-10-21T13:30:00.000Z", sevenDayResetAt: "2026-10-24T14:00:00.000Z" };
+
+  function draw(payloadFields: Readonly<Record<string, unknown>>, sevenDayUsed: number, env: Readonly<Record<string, string>> = {}): string {
+    const payload = parseClientPayload(payloadFields);
+    return renderStatuslineBlock({ summary: fakeStatuslineSummary({ ...QUOTA, sevenDayUsed }), view: viewOf(payload), payload, terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, settings: resolveStatusline(RESTORE), ports: fakeStatuslinePorts({ env: { NO_COLOR: "1", ...env } }) }).replace(ANSI, "");
+  }
+
+  it("draws what the default drew before for a session that is not a Bedrock one, whatever the weekly use", () => {
+    expect(draw(SESSION, WEEKLY_HIGH)).toBe(BEFORE.weeklyHigh);
+    expect(draw(SESSION, WEEKLY_LOW)).toBe(BEFORE.weeklyLow);
+    expect(draw(SESSION, WEEKLY_HIGH, { CLAUDE_CODE_USE_VERTEX: "1" })).toBe(BEFORE.weeklyHigh);
+  });
+
+  it("still draws none of the signed-in account's windows for a Bedrock session, which the restore does not undo", () => {
+    // The default before drew the five-hour and weekly windows here; they do not apply to a Bedrock session whatever the settings say.
+    for (const drawn of [draw(SESSION, WEEKLY_HIGH, { CLAUDE_CODE_USE_BEDROCK: "1" }), draw({ ...SESSION, model: { id: "us.anthropic.claude-opus-4-5-20251101-v1:0", display_name: "Opus 4.5" } }, WEEKLY_HIGH)]) {
+      expect(drawn).toMatch(/^Opus 4\.5\nCtx \[[\u2588\u2591]+\] 92\.0% \(Cache: 99%\)$/u);
+    }
+  });
+
+  it("names the model by its id when the client sends no display name, where the default before drew no model", () => {
+    expect(draw({ ...SESSION, model: { id: "claude-opus-4-5" } }, WEEKLY_HIGH)).toBe(BEFORE.weeklyHigh.replace("Opus 4.5", "claude-opus-4-5"));
   });
 });
