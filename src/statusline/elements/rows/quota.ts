@@ -37,37 +37,39 @@ function modelScopedWindows({ payload }: RenderContext): readonly QuotaWindowVie
   });
 }
 
-/** Every window the quota row can draw, before the thresholds choose among them: every model family's window for an account whose limits are per family, else the five-hour and weekly windows (with the per-model weekly ones when asked for) or, with neither, a provider's own windows. */
-function candidateWindows(context: RenderContext): readonly QuotaWindowView[] {
+/** The windows of the account the session is signed in as: the five-hour and weekly windows, with the per-model weekly ones when asked for and the session selected no provider. None for a session served through Amazon Bedrock (`hidesSubscriptionWindows`), which spends none of them. */
+function subscriptionWindows(context: RenderContext): { readonly unified: readonly QuotaWindowView[]; readonly modelScoped: readonly QuotaWindowView[] } {
   const { summary, settings } = context;
+  if (hidesSubscriptionWindows(context.ports.env, context.payload.model?.id)) {
+    return { unified: [], modelScoped: [] };
+  }
+  const unified: QuotaWindowView[] = [];
+  if (summary.fiveHourUsed !== undefined) {
+    unified.push({ label: settings.labels.fiveHour === "" ? context.t("quota.fiveHour") : settings.labels.fiveHour, fraction: summary.fiveHourUsed / FULL_PERCENT, resetsAt: summary.fiveHourResetAt, periodMs: FIVE_HOUR_WINDOW_MS, weekly: false });
+  }
+  if (summary.sevenDayUsed !== undefined) {
+    unified.push({ label: settings.labels.sevenDay === "" ? context.t("quota.sevenDay") : settings.labels.sevenDay, fraction: summary.sevenDayUsed / FULL_PERCENT, resetsAt: summary.sevenDayResetAt, periodMs: SEVEN_DAY_WINDOW_MS, weekly: true });
+  }
+  // The payload's windows describe the account the session is signed in as, which a session that selected a provider does not spend.
+  return { unified, modelScoped: settings.usage.modelScoped && summary.provider === undefined ? modelScopedWindows(context) : [] };
+}
+
+/** Every window the quota row can draw, before the thresholds choose among them: every model family's window for an account whose limits are per family, else the subscription windows (`subscriptionWindows`, none for a Bedrock session) with, when neither the five-hour nor the weekly window is drawn, a provider's own windows. A Bedrock session still draws a model family's windows and a provider's own, which are not the signed-in account's. */
+function candidateWindows(context: RenderContext): readonly QuotaWindowView[] {
+  const { summary } = context;
   if (summary.quotaFamilies.length > 0) {
     // An Antigravity account's limits are per model family, so every family's window is drawn whichever model is in use.
     return summary.quotaFamilies.map((window) => ({ label: window.measures, fraction: window.utilization, resetsAt: window.resetsAt, periodMs: undefined, weekly: false }));
   }
-  const windows: QuotaWindowView[] = [];
-  if (summary.fiveHourUsed !== undefined) {
-    windows.push({ label: settings.labels.fiveHour === "" ? context.t("quota.fiveHour") : settings.labels.fiveHour, fraction: summary.fiveHourUsed / FULL_PERCENT, resetsAt: summary.fiveHourResetAt, periodMs: FIVE_HOUR_WINDOW_MS, weekly: false });
-  }
-  if (summary.sevenDayUsed !== undefined) {
-    windows.push({ label: settings.labels.sevenDay === "" ? context.t("quota.sevenDay") : settings.labels.sevenDay, fraction: summary.sevenDayUsed / FULL_PERCENT, resetsAt: summary.sevenDayResetAt, periodMs: SEVEN_DAY_WINDOW_MS, weekly: true });
-  }
+  const { unified, modelScoped } = subscriptionWindows(context);
   // A provider outside Anthropic's unified rate-limit family (z.ai) reports its usage only through its own quota windows, which are drawn when no unified window is.
-  if (summary.fiveHourUsed === undefined && summary.sevenDayUsed === undefined) {
-    windows.push(...summary.providerQuotaWindows.map((window) => ({ label: window.measures, fraction: window.utilization, resetsAt: window.resetsAt, periodMs: window.periodMs, weekly: false })));
-  }
-  // The payload's windows describe the account the session is signed in as, which a session that selected a provider does not spend.
-  if (settings.usage.modelScoped && summary.provider === undefined) {
-    windows.push(...modelScopedWindows(context));
-  }
-  return windows;
+  const providerWindows = unified.length > 0 ? [] : summary.providerQuotaWindows.map((window) => ({ label: window.measures, fraction: window.utilization, resetsAt: window.resetsAt, periodMs: window.periodMs, weekly: false }));
+  return [...unified, ...providerWindows, ...modelScoped];
 }
 
-/** The windows to draw: none when no window has used `usage.threshold` yet, and without the weekly window when a five-hour one is drawn beside it and the weekly use is below `usage.sevenDayThreshold`. */
+/** The windows to draw (`candidateWindows`, so no subscription window for a Bedrock session): none when no window has used `usage.threshold` yet, and without the weekly window when a five-hour one is drawn beside it and the weekly use is below `usage.sevenDayThreshold`. */
 function visibleWindows(context: RenderContext): readonly QuotaWindowView[] {
   const { summary, settings } = context;
-  if (hidesSubscriptionWindows(context.ports.env, context.payload.model?.id)) {
-    return [];
-  }
   const candidates = candidateWindows(context);
   const mostUsed = Math.max(0, ...candidates.map((window) => window.fraction * FULL_PERCENT));
   if (mostUsed < settings.usage.threshold) {
@@ -98,7 +100,7 @@ function wrapped(windows: readonly string[], width: number): string[] {
   return packLines(windows, width, SEPARATOR).map((line) => line.join(SEPARATOR));
 }
 
-/** The quota windows' row: the five-hour and weekly windows, the per-model weekly windows when asked for, every model family's window for an account whose limits are per family, or a provider's own windows when it reports no unified one. Drawn as bars, as text alone, or as one compact line of text, under `settings.usage`. */
+/** The quota windows' row: the five-hour and weekly windows, the per-model weekly windows when asked for, every model family's window for an account whose limits are per family, or a provider's own windows when no unified one is drawn. A session served through Amazon Bedrock draws none of the signed-in account's windows (the five-hour, weekly and per-model ones) whatever the settings, and still draws a model family's or a provider's own. Drawn as bars, as text alone, or as one compact line of text, under `settings.usage`. */
 export function quotaRow(context: RenderContext): RowOutput {
   const { palette, settings } = context;
   const style = barStyleOf(context, "usage");

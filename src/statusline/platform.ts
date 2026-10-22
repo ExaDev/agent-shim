@@ -53,7 +53,7 @@ export function isBedrockModelId(modelId: string | undefined): boolean {
 }
 
 /**
- * Whether the subscription windows do not apply to the session, as claude-hud decides it: it is served through Amazon Bedrock, by the environment switch or by the model id the client reports, and Bedrock is billed by use with no five-hour or weekly window to draw.
+ * Whether the subscription windows (the signed-in account's five-hour, weekly and per-model weekly windows) do not apply to the session, as claude-hud's `shouldHideUsage` decides it: it is served through Amazon Bedrock, by the environment switch or by a Bedrock model id (`isBedrockModelId`), and Bedrock is billed by use with none of those windows to spend. A provider's own windows and a model family's are not subscription windows and this says nothing about them.
  * @param env - The environment the statusline runs in, which is the client's.
  * @param modelId - The model id the client's payload reports, or undefined when it reports none.
  */

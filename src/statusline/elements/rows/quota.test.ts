@@ -94,6 +94,15 @@ describe("the quota row's usage settings", () => {
     expect(defaultQuotaLines({ usage: { bar: false } }, {}, { model: { id: "us.anthropic.claude-opus-4-5-v1:0" } })).toEqual([]);
     expect(defaultQuotaLines({ usage: { bar: false } }, {}, { model: { id: "claude-opus-4-5" } })).toEqual(["5h 25.0% (resets in 1h 30m)"]);
     expect(defaultQuotaLines({ usage: { bar: false } }, {}, {}, { ...PLAIN, CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["5h 25.0% (resets in 1h 30m)"]);
+    expect(defaultQuotaLines({ usage: { bar: false } }, { sevenDayUsed: 80 }, MODEL_SCOPED_PAYLOAD, { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual([]);
+  });
+
+  it("still draws a model family's windows and a provider's own for a session served through Amazon Bedrock, since neither is the signed-in account's", () => {
+    const bedrock = { ...PLAIN, CLAUDE_CODE_USE_BEDROCK: "1" };
+    const families = [{ measures: "Gemini", utilization: 0.5, resetsAt: "2026-10-16T10:30:00.000Z" }];
+    const providerWindows = [{ measures: "tokens", utilization: 0.5, resetsAt: "2026-10-16T10:30:00.000Z", periodMs: 18_000_000 }];
+    expect(defaultQuotaLines({ usage: { bar: false } }, { quotaFamilies: families, fiveHourUsed: undefined, sevenDayUsed: undefined }, {}, bedrock)).toEqual(["Gemini 50.0% (resets in 1h 30m)"]);
+    expect(defaultQuotaLines({ usage: { bar: false } }, { providerQuotaWindows: providerWindows, provider: "z.ai", fiveHourUsed: undefined, sevenDayUsed: undefined }, {}, bedrock)).toEqual(["tokens 50.0% (resets in 1h 30m)"]);
   });
 
   it("by default draws the per-model weekly windows after the account's own", () => {
