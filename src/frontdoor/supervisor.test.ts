@@ -5,6 +5,11 @@ import { FRONT_DOOR_PROTOCOL, listFrontDoorDirectRecords, listFrontDoorSessions,
 import { awaitPidExit, FRONTDOOR_POLL_MS, FRONTDOOR_SUPERVISOR_STILL_RUNNING, runFrontDoorSupervisor, watchedInstallEntry } from "./supervisor";
 import { DEAD_SESSION, FRESH_PORT, FULL_IDLE_WINDOW_TICKS, IDLE_MINUTES, INSTALLED_BINARY, LIVE_SESSION, MS_PER_MINUTE, NEW_SESSION, OCCUPIED_PORT, OWN_PID, REPLACED_BINARY, SESSION_TOKEN, SLACK_TICKS, STICKY_CONNECT_PORT, STICKY_DIRECT_PORT, STICKY_PORT, SUCCESSOR_PID, SUCCESSOR_STATE, makeWorld, paths } from "./supervisorTestWorld";
 
+/** The pauses (each ends a tick) at which a launch registers, its process ends, and the tick that finds it ended has pruned it. */
+const REGISTERS_AT_PAUSE = 1;
+const DIES_AT_PAUSE = 2;
+const PRUNED_BY_PAUSE = 3;
+
 /** The existence check that always answers yes: the sibling rule applies wherever the candidate path would be. */
 const SIBLING_EXISTS = (): boolean => true;
 
@@ -171,6 +176,46 @@ describe("runFrontDoorSupervisor", () => {
     expect(await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: FULL_IDLE_WINDOW_TICKS })).toBe(FRONTDOOR_SUPERVISOR_STILL_RUNNING);
     expect(listFrontDoorSessions(world.fs, paths.frontdoorSessionsDir).map((session) => session.pid)).toEqual([LIVE_SESSION]);
     expect(world.closes).toEqual([]);
+  });
+
+  it("stops admitting a dead launcher's capability in the tick that prunes it, and keeps admitting the live one's", async () => {
+    const world = makeWorld();
+    world.alive.add(LIVE_SESSION);
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0, token: "live-token" });
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: DEAD_SESSION, startedAt: 0, token: "dead-token" });
+    const admitted: boolean[] = [];
+    world.onSleep = () => {
+      // The first pause is the end of the first tick, which listed both launches and pruned the dead one.
+      if (admitted.length === 0) {
+        admitted.push(world.registry.admits("dead-token"), world.registry.admits("live-token"));
+      }
+    };
+    await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: 1 });
+    expect(admitted).toEqual([false, true]);
+  });
+
+  it("admits a launch that registers between ticks on its first request, and refuses it once the tick that finds it dead has pruned it", async () => {
+    const world = makeWorld();
+    world.alive.add(LIVE_SESSION);
+    writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: LIVE_SESSION, startedAt: 0, token: "live-token" });
+    const seen: { afterRegistering?: boolean; afterDying?: boolean } = {};
+    let pauses = 0;
+    world.onSleep = () => {
+      pauses += 1;
+      if (pauses === REGISTERS_AT_PAUSE) {
+        world.alive.add(NEW_SESSION);
+        writeFrontDoorSession(world.fs, paths.frontdoorSessionsDir, { pid: NEW_SESSION, startedAt: world.clock(), token: "new-token" });
+        seen.afterRegistering = world.registry.admits("new-token");
+      }
+      if (pauses === DIES_AT_PAUSE) {
+        world.alive.delete(NEW_SESSION);
+      }
+      if (pauses === PRUNED_BY_PAUSE) {
+        seen.afterDying = world.registry.admits("new-token");
+      }
+    };
+    await runFrontDoorSupervisor(IDLE_MINUTES, world.ports, { tickLimit: PRUNED_BY_PAUSE });
+    expect(seen).toEqual({ afterRegistering: true, afterDying: false });
   });
 
   it("asks about its sessions and its superseding owner without the synchronous liveness check", async () => {

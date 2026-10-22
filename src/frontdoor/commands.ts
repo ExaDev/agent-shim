@@ -39,7 +39,6 @@ import { appendDoorLog } from "./doorLog";
 import { handOverOnSignal, retireOnSignals, type DoorExitFacts } from "./replacement";
 import { createRoutingSettingReader } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
-import { isLiveCapability } from "./capability";
 import { captureFromEnv } from "./capture";
 import { CONNECT_INTERCEPT_HOST, CONNECT_INTERCEPT_HOSTS, CONNECT_LIMITS, CONNECT_TAP_HOSTS, HTTPS_PORT, LOOPBACK_LEAF_NAMES, createLeafCache, ensureCa, generateCa, mintLeaf, realConnectCertStore, startConnectServer, type CaMaterial } from "./connect";
 import { lateRcEventDial, lateRcStreamDial, realConnectEffects, realRcEventDial, realRcStreamDial, type RcDialTarget } from "./connectEffects";
@@ -55,6 +54,7 @@ import { createDoorHealthPublisher } from "./doorHealthEvents";
 import { createDoorEventHub, rcFanoutOnDoorHub } from "./eventHub";
 import { USAGE_EVENT_SOURCE } from "./eventSchemas";
 import { createQuotaExpiringPublisher } from "./quotaExpiringEvents";
+import { createLiveSessionRegistry } from "./liveSessionRegistry";
 import { createLaunchEventPublisher } from "./launchEvents";
 import { serveRouted, type RouteResolution } from "./pipeline";
 import { createProviderRouteResolver } from "./providerRoute";
@@ -81,7 +81,7 @@ import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_DELAY_EN
 import { PROBE_TIMEOUT_MS } from "./probe";
 import { readFrontDoorListeners, realFrontDoorListenerProbes } from "./listenerReadings";
 import { collectFrontDoorStatus, formatFrontDoorListeners, formatFrontDoorStatus, headroomSocketTarget } from "./status";
-import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, liveSessionTokens, removeFrontDoorSession, writeFrontDoorSession, readFrontDoorSessionModels } from "./state";
+import { FRONT_DOOR_PROTOCOL, listFrontDoorSessions, removeFrontDoorSession, writeFrontDoorSession, readFrontDoorSessionModels } from "./state";
 import { declareThisProcessTheFrontDoor } from "./selfIdentity";
 import { awaitPidExit, runFrontDoorSupervisor, watchedInstallEntry, type FrontDoorSupervisorPorts, type OwnExecutableStat } from "./supervisor";
 import { createAccountReader } from "../usage/account";
@@ -287,8 +287,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     rcHub,
   );
 
-  // One check for every listener that admits launches, read fresh on each call since launches come and go: the provider listener's and the CONNECT surface's routed paths (the capability header), and the CONNECT surface's own CONNECT requests (the proxy credential).
-  const isLiveToken = (token: string): boolean => isLiveCapability(token, liveSessionTokens(realFarmFs, paths.frontdoorSessionsDir));
+  // One check for every listener that admits launches: the provider listener's and the CONNECT surface's routed paths (the capability header), and the CONNECT surface's own CONNECT requests (the proxy credential). It answers from memory: the supervisor's tick refreshes the view, and only a token the view does not hold (a launch that registered since) is looked up in the registry directory.
+  const sessionRegistry = createLiveSessionRegistry({ fs: realFarmFs, sessionsDir: paths.frontdoorSessionsDir });
+  const isLiveToken = (token: string): boolean => sessionRegistry.admits(token);
 
   // Usage tracking: one store per door process, its log segments named by this pid, written on a deferred turn so recording never sits in a response's path. Every snapshot it writes is published on the backbone's usage source, the durable fact the expiring-quota checker and any quota consumer reads; the routing layer's snapshot cache rides the same publish, so a route condition reading a target's quota sees the state this process last wrote without a file read.
   const usageStore = createUsageStore({
@@ -448,6 +449,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   return {
     fs: realFarmFs,
     paths,
+    registry: sessionRegistry,
     ownPid: process.pid,
     now: () => Date.now(),
     sleep: async (ms) => {
@@ -639,6 +641,7 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
           // The session the transparent surface minted for this door is no longer anything this door serves: the successor mints its own, and this one would hold its idle clock open.
           if (transparentCapability !== undefined) {
             removeFrontDoorSession(realFarmFs, paths.frontdoorSessionsDir, process.pid);
+            sessionRegistry.forget([process.pid]);
           }
           await server.drain();
           rcSelfHostSurface?.close();
