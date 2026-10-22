@@ -334,7 +334,7 @@
                 },
                 "platform": {
                   "type": "boolean",
-                  "description": "Whether the model segment ends with the label claude-hud draws beside the model name, chosen from the client's environment and model id as claude-hud chooses it, the first that holds: Bedrock when CLAUDE_CODE_USE_BEDROCK is 1, Vertex when CLAUDE_CODE_USE_VERTEX is 1, MiniMax when ANTHROPIC_BASE_URL (else ANTHROPIC_API_BASE_URL) is https://api.minimax.io/anthropic or https://api.minimaxi.com/anthropic, and Enterprise when the model id is opusplan, sonnetplan or haikuplan. Nothing is drawn when none holds, and the label stands alone when no name is known: the client sends neither a display name nor a model id, no override is set and the transcript gives none. It is not the provider segment, which names the agent-shim provider the launch selected and the door routes to."
+                  "description": "Whether the model segment ends with the label claude-hud draws beside the model name, chosen from the client's environment and model id as claude-hud chooses it, the first that holds: Bedrock when CLAUDE_CODE_USE_BEDROCK is 1, Vertex when CLAUDE_CODE_USE_VERTEX is 1, MiniMax when ANTHROPIC_BASE_URL (else ANTHROPIC_API_BASE_URL) is https://api.minimax.io/anthropic or https://api.minimaxi.com/anthropic, and Enterprise when the model id is opusplan, sonnetplan or haikuplan. Nothing is drawn when none holds, and the label stands alone when no name is known: the client's display name and model id are both absent or blank, no override is set, and the transcript supplies none where model.source reads it. The switches are Claude Code's, so an Antigravity client never draws the label. It is not the provider segment, which names the agent-shim provider the launch selected and the door routes to."
                 }
               },
               "additionalProperties": false
@@ -617,7 +617,7 @@
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 100,
-                  "description": "The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden, and 0 never hides it. A weekly window with no five-hour window beside it is never hidden by this setting. Neither setting draws anything in a Bedrock session, which draws none of the account's windows, and usage.threshold can still hide the whole row."
+                  "description": "The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden, and 0 never hides it. A weekly window with no five-hour window beside it is never hidden by this setting. A Bedrock session draws none of the account's windows, so this setting governs nothing there, and usage.threshold can still hide the whole row."
                 }
               },
               "additionalProperties": false
