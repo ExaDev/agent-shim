@@ -28,7 +28,9 @@ const JUST_CLEARED = 100;
 /** claude-hud's context thresholds (`display.contextWarningThreshold` and `display.contextCriticalThreshold` in its `DEFAULT_CONFIG`), which are the context bar's defaults, and how far under a threshold a percentage still counts as under it. */
 const DEFAULT_WARN_AT = 70;
 const DEFAULT_CRITICAL_AT = 85;
-const JUST_BELOW = 0.1;
+/** Half a point below a threshold, which rounds up to it, and a little more than that, which rounds down below it. */
+const HALF_POINT_BELOW = 0.5;
+const OVER_HALF_POINT_BELOW = 0.6;
 const GREEN = `${ESCAPE}[32m`;
 const YELLOW = `${ESCAPE}[33m`;
 const RED = `${ESCAPE}[31m`;
@@ -138,12 +140,14 @@ describe("the context row's thresholds", () => {
     at(BETWEEN_CRITICAL_THRESHOLDS, { context: { breakdownAt: EARLIER_CRITICAL_AT } }, RED);
   });
 
-  it("colours at exactly each threshold in the colour of the band it opens", () => {
+  it("colours from half a point below each threshold, which rounds up to it, in the colour of the band it opens, as claude-hud does with its whole-number percentage", () => {
     const line = (percent: number): string => draw({}, { contextUsedPercentage: percent })[0] ?? "";
-    expect(line(DEFAULT_WARN_AT - JUST_BELOW)).toContain(`${GREEN}${(DEFAULT_WARN_AT - JUST_BELOW).toFixed(1)}%`);
+    expect(line(DEFAULT_WARN_AT - OVER_HALF_POINT_BELOW)).toContain(`${GREEN}${(DEFAULT_WARN_AT - OVER_HALF_POINT_BELOW).toFixed(1)}%`);
+    expect(line(DEFAULT_WARN_AT - HALF_POINT_BELOW)).toContain(`${YELLOW}${(DEFAULT_WARN_AT - HALF_POINT_BELOW).toFixed(1)}%`);
     expect(line(DEFAULT_WARN_AT)).toContain(`${YELLOW}${DEFAULT_WARN_AT.toFixed(1)}%`);
     expect(line(DEFAULT_CRITICAL_AT - 1)).toContain(`${YELLOW}${(DEFAULT_CRITICAL_AT - 1).toFixed(1)}%`);
-    expect(line(DEFAULT_CRITICAL_AT - JUST_BELOW)).toContain(`${YELLOW}${(DEFAULT_CRITICAL_AT - JUST_BELOW).toFixed(1)}%`);
+    expect(line(DEFAULT_CRITICAL_AT - OVER_HALF_POINT_BELOW)).toContain(`${YELLOW}${(DEFAULT_CRITICAL_AT - OVER_HALF_POINT_BELOW).toFixed(1)}%`);
+    expect(line(DEFAULT_CRITICAL_AT - HALF_POINT_BELOW)).toContain(`${RED}${(DEFAULT_CRITICAL_AT - HALF_POINT_BELOW).toFixed(1)}%`);
     expect(line(DEFAULT_CRITICAL_AT)).toContain(`${RED}${DEFAULT_CRITICAL_AT.toFixed(1)}%`);
   });
 
@@ -248,10 +252,11 @@ describe("the context row's breakdown", () => {
     expect(stripAnsi(draw({ context: { breakdown: "never" } }, { contextUsedPercentage: DEFAULT_CRITICAL_AT }, usage)[0] ?? "")).not.toContain("in:");
   });
 
-  it("adds the breakdown at exactly its threshold, and not a hair below it", () => {
+  it("adds the breakdown from half a point below its threshold, which rounds up to it, and not further below", () => {
     const atAndBelow = (settings: StatuslineSettings, threshold: number): void => {
       expect(stripAnsi(draw(settings, { contextUsedPercentage: threshold }, usage)[0] ?? ""), `at ${String(threshold)}`).toContain("in:");
-      expect(stripAnsi(draw(settings, { contextUsedPercentage: threshold - JUST_BELOW }, usage)[0] ?? ""), `below ${String(threshold)}`).not.toContain("in:");
+      expect(stripAnsi(draw(settings, { contextUsedPercentage: threshold - HALF_POINT_BELOW }, usage)[0] ?? ""), `half a point below ${String(threshold)}`).toContain("in:");
+      expect(stripAnsi(draw(settings, { contextUsedPercentage: threshold - OVER_HALF_POINT_BELOW }, usage)[0] ?? ""), `below ${String(threshold)}`).not.toContain("in:");
     };
     atAndBelow({ context: { breakdown: "critical" } }, DEFAULT_CRITICAL_AT);
     atAndBelow({ context: { breakdown: "critical", criticalAt: EARLIER_CRITICAL_AT } }, EARLIER_CRITICAL_AT);

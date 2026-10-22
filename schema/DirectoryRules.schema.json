@@ -172,7 +172,7 @@
                       "essential",
                       "minimal"
                     ],
-                    "description": "A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts, usage.resetLabel and context.breakdown) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own default, everything claude-hud's default configuration draws plus agent-shim's own segments; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments, the extra segment once extra.command is set, and the context row; standard adds the provider, route, account, identity and headroom segments and the quota and added directories rows, with the reset label and the token breakdown at high use, full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown at high use, essential adds the duration, the added directories row and the tools, agents and todos rows, and minimal adds the added directories row alone."
+                    "description": "A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts, usage.resetLabel and context.breakdown) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own default, everything claude-hud's default configuration draws plus agent-shim's own segments; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments, the extra segment once extra.command is set, and the context row; standard adds the provider, route, account, identity and headroom segments and the quota and added directories rows, with the reset label and the token breakdown from its threshold, full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown from its threshold, essential adds the duration, the added directories row and the tools, agents and todos rows, and minimal adds the added directories row alone."
                   },
                   "layout": {
                     "type": "object",
@@ -432,13 +432,13 @@
                         "description": "The context figure: both (the tokens held against the window, then the percentage), percent, tokens, or remaining (the percentage of the window left)."
                       },
                       "warnAt": {
-                        "description": "The whole percentage of the context window at which the context bar turns yellow; it must be below context.criticalAt. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars, and its default is claude-hud's contextWarningThreshold. A layer may write null to return it to its default when a shallower layer sets it.",
+                        "description": "The whole percentage of the context window at which the context bar turns yellow; it must be below context.criticalAt. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextWarningThreshold. A layer may write null to return it to its default when a shallower layer sets it.",
                         "anyOf": [
                           {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 100,
-                            "description": "The whole percentage of the context window at which the context bar turns yellow; it must be below context.criticalAt. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars, and its default is claude-hud's contextWarningThreshold."
+                            "description": "The whole percentage of the context window at which the context bar turns yellow; it must be below context.criticalAt. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextWarningThreshold."
                           },
                           {
                             "type": "null"
@@ -446,13 +446,13 @@
                         ]
                       },
                       "criticalAt": {
-                        "description": "The whole percentage of the context window at which the context bar turns red, and from which the token breakdown appears while context.breakdownAt is unset. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown. A layer may write null to return it to its default when a shallower layer sets it.",
+                        "description": "The whole percentage of the context window at which the context bar turns red, and from which the token breakdown appears while context.breakdownAt is unset. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown. A layer may write null to return it to its default when a shallower layer sets it.",
                         "anyOf": [
                           {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 100,
-                            "description": "The whole percentage of the context window at which the context bar turns red, and from which the token breakdown appears while context.breakdownAt is unset. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown."
+                            "description": "The whole percentage of the context window at which the context bar turns red, and from which the token breakdown appears while context.breakdownAt is unset. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown."
                           },
                           {
                             "type": "null"
@@ -500,7 +500,7 @@
                           "never",
                           "critical"
                         ],
-                        "description": "Whether to add the input and cache tokens of the last request to the context row: critical adds them once the percentage the row draws (the one the client reports, or the estimate context.estimate makes) reaches the breakdown threshold, which is context.breakdownAt, or context.criticalAt while that is unset, and never leaves them off. With no percentage to draw the row draws nothing, and when the client does not report the last request's tokens there is no breakdown to add."
+                        "description": "Whether to add the input and cache tokens of the last request to the context row: critical adds them once the percentage the row draws (the one the client reports, or the estimate context.estimate makes, or, with context.autoCompactWindow set, the tokens held over that window), rounded to a whole number, reaches the breakdown threshold, which is context.breakdownAt, or context.criticalAt while that is unset, and never leaves them off. With no percentage to draw the row draws nothing, and when the client does not report the last request's tokens there is no breakdown to add."
                       }
                     },
                     "additionalProperties": false
@@ -547,13 +547,13 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 100,
-                        "description": "The whole percentage of use at which a bar other than the context bar turns yellow (the context bar has context.warnAt); it must be below criticalAt."
+                        "description": "The whole percentage of use at which a bar other than the context bar turns yellow (the context bar has context.warnAt); it must be below criticalAt. The context row's cache hit share is coloured by these bands too."
                       },
                       "criticalAt": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 100,
-                        "description": "The whole percentage of use at which a bar other than the context bar turns red (the context bar has context.criticalAt)."
+                        "description": "The whole percentage of use at which a bar other than the context bar turns red (the context bar has context.criticalAt). The context row's cache hit share is coloured by these bands too."
                       }
                     },
                     "additionalProperties": false

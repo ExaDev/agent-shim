@@ -28,6 +28,9 @@ function windowTokensOf({ settings, view }: RenderContext): number | undefined {
   return settings.context.autoCompactWindow ?? view.contextWindowTokens;
 }
 
+/** Half a percentage point, the distance within which a percentage rounds up to a whole one. */
+const ROUNDING_HALF_POINT = 0.5;
+
 /** The tokens held against a window, with the reserve Claude Code keeps for compaction added in proportion: none while the window is nearly empty, all of it once half full, and a straight line between. */
 function bufferedPercent(tokens: number, windowTokens: number): number {
   const held = tokens / windowTokens;
@@ -72,7 +75,8 @@ export function contextRow(context: RenderContext): RowOutput {
     return settings.context.bar === "shown" ? { kind: "bars", cells: [] } : { kind: "text", lines: [] };
   }
   const style = barStyleOf(context, "context");
-  const bands = { warnAt: settings.context.warnAt, criticalAt: settings.context.criticalAt };
+  // claude-hud compares the percentage rounded to a whole number with its thresholds, which is comparing the percentage itself with each threshold less half a point; the bar's fill keeps the unrounded figure, and so does the text.
+  const bands = { warnAt: settings.context.warnAt - ROUNDING_HALF_POINT, criticalAt: settings.context.criticalAt - ROUNDING_HALF_POINT };
   const fraction = Math.max(0, Math.min(1, percent / FULL_PERCENT));
   const color = statusColor(fraction, true, { ...style, bands });
   const windowTokens = windowTokensOf(context);
@@ -105,7 +109,7 @@ export function contextRow(context: RenderContext): RowOutput {
     default:
       return settings.context.value satisfies never;
   }
-  const high = settings.context.breakdown === "critical" && percent >= contextBreakdownAt(settings) ? breakdownText(context) : undefined;
+  const high = settings.context.breakdown === "critical" && Math.round(percent) >= contextBreakdownAt(settings) ? breakdownText(context) : undefined;
   if (settings.context.bar === "hidden" && afterBar.length === 0) {
     return { kind: "text", lines: [] };
   }

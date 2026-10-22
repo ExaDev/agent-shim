@@ -430,9 +430,9 @@ describe("the context group", () => {
   });
 
   it("refuses a context warning threshold at or above the critical one, and checks the bands apart from it", () => {
-    expect(() => resolveStatusline({ context: { warnAt: 95 } })).toThrow(/^statusline context\.warnAt \(95\) must be below context\.criticalAt \(85\)$/);
+    expect(() => resolveStatusline({ context: { warnAt: 95 } })).toThrow(/^statusline context\.warnAt \(95\) must be below context\.criticalAt \(85\); set both when moving one$/);
     expect(() => resolveStatusline({ context: { warnAt: CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD } })).toThrow(/context\.warnAt \(85\) must be below context\.criticalAt \(85\)/);
-    expect(() => resolveStatusline({ context: { criticalAt: 60 } })).toThrow(/^statusline context\.warnAt \(70\) must be below context\.criticalAt \(60\)$/);
+    expect(() => resolveStatusline({ context: { criticalAt: 60 } })).toThrow(/^statusline context\.warnAt \(70\) must be below context\.criticalAt \(60\); set both when moving one$/);
     expect(resolveStatusline({ bands: { warnAt: 88, criticalAt: 95 } }).context).toMatchObject({ warnAt: CLAUDE_HUD_CONTEXT_WARNING_THRESHOLD, criticalAt: CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD });
     expect(resolveStatusline({ context: OWN_PAIR }).context.criticalAt).toBe(OWN_PAIR.criticalAt);
   });

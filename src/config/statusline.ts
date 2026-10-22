@@ -76,7 +76,7 @@ const GIT_WITH_DIRTY_MARKER = { enabled: true, showDirty: true, showAheadBehind:
 const JJ_OFF = { enabled: false, showDirty: true, showConflicts: true } as const;
 
 /**
- * What each preset sets. `standard` is the default: everything claude-hud's own default configuration draws (the model, project, version control and extra segments over the context, quota and added directories rows, with the reset label and the token breakdown at high use), and agent-shim's provider, route, account, identity and headroom segments. All the others are claude-hud's presets as its guided configuration (`commands/configure.md`) defines them, for the elements the statusline has: each is a claude-hud configuration with that preset applied, so a toggle the preset does not list stays at claude-hud's default (the reset label on, the added directories on, usage on). `full` is the model, project, version control, effort, advisor, version, output style, cost, session name and duration, over the context, quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown on the context row at high use and Jujutsu on. `essential` is the model, project, version control and duration over the context, added directories, tools, agents and todos rows, and `minimal` is the same without the duration; neither adds the token breakdown. The segments and rows that are agent-shim's own (provider, route, account, identity, headroom, daily cost, speed, the changed files and the session times) are in none of claude-hud's three, because claude-hud's presets never turn them on.
+ * What each preset sets. `standard` is the default: everything claude-hud's own default configuration draws (the model, project, version control and extra segments over the context, quota and added directories rows, with the reset label and the token breakdown from its threshold), and agent-shim's provider, route, account, identity and headroom segments. All the others are claude-hud's presets as its guided configuration (`commands/configure.md`) defines them, for the elements the statusline has: each is a claude-hud configuration with that preset applied, so a toggle the preset does not list stays at claude-hud's default (the reset label on, the added directories on, usage on). `full` is the model, project, version control, effort, advisor, version, output style, cost, session name and duration, over the context, quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown on the context row from its threshold and Jujutsu on. `essential` is the model, project, version control and duration over the context, added directories, tools, agents and todos rows, and `minimal` is the same without the duration; neither adds the token breakdown. The segments and rows that are agent-shim's own (provider, route, account, identity, headroom, daily cost, speed, the changed files and the session times) are in none of claude-hud's three, because claude-hud's presets never turn them on.
  */
 const PRESET_BUNDLES: Readonly<Record<(typeof STATUSLINE_PRESETS)[number], PresetBundle>> = {
   standard: { layout: { header: DEFAULT_HEADER_SEGMENTS, rows: DEFAULT_ROWS }, git: GIT_WITH_DIRTY_MARKER, jj: JJ_OFF, usage: { resetLabel: CLAUDE_HUD_DEFAULTS.usage.resetLabel }, context: { breakdown: CLAUDE_HUD_DEFAULTS.context.breakdown } },
@@ -241,8 +241,8 @@ const SHAPES = {
   context: {
     bar: z.enum(["shown", "hidden"]).describe("Whether the context row draws its bar, or only its figures on one line of text."),
     value: z.enum(STATUSLINE_CONTEXT_VALUES).describe("The context figure: both (the tokens held against the window, then the percentage), percent, tokens, or remaining (the percentage of the window left)."),
-    warnAt: wholePercent.describe("The whole percentage of the context window at which the context bar turns yellow; it must be below context.criticalAt. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars, and its default is claude-hud's contextWarningThreshold."),
-    criticalAt: wholePercent.describe("The whole percentage of the context window at which the context bar turns red, and from which the token breakdown appears while context.breakdownAt is unset. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown."),
+    warnAt: wholePercent.describe("The whole percentage of the context window at which the context bar turns yellow; it must be below context.criticalAt. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextWarningThreshold."),
+    criticalAt: wholePercent.describe("The whole percentage of the context window at which the context bar turns red, and from which the token breakdown appears while context.breakdownAt is unset. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown."),
     breakdownAt: wholePercent
       .optional()
       .describe(
@@ -258,7 +258,7 @@ const SHAPES = {
     breakdown: z
       .enum(["never", "critical"])
       .describe(
-        "Whether to add the input and cache tokens of the last request to the context row: critical adds them once the percentage the row draws (the one the client reports, or the estimate context.estimate makes) reaches the breakdown threshold, which is context.breakdownAt, or context.criticalAt while that is unset, and never leaves them off. With no percentage to draw the row draws nothing, and when the client does not report the last request's tokens there is no breakdown to add.",
+        "Whether to add the input and cache tokens of the last request to the context row: critical adds them once the percentage the row draws (the one the client reports, or the estimate context.estimate makes, or, with context.autoCompactWindow set, the tokens held over that window), rounded to a whole number, reaches the breakdown threshold, which is context.breakdownAt, or context.criticalAt while that is unset, and never leaves them off. With no percentage to draw the row draws nothing, and when the client does not report the last request's tokens there is no breakdown to add.",
       ),
   },
   customLine: {
@@ -275,8 +275,8 @@ const SHAPES = {
       ),
   },
   bands: {
-    warnAt: wholePercent.describe("The whole percentage of use at which a bar other than the context bar turns yellow (the context bar has context.warnAt); it must be below criticalAt."),
-    criticalAt: wholePercent.describe("The whole percentage of use at which a bar other than the context bar turns red (the context bar has context.criticalAt)."),
+    warnAt: wholePercent.describe("The whole percentage of use at which a bar other than the context bar turns yellow (the context bar has context.warnAt); it must be below criticalAt. The context row's cache hit share is coloured by these bands too."),
+    criticalAt: wholePercent.describe("The whole percentage of use at which a bar other than the context bar turns red (the context bar has context.criticalAt). The context row's cache hit share is coloured by these bands too."),
   },
   labels: {
     fiveHour: windowLabel.describe("The name of the five-hour window; empty uses the language's own name for it."),
@@ -388,7 +388,7 @@ function canonicalLanguage(tag: (typeof LANGUAGE_TAGS)[number]): (typeof STATUSL
 /** The settings that are not part of a group. A layer's `language` is read in any of its tags and kept as the canonical one, so everything after the schema sees one value. */
 const TOP_LEVEL = {
   language: z.enum(STATUSLINE_LANGUAGES).describe(LANGUAGE_DESCRIPTION),
-  preset: z.enum(STATUSLINE_PRESETS).describe("A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts, usage.resetLabel and context.breakdown) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own default, everything claude-hud's default configuration draws plus agent-shim's own segments; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments, the extra segment once extra.command is set, and the context row; standard adds the provider, route, account, identity and headroom segments and the quota and added directories rows, with the reset label and the token breakdown at high use, full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown at high use, essential adds the duration, the added directories row and the tools, agents and todos rows, and minimal adds the added directories row alone."),
+  preset: z.enum(STATUSLINE_PRESETS).describe("A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts, usage.resetLabel and context.breakdown) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own default, everything claude-hud's default configuration draws plus agent-shim's own segments; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments, the extra segment once extra.command is set, and the context row; standard adds the provider, route, account, identity and headroom segments and the quota and added directories rows, with the reset label and the token breakdown from its threshold, full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown from its threshold, essential adds the duration, the added directories row and the tools, agents and todos rows, and minimal adds the added directories row alone."),
 };
 
 /** What a configuration layer may set: every group and every key optional, so a layer names only what it changes. */
@@ -544,7 +544,7 @@ export function resolveStatusline(settings: Readonly<StatuslineSettings> | undef
     throw new RangeError(`statusline bands.warnAt (${String(resolved.bands.warnAt)}) must be below bands.criticalAt (${String(resolved.bands.criticalAt)})`);
   }
   if (resolved.context.warnAt >= resolved.context.criticalAt) {
-    throw new RangeError(`statusline context.warnAt (${String(resolved.context.warnAt)}) must be below context.criticalAt (${String(resolved.context.criticalAt)})`);
+    throw new RangeError(`statusline context.warnAt (${String(resolved.context.warnAt)}) must be below context.criticalAt (${String(resolved.context.criticalAt)}); set both when moving one`);
   }
   const merged = new Set(resolved.layout.merge.flat());
   const unmerged = resolved.layout.rightAlign.filter((row) => !merged.has(row));
