@@ -55,7 +55,7 @@ describe("viewOf", () => {
       }),
     );
     expect(view).toEqual({
-      modelDisplayName: "Sonnet 5.5",
+      clientModelName: "Sonnet 5.5",
       contextUsedPercentage: 63.4,
       contextTotalTokens: 634_000,
       contextWindowTokens: 1_000_000,
@@ -63,6 +63,14 @@ describe("viewOf", () => {
       cacheReadTokens: 600_000,
       freshInputTokens: 34_000,
     });
+  });
+
+  it("names the model by its display name, else by its model id, each trimmed and absent when blank", () => {
+    const nameOf = (model: Readonly<Record<string, string>>): string | undefined => viewOf(parseClientPayload({ model })).clientModelName;
+    expect(nameOf({ id: "claude-opus-4-5", display_name: " Opus 4.5 " })).toBe("Opus 4.5");
+    expect(nameOf({ id: " claude-opus-4-5 " })).toBe("claude-opus-4-5");
+    expect(nameOf({ id: "claude-opus-4-5", display_name: " " })).toBe("claude-opus-4-5");
+    expect(nameOf({ id: " ", display_name: "" })).toBeUndefined();
   });
 
   it("leaves every figure absent for an empty payload", () => {

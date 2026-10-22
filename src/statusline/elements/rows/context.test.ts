@@ -35,7 +35,7 @@ const LINE_WIDTH = 200;
 const SEPARATOR = " | ";
 
 const REPORTED: StatuslinePayloadView = {
-  modelDisplayName: undefined,
+  clientModelName: undefined,
   contextUsedPercentage: REPORTED_PERCENT,
   contextTotalTokens: HELD,
   contextWindowTokens: WINDOW,

@@ -87,7 +87,7 @@ const SUMMARY: StatuslineSummary = {
 };
 
 const VIEW = {
-  modelDisplayName: "Sonnet 5.5",
+  clientModelName: "Sonnet 5.5",
   contextUsedPercentage: 63.4,
   contextTotalTokens: 634_000,
   contextWindowTokens: 1_000_000,
@@ -341,7 +341,7 @@ describe("renderStatuslineBlock", () => {
     expect(
       renderStatuslineBlock(
         { identity: undefined, provider: undefined, providerAccountEmail: undefined, providerAccountSub: undefined, providerPlan: undefined, loginAccountEmail: undefined, loginRateLimitTier: undefined, loginOrganizationName: undefined, loginOrganizationType: undefined, loginSeatTier: undefined, loginPlan: undefined, fiveHourUsed: undefined, fiveHourResetAt: undefined, sevenDayUsed: undefined, sevenDayResetAt: undefined, providerQuotaWindows: [], quotaFamilies: [], headroom: undefined },
-        { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
+        { clientModelName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
         NARROW_TERMINAL,
         NOW_MS,
       ),

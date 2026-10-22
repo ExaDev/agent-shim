@@ -139,7 +139,7 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
           stackedUnderDefault = false;
         }
       }
-      const view = { ...viewOf(clientPayload), ...(stackedUnderDefault ? { modelDisplayName: undefined } : {}) };
+      const view = { ...viewOf(clientPayload), ...(stackedUnderDefault ? { clientModelName: undefined } : {}) };
       const widths = widthsOf(payload, process.env, settings.layout);
       console.log(renderStatuslineBlock({ summary, view, payload: clientPayload, terminalWidth: widths.terminal, lineWidth: widths.line, nowMs, settings, ports: realStatuslinePorts(process.env, deps.paths.statuslineDir) }));
       }),

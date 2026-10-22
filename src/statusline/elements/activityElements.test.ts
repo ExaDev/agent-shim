@@ -69,7 +69,7 @@ function render(settings: StatuslineSettings, options: { readonly nowMs?: number
   const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: options.transcript ?? SESSION });
   const text = renderStatuslineBlock({
     summary: SUMMARY,
-    view: { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
+    view: { clientModelName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
     payload: parseClientPayload({ transcript_path: TRANSCRIPT }),
     terminalWidth: options.terminalWidth ?? WIDE_TERMINAL,
     nowMs: options.nowMs ?? T0 + STEP.tenth * SECOND + STEP.fifth * SECOND,
@@ -89,7 +89,7 @@ describe("the activity rows", () => {
         throw new Error("the transcript was read");
       },
     });
-    const input = { summary: SUMMARY, view: { modelDisplayName: "Sonnet 5.5", contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined }, payload: parseClientPayload({ transcript_path: TRANSCRIPT }), terminalWidth: WIDE_TERMINAL, nowMs: T0, ports: unreadable };
+    const input = { summary: SUMMARY, view: { clientModelName: "Sonnet 5.5", contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined }, payload: parseClientPayload({ transcript_path: TRANSCRIPT }), terminalWidth: WIDE_TERMINAL, nowMs: T0, ports: unreadable };
     expect(plain(renderStatuslineBlock(input))).toBe("Sonnet 5.5");
   });
 

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { resolveStatusline, STATUSLINE_DEFAULTS, type StatuslineSettings } from "../config/statusline";
 import { ESCAPE } from "./ansi";
 import type { StatuslineSummary } from "./enrich";
-import { parseClientPayload } from "./payload";
+import { parseClientPayload, viewOf } from "./payload";
 import type { StatuslinePorts } from "./ports";
 import { renderStatuslineBlock } from "./render";
 import { fakeRangeReader, fakeStatuslinePorts, newReadLog, type ReadLog } from "./testing";
@@ -35,7 +35,7 @@ const SUMMARY: StatuslineSummary = {
 };
 
 const VIEW = {
-  modelDisplayName: "Claude Opus 4.7 (1M context)",
+  clientModelName: "Claude Opus 4.7 (1M context)",
   contextUsedPercentage: undefined,
   contextTotalTokens: undefined,
   contextWindowTokens: undefined,
@@ -145,7 +145,7 @@ describe("the platform beside the model", () => {
     expect(segments({ settings: onlyHeader("model"), ports: { env: { CLAUDE_CODE_USE_BEDROCK: "1" } } })).toEqual(["Claude Opus 4.7 (1M context)", "Bedrock"]);
     expect(segments({ settings: onlyHeader("model"), ports: vertex })).toEqual(["Claude Opus 4.7 (1M context)", "Vertex"]);
     expect(segments({ settings: onlyHeader("model"), ports: { env: { ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic" } } })).toEqual(["Claude Opus 4.7 (1M context)", "MiniMax"]);
-    expect(segments({ settings: onlyHeader("model"), payload: { model: { id: "opusplan", display_name: "Opus Plan" } }, view: { modelDisplayName: "Opus Plan" } })).toEqual(["Opus Plan", "Enterprise"]);
+    expect(segments({ settings: onlyHeader("model"), payload: { model: { id: "opusplan", display_name: "Opus Plan" } }, view: { clientModelName: "Opus Plan" } })).toEqual(["Opus Plan", "Enterprise"]);
   });
 
   it("draws the name alone when no platform is detected", () => {
@@ -156,10 +156,47 @@ describe("the platform beside the model", () => {
     expect(segments({ settings: { ...onlyHeader("model"), model: { platform: false } }, ports: vertex })).toEqual(["Claude Opus 4.7 (1M context)"]);
   });
 
-  it("follows an overridden name and a dynamic mode's served model too, and draws nothing without a name", () => {
+  it("follows an overridden name and a dynamic mode's served model too, and stands alone without a name, as claude-hud draws it beside its placeholder", () => {
     const modelChoice = { requested: "auto", served: "glm-5.3", provider: "zai", providers: ["zai"] };
     expect(segments({ settings: { ...onlyHeader("model"), model: { override: "Work model" } }, summary: { modelChoice }, ports: vertex })).toEqual(["Work model -> glm-5.3", "Vertex"]);
-    expect(segments({ settings: onlyHeader("model"), view: { modelDisplayName: undefined }, ports: vertex })).toEqual([]);
+    expect(segments({ settings: onlyHeader("model"), view: { clientModelName: undefined }, ports: vertex })).toEqual(["Vertex"]);
+  });
+});
+
+describe("the model segment for a client that sends no display name", () => {
+  /** The model segment's parts for a payload whose `model` is `model`, with the view read from that payload as the statusline reads it. */
+  function modelParts(model: Readonly<Record<string, string>> | undefined, env: Readonly<Record<string, string>> = {}, settings: StatuslineSettings = {}, summary: Partial<StatuslineSummary> = {}): string[] {
+    const payload = model === undefined ? {} : { model };
+    return segments({ settings: { ...settings, ...onlyHeader("model") }, payload, view: { clientModelName: viewOf(parseClientPayload(payload)).clientModelName }, ports: { env }, summary });
+  }
+
+  it("draws the model id in place of the name, followed by the platform, as claude-hud falls back", () => {
+    // claude-hud: `[claude-opus-4-5 | Vertex]`.
+    expect(modelParts({ id: "claude-opus-4-5" }, { CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["claude-opus-4-5", "Vertex"]);
+    expect(modelParts({ id: "claude-opus-4-5" })).toEqual(["claude-opus-4-5"]);
+  });
+
+  it("draws the id as it stands, where claude-hud rewrites a Bedrock or enterprise id into a readable name", () => {
+    expect(modelParts({ id: "us.anthropic.claude-opus-4-5-20251101-v1:0" }, { CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual(["us.anthropic.claude-opus-4-5-20251101-v1:0", "Bedrock"]);
+    expect(modelParts({ id: "opusplan" })).toEqual(["opusplan", "Enterprise"]);
+  });
+
+  it("draws the display name when the client sends both, and the id when the name is blank", () => {
+    expect(modelParts({ id: "claude-opus-4-5", display_name: "Opus 4.5" }, { CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["Opus 4.5", "Vertex"]);
+    expect(modelParts({ id: " claude-opus-4-5 ", display_name: "  " })).toEqual(["claude-opus-4-5"]);
+  });
+
+  it("draws the platform alone with neither a name nor an id, and nothing at all without a platform or with model.platform off", () => {
+    // claude-hud: `[Unknown | Bedrock]`; its placeholder word says nothing and is not drawn.
+    expect(modelParts(undefined, { CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual(["Bedrock"]);
+    expect(modelParts({}, { CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["Vertex"]);
+    expect(modelParts(undefined)).toEqual([]);
+    expect(modelParts(undefined, { CLAUDE_CODE_USE_VERTEX: "1" }, { model: { platform: false } })).toEqual([]);
+  });
+
+  it("draws a dynamic mode's served model after the id, then the platform", () => {
+    const modelChoice = { requested: "auto", served: "glm-5.3", provider: "zai", providers: ["zai"] };
+    expect(modelParts({ id: "auto" }, { CLAUDE_CODE_USE_VERTEX: "1" }, {}, { modelChoice })).toEqual(["auto -> glm-5.3", "Vertex"]);
   });
 });
 

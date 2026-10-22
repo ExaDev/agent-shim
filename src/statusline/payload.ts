@@ -65,10 +65,16 @@ export function parseClientPayload(raw: unknown): ClientPayload {
   return ClientPayloadSchema.parse(raw);
 }
 
-/** The payload fields the context row and the model segment draw, as the renderer takes them. */
+/** `value` without its surrounding white space, or undefined when nothing is left. */
+function nonBlank(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+/** The payload fields the context row and the model segment draw, as the renderer takes them. The model's name is the client's display name, else its model id as it stands, as claude-hud's `getModelName` falls back; each is trimmed and read as absent when blank. */
 export function viewOf(payload: ClientPayload): StatuslinePayloadView {
   return {
-    modelDisplayName: payload.model?.display_name,
+    clientModelName: nonBlank(payload.model?.display_name) ?? nonBlank(payload.model?.id),
     contextUsedPercentage: payload.context_window?.used_percentage,
     contextTotalTokens: payload.context_window?.total_input_tokens,
     contextWindowTokens: payload.context_window?.context_window_size,

@@ -9,7 +9,7 @@ Checked against claude-hud at commit `939eb66`.
 | claude-hud | agent-shim |
 |---|---|
 | `language` | `language`: en, zh-Hans and zh-Hant, with `zh` read as `zh-Hans` and `zh-TW` as `zh-Hant` and kept as the canonical tag; any other value is refused, where claude-hud falls back to English. Every word the statusline writes is a message in the catalogue, the window names follow the language until `labels.fiveHour` or `labels.sevenDay` names them, and durations, token counts, money and clock times are written the same in every language |
-| `display.showModel` | `layout.header`: the model segment is drawn when the list names `model` |
+| `display.showModel` | `layout.header`: the model segment is drawn when the list names `model`; a client that sends no display name is named by its model id as it stands, as claude-hud falls back, where claude-hud rewrites a Bedrock or enterprise planning id into a readable name (`Claude Opus 4.5`); with neither, the platform `model.platform` draws stands alone, where claude-hud draws the word `Unknown` beside it, and with no platform either nothing is drawn |
 | `display.showProvider` | `layout.header`: the provider segment is drawn when the list names `provider`; claude-hud's switch also moves the detected platform in front of the model, where `model.platform` always draws it after the model |
 | `display.showUsage` | `layout.rows`: the quota row is drawn when the list names `quota` |
 | `display.usageValue` | `usage.value`: `used` and `remaining` where claude-hud's are `percent` and `remaining`; the bar and the colour follow the share used either way, as in claude-hud |
@@ -156,6 +156,8 @@ These differences are kept:
 - The context and quota bars share a line through `layout.mergeBars`, where claude-hud names them as a merge group; either joins them when they fit.
 - The project path, the added directories and the branch are plain text, where claude-hud wraps them in terminal hyperlinks; see [Project and version control](#project-and-version-control).
 - The provider, route, account, identity and headroom segments are agent-shim's own, drawn after the version control segment.
+- A client that sends no display name is named by its model id as it stands, as claude-hud falls back, where claude-hud rewrites a Bedrock id (`us.anthropic.claude-opus-4-5-20251101-v1:0`) or an enterprise planning id (`opusplan`) into a readable name (`Claude Opus 4.5`, `Claude Opus`): the id carries everything the readable name does and more (the region, the date, the version suffix), so the rewrite is a style.
+- A client that sends neither a display name nor a model id gets the platform alone (`Vertex`), and nothing when no platform is detected, where claude-hud draws the word `Unknown` (`[Unknown | Vertex]`, `[Unknown]`): the placeholder carries no information.
 
 A statusline configured by someone relying on the default before it became a superset draws more now, and hides a weekly window below 80% of its use beside a five-hour one. The previous output is `layout.header` set to `model`, `provider`, `route`, `account`, `identity` and `headroom`, `layout.rows` set to `context` and `quota`, `usage.resetLabel`, `usage.modelScoped` and `model.platform` set to `false`, `usage.sevenDayThreshold` set to 0, and `context.estimate` and `context.breakdown` set to `never`.
 

@@ -37,7 +37,7 @@ const SUMMARY: StatuslineSummary = {
 };
 
 const VIEW = {
-  modelDisplayName: undefined,
+  clientModelName: undefined,
   contextUsedPercentage: undefined,
   contextTotalTokens: undefined,
   contextWindowTokens: undefined,
@@ -322,14 +322,14 @@ describe("the gitFiles row", () => {
 describe("the default statusline", () => {
   it("draws the project with its added directories inline and its git status after the model, as claude-hud's default draws its project line", () => {
     const repo = scripted({ [STATUS_ARGS]: statusOutput([ENTRY(".M", "a.ts")]) });
-    const withDirectory = renderStatuslineBlock({ summary: SUMMARY, view: { ...VIEW, modelDisplayName: "Opus" }, payload: parseClientPayload({ ...IN_REPO, workspace: { added_dirs: ["/a/one"] } }), terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, ports: repo.ports });
+    const withDirectory = renderStatuslineBlock({ summary: SUMMARY, view: { ...VIEW, clientModelName: "Opus" }, payload: parseClientPayload({ ...IN_REPO, workspace: { added_dirs: ["/a/one"] } }), terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, ports: repo.ports });
     expect(squeeze(withDirectory)).toBe("Opus | agent-shim +one git:(main*)");
     expect(repo.runs).toEqual([`git ${STATUS_ARGS}`]);
   });
 
   it("draws neither the project nor the git status when the client names no directory, and reads nothing from the machine", () => {
     const repo = scripted({ [STATUS_ARGS]: statusOutput([ENTRY(".M", "a.ts")]) });
-    expect(renderStatuslineBlock({ summary: SUMMARY, view: { ...VIEW, modelDisplayName: "Opus" }, payload: parseClientPayload({}), terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, ports: repo.ports })).toBe("Opus");
+    expect(renderStatuslineBlock({ summary: SUMMARY, view: { ...VIEW, clientModelName: "Opus" }, payload: parseClientPayload({}), terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, ports: repo.ports })).toBe("Opus");
     expect(repo.runs).toEqual([]);
   });
 });

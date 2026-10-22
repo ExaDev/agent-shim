@@ -38,17 +38,17 @@ function modelNameOf({ view, settings, transcriptIdentity }: RenderContext): { r
       return { name: formatModelName(served, settings.model.format), isServed: true };
     }
   }
-  return view.modelDisplayName === undefined || view.modelDisplayName === "" ? undefined : { name: formatModelName(view.modelDisplayName, settings.model.format), isServed: false };
+  return view.clientModelName === undefined ? undefined : { name: formatModelName(view.clientModelName, settings.model.format), isServed: false };
 }
 
-/** The model the session is on, followed by the platform serving it (Bedrock, Vertex, MiniMax or an enterprise planning mode) when one is detected and `model.platform` is on, as claude-hud draws it: after the name, with the separator the header puts between its segments. Undefined when no name is known. */
+/** The model the session is on, followed by the platform label claude-hud draws beside it (`modelPlatformOf`) when one is detected and `model.platform` is on: after the name, with the separator the header puts between its segments, or the label alone when no name is known, as claude-hud still draws it beside its placeholder. Undefined when there is neither a name nor a label to draw. */
 export function modelSegment(context: RenderContext): string | undefined {
   const name = modelName(context);
-  if (name === undefined || !context.settings.model.platform) {
+  const platform = context.settings.model.platform ? modelPlatformOf(context.ports.env, context.payload.model?.id) : undefined;
+  if (platform === undefined) {
     return name;
   }
-  const platform = modelPlatformOf(context.ports.env, context.payload.model?.id);
-  return platform === undefined ? name : `${name}${SEPARATOR}${platform}`;
+  return name === undefined ? platform : `${name}${SEPARATOR}${platform}`;
 }
 
 /** The model's name as the segment draws it, with a dynamic mode's choice beside it, or undefined when no name is known. */

@@ -11,7 +11,8 @@ import type { TranscriptFacts } from "../transcript/reader";
 
 /** The payload fields the built-in statusline shows: the model, the context window's use, and the prompt cache's effectiveness. */
 export interface StatuslinePayloadView {
-  readonly modelDisplayName: string | undefined;
+  /** The model's name as the client reports it: its display name, else its model id, or undefined when it reports neither. */
+  readonly clientModelName: string | undefined;
   readonly contextUsedPercentage: number | undefined;
   readonly contextTotalTokens: number | undefined;
   readonly contextWindowTokens: number | undefined;

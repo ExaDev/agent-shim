@@ -16,7 +16,7 @@ const NARROW_TERMINAL = 40;
 const WIDTH_REMOVED = 20;
 const WINDOW_USED = 60;
 const NARROW_USABLE_COLUMNS = NARROW_TERMINAL - RESERVED_COLUMNS;
-const NO_VIEW = { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined };
+const NO_VIEW = { clientModelName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined };
 
 const SUMMARY: StatuslineSummary = {
   identity: undefined,
