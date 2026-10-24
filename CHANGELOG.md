@@ -1,3 +1,10 @@
+## [11.65.3](https://github.com/ExaDev/agent-shim/compare/v11.65.2...v11.65.3) (2026-10-24)
+
+### Bug Fixes
+
+* **deps:** move zod, undici and ip-address to their patched releases ([667975c](https://github.com/ExaDev/agent-shim/commit/667975c4725e5fe701896b43e71d75d822914d66))
+* **deps:** override fast-uri and body-parser to their patched releases ([cda2f53](https://github.com/ExaDev/agent-shim/commit/cda2f530e94fa4d57bcca886cc176328462555b3))
+
 ## [11.65.2](https://github.com/ExaDev/agent-shim/compare/v11.65.1...v11.65.2) (2026-10-22)
 
 ### Build System
