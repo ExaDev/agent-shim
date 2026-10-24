@@ -555,6 +555,15 @@
                   "maximum": 40,
                   "description": "A bar's width in cells before the line's spare width is shared out among the bars."
                 },
+                "gradient": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "use",
+                    "width"
+                  ],
+                  "description": "How a bar's used part is coloured: off (the default) draws the band's single colour, the bar's own colour below the warning threshold, the warning colour from there and the critical one from the critical threshold; use blends the bar's colour with its use, from its own colour at none in use to the warning colour at the warning threshold and the critical one at the critical threshold, holding exactly the colour the bands draw at each threshold and the critical colour above it; and width colours each cell of the used part across the bar's width, from the bar's own colour at the first cell to the critical one at the last, whatever the use. A bar's thresholds are bands.warnAt and bands.criticalAt, the context bar's own where it sets them, and the figures beside a bar and its unused part (colours.empty) keep their colours in every mode. A gradient blends RGB values, so a colour name is blended at the default RGB the xterm scheme gives it rather than the shade a themed terminal draws it in, and a role set to default or dim, which names no colour of its own, leaves that bar the band's single colour."
+                },
                 "filled": {
                   "type": "string",
                   "description": "The character that draws the used part of a bar."

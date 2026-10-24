@@ -38,6 +38,7 @@ describe("statuslineKeys", () => {
     expect(header).toMatchObject({ kind: "list" });
     expect(header?.choices).toContain("account");
     expect(statuslineKeys().find((key) => key.path === "bar.width")).toMatchObject({ kind: "integer", choices: [], defaultValue: 10 });
+    expect(statuslineKeys().find((key) => key.path === "bar.gradient")).toMatchObject({ kind: "choice", choices: ["off", "use", "width"], defaultValue: "off" });
     expect(statuslineKeys().find((key) => key.path === "labels.fiveHour")).toMatchObject({ kind: "text", defaultValue: "" });
     expect(statuslineKeys().find((key) => key.path === "language")).toMatchObject({ kind: "choice", choices: ["en", "zh-Hans", "zh-Hant"], defaultValue: "en" });
     expect(statuslineKeys().find((key) => key.path === "preset")).toMatchObject({ kind: "choice", choices: ["standard", "full", "essential", "minimal"], defaultValue: "standard" });
