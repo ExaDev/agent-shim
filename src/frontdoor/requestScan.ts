@@ -51,6 +51,8 @@ export async function scanRequestHead(request: RoutedRequest, wholeBody = false)
   let ended = false;
   let error: Error | undefined;
   const replay = new PassThrough();
+  // Destroying the replay with the body's failure emits `error` on it, and a stream with no `error` listener turns that into an uncaught exception that ends the process. A client aborting its upload fails the body whether or not the route has attached to the replay yet, so the scan owns a listener; a consumer reading the replay still receives the same error through the stream itself.
+  replay.on("error", () => undefined);
   const modelIn = (): string | undefined => /"model"\s*:\s*"([^"]+)"/.exec(text)?.[1];
 
   const settled = new Promise<RequestScan>((resolve) => {
@@ -102,6 +104,11 @@ export async function scanRequestHead(request: RoutedRequest, wholeBody = false)
     });
     body.on("error", (cause: Error) => {
       error = cause;
+      // A body that fails before the head is decided (the client aborting mid-upload) settles with what it read, so the caller's await ends and the route sees the failure on the replay it is handed.
+      if (!decided) {
+        decided = true;
+        settle();
+      }
       replay.destroy(cause);
     });
     // A body that ends before any data arrived settles with nothing read.
