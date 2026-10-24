@@ -1,3 +1,9 @@
+## [11.65.4](https://github.com/ExaDev/agent-shim/compare/v11.65.3...v11.65.4) (2026-10-24)
+
+### Bug Fixes
+
+* **frontdoor:** keep a client abort during the routing scan from crashing the door ([3185775](https://github.com/ExaDev/agent-shim/commit/3185775c982e3a5af5d182e8bceaa120f0f009b0))
+
 ## [11.65.3](https://github.com/ExaDev/agent-shim/compare/v11.65.2...v11.65.3) (2026-10-24)
 
 ### Bug Fixes
