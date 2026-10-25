@@ -1,3 +1,13 @@
+## [11.66.0](https://github.com/ExaDev/agent-shim/compare/v11.65.10...v11.66.0) (2026-10-25)
+
+### Features
+
+* **statusline:** blend the bars' colour with their use or across their width ([c124aba](https://github.com/ExaDev/agent-shim/commit/c124abab864f17c61cbff39baff6d6f9493e9daa))
+
+### Documentation
+
+* **statusline:** describe the bars' gradient modes ([bd6302c](https://github.com/ExaDev/agent-shim/commit/bd6302cb80a5c3d78605a1f29092e3ecd219dd6f))
+
 ## [11.65.10](https://github.com/ExaDev/agent-shim/compare/v11.65.9...v11.65.10) (2026-10-25)
 
 ### Bug Fixes
