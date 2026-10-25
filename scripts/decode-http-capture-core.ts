@@ -1,11 +1,12 @@
 import * as zlib from "node:zlib";
 
+import { decodeFrames, negotiationOf, type WebSocketMessage } from "./decode-websocket-core";
 import { captureRecordSchema, decodeChunk, type CaptureRecord } from "./rc-capture-record";
 
 /**
  * The pure half of `scripts/decode-http-capture.mts`: turns the RC rig's SNI proxy capture (`scripts/rc-capture-record.ts` defines its records) back into the HTTP/1.1 exchanges each connection carried, with chunked transfer framing removed and compressed bodies decoded, so a protocol's request and response bodies can be read offline.
  *
- * A connection's two byte streams are rebuilt from its records, then requests and responses are read in lockstep, which is exact for HTTP/1.1 over a keep-alive connection that does not pipeline. A `101` response ends the lockstep: whatever follows is the upgraded protocol's frames, which this decoder does not read. A message the capture ends in the middle of is returned with `complete: false` instead of being dropped, and a trailing partial message head is ignored.
+ * A connection's two byte streams are rebuilt from its records, then requests and responses are read in lockstep, which is exact for HTTP/1.1 over a keep-alive connection that does not pipeline. A `101` response ends the lockstep: whatever follows is the upgraded protocol's bytes, kept on the exchange as `tail`, and `renderExchange` reads them as WebSocket messages (`scripts/decode-websocket-core.ts`) when the handshake was a WebSocket upgrade. A message the capture ends in the middle of is returned with `complete: false` instead of being dropped, and a trailing partial message head is ignored.
  */
 export interface HttpMessage {
   /** The request line or the status line, as sent. */
@@ -26,6 +27,8 @@ export interface HttpExchange {
   readonly response: HttpMessage | undefined;
   /** True when the response was `101 Switching Protocols`. */
   readonly upgraded: boolean;
+  /** The bytes each side sent after the handshake of an upgraded connection; undefined when the connection was not upgraded. */
+  readonly tail: { readonly client: Buffer; readonly server: Buffer } | undefined;
 }
 
 /** Header names whose values are credentials, printed as `<redacted>`. */
@@ -44,6 +47,7 @@ const STATUS_NO_CONTENT = 204;
 const STATUS_NOT_MODIFIED = 304;
 const FIRST_FINAL_STATUS = 200;
 const HEX_RADIX = 16;
+const CLOSE_CODE_BYTES = 2;
 
 /** Parses a capture file's text, one record per line, rejecting any line that is not a current-format record (an older capture lacks `conn` and `enc`) rather than guessing at its bytes. */
 export function parseCapture(text: string): CaptureRecord[] {
@@ -213,7 +217,8 @@ function readExchanges(conn: number, streams: ConnectionStreams): HttpExchange[]
       }
     }
     const upgraded = response !== undefined && statusOf(response) === STATUS_SWITCHING_PROTOCOLS;
-    exchanges.push({ conn, host: streams.host, request, response, upgraded });
+    const tail = upgraded ? { client: streams.client.subarray(clientOffset), server: streams.server.subarray(serverOffset) } : undefined;
+    exchanges.push({ conn, host: streams.host, request, response, upgraded, tail });
     if (upgraded || !requestBody.complete || response?.complete !== true) {
       return exchanges;
     }
@@ -321,10 +326,55 @@ function renderMessage(message: HttpMessage, prefix: string, options: RenderOpti
   return lines;
 }
 
-/** One exchange as text: request lines marked `>`, response lines marked `<`, bodies below their headers. */
+function isWebSocketUpgrade(exchange: HttpExchange): boolean {
+  return headerValue(exchange.request.headers, "upgrade")?.toLowerCase() === "websocket";
+}
+
+/** A WebSocket payload as text: JSON redacted (and reduced to its structure under `shape`), other text verbatim, binary and control payloads by size. */
+function renderWebSocketPayload(message: WebSocketMessage, options: RenderOptions): string {
+  if (message.kind === "close") {
+    return message.payload.length < CLOSE_CODE_BYTES ? "(no status)" : `${String(message.payload.readUInt16BE(0))} ${message.payload.toString("utf8", CLOSE_CODE_BYTES)}`;
+  }
+  const text = message.payload.toString("utf8");
+  if (message.kind === "binary" || !Buffer.from(text, "utf8").equals(message.payload)) {
+    return `(binary, ${String(message.payload.length)} bytes)`;
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return options.shape ? `(text, ${String(text.length)} chars)` : text;
+  }
+  const redacted = redactJson(json);
+  return JSON.stringify(options.shape ? shapeOf(redacted) : redacted);
+}
+
+/** The messages of an upgraded WebSocket connection, each direction in its own order (the capture holds no ordering between the two), client messages marked `ws >` and server ones `ws <`. */
+function renderWebSocket(exchange: HttpExchange, tail: NonNullable<HttpExchange["tail"]>, options: RenderOptions): string[] {
+  const negotiation = negotiationOf(headerValue(exchange.response?.headers ?? [], "sec-websocket-extensions"));
+  const lines: string[] = [];
+  for (const [direction, mark, stream] of [
+    ["client_to_server", "ws >", tail.client],
+    ["server_to_client", "ws <", tail.server],
+  ] as const) {
+    const decoded = decodeFrames(stream, direction, negotiation);
+    for (const message of decoded.messages) {
+      lines.push(`${mark} ${message.kind} ${renderWebSocketPayload(message, options)}`);
+    }
+    if (decoded.trailingBytes > 0) {
+      lines.push(`${mark} (incomplete: ${String(decoded.trailingBytes)} bytes captured, not decoded)`);
+    }
+  }
+  return lines;
+}
+
+/** One exchange as text: request lines marked `>`, response lines marked `<`, bodies below their headers, then the messages of an upgraded WebSocket connection. */
 export function renderExchange(exchange: HttpExchange, options: RenderOptions): string {
   const lines = [`=== conn ${String(exchange.conn)} ${exchange.host}${exchange.upgraded ? " (upgraded)" : ""}`, ...renderMessage(exchange.request, ">", options)];
   lines.push(...(exchange.response === undefined ? ["< (no response captured)"] : renderMessage(exchange.response, "<", options)));
+  if (exchange.tail !== undefined && isWebSocketUpgrade(exchange)) {
+    lines.push(...renderWebSocket(exchange, exchange.tail, options));
+  }
   return lines.join("\n");
 }
 
