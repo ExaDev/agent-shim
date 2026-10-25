@@ -1,3 +1,9 @@
+## [11.65.8](https://github.com/ExaDev/agent-shim/compare/v11.65.7...v11.65.8) (2026-10-25)
+
+### Documentation
+
+* record the managed settings, policy limits and pools answers of a Team login ([99791d7](https://github.com/ExaDev/agent-shim/commit/99791d789780e3f518c2fe780f63cf29c8145eda))
+
 ## [11.65.7](https://github.com/ExaDev/agent-shim/compare/v11.65.6...v11.65.7) (2026-10-25)
 
 ### Documentation
