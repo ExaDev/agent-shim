@@ -1,6 +1,6 @@
 import http from "node:http";
 import type { IncomingMessage } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import { serveRouted } from "./pipeline";
@@ -28,6 +28,9 @@ const DELIVERY_SETTLE_MS = 50;
 /** The statuses the shared enum does not name, mirrored from the surface's own constants so the assertions read the status they mean. */
 const HTTP_CONFLICT = 409;
 const HTTP_SERVICE_UNAVAILABLE = 503;
+
+/** How long past the keepalive cadence the keepalive case waits for the frame itself: half a cadence for the door's timer to run late, the frame to be written, and the client to receive and parse it, all on event loops a loaded suite is also using. */
+const KEEPALIVE_DELIVERY_SLACK_MS = RC_SELF_HOST_KEEPALIVE_MS / 2;
 
 /** Headroom past the keepalive cadence for the timer's own tick, on the test timeout of the keepalive case: one whole extra cadence. */
 const KEEPALIVE_TEST_TIMEOUT_MS = RC_SELF_HOST_KEEPALIVE_MS * 2;
@@ -435,11 +438,13 @@ describe("the self-hosted Remote Control streams", () => {
     const { id, workerJwt } = await createSession(world);
     const stream = new SseStream(world.port, `/v1/code/sessions/${id}/worker/events/stream`, { authorization: `Bearer ${workerJwt}` });
     expect((await stream.response()).statusCode).toBe(HTTP_STATUS.ok);
-    // The keepalive interval fires on wall-clock time and the cadence is the protocol's own (15 s), so the test waits one real interval plus a tick; anything shorter would not be testing the timer.
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, RC_SELF_HOST_KEEPALIVE_MS + DELIVERY_SETTLE_MS);
-    });
-    expect(stream.frames.some((frame) => frame.startsWith(":"))).toBe(true);
+    // The keepalive interval fires on wall-clock time and the cadence is the protocol's own (15 s), so the frame cannot arrive before a real interval has passed; the wait is on the frame, bounded by the interval plus the slack a loaded machine needs to deliver it, not on a clock that would read the frames while one is still in flight.
+    await vi.waitFor(
+      () => {
+        expect(stream.frames.some((frame) => frame.startsWith(":"))).toBe(true);
+      },
+      { timeout: RC_SELF_HOST_KEEPALIVE_MS + KEEPALIVE_DELIVERY_SLACK_MS, interval: DELIVERY_SETTLE_MS },
+    );
     stream.close();
   }, KEEPALIVE_TEST_TIMEOUT_MS);
 });
