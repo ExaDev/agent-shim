@@ -336,10 +336,10 @@ export function realFrontDoorLiveness(pids: readonly number[]): FrontDoorLivenes
   });
 }
 
-/** The state column `ps` reports for each of `pids` it knows, read without blocking the calling thread: `ps` is bounded by `PS_TIMEOUT_MS`, and a run that fails or times out reports nothing, so no pid is then in the map. */
-async function readProcessStates(pids: readonly number[]): Promise<ReadonlyMap<number, string>> {
+/** The state column `ps` reports for each of `pids` it knows, read without blocking the calling thread: `ps` is bounded by `timeoutMs`, and a run that fails or times out reports nothing, so no pid is then in the map. */
+async function readProcessStates(pids: readonly number[], timeoutMs: number): Promise<ReadonlyMap<number, string>> {
   return await new Promise((resolve) => {
-    execFile("ps", ["-o", "pid=,stat=", "-p", pids.map(String).join(",")], { encoding: "utf8", timeout: PS_TIMEOUT_MS }, (_error, stdout) => {
+    execFile("ps", ["-o", "pid=,stat=", "-p", pids.map(String).join(",")], { encoding: "utf8", timeout: timeoutMs }, (_error, stdout) => {
       const states = new Map<number, string>();
       for (const line of stdout.split("\n")) {
         const [pidText, stat] = line.trim().split(/\s+/);
@@ -353,14 +353,14 @@ async function readProcessStates(pids: readonly number[]): Promise<ReadonlyMap<n
 }
 
 /**
- * Which of `pids` are running, zombie-aware like `realIsProcessRunning` but without blocking the calling thread: signal 0 settles which processes exist, and one non-blocking `ps` over the survivors finds those that have exited but not been reaped. The front door's supervisor asks about every registered session once a tick, and a synchronous `ps` per session held its event loop for as long as a loaded machine took to start each one. A process `ps` did not report on (it failed or timed out, or the pid went between the two reads) counts by whether it exists, as `realIsProcessZombie` does when `ps` is unavailable.
+ * Which of `pids` are running, zombie-aware like `realIsProcessRunning` but without blocking the calling thread: signal 0 settles which processes exist, and one non-blocking `ps` over the survivors finds those that have exited but not been reaped. The front door's supervisor asks about every registered session once a tick, and a synchronous `ps` per session held its event loop for as long as a loaded machine took to start each one. A process `ps` did not report on (it failed or timed out, or the pid went between the two reads) counts by whether it exists, as `realIsProcessZombie` does when `ps` is unavailable. `psTimeoutMs` bounds the `ps` run and defaults to the limit a supervisor tick can afford; a caller that has to see the states however long `ps` takes passes a larger one.
  */
-export async function realRunningAmong(pids: readonly number[]): Promise<ReadonlySet<number>> {
+export async function realRunningAmong(pids: readonly number[], psTimeoutMs: number = PS_TIMEOUT_MS): Promise<ReadonlySet<number>> {
   const existing = pids.filter(realIsProcessAlive);
   if (existing.length === 0) {
     return new Set();
   }
-  const states = await readProcessStates(existing);
+  const states = await readProcessStates(existing, psTimeoutMs);
   return new Set(existing.filter((pid) => states.get(pid)?.startsWith("Z") !== true));
 }
 
