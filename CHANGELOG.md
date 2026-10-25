@@ -1,3 +1,9 @@
+## [11.65.7](https://github.com/ExaDev/agent-shim/compare/v11.65.6...v11.65.7) (2026-10-25)
+
+### Documentation
+
+* add the routine write answers and the ultrareview session as observed ([b9f1edd](https://github.com/ExaDev/agent-shim/commit/b9f1eddb3aa4dfff7be4f84f98242f17eb315761))
+
 ## [11.65.6](https://github.com/ExaDev/agent-shim/compare/v11.65.5...v11.65.6) (2026-10-25)
 
 ### Bug Fixes
