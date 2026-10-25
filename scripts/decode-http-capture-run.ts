@@ -1,5 +1,5 @@
 /**
- * Reads the RC rig's SNI proxy capture file and prints the HTTP exchanges it recorded, with chunked framing removed and compressed bodies decoded: the offline way to read the request and response bodies of a protocol the rig observed.
+ * Reads the RC rig's SNI proxy capture file and prints the HTTP exchanges it recorded, with chunked framing removed and compressed bodies decoded, and the WebSocket messages of an upgraded connection after its handshake: the offline way to read the request and response bodies of a protocol the rig observed.
  *
  * Usage: node scripts/decode-http-capture.mts PATH-TO-CAPTURE-FILE [--match TEXT] [--shape] `--match` keeps the exchanges whose request line (method and target) contains TEXT; `--shape` prints each JSON body as its keys and value types instead of its content. Credential headers and credential-named JSON fields print as placeholders, but a body is the live protocol's payload and can hold other secrets: read the output, then delete the capture; never paste either anywhere.
  */

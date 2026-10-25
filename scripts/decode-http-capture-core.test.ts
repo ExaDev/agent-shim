@@ -132,7 +132,7 @@ describe("decodeExchanges", () => {
     expect(exchange.response?.body.toString()).toBe("ok");
   });
 
-  it("stops at a 101 and leaves the upgraded frames unread", () => {
+  it("stops at a 101 and keeps the bytes after the handshake as the tail", () => {
     const exchange = only(
       decodeExchanges(
         records([
@@ -143,6 +143,12 @@ describe("decodeExchanges", () => {
     );
     expect(exchange.upgraded).toBe(true);
     expect(exchange.response?.startLine).toBe("HTTP/1.1 101 Switching Protocols");
+    expect(exchange.tail?.client.equals(CLIENT_FRAME)).toBe(true);
+    expect(exchange.tail?.server.equals(SERVER_FRAME)).toBe(true);
+  });
+
+  it("has no tail on a connection that was not upgraded", () => {
+    expect(only(decodeExchanges(records([client(1, "GET /t HTTP/1.1\r\n\r\n"), server(1, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")]))).tail).toBeUndefined();
   });
 
   it("flags a body the capture ends in the middle of", () => {
