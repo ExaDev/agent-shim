@@ -1,3 +1,9 @@
+## [11.65.10](https://github.com/ExaDev/agent-shim/compare/v11.65.9...v11.65.10) (2026-10-25)
+
+### Bug Fixes
+
+* **frontdoor:** keep the watchdog's pending ran-again report across a late check ([ec20c41](https://github.com/ExaDev/agent-shim/commit/ec20c41b2cdf7b3824a0948e675244a8b24887ab)), closes [#587](https://github.com/ExaDev/agent-shim/issues/587)
+
 ## [11.65.9](https://github.com/ExaDev/agent-shim/compare/v11.65.8...v11.65.9) (2026-10-25)
 
 ### Bug Fixes
