@@ -445,6 +445,9 @@ describe("realFarmFs owner-only writes", () => {
 });
 
 describe.skipIf(process.platform === "win32")("realRunningAmong", () => {
+  /** A `ps` time limit no run under test reaches: a `ps` that exceeds the default limit on a loaded machine reports no states, which makes a zombie count as running, so the zombie case must not depend on how long `ps` takes. */
+  const GENEROUS_PS_TIMEOUT_MS = 60_000;
+
   /** A pid that has exited and been reaped, so nothing holds it. */
   function exitedPid(): number {
     return spawnSync(process.execPath, ["-e", "0"]).pid;
@@ -468,7 +471,7 @@ describe.skipIf(process.platform === "win32")("realRunningAmong", () => {
           resolve(Number(chunk.toString().trim()));
         });
       });
-      expect(await realRunningAmong([parent.pid ?? 0, zombie])).toEqual(new Set([parent.pid]));
+      expect(await realRunningAmong([parent.pid ?? 0, zombie], GENEROUS_PS_TIMEOUT_MS)).toEqual(new Set([parent.pid]));
     } finally {
       parent.kill();
     }
