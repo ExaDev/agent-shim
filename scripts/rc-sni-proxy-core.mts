@@ -15,6 +15,7 @@ import * as net from "node:net";
 import * as tls from "node:tls";
 
 import { generateCa, mintLeaf, type CaMaterial } from "../src/frontdoor/connect";
+import { encodeChunk, type CaptureRecord } from "./rc-capture-record";
 
 const HOME = "/tmp/agent-shim-rc-capture";
 const CA_CERT_PATH = `${HOME}/ca/sni-ca.pem`;
@@ -35,8 +36,7 @@ const UPSTREAM_SOURCE_PORT_END = 48899;
 /** The four Anthropic hosts that share one address, so one redirect carries them all and each needs its own leaf to pass hostname verification. */
 const HOSTS = ["api.anthropic.com", "platform.claude.com", "bridge.claudeusercontent.com", "claude.ai"] as const;
 
-/** Bytes of each captured chunk kept in the JSONL record (the preserved rig script's cap, kept so records stay line-shaped under an unbounded stream); the console excerpt keeps one frame's echo short the same way. */
-const CAPTURE_DATA_CAP = 500;
+/** Characters of each captured chunk echoed to the proxy log, so one frame's echo stays short; the capture file itself keeps every chunk whole. */
 const CONSOLE_EXCERPT_CAP = 150;
 
 /** Loads the persisted CA, generating and persisting one when not both halves exist: a cert without its key can sign nothing, so it counts as absent and is replaced (the same rule `ensureCa` applies to the door's own CA). Persisting the key as well as the cert is what keeps a rig re-run from invalidating the container's `NODE_EXTRA_CA_CERTS`. */
@@ -81,20 +81,16 @@ for (const host of HOSTS) {
 
 const captureFile = `${HOME}/logs/frontdoor-capture.jsonl`;
 let frameId = 0;
+let connectionId = 0;
 let upstreamPort = UPSTREAM_SOURCE_PORT_START;
 
-/** Appends one captured chunk to the JSONL capture (text when it survives a UTF-8 round trip, base64 otherwise, each capped per frame so an unbounded stream cannot grow one line without limit) and echoes text frames to the proxy log. */
-const log = (dir: "client_to_server" | "server_to_client", host: string, data: Buffer): void => {
+/** Appends one captured chunk to the JSONL capture, whole, in the record format `scripts/rc-capture-record.ts` defines (one socket read per record, so a line stays bounded by the read size), and echoes text chunks to the proxy log. */
+const log = (conn: number, dir: CaptureRecord["dir"], host: string, data: Buffer): void => {
   frameId++;
-  const isText = !data.includes(0);
-  fs.appendFileSync(captureFile, JSON.stringify({
-    ts: new Date().toISOString(),
-    id: frameId,
-    dir,
-    host,
-    data: isText ? data.toString("utf8").slice(0, CAPTURE_DATA_CAP) : data.toString("base64").slice(0, CAPTURE_DATA_CAP),
-  }) + "\n");
-  if (isText) console.log(`[${dir} ${host}] ${data.toString("utf8").slice(0, CONSOLE_EXCERPT_CAP)}`);
+  const { enc, data: encoded } = encodeChunk(data);
+  const record: CaptureRecord = { ts: new Date().toISOString(), id: frameId, conn, dir, host, enc, data: encoded };
+  fs.appendFileSync(captureFile, JSON.stringify(record) + "\n");
+  if (enc === "utf8") console.log(`[${dir} ${host}] ${encoded.slice(0, CONSOLE_EXCERPT_CAP)}`);
 };
 
 const server = tls.createServer({
@@ -108,7 +104,8 @@ const server = tls.createServer({
   // servername is false (no SNI) or null (not negotiated) as well as a name; the preserved script's falsy fallback maps every such case to the API host, whose leaf is also the listener's default certificate.
   const sni = clientSocket.servername;
   const host = typeof sni === "string" && sni !== "" ? sni : "api.anthropic.com";
-  console.log(`=== ${host} connected ===`);
+  const conn = ++connectionId;
+  console.log(`=== ${host} connected (conn ${String(conn)}) ===`);
 
   // The client's first flight must not be consumed before the upstream pipe
   // exists: pause immediately and resume only once the upstream TLS session is
@@ -125,8 +122,8 @@ const server = tls.createServer({
     clientSocket.resume();
   });
 
-  clientSocket.on("data", (chunk: Buffer) => { log("client_to_server", host, chunk); });
-  upstream.on("data", (chunk: Buffer) => { log("server_to_client", host, chunk); });
+  clientSocket.on("data", (chunk: Buffer) => { log(conn, "client_to_server", host, chunk); });
+  upstream.on("data", (chunk: Buffer) => { log(conn, "server_to_client", host, chunk); });
   const cleanup = (): void => { clientSocket.destroy(); upstream.destroy(); rawSocket.destroy(); };
   clientSocket.on("error", (error: Error) => { console.log(`${host} client err: ${error.message}`); cleanup(); });
   upstream.on("error", (error: Error) => { console.log(`${host} upstream err: ${error.message}`); cleanup(); });
