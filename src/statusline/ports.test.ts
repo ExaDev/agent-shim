@@ -27,18 +27,21 @@ const MAX_BLOCK_MULTIPLE = 2;
 /** What the programs that write a large file ask to write: a whole bound more than any shell lets a file reach under the limit. */
 const LARGE_FILE_BYTES = RUN_MAX_OUTPUT_BYTES * (MAX_BLOCK_MULTIPLE + 1);
 
-/** `use`d with ports whose state directory is a throwaway one (the file-backed runs need to write there), removed afterwards. */
-function withStateDirectory<T>(use: (ports: ReturnType<typeof realStatuslinePorts>) => T): T {
+/** The limit the tests that read a program's output give the ports: far beyond what a loaded machine takes to start an interpreter, so a program killed at the production limit under load is never mistaken for one that returned nothing. The tests of the limit itself give their own. */
+const OUTPUT_TEST_RUN_MS = 60_000;
+
+/** `use`d with ports whose state directory is a throwaway one (the file-backed runs need to write there), removed afterwards, and whose runs are killed after `runTimeoutMs`. */
+function withStateDirectory<T>(use: (ports: ReturnType<typeof realStatuslinePorts>) => T, runTimeoutMs: number = OUTPUT_TEST_RUN_MS): T {
   const state = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
   try {
-    return use(realStatuslinePorts({}, state));
+    return use(realStatuslinePorts({}, state, runTimeoutMs));
   } finally {
     fs.rmSync(state, { recursive: true });
   }
 }
 
 describe("realStatuslinePorts", () => {
-  const ports = realStatuslinePorts({ HOME: "/h" }, "/state");
+  const ports = realStatuslinePorts({ HOME: "/h" }, "/state", OUTPUT_TEST_RUN_MS);
 
   it("carries the environment it was given and the home directory", () => {
     expect(ports.env).toEqual({ HOME: "/h" });
@@ -104,10 +107,18 @@ describe("realStatuslinePorts", () => {
     /** How long the programs below ask to run for: far longer than the limit, so returning before it is over can only mean the program was killed. */
     const PROGRAM_RUN_MS = 60_000;
 
+    it.each([[{}], [{ outputInFile: true }]])("is killed at the limit the ports were given, not only at the production one (%j)", (options) => {
+      const GIVEN_LIMIT_MS = 100;
+      const script = `setTimeout(() => {}, ${String(PROGRAM_RUN_MS)});`;
+      const start = Date.now();
+      expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, ["-e", script], os.tmpdir(), options), GIVEN_LIMIT_MS)).toBeUndefined();
+      expect(Date.now() - start).toBeLessThan(RUN_TIMEOUT_MS);
+    });
+
     it.each([[{}], [{ outputInFile: true }]])("is killed with a signal it cannot trap, and the call returns before the program would have finished (%j)", (options) => {
       const script = `process.on("SIGTERM", () => {}); setTimeout(() => {}, ${String(PROGRAM_RUN_MS)});`;
       const start = Date.now();
-      expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, ["-e", script], os.tmpdir(), options))).toBeUndefined();
+      expect(withStateDirectory((withFiles) => withFiles.run(process.execPath, ["-e", script], os.tmpdir(), options), RUN_TIMEOUT_MS)).toBeUndefined();
       expect(Date.now() - start).toBeLessThan(PROGRAM_RUN_MS);
     });
 
@@ -199,7 +210,7 @@ describe("realStatuslinePorts", () => {
         return lstat(target);
       });
       try {
-        expect(realStatuslinePorts({}, state).run(process.execPath, ["-p", "1"], os.tmpdir(), { outputInFile: true })).toBe("1\n");
+        expect(realStatuslinePorts({}, state, OUTPUT_TEST_RUN_MS).run(process.execPath, ["-p", "1"], os.tmpdir(), { outputInFile: true })).toBe("1\n");
       } finally {
         spy.mockRestore();
       }
@@ -225,7 +236,7 @@ describe("realStatuslinePorts", () => {
       setAge(overrun, RUN_TIMEOUT_MS * 2);
       setAge(stale, STALE_RUN_DIRECTORY_MS + 1);
       try {
-        expect(realStatuslinePorts({}, state).run(process.execPath, ["-p", "1"], os.tmpdir(), { outputInFile: true })).toBe("1\n");
+        expect(realStatuslinePorts({}, state, OUTPUT_TEST_RUN_MS).run(process.execPath, ["-p", "1"], os.tmpdir(), { outputInFile: true })).toBe("1\n");
         expect(fs.readdirSync(runRoot)).toEqual(["agent-shim-run-overrun"]);
       } finally {
         fs.rmSync(state, { recursive: true });
@@ -255,7 +266,7 @@ describe("realStatuslinePorts", () => {
       fs.utimesSync(stale, longAgo, longAgo);
       fs.utimesSync(unrelated, longAgo, longAgo);
       try {
-        const own = realStatuslinePorts({}, state);
+        const own = realStatuslinePorts({}, state, OUTPUT_TEST_RUN_MS);
         expect(own.run(process.execPath, ["-p", "1"], os.tmpdir(), { outputInFile: true })).toBe("1\n");
         expect(fs.readdirSync(runRoot).sort()).toEqual(["agent-shim-run-fresh", "other"]);
         expect(own.run(process.execPath, ["-e", "process.exit(3)"], os.tmpdir(), { outputInFile: true })).toBeUndefined();
