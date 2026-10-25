@@ -1,3 +1,11 @@
+## [11.65.5](https://github.com/ExaDev/agent-shim/compare/v11.65.4...v11.65.5) (2026-10-25)
+
+### Documentation
+
+* add the client-only contracts and observed session states ([bcdc7a0](https://github.com/ExaDev/agent-shim/commit/bcdc7a00786a66d764459213594cd8869af2811f))
+* add the routine, session list and state values the second capture showed ([117a512](https://github.com/ExaDev/agent-shim/commit/117a5123c841689d7ef3d11896e46716103ce5da))
+* record the service contracts behind Claude Code's login-gated features ([1f46460](https://github.com/ExaDev/agent-shim/commit/1f464601fd181d2fc0f64898cbe074ba29d35a85))
+
 ## [11.65.4](https://github.com/ExaDev/agent-shim/compare/v11.65.3...v11.65.4) (2026-10-24)
 
 ### Bug Fixes
