@@ -157,7 +157,7 @@ describe("renderContracts", () => {
 });
 
 describe("maps keyed by names", () => {
-  const MANY_KEYS = 30;
+  const MANY_KEYS = 250;
   const keyed = (offset: number): Record<string, unknown> => Object.fromEntries(Array.from({ length: MANY_KEYS }, (_unused, index) => [`flag_${String(index + offset)}`, { on: index % 2 === 0, value: index }]));
 
   it("shows an object with very many keys as one entry whose key is a placeholder", () => {

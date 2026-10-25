@@ -28,8 +28,8 @@ const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const PREFIXED_ID_SEGMENT = /^([A-Za-z]+)_(?=[0-9A-Za-z]*\d)[0-9A-Za-z]{16,}$/;
 const LONG_TOKEN_SEGMENT = /^(?=[0-9A-Za-z_-]*\d)[0-9A-Za-z_-]{20,}$/;
 
-/** An object with more keys than this, in any one sample, is a map keyed by names (feature flags, settings by id) rather than a fixed record, and is shown as one entry whose key is `<key>`. A fixed record in these services stays well under it. */
-const MAP_MIN_KEYS = 24;
+/** An object with more keys than this, in any one sample, is a map keyed by names (a feature flag table runs to hundreds) rather than a fixed record, and is shown as one entry whose key is `<key>`. The widest fixed records a capture of these services held had about a hundred keys, so the bound sits above them: collapsing a record would hide its fields. */
+const MAP_MIN_KEYS = 200;
 
 /** The two segments after `code/repos` name an owner and a repository, which are data, not route. */
 const REPO_ROUTE = /\/code\/repos\/[^/]+\/[^/]+/;
