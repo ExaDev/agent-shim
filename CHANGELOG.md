@@ -1,3 +1,9 @@
+## [11.65.9](https://github.com/ExaDev/agent-shim/compare/v11.65.8...v11.65.9) (2026-10-25)
+
+### Bug Fixes
+
+* **test:** wait for the respawn marker's text, not its existence ([f81673b](https://github.com/ExaDev/agent-shim/commit/f81673b90c98e1e5404adee796ecbcf6eea3d7f5)), closes [#580](https://github.com/ExaDev/agent-shim/issues/580)
+
 ## [11.65.8](https://github.com/ExaDev/agent-shim/compare/v11.65.7...v11.65.8) (2026-10-25)
 
 ### Documentation
