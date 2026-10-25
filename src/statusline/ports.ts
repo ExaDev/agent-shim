@@ -115,20 +115,20 @@ function sweepStaleRunDirectories(root: string): void {
 }
 
 /**
- * A program run without a shell (except the one `fileSizeLimitedCommand` starts it through when its output is asked to go to a file), as `StatuslinePorts.run` describes. It is killed with SIGKILL when it outruns `RUN_TIMEOUT_MS`: SIGTERM, which a timeout sends by default, can be ignored, and the program would then hold the statusline for as long as it chose to run.
+ * A program run without a shell (except the one `fileSizeLimitedCommand` starts it through when its output is asked to go to a file), as `StatuslinePorts.run` describes. It is killed with SIGKILL when it outruns `timeoutMs` (`RUN_TIMEOUT_MS` in production): SIGTERM, which a timeout sends by default, can be ignored, and the program would then hold the statusline for as long as it chose to run.
  *
  * By default its standard output goes to a pipe, bounded by `RUN_MAX_OUTPUT_BYTES`. With `outputInFile` it goes to a file in a private directory under `runRoot`, removed afterwards whatever happened, because the call waits for a pipe to close: a program that exits but leaves a process holding the pipe (anything started with `&`, an agent such as gpg-agent or ssh-agent) would hold the call to the time limit and lose its output. With a file the call returns when the program exits and the output it wrote is kept. A file has no buffer limit, so such a program is started under `ulimit -f`, which also bounds every other file it writes; Windows has no `ulimit`, and there only the time limit bounds the file. A call that is cancelled (Claude Code does so with SIGTERM when a newer update arrives) cannot remove its directory, so the next call sweeps the ones that are old enough, and the program it started keeps running until it exits. On Windows a directory is also left behind when a process the program started still holds the file open, to be swept by a later call.
  *
  * Only the program itself is killed at the limit. A process it started stays running after the program is killed or exits, and the synchronous API cannot reap it: `spawnSync` has no documented way to start the program as the leader of a process group (`detached` is neither a documented nor a typed option), and gives the pid back only once the program has gone, so there is no group to signal.
  */
-function runProgram(runRoot: string, file: string, args: readonly string[], cwd: string, options: RunOptions = {}): string | undefined {
-  return options.outputInFile === true ? runWithOutputInFile(runRoot, file, args, cwd) : runWithPipe(file, args, cwd);
+function runProgram(runRoot: string, timeoutMs: number, file: string, args: readonly string[], cwd: string, options: RunOptions = {}): string | undefined {
+  return options.outputInFile === true ? runWithOutputInFile(runRoot, timeoutMs, file, args, cwd) : runWithPipe(timeoutMs, file, args, cwd);
 }
 
-/** A program with its standard output on a pipe, bounded by `RUN_MAX_OUTPUT_BYTES`; killed with SIGKILL at `RUN_TIMEOUT_MS`. */
-function runWithPipe(file: string, args: readonly string[], cwd: string): string | undefined {
+/** A program with its standard output on a pipe, bounded by `RUN_MAX_OUTPUT_BYTES`; killed with SIGKILL after `timeoutMs`. */
+function runWithPipe(timeoutMs: number, file: string, args: readonly string[], cwd: string): string | undefined {
   try {
-    const result = spawnSyncBlocking("a statusline command", file, args, { cwd, encoding: "utf8", timeout: RUN_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: RUN_MAX_OUTPUT_BYTES, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+    const result = spawnSyncBlocking("a statusline command", file, args, { cwd, encoding: "utf8", timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: RUN_MAX_OUTPUT_BYTES, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
     return result.error === undefined && result.status === 0 ? result.stdout : undefined;
   } catch {
     return undefined;
@@ -136,7 +136,7 @@ function runWithPipe(file: string, args: readonly string[], cwd: string): string
 }
 
 /** A program with its standard output in a file of a private directory under `runRoot`, as `runProgram` describes. */
-function runWithOutputInFile(runRoot: string, file: string, args: readonly string[], cwd: string): string | undefined {
+function runWithOutputInFile(runRoot: string, timeoutMs: number, file: string, args: readonly string[], cwd: string): string | undefined {
   let directory: string | undefined;
   try {
     sweepStaleRunDirectories(runRoot);
@@ -145,7 +145,7 @@ function runWithOutputInFile(runRoot: string, file: string, args: readonly strin
     const descriptor = fs.openSync(path.join(directory, "stdout"), "wx+", RUN_FILE_MODE);
     try {
       const limited = process.platform === "win32" ? { command: file, args } : fileSizeLimitedCommand("/bin/sh", file, args);
-      const result = spawnSyncBlocking("a statusline command", limited.command, limited.args, { cwd, timeout: RUN_TIMEOUT_MS, killSignal: "SIGKILL", stdio: ["ignore", descriptor, "ignore"], windowsHide: true });
+      const result = spawnSyncBlocking("a statusline command", limited.command, limited.args, { cwd, timeout: timeoutMs, killSignal: "SIGKILL", stdio: ["ignore", descriptor, "ignore"], windowsHide: true });
       return result.error === undefined && result.status === 0 ? readOutput(descriptor) : undefined;
     } finally {
       fs.closeSync(descriptor);
@@ -180,7 +180,7 @@ function discard(target: string): void {
 function readMemoryUse(): MemoryUse | undefined {
   const totalBytes = os.totalmem();
   if (process.platform === "darwin") {
-    const output = runWithPipe("/usr/bin/vm_stat", [], process.cwd());
+    const output = runWithPipe(RUN_TIMEOUT_MS, "/usr/bin/vm_stat", [], process.cwd());
     const usedBytes = output === undefined ? undefined : usedBytesFromVmStat(output);
     return usedBytes === undefined ? undefined : { usedBytes, totalBytes };
   }
@@ -191,8 +191,8 @@ function readMemoryUse(): MemoryUse | undefined {
   return { usedBytes: totalBytes - os.freemem(), totalBytes };
 }
 
-/** The statusline's ports on the real machine, keeping its own state in `stateDirectory`. */
-export function realStatuslinePorts(env: Readonly<Record<string, string | undefined>>, stateDirectory: string): StatuslinePorts {
+/** The statusline's ports on the real machine, keeping its own state in `stateDirectory`. A program `run` starts is killed after `runTimeoutMs`, which is `RUN_TIMEOUT_MS` unless a test of what a program returns needs a limit that a loaded machine cannot reach. */
+export function realStatuslinePorts(env: Readonly<Record<string, string | undefined>>, stateDirectory: string, runTimeoutMs: number = RUN_TIMEOUT_MS): StatuslinePorts {
   const { locale, timeZone } = Intl.DateTimeFormat().resolvedOptions();
   return {
     env,
@@ -215,7 +215,7 @@ export function realStatuslinePorts(env: Readonly<Record<string, string | undefi
         return undefined;
       }
     },
-    run: (file, args, cwd, options) => runProgram(path.join(stateDirectory, RUN_DIRECTORY), file, args, cwd, options),
+    run: (file, args, cwd, options) => runProgram(path.join(stateDirectory, RUN_DIRECTORY), runTimeoutMs, file, args, cwd, options),
     entryKind: (target) => {
       try {
         return fs.lstatSync(target).isDirectory() ? "directory" : "other";
