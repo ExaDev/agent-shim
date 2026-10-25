@@ -1,3 +1,9 @@
+## [11.65.6](https://github.com/ExaDev/agent-shim/compare/v11.65.5...v11.65.6) (2026-10-25)
+
+### Bug Fixes
+
+* **test:** hold the zombie case's ps run to a limit it cannot reach ([49d9760](https://github.com/ExaDev/agent-shim/commit/49d9760058faa8c0388297a13f9ffd5093769ab6)), closes [#574](https://github.com/ExaDev/agent-shim/issues/574)
+
 ## [11.65.5](https://github.com/ExaDev/agent-shim/compare/v11.65.4...v11.65.5) (2026-10-25)
 
 ### Documentation
