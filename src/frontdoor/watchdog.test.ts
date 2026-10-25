@@ -1,13 +1,15 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FRONTDOOR_PROBE_ATTEMPTS } from "./ensure";
 import { PROBE_TIMEOUT_MS } from "./probe";
-import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_MAX_GENERATIONS, respawnDelayMs, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog, type DoorWatchdog, type MachineLoadReading, type ThreadWatchdogParams } from "./watchdog";
+import { DOOR_AWAIT_PID_ENV, DOOR_RESPAWN_DELAY_ENV, DOOR_RESPAWN_GENERATION_ENV, DOOR_RESPAWN_COOLDOWN_CAP_MS, DOOR_RESPAWN_MAX_GENERATIONS, respawnDelayMs, DOOR_STALL_BOUND_MS, DOOR_WATCHDOG_CHECK_MS, startThreadWatchdog, WATCHDOG_SOURCE, type DoorWatchdog, type MachineLoadReading, type ThreadWatchdogParams } from "./watchdog";
 
 /** The respawn ceiling the tests run at: small so the chain-end case needs no real doors, and one above the middle generation so the stepping case can observe a spawn that is not the last. */
 const TEST_RESPAWN_MAX_GENERATION = 3;
@@ -47,7 +49,11 @@ const STARVED: MachineLoadReading = { loadAverage: TEST_CPUS * (PAUSE_WAIT_GUARD
 const LOADED_RUN_QUEUE_PER_CPU = 2;
 const LOADED: MachineLoadReading = { loadAverage: TEST_CPUS * LOADED_RUN_QUEUE_PER_CPU, cpus: TEST_CPUS };
 
+/** A gap between two checks just past the two cadences the thread allows before it calls a check late: what a loaded machine makes of the thread's own timer. */
+const LATE_CHECK_GAP_MS = 2 * TEST_CHECK_MS + 1;
+
 /** What the thread logs once a silence has outlasted the bound in wall time but not in processor time. */
+
 const WAITING_OUT_STARVATION = "rather than replacing a door the machine did not schedule";
 
 /** Blocks this thread, the way a synchronous call in the door would, in short waits between which it checks `done`, until `done` holds or the guard runs out: the main loop's beat cannot run meanwhile, and the outcome waited for decides how long the hold lasts rather than a guessed duration. */
@@ -408,5 +414,50 @@ describe("startThreadWatchdog", () => {
       await stallWith({ respawnGeneration: TEST_RESPAWN_MAX_GENERATION + GENERATIONS_PAST_THE_CAP, respawn });
       expect(await writtenTextOf(markerFile)).toBe(String(TEST_COOLDOWN_CAP_MS));
     });
+  });
+});
+
+describe("the watchdog thread's check on a fake clock", () => {
+  let directory: string;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-watchdog-clock-"));
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  /** Runs the thread's source in this thread, against the fake clock, with a beat counter the test moves; the checks it makes are the ones the real thread makes, at times the test chooses. */
+  function startThreadInProcess(logFile: string): Int32Array {
+    const shared = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+    const workerData = { shared, boundMs: TEST_BOUND_MS, checkEveryMs: TEST_CHECK_MS, pauseWaitMs: NO_PAUSE_WAIT_MS, stateFile: path.join(directory, "state.json"), ownPid: process.pid, action: "report", logFile, machineLoad: STARVED };
+    const parentPort = { on: () => undefined, postMessage: () => undefined };
+    const realRequire = createRequire(import.meta.url);
+    const threadRequire = (id: string): unknown => (id === "node:worker_threads" ? { workerData, parentPort } : realRequire(id));
+    const run: unknown = vm.runInThisContext(`(function (require) {${WATCHDOG_SOURCE}})`);
+    if (typeof run !== "function") {
+      throw new Error("the watchdog source did not compile to a function");
+    }
+    Reflect.apply(run, undefined, [threadRequire]);
+    return new Int32Array(shared);
+  }
+
+  it("still says the loop ran again when a late check, which saw it silent, came between the wait and the loop's next beat", () => {
+    const logFile = path.join(directory, LOG_NAME);
+    const counter = startThreadInProcess(logFile);
+    vi.advanceTimersByTime(TEST_BOUND_MS + TEST_CHECK_MS);
+    expect(textOf(logFile)).toContain(WAITING_OUT_STARVATION);
+
+    // The thread's own timer slips past the cadence while the loop is still silent, then the loop beats.
+    vi.setSystemTime(Date.now() + LATE_CHECK_GAP_MS);
+    vi.advanceTimersByTime(TEST_CHECK_MS);
+    Atomics.add(counter, 0, 1);
+    vi.advanceTimersByTime(TEST_CHECK_MS);
+
+    expect(textOf(logFile)).toMatch(/the front door's event loop ran again after \d+ms; the machine's load had starved it, so the watchdog kept the door/);
   });
 });

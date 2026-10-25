@@ -56,9 +56,9 @@ export interface MachineLoadReading {
 type StallAction = "kill-process" | "report";
 
 /**
- * The watchdog thread: its own event loop, which a blocked main loop cannot stall. It compares a shared beat counter (moved by a timer on the main loop) against its previous reading on a fixed cadence, and counts the time the counter stays still at the share of a processor the machine's load leaves a runnable thread (all of one while the one-minute load average is within the processor count, the processor count over the load average beyond it): a main loop the machine did not schedule has not had the time to run, and replacing the door would only drop every in-flight request into a door just as starved. When that counted time reaches `boundMs` it records the stall in the state file (the existing `lastError` field, so no reader of the file sees a new key) and in the door's log (the next generation's first state write replaces `lastError`, and a SIGKILL runs no handler, so the log line is the only record that outlives the replacement), logs the machine's load and where the main thread was (see `describeMainThread`, so a stall that was the door's own code is told apart from one the machine caused), starts a replacement door (as long as this door's own generation has not reached the respawn ceiling, so a stall that recurs through consecutive doors ends the chain rather than looping) and ends the process. A thread that was itself descheduled for longer than its cadence (the machine was suspended or starved) restarts its clock instead of judging, since the main loop stalled by the same pause is not a hung one.
+ * The source of the watchdog thread, exported so a test can run its checks in process against a fake clock and make one late, which a real thread cannot be made to do on demand. The thread: its own event loop, which a blocked main loop cannot stall. It compares a shared beat counter (moved by a timer on the main loop) against its previous reading on a fixed cadence, and counts the time the counter stays still at the share of a processor the machine's load leaves a runnable thread (all of one while the one-minute load average is within the processor count, the processor count over the load average beyond it): a main loop the machine did not schedule has not had the time to run, and replacing the door would only drop every in-flight request into a door just as starved. When that counted time reaches `boundMs` it records the stall in the state file (the existing `lastError` field, so no reader of the file sees a new key) and in the door's log (the next generation's first state write replaces `lastError`, and a SIGKILL runs no handler, so the log line is the only record that outlives the replacement), logs the machine's load and where the main thread was (see `describeMainThread`, so a stall that was the door's own code is told apart from one the machine caused), starts a replacement door (as long as this door's own generation has not reached the respawn ceiling, so a stall that recurs through consecutive doors ends the chain rather than looping) and ends the process. A thread that was itself descheduled for longer than its cadence (the machine was suspended or starved) restarts its clock instead of judging, since the main loop stalled by the same pause is not a hung one.
  */
-const WATCHDOG_SOURCE = `
+export const WATCHDOG_SOURCE = `
 const { workerData, parentPort } = require("node:worker_threads");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -70,7 +70,7 @@ let lastChangeAt = Date.now();
 let lastCheckAt = Date.now();
 // The processor time the machine's load left the main thread since the counter last moved: what the bound is judged against.
 let scheduledMs = 0;
-// Set once a silence has outlasted the bound in wall time while the counted time has not, so the wait is logged once and its end is logged too.
+// Set once a silence has outlasted the bound in wall time while the counted time has not, so the wait is logged once and its end is logged too, whether or not a late check restarted the clock in between.
 let waitingOutStarvation = false;
 let stopped = false;
 const readLoad = () => machineLoad === undefined ? { loadAverage: os.loadavg()[0], cpus: os.cpus().length } : machineLoad;
@@ -235,8 +235,11 @@ const timer = setInterval(() => {
   lastCheckAt = now;
   const value = Atomics.load(counter, 0);
   if (value !== lastValue || sinceLastCheck > checkEveryMs * 2) {
-    if (waitingOutStarvation && value !== lastValue) log("the front door's event loop ran again after " + String(now - lastChangeAt) + "ms; the machine's load had starved it, so the watchdog kept the door");
-    waitingOutStarvation = false;
+    // Only a moved counter ends the wait: a late check that saw the loop still silent restarts the clock but leaves the wait pending, so the beat that follows is still reported.
+    if (value !== lastValue) {
+      if (waitingOutStarvation) log("the front door's event loop ran again after " + String(now - lastChangeAt) + "ms; the machine's load had starved it, so the watchdog kept the door");
+      waitingOutStarvation = false;
+    }
     lastValue = value;
     lastChangeAt = now;
     scheduledMs = 0;
