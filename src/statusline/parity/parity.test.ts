@@ -36,6 +36,20 @@ describe("the claude-hud parity map", () => {
     expect(Object.keys(PARITY).filter((key) => !doc.includes(`\`${key}\``))).toEqual([]);
   });
 
+  it("words the document's row for each setting key as the map's setting and note do, ignoring code formatting", () => {
+    const rows = fs.readFileSync(PARITY_DOC, "utf8").split("\n");
+    const unplain = (text: string): string => text.replaceAll("`", "");
+    const differing = Object.entries(PARITY).flatMap(([key, entry]) => {
+      if (!("setting" in entry)) {
+        return [];
+      }
+      const row = rows.find((line) => line.startsWith(`| \`${key}\` |`));
+      const counterpart = entry.note === undefined ? entry.setting : `${entry.setting}: ${entry.note}`;
+      return row !== undefined && unplain(row) === unplain(`| \`${key}\` | ${counterpart} |`) ? [] : [key];
+    });
+    expect(differing).toEqual([]);
+  });
+
   it("says in the parity document how each preset is reproduced", () => {
     const doc = fs.readFileSync(PARITY_DOC, "utf8");
     for (const preset of STATUSLINE_PRESETS) {
