@@ -7,11 +7,15 @@ import { decodeFrames, negotiationOf, type WebSocketDirection } from "./decode-w
  * A shape is a JSON value whose leaves name types: `string`, `number`, `boolean`, `null`, joined with `|` where samples disagree. A key missing from some samples carries a `?` suffix. A string is shown as its value only when it is one of a small closed set seen across several samples (a discriminator such as a `type` field), never from a single sample, so identifiers and prose never appear in a shape.
  */
 
-/** A string field is reported as an enumeration only when at least this many samples held a string there. */
+/** A string field is reported as an enumeration only when at least this many samples held a string there... */
 const ENUM_MIN_SAMPLES = 3;
 
-/** ...and only when no more than this many distinct values were seen; past it the field is free text or an identifier. */
+/** ...with at least two and no more than this many distinct values: a value that never varies is as likely an identifier or a setting as a discriminator, and past the upper bound the field is free text or an identifier. */
+const ENUM_MIN_DISTINCT = 2;
 const ENUM_MAX_DISTINCT = 8;
+
+/** ...each looking like a lower-case token (`message`, `claude_code`, `claude-opus-4-7`): not a timestamp, number, address or identifier. */
+const ENUM_VALUE = /^[a-z][a-z0-9_.:/-]{0,31}$/;
 
 /** Header names left out of an endpoint's request header list: transport and credential noise that says nothing about the contract. */
 const NOISE_HEADERS: ReadonlySet<string> = new Set(["host", "connection", "accept-encoding", "accept", "user-agent", "content-length", "authorization", "proxy-authorization", "cookie", "x-api-key", "transfer-encoding", "accept-language", "sec-fetch-mode"]);
@@ -32,6 +36,15 @@ const REPO_ROUTE = /\/code\/repos\/[^/]+\/[^/]+/;
 
 /** A path segment followed by one of these is the name of a collection member (`skills/{name}/download`), not a fixed part of the route. */
 const MEMBER_ACTIONS: ReadonlySet<string> = new Set(["download"]);
+
+/** An object key that is an identifier (an organisation uuid keying a settings map) becomes a placeholder, so two accounts' shapes agree and no identifier reaches a shape. */
+function normaliseKey(key: string): string {
+  if (UUID_SEGMENT.test(key)) {
+    return "{uuid}";
+  }
+  const prefixed = PREFIXED_ID_SEGMENT.exec(key);
+  return prefixed === null ? key : `{${(prefixed[1] ?? "id").toLowerCase()}_id}`;
+}
 
 /** The path of a request target with each identifier replaced by a placeholder naming its kind, and the query parameter names it carried. */
 export function normaliseTarget(target: string): { readonly path: string; readonly query: readonly string[] } {
@@ -100,7 +113,8 @@ function observe(accumulator: Accumulator, value: unknown): void {
       }
       return;
     }
-    for (const [key, entry] of entries) {
+    for (const [rawKey, entry] of entries) {
+      const key = normaliseKey(rawKey);
       let field = accumulator.object.fields.get(key);
       if (field === undefined) {
         field = emptyAccumulator();
@@ -127,7 +141,7 @@ function observe(accumulator: Accumulator, value: unknown): void {
 
 function stringLeaf(accumulator: Accumulator): string {
   const distinct = [...accumulator.strings.keys()];
-  if (accumulator.stringSamples >= ENUM_MIN_SAMPLES && distinct.length <= ENUM_MAX_DISTINCT) {
+  if (accumulator.stringSamples >= ENUM_MIN_SAMPLES && distinct.length >= ENUM_MIN_DISTINCT && distinct.length <= ENUM_MAX_DISTINCT && distinct.every((value) => ENUM_VALUE.test(value))) {
     return distinct.sort().map((value) => JSON.stringify(value)).join("|");
   }
   return "string";

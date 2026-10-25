@@ -78,6 +78,23 @@ describe("summariseContracts", () => {
     expect(only(many.responses).body).toEqual({ type: '"error"|"message"' });
   });
 
+  it("never shows a value that does not vary, nor values that are not lower-case tokens, even across many samples", () => {
+    const constant = only(summariseContracts(Array.from({ length: SAMPLES_FOR_ENUM }, () => exchange("GET /c HTTP/1.1", undefined, STATUS_OK, { account: "someone", at: "2026-01-01T00:00:00Z" }))));
+    expect(only(constant.responses).body).toEqual({ account: "string", at: "string" });
+    const varying = only(summariseContracts(Array.from({ length: SAMPLES_FOR_ENUM }, (_unused, index) => exchange("GET /c HTTP/1.1", undefined, STATUS_OK, { at: `2026-01-0${String(index + 1)}T00:00:00Z`, who: index === 0 ? "A@b.test" : "c@d.test" }))));
+    expect(only(varying.responses).body).toEqual({ at: "string", who: "string" });
+  });
+
+  it("replaces an identifier used as an object key with a placeholder, merging the accounts' maps", () => {
+    const summary = only(
+      summariseContracts([
+        exchange("GET /m HTTP/1.1", undefined, STATUS_OK, { "0b9a3c1e-5d52-4b7e-9c11-2f0a8d6e4a77": true }),
+        exchange("GET /m HTTP/1.1", undefined, STATUS_OK, { "1c8b4d2f-6e63-4c8f-8d22-3a1b9e7f5b88": false }),
+      ]),
+    );
+    expect(only(summary.responses).body).toEqual({ "{uuid}": "boolean" });
+  });
+
   it("keeps the responses of different statuses apart and an empty array as unknown elements", () => {
     const summary = only(summariseContracts([exchange("GET /r HTTP/1.1", undefined, STATUS_OK, { list: [] }), exchange("GET /r HTTP/1.1", undefined, STATUS_NOT_FOUND, { error: { type: "not_found" } })]));
     expect(summary.responses.map((response) => response.status)).toEqual([String(STATUS_OK), String(STATUS_NOT_FOUND)]);
