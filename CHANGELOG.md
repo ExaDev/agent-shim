@@ -1,3 +1,10 @@
+## [11.66.1](https://github.com/ExaDev/agent-shim/compare/v11.66.0...v11.66.1) (2026-10-25)
+
+### Bug Fixes
+
+* **frontdoor:** wait for the keepalive frame instead of a clock ([e22b455](https://github.com/ExaDev/agent-shim/commit/e22b455aca4275eb1c8cbe86a02e5316193aeba9)), closes [#603](https://github.com/ExaDev/agent-shim/issues/603)
+* **statusline:** let the real ports take the limit a program may run for ([cee89a2](https://github.com/ExaDev/agent-shim/commit/cee89a2c7c74f4c6143f4c582df5002f42c5299b)), closes [#602](https://github.com/ExaDev/agent-shim/issues/602)
+
 ## [11.66.0](https://github.com/ExaDev/agent-shim/compare/v11.65.10...v11.66.0) (2026-10-25)
 
 ### Features
