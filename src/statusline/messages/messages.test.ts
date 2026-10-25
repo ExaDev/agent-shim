@@ -113,7 +113,7 @@ const DATA_DIRECTORIES: Readonly<Record<string, string>> = {
 const PLUMBING: Readonly<Record<string, readonly string[]>> = {
   "carry the settings and the command line": ["change.ts", "commands.ts", "keys.ts", "settings.ts"],
   "read the machine, the client's payload and the door": ["cacheFile.ts", "client.ts", "configCounts.ts", "dailyLedger.ts", "doorCost.ts", "enrich.ts", "headroom.ts", "identityTranscript.ts", "payload.ts", "ports.ts", "speed.ts"],
-  "lay out, measure, paint and clean text that others wrote": ["ansi.ts", "barGrid.ts", "blank.ts", "graphemes.ts", "headerLayout.ts", "palette.ts", "render.ts", "rowsLayout.ts", "sanitise.ts", "width.ts"],
+  "lay out, measure, paint and clean text that others wrote": ["ansi.ts", "barGrid.ts", "blank.ts", "colour.ts", "graphemes.ts", "headerLayout.ts", "palette.ts", "render.ts", "rowsLayout.ts", "sanitise.ts", "width.ts"],
   "stand in for the machine in tests": ["testing.ts", "transcript/activityTesting.ts"],
 };
 
@@ -146,7 +146,7 @@ const NOT_WORDS: Readonly<Record<string, readonly string[]>> = {
   "elements/rows/sessionTime.ts": ["started", "label", "text"],
   "projectPath.ts": ["full"],
   "resetTime.ts": ["relative", "absolute", "both", "elapsed", "elapsedAndAbsolute"],
-  "style.ts": ["usage", "usageWarning", "warning", "critical", "empty", "M", "k", "s", "d ", "h", "h ", "m"],
+  "style.ts": ["usage", "usageWarning", "warning", "critical", "empty", "use", "width", "M", "k", "s", "d ", "h", "h ", "m"],
   "wallClock.ts": ["en-CA", "medium", "short", "auto", "numeric"],
   // The names the client's transcript is written in (record types, tool names, input fields and statuses), the environment variables it reads and the markers it leaves in a user's text, which the reader compares and never draws; and the results of `typeof` and the digest algorithms.
   "transcript/activity.ts": ["BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS", "Task", "Agent", "TodoWrite", "TaskCreate", "TaskUpdate", "Skill", "Bash", "async_launched", "teammate_spawned", "pending", "in_progress", "completed", "string", "Read", "Write", "Edit", "file_path", "path", "Glob", "Grep", "pattern", "skill", "command", "not_started", "running", "complete", "done", "object", "content", "status", "number", "subject", "description", "deleted", "sha256", "base64url", "subagent_type", "model", "true", "queue-operation", "enqueue", "assistant", "tool_result", "tool_use", "user", "error"],

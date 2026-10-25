@@ -86,6 +86,9 @@ export const STATUSLINE_PATH_LEVELS = ["1", "2", "3", "full"] as const;
 /** How the quota row writes a window's figure: the share of the window used, or the share still left. */
 const STATUSLINE_USAGE_VALUES = ["used", "remaining"] as const;
 
+/** How a bar's used part is coloured: the band's single colour, or a gradient that blends the bar's own, warning and critical colours by the use, or its own and critical colours across the width; a gradient with a stop that names no colour of its own leaves the bar the band's single colour, and so does `width` where no cell of the used part is drawn. */
+const STATUSLINE_BAR_GRADIENTS = ["off", "use", "width"] as const;
+
 /** How the quota row tells when a window resets: the time left, the wall-clock time, both, the share of the window already gone, or that share and the wall-clock time. */
 const STATUSLINE_TIME_FORMATS = ["relative", "absolute", "both", "elapsed", "elapsedAndAbsolute"] as const;
 
@@ -229,8 +232,8 @@ const SHAPES = {
   context: {
     bar: z.enum(["shown", "hidden"]).describe("Whether the context row draws its bar, or only its figures on one line of text."),
     value: z.enum(STATUSLINE_CONTEXT_VALUES).describe("The context figure: both (the tokens held against the window, then the percentage), percent, tokens, or remaining (the percentage of the window left)."),
-    warnAt: wholePercent.optional().describe("The whole percentage of the context window at which the context bar turns yellow; while it is unset the context bar follows bands.warnAt."),
-    criticalAt: wholePercent.optional().describe("The whole percentage of the context window at which the context bar turns red and, with context.breakdown set to critical, the token breakdown appears; while it is unset the context bar follows bands.criticalAt."),
+    warnAt: wholePercent.optional().describe("The whole percentage of the context window at which the context bar turns yellow when bar.gradient is off (a bar.gradient of use holds the warning colour exactly there, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn); while it is unset the context bar follows bands.warnAt."),
+    criticalAt: wholePercent.optional().describe("The whole percentage of the context window at which the context bar turns red when bar.gradient is off (a bar.gradient of use holds the critical colour from there, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn) and, with context.breakdown set to critical, the token breakdown appears; while it is unset the context bar follows bands.criticalAt."),
     autoCompactWindow: z
       .number()
       .int()
@@ -254,8 +257,8 @@ const SHAPES = {
       ),
   },
   bands: {
-    warnAt: wholePercent.describe("The whole percentage of use at which a bar turns yellow; it must be below criticalAt."),
-    criticalAt: wholePercent.describe("The whole percentage of use at which a bar turns red."),
+    warnAt: wholePercent.describe("The whole percentage of use at which a bar turns yellow when bar.gradient is off; it must be below criticalAt. A bar.gradient of use holds the warning colour exactly there, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn."),
+    criticalAt: wholePercent.describe("The whole percentage of use at which a bar turns red when bar.gradient is off. A bar.gradient of use holds the critical colour from there, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn."),
   },
   labels: {
     fiveHour: windowLabel.describe("The name of the five-hour subscription window; empty uses the language's own name for it."),
@@ -263,6 +266,11 @@ const SHAPES = {
   },
   bar: {
     width: z.number().int().min(1).max(MAX_BAR_CELLS).describe("A bar's width in cells before the line's spare width is shared out among the bars."),
+    gradient: z
+      .enum(STATUSLINE_BAR_GRADIENTS)
+      .describe(
+        "How a bar's used part is coloured: off (the default) draws the band's single colour, the bar's own colour below the warning threshold, the warning colour from there and the critical one from the critical threshold; use blends the bar's colour with its use, from its own colour at none in use to the warning colour at the warning threshold and the critical one at the critical threshold, holding exactly the colour the bands draw at each threshold and the critical colour above it; and width colours each cell of the used part across the bar's width, from the bar's own colour at the first cell to the critical one at the last, whatever the use, with a bar one cell wide drawing that cell in its own colour. A bar's thresholds are bands.warnAt and bands.criticalAt, the context bar's own where it sets them, and the figures beside a bar keep the band's colours in every mode. The unused part keeps colours.empty in every mode, and when that is default or dim, which set no colour of their own, it draws in the colour the used part ends in: under off the band's colour, under use the blend for the bar's use (even where no cell of the used part is drawn), and under width the last drawn cell's colour (the band's colour where no cell is drawn). A gradient blends RGB values, so a colour name, or a palette index below 16, is blended at the default RGB the xterm scheme gives it rather than the shade a themed terminal draws it in, while a stop itself, where a mode holds it exactly, is drawn as the bands draw that role. A bar whose stops include a role set to default or dim, which names no colour of its own, is drawn in the band's single colour: for use those stops are the bar's own, warning and critical roles, and for width its own and critical roles. A width bar with no cell of its used part drawn has no cell to colour, so it takes the band's colours as off does.",
+      ),
     filled: barCharacter.describe("The character that draws the used part of a bar."),
     empty: barCharacter.describe("The character that draws the unused part of a bar."),
   },
@@ -301,11 +309,11 @@ const SHAPES = {
     maxVisible: z.number().int().min(0).describe("The most kinds of finished tool call the tools row names, the most-used first, with the rest counted as +N more. 0 names every kind."),
   },
   colours: {
-    context: colourValue.describe("The colour of the context bar and its figures below the warning threshold."),
-    usage: colourValue.describe("The colour of the quota bars and their figures below the warning threshold."),
-    warning: colourValue.describe("The colour of the context bar at or above bands.warnAt, and of a cache hit share that is middling."),
-    usageWarning: colourValue.describe("The colour of a quota bar at or above bands.warnAt."),
-    critical: colourValue.describe("The colour of a bar at or above bands.criticalAt, and of a cache hit share that is nearly nothing."),
+    context: colourValue.describe("The colour of the context bar below the warning threshold while bar.gradient is off, of the figures beside it below that threshold in every mode, and the colour a bar.gradient of use or width blends the context bar from (at none in use for use, at the first cell for width), while a gradient bar with a stop whose colour is default or dim, or a width bar with no cell of its used part drawn, takes the band's colours."),
+    usage: colourValue.describe("The colour of the quota bars and the memory bar below the warning threshold while bar.gradient is off, of the figures beside them below that threshold in every mode, and the colour a bar.gradient of use or width blends those bars from (at none in use for use, at the first cell for width), while a gradient bar with a stop whose colour is default or dim, or a width bar with no cell of its used part drawn, takes the band's colours."),
+    warning: colourValue.describe("The colour of the context bar from its warning threshold (bands.warnAt, or context.warnAt where that is set) up to its critical threshold (bands.criticalAt, or context.criticalAt where that is set) when bar.gradient is off (a bar.gradient of use holds it exactly at the threshold, and a gradient bar with a stop whose colour is default or dim draws the band's colours instead, and so does a width bar with no cell of its used part drawn), of the figures beside the bar from that threshold up to its critical threshold in every mode, and of a cache hit share that is middling."),
+    usageWarning: colourValue.describe("The colour of a quota bar or the memory bar from bands.warnAt up to bands.criticalAt when bar.gradient is off (a bar.gradient of use holds it exactly at bands.warnAt, and a gradient bar with a stop whose colour is default or dim draws the band's colours instead, and so does a width bar with no cell of its used part drawn), and of the figures beside the bar from that threshold up to bands.criticalAt in every mode."),
+    critical: colourValue.describe("The colour of a bar at or above its critical threshold (bands.criticalAt, or context.criticalAt for the context bar where that is set) when bar.gradient is off or use, of the last cell of a full bar more than one cell wide under a bar.gradient of width (a bar one cell wide draws its cell in its own colour, and a width bar whose own colour or this one is default or dim, or that has no cell of its used part drawn, draws the band's colours instead), of the figures beside a bar from its critical threshold in every mode, and of a cache hit share that is nearly nothing."),
     model: colourValue.describe("The colour of the model and provider segments."),
     label: colourValue.describe("The colour of labels and secondary text: row labels, and the route, account, identity and headroom segments."),
     empty: colourValue.describe("The colour of the unused part of a bar."),
@@ -440,7 +448,7 @@ export const STATUSLINE_DEFAULTS: ResolvedStatusline = {
   extra: { command: [] },
   bands: { warnAt: 70, criticalAt: 90 },
   labels: { fiveHour: "", sevenDay: "" },
-  bar: { width: 10, filled: "\u2588", empty: "\u2591" },
+  bar: { width: 10, gradient: "off", filled: "\u2588", empty: "\u2591" },
   usage: { value: "used", bar: true, compact: false, resetLabel: false, modelScoped: false, timeFormat: "relative", threshold: 0, sevenDayThreshold: 0 },
   clock: { hourCycle: "auto", seconds: false },
   cost: { routed: false },
