@@ -64,6 +64,17 @@ function textOf(file: string): string {
   return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
 }
 
+/** The text a respawned child wrote to `file`, once there is any: the child's write creates the file empty before it fills it, so the file existing does not mean its text has arrived. */
+async function writtenTextOf(file: string): Promise<string> {
+  await vi.waitFor(
+    () => {
+      expect(textOf(file)).not.toBe("");
+    },
+    { timeout: PAUSE_WAIT_GUARD_MS },
+  );
+  return textOf(file);
+}
+
 describe("the watchdog's derived constants", () => {
   it("is more patient than a launcher is with a door, so a door a launcher still calls busy is never acted on", () => {
     expect(DOOR_STALL_BOUND_MS).toBeGreaterThan(FRONTDOOR_PROBE_ATTEMPTS * PROBE_TIMEOUT_MS);
@@ -380,13 +391,7 @@ describe("startThreadWatchdog", () => {
       const markerFile = path.join(directory, MARKER);
       const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_RESPAWN_DELAY_ENV} + ":" + process.env.${DOOR_RESPAWN_GENERATION_ENV})`], env: { PATH: process.env.PATH ?? "" } };
       const log = await stallWith({ respawnGeneration: TEST_RESPAWN_MAX_GENERATION, respawn });
-      await vi.waitFor(
-        () => {
-          expect(fs.existsSync(markerFile)).toBe(true);
-        },
-        { timeout: PAUSE_WAIT_GUARD_MS },
-      );
-      expect(fs.readFileSync(markerFile, "utf8")).toBe(`${String(TEST_COOLDOWN_STEP_MS)}:${String(TEST_RESPAWN_MAX_GENERATION + 1)}`);
+      expect(await writtenTextOf(markerFile)).toBe(`${String(TEST_COOLDOWN_STEP_MS)}:${String(TEST_RESPAWN_MAX_GENERATION + 1)}`);
       expect(log).toMatch(new RegExp(`${String(TEST_COOLDOWN_STEP_MS)}ms cooldown`));
     });
 
@@ -394,26 +399,14 @@ describe("startThreadWatchdog", () => {
       const markerFile = path.join(directory, MARKER);
       const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_RESPAWN_DELAY_ENV})`], env: { PATH: process.env.PATH ?? "" } };
       await stallWith({ respawnGeneration: 0, respawn });
-      await vi.waitFor(
-        () => {
-          expect(fs.existsSync(markerFile)).toBe(true);
-        },
-        { timeout: PAUSE_WAIT_GUARD_MS },
-      );
-      expect(fs.readFileSync(markerFile, "utf8")).toBe("0");
+      expect(await writtenTextOf(markerFile)).toBe("0");
     });
 
     it("caps the cooldown, so a chain that keeps stalling is retried at a steady pace", async () => {
       const markerFile = path.join(directory, MARKER);
       const respawn = { command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerFile)}, process.env.${DOOR_RESPAWN_DELAY_ENV})`], env: { PATH: process.env.PATH ?? "" } };
       await stallWith({ respawnGeneration: TEST_RESPAWN_MAX_GENERATION + GENERATIONS_PAST_THE_CAP, respawn });
-      await vi.waitFor(
-        () => {
-          expect(fs.existsSync(markerFile)).toBe(true);
-        },
-        { timeout: PAUSE_WAIT_GUARD_MS },
-      );
-      expect(fs.readFileSync(markerFile, "utf8")).toBe(String(TEST_COOLDOWN_CAP_MS));
+      expect(await writtenTextOf(markerFile)).toBe(String(TEST_COOLDOWN_CAP_MS));
     });
   });
 });
