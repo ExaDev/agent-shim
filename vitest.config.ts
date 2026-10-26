@@ -15,6 +15,7 @@ export default defineConfig({
     testTimeout: HANG_GUARD_MS,
     hookTimeout: HANG_GUARD_MS,
     environment: "node",
+    globalSetup: ["./src/test-global-setup.ts"],
     setupFiles: ["./src/test-setup.ts"],
     env: {
       AGENT_SHIM_HOME: testAgentShimHome,
@@ -24,7 +25,7 @@ export default defineConfig({
       reporter: ["text", "lcov", "json-summary"],
       reportsDirectory: "coverage",
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts", "src/test-setup.ts"],
+      exclude: ["src/**/*.test.ts", "src/test-setup.ts", "src/test-global-setup.ts"],
     },
   },
 });

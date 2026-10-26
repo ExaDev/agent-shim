@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { CHUNK_LOG_CAP_BYTES, STREAM_LOG_CAP_BYTES, captureFromEnv, createFileCapture, redactBody, redactHeaders } from "./capture";
 
@@ -9,6 +9,20 @@ import { CHUNK_LOG_CAP_BYTES, STREAM_LOG_CAP_BYTES, captureFromEnv, createFileCa
 const HTTP_UNAUTHORIZED = 401;
 /** A few bytes past the excerpt cap, enough to prove the cap truncates without making an oversized fixture. */
 const BYTES_PAST_CAP = 10;
+
+const tempDirs: string[] = [];
+
+function tempDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe("redactHeaders", () => {
   it("replaces every credential-named header value and keeps every other header verbatim", () => {
@@ -60,7 +74,7 @@ describe("redactBody", () => {
 
 describe("captureFromEnv", () => {
   it("builds a capture writing under the logs directory only for the exact value 1", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-"));
+    const dir = tempDir();
     const on = captureFromEnv({ AGENT_SHIM_FRONTDOOR_CAPTURE: "1" }, dir);
     expect(on).toBeDefined();
     on?.connect({ host: "api.anthropic.com", port: 443 }, true);
@@ -73,7 +87,7 @@ describe("captureFromEnv", () => {
 
 describe("createFileCapture", () => {
   it("writes one JSON line per event, correlating chunks with their request by id", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-"));
+    const dir = tempDir();
     const file = path.join(dir, "nested", "frontdoor-capture.jsonl");
     const capture = createFileCapture(file, () => new Date("2026-10-03T12:00:00.000Z"));
 
@@ -96,7 +110,7 @@ describe("createFileCapture", () => {
   });
 
   it("truncates a chunk past the excerpt cap and stops storing a direction past the stream cap, while still counting nothing further", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-"));
+    const dir = tempDir();
     const file = path.join(dir, "frontdoor-capture.jsonl");
     const capture = createFileCapture(file);
 
@@ -118,7 +132,7 @@ describe("createFileCapture", () => {
   });
 
   it("records a tapped stream: text chunks as bodies, binary chunks as base64, capped per direction", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-"));
+    const dir = tempDir();
     const file = path.join(dir, "frontdoor-capture.jsonl");
     const capture = createFileCapture(file, () => new Date("2026-10-03T12:00:00.000Z"));
     const tap = capture.tapStream?.("platform.claude.com");
@@ -143,7 +157,7 @@ describe("createFileCapture", () => {
   });
 
   it("records an upgrade request separately from piped exchanges", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-capture-"));
+    const dir = tempDir();
     const file = path.join(dir, "frontdoor-capture.jsonl");
     const capture = createFileCapture(file);
     capture.upgrade({ method: "GET", url: "/remote/ws", headers: { upgrade: "websocket" } });
