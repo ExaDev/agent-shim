@@ -1,3 +1,9 @@
+## [11.66.3](https://github.com/ExaDev/agent-shim/compare/v11.66.2...v11.66.3) (2026-10-26)
+
+### Bug Fixes
+
+* **test:** remove the temporary directories a test run creates ([c5f556e](https://github.com/ExaDev/agent-shim/commit/c5f556efc2b04ff12e30089dbaf8aecf10dbfd5f))
+
 ## [11.66.2](https://github.com/ExaDev/agent-shim/compare/v11.66.1...v11.66.2) (2026-10-26)
 
 ### Bug Fixes
