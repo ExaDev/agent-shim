@@ -14,6 +14,8 @@ import { realSessionFs } from "../agents/realFs";
 import { collectSessionList, showSession } from "../agents/sessions";
 import { listIdentities } from "../identityStore";
 import { realFarmFs, realFsPort, realHeadroomSocketTrust, realIsProcessAlive, realIsProcessRunning, realRunningAmong, realAsyncCredentialPort, realOwnExecutablePath, selfInvocation, spawnDetachedSupervisor, spawnSelfDetached } from "../realPorts";
+import { createHeadroomKeeper } from "../headroom/keeper";
+import { HEADROOM_POLL_MS } from "../headroom/supervisor";
 import { supervisedSessionOf, writeModelMove } from "../supervise/registry";
 import { createTargetObservationStore } from "../selection/targetStore";
 import { checkForUpdate } from "../update/commands";
@@ -319,6 +321,22 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
     timer.unref();
     keeperTimers.push(timer);
   };
+  // The headroom supervisor is otherwise only ever started by a launch, so one that exited leaves every session routed through this door's hop failing until an unrelated launch starts another. The door sees those requests fail, so it keeps the supervisor alive for the launchers registered against it, at the supervisor's own tick rate.
+  const headroomKeeper = createHeadroomKeeper({
+    paths,
+    ownPid: process.pid,
+    ports: { fs: realFarmFs, now: () => Date.now(), isRunning: realIsProcessRunning, spawnSupervisor: (layout) => spawnDetachedSupervisor(layout, "__headroom-supervisor", layout.headroomLogPath) },
+    log,
+  });
+  const headroomKeeperTimer = setInterval(() => {
+    try {
+      headroomKeeper.tick();
+    } catch (error) {
+      log(`headroom keeper failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, HEADROOM_POLL_MS);
+  headroomKeeperTimer.unref();
+  keeperTimers.push(headroomKeeperTimer);
   everyFreshnessInterval(() => {
     // A configuration this door cannot read (a key from a newer agent-shim sharing the file) is logged each tick and never ends the process: every session routed through this door depends on it.
     try {

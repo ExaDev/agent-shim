@@ -15,7 +15,7 @@ import {
 /**
  * How long one launch waits for the daemon to report ready, and for its supervisor to record an allowlist the launch needs. Generous on purpose: a first-ever launch can sit behind `uv tool install` building headroom from a git URL, and a warm daemon answers (and a running supervisor records a changed allowlist) within one of its ticks, so the bound only ever bites when something is genuinely broken.
  */
-const HEADROOM_START_TIMEOUT_MS = 120_000;
+export const HEADROOM_START_TIMEOUT_MS = 120_000;
 
 /** The launcher's poll rate while waiting for the daemon. Fast enough not to add perceptible latency on a warm start, slow enough not to hammer the state file. */
 const HEADROOM_LAUNCHER_POLL_MS = 250;
@@ -62,6 +62,41 @@ export interface EnsureHeadroomPorts {
   readonly daemonCommandLine: (pid: number) => string | undefined;
   /** Spawns the detached supervisor process that owns the headroom daemon, returning its pid. */
   readonly spawnSupervisor: (paths: LayoutPaths) => number;
+}
+
+/** What one attempt to start the supervisor under the start lock did. */
+export type SupervisorStart =
+  /** The caller took the lock and spawned the supervisor. */
+  | "spawned"
+  /** Another live process holds the lock, so it is spawning the supervisor and the caller waits on the state file. */
+  | "held"
+  /** The lock's holder had died, so the lock was removed and the caller decides again from the state file. */
+  | "cleared-stale-lock";
+
+/**
+ * The exclusive-create start lock decides which of several concurrent callers spawns the one supervisor: its holder spawns, everyone else waits on the state file, and a lock whose holder has died is removed so the next decision can take it. Shared by a launch (`ensureHeadroom`) and the front door's keeper, so both start the supervisor the same way and never two at once.
+ *
+ * The lock is not cleared when the supervisor comes up: it stays until its holder exits, so a holder that outlives the start (the front door) removes its own lock once the supervisor is serving.
+ */
+export function startSupervisorUnderLock(params: {
+  readonly paths: LayoutPaths;
+  readonly holderPid: number;
+  readonly ports: Pick<EnsureHeadroomPorts, "fs" | "now" | "isRunning" | "spawnSupervisor">;
+}): SupervisorStart {
+  const { paths, ports } = params;
+  ports.fs.mkdirp(paths.headroomDir);
+  const created = ports.fs.writeFileExclusive(paths.headroomLockFile, `${JSON.stringify({ pid: params.holderPid, at: ports.now() } satisfies HeadroomLock)}\n`);
+  if (created) {
+    ports.spawnSupervisor(paths);
+    return "spawned";
+  }
+  const lock = readStartLock(ports.fs, paths.headroomLockFile);
+  if (lock === undefined || !ports.isRunning(lock.pid)) {
+    // A dead holder's lock is litter from a launcher that died before the supervisor it spawned could clear it.
+    ports.fs.removeRecursive(paths.headroomLockFile);
+    return "cleared-stale-lock";
+  }
+  return "held";
 }
 
 /**
@@ -134,21 +169,11 @@ export function ensureHeadroom(params: {
         );
       }
     } else if (!spawnedSupervisor) {
-      ports.fs.mkdirp(paths.headroomDir);
-      const created = ports.fs.writeFileExclusive(
-        paths.headroomLockFile,
-        `${JSON.stringify({ pid: params.launcherPid, at: ports.now() } satisfies HeadroomLock)}\n`,
-      );
-      if (created) {
-        ports.spawnSupervisor(paths);
+      const started = startSupervisorUnderLock({ paths, holderPid: params.launcherPid, ports });
+      if (started === "spawned") {
         spawnedSupervisor = true;
-      } else {
-        const lock = readStartLock(ports.fs, paths.headroomLockFile);
-        if (lock === undefined || !ports.isRunning(lock.pid)) {
-          // A dead holder's lock is litter from a launcher that died before the supervisor it spawned could clear it.
-          ports.fs.removeRecursive(paths.headroomLockFile);
-          continue;
-        }
+      } else if (started === "cleared-stale-lock") {
+        continue;
       }
     }
 
