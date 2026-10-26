@@ -71,7 +71,7 @@ export function fakeRenderContext(overrides: Readonly<Partial<Omit<RenderContext
   const settings = overrides.settings ?? resolveStatusline(undefined);
   return {
     summary: fakeStatuslineSummary(),
-    view: { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
+    view: { clientModelName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
     nowMs: 0,
     terminalWidth: FAKE_TERMINAL_WIDTH,
     width: FAKE_TERMINAL_WIDTH,

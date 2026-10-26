@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { isPlainObject, ResolvedStatuslineSchema, STATUSLINE_COLOUR_NAMES, STATUSLINE_DEFAULTS } from "../config/statusline";
+import { isPlainObject, ResolvedStatuslineSchema, STATUSLINE_COLOUR_NAMES, STATUSLINE_DEFAULTS, StatuslineSchema } from "../config/statusline";
 
 /** How a setting's value is written: `boolean` is `true` or `false`, `choice` is one of a closed set, `list` an ordered list of such choices, `groups` a list of such lists, `textList` an ordered list of free text (a program and its arguments), and `colour` a colour name, a palette index from 0 to 255 or `#rrggbb`. */
 type StatuslineKeyKind = "integer" | "boolean" | "text" | "choice" | "list" | "groups" | "textList" | "colour";
@@ -17,6 +17,8 @@ export interface StatuslineKey {
   readonly defaultValue: unknown;
   /** Whether the key may stay unset with no default value, the statusline then behaving as its description says. */
   readonly optional: boolean;
+  /** Whether a layer may write null for the key (`none` on the command line), which returns it, for the layers it is merged over, to its default, or to unset when it has none. */
+  readonly unsettable: boolean;
 }
 
 function valueAt(source: unknown, path: readonly string[]): unknown {
@@ -30,10 +32,16 @@ function valueAt(source: unknown, path: readonly string[]): unknown {
   return current;
 }
 
+/** Whether a layer may write null at `path`, asked of the schema the configuration files are checked against. */
+function acceptsNull(path: readonly string[]): boolean {
+  const layer = path.reduceRight<unknown>((inner, part) => ({ [part]: inner }), null);
+  return StatuslineSchema.safeParse(layer).success;
+}
+
 function keyOf(path: readonly string[], declared: z.ZodType): StatuslineKey {
   const optional = declared instanceof z.ZodOptional;
   const leaf = optional ? declared.unwrap() : declared;
-  const common = { path: path.join("."), description: declared.description ?? "", defaultValue: valueAt(STATUSLINE_DEFAULTS, path), optional };
+  const common = { path: path.join("."), description: declared.description ?? "", defaultValue: valueAt(STATUSLINE_DEFAULTS, path), optional, unsettable: acceptsNull(path) };
   if (leaf instanceof z.ZodNumber) {
     return { ...common, kind: "integer", choices: [] };
   }
@@ -70,12 +78,21 @@ export function statuslineKeys(): readonly StatuslineKey[] {
   return walk(ResolvedStatuslineSchema.shape, []);
 }
 
+/** What the listing says of a setting's default: that it has none, and that `none` unsets it, or its value, and, where a layer may write null for it, that `none` returns it to that value. */
+function defaultText(key: StatuslineKey): string {
+  if (key.optional) {
+    return "no default; none unsets it over shallower layers";
+  }
+  const value = `default ${JSON.stringify(key.defaultValue)}`;
+  return key.unsettable ? `${value}; none returns it to the default over shallower layers` : value;
+}
+
 /** The listing `statusline keys` prints: each setting's path, then its kind with the choices it takes and its default (or that it has none, being optional), then what it does. */
 export function formatStatuslineKeys(keys: readonly StatuslineKey[]): string {
   return keys
     .map((key) => {
       const takes = key.kind === "choice" || key.kind === "list" || key.kind === "groups" || key.kind === "colour" ? `${key.kind} of ${key.choices.join(", ")}` : key.kind;
-      return `${key.path}  (${takes}; ${key.optional ? "no default; none unsets it over shallower layers" : `default ${JSON.stringify(key.defaultValue)}`})\n    ${key.description}`;
+      return `${key.path}  (${takes}; ${defaultText(key)})\n    ${key.description}`;
     })
     .join("\n");
 }

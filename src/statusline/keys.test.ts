@@ -60,8 +60,8 @@ describe("statuslineKeys", () => {
     const rows = statuslineKeys().find((key) => key.path === "layout.rows");
     expect(header?.choices).toEqual(expect.arrayContaining(["sessionName", "duration", "speed"]));
     expect(rows?.choices).toEqual(expect.arrayContaining(["sessionTime", "promptCache", "compactions"]));
-    expect(header?.defaultValue).toEqual(["model", "provider", "route", "account", "identity", "headroom"]);
-    expect(rows?.defaultValue).toEqual(["context", "quota"]);
+    expect(header?.defaultValue).toEqual(["model", "project", "vcs", "provider", "route", "account", "identity", "headroom", "extra"]);
+    expect(rows?.defaultValue).toEqual(["context", "quota", "addedDirs"]);
   });
 
   it("describes the session settings", () => {
@@ -70,13 +70,21 @@ describe("statuslineKeys", () => {
   });
 });
 
-describe("an optional setting", () => {
-  it("is listed with its kind, no default and its own description", () => {
-    const warnAt = statuslineKeys().find((key) => key.path === "context.warnAt");
-    expect(warnAt).toMatchObject({ kind: "integer", optional: true, defaultValue: undefined });
-    expect(warnAt?.description).toContain("bands.warnAt");
-    expect(statuslineKeys().find((key) => key.path === "bands.warnAt")).toMatchObject({ optional: false });
-    expect(formatStatuslineKeys(statuslineKeys())).toContain("context.warnAt  (integer; no default; none unsets it over shallower layers)");
+describe("a setting a layer may write null for", () => {
+  it("is listed with its kind, no default and its own description when it is optional", () => {
+    const breakdownAt = statuslineKeys().find((key) => key.path === "context.breakdownAt");
+    expect(breakdownAt).toMatchObject({ kind: "integer", optional: true, unsettable: true, defaultValue: undefined });
+    expect(breakdownAt?.description).toContain("context.criticalAt");
+    expect(statuslineKeys().find((key) => key.path === "bands.warnAt")).toMatchObject({ optional: false, unsettable: false });
+    expect(formatStatuslineKeys(statuslineKeys())).toContain("context.breakdownAt  (integer; no default; none unsets it over shallower layers)\n");
+  });
+
+  it("is listed with its default, and that none returns it to that default, when it has one", () => {
+    expect(statuslineKeys().find((key) => key.path === "context.criticalAt")).toMatchObject({ kind: "integer", optional: false, unsettable: true, defaultValue: 85 });
+    const text = formatStatuslineKeys(statuslineKeys());
+    expect(text).toContain("context.warnAt  (integer; default 70; none returns it to the default over shallower layers)\n");
+    expect(text).toContain("context.criticalAt  (integer; default 85; none returns it to the default over shallower layers)\n");
+    expect(text).toContain("bands.criticalAt  (integer; default 90)\n");
   });
 });
 

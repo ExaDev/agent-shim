@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveStatusline, type StatuslineSettings } from "../config/statusline";
+import { resolveStatusline, STATUSLINE_DEFAULTS, type StatuslineSettings } from "../config/statusline";
 import { ESCAPE } from "./ansi";
 import type { StatuslinePayloadView } from "./elements/context";
 import { rgbOfHex, type Rgb } from "./colour";
@@ -21,6 +21,10 @@ const RESET_TEXT = "(38m)";
 /** The default bands the quota bar steps at, which the gradient's spans stop at. */
 const WARN_AT = 70;
 const CRITICAL_AT = 90;
+/** The context bar's own warning threshold at its default, which is not the quota bars' (it is claude-hud's, and they step at the default bands). */
+const CONTEXT_DEFAULT_WARN_AT = STATUSLINE_DEFAULTS.context.warnAt;
+/** The context bar compares the percentage after rounding it, so its stops sit half a point below its whole-percentage thresholds. */
+const CONTEXT_ROUNDING_HALF_POINT = 0.5;
 /** A terminal wide enough that every row here draws on one line of its own. */
 const WIDE_TERMINAL = 170;
 /** Uses the tests draw, named by where each sits against the default bands: half the window, between the thresholds, and past the critical threshold. */
@@ -94,7 +98,7 @@ const summaryOf = (fiveHourUsed: number | undefined, sevenDayUsed: number | unde
   headroom: undefined,
 });
 
-const NO_VIEW: StatuslinePayloadView = { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined };
+const NO_VIEW: StatuslinePayloadView = { clientModelName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined };
 
 /** The quota row alone, with the gradient's stop colours set as hex values, at a use of `used` whole percent on a line that leaves its bar the base ten cells. */
 function renderQuota(used: number, gradient: "off" | "use" | "width", colours: Readonly<NonNullable<StatuslineSettings["colours"]>> = HEX_COLOURS, env: Readonly<Record<string, string | undefined>> = {}, cells: number = BASE_CELLS): string {
@@ -119,8 +123,8 @@ function barOf(line: string): string {
 describe("bar.gradient off (the default)", () => {
   const PINNED_FIVE_HOUR = 3.6;
   const PINNED_SEVEN_DAY = 28.2;
-  const PINNED_VIEW: StatuslinePayloadView = { modelDisplayName: "Sonnet 5.5", contextUsedPercentage: 63.4, contextTotalTokens: 634_000, contextWindowTokens: 1_000_000, cacheHitRatio: 0.986, cacheReadTokens: 600_000, freshInputTokens: 34_000 };
-  const pinned = renderStatuslineBlock({ summary: summaryOf(PINNED_FIVE_HOUR, PINNED_SEVEN_DAY), view: PINNED_VIEW, payload: parseClientPayload({}), terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, ports: fakeStatuslinePorts() });
+  const PINNED_VIEW: StatuslinePayloadView = { clientModelName: "Sonnet 5.5", contextUsedPercentage: 63.4, contextTotalTokens: 634_000, contextWindowTokens: 1_000_000, cacheHitRatio: 0.986, cacheReadTokens: 600_000, freshInputTokens: 34_000 };
+  const pinned = renderStatuslineBlock({ summary: summaryOf(PINNED_FIVE_HOUR, PINNED_SEVEN_DAY), view: PINNED_VIEW, payload: parseClientPayload({}), terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, settings: resolveStatusline({ usage: { resetLabel: false, sevenDayThreshold: 0 } }), ports: fakeStatuslinePorts() });
 
   it("draws the same bytes as before the setting existed, which it pins", () => {
     expect(pinned).toBe(
@@ -176,7 +180,7 @@ describe("bar.gradient use", () => {
     const render = (gradient: "off" | "use"): string =>
       renderStatuslineBlock({ summary: summaryOf(undefined, undefined), view, payload: parseClientPayload({}), terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, settings: resolveStatusline({ ...settings, context: { warnAt: CONTEXT_WARN_AT, criticalAt: CONTEXT_CRITICAL_AT, breakdown: "critical" }, bar: { gradient } }), ports: fakeStatuslinePorts() });
     // Between the context bar's own thresholds the fill holds the blend of the warning and critical colours, while its figures hold the band's warning colour.
-    expect(render("use")).toContain(`${escapeOf(blendOf(WARNING, CRITICAL, betweenBands(CONTEXT_BETWEEN, CONTEXT_WARN_AT, CONTEXT_CRITICAL_AT)))}${FILL}`);
+    expect(render("use")).toContain(`${escapeOf(blendOf(WARNING, CRITICAL, betweenBands(CONTEXT_BETWEEN, CONTEXT_WARN_AT - CONTEXT_ROUNDING_HALF_POINT, CONTEXT_CRITICAL_AT - CONTEXT_ROUNDING_HALF_POINT)))}${FILL}`);
     expect(render("use")).toContain(`${escapeOf(WARNING)}55.0%${RESET}`);
     expect(stripAnsi(render("use"))).toBe(stripAnsi(render("off")));
   });
@@ -288,7 +292,7 @@ function renderMemory(used: number, gradient: "off" | "use" | "width", colours: 
   });
 }
 
-/** The context row alone, at a use of `used` whole percent, with the context role and the shared warning and critical roles set to the hex stops. */
+/** The context row alone, at a use of `used` percent, with the context role and the shared warning and critical roles set to the hex stops. */
 function renderContext(used: number, gradient: "off" | "use" | "width", colours: Readonly<NonNullable<StatuslineSettings["colours"]>> = { context: HEX_COLOURS.usage, warning: HEX_COLOURS.usageWarning, critical: HEX_COLOURS.critical }): string {
   return renderStatuslineBlock({
     summary: summaryOf(undefined, undefined),
@@ -310,9 +314,15 @@ const OTHER_WARNING_HEX = "#0000ff";
 describe("bar.gradient on every bar", () => {
   it("blends the context bar towards colours.warning and the quota bar towards colours.usageWarning, each ignoring the other's", () => {
     const contextLine = renderContext(HALF_IN_USE, "use", { context: HEX_COLOURS.usage, warning: DISTINCT_WARNING_HEX, usageWarning: OTHER_WARNING_HEX, critical: HEX_COLOURS.critical });
-    expect(contextLine).toContain(`${escapeOf(blendOf(OK, DISTINCT_WARNING, belowWarnAt(HALF_IN_USE, WARN_AT)))}${FILL}`);
+    expect(contextLine).toContain(`${escapeOf(blendOf(OK, DISTINCT_WARNING, belowWarnAt(HALF_IN_USE, CONTEXT_DEFAULT_WARN_AT - CONTEXT_ROUNDING_HALF_POINT)))}${FILL}`);
     const quotaBar = barOf(renderQuota(HALF_IN_USE, "use", { ...HEX_COLOURS, usageWarning: DISTINCT_WARNING_HEX, warning: OTHER_WARNING_HEX }));
     expect(quotaBar).toContain(escapeOf(blendOf(OK, DISTINCT_WARNING, belowWarnAt(HALF_IN_USE, WARN_AT))));
+  });
+
+  it("holds the warning colour on the context bar exactly where it turns yellow, half a point below context.warnAt, and blends towards critical from there", () => {
+    const AT_STOP = CONTEXT_DEFAULT_WARN_AT - CONTEXT_ROUNDING_HALF_POINT;
+    expect(renderContext(AT_STOP, "use")).toContain(`${escapeOf(WARNING)}${FILL}`);
+    expect(renderContext(CONTEXT_DEFAULT_WARN_AT, "use")).not.toContain(`${escapeOf(WARNING)}${FILL}`);
   });
 
   it("leaves the context bar the band colours when colours.context names no colour of its own, at every use", () => {

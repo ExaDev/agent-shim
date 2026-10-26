@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { resolveStatusline, STATUSLINE_DEFAULTS, type StatuslineSettings } from "../config/statusline";
 import { ESCAPE } from "./ansi";
 import type { StatuslineSummary } from "./enrich";
-import { parseClientPayload } from "./payload";
+import { parseClientPayload, viewOf } from "./payload";
 import type { StatuslinePorts } from "./ports";
 import { renderStatuslineBlock } from "./render";
 import { fakeRangeReader, fakeStatuslinePorts, newReadLog, type ReadLog } from "./testing";
@@ -35,7 +35,7 @@ const SUMMARY: StatuslineSummary = {
 };
 
 const VIEW = {
-  modelDisplayName: "Claude Opus 4.7 (1M context)",
+  clientModelName: "Claude Opus 4.7 (1M context)",
   contextUsedPercentage: undefined,
   contextTotalTokens: undefined,
   contextWindowTokens: undefined,
@@ -135,6 +135,77 @@ describe("the model segment", () => {
     const log = newReadLog();
     expect(segments({ settings: { ...onlyHeader("model"), model: { source: "transcript" } }, ports: transcriptOf(assistant("glm-5.3"), log), payload: { transcript_path: undefined } })).toEqual(["Claude Opus 4.7 (1M context)"]);
     expect(log.reads).toEqual([]);
+  });
+});
+
+describe("the platform beside the model", () => {
+  const vertex = { env: { CLAUDE_CODE_USE_VERTEX: "1" } };
+
+  it("follows the model's name with the platform claude-hud detects, after the header's separator", () => {
+    expect(segments({ settings: onlyHeader("model"), ports: { env: { CLAUDE_CODE_USE_BEDROCK: "1" } } })).toEqual(["Claude Opus 4.7 (1M context)", "Bedrock"]);
+    expect(segments({ settings: onlyHeader("model"), ports: vertex })).toEqual(["Claude Opus 4.7 (1M context)", "Vertex"]);
+    expect(segments({ settings: onlyHeader("model"), ports: { env: { ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic" } } })).toEqual(["Claude Opus 4.7 (1M context)", "MiniMax"]);
+    expect(segments({ settings: onlyHeader("model"), payload: { model: { id: "opusplan", display_name: "Opus Plan" } }, view: { clientModelName: "Opus Plan" } })).toEqual(["Opus Plan", "Enterprise"]);
+  });
+
+  it("draws the name alone when no platform is detected", () => {
+    expect(segments({ settings: onlyHeader("model"), payload: { model: { id: "claude-opus-4-7", display_name: "Claude Opus 4.7 (1M context)" } } })).toEqual(["Claude Opus 4.7 (1M context)"]);
+  });
+
+  it("draws the name alone when model.platform is off", () => {
+    expect(segments({ settings: { ...onlyHeader("model"), model: { platform: false } }, ports: vertex })).toEqual(["Claude Opus 4.7 (1M context)"]);
+  });
+
+  it("follows an overridden name and a dynamic mode's served model too, and stands alone without a name, as claude-hud draws it beside its placeholder", () => {
+    const modelChoice = { requested: "auto", served: "glm-5.3", provider: "zai", providers: ["zai"] };
+    expect(segments({ settings: { ...onlyHeader("model"), model: { override: "Work model" } }, summary: { modelChoice }, ports: vertex })).toEqual(["Work model -> glm-5.3", "Vertex"]);
+    expect(segments({ settings: onlyHeader("model"), view: { clientModelName: undefined }, ports: vertex })).toEqual(["Vertex"]);
+  });
+});
+
+describe("the model segment for a client that sends no usable display name", () => {
+  /** The model segment's parts for a payload whose `model` is `model`, with the view read from that payload as the statusline reads it. */
+  function modelParts(model: Readonly<Record<string, string>> | undefined, env: Readonly<Record<string, string>> = {}, settings: StatuslineSettings = {}, summary: Partial<StatuslineSummary> = {}): string[] {
+    const payload = model === undefined ? {} : { model };
+    return segments({ settings: { ...settings, ...onlyHeader("model") }, payload, view: { clientModelName: viewOf(parseClientPayload(payload)).clientModelName }, ports: { env }, summary });
+  }
+
+  it("draws the model id in place of the name, followed by the platform, as claude-hud falls back", () => {
+    // claude-hud: `[claude-opus-4-5 | Vertex]`.
+    expect(modelParts({ id: "claude-opus-4-5" }, { CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["claude-opus-4-5", "Vertex"]);
+    expect(modelParts({ id: "claude-opus-4-5" })).toEqual(["claude-opus-4-5"]);
+  });
+
+  it("draws the id trimmed and otherwise as it stands, where claude-hud rewrites a Bedrock or enterprise id into a readable name", () => {
+    expect(modelParts({ id: "us.anthropic.claude-opus-4-5-20251101-v1:0" }, { CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual(["us.anthropic.claude-opus-4-5-20251101-v1:0", "Bedrock"]);
+    expect(modelParts({ id: "opusplan" })).toEqual(["opusplan", "Enterprise"]);
+  });
+
+  it("draws the display name when the client sends both, and the id when the name is blank", () => {
+    expect(modelParts({ id: "claude-opus-4-5", display_name: "Opus 4.5" }, { CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["Opus 4.5", "Vertex"]);
+    expect(modelParts({ id: " claude-opus-4-5 ", display_name: "  " })).toEqual(["claude-opus-4-5"]);
+  });
+
+  it("draws the platform alone with neither a name nor an id, and nothing at all without a platform or with model.platform off", () => {
+    // claude-hud: `[Unknown | Bedrock]`; its placeholder word says nothing and is not drawn.
+    expect(modelParts(undefined, { CLAUDE_CODE_USE_BEDROCK: "1" })).toEqual(["Bedrock"]);
+    expect(modelParts({}, { CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["Vertex"]);
+    expect(modelParts(undefined)).toEqual([]);
+    expect(modelParts(undefined, { CLAUDE_CODE_USE_VERTEX: "1" }, { model: { platform: false } })).toEqual([]);
+  });
+
+  it("reads Claude Code's switches only for a Claude Code client, so an Antigravity client draws no platform", () => {
+    const antigravity = { product: "antigravity", model: { id: "gemini-3-pro", display_name: "Gemini 3 Pro" } };
+    const drawn = (payload: Readonly<Record<string, unknown>>, env: Readonly<Record<string, string>>): string[] => segments({ settings: onlyHeader("model"), payload, view: { clientModelName: viewOf(parseClientPayload(payload)).clientModelName }, ports: { env } });
+    expect(drawn(antigravity, { CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["Gemini 3 Pro"]);
+    expect(drawn(antigravity, { CLAUDE_CODE_USE_BEDROCK: "1", ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic" })).toEqual(["Gemini 3 Pro"]);
+    expect(drawn({ product: "antigravity", model: { id: "opusplan", display_name: "Opus Plan" } }, {})).toEqual(["Opus Plan"]);
+    expect(drawn({ model: { id: "claude-opus-4-5", display_name: "Opus 4.5" } }, { CLAUDE_CODE_USE_VERTEX: "1" })).toEqual(["Opus 4.5", "Vertex"]);
+  });
+
+  it("draws a dynamic mode's served model after the id, then the platform", () => {
+    const modelChoice = { requested: "auto", served: "glm-5.3", provider: "zai", providers: ["zai"] };
+    expect(modelParts({ id: "auto" }, { CLAUDE_CODE_USE_VERTEX: "1" }, {}, { modelChoice })).toEqual(["auto -> glm-5.3", "Vertex"]);
   });
 });
 
@@ -332,11 +403,16 @@ describe("the output style segment", () => {
 });
 
 describe("the segments' defaults", () => {
-  it("draw none of the added segments, and leave the established ones as they were, whatever the payload and transcript hold", () => {
-    expect(STATUSLINE_DEFAULTS.layout.header).toEqual(["model", "provider", "route", "account", "identity", "headroom"]);
+  it("draw none of the added segments, which claude-hud's default leaves off too, whatever the payload and transcript hold", () => {
+    expect(STATUSLINE_DEFAULTS.layout.header).toEqual(["model", "project", "vcs", "provider", "route", "account", "identity", "headroom", "extra"]);
     const payload = { version: "2.1.81", effort: "high", cwd: "/work", transcript_path: TRANSCRIPT };
     const ports = { ...transcriptOf(assistant("glm-5.3", "claude-opus-4-7")), readText: () => explanatoryStyle() };
-    expect(segments({ payload, ports })).toEqual(["Claude Opus 4.7 (1M context)", "ada.lovelace@example.com · Max 20x"]);
+    expect(segments({ payload, ports })).toEqual(["Claude Opus 4.7 (1M context)", `${ESCAPE}[33mwork${ESCAPE}[0m`, "ada.lovelace@example.com · Max 20x"]);
+  });
+
+  it("draw the platform beside the model, as claude-hud's default does", () => {
+    expect(STATUSLINE_DEFAULTS.model.platform).toBe(true);
+    expect(segments({ payload: { cwd: "/work" }, ports: { env: { CLAUDE_CODE_USE_VERTEX: "1" } } })).toEqual(["Claude Opus 4.7 (1M context)", "Vertex", `${ESCAPE}[33mwork${ESCAPE}[0m`, "ada.lovelace@example.com · Max 20x"]);
   });
 });
 

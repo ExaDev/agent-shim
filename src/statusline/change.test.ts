@@ -74,16 +74,19 @@ describe("applyStatuslineChange", () => {
   });
 
   it("sets an optional setting from text and unsets it again, so it follows what it falls back on", () => {
-    const { path, value } = parseStatuslineAssignment("context.warnAt=60");
-    expect(applyStatuslineChange(undefined, { set: { [path]: value } })).toEqual({ context: { warnAt: 60 } });
-    expect(applyStatuslineChange({ context: { warnAt: 60 } }, { unset: ["context.warnAt"] })).toBeUndefined();
-    expect(() => applyStatuslineChange(undefined, { set: { "context.warnAt": 0 } })).toThrow(/statusline: context\.warnAt:/);
+    const { path, value } = parseStatuslineAssignment("context.breakdownAt=90");
+    expect(applyStatuslineChange(undefined, { set: { [path]: value } })).toEqual({ context: { breakdownAt: 90 } });
+    expect(applyStatuslineChange({ context: { breakdownAt: 90 } }, { unset: ["context.breakdownAt"] })).toBeUndefined();
+    expect(() => applyStatuslineChange(undefined, { set: { "context.breakdownAt": 0 } })).toThrow(/statusline: context\.breakdownAt:/);
   });
 
-  it("writes none for an optional setting as null, which unsets it for the layers it is merged over, and takes none as an ordinary value for any other", () => {
+  it("writes none as null for an optional setting and for a context threshold, which returns it to unset or to its default for the layers it is merged over, and takes none as an ordinary value for any other", () => {
+    expect(parseStatuslineAssignment("context.breakdownAt=none")).toEqual({ path: "context.breakdownAt", value: null });
     expect(parseStatuslineAssignment("context.warnAt=none")).toEqual({ path: "context.warnAt", value: null });
-    expect(applyStatuslineChange(undefined, { set: { "context.warnAt": null } })).toEqual({ context: { warnAt: null } });
+    expect(parseStatuslineAssignment("context.criticalAt=none")).toEqual({ path: "context.criticalAt", value: null });
+    expect(applyStatuslineChange(undefined, { set: { "context.criticalAt": null } })).toEqual({ context: { criticalAt: null } });
     expect(() => parseStatuslineAssignment("bar.width=none")).toThrow(/not a number/);
+    expect(() => parseStatuslineAssignment("bands.criticalAt=none")).toThrow(/not a number/);
   });
 
   it("removing a setting that is not set is not an error", () => {

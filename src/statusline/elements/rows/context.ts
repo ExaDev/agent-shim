@@ -1,9 +1,9 @@
-import { AUTOCOMPACT_RESERVE_FRACTION, AUTOCOMPACT_RESERVE_RAMP_END, AUTOCOMPACT_RESERVE_RAMP_START, contextBands } from "../../../config/statusline";
+import { AUTOCOMPACT_RESERVE_FRACTION, AUTOCOMPACT_RESERVE_RAMP_END, AUTOCOMPACT_RESERVE_RAMP_START, contextBreakdownAt } from "../../../config/statusline";
 import type { Translate } from "../../messages/catalogues";
 import { barCell, formatTokens, FULL_PERCENT, statusColor, withColor, type BarStyle } from "../../style";
 import { barStyleOf, type RenderContext, type RowOutput, type StatuslinePayloadView } from "../context";
 
-/** The cache hit fraction drawn as a percentage in the colour of its band: a hit ratio is better the higher it is, so the bands are the remaining-style ones, red when nearly nothing is served from cache and green when most is. */
+/** The cache hit fraction drawn as a percentage in the colour of its band: a hit ratio is better the higher it is, so the bands are the remaining-style ones: red when the share is at most 100 less `criticalAt` percent, yellow when it is above that and at most 100 less `warnAt` percent, and green above that. */
 function cacheHitText(hitFraction: number, style: BarStyle, t: Translate): string {
   const clamped = Math.max(0, Math.min(1, hitFraction));
   return ` (${t("context.cacheShare", { percent: withColor(statusColor(clamped, false, style), `${(clamped * FULL_PERCENT).toFixed(0)}%`) })})`;
@@ -28,11 +28,15 @@ function windowTokensOf({ settings, view }: RenderContext): number | undefined {
   return settings.context.autoCompactWindow ?? view.contextWindowTokens;
 }
 
+/** Half a percentage point, the distance within which a percentage rounds up to a whole one. */
+const ROUNDING_HALF_POINT = 0.5;
+
 /** The tokens held against a window, with the reserve Claude Code keeps for compaction added in proportion: none while the window is nearly empty, all of it once half full, and a straight line between. */
 function bufferedPercent(tokens: number, windowTokens: number): number {
   const held = tokens / windowTokens;
   const ramp = Math.max(0, Math.min(1, (held - AUTOCOMPACT_RESERVE_RAMP_START) / (AUTOCOMPACT_RESERVE_RAMP_END - AUTOCOMPACT_RESERVE_RAMP_START)));
-  return Math.min(FULL_PERCENT, (held + AUTOCOMPACT_RESERVE_FRACTION * ramp) * FULL_PERCENT);
+  // Added to the tokens before the division, as claude-hud adds it, so a half reached by arithmetic rounds the same way there.
+  return Math.min(FULL_PERCENT, ((tokens + windowTokens * AUTOCOMPACT_RESERVE_FRACTION * ramp) / windowTokens) * FULL_PERCENT);
 }
 
 /** The percentage of the window in use, or undefined when there is none to draw. A window set in the settings is measured against the tokens held, and with no tokens reported there is nothing to measure, so the percentage the client reports (which is against its own window) is not drawn in its place. Otherwise it is the percentage the client reports. Where the client reports none, or reports 0 beside tokens already held (which is how a client says it has not worked it out yet), it is the estimate the settings ask for when one can be made from the tokens and the window; a reported value that cannot be replaced by an estimate is kept. */
@@ -54,7 +58,7 @@ function estimateOf(kind: "raw" | "buffered", tokens: number, windowTokens: numb
   return kind === "buffered" ? bufferedPercent(tokens, windowTokens) : Math.min(FULL_PERCENT, (tokens / windowTokens) * FULL_PERCENT);
 }
 
-/** The tokens the last request held, over the input and the cache, as the breakdown at high use writes them, or nothing when the client did not report the last request. */
+/** The tokens the last request held, over the input and the cache, as the breakdown writes them, or nothing when the client did not report the last request. */
 function breakdownText({ payload, t }: RenderContext): string | undefined {
   const usage = payload.context_window?.current_usage;
   if (usage === undefined) {
@@ -64,7 +68,7 @@ function breakdownText({ payload, t }: RenderContext): string | undefined {
   return ` (${t("context.breakdown", { input: formatTokens(usage.input_tokens ?? 0), cached: formatTokens(cached) })})`;
 }
 
-/** The context window's bar, or its figures alone, written as the settings ask: the tokens held and the percentage in use, the prompt cache's hit share, and at high use the breakdown of the last request. */
+/** The context window's bar, or its figures alone, written as the settings ask: the tokens held and the percentage in use, the prompt cache's hit share, and from the breakdown threshold (`contextBreakdownAt`) the breakdown of the last request. */
 export function contextRow(context: RenderContext): RowOutput {
   const { view, palette, settings } = context;
   const percent = usedPercentOf(context);
@@ -72,9 +76,11 @@ export function contextRow(context: RenderContext): RowOutput {
     return settings.context.bar === "shown" ? { kind: "bars", cells: [] } : { kind: "text", lines: [] };
   }
   const style = barStyleOf(context, "context");
-  const bands = contextBands(settings);
+  // claude-hud chooses the colour by the percentage rounded to a whole number, so the band is chosen by that rounded percentage (a half reached by the same arithmetic rounds as it does there); the bar's fill and the text keep the unrounded figure. The thresholds sit half a point lower so the gradient's stops fall where the rounded percentage changes band.
+  const bands = { warnAt: settings.context.warnAt - ROUNDING_HALF_POINT, criticalAt: settings.context.criticalAt - ROUNDING_HALF_POINT };
   const fraction = Math.max(0, Math.min(1, percent / FULL_PERCENT));
-  const color = statusColor(fraction, true, { ...style, bands });
+  const bandFraction = Math.max(0, Math.min(1, Math.round(percent) / FULL_PERCENT));
+  const color = statusColor(bandFraction, true, { ...style, bands });
   const windowTokens = windowTokensOf(context);
   const tokens = view.contextTotalTokens;
   const heldAgainstWindow = tokens === undefined || windowTokens === undefined ? undefined : `${formatTokens(tokens)}/${formatTokens(windowTokens)}`;
@@ -105,7 +111,7 @@ export function contextRow(context: RenderContext): RowOutput {
     default:
       return settings.context.value satisfies never;
   }
-  const high = settings.context.breakdown === "critical" && percent >= bands.criticalAt ? breakdownText(context) : undefined;
+  const high = settings.context.breakdown === "critical" && Math.round(percent) >= contextBreakdownAt(settings) ? breakdownText(context) : undefined;
   if (settings.context.bar === "hidden" && afterBar.length === 0) {
     return { kind: "text", lines: [] };
   }
@@ -113,7 +119,7 @@ export function contextRow(context: RenderContext): RowOutput {
   const label = [context.t("context.label"), ...beforeBar].join(" ");
   if (settings.context.bar === "shown") {
     const suffix = afterBar.length === 0 ? trailer : ` ${afterBar.join(" ")}${trailer}`;
-    return { kind: "bars", cells: [barCell(palette.paint("label", `${label} `), suffix, fraction, { ...style, bands })] };
+    return { kind: "bars", cells: [barCell(palette.paint("label", `${label} `), suffix, fraction, { ...style, bands, bandFraction })] };
   }
   return { kind: "text", lines: [`${[palette.paint("label", label), ...afterBar].join(" ")}${trailer}`] };
 }

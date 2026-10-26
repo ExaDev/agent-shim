@@ -12,7 +12,7 @@ export interface DrawnRow {
   readonly output: RowOutput;
 }
 
-/** What rows lay out as: bars, which are aligned to a grid with the bars beside them, or lines of text, which are drawn as they are. */
+/** What rows lay out as: bars, which are laid out on a grid with the bars beside them, or lines of text, which are drawn as they are. */
 type Item = { readonly kind: "bars"; readonly unit: BarUnit } | { readonly kind: "lines"; readonly lines: readonly string[] };
 
 /** The settings that decide how rows are laid out: whether neighbouring bar rows share a line, the groups of rows that may share a line, and the rows that start a right-aligned part of one. */
@@ -115,7 +115,7 @@ function runsOf(rows: readonly DrawnRow[], settings: RowsLayoutSettings): DrawnR
 }
 
 /**
- * The lines of the rows below the header. Rows that sit next to each other in the order and belong to one merge group, and bar rows outside every group while `mergeBars` is set, are joined onto a line when they fit together (bars sharing a grid, other rows as one line of text), else each is drawn on its own. Bars of consecutive items keep one grid, so their columns line up whether they share a line or not, and a row of text, even one with nothing to show, ends the run, as does a merge group of which no row has anything to show but one is a row of text; a merge group of bar rows alone with nothing to show is left out, so the bars either side of it share as if it were not there.
+ * The lines of the rows below the header. Rows that sit next to each other in the order and belong to one merge group, and bar rows outside every group while `mergeBars` is set, are joined onto a line when they fit together (bars sharing a grid, other rows as one line of text), else each is drawn on its own. Bars of consecutive items are handed to one grid, which lines their columns up wherever its layout allows, whether or not they share a line, and a row of text, even one with nothing to show, ends the run, as does a merge group of which no row has anything to show but one is a row of text; a merge group of bar rows alone with nothing to show is left out, so the bars either side of it share as if it were not there.
  */
 export function layoutRows(rows: readonly DrawnRow[], settings: RowsLayoutSettings, width: number): string[] {
   const items = runsOf(rows, settings).flatMap((run): readonly Item[] => {

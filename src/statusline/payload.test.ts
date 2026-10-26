@@ -5,6 +5,14 @@ import { parseClientPayload, viewOf } from "./payload";
 const COST_USD = 1.5;
 const WINDOW_TOKENS = 200_000;
 
+/** A percentage a client reports for the window, to check it passes through. */
+const PERCENT_REPORTED = 45;
+/** The whole window as a percentage, and a figure past it that a client could send. */
+const FULL_WINDOW_PERCENT = 100;
+const OVER_FULL_PERCENT = 150;
+/** A list entry that is neither text nor an object. */
+const NOT_TEXT = 5;
+
 describe("parseClientPayload", () => {
   it("reads the fields the statusline uses and passes the rest through unread", () => {
     const payload = parseClientPayload({
@@ -55,7 +63,7 @@ describe("viewOf", () => {
       }),
     );
     expect(view).toEqual({
-      modelDisplayName: "Sonnet 5.5",
+      clientModelName: "Sonnet 5.5",
       contextUsedPercentage: 63.4,
       contextTotalTokens: 634_000,
       contextWindowTokens: 1_000_000,
@@ -63,6 +71,44 @@ describe("viewOf", () => {
       cacheReadTokens: 600_000,
       freshInputTokens: 34_000,
     });
+  });
+
+  it("reads a negative token total as absent, so it cannot draw as a negative share of the window", () => {
+    const totalOf = (total: number): number | undefined => viewOf(parseClientPayload({ context_window: { total_input_tokens: total, context_window_size: WINDOW_TOKENS } })).contextTotalTokens;
+    expect(totalOf(-1)).toBeUndefined();
+    expect(totalOf(0)).toBe(0);
+    expect(totalOf(WINDOW_TOKENS)).toBe(WINDOW_TOKENS);
+  });
+
+  it("reads a negative reported percentage as absent and holds one above 100 at the whole window, as claude-hud draws neither", () => {
+    const percentOf = (used: number): number | undefined => viewOf(parseClientPayload({ context_window: { used_percentage: used, context_window_size: WINDOW_TOKENS } })).contextUsedPercentage;
+    expect(percentOf(-1)).toBeUndefined();
+    expect(percentOf(0)).toBe(0);
+    expect(percentOf(PERCENT_REPORTED)).toBe(PERCENT_REPORTED);
+    expect(percentOf(FULL_WINDOW_PERCENT)).toBe(FULL_WINDOW_PERCENT);
+    expect(percentOf(OVER_FULL_PERCENT)).toBe(FULL_WINDOW_PERCENT);
+  });
+
+  it("skips a list entry that cannot be used on its own, keeping the others", () => {
+    const payload = parseClientPayload({
+      workspace: { added_dirs: ["/work/extra-one", NOT_TEXT, null, "/work/extra-two"] },
+      rate_limits: { model_scoped: [{ display_name: "Opus", utilization: PERCENT_REPORTED }, NOT_TEXT, null, { display_name: "Sonnet", utilization: PERCENT_REPORTED }] },
+    });
+    expect(payload.workspace?.added_dirs).toEqual(["/work/extra-one", "/work/extra-two"]);
+    expect(payload.rate_limits?.model_scoped?.map((window) => window.display_name)).toEqual(["Opus", "Sonnet"]);
+    expect(parseClientPayload({ workspace: { added_dirs: "/work/extra" } }).workspace?.added_dirs).toBeUndefined();
+    expect(parseClientPayload({ rate_limits: { model_scoped: "Opus" } }).rate_limits?.model_scoped).toBeUndefined();
+  });
+
+  it("names the model by its display name, else by its model id, each trimmed and absent when blank", () => {
+    const nameOf = (model: Readonly<Record<string, string>>): string | undefined => viewOf(parseClientPayload({ model })).clientModelName;
+    expect(nameOf({ id: "claude-opus-4-5", display_name: " Opus 4.5 " })).toBe("Opus 4.5");
+    expect(nameOf({ id: " claude-opus-4-5 " })).toBe("claude-opus-4-5");
+    expect(nameOf({ id: "claude-opus-4-5", display_name: " " })).toBe("claude-opus-4-5");
+    expect(nameOf({ id: " ", display_name: "" })).toBeUndefined();
+    // Trimming strips every kind of white space, not only the space: a tab, a line break, a no-break space, an em space and an ideographic space.
+    expect(nameOf({ display_name: "\t\u00a0Opus 4.5\u2003\u3000\n" })).toBe("Opus 4.5");
+    expect(nameOf({ id: "\tclaude-opus-4-5\n", display_name: "\u00a0\u2003\u3000" })).toBe("claude-opus-4-5");
   });
 
   it("leaves every figure absent for an empty payload", () => {

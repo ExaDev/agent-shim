@@ -11,7 +11,8 @@ import type { TranscriptFacts } from "../transcript/reader";
 
 /** The payload fields the built-in statusline shows: the model, the context window's use, and the prompt cache's effectiveness. */
 export interface StatuslinePayloadView {
-  readonly modelDisplayName: string | undefined;
+  /** The model's name as the client gives it, before `model.override`, the transcript's name and `model.format` apply: its display name, else its model id, each trimmed and read as absent when blank, or undefined when neither has any text or when the Antigravity CLI stacks this line under its own, which already names the model. */
+  readonly clientModelName: string | undefined;
   readonly contextUsedPercentage: number | undefined;
   readonly contextTotalTokens: number | undefined;
   readonly contextWindowTokens: number | undefined;
@@ -48,5 +49,5 @@ export function barStyleOf({ settings, palette }: RenderContext, okRole: BarStyl
   return { bands: settings.bands, palette, okRole, gradient: settings.bar.gradient, filled: settings.bar.filled, empty: settings.bar.empty };
 }
 
-/** What a row draws: bars, which are laid out on one grid with the bars of the rows beside them, or lines of text, which are drawn as they are. A row with nothing to show returns no cells or no lines. */
+/** What a row draws: bars, which the shared grid lines up with the bars of the rows beside them wherever its layout allows, or lines of text, which are drawn as they are. A row with nothing to show returns no cells or no lines. */
 export type RowOutput = { readonly kind: "bars"; readonly cells: readonly BarCell[] } | { readonly kind: "text"; readonly lines: readonly string[] };
