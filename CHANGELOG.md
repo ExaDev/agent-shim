@@ -1,3 +1,9 @@
+## [11.66.2](https://github.com/ExaDev/agent-shim/compare/v11.66.1...v11.66.2) (2026-10-26)
+
+### Bug Fixes
+
+* **frontdoor:** restart a headroom supervisor that died under live launchers ([dffb1ce](https://github.com/ExaDev/agent-shim/commit/dffb1cefcabbd03a53f25ee21a1574ec35cd20fd)), closes [#606](https://github.com/ExaDev/agent-shim/issues/606)
+
 ## [11.66.1](https://github.com/ExaDev/agent-shim/compare/v11.66.0...v11.66.1) (2026-10-25)
 
 ### Bug Fixes
