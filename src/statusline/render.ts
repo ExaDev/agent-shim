@@ -62,7 +62,7 @@ function expandedLines(header: ReturnType<typeof headerUnits>, drawn: Parameters
 }
 
 /**
- * The built-in statusline, laid out and coloured the way the Antigravity CLI's own statusline is: the model, the provider's account (email and subscription plan) and the identity when it is not that account, on the first line; then the context window's use (tokens against the window, the prompt cache's hit percentage) and the quota windows the door reports, each a bar that fills with use and, with `bar.gradient` off, turns yellow then red, one line when they fit and two when they do not.
+ * The built-in statusline, laid out and coloured the way the Antigravity CLI's own statusline is: the header segments the settings list (by default the model with the platform label beside it, the project with its git status and added directories inline, the provider (with its account's email and plan) and route, the login account (its email, with its organisation for a team or enterprise account and with its plan when no provider is selected, and beside a provider only when it differs from the provider's account), the identity beside a provider when it differs from both accounts, headroom's savings and the extra segment) on the first lines; then the rows the settings list (by default the context window's use, the quota windows the payload carries or the door reports, and an added directories row that draws nothing while they are inline), each bar filling with use and, with `bar.gradient` off, turning yellow then red, joined on one line when they fit and drawn on further lines when they do not.
  */
 export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
   const { terminalWidth, settings = STATUSLINE_DEFAULTS, elements = ELEMENTS } = input;

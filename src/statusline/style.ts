@@ -12,7 +12,7 @@ const MILLION = 1_000_000;
 const TEN = 10;
 export const FULL_PERCENT = 100;
 export const ONE_PERCENT = 1;
-/** The colour bands on a used fraction: red from `criticalAt`, yellow from `warnAt` (whole percentages) and green under it. They colour the figures beside a bar in every mode, and the bar itself while `bar.gradient` is `off`; they are also the thresholds the gradient's stops sit at (`use` holds yellow exactly at `warnAt` and red from `criticalAt`), and `width` colours a bar by its cells, not by these bands, once a cell of its used part is drawn; either gradient falls back to them when one of its stops names no colour of its own (`default` or `dim`), and `width` also when no cell of its used part is drawn. The defaults are the Antigravity statusline's own (red from 90%, yellow from 70%). */
+/** The colour bands on a used fraction: red from `criticalAt`, yellow from `warnAt` and green under it (whole percentages for `bands`; the context bar's are its own thresholds less half a point, since its percentage is rounded before it is compared). They colour the figures beside a bar in every mode, and the bar itself while `bar.gradient` is `off`; they are also the thresholds the gradient's stops sit at (`use` holds yellow exactly at the warning threshold and red from the critical one), and `width` colours a bar by its cells, not by these bands, once a cell of its used part is drawn; either gradient falls back to them when one of its stops names no colour of its own (`default` or `dim`), and `width` also when no cell of its used part is drawn. The defaults of `bands` are the Antigravity statusline's own (red from 90%, yellow from 70%), and the context bar's (`context.warnAt`, `context.criticalAt`) are claude-hud's. */
 interface ColourBands {
   readonly warnAt: number;
   readonly criticalAt: number;
@@ -34,6 +34,8 @@ export interface BarStyle {
   readonly okRole: "context" | "usage";
   /** How the fill's colour is gradiented beyond the band's single colour (`bar.gradient`). */
   readonly gradient: BarGradientMode;
+  /** The fraction the band is chosen by where it is not the fill's own: the context bar chooses its band by the percentage rounded to a whole number, as claude-hud does, while its fill keeps the unrounded one. */
+  readonly bandFraction?: number;
   readonly filled: string;
   readonly empty: string;
 }
@@ -54,10 +56,11 @@ export function statusColor(fraction: number, isUsedMetric: boolean, style: BarS
     }
     return fraction >= yellowAt ? ansi(warningRoleOf(style)) : ansi(style.okRole);
   }
-  if (fraction <= 1 - redAt) {
+  // The mirrored edges are the decimals `(100 - threshold) / 100` themselves, not 1 minus a threshold's decimal, so a share exactly on a whole-percentage edge is the same double as the edge and sits on the side it reaches.
+  if (fraction <= (FULL_PERCENT - style.bands.criticalAt) / FULL_PERCENT) {
     return ansi("critical");
   }
-  return fraction <= 1 - yellowAt ? ansi(warningRoleOf(style)) : ansi(style.okRole);
+  return fraction <= (FULL_PERCENT - style.bands.warnAt) / FULL_PERCENT ? ansi(warningRoleOf(style)) : ansi(style.okRole);
 }
 
 /** A role's colour as a gradient stop: the role, whose own escape the stop draws, and the RGB the gradient blends from or to. */
@@ -115,7 +118,7 @@ function fillOf(fraction: number, filled: number, cells: number, style: BarStyle
     return Array.from({ length: filled }, (_, column) => `${colourBetween(stops.ok, stops.critical, acrossBar(column, cells), style)}${style.filled}`).join("");
   }
   const color = style.gradient === "use" ? gradientColorOf(fraction, style) : undefined;
-  return `${color ?? statusColor(fraction, true, style)}${style.filled.repeat(filled)}`;
+  return `${color ?? statusColor(style.bandFraction ?? fraction, true, style)}${style.filled.repeat(filled)}`;
 }
 
 /** A bar that fills with `fraction`, `cells` fill positions wide between its brackets, its fill coloured by its band or, when the settings ask, every stop they need names a colour and (under `width`) a cell of the used part is drawn, by its use or across its width. */

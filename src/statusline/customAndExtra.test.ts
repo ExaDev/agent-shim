@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_DISPLAY_TEXT_CHARS, MIN_STATUSLINE_COLUMNS, resolveStatusline, type StatuslineSettings } from "../config/statusline";
+import { MAX_DISPLAY_TEXT_CHARS, MIN_STATUSLINE_COLUMNS, resolveStatusline, STATUSLINE_PRESETS, type StatuslineSettings } from "../config/statusline";
 import { ESCAPE } from "./ansi";
 import { parseClientPayload, viewOf } from "./payload";
 import { RESERVED_COLUMNS, renderStatuslineBlock } from "./render";
@@ -213,13 +213,11 @@ describe("the extra segment", () => {
 });
 
 describe("the extra segment in the presets", () => {
-  const CLAUDE_HUD_PRESETS = ["full", "essential", "minimal"] as const;
-
-  it.each(CLAUDE_HUD_PRESETS)("is drawn in %s once a command is set, as claude-hud draws its extra label under every preset", (preset) => {
+  it.each(STATUSLINE_PRESETS)("is drawn in %s once a command is set, as claude-hud draws its extra label under its default and every preset", (preset) => {
     expect(draw({ run: () => "from tool\n", payload: MODEL, settings: { preset, extra: { command: ["t"] } } })).toContain("from tool");
   });
 
-  it.each(CLAUDE_HUD_PRESETS)("changes nothing in %s while no command is set", (preset) => {
+  it.each(STATUSLINE_PRESETS)("changes nothing in %s while no command is set", (preset) => {
     const calls: string[] = [];
     const run: StatuslinePorts["run"] = (file) => {
       calls.push(file);
@@ -228,9 +226,5 @@ describe("the extra segment in the presets", () => {
     const withoutExtra = resolveStatusline({ preset }).layout.header.filter((name) => name !== "extra");
     expect(draw({ run, payload: MODEL, settings: { preset } })).toBe(draw({ run, payload: MODEL, settings: { preset, layout: { header: withoutExtra } } }));
     expect(calls).not.toContain("t");
-  });
-
-  it("is left out of the statusline's own preset, which a command alone does not change", () => {
-    expect(draw({ run: () => "from tool\n", payload: MODEL, settings: { preset: "standard", extra: { command: ["t"] } } })).not.toContain("from tool");
   });
 });

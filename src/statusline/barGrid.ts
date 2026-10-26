@@ -93,11 +93,11 @@ export function drawInline(group: BarGroup, separator: string, baseBarCells: num
 }
 
 /**
- * Lays bars out in rows that share their columns. Each unit is a set of groups that may share a row; the units are drawn one after another, a group of a unit that does not fit beside the others starting a fresh row, and a unit's bars are packed as many to a row as fit.
+ * Lays bars out in rows, sharing columns between rows as far as the layouts below allow. Each unit is a set of groups that may share a row, and the units are drawn one after another.
  *
- * Every row is aligned to one grid, across units too: the bars of a column start at the same position and end at the same position, because each label is padded to the column's widest label and each bar draws the same number of cells; a row's last bar runs on across the columns the row does not use, so its end lines up with the last column's. The spare width left after the bars' base size is shared among the columns. Bars at their base size on a line too narrow for even one (a label wider than the line) are drawn whole rather than cut.
+ * Every row of a shared grid is aligned to it, across units too: the bars of a column start at the same position and end at the same position, because each label is padded to the column's widest label and each bar draws the same number of cells; a row's last bar runs on across the columns the row does not use, so its end lines up with the last column's. The spare width left after the bars' base size is shared among the columns. Bars at their base size on a line too narrow for even one (a label wider than the line) are drawn whole rather than cut.
  *
- * The layout is the widest one that fits: each unit on one row when it fits, else the most bars to a row that still leaves every row within `maxWidth`, down to one. When not even that fits, the groups stop sharing columns and each is aligned within itself.
+ * The layout is the first of these that fits `maxWidth`: every unit on a row of its own in one shared grid; every group chunked into rows of at most the same number of bars, the most that fit, down to one bar to a row for several units (which are meant to line up) and to two for a single unit (whose groups are not padded to match one another a bar to a row); each group laid out on its own as the only group of a unit, whether it came from one unit or several. A group laid out on its own is tried the same way: its bars the most to a row that fits, down to two, else one to a row with its labels and figures padded to match when that fits, else one to a row with each row aligned within itself, where a row that fits the line has its bar widened to take the line's spare width.
  */
 export function layoutBarGrid(units: readonly BarUnit[], maxWidth: number, separator: string, baseBarCells: number): string[] {
   const nonEmpty = units.map((unit) => unit.filter((group) => group.length > 0)).filter((unit) => unit.length > 0);
@@ -118,9 +118,15 @@ export function layoutBarGrid(units: readonly BarUnit[], maxWidth: number, separ
   if (fitting !== undefined) {
     return renderGrid(fitting, maxWidth, separator, baseBarCells);
   }
-  // One bar to a row is too wide once every group's labels and figures are padded to match, so each group keeps to its own alignment; a lone group that still does not fit is drawn whole, one bar to a row.
+  // None of the shared grids measured above fits, so each group is laid out on its own, as the only group of a unit: with several units that is where their groups stop being padded to one another, and with one unit it is where the groups of that unit stop sharing columns.
   if (groups.length > 1) {
     return groups.flatMap((group) => layoutBarGrid([[group]], maxWidth, separator, baseBarCells));
   }
-  return renderGrid(chunked(1), maxWidth, separator, baseBarCells);
+  // A lone group that has not fitted at two to a row is drawn one bar to a row with its labels and figures padded to match when that fits.
+  const oneToARow = chunked(1);
+  if (oneToARow.baseWidth <= maxWidth) {
+    return renderGrid(oneToARow, maxWidth, separator, baseBarCells);
+  }
+  // Padding the labels and figures to match would make the rows wider than the line, so each row keeps to its own alignment and a long label widens only its own row.
+  return oneToARow.rows.flatMap((row) => renderGrid(measureGrid([row], separatorLength, baseBarCells), maxWidth, separator, baseBarCells));
 }

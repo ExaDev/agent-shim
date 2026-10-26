@@ -98,6 +98,9 @@ const EVERYTHING: StatuslineSettings = {
   project: { addedDirsLayout: "row" },
 };
 
+/** The usage settings every scene holds fixed beneath the settings it names, so the words of the five-hour and weekly windows and of a bare reset time are drawn whatever the defaults are: the reset time bare unless a scene asks for the label, and the weekly window drawn whatever its use. */
+const HELD_USAGE = { resetLabel: false, sevenDayThreshold: 0 } as const;
+
 interface Draw {
   readonly language: StatuslineLanguage;
   readonly settings?: StatuslineSettings;
@@ -128,7 +131,7 @@ function draw({ language, settings = EVERYTHING, nowMs = T0 + FOUR_AFTER_START, 
     payload,
     terminalWidth: WIDE_TERMINAL,
     nowMs,
-    settings: resolveStatusline({ ...settings, language }),
+    settings: resolveStatusline({ ...settings, usage: { ...HELD_USAGE, ...settings.usage }, language }),
     ports: fakeStatuslinePorts({ ...disk.ports, env: { NO_COLOR: "1" }, memoryUse: () => ({ usedBytes: EIGHT_GIB, totalBytes: SIXTEEN_GIB }), stateDirectory: "/state/test" }),
   });
   // The header is spread across the line, so its segments are compared apart from the spaces between them.

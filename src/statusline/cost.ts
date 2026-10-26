@@ -2,6 +2,7 @@ import type { UsageRecord } from "../usage/schema";
 import type { StatuslineSummary } from "./enrich";
 import type { RenderContext } from "./elements/context";
 import type { ClientPayload } from "./payload";
+import { isBedrockModelId } from "./platform";
 
 /** A model's prices in US dollars per million tokens, as `agent-shim model price` stores them, keyed by `<provider>/<model>`. */
 export type ModelPrices = Readonly<Record<string, Readonly<{ input: number; output: number }>>>;
@@ -34,9 +35,9 @@ export function doorCostUsdOf(records: readonly UsageRecord[], prices: ModelPric
   return costed === 0 ? undefined : totalUsd;
 }
 
-/** Whether a model id names a cloud platform's own copy of a model (Bedrock's `anthropic.claude-...`, Vertex's `...@<version>`), whose bill is the platform's and not the client's. */
+/** Whether a model id names a cloud platform's own copy of a model (a Bedrock id, `isBedrockModelId`, or Vertex's `...@<version>`), whose bill is the platform's and not the client's. */
 function isCloudModelId(modelId: string | undefined): boolean {
-  return modelId !== undefined && (modelId.toLowerCase().includes("anthropic.claude-") || modelId.includes("@"));
+  return modelId !== undefined && (isBedrockModelId(modelId) || modelId.includes("@"));
 }
 
 /** Whether the session's spend is billed by someone other than Anthropic for the client's own sign-in: its launch selected a provider, or its model id is a cloud platform's. The client's cost figure is then a table lookup for a name it may not know, not a bill. */

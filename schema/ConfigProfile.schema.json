@@ -167,7 +167,7 @@
                 "essential",
                 "minimal"
               ],
-              "description": "A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts, usage.resetLabel and context.breakdown) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments, the extra segment once extra.command is set, and the context row; full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown at high use, essential adds the duration, the added directories row and the tools, agents and todos rows, and minimal adds the added directories row alone."
+              "description": "A named bundle of settings (layout.header, layout.rows, git.enabled, git.showDirty, git.showAheadBehind, git.showLineDiff, jj.enabled, jj.showDirty, jj.showConflicts, usage.resetLabel and context.breakdown) that this layer sets beneath the keys it names itself and above everything the shallower layers set: standard is the statusline's own default, everything claude-hud's default configuration draws plus agent-shim's own segments; full, essential and minimal are claude-hud's presets. Each draws the model, project and version control segments, the extra segment once extra.command is set, and the context row; standard adds the provider, route, account, identity and headroom segments and the quota and added directories rows, with the reset label and the token breakdown from its threshold, full adds the effort, advisor, version, output style, cost, session name and duration segments and the quota, added directories, memory, environment, tools, skills, mcp, agents, todos, prompt cache, compactions and session tokens rows, with the token breakdown from its threshold, essential adds the duration, the added directories row and the tools, agents and todos rows, and minimal adds the added directories row alone."
             },
             "layout": {
               "type": "object",
@@ -241,7 +241,7 @@
                 },
                 "mergeBars": {
                   "type": "boolean",
-                  "description": "Whether bar rows that sit next to each other in layout.rows share a line, and one grid, when they fit (the context and quota bars do by default); when false each bar row is on a line of its own, its bars still aligned to its neighbours'. A row of text is never joined by this setting, whichever form the quota row takes: layout.merge does that."
+                  "description": "Whether bar rows that sit next to each other in layout.rows share a line, and one grid, when they fit (the context and quota bars do by default); when false each bar row is on a line of its own, its bars aligned to its neighbours' while the line is wide enough for that. A row of text is never joined by this setting, whichever form the quota row takes: layout.merge does that."
                 },
                 "merge": {
                   "type": "array",
@@ -333,7 +333,11 @@
                     "transcript",
                     "auto"
                   ],
-                  "description": "Where the model's name comes from: client is the name the client reports, transcript is the model the session's last reply came from (what a proxy actually served), and auto uses the transcript's model only when it is not a Claude model, which is what a proxy redirect looks like."
+                  "description": "Where the model's name comes from: client is the name the client reports (its display name, else its model id, each trimmed and read as absent when blank), transcript is the model the session's last reply came from (what a proxy actually served), and auto uses the transcript's model only when it is not a Claude model, which is what a proxy redirect looks like."
+                },
+                "platform": {
+                  "type": "boolean",
+                  "description": "Whether the model segment ends with the label claude-hud draws beside the model name, chosen from the client's environment and model id as claude-hud chooses it, the first that holds: Bedrock when CLAUDE_CODE_USE_BEDROCK is 1, Vertex when CLAUDE_CODE_USE_VERTEX is 1, MiniMax when ANTHROPIC_BASE_URL (else ANTHROPIC_API_BASE_URL), trimmed, is https://api.minimax.io/anthropic or https://api.minimaxi.com/anthropic compared by origin and path with any trailing slash, query or default port ignored, and Enterprise when the model id is opusplan, sonnetplan or haikuplan in any case. Nothing is drawn when none holds, and the label stands alone when no name is known: the client's display name and model id are both absent or blank, no override is set, and model.source supplies no transcript name (under transcript it supplies one when the transcript has an assistant record with a model, and under auto only for such a model that is not a Claude one), or model.format leaves nothing of the name. The switches and the model ids are Claude Code's, so an Antigravity client never draws the label. It is not the provider segment, which names the agent-shim provider the launch selected and the door routes to."
                 }
               },
               "additionalProperties": false
@@ -423,12 +427,13 @@
                   "description": "The context figure: both (the tokens held against the window, then the percentage), percent, tokens, or remaining (the percentage of the window left)."
                 },
                 "warnAt": {
-                  "description": "The whole percentage of the context window at which the context bar turns yellow when bar.gradient is off (a bar.gradient of use holds the warning colour exactly there, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn); while it is unset the context bar follows bands.warnAt. A layer may write null to return it to unset when a shallower layer sets it.",
+                  "description": "The whole percentage of the context window at which the context bar turns yellow when bar.gradient is off (a bar.gradient of use holds the warning colour exactly where the bar turns yellow, half a point below this percentage for the rounding, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn); it must be below context.criticalAt. The percentage is rounded to a whole number before it is compared with this, as claude-hud rounds it, so a reading within half a point below counts as at it. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextWarningThreshold. A layer may write null to return it to its default when a shallower layer sets it.",
                   "anyOf": [
                     {
                       "type": "integer",
                       "minimum": 1,
-                      "maximum": 100
+                      "maximum": 100,
+                      "description": "The whole percentage of the context window at which the context bar turns yellow when bar.gradient is off (a bar.gradient of use holds the warning colour exactly where the bar turns yellow, half a point below this percentage for the rounding, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn); it must be below context.criticalAt. The percentage is rounded to a whole number before it is compared with this, as claude-hud rounds it, so a reading within half a point below counts as at it. It is the context bar's own threshold, apart from bands.warnAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextWarningThreshold."
                     },
                     {
                       "type": "null"
@@ -436,7 +441,21 @@
                   ]
                 },
                 "criticalAt": {
-                  "description": "The whole percentage of the context window at which the context bar turns red when bar.gradient is off (a bar.gradient of use holds the critical colour from there, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn) and, with context.breakdown set to critical, the token breakdown appears; while it is unset the context bar follows bands.criticalAt. A layer may write null to return it to unset when a shallower layer sets it.",
+                  "description": "The whole percentage of the context window at which the context bar turns red when bar.gradient is off (a bar.gradient of use holds the critical colour from where the bar turns red, half a point below this percentage for the rounding, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn), and from which the token breakdown appears while context.breakdownAt is unset. The percentage is rounded to a whole number before it is compared with this, as claude-hud rounds it, so a reading within half a point below counts as at it. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown. A layer may write null to return it to its default when a shallower layer sets it.",
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 100,
+                      "description": "The whole percentage of the context window at which the context bar turns red when bar.gradient is off (a bar.gradient of use holds the critical colour from where the bar turns red, half a point below this percentage for the rounding, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn), and from which the token breakdown appears while context.breakdownAt is unset. The percentage is rounded to a whole number before it is compared with this, as claude-hud rounds it, so a reading within half a point below counts as at it. It is the context bar's own threshold, apart from bands.criticalAt, which colours the other bars and the context row's cache hit share, and its default is claude-hud's contextCriticalThreshold, which also starts claude-hud's breakdown."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "breakdownAt": {
+                  "description": "The whole percentage of the context window from which the token breakdown appears, with context.breakdown set to critical; while it is unset the breakdown appears from context.criticalAt. The percentage is rounded to a whole number before it is compared with this, as claude-hud rounds it, so a reading within half a point below counts as at it. It need not relate to context.warnAt or context.criticalAt, since it decides when a piece of information is shown and not a colour, so it may sit below, at or above either. A layer may write null to return it to unset when a shallower layer sets it.",
                   "anyOf": [
                     {
                       "type": "integer",
@@ -468,7 +487,7 @@
                     "raw",
                     "buffered"
                   ],
-                  "description": "What to draw when the client reports no percentage of the window in use, or reports 0 while tokens are already held (which is how a client says it has not worked it out yet): never (nothing is estimated: a percentage reported, 0 included, is drawn as it is, and none reported draws nothing), raw (the tokens held over the window), or buffered (that, plus the 16.5% of the window Claude Code reserves for compaction, rising from nothing at 5% of the window held to the whole reserve at 50%)."
+                  "description": "What to draw when the client reports no percentage of the window in use (a negative one counts as none), or reports 0 while tokens are already held (which is how a client says it has not worked it out yet): never (nothing is estimated: a percentage reported from 0 to 100 is drawn as it is, one above 100 as 100, and a negative or missing one draws nothing), raw (the tokens held over the window), or buffered (that, plus the 16.5% of the window Claude Code reserves for compaction, rising from nothing at 5% of the window held to the whole reserve at 50%)."
                 },
                 "breakdown": {
                   "type": "string",
@@ -476,7 +495,7 @@
                     "never",
                     "critical"
                   ],
-                  "description": "Whether to add the input and cache tokens of the last request to the context row once its use reaches context.criticalAt."
+                  "description": "Whether to add the input and cache tokens of the last request to the context row: critical adds them once the percentage the row draws (the one the client reports, or the estimate context.estimate makes, or, with context.autoCompactWindow set, the tokens held over that window), rounded to a whole number, reaches the breakdown threshold, which is context.breakdownAt, or context.criticalAt while that is unset, and never leaves them off. With no percentage to draw the row draws nothing, and when the client does not report the last request's tokens there is no breakdown to add."
                 }
               },
               "additionalProperties": false
@@ -523,13 +542,13 @@
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 100,
-                  "description": "The whole percentage of use at which a bar turns yellow when bar.gradient is off; it must be below criticalAt. A bar.gradient of use holds the warning colour exactly there, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn."
+                  "description": "The whole percentage of use at which a bar other than the context bar turns yellow when bar.gradient is off (the context bar has context.warnAt); it must be below criticalAt. A bar.gradient of use holds the warning colour exactly there, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn. The context row's cache hit share is coloured by these bands too."
                 },
                 "criticalAt": {
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 100,
-                  "description": "The whole percentage of use at which a bar turns red when bar.gradient is off. A bar.gradient of use holds the critical colour from there, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn."
+                  "description": "The whole percentage of use at which a bar other than the context bar turns red when bar.gradient is off (the context bar has context.criticalAt). A bar.gradient of use holds the critical colour from there, and width colours a bar by its cells, not its use, once a cell of its used part is drawn; both fall back to the band colours when a stop's colour is default or dim, and width also when no cell of its used part is drawn. The context row's cache hit share is coloured by these bands too."
                 }
               },
               "additionalProperties": false
@@ -539,11 +558,11 @@
               "properties": {
                 "fiveHour": {
                   "type": "string",
-                  "description": "The name of the five-hour subscription window; empty uses the language's own name for it."
+                  "description": "The name of the five-hour window; empty uses the language's own name for it."
                 },
                 "sevenDay": {
                   "type": "string",
-                  "description": "The name of the weekly subscription window; empty uses the language's own name for it."
+                  "description": "The name of the weekly window; empty uses the language's own name for it."
                 }
               },
               "additionalProperties": false
@@ -564,7 +583,7 @@
                     "use",
                     "width"
                   ],
-                  "description": "How a bar's used part is coloured: off (the default) draws the band's single colour, the bar's own colour below the warning threshold, the warning colour from there and the critical one from the critical threshold; use blends the bar's colour with its use, from its own colour at none in use to the warning colour at the warning threshold and the critical one at the critical threshold, holding exactly the colour the bands draw at each threshold and the critical colour above it; and width colours each cell of the used part across the bar's width, from the bar's own colour at the first cell to the critical one at the last, whatever the use, with a bar one cell wide drawing that cell in its own colour. A bar's thresholds are bands.warnAt and bands.criticalAt, the context bar's own where it sets them, and the figures beside a bar keep the band's colours in every mode. The unused part keeps colours.empty in every mode, and when that is default or dim, which set no colour of their own, it draws in the colour the used part ends in: under off the band's colour, under use the blend for the bar's use (even where no cell of the used part is drawn), and under width the last drawn cell's colour (the band's colour where no cell is drawn). A gradient blends RGB values, so a colour name, or a palette index below 16, is blended at the default RGB the xterm scheme gives it rather than the shade a themed terminal draws it in, while a stop itself, where a mode holds it exactly, is drawn as the bands draw that role. A bar whose stops include a role set to default or dim, which names no colour of its own, is drawn in the band's single colour: for use those stops are the bar's own, warning and critical roles, and for width its own and critical roles. A width bar with no cell of its used part drawn has no cell to colour, so it takes the band's colours as off does."
+                  "description": "How a bar's used part is coloured: off (the default) draws the band's single colour, the bar's own colour below the warning threshold, the warning colour from there and the critical one from the critical threshold; use blends the bar's colour with its use, from its own colour at none in use to the warning colour at the warning threshold and the critical one at the critical threshold, holding exactly the colour the bar draws without a gradient at each threshold (the context bar's sit half a point below its whole percentages) and the critical colour above it; and width colours each cell of the used part across the bar's width, from the bar's own colour at the first cell to the critical one at the last, whatever the use, with a bar one cell wide drawing that cell in its own colour. A bar's thresholds are bands.warnAt and bands.criticalAt, and the context bar's are context.warnAt and context.criticalAt, and the figures beside a bar keep the band's colours in every mode. The unused part keeps colours.empty in every mode, and when that is default or dim, which set no colour of their own, it draws in the colour the used part ends in: under off the band's colour, under use the blend for the bar's use (even where no cell of the used part is drawn), and under width the last drawn cell's colour (the band's colour where no cell is drawn). A gradient blends RGB values, so a colour name, or a palette index below 16, is blended at the default RGB the xterm scheme gives it rather than the shade a themed terminal draws it in, while a stop itself, where a mode holds it exactly, is drawn as the bands draw that role. A bar whose stops include a role set to default or dim, which names no colour of its own, is drawn in the band's single colour: for use those stops are the bar's own, warning and critical roles, and for width its own and critical roles. A width bar with no cell of its used part drawn has no cell to colour, so it takes the band's colours as off does."
                 },
                 "filled": {
                   "type": "string",
@@ -602,7 +621,7 @@
                 },
                 "modelScoped": {
                   "type": "boolean",
-                  "description": "Whether the per-model weekly windows the client reports (rate_limits.model_scoped) are drawn after the account's own windows; they describe the signed-in account, so a session that selected a provider never shows them."
+                  "description": "Whether the per-model weekly windows the client reports (rate_limits.model_scoped) are drawn after the five-hour and weekly windows (one reported with a null, missing or non-numeric figure is drawn as two hyphens beside its reset); they describe the signed-in account, so a session that selected a provider never shows them, nor does a Bedrock session, whose subscription windows do not apply."
                 },
                 "timeFormat": {
                   "type": "string",
@@ -619,13 +638,13 @@
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 100,
-                  "description": "The whole percentage of use that at least one quota window must reach for the quota row to be drawn at all; 0 always draws it."
+                  "description": "The whole percentage of use that at least one quota window must reach for the quota row to be drawn at all, the use compared after rounding to a whole percentage, as claude-hud compares it; 0 never hides it. A Bedrock session that selected no provider draws no five-hour, weekly or per-model window, whatever this is."
                 },
                 "sevenDayThreshold": {
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 100,
-                  "description": "The whole percentage of use at which the weekly window is drawn beside the five-hour one; below it the weekly window is hidden. A weekly window with no five-hour window beside it is always drawn, and 0 always draws it."
+                  "description": "The whole percentage of use at which the weekly window is drawn beside the five-hour one, the use compared after rounding to a whole percentage, as claude-hud compares it; below it the weekly window is hidden, and 0 never hides it. A weekly window with no five-hour window beside it is never hidden by this setting. A Bedrock session that selected no provider draws no five-hour, weekly or per-model window, so this setting has nothing to hide there, and usage.threshold can still hide the whole row."
                 }
               },
               "additionalProperties": false
@@ -758,7 +777,7 @@
                       "pattern": "^#[0-9a-fA-F]{6}$"
                     }
                   ],
-                  "description": "The colour of the context bar below the warning threshold while bar.gradient is off, of the figures beside it below that threshold in every mode, and the colour a bar.gradient of use or width blends the context bar from (at none in use for use, at the first cell for width), while a gradient bar with a stop whose colour is default or dim, or a width bar with no cell of its used part drawn, takes the band's colours."
+                  "description": "The colour of the context bar below the warning threshold while bar.gradient is off, of the figures beside it below that threshold in every mode, of a cache hit share above 100 less bands.warnAt percent, and the colour a bar.gradient of use or width blends the context bar from (at none in use for use, at the first cell for width), while a gradient bar with a stop whose colour is default or dim, or a width bar with no cell of its used part drawn, takes the band's colours."
                 },
                 "usage": {
                   "anyOf": [
@@ -832,7 +851,7 @@
                       "pattern": "^#[0-9a-fA-F]{6}$"
                     }
                   ],
-                  "description": "The colour of the context bar from its warning threshold (bands.warnAt, or context.warnAt where that is set) up to its critical threshold (bands.criticalAt, or context.criticalAt where that is set) when bar.gradient is off (a bar.gradient of use holds it exactly at the threshold, and a gradient bar with a stop whose colour is default or dim draws the band's colours instead, and so does a width bar with no cell of its used part drawn), of the figures beside the bar from that threshold up to its critical threshold in every mode, and of a cache hit share that is middling."
+                  "description": "The colour of the context bar from context.warnAt up to context.criticalAt when bar.gradient is off (a bar.gradient of use holds it exactly where the bar turns yellow, and a gradient bar with a stop whose colour is default or dim draws the band's colours instead, and so does a width bar with no cell of its used part drawn), of the figures beside the bar from that threshold up to context.criticalAt in every mode, and of a cache hit share above 100 less bands.criticalAt percent and at most 100 less bands.warnAt percent."
                 },
                 "usageWarning": {
                   "anyOf": [
@@ -906,7 +925,7 @@
                       "pattern": "^#[0-9a-fA-F]{6}$"
                     }
                   ],
-                  "description": "The colour of a bar at or above its critical threshold (bands.criticalAt, or context.criticalAt for the context bar where that is set) when bar.gradient is off or use, of the last cell of a full bar more than one cell wide under a bar.gradient of width (a bar one cell wide draws its cell in its own colour, and a width bar whose own colour or this one is default or dim, or that has no cell of its used part drawn, draws the band's colours instead), of the figures beside a bar from its critical threshold in every mode, and of a cache hit share that is nearly nothing."
+                  "description": "The colour of a bar at or above its critical threshold (context.criticalAt for the context bar, bands.criticalAt for any other bar) when bar.gradient is off or use, of the last cell of a full bar more than one cell wide under a bar.gradient of width (a bar one cell wide draws its cell in its own colour, and a width bar whose own colour or this one is default or dim, or that has no cell of its used part drawn, draws the band's colours instead), of the figures beside a bar from its critical threshold in every mode, and of a cache hit share of at most 100 less bands.criticalAt percent."
                 },
                 "model": {
                   "anyOf": [

@@ -22,6 +22,8 @@ const CONTEXT_SUFFIX = " 10.0% (Cache: 0%)";
 const ONE_BAR_TO_A_ROW_FITS = CONTEXT_PREFIX.length + BASE_BAR_CELLS + 2 + CONTEXT_SUFFIX.length;
 const WINDOW_SUFFIX = " 33.6% (6d 18h)";
 const SHORT_FILL_FRACTION = 0.5;
+/** A label far wider than the line leaves room for beside a bar. */
+const LONG_LABEL_COLUMNS = 40;
 
 function cell(prefix: string, suffix: string): BarCell {
   return { prefix, suffix, draw: (cells) => `[${"#".repeat(Math.round(cells * SHORT_FILL_FRACTION))}${".".repeat(cells - Math.round(cells * SHORT_FILL_FRACTION))}]` };
@@ -133,6 +135,18 @@ describe("layoutBarGrid", () => {
     expect(rows[0]).toContain(`[${"#".repeat(BASE_BAR_CELLS * SHORT_FILL_FRACTION)}${".".repeat(BASE_BAR_CELLS * SHORT_FILL_FRACTION)}]`);
   });
 
+  it("aligns each row within itself once one bar to a row does not fit with the labels padded to match, so a long label widens only its own row", () => {
+    const short = windowCell("5h");
+    const long = windowCell("L".repeat(LONG_LABEL_COLUMNS));
+    const shortRowWidth = "5h ".length + BASE_BAR_CELLS + 2 + WINDOW_SUFFIX.length;
+    const width = shortRowWidth + LONG_LABEL_COLUMNS / 2;
+    expect(measureGrid([[short], [long]], SEPARATOR.length, BASE_BAR_CELLS).baseWidth).toBeGreaterThan(width);
+    const rows = layoutBarGrid([[[short, long]]], width, SEPARATOR, BASE_BAR_CELLS);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.startsWith("5h [")).toBe(true);
+    expect(rows[0]?.length).toBeLessThanOrEqual(width);
+  });
+
   it("leaves no trailing space after a row's last figures", () => {
     const rows = layoutBarGrid([[CONTEXT, WINDOWS]], ROOMY, SEPARATOR, BASE_BAR_CELLS);
     for (const row of rows) {
@@ -172,9 +186,9 @@ function chunksOf<T>(items: readonly T[], size: number): T[][] {
 }
 
 /**
- * The layout of groups that share one unit, as the grid drew them before units existed: the whole unit on one row, else every group chunked to the most bars to a row that fits, from the largest group down to two, else each group aligned within itself. Kept as the reference the unit-based layout must agree with for a single unit.
+ * The layout of groups that share one unit, written out apart from the unit-based code: the whole unit on one row, else every group chunked to the most bars to a row that fits, from the largest group down to two, else each group aligned within itself, a lone group drawn a bar to a row with the labels padded to match when that fits and each row aligned within itself when it does not. Kept as the reference the unit-based layout must agree with for a single unit.
  */
-function layoutBeforeUnits(groups: readonly (readonly BarCell[])[], maxWidth: number, separator: string, baseBarCells: number): string[] {
+function layoutOfOneUnit(groups: readonly (readonly BarCell[])[], maxWidth: number, separator: string, baseBarCells: number): string[] {
   const nonEmpty = groups.filter((group) => group.length > 0);
   if (nonEmpty.length === 0) {
     return [];
@@ -191,9 +205,13 @@ function layoutBeforeUnits(groups: readonly (readonly BarCell[])[], maxWidth: nu
     return renderGrid(fitting, maxWidth, separator, baseBarCells);
   }
   if (nonEmpty.length > 1) {
-    return nonEmpty.flatMap((group) => layoutBeforeUnits([group], maxWidth, separator, baseBarCells));
+    return nonEmpty.flatMap((group) => layoutOfOneUnit([group], maxWidth, separator, baseBarCells));
   }
-  return renderGrid(layoutFor(1), maxWidth, separator, baseBarCells);
+  const oneToARow = layoutFor(1);
+  if (oneToARow.baseWidth <= maxWidth) {
+    return renderGrid(oneToARow, maxWidth, separator, baseBarCells);
+  }
+  return oneToARow.rows.flatMap((row) => renderGrid(measureGrid([row], separatorLength, baseBarCells), maxWidth, separator, baseBarCells));
 }
 
 /** The groups of the given sizes, their cells labelled to different lengths so that padding to a shared column shows. */
@@ -220,15 +238,15 @@ describe("layoutBarGrid for a single unit", () => {
   it("draws groups of one bar each, each aligned within itself, when padding them to one column does not fit on a line together", () => {
     const groups = groupsOfSizes([1, 1, 1]);
     const rows = layoutBarGrid([groups], SMALLEST_WIDTH, SEPARATOR, BASE_BAR_CELLS);
-    expect(rows).toEqual(layoutBeforeUnits(groups, SMALLEST_WIDTH, SEPARATOR, BASE_BAR_CELLS));
+    expect(rows).toEqual(layoutOfOneUnit(groups, SMALLEST_WIDTH, SEPARATOR, BASE_BAR_CELLS));
     expect(new Set(rows.map((row) => columnsOf(row, "[")[0])).size).toBe(rows.length);
   });
 
-  it("agrees with the layout before units existed for every shape and width, so a unit of groups keeps its alignment", () => {
+  it("agrees with the one-unit reference layout for every shape and width, so a unit of groups keeps its alignment", () => {
     for (const sizes of allShapes) {
       const groups = groupsOfSizes(sizes);
       for (let width = SMALLEST_WIDTH; width <= WIDEST_WIDTH; width += 1) {
-        expect(layoutBarGrid([groups], width, SEPARATOR, BASE_BAR_CELLS), `${sizes.join(",")} at ${String(width)}`).toEqual(layoutBeforeUnits(groups, width, SEPARATOR, BASE_BAR_CELLS));
+        expect(layoutBarGrid([groups], width, SEPARATOR, BASE_BAR_CELLS), `${sizes.join(",")} at ${String(width)}`).toEqual(layoutOfOneUnit(groups, width, SEPARATOR, BASE_BAR_CELLS));
       }
     }
   });

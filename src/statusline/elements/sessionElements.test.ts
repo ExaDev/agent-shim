@@ -90,7 +90,7 @@ function render(nowMs: number, settings: StatuslineSettings, options: { readonly
   const disk = options.disk ?? fakeStatuslineFilesystem(options.files ?? { [TRANSCRIPT]: options.transcript ?? SESSION });
   const text = renderStatuslineBlock({
     summary: SUMMARY,
-    view: { modelDisplayName: "Sonnet 5.5", contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
+    view: { clientModelName: "Sonnet 5.5", contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
     payload: parseClientPayload({ transcript_path: TRANSCRIPT, ...(options.outputTokens === undefined ? {} : { context_window: { current_usage: { output_tokens: options.outputTokens } } }) }),
     terminalWidth: WIDE_TERMINAL,
     nowMs,
@@ -109,7 +109,7 @@ const header = (...names: readonly ("sessionName" | "duration" | "speed" | "mode
 const rows = (...names: readonly ("sessionTime" | "promptCache" | "compactions")[]): StatuslineSettings => ({ layout: { header: [], rows: [...names] } });
 
 describe("the session elements", () => {
-  it("draw nothing and read no transcript by default, so a default statusline is what it was", () => {
+  it("draw nothing and read no transcript by default, since the default layout does not list them", () => {
     const unreadable = fakeStatuslinePorts({
       readRange: () => {
         throw new Error("the transcript was read");
@@ -118,7 +118,7 @@ describe("the session elements", () => {
         throw new Error("a cache file was written");
       },
     });
-    const input = { summary: SUMMARY, view: { modelDisplayName: "Sonnet 5.5", contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined }, payload: parseClientPayload({ transcript_path: TRANSCRIPT }), terminalWidth: WIDE_TERMINAL, nowMs: T0, ports: unreadable };
+    const input = { summary: SUMMARY, view: { clientModelName: "Sonnet 5.5", contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined }, payload: parseClientPayload({ transcript_path: TRANSCRIPT }), terminalWidth: WIDE_TERMINAL, nowMs: T0, ports: unreadable };
     expect(plain(renderStatuslineBlock(input))).toBe("Sonnet 5.5");
   });
 
@@ -340,7 +340,7 @@ describe("the session elements", () => {
     });
 
     it("is left out when the client names no transcript", () => {
-      const text = renderStatuslineBlock({ summary: SUMMARY, view: { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined }, payload: parseClientPayload({ context_window: { current_usage: { output_tokens: 5 } } }), terminalWidth: WIDE_TERMINAL, nowMs: T0, settings: resolveStatusline(header("speed")), ports: fakeStatuslinePorts() });
+      const text = renderStatuslineBlock({ summary: SUMMARY, view: { clientModelName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined }, payload: parseClientPayload({ context_window: { current_usage: { output_tokens: 5 } } }), terminalWidth: WIDE_TERMINAL, nowMs: T0, settings: resolveStatusline(header("speed")), ports: fakeStatuslinePorts() });
       expect(text).toBe("");
     });
   });
@@ -350,7 +350,7 @@ describe("the session elements", () => {
     const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: SESSION });
     renderStatuslineBlock({
       summary: SUMMARY,
-      view: { modelDisplayName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
+      view: { clientModelName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
       payload: parseClientPayload({ transcript_path: TRANSCRIPT }),
       terminalWidth: WIDE_TERMINAL,
       nowMs: T0 + MINUTE,

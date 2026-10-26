@@ -1,5 +1,7 @@
 import type { ResolvedStatusline } from "../../../config/statusline";
 import type { StatuslineSummary } from "../../enrich";
+import { SEPARATOR } from "../../headerLayout";
+import { modelPlatformOf, platformInputsOf } from "../../platform";
 import type { RenderContext } from "../context";
 
 /** Whether a dynamic mode's choice names its provider beside the served model: the choice could cross providers, or routing by name left the launch's provider. */
@@ -36,11 +38,22 @@ function modelNameOf({ view, settings, transcriptIdentity }: RenderContext): { r
       return { name: formatModelName(served, settings.model.format), isServed: true };
     }
   }
-  return view.modelDisplayName === undefined || view.modelDisplayName === "" ? undefined : { name: formatModelName(view.modelDisplayName, settings.model.format), isServed: false };
+  return view.clientModelName === undefined ? undefined : { name: formatModelName(view.clientModelName, settings.model.format), isServed: false };
 }
 
-/** The model the session is on, or undefined when no name is known. */
+/** The model the session is on, followed by the platform label claude-hud draws beside it (`modelPlatformOf`) when one is detected and `model.platform` is on: after the name, with the separator the header puts between its segments, or the label alone when no name is known (`modelName` finds none: no override is set, and the first name found, the transcript's served model where `model.source` takes it, else the client's name with any text, is absent or empty once `model.format` has written it), as claude-hud still draws it beside its placeholder. Undefined when there is neither a name nor a label to draw. */
 export function modelSegment(context: RenderContext): string | undefined {
+  const name = modelName(context);
+  const inputs = platformInputsOf(context.payload, context.ports.env, context.payload.model?.id);
+  const platform = context.settings.model.platform ? modelPlatformOf(inputs.env, inputs.modelId) : undefined;
+  if (platform === undefined) {
+    return name;
+  }
+  return name === undefined ? platform : `${name}${SEPARATOR}${platform}`;
+}
+
+/** The model's name as the segment draws it, with a dynamic mode's choice beside it, or undefined when no name is known: no override is set, and the first name found, the transcript's served model where `model.source` takes it, else the client's name with any text, is absent or empty once `model.format` has written it. */
+function modelName(context: RenderContext): string | undefined {
   // A dynamic mode's selection draws the model that answered beside the name the session typed (`auto -> glm-5.3`), because the client's own model name alone says nothing about what is actually serving. The provider joins the arrow when the choice could have landed on more than one, or when it left the launch's provider: exactly the cases where the provider is part of the answer.
   const { summary } = context;
   const model = modelNameOf(context);

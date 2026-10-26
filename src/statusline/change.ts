@@ -8,7 +8,7 @@ export interface StatuslineChange {
   readonly unset?: readonly string[];
 }
 
-/** What an optional setting is written as to unset it for the layers it is merged over (stored as null), as against `--unset-statusline`, which removes it from the one layer. */
+/** What a setting a layer may write null for is written as to return it, for the layers it is merged over, to its default or, with none, to unset (stored as null), as against `--unset-statusline`, which removes it from the one layer. */
 const UNSET_WORD = "none";
 
 function keyNamed(path: string): StatuslineKey {
@@ -36,7 +36,7 @@ function textListOf(path: string, raw: string): unknown {
   return parsed;
 }
 
-/** The value a `<setting>=<value>` option names, written the way the setting's kind is written: a whole number, `true` or `false`, text, one choice, a colour (a name, a palette index or #rrggbb), a comma-separated list of choices (an empty value is the empty list), groups of choices (groups separated by semicolons, an empty value being no groups), or a JSON array of strings for a list of free text (an empty value is the empty list); an optional setting also takes `none`, which unsets it for the layers it is merged over. The value's own validity is the schema's to judge. */
+/** The value a `<setting>=<value>` option names, written the way the setting's kind is written: a whole number, `true` or `false`, text, one choice, a colour (a name, a palette index or #rrggbb), a comma-separated list of choices (an empty value is the empty list), groups of choices (groups separated by semicolons, an empty value being no groups), or a JSON array of strings for a list of free text (an empty value is the empty list); a setting a layer may write null for also takes `none`, which returns it to its default, or to unset when it has none, for the layers it is merged over. The value's own validity is the schema's to judge. */
 export function parseStatuslineAssignment(text: string): { readonly path: string; readonly value: unknown } {
   const split = text.indexOf("=");
   if (split < 1) {
@@ -45,7 +45,7 @@ export function parseStatuslineAssignment(text: string): { readonly path: string
   const path = text.slice(0, split);
   const raw = text.slice(split + 1);
   const key = keyNamed(path);
-  if (key.optional && raw === UNSET_WORD) {
+  if (key.unsettable && raw === UNSET_WORD) {
     return { path, value: null };
   }
   switch (key.kind) {
