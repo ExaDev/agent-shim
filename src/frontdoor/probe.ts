@@ -8,7 +8,7 @@ export type ListenerVerdict = { readonly ok: true } | { readonly ok: false; read
 export const PROBE_TIMEOUT_MS = 2_000;
 
 /** Extra time the waiting thread allows past the probe's own timeout, so the worker's own timeout verdict arrives rather than the outer wait expiring first. */
-const PROBE_WAIT_MARGIN_MS = 1_000;
+export const PROBE_WAIT_MARGIN_MS = 1_000;
 
 /** Bytes reserved for the failure reason the worker hands back; a TLS or socket error message is one short line. */
 const REASON_BYTES = 1_024;
@@ -58,10 +58,12 @@ request.on("error", (error) => finish(failed, (error.code ? error.code + ": " : 
  * Authenticates the front door's provider listener before a launch trusts it: a TLS handshake that must chain to agent-shim's CA (whose key only this user can read) for 127.0.0.1, then a healthy answer. A process that merely holds the port (a stale state file's port re-bound by someone else, or a reused pid's listener) cannot complete that handshake, so it fails here and the launch never hands its child that address.
  *
  * Synchronous because the launcher is synchronous right through to `spawnSync`: the HTTPS request runs on a worker thread and this thread blocks on a shared buffer until the worker posts its verdict.
+ *
+ * The worker gives up after `timeoutMs` (`PROBE_TIMEOUT_MS` in production); a test that reads the verdict of a probe gives it a bound a loaded machine does not reach.
  */
-export function probeFrontDoorSync(port: number, caPem: string): ListenerVerdict {
+export function probeFrontDoorSync(port: number, caPem: string, timeoutMs: number = PROBE_TIMEOUT_MS): ListenerVerdict {
   refuseToBlockInRole("a synchronous probe of the front door");
-  return runProbeWorker(PROBE_SOURCE, { port, ca: caPem });
+  return runProbeWorker(PROBE_SOURCE, { port, ca: caPem }, timeoutMs);
 }
 
 /**
@@ -90,28 +92,28 @@ setTimeout(() => { socket.destroy(); finish(failed, "no connection accepted with
 `;
 
 /**
- * Whether a listener on 127.0.0.1 accepts a TCP connection within the probe's bound, which is all the CONNECT surface can be asked without presenting a launch's capability. Used by `doctor` and `frontdoor status` to tell a listener that accepts from one whose process is alive but whose event loop is not serving, which a supervisor pid check cannot.
+ * Whether a listener on 127.0.0.1 accepts a TCP connection within the probe's bound (`timeoutMs`), which is all the CONNECT surface can be asked without presenting a launch's capability. Used by `doctor` and `frontdoor status` to tell a listener that accepts from one whose process is alive but whose event loop is not serving, which a supervisor pid check cannot. The bound is `timeoutMs` (`PROBE_TIMEOUT_MS` in production).
  */
-export function probeListenerAcceptSync(port: number): ListenerVerdict {
+export function probeListenerAcceptSync(port: number, timeoutMs: number = PROBE_TIMEOUT_MS): ListenerVerdict {
   refuseToBlockInRole("a synchronous probe of a front door listener");
-  return runProbeWorker(ACCEPT_PROBE_SOURCE, { port });
+  return runProbeWorker(ACCEPT_PROBE_SOURCE, { port }, timeoutMs);
 }
 
-/** Runs one probe source on a worker thread and blocks this thread on its verdict, whatever the probe asks. */
-function runProbeWorker(source: string, data: Readonly<Record<string, unknown>>): ListenerVerdict {
+/** Runs one probe source on a worker thread and blocks this thread on its verdict, whatever the probe asks, for at most `timeoutMs` plus the margin the waiting thread allows the worker's own timeout verdict. */
+function runProbeWorker(source: string, data: Readonly<Record<string, unknown>>, timeoutMs: number): ListenerVerdict {
   const shared = new SharedArrayBuffer(HEADER_SLOTS * INT32_BYTES + REASON_BYTES);
   const header = new Int32Array(shared, 0, HEADER_SLOTS);
   const worker = new Worker(source, {
     eval: true,
-    workerData: { ...data, timeoutMs: PROBE_TIMEOUT_MS, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS },
+    workerData: { ...data, timeoutMs, shared, ok: VERDICT_OK, failed: VERDICT_FAILED, headerSlots: HEADER_SLOTS },
   });
   // The worker must never keep the launcher alive: the verdict is all this thread needs from it.
   worker.unref();
   try {
-    const waited = Atomics.wait(header, 0, VERDICT_PENDING, PROBE_TIMEOUT_MS + PROBE_WAIT_MARGIN_MS);
+    const waited = Atomics.wait(header, 0, VERDICT_PENDING, timeoutMs + PROBE_WAIT_MARGIN_MS);
     const verdict = Atomics.load(header, 0);
     if (waited === "timed-out" || verdict === VERDICT_PENDING) {
-      return { ok: false, reason: `the probe did not finish within ${String(PROBE_TIMEOUT_MS + PROBE_WAIT_MARGIN_MS)}ms` };
+      return { ok: false, reason: `the probe did not finish within ${String(timeoutMs + PROBE_WAIT_MARGIN_MS)}ms` };
     }
     if (verdict === VERDICT_OK) {
       return { ok: true };
