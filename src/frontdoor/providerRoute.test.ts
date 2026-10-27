@@ -54,7 +54,7 @@ function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
   };
 }
 
-function resolver(files: Record<string, unknown>, directPort = OWN_PORT, models?: unknown, accountMoves?: (sessionId: string, to: string, model: string) => boolean): ReturnType<typeof createProviderRouteResolver> {
+function resolver(files: Record<string, unknown>, directPort = OWN_PORT, models?: unknown, accountMoves?: (sessionId: string, to: string, model: string) => Promise<boolean>): ReturnType<typeof createProviderRouteResolver> {
   return createProviderRouteResolver({ fs: fakeFs(files), providersDir: PROVIDERS_DIR, codexPorts: codexPorts(), directPort: () => directPort, env: { Z: "tok-from-z" }, ...(models === undefined ? {} : { models: () => models as ModelsConfig | undefined }), ...(accountMoves === undefined ? {} : { accountMoves }), credentials: fakeAsyncCredentials() });
 }
 
@@ -756,9 +756,9 @@ describe("an account model member", () => {
 
   it("is answered with a clear refusal naming the identity, and a move request is left for the session's supervisor", async () => {
     const moves: [string, string, string][] = [];
-    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }, OWN_PORT, undefined, (sessionId, to, model) => {
+    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }, OWN_PORT, undefined, async (sessionId, to, model) => {
       moves.push([sessionId, to, model]);
-      return true;
+      return await Promise.resolve(true);
     });
     const resolution = await resolve(sessionRequest("acct:work/opus"));
     expect(resolution.ok).toBe(false);
@@ -782,9 +782,9 @@ describe("an account model member", () => {
   it("resolves a virtual model whose first member is an account member the same way", async () => {
     const moves: [string, string, string][] = [];
     const models: ModelsConfig = { virtual: { opusAnywhere: { mode: "ordered", members: ["acct:work/opus"] } } };
-    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }, OWN_PORT, models, (sessionId, to, model) => {
+    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }, OWN_PORT, models, async (sessionId, to, model) => {
       moves.push([sessionId, to, model]);
-      return true;
+      return await Promise.resolve(true);
     });
     const resolution = await resolve(sessionRequest("opusAnywhere"));
     expect(resolution.ok).toBe(false);

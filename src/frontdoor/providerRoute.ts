@@ -171,9 +171,9 @@ export function createProviderRouteResolver(deps: {
   /** Reads the session identity's usage snapshot, kept fresh by the caller (the door's own store writes it): the per-provider quota facts a route condition skips an exhausted target with. */
   readonly usageSnapshotOf?: (identity: string | undefined) => UsageSnapshot | undefined;
   /**
-   * Serves an `acct:` model member by leaving a move request for the session's supervisor, returning whether the session is supervised (so the request was written and a relaunch is coming); unsupervised sessions get the message that names the command to run instead. Wired to the supervise registry by the door's own process; absent in every other caller, where no session is supervised.
+   * Serves an `acct:` model member by leaving a move request for the session's supervisor, resolving to whether the session is supervised (so the request was written and a relaunch is coming); unsupervised sessions get the message that names the command to run instead. Wired to the supervise registry by the door's own process; absent in every other caller, where no session is supervised.
    */
-  readonly accountMoves?: (sessionId: string, to: string, model: string) => boolean;
+  readonly accountMoves?: (sessionId: string, to: string, model: string) => Promise<boolean>;
   /** The observed latency, success and token mix of one target (`provider/model`), from the door's observation store seeded by the usage log: what the ranked modes of a virtual model's selection read. */
   readonly observations?: (target: string) => TargetObservation | undefined;
   /**
@@ -403,7 +403,7 @@ export function createProviderRouteResolver(deps: {
         const account = scan.model === undefined ? undefined : resolveAccountTarget(scan.model, deps.models?.(current.session));
         if (account !== undefined) {
           const sessionId = current.session.sessionId ?? "";
-          const moved = sessionId !== "" && (deps.accountMoves?.(sessionId, account.identity, account.model) ?? false);
+          const moved = sessionId !== "" && ((await deps.accountMoves?.(sessionId, account.identity, account.model)) ?? false);
           return {
             ok: false,
             status: HTTP_STATUS.badRequest,

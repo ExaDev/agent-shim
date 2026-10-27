@@ -278,8 +278,8 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
       usageSnapshotOf: (identity) => (identity === undefined ? undefined : routingSnapshots.get(identity) ?? readUsageSnapshot(realFarmFs, paths.usageSnapshotsDir, identity)),
       // An `acct:` model member is served by relaunch: the door leaves a move request for the session's supervisor (found across every pool's registry, since the door does not know which pool launched the session) and answers the request with what is happening. A session nothing supervises gets the message naming the command to run instead.
       observations: (target) => observations.observation(target),
-      accountMoves: (sessionId, to, model) => {
-        if (supervisedSessionOf(realFarmFs, paths, sessionId, realIsProcessRunning) === undefined) {
+      accountMoves: async (sessionId, to, model) => {
+        if ((await supervisedSessionOf(realFarmFs, paths, sessionId, realRunningAmong)) === undefined) {
           return false;
         }
         writeModelMove(realFarmFs, paths, { sessionId, to, model, at: new Date().toISOString() });

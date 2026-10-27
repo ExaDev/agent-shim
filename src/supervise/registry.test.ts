@@ -77,12 +77,14 @@ describe("model-move requests", () => {
 });
 
 describe("finding a session's registry entry across pools", () => {
-  it("returns the live entry a session id registered, whichever pool holds it", () => {
+  it("returns the live entry a session id registered, whichever pool holds it", async () => {
     const fs = createFakeFarmFs({});
     registerSupervised(fs, paths, session({ sessionId: "s9", pool: "other", identity: "spare" }));
-    expect(supervisedSessionOf(fs, paths, "s9", () => true)).toMatchObject({ pool: "other", identity: "spare" });
-    expect(supervisedSessionOf(fs, paths, "s9", () => false)).toBeUndefined();
-    expect(supervisedSessionOf(fs, paths, "missing", () => true)).toBeUndefined();
+    const everyoneRunning = async (pids: readonly number[]): Promise<ReadonlySet<number>> => await Promise.resolve(new Set(pids));
+    const nobodyRunning = async (): Promise<ReadonlySet<number>> => await Promise.resolve(new Set());
+    await expect(supervisedSessionOf(fs, paths, "s9", everyoneRunning)).resolves.toMatchObject({ pool: "other", identity: "spare" });
+    await expect(supervisedSessionOf(fs, paths, "s9", nobodyRunning)).resolves.toBeUndefined();
+    await expect(supervisedSessionOf(fs, paths, "missing", everyoneRunning)).resolves.toBeUndefined();
   });
 });
 
