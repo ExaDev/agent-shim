@@ -1,3 +1,13 @@
+## [11.67.0](https://github.com/ExaDev/agent-shim/compare/v11.66.3...v11.67.0) (2026-10-27)
+
+### Features
+
+* **statusline:** draw everything claude-hud's default draws by default ([99f790d](https://github.com/ExaDev/agent-shim/commit/99f790d9353f7fc6c02ca4cf3dd63f294315084e))
+
+### Documentation
+
+* **statusline:** describe the default as a superset of claude-hud's ([9c69db7](https://github.com/ExaDev/agent-shim/commit/9c69db79aefbb7aa2312e7b925adb6d8239c8435))
+
 ## [11.66.3](https://github.com/ExaDev/agent-shim/compare/v11.66.2...v11.66.3) (2026-10-26)
 
 ### Bug Fixes
