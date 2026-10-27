@@ -1,3 +1,9 @@
+## [11.68.0](https://github.com/ExaDev/agent-shim/compare/v11.67.5...v11.68.0) (2026-10-27)
+
+### Features
+
+* **frontdoor:** tell Claude Code which limit a provider's spent quota is ([019c887](https://github.com/ExaDev/agent-shim/commit/019c887e4bc9b96c0d2170a7a2b6a271a462745f)), references [#448](https://github.com/ExaDev/agent-shim/issues/448)
+
 ## [11.67.5](https://github.com/ExaDev/agent-shim/compare/v11.67.4...v11.67.5) (2026-10-27)
 
 ### Bug Fixes
