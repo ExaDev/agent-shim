@@ -16,6 +16,10 @@ const STREAMED_OUTPUT_START = 1;
 const STREAMED_OUTPUT_PEAK = 9;
 const STREAMED_OUTPUT_UNDERSTATED = 4;
 const NEGATIVE_COUNT = -1;
+const HALF_TOKEN = 0.5;
+const QUARTER_TOKEN = 0.25;
+const ALMOST_TWO_TOKENS = 1.9;
+const OUTPUT_OF_FRACTIONS = 20;
 
 function fold(lines: readonly string[], from = EMPTY_TOKEN_STATE) {
   return lines.reduce((state, text) => {
@@ -27,6 +31,17 @@ function fold(lines: readonly string[], from = EMPTY_TOKEN_STATE) {
 describe("foldTokens", () => {
   it("sums the four counts over the responses", () => {
     expect(fold([line("a", FIRST), line("b", SECOND)]).totals).toEqual(BOTH);
+  });
+
+  it("truncates each response's counts to whole tokens before summing them, as claude-hud does", () => {
+    const fractions = fold([line("a", { input_tokens: HALF_TOKEN, output_tokens: OUTPUT_OF_FRACTIONS }), line("b", { input_tokens: QUARTER_TOKEN, output_tokens: 0 })]);
+    expect(fractions.totals).toEqual({ inputTokens: 0, outputTokens: OUTPUT_OF_FRACTIONS, cacheCreationTokens: 0, cacheReadTokens: 0 });
+    expect(fold([line("c", { cache_read_input_tokens: ALMOST_TWO_TOKENS })]).totals.cacheReadTokens).toBe(1);
+  });
+
+  it("adds the growth of a streamed response in whole tokens, each record's count truncated first", () => {
+    const streamed = fold([line("a", { output_tokens: HALF_TOKEN }), line("a", { output_tokens: ALMOST_TWO_TOKENS }), line("a", { output_tokens: ALMOST_TWO_TOKENS })]);
+    expect(streamed.totals.outputTokens).toBe(1);
   });
 
   it("counts a response once however many of its records repeat its usage", () => {
@@ -77,5 +92,9 @@ describe("TokenStateSchema", () => {
   it("refuses a state with a negative or missing count, so a damaged cache is not trusted", () => {
     expect(TokenStateSchema.safeParse({ totals: { ...ONLY_FIRST, inputTokens: NEGATIVE_COUNT } }).success).toBe(false);
     expect(TokenStateSchema.safeParse({ totals: { inputTokens: 1 } }).success).toBe(false);
+  });
+
+  it("refuses a state holding a fraction of a token, which was folded before counts were truncated", () => {
+    expect(TokenStateSchema.safeParse({ totals: { ...ONLY_FIRST, inputTokens: HALF_TOKEN } }).success).toBe(false);
   });
 });

@@ -2,7 +2,8 @@ import { z } from "zod";
 
 import type { TranscriptRecord } from "./record";
 
-const tokenCount = z.number().nonnegative();
+/** A count of whole tokens: a state holding a fraction was folded before counts were truncated, so it is refused and rebuilt. */
+const tokenCount = z.number().int().nonnegative();
 
 /** The tokens a session has used, summed over every response its transcript records, by the four counts the API reports. */
 const SessionTokensSchema = z.strictObject({ inputTokens: tokenCount, outputTokens: tokenCount, cacheCreationTokens: tokenCount, cacheReadTokens: tokenCount });
@@ -53,6 +54,11 @@ function larger(left: Readonly<SessionTokens>, right: Readonly<SessionTokens>): 
   };
 }
 
+/** A count the client wrote as whole tokens: a fraction is truncated, as claude-hud's `Math.trunc` does for each record's count before it sums them, so the sum of fractions is not rounded as a whole. */
+function wholeTokens(count: number | undefined): number {
+  return Math.trunc(count ?? 0);
+}
+
 /**
  * `state` after one more transcript record, read in file order. Claude Code writes one record per content block of a response and repeats the response's usage on each, so the records of one response are one response: they are told apart by the response's id, and only their increase is counted. The records of a response are adjacent among the records that carry usage (others may fall between them), which is why remembering only the last response is enough. A response without an id is told apart from its neighbours by its counts, so two identical records in a row are one response written twice.
  */
@@ -63,10 +69,10 @@ export function foldTokens(state: TokenState, record: TranscriptRecord): TokenSt
   }
   // The counters are never negative, so a counter of zero falls back to the same zero and either way reads the same.
   const counts: SessionTokens = {
-    inputTokens: usage.input_tokens ?? 0,
-    outputTokens: usage.output_tokens ?? 0,
-    cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
-    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+    inputTokens: wholeTokens(usage.input_tokens),
+    outputTokens: wholeTokens(usage.output_tokens),
+    cacheCreationTokens: wholeTokens(usage.cache_creation_input_tokens),
+    cacheReadTokens: wholeTokens(usage.cache_read_input_tokens),
   };
   // The schema's least message id is one character, so an empty one is already absent and the fallback reads the same.
   const key = record.message?.id ?? `${String(counts.inputTokens)}|${String(counts.outputTokens)}|${String(counts.cacheCreationTokens)}|${String(counts.cacheReadTokens)}`;
