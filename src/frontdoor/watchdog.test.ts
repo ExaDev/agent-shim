@@ -36,7 +36,7 @@ const BOUNDS_TO_WAIT_FOR_SILENCE = 4;
 const BOUNDS_TO_BLOCK = 3;
 /** The wait for the main thread to pause for the tests that do not read its frames: none, so a stall is reported as soon as it is seen. */
 const NO_PAUSE_WAIT_MS = 0;
-/** The wait for the test that does read them: a guard against a pause that never comes, not an expectation of how long one takes, so a loaded machine cannot make it flaky. */
+/** The wait for the test that does read them, and the deadline a sampler is given by the tests that wait for what the sampler itself does (it exits, or it cannot start): a guard against a pause or a sampler that never ends, not an expectation of how long one takes, so a loaded machine cannot make it flaky. Starting a child process is slow enough on a loaded machine to pass any fixed figure, and the watchdog would then report that the sampler did not finish instead of how it ended. The tests of the deadline itself set their own. */
 const PAUSE_WAIT_GUARD_MS = 60_000;
 
 /** The processor count of the fixed load readings the thread tests judge by, so the machine running the tests (which may itself be loaded) never decides whether a stall is reported. */
@@ -315,7 +315,7 @@ describe("startThreadWatchdog", () => {
         fs.writeFileSync(path.join(samples, old), "older");
         fs.utimesSync(path.join(samples, old), new Date(0), new Date(Number(old.slice(0, 1)) * MS_PER_SECOND));
       }
-      const nativeSample = { command: process.execPath, args: ["-e", "require('node:fs').writeFileSync(process.argv[1], 'sampled ' + process.argv[2] + 's')", "{file}", "{seconds}"], directory: samples, seconds: 1, overheadMs: PROBE_TIMEOUT_MS, keep: 2 };
+      const nativeSample = { command: process.execPath, args: ["-e", "require('node:fs').writeFileSync(process.argv[1], 'sampled ' + process.argv[2] + 's')", "{file}", "{seconds}"], directory: samples, seconds: 1, overheadMs: PAUSE_WAIT_GUARD_MS, keep: 2 };
       const log = await stallWith({ nativeSample });
       await vi.waitFor(
         () => {
@@ -340,7 +340,7 @@ describe("startThreadWatchdog", () => {
 
     it("says the sampler wrote nothing when it fails, passing on what it said, rather than naming a file that is not there", async () => {
       const samples = path.join(directory, "stall-samples");
-      const nativeSample = { command: process.execPath, args: ["-e", "process.stderr.write('cannot examine process'); process.exit(1)"], directory: samples, seconds: 1, overheadMs: PROBE_TIMEOUT_MS, keep: 1 };
+      const nativeSample = { command: process.execPath, args: ["-e", "process.stderr.write('cannot examine process'); process.exit(1)"], directory: samples, seconds: 1, overheadMs: PAUSE_WAIT_GUARD_MS, keep: 1 };
       await stallWith({ nativeSample });
       await vi.waitFor(
         () => {
@@ -382,7 +382,7 @@ describe("startThreadWatchdog", () => {
     });
 
     it("says so when the native sampler cannot be run, and still ends the stall", async () => {
-      const nativeSample = { command: path.join(directory, "no-such-sampler"), args: [], directory: path.join(directory, "stall-samples"), seconds: 1, overheadMs: PROBE_TIMEOUT_MS, keep: 1 };
+      const nativeSample = { command: path.join(directory, "no-such-sampler"), args: [], directory: path.join(directory, "stall-samples"), seconds: 1, overheadMs: PAUSE_WAIT_GUARD_MS, keep: 1 };
       const log = await stallWith({ nativeSample });
       await vi.waitFor(
         () => {
