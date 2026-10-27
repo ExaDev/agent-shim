@@ -95,11 +95,15 @@ export function unregisterSupervised(fs: RegistryFs, paths: LayoutPaths, pool: s
   fs.removeRecursive(sessionStatePath(paths, pool, sessionId));
 }
 
-/**
- * The pool's sessions whose launcher is still running. An entry whose launcher has gone, or that is not a session of this schema, is not a session anyone is supervising, so it is removed rather than counted.
- */
-export function liveSupervised(fs: RegistryFs, paths: LayoutPaths, pool: string, isRunning: (pid: number) => boolean): readonly SupervisedSession[] {
-  const live: SupervisedSession[] = [];
+/** A registry entry with the file it was read from, so a caller that finds its launcher gone can remove it. */
+interface ListedSupervised {
+  readonly file: string;
+  readonly session: SupervisedSession;
+}
+
+/** The pool's entries, liveness unjudged. An entry that is not a session of this schema is not one anyone is supervising, so it is removed rather than listed. */
+function listSupervised(fs: RegistryFs, paths: LayoutPaths, pool: string): readonly ListedSupervised[] {
+  const listed: ListedSupervised[] = [];
   for (const name of fs.readdir(sessionsDirOf(paths, pool))) {
     const file = path.join(sessionsDirOf(paths, pool), name);
     const raw = fs.readFileUtf8(file);
@@ -113,8 +117,23 @@ export function liveSupervised(fs: RegistryFs, paths: LayoutPaths, pool: string,
       fs.removeRecursive(file);
       continue;
     }
-    if (parsed.success && isRunning(parsed.data.pid)) {
-      live.push(parsed.data);
+    if (parsed.success) {
+      listed.push({ file, session: parsed.data });
+    } else {
+      fs.removeRecursive(file);
+    }
+  }
+  return listed;
+}
+
+/**
+ * The pool's sessions whose launcher is still running. An entry whose launcher has gone, or that is not a session of this schema, is not a session anyone is supervising, so it is removed rather than counted.
+ */
+export function liveSupervised(fs: RegistryFs, paths: LayoutPaths, pool: string, isRunning: (pid: number) => boolean): readonly SupervisedSession[] {
+  const live: SupervisedSession[] = [];
+  for (const { file, session } of listSupervised(fs, paths, pool)) {
+    if (isRunning(session.pid)) {
+      live.push(session);
     } else {
       fs.removeRecursive(file);
     }
@@ -180,15 +199,17 @@ export function removeModelMove(fs: Pick<RegistryFs, "removeRecursive">, paths: 
 }
 
 /**
- * The live registry entry a session id belongs to, across every pool: what tells the door a session is supervised (so a model move can be left for its supervisor) and which pool's lock the move belongs under. A session id registers once, so the first live entry is the entry.
+ * The live registry entry a session id belongs to, across every pool: what tells the door a session is supervised (so a model move can be left for its supervisor) and which pool's lock the move belongs under. A session id registers once, so the first live entry is the entry. Entries whose launcher has gone are removed, as `liveSupervised` does. Liveness is read without blocking the calling thread, since the door that calls this answers every session on its event loop.
  */
-export function supervisedSessionOf(fs: RegistryFs, paths: LayoutPaths, sessionId: string, isRunning: (pid: number) => boolean): SupervisedSession | undefined {
-  for (const pool of fs.readdir(paths.superviseDir)) {
-    const sessions = liveSupervised(fs, paths, pool, isRunning);
-    const found = sessions.find((session) => session.sessionId === sessionId);
-    if (found !== undefined) {
-      return found;
+export async function supervisedSessionOf(fs: RegistryFs, paths: LayoutPaths, sessionId: string, runningAmong: (pids: readonly number[]) => Promise<ReadonlySet<number>>): Promise<SupervisedSession | undefined> {
+  const listed = fs.readdir(paths.superviseDir).flatMap((pool) => listSupervised(fs, paths, pool));
+  const running = await runningAmong(listed.map(({ session }) => session.pid));
+  const live = listed.filter(({ file, session }) => {
+    if (running.has(session.pid)) {
+      return true;
     }
-  }
-  return undefined;
+    fs.removeRecursive(file);
+    return false;
+  });
+  return live.find(({ session }) => session.sessionId === sessionId)?.session;
 }

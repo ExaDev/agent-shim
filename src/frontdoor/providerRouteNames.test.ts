@@ -26,7 +26,7 @@ function codexPorts(): Omit<CodexRoutePorts, "loadProvider"> {
   };
 }
 
-function resolver(files: Record<string, unknown>, models?: ModelsConfig, accountMoves?: (sessionId: string, to: string, model: string) => boolean): ReturnType<typeof createProviderRouteResolver> {
+function resolver(files: Record<string, unknown>, models?: ModelsConfig, accountMoves?: (sessionId: string, to: string, model: string) => Promise<boolean>): ReturnType<typeof createProviderRouteResolver> {
   return createProviderRouteResolver({
     fs: fakeFs(files),
     providersDir: PROVIDERS_DIR,
@@ -66,9 +66,9 @@ describe("a name in a request cannot reach a file outside its directory", () => 
   it("does not treat an identity that would name a path as an account target, and requests no move to it", async () => {
     const moves: [string, string, string][] = [];
     const models: ModelsConfig = { virtual: { sneaky: { mode: "ordered", members: ["acct:../../x/opus"] } } };
-    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }, models, (sessionId, to, model) => {
+    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }, models, async (sessionId, to, model) => {
       moves.push([sessionId, to, model]);
-      return true;
+      return await Promise.resolve(true);
     });
     await resolve(request("/providers/z/v1/messages", "acct:../../x/opus"));
     await resolve(request("/providers/z/v1/messages", "sneaky"));
@@ -77,9 +77,9 @@ describe("a name in a request cannot reach a file outside its directory", () => 
 
   it("still requests a move to an identity with an ordinary name", async () => {
     const moves: [string, string, string][] = [];
-    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }, undefined, (sessionId, to, model) => {
+    const resolve = resolver({ [`${PROVIDERS_DIR}/z.json`]: httpProvider }, undefined, async (sessionId, to, model) => {
       moves.push([sessionId, to, model]);
-      return true;
+      return await Promise.resolve(true);
     });
     await resolve(request("/providers/z/v1/messages", "acct:work/opus"));
     expect(moves).toEqual([["s-1", "work", "opus"]]);
