@@ -1,3 +1,9 @@
+## [11.67.3](https://github.com/ExaDev/agent-shim/compare/v11.67.2...v11.67.3) (2026-10-27)
+
+### Bug Fixes
+
+* **frontdoor:** find a supervised session without blocking the door ([8b467e8](https://github.com/ExaDev/agent-shim/commit/8b467e8b49893d2a2f3f6f13e38c1a38b400cb8c))
+
 ## [11.67.2](https://github.com/ExaDev/agent-shim/compare/v11.67.1...v11.67.2) (2026-10-27)
 
 ### Bug Fixes
