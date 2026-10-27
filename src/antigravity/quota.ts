@@ -2,6 +2,7 @@
  * Antigravity quota and rate-limit translation into Anthropic unified headers.
  */
 
+import { exhaustionHeaders } from "../usage/unifiedRefusal";
 import { CCPA_DEFAULT_PROJECT_ID, CCPA_ENDPOINT, CCPA_USER_AGENT } from "./cloudUpstream";
 
 const MS_PER_SECOND = 1000;
@@ -185,11 +186,7 @@ export function unifiedAntigravityQuotaHeaders(params: AntigravityQuotaParams): 
 
   if (exhaustion !== undefined) {
     // The window that binds names itself and the instant it lifts, as the real API does, so the client can say which limit was hit and when it ends, and retrying before then cannot succeed: the overall reset is that instant, not the earliest of several windows (of which an unexhausted one resets sooner).
-    headers["anthropic-ratelimit-unified-representative-claim"] = exhaustion.window;
-    headers["anthropic-ratelimit-unified-reset"] = String(exhaustion.resetSec);
-    headers["retry-after"] = String(Math.max(1, exhaustion.resetSec - nowSec));
-    headers["x-should-retry"] = "false";
-    return headers;
+    return { ...headers, ...exhaustionHeaders({ window: exhaustion.window, resetSec: exhaustion.resetSec, nowSec }) };
   }
 
   if (earliestResetSec !== undefined) {
