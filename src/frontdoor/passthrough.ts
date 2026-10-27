@@ -5,6 +5,7 @@ import type { IncomingMessage } from "node:http";
 import { HTTP_STATUS } from "../codex/http";
 import { forwardableHeaders } from "./connect";
 import { ExemptHttpAgent, ExemptTlsAgent } from "./connectEffects";
+import { quotaRefusalHeaders } from "../usage/unifiedRefusal";
 import type { FrontDoorRoute } from "./route";
 import { upstreamChunks } from "./server";
 
@@ -19,6 +20,12 @@ export interface PassthroughTarget {
   /** What a headroom hop in front of this route is told to forward to: the door's direct listener, whose re-resolution of the path is what strips the provider prefix the upstream must not see. */
   readonly headroomUpstream: string | undefined;
 }
+
+/** The status an upstream answers a spent quota or a rate limit with. */
+const TOO_MANY_REQUESTS = 429;
+
+/** The most of a refusal's body held to read what it says. Error bodies are a line or two, so a body past this is no refusal worth translating and is streamed on as it is. */
+const REFUSAL_BODY_LIMIT_BYTES = 16_384;
 
 /**
  * Joins an upstream response's headers into the single-value shape a routed response's head takes, minus the hop-by-hop set: this process re-frames both messages, so framing headers (`transfer-encoding`, `connection` and kin) belong to whichever connection carried them and must be regenerated, never copied. A repeated header becomes one comma-joined value, which is lossless for the JSON and SSE APIs routed here.
@@ -63,21 +70,51 @@ export function createPassthroughRoute(name: string, target: PassthroughTarget):
           agent,
         };
         const onUpstreamResponse = (upstreamResponse: IncomingMessage): void => {
-          response.start(upstreamResponse.statusCode ?? HTTP_STATUS.badGateway, responseHeaders(upstreamResponse.headers));
-          // Headers go out before the first body byte: a streaming (SSE) response must reach the client as its chunks arrive, not when it completes.
-          response.flush();
+          const status = upstreamResponse.statusCode ?? HTTP_STATUS.badGateway;
+          const head = responseHeaders(upstreamResponse.headers);
+          const chunks = upstreamChunks(upstreamResponse);
           const stream = async (): Promise<void> => {
             try {
-              for await (const chunk of upstreamChunks(upstreamResponse)) {
-                if (request.signal.aborted) {
-                  return;
+              // A 429 is the one response held back before its head goes out: an error body is small, and what it says (a spent quota, which window, when it lifts) decides whether the head is translated into the real API's form. Every other response, a stream above all, starts as soon as its head is known.
+              const held: Uint8Array[] = [];
+              let finished = false;
+              if (status === TOO_MANY_REQUESTS) {
+                let heldBytes = 0;
+                while (heldBytes <= REFUSAL_BODY_LIMIT_BYTES) {
+                  const next = await chunks.next();
+                  if (next.done === true) {
+                    finished = true;
+                    break;
+                  }
+                  held.push(next.value);
+                  heldBytes += next.value.length;
                 }
+              }
+              const translated = finished ? quotaRefusalHeaders({ status, headers: head, body: Buffer.concat(held), nowMs: Date.now() }) : undefined;
+              response.start(status, { ...head, ...translated });
+              // Headers go out before the first body byte: a streaming (SSE) response must reach the client as its chunks arrive, not when it completes.
+              response.flush();
+              for (const chunk of held) {
                 await response.write(chunk);
+              }
+              if (!finished) {
+                for await (const chunk of chunks) {
+                  if (request.signal.aborted) {
+                    return;
+                  }
+                  await response.write(chunk);
+                }
               }
               response.end();
             } catch {
               // The client went away mid-stream, or the upstream dropped the connection: either way the response is no longer salvageable.
-              response.destroy();
+              if (response.headersSent) {
+                response.destroy();
+              } else {
+                response.start(HTTP_STATUS.badGateway, { "Content-Type": "application/json" });
+                await response.write(JSON.stringify({ type: "error", error: { type: "api_error", message: `upstream ${target.baseUrl} dropped the connection` } }));
+                response.end();
+              }
             }
             resolve(undefined);
           };

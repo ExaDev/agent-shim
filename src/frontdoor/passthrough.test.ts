@@ -11,6 +11,9 @@ import { AUTH_HEADER, HEADROOM_FLAG_HEADER, IDENTITY_HEADER } from "./route";
 
 const servers: http.Server[] = [];
 
+/** Characters in a refusal body that put it past what the route holds to read (16,384 bytes). */
+const REFUSAL_BODY_PAST_LIMIT = 20_000;
+
 afterEach(async () => {
   await Promise.all(
     servers.splice(0).map(async (server) => {
@@ -119,6 +122,64 @@ describe("the pass-through route", () => {
         body: "{}",
       });
       expect(upstream.seen()[0]?.url).toBe("/api/anthropic/v1/messages?beta=true");
+    } finally {
+      await door.close();
+    }
+  });
+
+  /** A fake upstream answering every request with one fixed status, headers and body. */
+  async function refusingUpstream(status: number, headers: Readonly<Record<string, string>>, text: string): Promise<number> {
+    const server = http.createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(status, headers);
+        response.end(text);
+      });
+    });
+    return await listen(server);
+  }
+
+  it("translates an upstream's spent-quota 429 into the real API's limit headers and leaves its body as it was", async () => {
+    const text = JSON.stringify({ type: "error", error: { code: "1308", message: "Usage limit reached for 5 hour. Your limit will reset at 2026-10-22 23:57:10" } });
+    const port = await refusingUpstream(HTTP_STATUS.tooManyRequests, { "content-type": "application/json", "retry-after": "3600" }, text);
+    const door = await startDoor({ baseUrl: `http://127.0.0.1:${String(port)}`, stripPrefix: "/providers/z", headroomUpstream: undefined });
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      expect(response.status).toBe(HTTP_STATUS.tooManyRequests);
+      expect(response.headers.get("anthropic-ratelimit-unified-representative-claim")).toBe("five_hour");
+      expect(response.headers.get("anthropic-ratelimit-unified-status")).toBe("rejected");
+      expect(response.headers.get("x-should-retry")).toBe("false");
+      expect(response.headers.get("retry-after")).toBe("3600");
+      expect(await response.text()).toBe(text);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("leaves a short rate limit's 429 as the upstream sent it", async () => {
+    const text = JSON.stringify({ type: "error", error: { code: "1302", message: "Rate limit reached for requests" } });
+    const port = await refusingUpstream(HTTP_STATUS.tooManyRequests, { "content-type": "application/json", "retry-after": "5" }, text);
+    const door = await startDoor({ baseUrl: `http://127.0.0.1:${String(port)}`, stripPrefix: "/providers/z", headroomUpstream: undefined });
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      expect(response.status).toBe(HTTP_STATUS.tooManyRequests);
+      expect(response.headers.get("anthropic-ratelimit-unified-representative-claim")).toBeNull();
+      expect(response.headers.get("retry-after")).toBe("5");
+      expect(await response.text()).toBe(text);
+    } finally {
+      await door.close();
+    }
+  });
+
+  it("streams on a refusal body past the most it holds, whole and untranslated", async () => {
+    const text = JSON.stringify({ type: "error", error: { code: "1308", message: `Usage limit reached for 5 hour. ${"x".repeat(REFUSAL_BODY_PAST_LIMIT)}` } });
+    const port = await refusingUpstream(HTTP_STATUS.tooManyRequests, { "content-type": "application/json", "retry-after": "3600" }, text);
+    const door = await startDoor({ baseUrl: `http://127.0.0.1:${String(port)}`, stripPrefix: "/providers/z", headroomUpstream: undefined });
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, { method: "POST", headers: { [AUTH_HEADER]: "launch-token-for-tests" }, body: "{}" });
+      expect(response.status).toBe(HTTP_STATUS.tooManyRequests);
+      expect(response.headers.get("anthropic-ratelimit-unified-representative-claim")).toBeNull();
+      expect(await response.text()).toBe(text);
     } finally {
       await door.close();
     }
