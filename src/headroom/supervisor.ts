@@ -2,6 +2,7 @@ import path from "node:path";
 
 import { HEADROOM_DEFAULT_IDLE_SHUTDOWN_MINUTES, HEADROOM_DEFAULT_SOURCE, type HeadroomGlobalConfig } from "../config/schema";
 import type { LayoutPaths } from "../paths";
+import type { LogRotationLimits } from "../logRotation";
 import { directOrigin, frontDoorOrigin, listFrontDoorDirectRecords, liveFrontDoorDirectRecords, pruneDeadFrontDoorDirectRecords, pruneMalformedFrontDoorDirectFiles, readFrontDoorState, type FrontDoorDirectRecord, type FrontDoorLiveness } from "../frontdoor/state";
 import { hashSettings, settingsOf, type HeadroomSettings } from "./settings";
 import { redactText } from "../frontdoor/capture";
@@ -62,8 +63,10 @@ export interface SupervisorPorts {
   readonly frontDoorLiveness: (pids: readonly number[]) => FrontDoorLiveness;
   /** The daemon log's size in bytes (0 before it exists): where the next start attempt's own output will begin. */
   readonly daemonLogSize: () => number;
-  /** The daemon log from byte `fromByte` to its end, at most its last `maxBytes`, read without loading the whole file (nothing rotates the log). */
+  /** The daemon log from byte `fromByte` to its end, at most its last `maxBytes`, read without loading the whole file. */
   readonly readDaemonLogTail: (fromByte: number, maxBytes: number) => string;
+  /** Rotates the daemon log when it is over `limits.maxBytes` (see `rotateLogIfOver`), returning whether it did. Every offset `daemonLogSize` returned earlier is invalid afterwards, so the supervisor calls it only at the top of a tick, before it takes the offset of any start attempt. */
+  readonly rotateDaemonLog: (limits: LogRotationLimits) => boolean;
   /** The command line of a running process as `ps` reports it, or undefined when it cannot be read: how a recorded orphan daemon is confirmed to be one before it is signalled (see `daemonIdentity`). */
   readonly daemonCommandLine: (pid: number) => string | undefined;
   /** The platform facts and owner-only checks the daemon's socket directory is prepared and verified with (see `prepareHeadroomSocket`). */
@@ -101,6 +104,16 @@ const DAEMON_EXIT_LOG_LINES = 6;
 export const DAEMON_EXIT_LOG_LINE_CHARS = 400;
 /** The most of the daemon log an early-exit report reads: many times what `DAEMON_EXIT_LOG_LINES` lines of a usage error or a traceback's last frame take, so the lines are always there, and a fixed bound however large the unrotated log has grown. */
 const DAEMON_LOG_TAIL_BYTES = 8192;
+/** Bytes per kibibyte. */
+const BYTES_PER_KIB = 1024;
+/** Bytes per mebibyte, so the log cap reads as the size it is. */
+const BYTES_PER_MIB = BYTES_PER_KIB * BYTES_PER_KIB;
+/** The daemon log cap in mebibytes. */
+const HEADROOM_LOG_MAX_MIB = 64;
+/** The size above which the daemon log is rotated: large enough that one generation holds a long run of the proxy's per-request event lines for diagnosing a fault, and small enough that the live file and every kept generation together stay bounded at `HEADROOM_LOG_KEPT_GENERATIONS + 1` times it, however long the daemon runs. */
+export const HEADROOM_LOG_MAX_BYTES = HEADROOM_LOG_MAX_MIB * BYTES_PER_MIB;
+/** How many rotated daemon logs are kept beside the live one: the generation before the current one covers a fault noticed just after a rotation, and a second gives a margin before a fault's lines are deleted. */
+export const HEADROOM_LOG_KEPT_GENERATIONS = 2;
 /** The supervisor's own tick rate for crash detection, allowlist rewrites, drift checks, and idle shutdown. */
 export const HEADROOM_POLL_MS = 1_000;
 
@@ -414,6 +427,10 @@ export async function runSupervisor(
       return HEADROOM_SUPERVISOR_STILL_RUNNING;
     }
     ticks += 1;
+    // First in the tick, so a start attempt later in it takes its log offset after the last rotation it could be invalidated by.
+    if (ports.rotateDaemonLog({ maxBytes: HEADROOM_LOG_MAX_BYTES, keptGenerations: HEADROOM_LOG_KEPT_GENERATIONS })) {
+      ports.log(`agent-shim headroom supervisor: rotated the daemon log past ${String(HEADROOM_LOG_MAX_BYTES)} bytes, keeping ${String(HEADROOM_LOG_KEPT_GENERATIONS)} earlier file(s)`);
+    }
     config = ports.readConfig();
     const settingsHash = hashSettings(config.settings);
     // One read of the process table per tick, shared by the pruning and the allowlist so both act on the same verdict.

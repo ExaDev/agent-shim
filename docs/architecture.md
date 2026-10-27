@@ -17,6 +17,7 @@ src/
   pathNorm.ts            # rule-path normalisation/ancestor helpers shared across the resolver and directory rules
   versionDiscovery.ts     # portable "find the real claude binary" logic
   realPorts.ts            # the real filesystem/spawn/proc/clock/git/credential ports wired into runLauncher by runClaude.ts (tests wire fakes instead)
+  logRotation.ts          # rotateLogIfOver: caps a log whose writer cannot reopen it by copying it to a numbered generation and emptying it in place, over the farm filesystem port
   launcher.ts             # runLauncher: thin orchestration over launcher/* below; the decisions (identity, pool pick, profile, provider, credential, launch flags, pinned version, binary, arguments) live in one function that either performs the launch's recovery, pick recording and credential resolution or, read-only, none of them, and `resolveLaunch` reports that read-only decision as data
   launcher/
     ports.ts              # FsPort, SpawnPort, RunPort, ClockPort, ProcPort, LogPort, FarmFs — injected, fakeable

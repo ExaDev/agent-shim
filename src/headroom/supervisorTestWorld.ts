@@ -2,6 +2,7 @@
  * The fake world the headroom supervisor's test files run `runSupervisor` against, shared so the loop's tests can be split by concern without each file rebuilding the process model.
  */
 import { HEADROOM_DEFAULT_SOURCE } from "../config/schema";
+import { rotateLogIfOver, type LogRotationLimits } from "../logRotation";
 import { buildLayoutPaths } from "../paths";
 import { FAKE_UID, createFakeFarmFs, fakeSocketTrust } from "../test-helpers";
 import { resolveSupervisorConfig, runSupervisor, type HeadroomSupervisorConfig, type RunSupervisorOptions, type SupervisorPorts } from "./supervisor";
@@ -188,6 +189,7 @@ export function makeWorld(seededProviders: readonly { name: string; baseUrl: str
         const bytes = Buffer.from(fs.readFileUtf8(paths.headroomLogPath) ?? "");
         return bytes.subarray(Math.max(fromByte, bytes.length - maxBytes)).toString("utf8");
       },
+      rotateDaemonLog: (limits: LogRotationLimits) => rotateLogIfOver(fs, paths.headroomLogPath, limits),
       // Read through getters, so a test can switch the platform or replace a stat after the world is built.
       socketTrust: {
         get platform() {
