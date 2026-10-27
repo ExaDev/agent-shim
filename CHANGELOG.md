@@ -1,3 +1,9 @@
+## [11.67.1](https://github.com/ExaDev/agent-shim/compare/v11.67.0...v11.67.1) (2026-10-27)
+
+### Bug Fixes
+
+* **headroom:** cap and rotate the daemon log ([a2f74a6](https://github.com/ExaDev/agent-shim/commit/a2f74a6fb302425732ac5cdebe9d7fe64da86b78)), closes [#615](https://github.com/ExaDev/agent-shim/issues/615)
+
 ## [11.67.0](https://github.com/ExaDev/agent-shim/compare/v11.66.3...v11.67.0) (2026-10-27)
 
 ### Features
