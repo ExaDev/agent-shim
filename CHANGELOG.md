@@ -1,3 +1,11 @@
+## [11.67.2](https://github.com/ExaDev/agent-shim/compare/v11.67.1...v11.67.2) (2026-10-27)
+
+### Bug Fixes
+
+* **deps:** override qs past the patched release of GHSA-6pq8-jhm2-2vcw ([9eeccd1](https://github.com/ExaDev/agent-shim/commit/9eeccd1b4f11d16c06e958ae18a6f78d408411c1))
+* **frontdoor:** read the headroom keeper's liveness without blocking the door ([e403bb5](https://github.com/ExaDev/agent-shim/commit/e403bb5c8876f45b3548dcc07548a7d1eb48a5b6))
+* stop two tests depending on how fast a busy machine runs ([49ad6b1](https://github.com/ExaDev/agent-shim/commit/49ad6b16a0a9338e54fdd7d1677db8354da143d5)), closes [#618](https://github.com/ExaDev/agent-shim/issues/618)
+
 ## [11.67.1](https://github.com/ExaDev/agent-shim/compare/v11.67.0...v11.67.1) (2026-10-27)
 
 ### Bug Fixes
