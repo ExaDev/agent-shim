@@ -1,3 +1,9 @@
+## [11.67.5](https://github.com/ExaDev/agent-shim/compare/v11.67.4...v11.67.5) (2026-10-27)
+
+### Bug Fixes
+
+* **statusline:** truncate a response's token counts to whole tokens before summing ([637fe15](https://github.com/ExaDev/agent-shim/commit/637fe15e4246398b480583609ee046ff13f83723)), closes [#614](https://github.com/ExaDev/agent-shim/issues/614)
+
 ## [11.67.4](https://github.com/ExaDev/agent-shim/compare/v11.67.3...v11.67.4) (2026-10-27)
 
 ### Bug Fixes
