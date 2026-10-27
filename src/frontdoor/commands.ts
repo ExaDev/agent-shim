@@ -325,15 +325,24 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   const headroomKeeper = createHeadroomKeeper({
     paths,
     ownPid: process.pid,
-    ports: { fs: realFarmFs, now: () => Date.now(), isRunning: realIsProcessRunning, spawnSupervisor: (layout) => spawnDetachedSupervisor(layout, "__headroom-supervisor", layout.headroomLogPath) },
+    ports: { fs: realFarmFs, now: () => Date.now(), runningAmong: realRunningAmong, spawnSupervisor: (layout) => spawnDetachedSupervisor(layout, "__headroom-supervisor", layout.headroomLogPath) },
     log,
   });
+  // A tick awaits a process-table read, which on a loaded machine can outlast the interval: a tick starts only once the previous one has finished, so reads never pile up.
+  let headroomKeeperTicking = false;
   const headroomKeeperTimer = setInterval(() => {
-    try {
-      headroomKeeper.tick();
-    } catch (error) {
-      log(`headroom keeper failed: ${error instanceof Error ? error.message : String(error)}`);
+    if (headroomKeeperTicking) {
+      return;
     }
+    headroomKeeperTicking = true;
+    headroomKeeper
+      .tick()
+      .catch((error: unknown) => {
+        log(`headroom keeper failed: ${error instanceof Error ? error.message : String(error)}`);
+      })
+      .finally(() => {
+        headroomKeeperTicking = false;
+      });
   }, HEADROOM_POLL_MS);
   headroomKeeperTimer.unref();
   keeperTimers.push(headroomKeeperTimer);
