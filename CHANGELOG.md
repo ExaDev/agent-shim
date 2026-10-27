@@ -1,3 +1,10 @@
+## [11.67.4](https://github.com/ExaDev/agent-shim/compare/v11.67.3...v11.67.4) (2026-10-27)
+
+### Bug Fixes
+
+* **frontdoor:** let the probes take the bound they wait for ([8699fb4](https://github.com/ExaDev/agent-shim/commit/8699fb40d29ec385ea5becaa4c53d7dc7a8a70a2)), closes [#604](https://github.com/ExaDev/agent-shim/issues/604)
+* **statusline:** read a reset time a Date cannot hold as absent ([d6b9f10](https://github.com/ExaDev/agent-shim/commit/d6b9f10bdb0d0706011476c26e53afb8282d3e1b)), closes [#624](https://github.com/ExaDev/agent-shim/issues/624)
+
 ## [11.67.3](https://github.com/ExaDev/agent-shim/compare/v11.67.2...v11.67.3) (2026-10-27)
 
 ### Bug Fixes
