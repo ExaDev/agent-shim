@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveStatusline, type StatuslineSettings } from "../../config/statusline";
+import { resolveStatusline, type ResolvedStatusline, type StatuslineSettings } from "../../config/statusline";
 import { visibleLength } from "../ansi";
 import { STATUSLINE_LANGUAGES } from "../messages/languages";
-import { createPalette } from "../palette";
+import { createPalette, type Palette } from "../palette";
 import { fakeRenderContext } from "../testing";
 import { EMPTY_ACTIVITY_FACTS, type ActivityFacts, type AgentFact, type NamesFact, type ToolCallFact } from "../transcript/activity";
 import type { RenderContext, RowOutput } from "./context";
@@ -71,11 +71,11 @@ function session(seed: number): ActivityFacts {
   };
 }
 
-function contextOf(activity: ActivityFacts, width: number, settings: StatuslineSettings): RenderContext {
-  const resolved = resolveStatusline(settings);
+/** The context a row draws from, for `activity` at `width`. The resolved settings and the palette are the caller's, built once per settings choice: they depend on neither the session nor the width, and resolving them parses the whole settings schema. */
+function contextOf(activity: ActivityFacts, width: number, resolved: ResolvedStatusline, palette: Palette): RenderContext {
   return fakeRenderContext({
     settings: resolved,
-    palette: createPalette(resolved.colours, true),
+    palette,
     width,
     nowMs: NOW_MS,
     transcript: () => ({
@@ -104,12 +104,15 @@ describe("the activity rows at every width", () => {
   for (const language of STATUSLINE_LANGUAGES) {
     for (const [choice, settings] of SETTINGS) {
       it(`never draw a line wider than the width, in ${language} with ${choice}`, () => {
+        const resolved = resolveStatusline({ ...settings, language });
+        const palette = createPalette(resolved.colours, true);
         const overflowing: string[] = [];
         for (let index = 0; index < SESSIONS; index += 1) {
           const activity = session(SEED + index);
           for (let width = MIN_WIDTH; width <= MAX_WIDTH; width += 1) {
+            const context = contextOf(activity, width, resolved, palette);
             for (const [name, row] of Object.entries(ROWS)) {
-              for (const line of linesOf(row(contextOf(activity, width, { ...settings, language })))) {
+              for (const line of linesOf(row(context))) {
                 if (visibleLength(line) > width) {
                   overflowing.push(`${name} session ${String(index)} width ${String(width)}: ${String(visibleLength(line))} columns`);
                 }
@@ -123,7 +126,9 @@ describe("the activity rows at every width", () => {
   }
 
   it("draw something for the sessions the test generates, so the widths it checks are not all empty rows", () => {
-    const drawn = Object.values(ROWS).map((row) => Array.from({ length: SESSIONS }, (_, index) => linesOf(row(contextOf(session(SEED + index), MAX_WIDTH, {}))).length).reduce((total, count) => total + count, 0));
+    const resolved = resolveStatusline({});
+    const palette = createPalette(resolved.colours, true);
+    const drawn = Object.values(ROWS).map((row) => Array.from({ length: SESSIONS }, (_, index) => linesOf(row(contextOf(session(SEED + index), MAX_WIDTH, resolved, palette))).length).reduce((total, count) => total + count, 0));
     expect(drawn.every((count) => count > 0)).toBe(true);
   });
 });
