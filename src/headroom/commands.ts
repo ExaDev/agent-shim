@@ -7,6 +7,7 @@ import type { Command } from "commander";
 import { printJson, withExamples, type CommandDeps } from "../cli/commandDeps";
 import { HTTP_STATUS } from "../codex/http";
 import { readGlobalConfig } from "../configProfilesStore";
+import { rotateLogIfOver } from "../logRotation";
 import { realTrustBundleFs } from "../frontdoor/realFrontDoorPort";
 import { resolveTrustBundle, type TrustBundle, type TrustBundleFs } from "../frontdoor/trust";
 import { registerHeadroomRoutingCommands } from "./routingCommands";
@@ -286,6 +287,7 @@ function realSupervisorPorts(paths: LayoutPaths): SupervisorPorts {
     daemonCommandLine: realProcessCommandLine,
     daemonLogSize: () => realFileSize(paths.headroomLogPath),
     readDaemonLogTail: (fromByte, maxBytes) => realReadFileTail(paths.headroomLogPath, fromByte, maxBytes),
+    rotateDaemonLog: (limits) => rotateLogIfOver(realFarmFs, paths.headroomLogPath, limits),
     socketTrust: realHeadroomSocketTrust,
     readConfig: () => resolveSupervisorConfig(readGlobalConfig(paths)?.headroom ?? {}),
     spawnHeadroom: (socketPath, allowlistFile, settings) => {

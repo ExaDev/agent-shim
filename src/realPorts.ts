@@ -288,7 +288,7 @@ export function realFileSize(filePath: string): number {
 }
 
 /**
- * The text of `filePath` from byte `fromByte` to its end, but at most its last `maxBytes`: one bounded read, never the whole file, for a log nothing rotates. When the bound cuts into the range, the cut line is dropped up to the first line break, or, when the read holds no line break, only the bytes of a multi-byte character the cut split, so the text never starts inside a UTF-8 sequence. Any other invalid UTF-8 decodes to the replacement character. An absent file reads as empty.
+ * The text of `filePath` from byte `fromByte` to its end, but at most its last `maxBytes`: one bounded read, never the whole file, for a log that can still be large (the supervisor caps and rotates the daemon log). When the bound cuts into the range, the cut line is dropped up to the first line break, or, when the read holds no line break, only the bytes of a multi-byte character the cut split, so the text never starts inside a UTF-8 sequence. Any other invalid UTF-8 decodes to the replacement character. An absent file reads as empty.
  */
 export function realReadFileTail(filePath: string, fromByte: number, maxBytes: number): string {
   const size = realFileSize(filePath);

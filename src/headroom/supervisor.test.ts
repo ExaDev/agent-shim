@@ -426,7 +426,7 @@ describe("runSupervisor", () => {
         return pid;
       },
     };
-    // The log is never read whole: nothing rotates it, so each attempt reads only its size and a bounded tail through the ports.
+    // The log is never read whole, since it can be large: each attempt reads only its size and a bounded tail through the ports.
     const wholeLogReads: string[] = [];
     const readFileUtf8 = world.fs.readFileUtf8;
     const guarded: SupervisorPorts = {
