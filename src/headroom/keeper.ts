@@ -1,13 +1,16 @@
 import type { LayoutPaths } from "../paths";
 import { HEADROOM_START_TIMEOUT_MS, startSupervisorUnderLock, type EnsureHeadroomPorts } from "./ensure";
-import { listSessions, readStartLock, resolveServingHeadroomState, writeSession } from "./state";
+import { listSessions, readHeadroomState, readStartLock, resolveServingHeadroomState, writeSession } from "./state";
 
 /** Every effect the keeper performs, injected so a tick runs against fakes in tests. */
 export interface HeadroomKeeperPorts {
   readonly paths: LayoutPaths;
   /** The pid the keeper holds the start lock as: the long-lived process running it, never a launcher. */
   readonly ownPid: number;
-  readonly ports: Pick<EnsureHeadroomPorts, "fs" | "now" | "isRunning" | "spawnSupervisor">;
+  readonly ports: Pick<EnsureHeadroomPorts, "fs" | "now" | "spawnSupervisor"> & {
+    /** Which of `pids` are running (zombie-aware), read without blocking the calling thread: the keeper runs in the front door, whose event loop answers every session. */
+    readonly runningAmong: (pids: readonly number[]) => Promise<ReadonlySet<number>>;
+  };
   readonly log: (message: string) => void;
 }
 
@@ -31,7 +34,7 @@ export type HeadroomKeeperOutcome =
  *
  * Once a supervisor is alive, the launchers registered against a dead one are re-registered against it. Without that the new supervisor has no sessions of its own, so it would shut itself down after its idle period and leave the same failure behind.
  */
-export function createHeadroomKeeper(deps: HeadroomKeeperPorts): { readonly tick: () => HeadroomKeeperOutcome } {
+export function createHeadroomKeeper(deps: HeadroomKeeperPorts): { readonly tick: () => Promise<HeadroomKeeperOutcome> } {
   const { paths, ports, log } = deps;
   let lastAttemptAt: number | undefined;
 
@@ -42,12 +45,19 @@ export function createHeadroomKeeper(deps: HeadroomKeeperPorts): { readonly tick
     }
   };
 
-  const tick = (): HeadroomKeeperOutcome => {
-    const state = resolveServingHeadroomState(ports.fs, { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile }, ports.isRunning)?.state;
-    const supervisorPid = state?.supervisorPid;
-    const orphans = listSessions(ports.fs, paths.headroomSessionsDir).filter((session) => ports.isRunning(session.pid) && !ports.isRunning(session.supervisorPid));
+  const tick = async (): Promise<HeadroomKeeperOutcome> => {
+    const stateFiles = { stateFile: paths.headroomStateFile, legacyStateFile: paths.headroomLegacyStateFile };
+    const sessions = listSessions(ports.fs, paths.headroomSessionsDir);
+    // One liveness read per tick over every pid the tick can ask about, so the decision below runs synchronously against a single snapshot. A pid first written after the read (a launch taking the start lock meanwhile) is counted as running until the next tick asks about it: clearing a live launch's lock is the worse error.
+    const asked = new Set<number>([readHeadroomState(ports.fs, stateFiles.stateFile)?.supervisorPid, readHeadroomState(ports.fs, stateFiles.legacyStateFile)?.supervisorPid, readStartLock(ports.fs, paths.headroomLockFile)?.pid, ...sessions.flatMap((session) => [session.pid, session.supervisorPid])].filter((pid) => pid !== undefined));
+    const running = await ports.runningAmong([...asked]);
+    const isRunning = (pid: number): boolean => !asked.has(pid) || running.has(pid);
 
-    if (supervisorPid !== undefined && ports.isRunning(supervisorPid)) {
+    const state = resolveServingHeadroomState(ports.fs, stateFiles, isRunning)?.state;
+    const supervisorPid = state?.supervisorPid;
+    const orphans = sessions.filter((session) => isRunning(session.pid) && !isRunning(session.supervisorPid));
+
+    if (supervisorPid !== undefined && isRunning(supervisorPid)) {
       lastAttemptAt = undefined;
       releaseOwnLock();
       for (const session of orphans) {
@@ -68,7 +78,7 @@ export function createHeadroomKeeper(deps: HeadroomKeeperPorts): { readonly tick
     // A previous attempt that never produced a supervisor leaves this keeper's own lock behind, which would read as someone else's start in progress.
     releaseOwnLock();
     lastAttemptAt = ports.now();
-    const start = startSupervisorUnderLock({ paths, holderPid: deps.ownPid, ports });
+    const start = startSupervisorUnderLock({ paths, holderPid: deps.ownPid, ports: { fs: ports.fs, now: ports.now, isRunning, spawnSupervisor: ports.spawnSupervisor } });
     log(`front door: headroom supervisor is not running and ${String(orphans.length)} launcher(s) are registered against it (${start})`);
     return { kind: "starting", start, waiting: orphans.length };
   };

@@ -29,7 +29,7 @@ function makeWorld() {
   const ports = {
     fs,
     now: () => clock,
-    isRunning: (pid: number) => alive.has(pid),
+    runningAmong: async (pids: readonly number[]) => Promise.resolve(new Set(pids.filter((pid) => alive.has(pid)))),
     spawnSupervisor: () => {
       spawns.push(clock);
       return NEW_SUPERVISOR_PID;
@@ -44,6 +44,8 @@ function makeWorld() {
     spawns,
     logs,
     ports,
+    /** The ports a launch starts a supervisor through, which read liveness one pid at a time. */
+    launchPorts: { ...ports, isRunning: (pid: number) => alive.has(pid) },
     keeper,
     advance: (ms: number) => {
       clock += ms;
@@ -62,114 +64,162 @@ function makeWorld() {
 }
 
 describe("createHeadroomKeeper", () => {
-  it("starts the supervisor when launchers are registered against one that is no longer running", () => {
+  it("starts the supervisor when launchers are registered against one that is no longer running", async () => {
     const world = makeWorld();
     world.recordDeadSupervisor();
     world.register(LAUNCHER_A, DEAD_SUPERVISOR_PID);
     world.register(LAUNCHER_B, DEAD_SUPERVISOR_PID);
 
-    const outcome = world.keeper.tick();
+    const outcome = await world.keeper.tick();
 
     expect(outcome).toEqual({ kind: "starting", start: "spawned", waiting: 2 });
     expect(world.spawns).toHaveLength(1);
   });
 
-  it("starts at most one supervisor however many ticks pass inside one start bound, and tries again once the bound has passed", () => {
+  it("starts at most one supervisor however many ticks pass inside one start bound, and tries again once the bound has passed", async () => {
     const world = makeWorld();
     world.recordDeadSupervisor();
     world.register(LAUNCHER_A, DEAD_SUPERVISOR_PID);
 
-    world.keeper.tick();
+    await world.keeper.tick();
     world.advance(TICK_MS);
-    const second = world.keeper.tick();
+    const second = await world.keeper.tick();
     world.advance(HEADROOM_START_TIMEOUT_MS - 2 * TICK_MS);
-    const third = world.keeper.tick();
+    const third = await world.keeper.tick();
 
     expect(second).toEqual({ kind: "backing-off", waiting: 1 });
     expect(third).toEqual({ kind: "backing-off", waiting: 1 });
     expect(world.spawns).toHaveLength(1);
 
     world.advance(2 * TICK_MS);
-    const fourth = world.keeper.tick();
+    const fourth = await world.keeper.tick();
 
     expect(fourth).toEqual({ kind: "starting", start: "spawned", waiting: 1 });
     expect(world.spawns).toHaveLength(2);
   });
 
-  it("starts a supervisor when no state file is recorded at all but a launcher is registered against a supervisor that is gone", () => {
+  it("starts a supervisor when no state file is recorded at all but a launcher is registered against a supervisor that is gone", async () => {
     const world = makeWorld();
     world.register(LAUNCHER_A, DEAD_SUPERVISOR_PID);
 
-    expect(world.keeper.tick()).toEqual({ kind: "starting", start: "spawned", waiting: 1 });
+    expect(await world.keeper.tick()).toEqual({ kind: "starting", start: "spawned", waiting: 1 });
   });
 
-  it("leaves a supervisor that shut itself down alone: no live launcher is registered against it", () => {
+  it("leaves a supervisor that shut itself down alone: no live launcher is registered against it", async () => {
     const world = makeWorld();
     world.recordDeadSupervisor();
     world.register(DEAD_LAUNCHER, DEAD_SUPERVISOR_PID);
 
-    expect(world.keeper.tick()).toEqual({ kind: "idle" });
+    expect(await world.keeper.tick()).toEqual({ kind: "idle" });
     expect(world.spawns).toHaveLength(0);
   });
 
-  it("does nothing when no launcher is registered", () => {
+  it("does nothing when no launcher is registered", async () => {
     const world = makeWorld();
     world.recordDeadSupervisor();
 
-    expect(world.keeper.tick()).toEqual({ kind: "idle" });
+    expect(await world.keeper.tick()).toEqual({ kind: "idle" });
     expect(world.spawns).toHaveLength(0);
   });
 
-  it("re-registers launchers bound to a dead supervisor against the live one, so the new supervisor does not idle out", () => {
+  it("re-registers launchers bound to a dead supervisor against the live one, so the new supervisor does not idle out", async () => {
     const world = makeWorld();
     world.alive.add(NEW_SUPERVISOR_PID);
     world.recordSupervisor(NEW_SUPERVISOR_PID);
     world.register(LAUNCHER_A, DEAD_SUPERVISOR_PID);
     world.register(LAUNCHER_B, DEAD_SUPERVISOR_PID);
 
-    const outcome = world.keeper.tick();
+    const outcome = await world.keeper.tick();
 
     expect(outcome).toEqual({ kind: "serving", rebound: [LAUNCHER_A, LAUNCHER_B] });
     expect(listSessions(world.fs, paths.headroomSessionsDir).map((session) => session.supervisorPid)).toEqual([NEW_SUPERVISOR_PID, NEW_SUPERVISOR_PID]);
   });
 
-  it("leaves launchers bound to another supervisor that is still running where they are", () => {
+  it("leaves launchers bound to another supervisor that is still running where they are", async () => {
     const world = makeWorld();
     world.alive.add(NEW_SUPERVISOR_PID);
     world.alive.add(OTHER_LIVE_SUPERVISOR_PID);
     world.recordSupervisor(NEW_SUPERVISOR_PID);
     world.register(LAUNCHER_A, OTHER_LIVE_SUPERVISOR_PID);
 
-    expect(world.keeper.tick()).toEqual({ kind: "serving", rebound: [] });
+    expect(await world.keeper.tick()).toEqual({ kind: "serving", rebound: [] });
     expect(listSessions(world.fs, paths.headroomSessionsDir)[0]?.supervisorPid).toBe(OTHER_LIVE_SUPERVISOR_PID);
   });
 
-  it("releases the start lock it took once the supervisor is serving, so a later launch can start one", () => {
+  it("releases the start lock it took once the supervisor is serving, so a later launch can start one", async () => {
     const world = makeWorld();
     world.recordDeadSupervisor();
     world.register(LAUNCHER_A, DEAD_SUPERVISOR_PID);
-    world.keeper.tick();
+    await world.keeper.tick();
     expect(readStartLock(world.fs, paths.headroomLockFile)?.pid).toBe(DOOR_PID);
 
     world.alive.add(NEW_SUPERVISOR_PID);
     world.recordSupervisor(NEW_SUPERVISOR_PID);
-    world.keeper.tick();
+    await world.keeper.tick();
 
     expect(readStartLock(world.fs, paths.headroomLockFile)).toBeUndefined();
     world.alive.delete(NEW_SUPERVISOR_PID);
-    expect(startSupervisorUnderLock({ paths, holderPid: LAUNCHER_B, ports: world.ports })).toBe("spawned");
+    expect(startSupervisorUnderLock({ paths, holderPid: LAUNCHER_B, ports: world.launchPorts })).toBe("spawned");
   });
 
-  it("does not spawn a second supervisor while a live launch holds the start lock", () => {
+  it("does not spawn a second supervisor while a live launch holds the start lock", async () => {
     const world = makeWorld();
     world.recordDeadSupervisor();
     world.register(LAUNCHER_A, DEAD_SUPERVISOR_PID);
-    expect(startSupervisorUnderLock({ paths, holderPid: LAUNCHER_B, ports: world.ports })).toBe("spawned");
+    expect(startSupervisorUnderLock({ paths, holderPid: LAUNCHER_B, ports: world.launchPorts })).toBe("spawned");
     world.spawns.length = 0;
 
-    const outcome = world.keeper.tick();
+    const outcome = await world.keeper.tick();
 
     expect(outcome).toEqual({ kind: "starting", start: "held", waiting: 1 });
     expect(world.spawns).toHaveLength(0);
+  });
+
+  it("asks about every pid it decides on in one liveness read per tick", async () => {
+    const world = makeWorld();
+    world.recordDeadSupervisor();
+    world.register(LAUNCHER_A, DEAD_SUPERVISOR_PID);
+    world.register(LAUNCHER_B, DEAD_SUPERVISOR_PID);
+    const reads: (readonly number[])[] = [];
+    const keeper = createHeadroomKeeper({
+      paths,
+      ownPid: DOOR_PID,
+      ports: {
+        ...world.ports,
+        runningAmong: async (pids) => {
+          reads.push(pids);
+          return world.ports.runningAmong(pids);
+        },
+      },
+      log: () => undefined,
+    });
+
+    await keeper.tick();
+
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toEqual(expect.arrayContaining([DEAD_SUPERVISOR_PID, LAUNCHER_A, LAUNCHER_B]));
+  });
+
+  it("counts a start lock taken while the liveness read was running as held, never as a dead launch's litter", async () => {
+    const world = makeWorld();
+    world.recordDeadSupervisor();
+    world.register(LAUNCHER_A, DEAD_SUPERVISOR_PID);
+    const keeper = createHeadroomKeeper({
+      paths,
+      ownPid: DOOR_PID,
+      ports: {
+        ...world.ports,
+        runningAmong: async (pids) => {
+          world.fs.writeFileExclusive(paths.headroomLockFile, `${JSON.stringify({ pid: DEAD_LAUNCHER, at: 0 })}\n`);
+          return world.ports.runningAmong(pids);
+        },
+      },
+      log: () => undefined,
+    });
+
+    const outcome = await keeper.tick();
+
+    expect(outcome).toEqual({ kind: "starting", start: "held", waiting: 1 });
+    expect(readStartLock(world.fs, paths.headroomLockFile)?.pid).toBe(DEAD_LAUNCHER);
   });
 });
