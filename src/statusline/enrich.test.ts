@@ -21,6 +21,8 @@ const MS_PER_SECOND = 1000;
 const PAYLOAD_FIVE_HOUR_USED_PERCENT = 23.5;
 const PAYLOAD_SEVEN_DAY_USED_PERCENT = 41.2;
 const PAYLOAD_PARTIAL_FIVE_HOUR_USED_PERCENT = 7;
+/** Epoch seconds past the 8.64e12 a Date holds either side of the epoch, where `toISOString` throws. */
+const BEYOND_DATE_RANGE_SECONDS = 1e13;
 
 const SNAPSHOT = {
   schemaVersion: 1,
@@ -236,6 +238,36 @@ describe("enrichStatuslinePayload", () => {
     expect(summary.fiveHourResetAt).toBe("2025-02-01T16:00:00.000Z");
     expect(summary.sevenDayUsed).toBe(PAYLOAD_SEVEN_DAY_USED_PERCENT);
     expect(summary.sevenDayResetAt).toBe("2025-02-06T16:00:00.000Z");
+  });
+
+  it("reads a payload window's reset as absent when it names an instant a Date cannot hold, and keeps the window", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: { rate_limits: { five_hour: { used_percentage: 23.5, resets_at: BEYOND_DATE_RANGE_SECONDS }, seven_day: { used_percentage: 41.2, resets_at: -BEYOND_DATE_RANGE_SECONDS } } },
+      env: {},
+      snapshot: undefined,
+      account: undefined,
+      providerName: undefined,
+      nowMs: NOW_MS,
+      headroom: undefined,
+    });
+    expect(summary.fiveHourUsed).toBe(PAYLOAD_FIVE_HOUR_USED_PERCENT);
+    expect(summary.fiveHourResetAt).toBeUndefined();
+    expect(summary.sevenDayUsed).toBe(PAYLOAD_SEVEN_DAY_USED_PERCENT);
+    expect(summary.sevenDayResetAt).toBeUndefined();
+  });
+
+  it("reads an Antigravity bucket's reset as absent when it lies beyond what a Date holds", () => {
+    const { summary } = enrichStatuslinePayload({
+      payload: { model: { id: "gemini-3.8-flash-high", display_name: "Gemini 3.8 Flash" }, quota: { "gemini-5h": { remaining_fraction: 0.8, reset_in_seconds: BEYOND_DATE_RANGE_SECONDS } } },
+      env: {},
+      snapshot: undefined,
+      account: undefined,
+      providerName: undefined,
+      nowMs: NOW_MS,
+      headroom: undefined,
+    });
+    expect(summary.fiveHourUsed).toBeCloseTo(ANTIGRAVITY_FIVE_HOUR_USED_PERCENT, FLOAT_PRECISION_DIGITS);
+    expect(summary.fiveHourResetAt).toBeUndefined();
   });
 
   it("lets the payload's present window replace the snapshot's and keeps the snapshot's for a window the payload lacks", () => {
