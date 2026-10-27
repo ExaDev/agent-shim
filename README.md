@@ -266,7 +266,7 @@ pnpm schema      # regenerate schema/*.schema.json from src/config/schema.ts; CI
 
 Run a single test file directly with `pnpm exec vitest run <path>`. Tests never touch a real identity: `vitest.config.ts` sets `AGENT_SHIM_HOME` to a throwaway directory, and a setup file refuses to run at all if that variable is unset or resolves to the real `~/.agent-shim`.
 
-Commits are gated by Husky hooks: `commit-msg` enforces conventional-commit format, `pre-commit` runs `eslint --fix` on staged files and rejects merge/squash commits and mass deletions on `main`, and `pre-push` runs the full test suite and also rejects a push that would delete more than 100 files on the remote.
+Commits are gated by Husky hooks: `commit-msg` enforces conventional-commit format, `pre-commit` runs `eslint --fix` on staged files and rejects merge/squash commits and mass deletions on `main`, and `pre-push` runs typecheck, the schema drift check, knip and the tests related to what the push changes (CI runs the full suite) and also rejects a push that would delete more than 100 files on the remote.
 
 A fresh clone needs one extra step before committing anything, since git stores filter definitions in `.git/config` rather than in the repository:
 
