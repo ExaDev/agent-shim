@@ -111,7 +111,13 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** One subscription window from the client's own payload: `used_percentage` is already a whole 0 to 100 percentage and `resets_at` epoch seconds. */
+/** The ISO form of an instant `ms` milliseconds after the epoch, or undefined when it lies beyond the range a `Date` holds (8.64e15 ms either side), where `toISOString` throws a `RangeError` and the statusline would draw nothing. */
+function isoOf(ms: number): string | undefined {
+  const instant = new Date(ms);
+  return Number.isNaN(instant.getTime()) ? undefined : instant.toISOString();
+}
+
+/** One subscription window from the client's own payload: `used_percentage` is already a whole 0 to 100 percentage and `resets_at` epoch seconds, read as absent when it names an instant a `Date` cannot hold. */
 function payloadWindow(rateLimits: Record<string, unknown>, key: "five_hour" | "seven_day"): { used: number; resetAt: string | undefined } | undefined {
   const window = rateLimits[key];
   if (!isObject(window) || typeof window.used_percentage !== "number" || !Number.isFinite(window.used_percentage)) {
@@ -120,7 +126,7 @@ function payloadWindow(rateLimits: Record<string, unknown>, key: "five_hour" | "
   const resetsAt = window.resets_at;
   return {
     used: Math.min(FULL_PERCENT, Math.max(0, window.used_percentage)),
-    resetAt: typeof resetsAt === "number" && Number.isFinite(resetsAt) ? new Date(resetsAt * MS_PER_SECOND).toISOString() : undefined,
+    resetAt: typeof resetsAt === "number" && Number.isFinite(resetsAt) ? isoOf(resetsAt * MS_PER_SECOND) : undefined,
   };
 }
 
@@ -156,7 +162,7 @@ function antigravityQuotaMapOf(payload: unknown): AntigravityQuotaMap | undefine
 function bucketView(bucket: AntigravityQuotaBucket | undefined, nowMs: number): { used: number | undefined; resetAt: string | undefined } {
   return {
     used: bucket?.remaining_fraction === undefined || !Number.isFinite(bucket.remaining_fraction) ? undefined : (1 - Math.min(1, Math.max(0, bucket.remaining_fraction))) * FULL_PERCENT,
-    resetAt: bucket?.reset_in_seconds === undefined || !Number.isFinite(bucket.reset_in_seconds) ? undefined : new Date(nowMs + bucket.reset_in_seconds * MS_PER_SECOND).toISOString(),
+    resetAt: bucket?.reset_in_seconds === undefined || !Number.isFinite(bucket.reset_in_seconds) ? undefined : isoOf(nowMs + bucket.reset_in_seconds * MS_PER_SECOND),
   };
 }
 
