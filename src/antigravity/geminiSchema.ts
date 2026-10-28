@@ -19,6 +19,8 @@ interface GeminiInlineDataPart {
 
 interface GeminiFunctionCallPart {
   readonly functionCall: {
+    /** The id of the call, which the backend carries onto the tool call of a Claude model it serves and which that model's API requires; the matching response names the same id. */
+    readonly id: string;
     readonly name: string;
     readonly args: Readonly<Record<string, unknown>>;
   };
@@ -28,6 +30,8 @@ interface GeminiFunctionCallPart {
 
 interface GeminiFunctionResponsePart {
   readonly functionResponse: {
+    /** The id of the call this answers. */
+    readonly id: string;
     readonly name: string;
     readonly response: Readonly<Record<string, unknown>>;
   };

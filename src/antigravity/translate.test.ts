@@ -392,8 +392,8 @@ describe("translateRequest", () => {
     const translated = translateRequest(req, defaults);
     const modelTurn = translated.request.contents.find((content) => content.role === "model");
     expect(modelTurn?.parts).toEqual([
-      { functionCall: { name: "bash_exec", args: { cmd: "ls" } }, thoughtSignature: "sig-abc" },
-      { functionCall: { name: "bash_exec", args: { cmd: "pwd" } }, thoughtSignature: UNVERIFIED_THOUGHT_SIGNATURE },
+      { functionCall: { id: "call_signed", name: "bash_exec", args: { cmd: "ls" } }, thoughtSignature: "sig-abc" },
+      { functionCall: { id: "call_plain", name: "bash_exec", args: { cmd: "pwd" } }, thoughtSignature: UNVERIFIED_THOUGHT_SIGNATURE },
     ]);
   });
 
@@ -440,14 +440,42 @@ describe("translateRequest", () => {
     expect(contents[1]?.role).toBe("model");
     expect(contents[1]?.parts[0]).toEqual({ text: "Running command" });
     expect(contents[1]?.parts[1]).toEqual({
-      functionCall: { name: "bash_exec", args: { cmd: "ls" } },
+      functionCall: { id: "call_1", name: "bash_exec", args: { cmd: "ls" } },
       thoughtSignature: UNVERIFIED_THOUGHT_SIGNATURE,
     });
 
     expect(contents[2]?.role).toBe("user");
     expect(contents[2]?.parts[0]).toEqual({
-      functionResponse: { name: "bash_exec", response: { output: "file1.txt\nfile2.txt" } },
+      functionResponse: { id: "call_1", name: "bash_exec", response: { output: "file1.txt\nfile2.txt" } },
     });
+  });
+
+  it("names each call and its response by the tool_use id, since a Claude model behind the backend requires the id on its tool call and pairs the result by it", () => {
+    const req = request({
+      messages: [
+        { role: "user", content: "Run two things" },
+        {
+          role: "assistant",
+          content: [
+            { type: "tool_use", id: "toolu_first", name: "bash-exec", input: { cmd: "ls" } },
+            { type: "tool_use", id: "toolu_second", name: "bash-exec", input: { cmd: "pwd" } },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "toolu_second", content: "/tmp" },
+            { type: "tool_result", tool_use_id: "toolu_first", content: "a" },
+          ],
+        },
+      ],
+      tools: [{ name: "bash-exec", description: "Runs a bash command", input_schema: { type: "object", properties: { cmd: { type: "string" } } } }],
+    });
+    const parts = translateRequest(req, defaults).request.contents.flatMap((content) => content.parts);
+    const calls = parts.flatMap((part) => ("functionCall" in part ? [part.functionCall.id] : []));
+    const responses = parts.flatMap((part) => ("functionResponse" in part ? [part.functionResponse.id] : []));
+    expect(calls).toEqual(["toolu_first", "toolu_second"]);
+    expect(responses).toEqual(["toolu_second", "toolu_first"]);
   });
 
   it("folds mid-conversation system turns into system reminders for user turns", () => {

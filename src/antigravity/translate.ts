@@ -333,6 +333,7 @@ function messagesToGeminiContents(
         const signature = toolCallSignatureOf(block.id);
         ensureRole("model").push({
           functionCall: {
+            id: block.id,
             name: sanitizedName,
             args: isRecord(block.input) ? block.input : {},
           },
@@ -343,6 +344,7 @@ function messagesToGeminiContents(
         const toolName = toolIdToName.get(block.tool_use_id) ?? "unknown_tool";
         ensureRole("user").push({
           functionResponse: {
+            id: block.tool_use_id,
             name: toolName,
             response: { output: flattenToolResult(block.content) },
           },
