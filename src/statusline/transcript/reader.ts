@@ -19,7 +19,7 @@ const NEWLINE = 0x0a;
 
 /** The kind of cache file the reader keeps, and the version of what it holds: a file of another version is read as absent. */
 const CACHE_KIND = "transcript";
-const CACHE_VERSION = 8;
+const CACHE_VERSION = 9;
 
 const TranscriptCacheSchema = z.strictObject({
   version: z.literal(CACHE_VERSION),
@@ -49,7 +49,7 @@ type CumulativeCache = Omit<TranscriptCache, "newer">;
 export interface TranscriptFacts {
   /** The transcript's size in bytes when it was read. */
   readonly bytes: number;
-  /** False while the reader is still catching up with a transcript bigger than a read takes in, or for good once it skipped a line bigger than a read, so a count over the whole session (compactions, tokens) may fall short of the truth. The facts that are the newest value of something are the last window's even then, when it holds a record that sets them. */
+  /** False while the reader is still catching up with a transcript bigger than a read takes in, or for good once it skipped a line bigger than a read, so a count over the whole session (compactions, tokens) may fall short of the truth. The facts that are the newest value of something are the last window's even then, where it holds a record that sets them, except the newest compaction, which is the later stamped of the last window's and the part read so far's (see `SessionFacts.lastCompaction`). */
   readonly complete: boolean;
   readonly session: SessionFacts;
   /** The tokens the session has used, over every response read; short of the truth while `complete` is false. */
@@ -122,7 +122,7 @@ function advance(cache: CumulativeCache, window: Uint8Array, reachedEnd: boolean
 }
 
 /**
- * What the session's transcript says, read through the ports and kept between refreshes. A refresh reads one window of the transcript, `MAX_TRANSCRIPT_READ_BYTES`, from where the cache ends (the start of the file when there is none) and folds its whole lines in order, so a transcript bigger than a window is caught up over successive refreshes. The facts that add up over the whole transcript are exact once the cache reaches the end of the file and marked incomplete until then; the facts that are the newest value of something are also folded from the last window of the transcript while it is behind, so each is right as soon as that window holds a record that sets it and otherwise stays as the part read so far has it, except the activity lists, which are the window's alone (see `activityFactsOf`). Each refresh reads at most two windows and a byte, beside the check of the first line. A cache of another file, which the first line tells, is not used. A complete line bigger than a window is skipped without being read whole, and the facts stay incomplete for good, since what it said is lost. Returns undefined when the transcript cannot be read.
+ * What the session's transcript says, read through the ports and kept between refreshes. A refresh reads one window of the transcript, `MAX_TRANSCRIPT_READ_BYTES`, from where the cache ends (the start of the file when there is none) and folds its whole lines in order, so a transcript bigger than a window is caught up over successive refreshes. The facts that add up over the whole transcript are exact once the cache reaches the end of the file and marked incomplete until then; the facts that are the newest value of something are also folded from the last window of the transcript while it is behind, so each is right as soon as that window holds a record that sets it and otherwise stays as the part read so far has it, except the activity lists, which are the window's alone (see `activityFactsOf`). Each refresh reads at most two windows and a byte, beside the check of the first line. A cache of another file, which the first line tells, is not used. A complete line bigger than a window is skipped without being read whole, and the facts stay incomplete for good, since what it said is lost. Returns undefined when the read of the window (`StatuslinePorts.readRange`) returns undefined.
  */
 export function readTranscript(ports: StatuslinePorts, transcriptPath: string, nowMs: number): TranscriptFacts | undefined {
   const file = cacheFileFor(ports, CACHE_KIND, transcriptPath);

@@ -1,5 +1,7 @@
 import { AUTOCOMPACT_RESERVE_FRACTION, AUTOCOMPACT_RESERVE_RAMP_END, AUTOCOMPACT_RESERVE_RAMP_START, contextBreakdownAt } from "../../../config/statusline";
+import { contextFrameOf } from "../../contextFrame";
 import type { Translate } from "../../messages/catalogues";
+import { contextViewOf, type ContextWindowFrame } from "../../payload";
 import { barCell, formatTokens, FULL_PERCENT, statusColor, withColor, type BarStyle } from "../../style";
 import { barStyleOf, type RenderContext, type RowOutput, type StatuslinePayloadView } from "../context";
 
@@ -31,6 +33,14 @@ function windowTokensOf({ settings, view }: RenderContext): number | undefined {
 /** Half a percentage point, the distance within which a percentage rounds up to a whole one. */
 const ROUNDING_HALF_POINT = 0.5;
 
+/** The decimals the row writes a percentage of the window with: the percentage in use, and under `remaining` the percentage left. The prompt cache's hit share is written as a whole percentage (see `cacheHitText`). */
+const WINDOW_PERCENT_DECIMALS = 1;
+
+/** A percentage of the window (in use, or left) as the row writes it: to `WINDOW_PERCENT_DECIMALS` decimals. */
+function writtenWindowPercent(percent: number): string {
+  return percent.toFixed(WINDOW_PERCENT_DECIMALS);
+}
+
 /** The tokens held against a window, with the reserve Claude Code keeps for compaction added in proportion: none while the window is nearly empty, all of it once half full, and a straight line between. */
 function bufferedPercent(tokens: number, windowTokens: number): number {
   const held = tokens / windowTokens;
@@ -39,7 +49,7 @@ function bufferedPercent(tokens: number, windowTokens: number): number {
   return Math.min(FULL_PERCENT, ((tokens + windowTokens * AUTOCOMPACT_RESERVE_FRACTION * ramp) / windowTokens) * FULL_PERCENT);
 }
 
-/** The percentage of the window in use, or undefined when there is none to draw. A window set in the settings is measured against the tokens held, and with no tokens reported there is nothing to measure, so the percentage the client reports (which is against its own window) is not drawn in its place. Otherwise it is the percentage the client reports. Where the client reports none, or reports 0 beside tokens already held (which is how a client says it has not worked it out yet), it is the estimate the settings ask for when one can be made from the tokens and the window; a reported value that cannot be replaced by an estimate is kept. */
+/** The percentage of the window in use, read from `context.view` (the payload's own frame, or the frame `contextFrameOf` draws in its place), or undefined when there is none to draw. A window set in the settings is measured against the tokens held, and with no tokens reported there is nothing to measure, so the percentage the frame reports (which is against its own window) is not drawn in its place. Otherwise it is the percentage the frame reports. Where the frame reports none, or reports 0 beside tokens already held (which is how a client says it has not worked it out yet), it is the estimate the settings ask for when one can be made from the tokens and the window; a reported value that cannot be replaced by an estimate is kept. */
 function usedPercentOf(context: RenderContext): number | undefined {
   const { settings, view } = context;
   const tokens = view.contextTotalTokens;
@@ -58,9 +68,9 @@ function estimateOf(kind: "raw" | "buffered", tokens: number, windowTokens: numb
   return kind === "buffered" ? bufferedPercent(tokens, windowTokens) : Math.min(FULL_PERCENT, (tokens / windowTokens) * FULL_PERCENT);
 }
 
-/** The tokens the last request held, over the input and the cache, as the breakdown writes them, or nothing when the client did not report the last request. */
-function breakdownText({ payload, t }: RenderContext): string | undefined {
-  const usage = payload.context_window?.current_usage;
+/** The tokens the last request held, over the input and the cache, as the breakdown writes them, or nothing when the frame drawn does not report the last request. */
+function breakdownText(frame: ContextWindowFrame | undefined, t: Translate): string | undefined {
+  const usage = frame?.current_usage;
   if (usage === undefined) {
     return undefined;
   }
@@ -68,8 +78,24 @@ function breakdownText({ payload, t }: RenderContext): string | undefined {
   return ` (${t("context.breakdown", { input: formatTokens(usage.input_tokens ?? 0), cached: formatTokens(cached) })})`;
 }
 
-/** The context window's bar, or its figures alone, written as the settings ask: the tokens held and the percentage in use, the prompt cache's hit share, and from the breakdown threshold (`contextBreakdownAt`) the breakdown of the last request. */
-export function contextRow(context: RenderContext): RowOutput {
+/** The context window frame the elements draw from in `context`'s render (`RenderContext.contextFrame` keeps it): the payload's own, or the one `contextFrameOf` draws in its place (the transcript's last good frame, or the percentage its newest compaction left). `contextFrameOf` rewrites the payload's frame only when both of two things hold: the frame is a suspicious zero (a percentage and every `current_usage` counter absent or 0, see `isSuspiciousZero`), and the percentage of the window in use the row works out from it under the settings (`usedPercentOf`) is absent or written as 0 to `WINDOW_PERCENT_DECIMALS` decimals, whatever figure `context.value` writes from it (`drawsPercent` false), since such a zero carries no more than the zero claude-hud rewrites. A suspicious zero whose percentage in use is written above 0 (an estimate from the tokens it holds) is a reading, and a frame that is not a suspicious zero is drawn as it stands whatever `drawsPercent` is, as claude-hud draws it: a frame reporting a percentage of 0.04 is written as `0.0%`, and one reporting 45% with no `total_input_tokens` while `context.autoCompactWindow` is set draws no row, and either, carrying a window above 0, is kept as the transcript's last good frame by the rule `contextFrameOf` keeps a frame by. May read and write the transcript's record through `context.ports`, as `contextFrameOf` says when, so it is called once a render. */
+export function drawnContextFrameOf(context: RenderContext): ContextWindowFrame | undefined {
+  const { payload } = context;
+  const percent = usedPercentOf(context);
+  const drawsPercent = percent !== undefined && Number(writtenWindowPercent(percent)) > 0;
+  return contextFrameOf({ ports: context.ports, transcriptPath: payload.transcript_path, frame: payload.context_window, drawsPercent, nowMs: context.nowMs, compaction: () => context.transcript()?.session.lastCompaction });
+}
+
+/** The context row's render context for the frame it draws (`RenderContext.contextFrame`): the payload's own, or the view read from the frame drawn in its place. */
+function drawnContextOf(input: RenderContext): { readonly context: RenderContext; readonly frame: ContextWindowFrame | undefined } {
+  const { payload } = input;
+  const frame = input.contextFrame();
+  return { context: frame === payload.context_window ? input : { ...input, view: { ...input.view, ...contextViewOf(frame) } }, frame };
+}
+
+/** The context window's bar, or its figures alone, written as the settings ask: the tokens held and the percentage in use, the prompt cache's hit share, and from the breakdown threshold (`contextBreakdownAt`) the breakdown of the last request. The frame drawn is the payload's, or the one `contextFrameOf` draws in place of a frame that reports no use (a percentage and every `current_usage` counter absent or 0) and whose percentage of the window in use, as the row works it out under the settings, is absent or written as 0 to `WINDOW_PERCENT_DECIMALS` decimals. */
+export function contextRow(input: RenderContext): RowOutput {
+  const { context, frame } = drawnContextOf(input);
   const { view, palette, settings } = context;
   const percent = usedPercentOf(context);
   if (percent === undefined) {
@@ -84,7 +110,7 @@ export function contextRow(context: RenderContext): RowOutput {
   const windowTokens = windowTokensOf(context);
   const tokens = view.contextTotalTokens;
   const heldAgainstWindow = tokens === undefined || windowTokens === undefined ? undefined : `${formatTokens(tokens)}/${formatTokens(windowTokens)}`;
-  const percentText = withColor(color, `${percent.toFixed(1)}%`);
+  const percentText = withColor(color, `${writtenWindowPercent(percent)}%`);
   const beforeBar: string[] = [];
   const afterBar: string[] = [];
   switch (settings.context.value) {
@@ -106,12 +132,12 @@ export function contextRow(context: RenderContext): RowOutput {
       break;
     }
     case "remaining":
-      afterBar.push(withColor(color, `${Math.max(0, FULL_PERCENT - percent).toFixed(1)}%`));
+      afterBar.push(withColor(color, `${writtenWindowPercent(Math.max(0, FULL_PERCENT - percent))}%`));
       break;
     default:
       return settings.context.value satisfies never;
   }
-  const high = settings.context.breakdown === "critical" && Math.round(percent) >= contextBreakdownAt(settings) ? breakdownText(context) : undefined;
+  const high = settings.context.breakdown === "critical" && Math.round(percent) >= contextBreakdownAt(settings) ? breakdownText(frame, context.t) : undefined;
   if (settings.context.bar === "hidden" && afterBar.length === 0) {
     return { kind: "text", lines: [] };
   }

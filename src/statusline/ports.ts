@@ -17,22 +17,26 @@ export interface StatuslinePorts {
   readonly clock: { readonly locale: string; readonly timeZone: string };
   /** The text of a file, or undefined when it cannot be read. */
   readonly readText: (path: string) => string | undefined;
-  /** Up to `length` bytes of a file from byte `start`, with the file's whole size, or undefined when it cannot be read. A `start` at or past the end reads no bytes, and reading never loads more than `length` bytes however large the file is. */
+  /** Up to `length` bytes of a file from byte `start`, with the file's whole size, or undefined when it cannot be read or is not a regular file once a final symbolic link is followed (a directory, a FIFO), which is then not opened. A `start` at or past the end reads no bytes, and reading never loads more than `length` bytes however large the file is. */
   readonly readRange: (path: string, start: number, length: number) => FileRange | undefined;
   /** The names of a directory's entries, or undefined when it cannot be listed. */
   readonly listDirectory: (path: string) => readonly string[] | undefined;
-  /** Replaces a file's text, creating its directories, so a reader never sees half of it. A failure to write is dropped: what the statusline writes is derived state that the next render writes again. */
+  /** Replaces a file's text, creating its directories, so a reader never sees half of it. A failure to write is dropped, leaving the file as it was for the next write to replace. */
   readonly writeText: (path: string, text: string) => void;
   /** Removes a file or a directory with everything beneath it. A failure is dropped, like a failed write: it only leaves derived state in place for the next render to remove. */
   readonly removePath: (path: string) => void;
   /** The standard output of a program run in `cwd`, or undefined when it fails, outruns the time the statusline allows a program, or writes more than it may. No shell ever interprets the program's arguments: they reach it as they are, even when `outputInFile` has the system shell set the file size limit and then start the program. */
   readonly run: (file: string, args: readonly string[], cwd: string, options?: RunOptions) => string | undefined;
-  /** What lies at `path`, without following a final symbolic link (a link is `other`), or undefined when nothing does. */
-  readonly entryKind: (path: string) => "directory" | "other" | undefined;
+  /** What lies at `path`, without following a final symbolic link: `directory`, `file` for a regular file, `other` for anything else (a symbolic link, a FIFO, a socket), or undefined when nothing does. */
+  readonly entryKind: (path: string) => "directory" | "file" | "other" | undefined;
   /** `path` with every symbolic link resolved, or undefined when it does not exist. */
   readonly realPath: (path: string) => string | undefined;
   /** When the file at `path` was last modified, in milliseconds since the epoch, or undefined when it cannot be read. */
   readonly modifiedAtMs: (path: string) => number | undefined;
+  /** The size in bytes of the regular file at `path`, a final symbolic link followed, or undefined when nothing is there, it is not a regular file (a directory, a FIFO) or it cannot be examined. The file is not opened, so a file its owner may not read still has a size, and a FIFO never holds the call. */
+  readonly fileSize: (path: string) => number | undefined;
+  /** `path` resolved against the directory the statusline runs in, as `path.resolve` resolves it: the text alone, with nothing looked up on the file system (an absolute path is only normalised). */
+  readonly absolutePath: (path: string) => string;
   /** How much of the machine's memory is in use, or undefined when the platform gives no figure the statusline trusts. */
   readonly memoryUse: () => MemoryUse | undefined;
 }
@@ -230,7 +234,11 @@ export function realStatuslinePorts(env: Readonly<Record<string, string | undefi
     run: (file, args, cwd, options) => runProgram(path.join(stateDirectory, RUN_DIRECTORY), runTimeoutMs, file, args, cwd, options),
     entryKind: (target) => {
       try {
-        return fs.lstatSync(target).isDirectory() ? "directory" : "other";
+        const stats = fs.lstatSync(target);
+        if (stats.isDirectory()) {
+          return "directory";
+        }
+        return stats.isFile() ? "file" : "other";
       } catch {
         return undefined;
       }
@@ -249,6 +257,15 @@ export function realStatuslinePorts(env: Readonly<Record<string, string | undefi
         return undefined;
       }
     },
+    fileSize: (target) => {
+      try {
+        const stats = fs.statSync(target);
+        return stats.isFile() ? stats.size : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    absolutePath: (target) => path.resolve(target),
     listDirectory: (target) => {
       try {
         return fs.readdirSync(target);

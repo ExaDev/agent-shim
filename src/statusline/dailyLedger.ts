@@ -2,6 +2,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import { CLIENT_SESSION_ID_PATTERN } from "../usage/schema";
+import { readStateText } from "./cacheFile";
 import type { SessionCost } from "./cost";
 import type { StatuslinePorts } from "./ports";
 
@@ -35,7 +36,7 @@ function localDay(nowMs: number): string {
   return `${String(date.getFullYear())}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-/** The entry a file holds, or undefined when there is none or it is not one. An entry is derived data that the next render writes again, so a damaged file is replaced rather than reported. */
+/** The entry a file holds, or undefined when there is none or it is not one. A damaged file is read as none and not reported: a session's file for today is replaced by the session's next render that lists the `dailyCost` segment and has a cost to record, as on its first render of the day (see `advance`), and its file for the day before is only read, for the carry. */
 function parseEntry(text: string | undefined): Entry | undefined {
   if (text === undefined) {
     return undefined;
@@ -84,14 +85,14 @@ export function recordDailySpend(ports: StatuslinePorts, nowMs: number, sessionI
   const todayDirectory = path.join(root, today);
   if (sessionId !== undefined && cost !== undefined && CLIENT_SESSION_ID_PATTERN.test(sessionId)) {
     const file = path.join(todayDirectory, `${sessionId}.json`);
-    const carried = previous === undefined ? undefined : parseEntry(ports.readText(path.join(root, previous, `${sessionId}.json`)));
-    const next = advance(parseEntry(ports.readText(file)), carried, cost, nowMs);
+    const carried = previous === undefined ? undefined : parseEntry(readStateText(ports, path.join(root, previous, `${sessionId}.json`)));
+    const next = advance(parseEntry(readStateText(ports, file)), carried, cost, nowMs);
     if (next?.changed === true) {
       ports.writeText(file, `${JSON.stringify(next.entry)}\n`);
     }
   }
   const entries = (ports.listDirectory(todayDirectory) ?? []).filter((name) => ENTRY_FILE.test(name)).flatMap((name) => {
-    const entry = parseEntry(ports.readText(path.join(todayDirectory, name)));
+    const entry = parseEntry(readStateText(ports, path.join(todayDirectory, name)));
     return entry === undefined ? [] : [entry];
   });
   return entries.length === 0 ? undefined : entries.reduce((sum, entry) => sum + (entry.totalUsd - entry.baselineUsd), 0);

@@ -46,7 +46,7 @@ function facts(activity: Partial<ActivityFacts>, complete = true): TranscriptFac
   return {
     bytes: TRANSCRIPT_BYTES,
     complete,
-    session: { title: undefined, startedAtMs: undefined, lastResponseAtMs: undefined, compactions: 0, promptCache: undefined },
+    session: { title: undefined, startedAtMs: undefined, lastResponseAtMs: undefined, compactions: 0, lastCompaction: undefined, promptCache: undefined },
     tokens: { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 },
     activity: { ...EMPTY_ACTIVITY_FACTS, ...activity },
   };

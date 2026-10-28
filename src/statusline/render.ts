@@ -12,6 +12,8 @@ import { colourEnabled, createPalette, type Palette } from "./palette";
 import { compactUnits, layoutRows } from "./rowsLayout";
 import { visibleLength } from "./ansi";
 import { readTranscript, type TranscriptFacts } from "./transcript/reader";
+import { drawnContextFrameOf } from "./elements/rows/context";
+import { once } from "./once";
 
 /** Claude Code indents the status line one column from the terminal edge and truncates at its own usable width, replacing the final column with an ellipsis. COLUMNS is correct in the child environment, but the usable width is short of it by this many columns, so a line as wide as COLUMNS minus two still loses its tail. */
 export const RESERVED_COLUMNS = 4;
@@ -33,15 +35,6 @@ export interface RenderInput {
   readonly settings?: ResolvedStatusline;
   readonly ports: StatuslinePorts;
   readonly elements?: ElementRegistry;
-}
-
-/** `read`, run on first call and its result kept, so every later call in the render is free. */
-function once<T>(read: () => T): () => T {
-  let kept: { readonly value: T } | undefined;
-  return () => {
-    kept ??= { value: read() };
-    return kept.value;
-  };
 }
 
 /** The character a rule between the header and the rows is drawn with. */
@@ -83,6 +76,7 @@ export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
       const transcriptPath = input.payload.transcript_path;
       return transcriptPath === undefined || transcriptPath === "" ? undefined : readTranscript(input.ports, transcriptPath, input.nowMs);
     }),
+    contextFrame: once(() => drawnContextFrameOf(context)),
   };
   // The segments drawn are the ones the settings list, in the order they list them.
   const parts = settings.layout.header.flatMap((name) => {
@@ -93,6 +87,8 @@ export function renderStatuslineBlock(input: Readonly<RenderInput>): string {
 
   const drawn = settings.layout.rows.map((name) => ({ name, output: elements.rows[name](context) }));
   const body = settings.layout.mode === "compact" ? packLines([...header, ...compactUnits(drawn, settings.bar.width)], width, SEPARATOR).map((line) => line.join(SEPARATOR)) : expandedLines(header, drawn, width, context.palette, settings);
+  // The frame is worked out in every render, whatever the layout draws, as claude-hud applies its context cache on every refresh, so a frame is kept, or a restored one written back, by the rule `contextFrameOf` keeps a frame by even while neither the context row nor the speed segment is listed. Asked after the elements, so a render in which one of them asked reads and writes nothing more and in the same order.
+  context.contextFrame();
   // The person's own line sits above everything or below it, not among the rows: a position in the rows is the order of `layout.rows`, and this is the line before the first or after the last, in either layout mode.
   const custom = customLineOf(context);
   if (custom === undefined) {

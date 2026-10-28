@@ -1,9 +1,14 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { resolveStatusline, type StatuslineSettings } from "../../config/statusline";
 import type { StatuslineSummary } from "../enrich";
 import { ESCAPE } from "../ansi";
 import { parseClientPayload } from "../payload";
+import { realStatuslinePorts } from "../ports";
 import { renderStatuslineBlock } from "../render";
 import { fakeStatuslineFilesystem, fakeStatuslinePorts, type FakeStatuslineFilesystem } from "../testing";
 import { MAX_TRANSCRIPT_READ_BYTES } from "../transcript/reader";
@@ -34,6 +39,8 @@ const AT = {
   threeDaysFourHoursAfterReply: 273_630_000,
 };
 const WIDE_TERMINAL = 170;
+/** How many entries are added to a directory named as the transcript between two refreshes: enough to grow its size on a filesystem that sizes a directory by its entries. */
+const DIRECTORY_ENTRIES_ADDED = 50;
 const DAY = 86_400_000;
 /** Where `HH:MM` sits in an ISO timestamp. */
 const CLOCK_FROM = 11;
@@ -339,6 +346,23 @@ describe("the session elements", () => {
       expect(render(T0 + SECOND, header("speed"), { disk }).lines).toEqual([`out: ${(grown / BYTES_PER_TOKEN).toFixed(1)} tok/s`]);
     });
 
+    it("measures nothing from a transcript path naming a directory, even where its size grows as entries are added, as claude-hud measures a file alone", () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-speed-"));
+      try {
+        const ports = realStatuslinePorts({}, path.join(root, "state"));
+        const directory = path.join(root, "transcript");
+        fs.mkdirSync(directory);
+        const speedAt = (nowMs: number): string => renderStatuslineBlock({ summary: SUMMARY, view: { clientModelName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined }, payload: parseClientPayload({ transcript_path: directory }), terminalWidth: WIDE_TERMINAL, nowMs, settings: resolveStatusline(header("speed")), ports });
+        expect(speedAt(T0)).toBe("");
+        for (let entry = 0; entry < DIRECTORY_ENTRIES_ADDED; entry += 1) {
+          fs.writeFileSync(path.join(directory, `entry-${String(entry)}`), "");
+        }
+        expect(speedAt(T0 + SECOND)).toBe("");
+      } finally {
+        fs.rmSync(root, { recursive: true });
+      }
+    });
+
     it("is left out when the client names no transcript", () => {
       const text = renderStatuslineBlock({ summary: SUMMARY, view: { clientModelName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined }, payload: parseClientPayload({ context_window: { current_usage: { output_tokens: 5 } } }), terminalWidth: WIDE_TERMINAL, nowMs: T0, settings: resolveStatusline(header("speed")), ports: fakeStatuslinePorts() });
       expect(text).toBe("");
@@ -357,9 +381,9 @@ describe("the session elements", () => {
       settings: resolveStatusline({ layout: { header: ["sessionName", "duration"], rows: ["sessionTime", "promptCache", "compactions"] } }),
       ports: fakeStatuslinePorts({
         ...disk.ports,
-        readRange: (path, start, length) => {
+        readRange: (file, start, length) => {
           reads += 1;
-          return disk.ports.readRange(path, start, length);
+          return disk.ports.readRange(file, start, length);
         },
       }),
     });

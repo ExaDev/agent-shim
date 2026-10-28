@@ -4,7 +4,7 @@ import type { BarCell } from "../barGrid";
 import type { TranscriptIdentity } from "../identityTranscript";
 import type { Translate } from "../messages/catalogues";
 import type { Palette } from "../palette";
-import type { ClientPayload } from "../payload";
+import type { ClientPayload, ContextWindowFrame } from "../payload";
 import type { StatuslinePorts } from "../ports";
 import type { BarStyle } from "../style";
 import type { TranscriptFacts } from "../transcript/reader";
@@ -40,8 +40,10 @@ export interface RenderContext {
   readonly ports: StatuslinePorts;
   /** The model and advisor of the newest assistant record in the session's transcript, or neither when the payload names no transcript or it holds none. Read on first use and the same on every later call in the render, so elements that each need it cost one read between them. */
   readonly transcriptIdentity: () => TranscriptIdentity;
-  /** What the session's transcript says, or undefined when the client names no transcript or it cannot be read. The transcript is read the first time an element asks and that read is shared, so a line that draws nothing from it never touches it. */
+  /** What the session's transcript says, or undefined when the client names no transcript or it cannot be read. The transcript is read the first time something in the render asks and that read is shared, so a line that draws nothing from it touches it only for the context frame (`contextFrame`), which every render works out and which asks for the transcript's newest compaction on a frame it may rewrite and on no other. */
   readonly transcript: () => TranscriptFacts | undefined;
+  /** The context window frame the elements draw from, as claude-hud's `context-cache` rewrites the whole payload: the payload's own, or the transcript's last good frame or the percentage its newest compaction left in place of a frame that reports no use (see `drawnContextFrameOf`). Worked out on first use and the same on every later call in the render, so however many elements ask, a render reads and writes the record only as one call of `contextFrameOf` does; the render asks for it after the elements when none did, so that call is made whatever the layout draws. */
+  readonly contextFrame: () => ContextWindowFrame | undefined;
 }
 
 /** How a bar is coloured and drawn under the settings, for the row whose bar's own colour, below its warning threshold while `bar.gradient` is `off`, is `okRole`'s. */

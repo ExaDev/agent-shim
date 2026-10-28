@@ -58,6 +58,16 @@ describe("foldTokens", () => {
     expect(streamed.inputTokens).toBe(ONLY_FIRST.inputTokens);
   });
 
+  it("measures a response's later records against the most its records have carried, so one restating the peak after an understated one adds nothing, as claude-hud keeps the largest", () => {
+    const restated = fold([line("a", { ...FIRST, output_tokens: STREAMED_OUTPUT_PEAK }), line("a", { ...FIRST, output_tokens: STREAMED_OUTPUT_UNDERSTATED }), line("a", { ...FIRST, output_tokens: STREAMED_OUTPUT_PEAK })]).totals;
+    expect(restated.outputTokens).toBe(STREAMED_OUTPUT_PEAK);
+  });
+
+  it("adds nothing for a later record of a response that understates any of its counts", () => {
+    const understated = fold([line("a", FIRST), line("a", { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 1, cache_read_input_tokens: 1 })]).totals;
+    expect(understated).toEqual(ONLY_FIRST);
+  });
+
   it("tells responses apart by their id even when other records fall between a response's records", () => {
     const between = JSON.stringify({ type: "user", message: { content: "x" } });
     expect(fold([line("a", FIRST), between, line("a", FIRST), line("b", SECOND)]).totals.inputTokens).toBe(INPUT_OF_BOTH);
@@ -65,6 +75,15 @@ describe("foldTokens", () => {
 
   it("tells a response with no id from its neighbour by its counts", () => {
     expect(fold([line(undefined, FIRST), line(undefined, FIRST), line(undefined, SECOND)]).totals.inputTokens).toBe(INPUT_OF_BOTH);
+  });
+
+  it.each(["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"] as const)("tells a response with no id from its neighbour by a difference in %s alone, as claude-hud's fallback key holds all four counts", (counter) => {
+    const next = { ...FIRST, [counter]: FIRST[counter] + 1 };
+    expect(totalTokens(fold([line(undefined, FIRST), line(undefined, next)]).totals)).toBe(totalTokens(ONLY_FIRST) + totalTokens(ONLY_FIRST) + 1);
+  });
+
+  it("reads an empty message id as none, so responses carrying one are told apart by their counts, as claude-hud does", () => {
+    expect(fold([line("", FIRST), line("", SECOND)]).totals).toEqual(BOTH);
   });
 
   it("reads a count that is missing or malformed as nothing, and skips records that carry no usage", () => {
@@ -80,6 +99,13 @@ describe("foldTokens", () => {
       expect(fold(lines.slice(split), kept), `split at ${String(split)}`).toEqual(whole);
     }
   });
+
+  it("sums a count past the largest finite number to Infinity and keeps it between refreshes, so further records leave it Infinity", () => {
+    const huge = { input_tokens: Number.MAX_VALUE };
+    const kept = TokenStateSchema.parse(JSON.parse(JSON.stringify(fold([line("a", huge), line("b", huge)]))));
+    expect(kept.totals.inputTokens).toBe(Number.POSITIVE_INFINITY);
+    expect(fold([line("c", FIRST)], kept).totals).toEqual({ ...ONLY_FIRST, inputTokens: Number.POSITIVE_INFINITY });
+  });
 });
 
 describe("totalTokens", () => {
@@ -92,6 +118,11 @@ describe("TokenStateSchema", () => {
   it("refuses a state with a negative or missing count, so a damaged cache is not trusted", () => {
     expect(TokenStateSchema.safeParse({ totals: { ...ONLY_FIRST, inputTokens: NEGATIVE_COUNT } }).success).toBe(false);
     expect(TokenStateSchema.safeParse({ totals: { inputTokens: 1 } }).success).toBe(false);
+  });
+
+  it.each(["inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens"] as const)("reads a %s total kept as null as Infinity, the only value JSON writes as null that a sum can reach, and refuses null in a response's own counts", (counter) => {
+    expect(TokenStateSchema.parse({ totals: { ...ONLY_FIRST, [counter]: null } }).totals).toEqual({ ...ONLY_FIRST, [counter]: Number.POSITIVE_INFINITY });
+    expect(TokenStateSchema.safeParse({ totals: ONLY_FIRST, open: { key: "a", usage: { ...ONLY_FIRST, [counter]: null } } }).success).toBe(false);
   });
 
   it("refuses a state holding a fraction of a token, which was folded before counts were truncated", () => {

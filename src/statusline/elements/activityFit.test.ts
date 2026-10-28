@@ -81,7 +81,7 @@ function contextOf(activity: ActivityFacts, width: number, resolved: ResolvedSta
     transcript: () => ({
       bytes: 1,
       complete: true,
-      session: { title: undefined, startedAtMs: undefined, lastResponseAtMs: undefined, compactions: 0, promptCache: undefined },
+      session: { title: undefined, startedAtMs: undefined, lastResponseAtMs: undefined, compactions: 0, lastCompaction: undefined, promptCache: undefined },
       tokens: { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 },
       activity,
     }),

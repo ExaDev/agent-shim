@@ -88,7 +88,7 @@ export interface LayoutPaths {
   readonly usageLogDir: string;
   /** Directory of the latest-state snapshots, one `<identity>.json` per identity: the stable file other tools read. */
   readonly usageSnapshotsDir: string;
-  /** Directory of the built-in statusline's own state (the day's cost ledger, and under `session/` what it keeps between refreshes about each transcript it reads): derived data, which the statusline rewrites whenever it is gone. */
+  /** Directory of the built-in statusline's own state (the day's cost ledger, under `session/` what it keeps between refreshes about each transcript it reads, and under `run/` the short-lived output files of the programs it runs), each file of the ledger and under `session/` read as absent when it is missing, is not a regular file or is not of its shape, and none restored: a session's entry for today in the cost ledger starts again from the cost reported by the session's next render that lists the `dailyCost` segment and has a cost to record (or from the previous day's total, by the rule a session's first render of the day carries it by), so the day's total no longer counts what the session spent before that figure, and its entry for the day before, which is only read, carries nothing; the transcript reader's cache is folded again from the start of the transcript; the speed sample is replaced by that of the next render that lists the `speed` segment and has a figure to measure, which draws no speed; and the transcript's last good context frame is none until the next good frame is written. */
   readonly statuslineDir: string;
   /** One file per provider holding the model catalogue the door last fetched from it. */
   readonly catalogueDir: string;

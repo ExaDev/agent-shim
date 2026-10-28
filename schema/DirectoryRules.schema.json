@@ -473,7 +473,7 @@
                         ]
                       },
                       "autoCompactWindow": {
-                        "description": "A window in tokens to measure the context against instead of the model's, matching the figure /context gives once Claude Code compacts before the window is full. While it is set, the row draws nothing until the client reports the tokens held, since without them there is nothing to measure against it; while it is unset the model's own window is used. A layer may write null to return it to unset when a shallower layer sets it.",
+                        "description": "A window in tokens to measure the context against instead of the model's, matching the figure /context gives once Claude Code compacts before the window is full. While it is set, the row draws nothing from a frame whose tokens held (total_input_tokens) are absent (missing, or not a finite number of 0 or more), since without them there is nothing to measure against it, and measures a frame reporting 0 as 0% (a frame reporting no use may first be given the session's last good frame, its tokens held included); while it is unset the model's own window is used. A layer may write null to return it to unset when a shallower layer sets it.",
                         "anyOf": [
                           {
                             "type": "integer",
@@ -492,7 +492,7 @@
                           "raw",
                           "buffered"
                         ],
-                        "description": "What to draw when the client reports no percentage of the window in use (a negative one counts as none), or reports 0 while tokens are already held (which is how a client says it has not worked it out yet): never (nothing is estimated: a percentage reported from 0 to 100 is drawn as it is, one above 100 as 100, and a negative or missing one draws nothing), raw (the tokens held over the window), or buffered (that, plus the 16.5% of the window Claude Code reserves for compaction, rising from nothing at 5% of the window held to the whole reserve at 50%)."
+                        "description": "What to draw when the client reports no percentage of the window in use (a negative one counts as none), or reports 0 while tokens are already held (which is how a client says it has not worked it out yet): never (nothing is estimated: a percentage reported from 0 to 100 is drawn as it is, one above 100 as 100, and a negative or missing one draws nothing), raw (the tokens held over the window), or buffered (that, plus the 16.5% of the window Claude Code reserves for compaction, rising from nothing at 5% of the window held to the whole reserve at 50%). This applies to the frame the row draws: a frame reporting no use may first be given the session's last good frame or the percentage its newest compaction left."
                       },
                       "breakdown": {
                         "type": "string",
@@ -500,7 +500,7 @@
                           "never",
                           "critical"
                         ],
-                        "description": "Whether to add the input and cache tokens of the last request to the context row: critical adds them once the percentage the row draws (the one the client reports, or the estimate context.estimate makes, or, with context.autoCompactWindow set, the tokens held over that window), rounded to a whole number, reaches the breakdown threshold, which is context.breakdownAt, or context.criticalAt while that is unset, and never leaves them off. With no percentage to draw the row draws nothing, and when the client does not report the last request's tokens there is no breakdown to add."
+                        "description": "Whether to add the input and cache tokens of the last request to the context row: critical adds them once the percentage the row draws (for the frame it draws, which context.estimate describes: the one the frame reports, or the estimate context.estimate makes, or, with context.autoCompactWindow set, the tokens held over that window), rounded to a whole number, reaches the breakdown threshold, which is context.breakdownAt, or context.criticalAt while that is unset, and never leaves them off. With no percentage to draw the row draws nothing, and the breakdown is of the last request the frame the row draws reports, so a frame given the session's last good frame draws, for instance, that frame's, and there is none to add while the frame drawn reports no last request."
                       }
                     },
                     "additionalProperties": false

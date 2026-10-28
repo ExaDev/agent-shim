@@ -47,6 +47,8 @@ const TranscriptRecordSchema = z
       })
       .optional()
       .catch(undefined),
+    /** What a `compact_boundary` record says of its compaction: the tokens the context held once it was done, where the client records them. */
+    compactMetadata: z.looseObject({ postTokens: count }).optional().catch(undefined),
     /** Shared by the records one API request produced. */
     requestId: text,
     message: z
