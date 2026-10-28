@@ -1,3 +1,9 @@
+## [11.70.1](https://github.com/ExaDev/agent-shim/compare/v11.70.0...v11.70.1) (2026-10-28)
+
+### Bug Fixes
+
+* **statusline:** tell id-less transcript responses apart by the counts as written ([d58d04b](https://github.com/ExaDev/agent-shim/commit/d58d04bcf43888c342e3ea3175e48d4cb79fc2d3)), references [#632](https://github.com/ExaDev/agent-shim/issues/632)
+
 ## [11.70.0](https://github.com/ExaDev/agent-shim/compare/v11.69.0...v11.70.0) (2026-10-28)
 
 ### Features
