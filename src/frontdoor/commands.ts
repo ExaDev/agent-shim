@@ -421,11 +421,9 @@ function realFrontDoorSupervisorPorts(paths: LayoutPaths, respawnGeneration: num
   catalogueKeeper.tick();
   everyFreshnessInterval(catalogueKeeper.tick);
   const headroomDecision = createHeadroomDecision(createRoutingSettingReader(paths));
-  // The door's per-target observations (latency, success, token mix), folded from every finished record: the selection engine's ranked and adaptive modes read them when a virtual model chooses a member. Seeded from the recent usage log so a restarted door does not start blind.
-  const targetObservations = createTargetObservationStore(realFarmFs, paths);
+  // The usage store folds each record into the door's per-target observations through its `onRecord` above, so recording a finished record needs nothing beside the store.
   const recordUsage = (record: UsageRecord): void => {
     withQuotaRefresh(usageStore.record, quotaRefresher)(record);
-    targetObservations.observe(record);
   };
   const usageMiddleware = createUsageMiddleware({
     // Each finished response also tells the per-session headroom decision when the session's cache was last touched and whether it read from it.
