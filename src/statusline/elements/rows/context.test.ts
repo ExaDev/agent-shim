@@ -8,6 +8,9 @@ import { fakeRenderContext } from "../../testing";
 import type { RenderContext, RowOutput, StatuslinePayloadView } from "../context";
 import { contextRow } from "./context";
 
+/** A percentage as the rows write it: rounded to one decimal, the decimal dropped when it is a whole number. */
+const written = (percent: number): string => String(Number(percent.toFixed(1)));
+
 const WINDOW = 200_000;
 const HELD = 90_000;
 const REPORTED_PERCENT = 45;
@@ -91,13 +94,13 @@ function linesOf(output: RowOutput): string[] {
 describe("the context row's figure", () => {
   it("writes the tokens held over the window before the bar and the percentage after it by default", () => {
     const [line] = draw({});
-    expect(stripAnsi(line ?? "")).toMatch(/^Ctx 90k\/200k \[.*\] 45\.0%$/);
+    expect(stripAnsi(line ?? "")).toMatch(/^Ctx 90k\/200k \[.*\] 45%$/);
   });
 
   it("writes only the percentage for percent, only the tokens held for tokens, and the percentage left for remaining", () => {
-    expect(stripAnsi(draw({ context: { value: "percent" } })[0] ?? "")).toMatch(/^Ctx \[.*\] 45\.0%$/);
+    expect(stripAnsi(draw({ context: { value: "percent" } })[0] ?? "")).toMatch(/^Ctx \[.*\] 45%$/);
     expect(stripAnsi(draw({ context: { value: "tokens" } })[0] ?? "")).toMatch(/^Ctx \[.*\] 90k\/200k$/);
-    expect(stripAnsi(draw({ context: { value: "remaining" } })[0] ?? "")).toMatch(/^Ctx \[.*\] 55\.0%$/);
+    expect(stripAnsi(draw({ context: { value: "remaining" } })[0] ?? "")).toMatch(/^Ctx \[.*\] 55%$/);
   });
 
   it("writes the tokens alone for tokens when the client does not report the window, and nothing when it does not report the tokens held", () => {
@@ -110,7 +113,7 @@ describe("the context row's figure", () => {
   });
 
   it("does not let the remaining percentage go below nothing when the percentage reported is over the window", () => {
-    expect(stripAnsi(draw({ context: { value: "remaining" } }, { contextUsedPercentage: 104 })[0] ?? "")).toMatch(/\] 0\.0%$/);
+    expect(stripAnsi(draw({ context: { value: "remaining" } }, { contextUsedPercentage: 104 })[0] ?? "")).toMatch(/\] 0%$/);
   });
 
   it("colours the figure the bar's colour in every value mode", () => {
@@ -123,20 +126,20 @@ describe("the context row's figure", () => {
 
 describe("the context row without its bar", () => {
   it("draws its figures as one line of text, with the same figure for each value", () => {
-    expect(draw({ context: { bar: "hidden" } }).map(stripAnsi)).toEqual(["Ctx 90k/200k 45.0%"]);
-    expect(draw({ context: { bar: "hidden", value: "percent" } }).map(stripAnsi)).toEqual(["Ctx 45.0%"]);
+    expect(draw({ context: { bar: "hidden" } }).map(stripAnsi)).toEqual(["Ctx 90k/200k 45%"]);
+    expect(draw({ context: { bar: "hidden", value: "percent" } }).map(stripAnsi)).toEqual(["Ctx 45%"]);
     expect(draw({ context: { bar: "hidden", value: "tokens" } }).map(stripAnsi)).toEqual(["Ctx 90k/200k"]);
-    expect(draw({ context: { bar: "hidden", value: "remaining" } }).map(stripAnsi)).toEqual(["Ctx 55.0%"]);
+    expect(draw({ context: { bar: "hidden", value: "remaining" } }).map(stripAnsi)).toEqual(["Ctx 55%"]);
   });
 
   it("keeps the cache share beside the figure, and draws nothing when there is no percentage", () => {
-    expect(draw({ context: { bar: "hidden" } }, { cacheHitRatio: 0.93 }).map(stripAnsi)).toEqual(["Ctx 90k/200k 45.0% (Cache: 93%)"]);
+    expect(draw({ context: { bar: "hidden" } }, { cacheHitRatio: 0.93 }).map(stripAnsi)).toEqual(["Ctx 90k/200k 45% (Cache: 93%)"]);
     expect(draw({ context: { bar: "hidden", estimate: "never" } }, { contextUsedPercentage: undefined })).toEqual([]);
   });
 
   it("draws the last request's share of prompt tokens read from cache when the client reports no hit ratio, and no share when it read none", () => {
-    expect(draw({ context: { bar: "hidden" } }, { cacheReadTokens: QUARTER_FRESH_READS, freshInputTokens: QUARTER_FRESH_INPUT }).map(stripAnsi)).toEqual(["Ctx 90k/200k 45.0% (Cache: 75%)"]);
-    expect(draw({ context: { bar: "hidden" } }, { cacheReadTokens: 0, freshInputTokens: QUARTER_FRESH_INPUT }).map(stripAnsi)).toEqual(["Ctx 90k/200k 45.0%"]);
+    expect(draw({ context: { bar: "hidden" } }, { cacheReadTokens: QUARTER_FRESH_READS, freshInputTokens: QUARTER_FRESH_INPUT }).map(stripAnsi)).toEqual(["Ctx 90k/200k 45% (Cache: 75%)"]);
+    expect(draw({ context: { bar: "hidden" } }, { cacheReadTokens: 0, freshInputTokens: QUARTER_FRESH_INPUT }).map(stripAnsi)).toEqual(["Ctx 90k/200k 45%"]);
   });
 
   it("is a row of text, so it ends a run of bars rather than joining their grid", () => {
@@ -157,7 +160,7 @@ describe("the context row's thresholds", () => {
   it("colours the figure and the bar by the context thresholds, which the bands do not move", () => {
     const at = (percent: number, settings: StatuslineSettings, colour: string): void => {
       const line = draw(settings, { contextUsedPercentage: percent })[0] ?? "";
-      expect(line, `figure at ${String(percent)}`).toContain(`${colour}${percent.toFixed(1)}%`);
+      expect(line, `figure at ${String(percent)}`).toContain(`${colour}${written(percent)}%`);
       expect(line, `bar at ${String(percent)}`).toContain(`[${colour}\u2588`);
     };
     at(IN_WARNING_BAND, {}, YELLOW);
@@ -172,13 +175,13 @@ describe("the context row's thresholds", () => {
 
   it("colours from half a point below each threshold, which rounds up to it, in the colour of the band it opens, as claude-hud does with its whole-number percentage", () => {
     const line = (percent: number): string => draw({}, { contextUsedPercentage: percent })[0] ?? "";
-    expect(line(DEFAULT_WARN_AT - OVER_HALF_POINT_BELOW)).toContain(`${GREEN}${(DEFAULT_WARN_AT - OVER_HALF_POINT_BELOW).toFixed(1)}%`);
-    expect(line(DEFAULT_WARN_AT - HALF_POINT_BELOW)).toContain(`${YELLOW}${(DEFAULT_WARN_AT - HALF_POINT_BELOW).toFixed(1)}%`);
-    expect(line(DEFAULT_WARN_AT)).toContain(`${YELLOW}${DEFAULT_WARN_AT.toFixed(1)}%`);
-    expect(line(DEFAULT_CRITICAL_AT - 1)).toContain(`${YELLOW}${(DEFAULT_CRITICAL_AT - 1).toFixed(1)}%`);
-    expect(line(DEFAULT_CRITICAL_AT - OVER_HALF_POINT_BELOW)).toContain(`${YELLOW}${(DEFAULT_CRITICAL_AT - OVER_HALF_POINT_BELOW).toFixed(1)}%`);
-    expect(line(DEFAULT_CRITICAL_AT - HALF_POINT_BELOW)).toContain(`${RED}${(DEFAULT_CRITICAL_AT - HALF_POINT_BELOW).toFixed(1)}%`);
-    expect(line(DEFAULT_CRITICAL_AT)).toContain(`${RED}${DEFAULT_CRITICAL_AT.toFixed(1)}%`);
+    expect(line(DEFAULT_WARN_AT - OVER_HALF_POINT_BELOW)).toContain(`${GREEN}${written(DEFAULT_WARN_AT - OVER_HALF_POINT_BELOW)}%`);
+    expect(line(DEFAULT_WARN_AT - HALF_POINT_BELOW)).toContain(`${YELLOW}${written(DEFAULT_WARN_AT - HALF_POINT_BELOW)}%`);
+    expect(line(DEFAULT_WARN_AT)).toContain(`${YELLOW}${written(DEFAULT_WARN_AT)}%`);
+    expect(line(DEFAULT_CRITICAL_AT - 1)).toContain(`${YELLOW}${written(DEFAULT_CRITICAL_AT - 1)}%`);
+    expect(line(DEFAULT_CRITICAL_AT - OVER_HALF_POINT_BELOW)).toContain(`${YELLOW}${written(DEFAULT_CRITICAL_AT - OVER_HALF_POINT_BELOW)}%`);
+    expect(line(DEFAULT_CRITICAL_AT - HALF_POINT_BELOW)).toContain(`${RED}${written(DEFAULT_CRITICAL_AT - HALF_POINT_BELOW)}%`);
+    expect(line(DEFAULT_CRITICAL_AT)).toContain(`${RED}${written(DEFAULT_CRITICAL_AT)}%`);
   });
 
   it("puts a cache share exactly on a band edge on the side it reaches, for edges that subtracting from 1 misses by a hair", () => {
@@ -214,12 +217,12 @@ describe("the context row's thresholds", () => {
 describe("the context row measured against a window", () => {
   it("measures the tokens held against the window set, not the one the client reports, and shows that window", () => {
     const [line] = draw({ context: { autoCompactWindow: 100_000 } });
-    expect(stripAnsi(line ?? "")).toMatch(/^Ctx 90k\/100k \[.*\] 90\.0%$/);
+    expect(stripAnsi(line ?? "")).toMatch(/^Ctx 90k\/100k \[.*\] 90%$/);
   });
 
   it("never reads over the window", () => {
     const [line] = draw({ context: { autoCompactWindow: 50_000 } });
-    expect(stripAnsi(line ?? "")).toMatch(/\] 100\.0%$/);
+    expect(stripAnsi(line ?? "")).toMatch(/\] 100%$/);
   });
 
   it("draws nothing while the client does not report the tokens held to measure, rather than the percentage against its own window", () => {
@@ -227,8 +230,8 @@ describe("the context row measured against a window", () => {
     expect(draw({ context: { autoCompactWindow: 100_000, bar: "hidden" } }, { contextTotalTokens: undefined })).toEqual([]);
   });
 
-  it("draws 0.0% for tokens not yet held", () => {
-    expect(stripAnsi(draw({ context: { autoCompactWindow: 100_000 } }, { contextTotalTokens: 0 })[0] ?? "")).toMatch(/\] 0\.0%$/);
+  it("draws 0% for tokens not yet held", () => {
+    expect(stripAnsi(draw({ context: { autoCompactWindow: 100_000 } }, { contextTotalTokens: 0 })[0] ?? "")).toMatch(/\] 0%$/);
   });
 });
 
@@ -242,12 +245,12 @@ describe("the context row when the client reports no percentage", () => {
   });
 
   it("estimates from the tokens held for raw", () => {
-    expect(stripAnsi(draw({ context: { estimate: "raw" } }, unreported)[0] ?? "")).toMatch(/\] 45\.0%$/);
+    expect(stripAnsi(draw({ context: { estimate: "raw" } }, unreported)[0] ?? "")).toMatch(/\] 45%$/);
   });
 
   it("adds the reserve to the estimate for buffered, in full from half the window held and in part below it", () => {
     const half = draw({ context: { estimate: "buffered" } }, { ...unreported, contextTotalTokens: WINDOW / HALF })[0] ?? "";
-    expect(stripAnsi(half)).toContain(`${(PERCENT / HALF + AUTOCOMPACT_RESERVE_FRACTION * PERCENT).toFixed(1)}%`);
+    expect(stripAnsi(half)).toContain(`${written(PERCENT / HALF + AUTOCOMPACT_RESERVE_FRACTION * PERCENT)}%`);
     const quarter = draw({ context: { estimate: "buffered" } }, { ...unreported, contextTotalTokens: WINDOW / QUARTER })[0] ?? "";
     const shown = Number.parseFloat(/(\d+\.\d)%$/.exec(stripAnsi(quarter))?.[1] ?? "");
     expect(shown).toBeGreaterThan(PERCENT / QUARTER);
@@ -256,7 +259,7 @@ describe("the context row when the client reports no percentage", () => {
 
   it("adds no reserve to a window that has just been cleared", () => {
     const line = draw({ context: { estimate: "buffered" } }, { ...unreported, contextTotalTokens: WINDOW / JUST_CLEARED })[0] ?? "";
-    expect(stripAnsi(line)).toMatch(/\] 1\.0%$/);
+    expect(stripAnsi(line)).toMatch(/\] 1%$/);
   });
 
   it("draws nothing when the client does not report the window or the tokens held to estimate from", () => {
@@ -265,22 +268,22 @@ describe("the context row when the client reports no percentage", () => {
   });
 
   it("treats a reported 0 beside tokens already held as not yet worked out when asked to estimate, and as 0 when not", () => {
-    expect(stripAnsi(draw({ context: { estimate: "raw" } }, { contextUsedPercentage: 0 })[0] ?? "")).toMatch(/\] 45\.0%$/);
-    expect(stripAnsi(draw({ context: { estimate: "never" } }, { contextUsedPercentage: 0 })[0] ?? "")).toMatch(/\] 0\.0%$/);
+    expect(stripAnsi(draw({ context: { estimate: "raw" } }, { contextUsedPercentage: 0 })[0] ?? "")).toMatch(/\] 45%$/);
+    expect(stripAnsi(draw({ context: { estimate: "never" } }, { contextUsedPercentage: 0 })[0] ?? "")).toMatch(/\] 0%$/);
     expect(draw({}, { contextUsedPercentage: 0 })).toEqual(draw({ context: { estimate: "buffered" } }, { contextUsedPercentage: 0 }));
   });
 
   it("keeps a reported 0 when no estimate can be made from the tokens and the window", () => {
     for (const estimate of ["raw", "buffered"] as const) {
       const noWindow = draw({ context: { estimate } }, { contextUsedPercentage: 0, contextWindowTokens: undefined });
-      expect(stripAnsi(noWindow[0] ?? ""), estimate).toMatch(/\] 0\.0%$/);
+      expect(stripAnsi(noWindow[0] ?? ""), estimate).toMatch(/\] 0%$/);
       const noTokens = draw({ context: { estimate } }, { contextUsedPercentage: 0, contextTotalTokens: undefined });
-      expect(stripAnsi(noTokens[0] ?? ""), estimate).toMatch(/\] 0\.0%$/);
+      expect(stripAnsi(noTokens[0] ?? ""), estimate).toMatch(/\] 0%$/);
     }
   });
 
   it("keeps the percentage the client reports when it reports one", () => {
-    expect(stripAnsi(draw({ context: { estimate: "buffered" } }, { contextUsedPercentage: 20 })[0] ?? "")).toMatch(/\] 20\.0%$/);
+    expect(stripAnsi(draw({ context: { estimate: "buffered" } }, { contextUsedPercentage: 20 })[0] ?? "")).toMatch(/\] 20%$/);
   });
 });
 
@@ -289,8 +292,8 @@ describe("the context row's breakdown", () => {
   const high = { contextUsedPercentage: 92 };
 
   it("adds the input and cache tokens of the last request from the critical threshold when asked", () => {
-    expect(stripAnsi(draw({ context: { breakdown: "critical" } }, high, usage)[0] ?? "")).toMatch(/92\.0% \(in: 2\.0k, cache: 90k\)$/);
-    expect(stripAnsi(draw({ context: { breakdown: "critical", bar: "hidden" } }, high, usage)[0] ?? "")).toBe("Ctx 90k/200k 92.0% (in: 2.0k, cache: 90k)");
+    expect(stripAnsi(draw({ context: { breakdown: "critical" } }, high, usage)[0] ?? "")).toMatch(/92% \(in: 2\.0k, cache: 90k\)$/);
+    expect(stripAnsi(draw({ context: { breakdown: "critical", bar: "hidden" } }, high, usage)[0] ?? "")).toBe("Ctx 90k/200k 92% (in: 2.0k, cache: 90k)");
   });
 
   it("adds nothing below the threshold, when not asked, or when the client reports no last request", () => {
@@ -301,7 +304,7 @@ describe("the context row's breakdown", () => {
 
   it("adds the breakdown by default from claude-hud's context critical threshold, as claude-hud's default does", () => {
     expect(stripAnsi(draw({}, high, usage)[0] ?? "")).toContain("in:");
-    expect(stripAnsi(draw({}, { contextUsedPercentage: DEFAULT_CRITICAL_AT }, usage)[0] ?? "")).toMatch(/85\.0% \(in: 2\.0k, cache: 90k\)$/);
+    expect(stripAnsi(draw({}, { contextUsedPercentage: DEFAULT_CRITICAL_AT }, usage)[0] ?? "")).toMatch(/85% \(in: 2\.0k, cache: 90k\)$/);
     expect(stripAnsi(draw({}, { contextUsedPercentage: DEFAULT_CRITICAL_AT - 1 }, usage)[0] ?? "")).not.toContain("in:");
     expect(stripAnsi(draw({ context: { breakdown: "never" } }, { contextUsedPercentage: DEFAULT_CRITICAL_AT }, usage)[0] ?? "")).not.toContain("in:");
   });
@@ -329,7 +332,7 @@ describe("the context row's breakdown", () => {
 
   it("moves only the breakdown with context.breakdownAt, leaving the red at the critical threshold", () => {
     const [line] = draw({ context: { breakdownAt: EARLIER_CRITICAL_AT } }, { contextUsedPercentage: BETWEEN_CRITICAL_THRESHOLDS }, usage);
-    expect(line).toContain(`${RED}${BETWEEN_CRITICAL_THRESHOLDS.toFixed(1)}%`);
+    expect(line).toContain(`${RED}${written(BETWEEN_CRITICAL_THRESHOLDS)}%`);
     expect(stripAnsi(line ?? "")).not.toContain("in:");
   });
 });

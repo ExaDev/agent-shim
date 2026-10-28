@@ -613,7 +613,7 @@
                 },
                 "compact": {
                   "type": "boolean",
-                  "description": "Whether the quota windows are drawn as one short line of text (`5h: 25.0% (1h 30m)`) in place of bars; it takes precedence over usage.bar."
+                  "description": "Whether the quota windows are drawn as one short line of text (`5h: 25% (1h 30m)`) in place of bars; it takes precedence over usage.bar."
                 },
                 "resetLabel": {
                   "type": "boolean",

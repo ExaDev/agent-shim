@@ -101,7 +101,7 @@ describe("the default render of a stand-in session", () => {
   it("draws each piece claude-hud's default draws for the same session", () => {
     const drawn = draw(SESSION);
     // claude-hud: `[Opus 4.5] │ demo-project +extra-dir git:(main*)`, `Context ... 92% (in: 1k, cache: 183k)`, `Usage ... 42% (resets in 1h 30m) | Weekly ... 85% (resets in 3d 2h)` and `Opus ... 37% (resets in 2d)`.
-    for (const piece of ["Opus 4.5", "demo-project +extra-dir git:(main*)", "92.0%", "(in: 1.2k, cache: 183k)", "42.0% (resets in 1h 30m)", "85.0% (resets in 3d 2h)", "Opus [", "37.0% (resets in 2d 0h)"]) {
+    for (const piece of ["Opus 4.5", "demo-project +extra-dir git:(main*)", "92%", "(in: 1.2k, cache: 183k)", "42% (resets in 1h 30m)", "85% (resets in 3d 2h)", "Opus [", "37% (resets in 2d 0h)"]) {
       expect(drawn, piece).toContain(piece);
     }
   });
@@ -109,7 +109,7 @@ describe("the default render of a stand-in session", () => {
   it("draws the token breakdown from claude-hud's context critical threshold, as claude-hud's default does, and not below it", () => {
     const at = (used: number): string => draw({ ...SESSION, context_window: { ...SESSION.context_window, used_percentage: used } });
     // claude-hud: `Context ... 85% (in: 1k, cache: 183k)` at 85%, and no breakdown at 84%.
-    expect(at(CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD)).toContain("85.0% (Cache: 99%) (in: 1.2k, cache: 183k)");
+    expect(at(CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD)).toContain("85% (Cache: 99%) (in: 1.2k, cache: 183k)");
     expect(at(CLAUDE_HUD_CONTEXT_CRITICAL_THRESHOLD - 1)).not.toContain("(in: ");
   });
 
@@ -150,16 +150,16 @@ describe("the documented restore of the default before it became a superset", ()
   const WEEKLY_LOW = 30;
   /** What the default drew for `SESSION` before it became a superset, as the statusline rendered it before that change, with the weekly use at `WEEKLY_HIGH` and at `WEEKLY_LOW`. */
   const BEFORE = {
-    weeklyHigh: "Opus 4.5\nCtx [███████████████████████████████████████░░░] 92.0% (Cache: 99%) | 5h [██████████████████░░░░░░░░░░░░░░░░░░░░░░░░] 42.0% (1h 30m) | Wk [████████████████████████████████████░░░░░░] 85.0% (3d 2h)",
-    weeklyLow: "Opus 4.5\nCtx [███████████████████████████████████████░░░] 92.0% (Cache: 99%) | 5h [██████████████████░░░░░░░░░░░░░░░░░░░░░░░░] 42.0% (1h 30m) | Wk [█████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 30.0% (3d 2h)",
+    weeklyHigh: "Opus 4.5\nCtx [████████████████████████████████████████░░░░] 92% (Cache: 99%) | 5h [██████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░] 42% (1h 30m) | Wk [█████████████████████████████████████░░░░░░░] 85% (3d 2h)",
+    weeklyLow: "Opus 4.5\nCtx [████████████████████████████████████████░░░░] 92% (Cache: 99%) | 5h [██████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░] 42% (1h 30m) | Wk [█████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 30% (3d 2h)",
   };
   const QUOTA = { fiveHourUsed: 42, fiveHourResetAt: "2026-10-21T13:30:00.000Z", sevenDayResetAt: "2026-10-24T14:00:00.000Z" };
   /** A context use between claude-hud's context critical threshold and the earlier one, where the default before drew the bar yellow and no breakdown. */
   const BETWEEN_CRITICAL_THRESHOLDS = 87;
   /** What the default drew before, in colour, for `SESSION` at `BETWEEN_CRITICAL_THRESHOLDS` and at its own use, with the weekly use at `WEEKLY_HIGH`, as the statusline rendered it before that change: the context bar yellow below 90% and red from it, and the weekly bar at 85% yellow, as the quota bars still are. */
   const BEFORE_COLOURED = {
-    between: "Opus 4.5\nCtx [\u001b[33m█████████████████████████████████████\u001b[90m░░░░░\u001b[0m] \u001b[33m87.0%\u001b[0m (Cache: \u001b[32m99%\u001b[0m) | 5h [\u001b[32m██████████████████\u001b[90m░░░░░░░░░░░░░░░░░░░░░░░░\u001b[0m] \u001b[32m42.0%\u001b[0m (1h 30m) | Wk [\u001b[33m████████████████████████████████████\u001b[90m░░░░░░\u001b[0m] \u001b[33m85.0%\u001b[0m (3d 2h)",
-    high: "Opus 4.5\nCtx [\u001b[31m███████████████████████████████████████\u001b[90m░░░\u001b[0m] \u001b[31m92.0%\u001b[0m (Cache: \u001b[32m99%\u001b[0m) | 5h [\u001b[32m██████████████████\u001b[90m░░░░░░░░░░░░░░░░░░░░░░░░\u001b[0m] \u001b[32m42.0%\u001b[0m (1h 30m) | Wk [\u001b[33m████████████████████████████████████\u001b[90m░░░░░░\u001b[0m] \u001b[33m85.0%\u001b[0m (3d 2h)",
+    between: "Opus 4.5\nCtx [\u001b[33m██████████████████████████████████████\u001b[90m░░░░░░\u001b[0m] \u001b[33m87%\u001b[0m (Cache: \u001b[32m99%\u001b[0m) | 5h [\u001b[32m██████████████████\u001b[90m░░░░░░░░░░░░░░░░░░░░░░░░░░\u001b[0m] \u001b[32m42%\u001b[0m (1h 30m) | Wk [\u001b[33m█████████████████████████████████████\u001b[90m░░░░░░░\u001b[0m] \u001b[33m85%\u001b[0m (3d 2h)",
+    high: "Opus 4.5\nCtx [\u001b[31m████████████████████████████████████████\u001b[90m░░░░\u001b[0m] \u001b[31m92%\u001b[0m (Cache: \u001b[32m99%\u001b[0m) | 5h [\u001b[32m██████████████████\u001b[90m░░░░░░░░░░░░░░░░░░░░░░░░░░\u001b[0m] \u001b[32m42%\u001b[0m (1h 30m) | Wk [\u001b[33m█████████████████████████████████████\u001b[90m░░░░░░░\u001b[0m] \u001b[33m85%\u001b[0m (3d 2h)",
   };
 
   function render(payloadFields: Readonly<Record<string, unknown>>, sevenDayUsed: number, env: Readonly<Record<string, string>>): string {
@@ -185,7 +185,7 @@ describe("the documented restore of the default before it became a superset", ()
   it("still draws no subscription window for a Bedrock session that selected no provider, which the restore does not undo", () => {
     // The default before drew the five-hour and weekly windows here; they do not apply to a Bedrock session whatever the settings say.
     for (const drawn of [draw(SESSION, WEEKLY_HIGH, { CLAUDE_CODE_USE_BEDROCK: "1" }), draw({ ...SESSION, model: { id: "us.anthropic.claude-opus-4-5-20251101-v1:0", display_name: "Opus 4.5" } }, WEEKLY_HIGH)]) {
-      expect(drawn).toMatch(/^Opus 4\.5\nCtx \[[\u2588\u2591]+\] 92\.0% \(Cache: 99%\)$/u);
+      expect(drawn).toMatch(/^Opus 4\.5\nCtx \[[\u2588\u2591]+\] 92% \(Cache: 99%\)$/u);
     }
   });
 

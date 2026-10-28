@@ -2,6 +2,7 @@ import { AUTOCOMPACT_RESERVE_FRACTION, AUTOCOMPACT_RESERVE_RAMP_END, AUTOCOMPACT
 import { contextFrameOf } from "../../contextFrame";
 import type { Translate } from "../../messages/catalogues";
 import { contextViewOf, type ContextWindowFrame } from "../../payload";
+import { writtenPercent } from "../../percent";
 import { barCell, formatTokens, FULL_PERCENT, statusColor, withColor, type BarStyle } from "../../style";
 import { barStyleOf, type RenderContext, type RowOutput, type StatuslinePayloadView } from "../context";
 
@@ -32,14 +33,6 @@ function windowTokensOf({ settings, view }: RenderContext): number | undefined {
 
 /** Half a percentage point, the distance within which a percentage rounds up to a whole one. */
 const ROUNDING_HALF_POINT = 0.5;
-
-/** The decimals the row writes a percentage of the window with: the percentage in use, and under `remaining` the percentage left. The prompt cache's hit share is written as a whole percentage (see `cacheHitText`). */
-const WINDOW_PERCENT_DECIMALS = 1;
-
-/** A percentage of the window (in use, or left) as the row writes it: to `WINDOW_PERCENT_DECIMALS` decimals. */
-function writtenWindowPercent(percent: number): string {
-  return percent.toFixed(WINDOW_PERCENT_DECIMALS);
-}
 
 /** The tokens held against a window, with the reserve Claude Code keeps for compaction added in proportion: none while the window is nearly empty, all of it once half full, and a straight line between. */
 function bufferedPercent(tokens: number, windowTokens: number): number {
@@ -78,11 +71,11 @@ function breakdownText(frame: ContextWindowFrame | undefined, t: Translate): str
   return ` (${t("context.breakdown", { input: formatTokens(usage.input_tokens ?? 0), cached: formatTokens(cached) })})`;
 }
 
-/** The context window frame the elements draw from in `context`'s render (`RenderContext.contextFrame` keeps it): the payload's own, or the one `contextFrameOf` draws in its place (the transcript's last good frame, or the percentage its newest compaction left). `contextFrameOf` rewrites the payload's frame only when both of two things hold: the frame is a suspicious zero (a percentage and every `current_usage` counter absent or 0, see `isSuspiciousZero`), and the percentage of the window in use the row works out from it under the settings (`usedPercentOf`) is absent or written as 0 to `WINDOW_PERCENT_DECIMALS` decimals, whatever figure `context.value` writes from it (`drawsPercent` false), since such a zero carries no more than the zero claude-hud rewrites. A suspicious zero whose percentage in use is written above 0 (an estimate from the tokens it holds) is a reading, and a frame that is not a suspicious zero is drawn as it stands whatever `drawsPercent` is, as claude-hud draws it: a frame reporting a percentage of 0.04 is written as `0.0%`, and one reporting 45% with no `total_input_tokens` while `context.autoCompactWindow` is set draws no row, and either, carrying a window above 0, is kept as the transcript's last good frame by the rule `contextFrameOf` keeps a frame by. May read and write the transcript's record through `context.ports`, as `contextFrameOf` says when, so it is called once a render. */
+/** The context window frame the elements draw from in `context`'s render (`RenderContext.contextFrame` keeps it): the payload's own, or the one `contextFrameOf` draws in its place (the transcript's last good frame, or the percentage its newest compaction left). `contextFrameOf` rewrites the payload's frame only when both of two things hold: the frame is a suspicious zero (a percentage and every `current_usage` counter absent or 0, see `isSuspiciousZero`), and the percentage of the window in use the row works out from it under the settings (`usedPercentOf`) is absent or 0 when rounded to one decimal (`writtenPercent`), whatever figure `context.value` writes from it (`drawsPercent` false), since such a zero carries no more than the zero claude-hud rewrites. A suspicious zero whose percentage in use is written above 0 (an estimate from the tokens it holds) is a reading, and a frame that is not a suspicious zero is drawn as it stands whatever `drawsPercent` is, as claude-hud draws it: a frame reporting a percentage of 0.04 is written as `0%`, and one reporting 45% with no `total_input_tokens` while `context.autoCompactWindow` is set draws no row, and either, carrying a window above 0, is kept as the transcript's last good frame by the rule `contextFrameOf` keeps a frame by. May read and write the transcript's record through `context.ports`, as `contextFrameOf` says when, so it is called once a render. */
 export function drawnContextFrameOf(context: RenderContext): ContextWindowFrame | undefined {
   const { payload } = context;
   const percent = usedPercentOf(context);
-  const drawsPercent = percent !== undefined && Number(writtenWindowPercent(percent)) > 0;
+  const drawsPercent = percent !== undefined && Number(writtenPercent(percent)) > 0;
   return contextFrameOf({ ports: context.ports, transcriptPath: payload.transcript_path, frame: payload.context_window, drawsPercent, nowMs: context.nowMs, compaction: () => context.transcript()?.session.lastCompaction });
 }
 
@@ -93,7 +86,7 @@ function drawnContextOf(input: RenderContext): { readonly context: RenderContext
   return { context: frame === payload.context_window ? input : { ...input, view: { ...input.view, ...contextViewOf(frame) } }, frame };
 }
 
-/** The context window's bar, or its figures alone, written as the settings ask: the tokens held and the percentage in use, the prompt cache's hit share, and from the breakdown threshold (`contextBreakdownAt`) the breakdown of the last request. The frame drawn is the payload's, or the one `contextFrameOf` draws in place of a frame that reports no use (a percentage and every `current_usage` counter absent or 0) and whose percentage of the window in use, as the row works it out under the settings, is absent or written as 0 to `WINDOW_PERCENT_DECIMALS` decimals. */
+/** The context window's bar, or its figures alone, written as the settings ask: the tokens held and the percentage in use, the prompt cache's hit share, and from the breakdown threshold (`contextBreakdownAt`) the breakdown of the last request. The frame drawn is the payload's, or the one `contextFrameOf` draws in place of a frame that reports no use (a percentage and every `current_usage` counter absent or 0) and whose percentage of the window in use, as the row works it out under the settings, is absent or 0 when rounded to one decimal (`writtenPercent`). */
 export function contextRow(input: RenderContext): RowOutput {
   const { context, frame } = drawnContextOf(input);
   const { view, palette, settings } = context;
@@ -110,7 +103,7 @@ export function contextRow(input: RenderContext): RowOutput {
   const windowTokens = windowTokensOf(context);
   const tokens = view.contextTotalTokens;
   const heldAgainstWindow = tokens === undefined || windowTokens === undefined ? undefined : `${formatTokens(tokens)}/${formatTokens(windowTokens)}`;
-  const percentText = withColor(color, `${writtenWindowPercent(percent)}%`);
+  const percentText = withColor(color, `${writtenPercent(percent)}%`);
   const beforeBar: string[] = [];
   const afterBar: string[] = [];
   switch (settings.context.value) {
@@ -132,7 +125,7 @@ export function contextRow(input: RenderContext): RowOutput {
       break;
     }
     case "remaining":
-      afterBar.push(withColor(color, `${writtenWindowPercent(Math.max(0, FULL_PERCENT - percent))}%`));
+      afterBar.push(withColor(color, `${writtenPercent(Math.max(0, FULL_PERCENT - percent))}%`));
       break;
     default:
       return settings.context.value satisfies never;

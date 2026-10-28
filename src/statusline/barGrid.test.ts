@@ -17,7 +17,7 @@ const ROOMY_ROWS = 4;
 const WINDOWS_ON_THE_ONE_ROW = 2;
 const WINDOWS_ON_THE_THREE_ROWS = 3;
 const CONTEXT_PREFIX = "Ctx 96k/1M ";
-const CONTEXT_SUFFIX = " 10.0% (Cache: 0%)";
+const CONTEXT_SUFFIX = " 10% (Cache: 0%)";
 /** The width of one bar to a row with the context row's label, bar and figures: its prefix, a bar and its two brackets, and its suffix, the widest. */
 const ONE_BAR_TO_A_ROW_FITS = CONTEXT_PREFIX.length + BASE_BAR_CELLS + 2 + CONTEXT_SUFFIX.length;
 const WINDOW_SUFFIX = " 33.6% (6d 18h)";

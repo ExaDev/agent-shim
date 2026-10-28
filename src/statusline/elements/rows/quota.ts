@@ -3,6 +3,7 @@ import type { BarCell } from "../../barGrid";
 import { leadingGraphemes } from "../../graphemes";
 import { packLines, SEPARATOR } from "../../headerLayout";
 import { paintCore } from "../../messages/around";
+import { writtenPercent } from "../../percent";
 import { hidesSubscriptionWindows, platformInputsOf } from "../../platform";
 import { formatResetTime } from "../../resetTime";
 import { visibleDisplayText } from "../../sanitise";
@@ -106,7 +107,7 @@ function figuresOf(window: QuotaWindowView, context: RenderContext, style: BarSt
   const clamped = Math.max(0, Math.min(1, window.fraction));
   const used = window.fraction * FULL_PERCENT;
   const shown = settings.usage.value === "remaining" ? Math.max(0, FULL_PERCENT - used) : used;
-  return { value: withColor(statusColor(clamped, true, style), `${shown.toFixed(1)}%`), reset, plainReset };
+  return { value: withColor(statusColor(clamped, true, style), `${writtenPercent(shown)}%`), reset, plainReset };
 }
 
 /** A reset in parentheses, or nothing when there is none to tell. */

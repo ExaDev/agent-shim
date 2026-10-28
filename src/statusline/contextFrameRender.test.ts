@@ -16,7 +16,7 @@ import { MAX_TRANSCRIPT_READ_BYTES, readTranscript } from "./transcript/reader";
 import type { Compaction } from "./transcript/session";
 import { T0, SECOND, WINDOW, NEGATIVE_PERCENT, SMALLER_WINDOW, GOOD_PERCENT, LATER_PERCENT, GOOD_HELD, POST_TOKENS, POST_PERCENT, FRACTIONAL_POST_TOKENS, FULL_PERCENT, NEGATIVE_COUNT, EMPTY_WINDOW, NEGATIVE_WINDOW, SLIVER_HELD, MOST_HELD_WRITTEN_AS_NONE, LEAST_HELD_WRITTEN_AS_SOME, QUARTER_HELD, HALF_HIT_RATIO, CRITICAL_POST_TOKENS, ZERO_USAGE, TRANSCRIPT, OTHER_TRANSCRIPT, RED, FILLER_CHARACTERS, FILLER_READS, GOOD_INPUT, GOOD_CACHE_READ, GOOD, LATER, HIGH, ZERO, machine, drawnAt, contextLine, stripAnsi, renderAt, usage } from "./contextFrameTesting";
 
-/** A percentage above 0 the row writes as `0.0%`: a frame reporting it is not a suspicious zero, so neither agent-shim nor claude-hud rewrites it. */
+/** A percentage above 0 the row writes as `0%`: a frame reporting it is not a suspicious zero, so neither agent-shim nor claude-hud rewrites it. */
 const PERCENT_WRITTEN_AS_NONE = 0.04;
 
 /** Offsets within one second of `T0` of a reading and of a compaction stamped after it, which a comparison to the whole second would put at the same time. */
@@ -37,14 +37,14 @@ describe("the context row on a suspicious zero", () => {
     const box = machine();
     contextLine(box, HIGH, T0);
     const line = contextLine(box, ZERO, T0 + SECOND);
-    expect(stripAnsi(line)).toMatch(/^Ctx 184k\/200k \[.*\] 92\.0% \(Cache: 98%\) \(in: 4\.0k, cache: 180k\)$/);
-    expect(line).toContain(`${RED}92.0%`);
+    expect(stripAnsi(line)).toMatch(/^Ctx 184k\/200k \[.*\] 92% \(Cache: 98%\) \(in: 4\.0k, cache: 180k\)$/);
+    expect(line).toContain(`${RED}92%`);
   });
 
   it("draws the percentage the newest compaction in the transcript left, with no breakdown, read through the transcript reader", () => {
     const box = machine({ [TRANSCRIPT]: `${JSON.stringify({ type: "system", subtype: "compact_boundary", timestamp: new Date(T0 + SECOND).toISOString(), compactMetadata: { postTokens: POST_TOKENS } })}\n` });
     contextLine(box, HIGH, T0);
-    expect(stripAnsi(contextLine(box, ZERO, T0 + 2 * SECOND))).toMatch(/^Ctx 0\/200k \[.*\] 15\.0%$/);
+    expect(stripAnsi(contextLine(box, ZERO, T0 + 2 * SECOND))).toMatch(/^Ctx 0\/200k \[.*\] 15%$/);
   });
 
   it("draws the percentage a compaction left to one decimal, rounded to the nearest", () => {
@@ -62,7 +62,7 @@ describe("the context row on a suspicious zero", () => {
   it("measures the last good frame's tokens against a window the settings give", () => {
     const box = machine();
     contextLine(box, GOOD, T0);
-    expect(stripAnsi(contextLine(box, ZERO, T0 + SECOND, { context: { autoCompactWindow: SMALLER_WINDOW } }))).toMatch(/^Ctx 80k\/100k \[.*\] 80\.0% \(Cache: 99%\)$/);
+    expect(stripAnsi(contextLine(box, ZERO, T0 + SECOND, { context: { autoCompactWindow: SMALLER_WINDOW } }))).toMatch(/^Ctx 80k\/100k \[.*\] 80% \(Cache: 99%\)$/);
   });
 
   it("draws the estimate from the tokens held where the row makes one, and the last good frame where it makes none", () => {
@@ -70,9 +70,9 @@ describe("the context row on a suspicious zero", () => {
     contextLine(box, GOOD, T0);
     expect(stripAnsi(contextLine(box, { ...ZERO, total_input_tokens: POST_TOKENS }, T0 + SECOND))).toMatch(/^Ctx 30k\/200k \[.*\] 18\.7%$/);
     for (const unestimated of [{ used_percentage: 0, total_input_tokens: POST_TOKENS }, { ...ZERO, total_input_tokens: NEGATIVE_COUNT }]) {
-      expect(stripAnsi(contextLine(box, unestimated, T0 + SECOND))).toMatch(/^Ctx 80k\/200k \[.*\] 40\.0% \(Cache: 99%\)$/);
+      expect(stripAnsi(contextLine(box, unestimated, T0 + SECOND))).toMatch(/^Ctx 80k\/200k \[.*\] 40% \(Cache: 99%\)$/);
     }
-    expect(stripAnsi(contextLine(box, { ...ZERO, total_input_tokens: POST_TOKENS }, T0 + SECOND, { context: { estimate: "never" } }))).toMatch(/^Ctx 80k\/200k \[.*\] 40\.0% \(Cache: 99%\)$/);
+    expect(stripAnsi(contextLine(box, { ...ZERO, total_input_tokens: POST_TOKENS }, T0 + SECOND, { context: { estimate: "never" } }))).toMatch(/^Ctx 80k\/200k \[.*\] 40% \(Cache: 99%\)$/);
   });
 
   it.each([
@@ -84,11 +84,11 @@ describe("the context row on a suspicious zero", () => {
     expect(stripAnsi(contextLine(box, frame, T0 + SECOND, { context: { estimate: "raw" } }))).toMatch(/^Ctx 600\/200k \[.*\] 0\.3%$/);
   });
 
-  it("draws a frame reporting a percentage above 0 that the row writes as 0.0% as it stands and keeps it, since only a suspicious zero is rewritten, as in claude-hud", () => {
+  it("draws a frame reporting a percentage above 0 that the row writes as 0% as it stands and keeps it, since only a suspicious zero is rewritten, as in claude-hud", () => {
     const box = machine();
     contextLine(box, GOOD, T0);
-    expect(stripAnsi(contextLine(box, { context_window_size: WINDOW, used_percentage: PERCENT_WRITTEN_AS_NONE }, T0 + CONTEXT_WRITE_INTERVAL_MS))).toMatch(/^Ctx \[.*\] 0\.0%$/);
-    expect(stripAnsi(contextLine(box, ZERO, T0 + CONTEXT_WRITE_INTERVAL_MS + SECOND))).toMatch(/^Ctx \[.*\] 0\.0%$/);
+    expect(stripAnsi(contextLine(box, { context_window_size: WINDOW, used_percentage: PERCENT_WRITTEN_AS_NONE }, T0 + CONTEXT_WRITE_INTERVAL_MS))).toMatch(/^Ctx \[.*\] 0%$/);
+    expect(stripAnsi(contextLine(box, ZERO, T0 + CONTEXT_WRITE_INTERVAL_MS + SECOND))).toMatch(/^Ctx \[.*\] 0%$/);
   });
 
   it("draws no row from a frame reporting a percentage without total_input_tokens while a window is set, and keeps it, since only a suspicious zero is rewritten, as in claude-hud", () => {
@@ -96,23 +96,23 @@ describe("the context row on a suspicious zero", () => {
     contextLine(box, GOOD, T0);
     const settings: StatuslineSettings = { context: { autoCompactWindow: SMALLER_WINDOW } };
     expect(stripAnsi(contextLine(box, { context_window_size: WINDOW, used_percentage: LATER_PERCENT }, T0 + CONTEXT_WRITE_INTERVAL_MS, settings))).toBe("");
-    expect(stripAnsi(contextLine(box, ZERO, T0 + CONTEXT_WRITE_INTERVAL_MS + SECOND))).toMatch(/^Ctx \[.*\] 60\.0%$/);
+    expect(stripAnsi(contextLine(box, ZERO, T0 + CONTEXT_WRITE_INTERVAL_MS + SECOND))).toMatch(/^Ctx \[.*\] 60%$/);
   });
 
-  it("measures a frame reporting 0 tokens held against a window the settings give as 0.0%, and draws no row from one that does not report them", () => {
+  it("measures a frame reporting 0 tokens held against a window the settings give as 0%, and draws no row from one that does not report them", () => {
     const box = machine();
     const settings: StatuslineSettings = { context: { autoCompactWindow: SMALLER_WINDOW } };
-    expect(stripAnsi(contextLine(box, { ...GOOD, total_input_tokens: 0 }, T0, settings))).toMatch(/^Ctx 0\/100k \[.*\] 0\.0% \(Cache: 99%\)$/);
+    expect(stripAnsi(contextLine(box, { ...GOOD, total_input_tokens: 0 }, T0, settings))).toMatch(/^Ctx 0\/100k \[.*\] 0% \(Cache: 99%\)$/);
     expect(stripAnsi(contextLine(box, { context_window_size: WINDOW, used_percentage: GOOD_PERCENT }, T0, settings))).toBe("");
   });
 
   it.each<[string, StatuslineSettings]>([
     ["buffered", {}],
     ["raw", { context: { estimate: "raw" } }],
-  ])("rewrites a frame whose %s estimate from the tokens held the row would write as 0.0%%, as claude-hud rewrites it, and draws the least estimate it writes as 0.1%% as it stands", (_, settings) => {
+  ])("rewrites a frame whose %s estimate from the tokens held the row would write as 0%%, as claude-hud rewrites it, and draws the least estimate it writes as 0.1%% as it stands", (_, settings) => {
     const box = machine();
     contextLine(box, GOOD, T0);
-    expect(stripAnsi(contextLine(box, { ...ZERO, total_input_tokens: MOST_HELD_WRITTEN_AS_NONE }, T0 + SECOND, settings))).toMatch(/^Ctx 80k\/200k \[.*\] 40\.0% \(Cache: 99%\)$/);
+    expect(stripAnsi(contextLine(box, { ...ZERO, total_input_tokens: MOST_HELD_WRITTEN_AS_NONE }, T0 + SECOND, settings))).toMatch(/^Ctx 80k\/200k \[.*\] 40% \(Cache: 99%\)$/);
     expect(stripAnsi(contextLine(box, { ...ZERO, total_input_tokens: LEAST_HELD_WRITTEN_AS_SOME }, T0 + SECOND, settings))).toMatch(/^Ctx 100\/200k \[.*\] 0\.1%$/);
   });
 
@@ -121,10 +121,10 @@ describe("the context row on a suspicious zero", () => {
     ["raw", { estimate: "raw" }],
   ])("under the %s estimate", (_, estimate) => {
     it.each<[NonNullable<NonNullable<StatuslineSettings["context"]>["value"]>, RegExp, RegExp]>([
-      ["both", /^Ctx 200k\/200k \[.*\] 100\.0%$/, /^Ctx 80k\/200k \[.*\] 40\.0% \(Cache: 99%\)$/],
-      ["percent", /^Ctx \[.*\] 100\.0%$/, /^Ctx \[.*\] 40\.0% \(Cache: 99%\)$/],
+      ["both", /^Ctx 200k\/200k \[.*\] 100%$/, /^Ctx 80k\/200k \[.*\] 40% \(Cache: 99%\)$/],
+      ["percent", /^Ctx \[.*\] 100%$/, /^Ctx \[.*\] 40% \(Cache: 99%\)$/],
       ["tokens", /^Ctx \[.*\] 200k\/200k$/, /^Ctx \[.*\] 80k\/200k \(Cache: 99%\)$/],
-      ["remaining", /^Ctx \[.*\] 0\.0%$/, /^Ctx \[.*\] 60\.0% \(Cache: 99%\)$/],
+      ["remaining", /^Ctx \[.*\] 0%$/, /^Ctx \[.*\] 60% \(Cache: 99%\)$/],
     ])("decides by the percentage in use whatever context.value %s writes, so a whole window held stands and an estimate of 0.0 to one decimal is rewritten", (value, stands, rewritten) => {
       const box = machine();
       contextLine(box, GOOD, T0);
@@ -137,32 +137,32 @@ describe("the context row on a suspicious zero", () => {
   it("measures the tokens a frame with no window holds against the window the settings give to decide that it is a reading", () => {
     const box = machine();
     contextLine(box, GOOD, T0);
-    expect(stripAnsi(contextLine(box, { used_percentage: 0, total_input_tokens: QUARTER_HELD }, T0 + SECOND, { context: { autoCompactWindow: WINDOW } }))).toMatch(/^Ctx 50k\/200k \[.*\] 25\.0%$/);
+    expect(stripAnsi(contextLine(box, { used_percentage: 0, total_input_tokens: QUARTER_HELD }, T0 + SECOND, { context: { autoCompactWindow: WINDOW } }))).toMatch(/^Ctx 50k\/200k \[.*\] 25%$/);
   });
 
   it("draws the hit ratio the payload reports beside a rewritten frame, as it does beside the payload's own", () => {
     const box = machine();
     contextLine(box, GOOD, T0);
     const line = renderAt(box, { transcript_path: TRANSCRIPT, context_window: ZERO, prompt_cache: { hit_ratio: HALF_HIT_RATIO } }, T0 + SECOND, { layout: { header: [], rows: ["context"] } });
-    expect(stripAnsi(line)).toMatch(/^Ctx 80k\/200k \[.*\] 40\.0% \(Cache: 50%\)$/);
+    expect(stripAnsi(line)).toMatch(/^Ctx 80k\/200k \[.*\] 40% \(Cache: 50%\)$/);
   });
 
   it("rewrites a frame whose last request carries other fields beside four counters of 0, as claude-hud checks only the four", () => {
     const box = machine();
     contextLine(box, GOOD, T0);
-    expect(stripAnsi(contextLine(box, { ...ZERO, current_usage: { ...ZERO_USAGE, service_tier: "standard" } }, T0 + SECOND))).toMatch(/ 40\.0% /);
+    expect(stripAnsi(contextLine(box, { ...ZERO, current_usage: { ...ZERO_USAGE, service_tier: "standard" } }, T0 + SECOND))).toMatch(/ 40% /);
   });
 
   it("keeps the frame's last request beside the percentage a compaction left, so the breakdown reads the frame's own counters", () => {
     const box = machine({ [TRANSCRIPT]: `${JSON.stringify({ type: "system", subtype: "compact_boundary", timestamp: new Date(T0).toISOString(), compactMetadata: { postTokens: CRITICAL_POST_TOKENS } })}\n` });
-    expect(stripAnsi(contextLine(box, { ...ZERO, current_usage: ZERO_USAGE }, T0 + SECOND))).toMatch(/^Ctx 0\/200k \[.*\] 90\.0% \(in: 0, cache: 0\)$/);
+    expect(stripAnsi(contextLine(box, { ...ZERO, current_usage: ZERO_USAGE }, T0 + SECOND))).toMatch(/^Ctx 0\/200k \[.*\] 90% \(in: 0, cache: 0\)$/);
   });
 
   it("reads a percentage or a counter of the last request that is not a number as absent, so the frame is rewritten", () => {
     const box = machine();
     contextLine(box, GOOD, T0);
     for (const malformed of [{ ...ZERO, used_percentage: "abc" }, { ...ZERO, current_usage: { input_tokens: "x" } }]) {
-      expect(stripAnsi(contextLine(box, malformed, T0 + SECOND))).toMatch(/ 40\.0% /);
+      expect(stripAnsi(contextLine(box, malformed, T0 + SECOND))).toMatch(/ 40% /);
     }
   });
 
@@ -171,7 +171,7 @@ describe("the context row on a suspicious zero", () => {
     contextLine(box, GOOD, T0);
     for (const overflowing of ['{"context_window_size":200000,"used_percentage":1e999}', '{"context_window_size":200000,"used_percentage":0,"current_usage":{"input_tokens":1e999}}']) {
       const frame: unknown = JSON.parse(overflowing);
-      expect(stripAnsi(contextLine(box, frame, T0 + SECOND))).toMatch(/ 40\.0% /);
+      expect(stripAnsi(contextLine(box, frame, T0 + SECOND))).toMatch(/ 40% /);
     }
   });
 
@@ -184,7 +184,7 @@ describe("the context row on a suspicious zero", () => {
       { type: "system", subtype: "local_command", timestamp: new Date(T0 + SECOND).toISOString(), content: "done" },
     ];
     const box = machine({ [TRANSCRIPT]: lines.map((line) => `${JSON.stringify(line)}\n`).join(""), [record]: JSON.stringify(kept) });
-    expect(stripAnsi(contextLine(box, ZERO, T0 + 2 * SECOND))).toMatch(/ 40\.0%$/);
+    expect(stripAnsi(contextLine(box, ZERO, T0 + 2 * SECOND))).toMatch(/ 40%$/);
   });
 
   it("draws the percentage a compaction in the newest window left while the transcript reader is still catching up with a transcript too big to read at once", () => {
@@ -194,24 +194,24 @@ describe("the context row on a suspicious zero", () => {
     expect(readTranscript(fakeStatuslinePorts(fakeStatuslineFilesystem({ [TRANSCRIPT]: text }).ports), TRANSCRIPT, T0)?.complete).toBe(false);
     const box = machine({ [TRANSCRIPT]: text });
     contextLine(box, HIGH, T0);
-    expect(stripAnsi(contextLine(box, ZERO, T0 + 2 * SECOND))).toMatch(/^Ctx 0\/200k \[.*\] 15\.0%$/);
+    expect(stripAnsi(contextLine(box, ZERO, T0 + 2 * SECOND))).toMatch(/^Ctx 0\/200k \[.*\] 15%$/);
   });
 
   it("counts a compaction stamped later than the reading within the same second, comparing the two to the millisecond as claude-hud does", () => {
     const boundary = `${JSON.stringify({ type: "system", subtype: "compact_boundary", timestamp: new Date(T0 + BOUNDARY_OFFSET_MS).toISOString(), compactMetadata: { postTokens: POST_TOKENS } })}\n`;
     const box = machine({ [TRANSCRIPT]: boundary });
     contextLine(box, GOOD, T0 + READING_OFFSET_MS);
-    expect(stripAnsi(contextLine(box, ZERO, T0 + SECOND))).toMatch(/^Ctx 0\/200k \[.*\] 15\.0%$/);
+    expect(stripAnsi(contextLine(box, ZERO, T0 + SECOND))).toMatch(/^Ctx 0\/200k \[.*\] 15%$/);
   });
 
   it("draws no tokens held for a restored frame whose record holds none, rather than the tokens the zero frame reports", () => {
     const box = machine();
     drawnAt(box, { context_window_size: WINDOW, used_percentage: GOOD_PERCENT, current_usage: GOOD.current_usage }, T0);
-    expect(stripAnsi(contextLine(box, { ...ZERO, total_input_tokens: MOST_HELD_WRITTEN_AS_NONE }, T0 + SECOND))).toMatch(/^Ctx \[.*\] 40\.0% \(Cache: 99%\)$/);
+    expect(stripAnsi(contextLine(box, { ...ZERO, total_input_tokens: MOST_HELD_WRITTEN_AS_NONE }, T0 + SECOND))).toMatch(/^Ctx \[.*\] 40% \(Cache: 99%\)$/);
   });
 
   it("draws the zero as before when there is no record and no compaction", () => {
-    expect(stripAnsi(contextLine(machine(), ZERO, T0))).toMatch(/^Ctx 0\/200k \[.*\] 0\.0%$/);
+    expect(stripAnsi(contextLine(machine(), ZERO, T0))).toMatch(/^Ctx 0\/200k \[.*\] 0%$/);
   });
 });
 
@@ -390,20 +390,20 @@ describe("the record kept whatever the layout draws", () => {
     const box = machine();
     renderAt(box, { transcript_path: TRANSCRIPT, context_window: GOOD }, T0, nothingFromTheFrame);
     expect(box.files.has(cacheFileFor(box.ports, "context", TRANSCRIPT))).toBe(true);
-    expect(stripAnsi(contextLine(box, ZERO, T0 + SECOND))).toMatch(/ 40\.0% /);
+    expect(stripAnsi(contextLine(box, ZERO, T0 + SECOND))).toMatch(/ 40% /);
   });
 
   it("writes a restored frame back in such a render, measuring the record's age from that write", () => {
     const box = machine();
     drawnAt(box, GOOD, T0);
     renderAt(box, { transcript_path: TRANSCRIPT, context_window: ZERO }, T0 + CONTEXT_RECORD_MAX_AGE_MS, nothingFromTheFrame);
-    expect(stripAnsi(contextLine(box, ZERO, T0 + CONTEXT_RECORD_MAX_AGE_MS + SECOND))).toMatch(/ 40\.0% /);
+    expect(stripAnsi(contextLine(box, ZERO, T0 + CONTEXT_RECORD_MAX_AGE_MS + SECOND))).toMatch(/ 40% /);
   });
 
   it("keeps a good frame in a compact render that lists nothing, so a later zero draws it", () => {
     const box = machine();
     renderAt(box, { transcript_path: TRANSCRIPT, context_window: GOOD }, T0, { layout: { mode: "compact", header: [], rows: [] } });
-    expect(stripAnsi(contextLine(box, ZERO, T0 + SECOND))).toMatch(/ 40\.0% /);
+    expect(stripAnsi(contextLine(box, ZERO, T0 + SECOND))).toMatch(/ 40% /);
   });
 
   it("is worked out where the first element asks for it, so the elements before that one do their reading first, as before the render asked on its own", () => {
@@ -490,22 +490,22 @@ describe("the record keyed by the transcript", () => {
   it("restores the record of the transcript the payload names, whatever the session's id", () => {
     const box = machine();
     renderAt(box, { session_id: SESSION_ID, transcript_path: TRANSCRIPT, context_window: GOOD }, T0, {});
-    expect(stripAnsi(renderAt(box, { session_id: SESSION_ID, transcript_path: OTHER_TRANSCRIPT, context_window: ZERO }, T0 + SECOND, { layout: { header: [], rows: ["context"] } }))).toMatch(/ 0\.0%$/);
-    expect(stripAnsi(renderAt(box, { session_id: OTHER_SESSION_ID, transcript_path: TRANSCRIPT, context_window: ZERO }, T0 + SECOND, { layout: { header: [], rows: ["context"] } }))).toMatch(/ 40\.0% /);
+    expect(stripAnsi(renderAt(box, { session_id: SESSION_ID, transcript_path: OTHER_TRANSCRIPT, context_window: ZERO }, T0 + SECOND, { layout: { header: [], rows: ["context"] } }))).toMatch(/ 0%$/);
+    expect(stripAnsi(renderAt(box, { session_id: OTHER_SESSION_ID, transcript_path: TRANSCRIPT, context_window: ZERO }, T0 + SECOND, { layout: { header: [], rows: ["context"] } }))).toMatch(/ 40% /);
   });
 
   it("keys the record the row draws from by the transcript path with the white space around it removed, as claude-hud does, so a padded path names the same record", () => {
     const box = machine();
     const rowOnly: StatuslineSettings = { layout: { header: [], rows: ["context"] } };
     renderAt(box, { transcript_path: TRANSCRIPT, context_window: GOOD }, T0, rowOnly);
-    expect(stripAnsi(renderAt(box, { transcript_path: `${TRANSCRIPT} `, context_window: ZERO }, T0 + SECOND, rowOnly))).toMatch(/ 40\.0% /);
+    expect(stripAnsi(renderAt(box, { transcript_path: `${TRANSCRIPT} `, context_window: ZERO }, T0 + SECOND, rowOnly))).toMatch(/ 40% /);
   });
 
   it("reads the compaction from the transcript at the path as the payload sends it, so a padded path names a transcript that is not there", () => {
     const box = machine({ [TRANSCRIPT]: `${JSON.stringify({ type: "system", subtype: "compact_boundary", timestamp: new Date(T0).toISOString(), compactMetadata: { postTokens: POST_TOKENS } })}\n` });
     const rowOnly: StatuslineSettings = { layout: { header: [], rows: ["context"] } };
-    expect(stripAnsi(renderAt(box, { transcript_path: `${TRANSCRIPT} `, context_window: ZERO }, T0 + SECOND, rowOnly))).toMatch(/ 0\.0%$/);
-    expect(stripAnsi(renderAt(box, { transcript_path: TRANSCRIPT, context_window: ZERO }, T0 + SECOND, rowOnly))).toMatch(/ 15\.0%$/);
+    expect(stripAnsi(renderAt(box, { transcript_path: `${TRANSCRIPT} `, context_window: ZERO }, T0 + SECOND, rowOnly))).toMatch(/ 0%$/);
+    expect(stripAnsi(renderAt(box, { transcript_path: TRANSCRIPT, context_window: ZERO }, T0 + SECOND, rowOnly))).toMatch(/ 15%$/);
   });
 });
 
@@ -595,7 +595,7 @@ describe("a restored record holding a percentage of 0 or below", () => {
     const box = machine({ [record]: JSON.stringify(kept) });
     const line = stripAnsi(contextLine(box, ZERO, T0, { context: { estimate: "raw" } }));
     expect(line).toContain("60k/200k");
-    expect(line).toMatch(/ 30\.0%$/);
+    expect(line).toMatch(/ 30%$/);
   });
 
   it("is drawn with a negative percentage as a frame reporting none: from the tokens it holds, or as no row when it holds none", () => {
@@ -604,7 +604,7 @@ describe("a restored record holding a percentage of 0 or below", () => {
     const settings: StatuslineSettings = { context: { estimate: "raw" } };
     expect(stripAnsi(contextLine(machine({ [record]: JSON.stringify(negative) }), ZERO, T0, settings))).toBe("");
     const held = stripAnsi(contextLine(machine({ [record]: JSON.stringify({ ...negative, totalInputTokens: RESTORED_HELD }) }), ZERO, T0, settings));
-    expect(held).toMatch(/ 30\.0%$/);
+    expect(held).toMatch(/ 30%$/);
   });
 });
 
@@ -616,7 +616,7 @@ describe("the order a frame is rewritten in", () => {
     const box = machine({ [TRANSCRIPT]: boundary, [record]: JSON.stringify(kept) });
     // Last written, by the file's own time, before the retention of the statusline's session state, which the transcript reader's first write prunes by.
     box.mtimes.set(path.normalize(record), T0 - CACHE_RETENTION_MS - SECOND);
-    expect(stripAnsi(contextLine(box, ZERO, T0))).toMatch(/ 40\.0%$/);
+    expect(stripAnsi(contextLine(box, ZERO, T0))).toMatch(/ 40%$/);
   });
 });
 

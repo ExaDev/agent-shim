@@ -103,7 +103,7 @@ describe("the memory row", () => {
   it("draws the memory in use as a bar with its figures", () => {
     const line = draw({ settings: MEMORY_ONLY, memory: { usedBytes: EIGHT_GIB * GIBIBYTE, totalBytes: SIXTEEN_GIB * GIBIBYTE } });
     expect(line).toContain("RAM ");
-    expect(line).toContain("50.0% (8.0 GB / 16 GB)");
+    expect(line).toContain("50% (8.0 GB / 16 GB)");
     expect(line).toContain("\u2588");
   });
 
@@ -121,7 +121,7 @@ describe("the memory row", () => {
       settings: resolveStatusline(MEMORY_ONLY),
       ports: fakeStatuslinePorts({ memoryUse: () => ({ usedBytes: 95, totalBytes: 100 }) }),
     });
-    expect(coloured).toContain("\u001b[31m95.0%");
+    expect(coloured).toContain("\u001b[31m95%");
   });
 });
 

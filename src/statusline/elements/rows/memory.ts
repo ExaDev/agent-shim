@@ -1,5 +1,6 @@
 import type { BarCell } from "../../barGrid";
 import { formatBytes } from "../../memoryUse";
+import { writtenPercent } from "../../percent";
 import { barCell, FULL_PERCENT, statusColor, withColor } from "../../style";
 import { barStyleOf, type RenderContext, type RowOutput } from "../context";
 
@@ -10,7 +11,7 @@ export function memoryRow(context: RenderContext): RowOutput {
   if (use !== undefined && use.totalBytes > 0) {
     const style = barStyleOf(context, "usage");
     const fraction = Math.max(0, Math.min(1, use.usedBytes / use.totalBytes));
-    const percent = withColor(statusColor(fraction, true, style), `${(fraction * FULL_PERCENT).toFixed(1)}%`);
+    const percent = withColor(statusColor(fraction, true, style), `${writtenPercent(fraction * FULL_PERCENT)}%`);
     cells.push(barCell(context.palette.paint("label", `${context.t("memory.label")} `), ` ${percent} (${formatBytes(use.usedBytes)} / ${formatBytes(use.totalBytes)})`, fraction, style));
   }
   return { kind: "bars", cells };

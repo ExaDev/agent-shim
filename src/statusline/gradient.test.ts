@@ -11,6 +11,9 @@ import { renderStatuslineBlock, RESERVED_COLUMNS } from "./render";
 import { FULL_PERCENT } from "./style";
 import { fakeStatuslinePorts } from "./testing";
 
+/** A percentage as the rows write it: rounded to one decimal, the decimal dropped when it is a whole number. */
+const written = (percent: number): string => String(Number(percent.toFixed(1)));
+
 const NOW_MS = Date.parse("2026-10-16T00:00:00.000Z");
 /** The quota bar's base width in cells, as `bar.width` defaults to, plus the two columns its brackets take. */
 const BASE_CELLS = 10;
@@ -32,9 +35,9 @@ const HALF_IN_USE = 50;
 const BETWEEN_BANDS = 80;
 const PAST_CRITICAL = 95;
 
-/** The quota row's line exactly wide enough for its bar at the base ten cells, so the layout shares no spare width into the bar and every column's colour is known: the label, the bracketed cells and the figures, whose width is the percentage's (` 80.0% (38m)` against ` 100.0% (38m)`). */
+/** The quota row's line exactly wide enough for its bar at the base ten cells, so the layout shares no spare width into the bar and every column's colour is known: the label, the bracketed cells and the figures, whose width is the percentage's (` 80% (38m)` against ` 100% (38m)`). */
 function baseBarLineWidth(used: number, cells: number = BASE_CELLS): number {
-  return LABEL.length + (cells + BRACKETS) + ` ${used.toFixed(1)}% ${RESET_TEXT}`.length;
+  return LABEL.length + (cells + BRACKETS) + ` ${written(used)}% ${RESET_TEXT}`.length;
 }
 
 /** The cells a bar fills at a use, as the drawing rounds it. */
@@ -166,8 +169,8 @@ describe("bar.gradient use", () => {
 
   it("keeps the figures beside the bar in the band's colour, and every character of the line as it was", () => {
     const line = renderQuota(BETWEEN_BANDS, "use");
-    expect(line).toContain(`${escapeOf(WARNING)}80.0%${RESET}`);
-    expect(line).not.toContain(`${escapeOf(blendOf(WARNING, CRITICAL, betweenBands(BETWEEN_BANDS, WARN_AT, CRITICAL_AT)))}80.0%`);
+    expect(line).toContain(`${escapeOf(WARNING)}80%${RESET}`);
+    expect(line).not.toContain(`${escapeOf(blendOf(WARNING, CRITICAL, betweenBands(BETWEEN_BANDS, WARN_AT, CRITICAL_AT)))}80%`);
     expect(stripAnsi(line)).toBe(stripAnsi(renderQuota(BETWEEN_BANDS, "off")));
   });
 
@@ -181,7 +184,7 @@ describe("bar.gradient use", () => {
       renderStatuslineBlock({ summary: summaryOf(undefined, undefined), view, payload: parseClientPayload({}), terminalWidth: WIDE_TERMINAL, nowMs: NOW_MS, settings: resolveStatusline({ ...settings, context: { warnAt: CONTEXT_WARN_AT, criticalAt: CONTEXT_CRITICAL_AT, breakdown: "critical" }, bar: { gradient } }), ports: fakeStatuslinePorts() });
     // Between the context bar's own thresholds the fill holds the blend of the warning and critical colours, while its figures hold the band's warning colour.
     expect(render("use")).toContain(`${escapeOf(blendOf(WARNING, CRITICAL, betweenBands(CONTEXT_BETWEEN, CONTEXT_WARN_AT - CONTEXT_ROUNDING_HALF_POINT, CONTEXT_CRITICAL_AT - CONTEXT_ROUNDING_HALF_POINT)))}${FILL}`);
-    expect(render("use")).toContain(`${escapeOf(WARNING)}55.0%${RESET}`);
+    expect(render("use")).toContain(`${escapeOf(WARNING)}55%${RESET}`);
     expect(stripAnsi(render("use"))).toBe(stripAnsi(render("off")));
   });
 
