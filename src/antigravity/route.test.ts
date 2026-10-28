@@ -177,6 +177,7 @@ describe("createAntigravityRoute", () => {
       body: JSON.stringify({
         model: "claude-3-7-sonnet-20250219",
         max_tokens: 1024,
+        stream: true,
         messages: [{ role: "user", content: "Hi" }],
       }),
       signal: new AbortController().signal,
@@ -242,6 +243,7 @@ describe("createAntigravityRoute", () => {
       body: JSON.stringify({
         model: "claude-3-7-sonnet-20250219",
         max_tokens: 1024,
+        stream: true,
         messages: [{ role: "user", content: "Hi local" }],
       }),
       signal: new AbortController().signal,
@@ -252,6 +254,35 @@ describe("createAntigravityRoute", () => {
     expect(fullStream).toContain("event: message_start");
     expect(fullStream).toContain("Hello from local ACP!");
     expect(fullStream).toContain("event: message_stop");
+  });
+
+  it("answers a request that does not ask for a stream with one JSON message, as the Messages API does, so a client such as auto mode's classifier finds its usage", async () => {
+    const geminiSse = [
+      'data: {"candidates":[{"content":{"parts":[{"text":"allow"}]}}]}\n\n',
+      'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"bash_exec","args":{"command":"ls"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":5,"totalTokenCount":20}}\n\n',
+    ].join("");
+    const route = createAntigravityRoute({
+      loadProvider: async () => await Promise.resolve({ ok: true, config: DEFAULT_CLOUD_CONFIG, token: "test-api-key", credentialTarget: "apiKey" }),
+      fetchFn: async () => await Promise.resolve(new Response(geminiSse, { status: 200, headers: { "Content-Type": "text/event-stream" } })),
+    });
+
+    const res = await route({
+      method: "POST",
+      path: "/providers/ag/v1/messages",
+      body: JSON.stringify({ model: "claude-3-7-sonnet-20250219", max_tokens: 1024, tools: [{ name: "bash_exec", description: "Runs a command", input_schema: { type: "object", properties: {} } }], messages: [{ role: "user", content: "Hi" }] }),
+      signal: new AbortController().signal,
+    });
+
+    expect(res.status).toBe(HTTP_STATUS.ok);
+    expect(res.headers["Content-Type"]).toBe("application/json");
+    const message: unknown = JSON.parse(res.body as string);
+    expect(message).toMatchObject({
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: "allow" }, { type: "tool_use", name: "bash_exec", input: { command: "ls" } }],
+      stop_reason: "tool_use",
+      usage: { input_tokens: 15, output_tokens: 5 },
+    });
   });
 
   it("returns error response with status code when upstream rejects", async () => {

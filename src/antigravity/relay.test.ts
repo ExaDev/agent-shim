@@ -171,4 +171,31 @@ describe("createAntigravityRelay", () => {
     });
     expect(rendered).toBe('event: ping\ndata: {"ok":true}\n\n');
   });
+  it("adds the frames up into the one message a non-streaming request is answered with: its text joined, its calls with their ids and arguments, the usage and the stop reason", () => {
+    let idCounter = 1;
+    const relay = createAntigravityRelay({ servedModel: "claude-sonnet-4-5", toolNames: new Map([["bash_exec", "bash-exec"]]), fallbackId: () => `id_${String(idCounter++)}` });
+    relay.pushChunk({ candidates: [{ content: { parts: [{ text: "Running" }] } }], usageMetadata: { promptTokenCount: 15, candidatesTokenCount: 2 } });
+    relay.pushChunk({ candidates: [{ content: { parts: [{ text: " it" }, { functionCall: { name: "bash_exec", args: { command: "ls" } } }] } }] });
+    relay.pushChunk({ candidates: [{ content: { parts: [{ text: "Done" }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 15, candidatesTokenCount: 6 } });
+    expect(relay.message()).toEqual({
+      id: "id_1",
+      type: "message",
+      role: "assistant",
+      model: "claude-sonnet-4-5",
+      content: [
+        { type: "text", text: "Running it" },
+        { type: "tool_use", id: "id_2", name: "bash-exec", input: { command: "ls" } },
+        { type: "text", text: "Done" },
+      ],
+      stop_reason: "tool_use",
+      stop_sequence: null,
+      usage: { input_tokens: 15, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 6 },
+    });
+  });
+
+  it("answers a message with no content and a plain stop when the backend sends nothing, so a client reading it still finds its usage", () => {
+    const relay = createAntigravityRelay({ servedModel: "claude-sonnet-4-5", toolNames: new Map(), fallbackId: () => "id_1" });
+    relay.finish();
+    expect(relay.message()).toMatchObject({ content: [], stop_reason: "end_turn", usage: { input_tokens: 0, output_tokens: 0 } });
+  });
 });
