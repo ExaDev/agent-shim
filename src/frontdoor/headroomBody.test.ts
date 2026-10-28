@@ -52,4 +52,36 @@ describe("collectBody", () => {
     });
     expect((await collectBody(failing)).kind).toBe("failed");
   });
+
+  it("reports a body destroyed before it was read as failed, instead of waiting for an end that cannot come", async () => {
+    const abandoned = new Readable({ read: () => undefined });
+    abandoned.destroy();
+    await once(abandoned, "close");
+    expect(await settledWithin(collectBody(abandoned))).toEqual({ kind: "failed" });
+  });
+
+  it("reports a body destroyed without an error while it is being read as failed", async () => {
+    const cut = new Readable({ read: () => undefined });
+    const collecting = collectBody(cut);
+    cut.destroy();
+    expect(await settledWithin(collecting)).toEqual({ kind: "failed" });
+  });
 });
+
+/** Far longer than a promise that can settle needs, which is one microtask turn. */
+const SETTLE_PROBE_MS = 250;
+
+/** Resolves to what `pending` settled with, or to "hung" when it had not settled by `SETTLE_PROBE_MS`, so a body that never settles fails an assertion instead of timing the whole test out. */
+async function settledWithin<T>(pending: Readonly<Promise<T>>): Promise<T | "hung"> {
+  let probe: NodeJS.Timeout | undefined;
+  const hung = new Promise<"hung">((resolve) => {
+    probe = setTimeout(() => {
+      resolve("hung");
+    }, SETTLE_PROBE_MS);
+  });
+  try {
+    return await Promise.race([pending, hung]);
+  } finally {
+    clearTimeout(probe);
+  }
+}
