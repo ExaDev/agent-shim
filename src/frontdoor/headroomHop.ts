@@ -180,6 +180,11 @@ export async function collectBody(body: Readable): Promise<CollectedBody> {
         resolve(result);
       }
     };
+    // A body destroyed by the client's abort before this point never emits `end` or `error` to a listener attached afterwards (Node 24), so it is settled here instead of awaited for ever, which would hold the request and response of an abandoned exchange open.
+    if (body.destroyed) {
+      settle({ kind: "failed" });
+      return;
+    }
     body.on("data", (chunk: unknown) => {
       if (settled) {
         return;
@@ -201,6 +206,10 @@ export async function collectBody(body: Readable): Promise<CollectedBody> {
       settle({ kind: "body", body: Buffer.concat(chunks) });
     });
     body.on("error", () => {
+      settle({ kind: "failed" });
+    });
+    // `close` follows `end` on a body that finished, so only a body cut short reaches here unsettled.
+    body.on("close", () => {
       settle({ kind: "failed" });
     });
   });
