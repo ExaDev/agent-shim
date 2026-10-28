@@ -62,6 +62,11 @@ function wholeTokens(count: number | undefined): number {
   return Math.trunc(count ?? 0);
 }
 
+/** The four counts of a record as the client wrote them, absent ones included, joined as claude-hud joins them: a response with no id is told from its neighbour by this key, so two records differing only in a fraction or in a missing count are two responses. A count that is not a non-negative number is read as absent. */
+function writtenCountsKey(usage: { readonly input_tokens?: number; readonly output_tokens?: number; readonly cache_creation_input_tokens?: number; readonly cache_read_input_tokens?: number }): string {
+  return [usage.input_tokens, usage.output_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens].map(String).join("|");
+}
+
 /**
  * `state` after one more transcript record, read in file order. Claude Code writes one record per content block of a response and repeats the response's usage on each, so the records of one response are one response: they are told apart by the response's id, and only their increase is counted. The records of a response are adjacent among the records that carry usage (others may fall between them), which is why remembering only the last response is enough. A response without an id is told apart from its neighbours by its counts, so two identical records in a row are one response written twice.
  */
@@ -78,7 +83,7 @@ export function foldTokens(state: TokenState, record: TranscriptRecord): TokenSt
     cacheReadTokens: wholeTokens(usage.cache_read_input_tokens),
   };
   // The schema's least message id is one character, so an empty one is already absent and the fallback reads the same.
-  const key = record.message?.id ?? `${String(counts.inputTokens)}|${String(counts.outputTokens)}|${String(counts.cacheCreationTokens)}|${String(counts.cacheReadTokens)}`;
+  const key = record.message?.id ?? writtenCountsKey(usage);
   if (state.open?.key === key) {
     return { totals: sum(state.totals, increase(state.open.usage, counts)), open: { key, usage: larger(state.open.usage, counts) } };
   }

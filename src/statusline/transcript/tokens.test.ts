@@ -20,6 +20,10 @@ const HALF_TOKEN = 0.5;
 const QUARTER_TOKEN = 0.25;
 const ALMOST_TWO_TOKENS = 1.9;
 const OUTPUT_OF_FRACTIONS = 20;
+const FRACTION_ONE_AND_TWO_TENTHS = 1.2;
+const FRACTION_ONE_AND_FOUR_TENTHS = 1.4;
+const TWO_TOKENS = 2;
+const TEN_TOKENS = 10;
 
 function fold(lines: readonly string[], from = EMPTY_TOKEN_STATE) {
   return lines.reduce((state, text) => {
@@ -80,6 +84,13 @@ describe("foldTokens", () => {
   it.each(["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"] as const)("tells a response with no id from its neighbour by a difference in %s alone, as claude-hud's fallback key holds all four counts", (counter) => {
     const next = { ...FIRST, [counter]: FIRST[counter] + 1 };
     expect(totalTokens(fold([line(undefined, FIRST), line(undefined, next)]).totals)).toBe(totalTokens(ONLY_FIRST) + totalTokens(ONLY_FIRST) + 1);
+  });
+
+  it("tells a response with no id from its neighbour by the counts as written, a fraction or a missing count included, as claude-hud's fallback key does", () => {
+    const fractions = fold([line(undefined, { input_tokens: FRACTION_ONE_AND_TWO_TENTHS }), line(undefined, { input_tokens: FRACTION_ONE_AND_FOUR_TENTHS })]);
+    expect(fractions.totals.inputTokens).toBe(TWO_TOKENS);
+    const missing = fold([line(undefined, { input_tokens: 5, output_tokens: 0 }), line(undefined, { input_tokens: 5 })]);
+    expect(missing.totals.inputTokens).toBe(TEN_TOKENS);
   });
 
   it("reads an empty message id as none, so responses carrying one are told apart by their counts, as claude-hud does", () => {
