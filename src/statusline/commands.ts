@@ -4,10 +4,11 @@ import path from "node:path";
 import type { Command } from "commander";
 
 import { printJson, withExamples } from "../cli/commandDeps";
-import { resolveStatusline, STATUSLINE_ENV } from "../config/statusline";
+import { cosmiconfigReader } from "../config/load";
+import { resolveStatusline } from "../config/statusline";
 import type { LayoutPaths } from "../paths";
 import { listProviders } from "../providersStore";
-import { realFarmFs, realHeadroomSocketTrust } from "../realPorts";
+import { realFarmFs, realFsPort, realHeadroomSocketTrust } from "../realPorts";
 import { readAccountMetadata, readAccountMetadataFile } from "../usage/account";
 import { readUsageSnapshot } from "../usage/read";
 import { headroomSocketTarget } from "../frontdoor/status";
@@ -21,7 +22,7 @@ import { parseClientPayload, viewOf } from "./payload";
 import { realStatuslinePorts } from "./ports";
 import { renderStatuslineBlock } from "./render";
 import { formatStatuslineKeys, statuslineKeys } from "./keys";
-import { statuslineSettingsFromEnv } from "./settings";
+import { statuslineSettingsForRender } from "./liveSettings";
 import { widthsOf } from "./width";
 
 async function readAllStdin(): Promise<string> {
@@ -123,8 +124,12 @@ export function registerStatuslineCommand(program: Command, deps: { readonly pat
         });
         return;
       }
-      const rawSettings = process.env[STATUSLINE_ENV];
-      const settings = resolveStatusline(rawSettings === undefined || rawSettings === "" ? undefined : statuslineSettingsFromEnv(rawSettings, STATUSLINE_ENV));
+      // The config is read afresh on every render (a new reader, since the shared one caches every file it loads), so an edit shows on the next message. A config that cannot be used draws with the defaults, and the reason goes to standard error, which the client does not draw.
+      const live = statuslineSettingsForRender({ env: process.env, cwd: process.cwd(), home: os.homedir(), paths: deps.paths, fs: { ...realFsPort, readConfigFile: cosmiconfigReader() } });
+      if (live.problem !== undefined) {
+        process.stderr.write(`agent-shim: statusline: ${live.problem}. Drawing with the defaults.\n`);
+      }
+      const settings = resolveStatusline(live.settings);
       // What the conversation's requests cost the door is read only for a layout that draws a cost, since it reads the log from the conversation's first day on.
       const conversationId = clientPayload.session_id;
       const prices = settings.layout.header.some((name) => name === "cost" || name === "dailyCost") ? readModels(deps.paths)?.prices : undefined;
