@@ -15,10 +15,46 @@ describe("isClaudeSubcommand", () => {
     expect(isClaudeSubcommand(["fix the plugin"])).toBe(false);
   });
 
-  it("reads only the first token, as a name a flag or a prompt carries further on is not a subcommand", () => {
-    expect(isClaudeSubcommand(["--verbose", "plugin", "list"])).toBe(false);
+  it("reads past options that take no value", () => {
+    expect(isClaudeSubcommand(["--verbose", "plugin", "list"])).toBe(true);
+    expect(isClaudeSubcommand(["--verbose", "--chrome", "mcp", "list"])).toBe(true);
+  });
+
+  it("reads past an option and the one value it takes", () => {
+    expect(isClaudeSubcommand(["--model", "opus", "plugin", "list"])).toBe(true);
+    expect(isClaudeSubcommand(["--settings", "{}", "--model", "opus", "auth", "status"])).toBe(true);
+    expect(isClaudeSubcommand(["-n", "work", "plugin", "list"])).toBe(true);
+  });
+
+  it("takes the value an option names with = from the same argument", () => {
+    expect(isClaudeSubcommand(["--model=opus", "plugin", "list"])).toBe(true);
+    expect(isClaudeSubcommand(["--debug=api", "plugin", "list"])).toBe(true);
+  });
+
+  it("gives an option with an optional value the next argument unless it starts with a hyphen, as claude reads it", () => {
+    expect(isClaudeSubcommand(["--debug", "plugin", "list"])).toBe(false);
+    expect(isClaudeSubcommand(["-r", "plugin"])).toBe(false);
+    expect(isClaudeSubcommand(["--debug", "--verbose", "plugin", "list"])).toBe(true);
+    expect(isClaudeSubcommand(["--resume", "-p", "plugin"])).toBe(true);
+    expect(isClaudeSubcommand(["--worktree"])).toBe(false);
+  });
+
+  it("gives a variadic option every argument up to the next option, as claude reads it", () => {
+    expect(isClaudeSubcommand(["--add-dir", "a", "b", "plugin", "list"])).toBe(false);
+    expect(isClaudeSubcommand(["--allowedTools", "Bash", "--verbose", "plugin", "list"])).toBe(true);
+    expect(isClaudeSubcommand(["--mcp-config", "one.json", "two.json"])).toBe(false);
+  });
+
+  it("takes an option this table does not list to have no value", () => {
+    expect(isClaudeSubcommand(["--not-a-claude-option", "plugin", "list"])).toBe(true);
+  });
+
+  it("finds no subcommand after a prompt, a terminator or the end of the arguments", () => {
     expect(isClaudeSubcommand(["fix", "plugin"])).toBe(false);
     expect(isClaudeSubcommand(["--", "plugin"])).toBe(false);
+    expect(isClaudeSubcommand(["--verbose", "--", "plugin"])).toBe(false);
+    expect(isClaudeSubcommand(["--model"])).toBe(false);
+    expect(isClaudeSubcommand(["--model", "opus"])).toBe(false);
   });
 
   it("matches a name exactly", () => {
