@@ -1,3 +1,9 @@
+## [11.68.2](https://github.com/ExaDev/agent-shim/compare/v11.68.1...v11.68.2) (2026-10-28)
+
+### Bug Fixes
+
+* **launcher:** give a claude subcommand only the arguments it was typed with ([a18877c](https://github.com/ExaDev/agent-shim/commit/a18877c7dcd694f2168c4a414f4e82044db83933)), references [#564](https://github.com/ExaDev/agent-shim/issues/564)
+
 ## [11.68.1](https://github.com/ExaDev/agent-shim/compare/v11.68.0...v11.68.1) (2026-10-28)
 
 ### Bug Fixes
