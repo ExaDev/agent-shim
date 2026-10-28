@@ -1,3 +1,13 @@
+## [11.71.1](https://github.com/ExaDev/agent-shim/compare/v11.71.0...v11.71.1) (2026-10-28)
+
+### Bug Fixes
+
+* **antigravity:** carry the tool_use id on the function call and its response ([3743e57](https://github.com/ExaDev/agent-shim/commit/3743e57adb5c93feb9b921c01bd6b2c510e7bbda)), references [#639](https://github.com/ExaDev/agent-shim/issues/639)
+
+### Tests
+
+* **frontdoor:** pin the request and response a gateway must pass through unchanged ([97e1375](https://github.com/ExaDev/agent-shim/commit/97e13754ac17d7a839af8bc8fdf98108f3f3160e))
+
 ## [11.71.0](https://github.com/ExaDev/agent-shim/compare/v11.70.1...v11.71.0) (2026-10-28)
 
 ### Features
