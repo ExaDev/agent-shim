@@ -112,6 +112,53 @@ describe("the pass-through route", () => {
     }
   });
 
+  it("forwards the request fields, beta headers and tool ids a gateway must not touch, and returns the response's own keys, as Claude Code's gateway guide requires", async () => {
+    const requests: UpstreamSeen[] = [];
+    const reply = { id: "msg_1", type: "message", content: [{ type: "tool_use", id: "toolu_reply", name: "Bash", input: {} }], stop_reason: "tool_use", safeguard_results: [{ id: "classifier-1", verdict: "allow" }] };
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk: Buffer) => {
+        body += chunk.toString("utf8");
+      });
+      request.on("end", () => {
+        requests.push({ method: request.method ?? "", url: request.url ?? "", headers: { ...request.headers }, body });
+        response.writeHead(HTTP_STATUS.ok, { "content-type": "application/json" });
+        response.end(JSON.stringify(reply));
+      });
+    });
+    const upstreamPort = await listen(server);
+    const door = await startDoor({ baseUrl: `http://127.0.0.1:${String(upstreamPort)}`, stripPrefix: "/providers/z", headroomUpstream: undefined });
+    const sent = {
+      model: "claude-sonnet-5-5",
+      max_tokens: 64,
+      // A field no gateway is expected to know, as the guide names it, beside the ones that pair with a beta header.
+      safeguards: [{ id: "classifier-1", type: "unrecognised" }],
+      context_management: { edits: [] },
+      output_config: { effort: "low" },
+      system: [{ type: "text", text: "rules", cache_control: { type: "ephemeral" } }],
+      messages: [
+        { role: "user", content: "list things" },
+        { role: "assistant", content: [{ type: "tool_use", id: "toolu_01ABC", name: "Bash", input: { command: "ls" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_01ABC", content: "a\nb" }] },
+      ],
+    };
+    const betaValues = "context-management-2025-06-27,effort-2025-11-24";
+    try {
+      const response = await fetch(`${door.url}/providers/z/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer tok", "anthropic-beta": betaValues, "anthropic-version": "2023-06-01", [AUTH_HEADER]: "launch-token-for-tests" },
+        body: JSON.stringify(sent),
+      });
+      const seen = requests[0];
+      expect(seen?.headers["anthropic-beta"]).toBe(betaValues);
+      expect(seen?.headers["anthropic-version"]).toBe("2023-06-01");
+      expect(JSON.parse(seen?.body ?? "null")).toEqual(sent);
+      expect(await response.json()).toEqual(reply);
+    } finally {
+      await door.close();
+    }
+  });
+
   it("addresses the request under the upstream's base path, so a provider whose base URL has a path is reached", async () => {
     const upstream = await fakeUpstream();
     const door = await startDoor({ baseUrl: `http://127.0.0.1:${String(upstream.port)}/api/anthropic/`, stripPrefix: "/providers/z", headroomUpstream: undefined });
