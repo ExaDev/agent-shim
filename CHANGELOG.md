@@ -1,3 +1,9 @@
+## [11.68.1](https://github.com/ExaDev/agent-shim/compare/v11.68.0...v11.68.1) (2026-10-28)
+
+### Bug Fixes
+
+* **statusline:** read a range only from a regular file, so a FIFO cannot hold a refresh ([594a875](https://github.com/ExaDev/agent-shim/commit/594a8754b690ca7286b2e675a0983ef52f4cee87)), closes [#628](https://github.com/ExaDev/agent-shim/issues/628)
+
 ## [11.68.0](https://github.com/ExaDev/agent-shim/compare/v11.67.5...v11.68.0) (2026-10-27)
 
 ### Features
