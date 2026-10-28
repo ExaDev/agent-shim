@@ -1,3 +1,9 @@
+## [11.68.3](https://github.com/ExaDev/agent-shim/compare/v11.68.2...v11.68.3) (2026-10-28)
+
+### Bug Fixes
+
+* **launcher:** find a claude subcommand that follows options ([275c7c6](https://github.com/ExaDev/agent-shim/commit/275c7c6dce48040a60748d156f4b302822bad764)), references [#564](https://github.com/ExaDev/agent-shim/issues/564)
+
 ## [11.68.2](https://github.com/ExaDev/agent-shim/compare/v11.68.1...v11.68.2) (2026-10-28)
 
 ### Bug Fixes
