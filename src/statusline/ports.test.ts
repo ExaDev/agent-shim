@@ -1,9 +1,10 @@
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 
 import { fileSizeLimitedCommand, realStatuslinePorts, RUN_MAX_OUTPUT_BYTES, RUN_TIMEOUT_MS, STALE_RUN_DIRECTORY_MS } from "./ports";
 
@@ -17,6 +18,8 @@ const PAST_END_RANGE = { start: 50, length: 5 };
 /** The permission bits of a file only its owner may read and write, and the mask that selects the permission bits of a mode. */
 const OWNER_READ_WRITE = 0o600;
 const OWNER_ONLY_MASK = 0o777;
+/** The permission bits of a file its owner may write and not read. */
+const OWNER_WRITE_ONLY = 0o200;
 
 /** How old a run directory is made for the next call to sweep it: well past the age at which one is stale. */
 const STALE_MS = STALE_RUN_DIRECTORY_MS * 2;
@@ -76,6 +79,29 @@ describe("realStatuslinePorts", () => {
     }
   });
 
+  it.skipIf(process.platform === "win32")("reads a FIFO through a final link as a file, what its writer writes, as claude-hud reads a settings file, reads a regular file through a final link and reads no text from a directory", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+    try {
+      const fifo = path.join(dir, "pipe");
+      execFileSync("mkfifo", [fifo]);
+      fs.symlinkSync(fifo, path.join(dir, "to-pipe"));
+      const file = path.join(dir, "a.txt");
+      fs.writeFileSync(file, "hello");
+      fs.symlinkSync(file, path.join(dir, "to-a.txt"));
+      // A writer that writes a character and exits once a reader opens the FIFO: the port waits for it and reads that character.
+      const writer = spawn("/bin/sh", ["-c", 'printf x > "$0"', fifo], { stdio: "ignore" });
+      try {
+        expect(ports.readText(path.join(dir, "to-pipe"))).toBe("x");
+      } finally {
+        writer.kill("SIGKILL");
+      }
+      expect(ports.readText(path.join(dir, "to-a.txt"))).toBe("hello");
+      expect(ports.readText(dir)).toBeUndefined();
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
   it("reads a range of a file with the file's whole size, never more bytes than asked for", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
     try {
@@ -108,6 +134,24 @@ describe("realStatuslinePorts", () => {
       } finally {
         fs.closeSync(held);
       }
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("reads a range of a regular file through a final link, and nothing through a link to a directory or a dangling link", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+    try {
+      const file = path.join(dir, "range.txt");
+      fs.writeFileSync(file, DIGITS);
+      fs.mkdirSync(path.join(dir, "sub"));
+      fs.symlinkSync(file, path.join(dir, "to-file"));
+      fs.symlinkSync(path.join(dir, "sub"), path.join(dir, "to-directory"));
+      fs.symlinkSync(path.join(dir, "missing.txt"), path.join(dir, "dangling"));
+      const range = ports.readRange(path.join(dir, "to-file"), MID_RANGE.start, MID_RANGE.length);
+      expect({ size: range?.size, text: range === undefined ? undefined : new TextDecoder().decode(range.bytes) }).toEqual({ size: DIGITS.length, text: "234" });
+      expect(ports.readRange(path.join(dir, "to-directory"), 0, MID_RANGE.length)).toBeUndefined();
+      expect(ports.readRange(path.join(dir, "dangling"), 0, MID_RANGE.length)).toBeUndefined();
     } finally {
       fs.rmSync(dir, { recursive: true });
     }
@@ -344,17 +388,52 @@ describe("realStatuslinePorts", () => {
     }
   });
 
-  it("tells a directory from anything else without following a final link, and nothing from a missing path", () => {
+  it("tells a directory and a regular file from anything else without following a final link, and nothing from a missing path", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
     try {
       fs.mkdirSync(path.join(dir, "sub"));
       fs.writeFileSync(path.join(dir, "file"), "x");
       fs.symlinkSync(path.join(dir, "sub"), path.join(dir, "link"));
       expect(ports.entryKind(path.join(dir, "sub"))).toBe("directory");
-      expect(ports.entryKind(path.join(dir, "file"))).toBe("other");
+      expect(ports.entryKind(path.join(dir, "file"))).toBe("file");
       expect(ports.entryKind(path.join(dir, "link"))).toBe("other");
       expect(ports.entryKind(path.join(dir, "missing"))).toBeUndefined();
     } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("tells a FIFO and a link to a regular file from a regular file", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+    try {
+      const fifo = path.join(dir, "fifo");
+      execFileSync("mkfifo", [fifo]);
+      fs.writeFileSync(path.join(dir, "file"), "x");
+      fs.symlinkSync(path.join(dir, "file"), path.join(dir, "link"));
+      expect(ports.entryKind(fifo)).toBe("other");
+      expect(ports.entryKind(path.join(dir, "link"))).toBe("other");
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("tells a socket and a character device from a regular file", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+    const server = net.createServer();
+    try {
+      const socket = path.join(dir, "socket");
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(socket, resolve);
+      });
+      expect(ports.entryKind(socket)).toBe("other");
+      expect(ports.entryKind("/dev/null")).toBe("other");
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
       fs.rmSync(dir, { recursive: true });
     }
   });
@@ -383,6 +462,34 @@ describe("realStatuslinePorts", () => {
     } finally {
       fs.rmSync(dir, { recursive: true });
     }
+  });
+
+  it("reports the size of a regular file without opening it, through a final link and 0 for an empty one, and none for a directory, a FIFO or a missing path", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+    const file = path.join(dir, "a.txt");
+    try {
+      fs.writeFileSync(file, DIGITS);
+      fs.chmodSync(file, OWNER_WRITE_ONLY);
+      fs.symlinkSync(file, path.join(dir, "link"));
+      const fifo = path.join(dir, "fifo");
+      expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
+      expect(ports.fileSize(file)).toBe(DIGITS.length);
+      expect(ports.fileSize(path.join(dir, "link"))).toBe(DIGITS.length);
+      expect(ports.fileSize(dir)).toBeUndefined();
+      expect(ports.fileSize(fifo)).toBeUndefined();
+      expect(ports.fileSize(path.join(dir, "missing"))).toBeUndefined();
+      const empty = path.join(dir, "empty.txt");
+      fs.writeFileSync(empty, "");
+      expect(ports.fileSize(empty)).toBe(0);
+    } finally {
+      fs.chmodSync(file, OWNER_READ_WRITE);
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("resolves a path against the directory the process runs in, as path.resolve does", () => {
+    expect(ports.absolutePath("t.jsonl")).toBe(path.join(process.cwd(), "t.jsonl"));
+    expect(ports.absolutePath("/a/b/../c/")).toBe("/a/c");
   });
 
   it("carries the state directory it was given", () => {

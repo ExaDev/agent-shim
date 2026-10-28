@@ -7,7 +7,7 @@ import type { StatuslinePorts } from "./ports";
 export interface ConfigCounts {
   /** CLAUDE.md and CLAUDE.local.md files, in the configuration directory and the project. */
   readonly claudeMd: number;
-  /** Markdown files under a `rules` directory, at any depth. */
+  /** Markdown files under a `rules` directory, at any depth: entries whose name ends in `.md` and that are regular files once their links are followed, each file counted once. */
   readonly rules: number;
   /** MCP servers configured for the user and for the project, a server named in both scopes counting in each. */
   readonly mcpServers: number;
@@ -76,17 +76,19 @@ function removeNames(servers: Set<string>, names: readonly string[] | undefined)
   }
 }
 
-/** What a path names with its links followed: `directory`, `other` for a file, or undefined for nothing. The ports' own `entryKind` does not follow a final link, and the configuration directory of a session is often a farm of links. */
-function followedKind(ports: StatuslinePorts, target: string): "directory" | "other" | undefined {
+/** What a path names with its links followed, as `StatuslinePorts.entryKind` names it, or undefined for nothing. The ports' own `entryKind` does not follow a final link, and the configuration directory of a session is often a farm of links. */
+function followedKind(ports: StatuslinePorts, target: string): ReturnType<StatuslinePorts["entryKind"]> {
   const real = ports.realPath(target);
   return real === undefined ? undefined : ports.entryKind(real);
 }
 
+/** Whether anything other than a directory is at `file` once its links are followed. */
 function isFile(ports: StatuslinePorts, file: string): boolean {
-  return followedKind(ports, file) === "other";
+  const kind = followedKind(ports, file);
+  return kind !== undefined && kind !== "directory";
 }
 
-/** The Markdown files under a rules directory, each file counted once however many links reach it, and no directory walked twice, which is what stops a link back up the tree from looping. */
+/** The Markdown files under a rules directory (entries whose name, as the directory lists it, ends in `.md` and that are regular files once their links are followed), each file counted once however many links reach it, and no directory walked twice, which is what stops a link back up the tree from looping. */
 function countRules(ports: StatuslinePorts, root: string): number {
   const visited = new Set<string>();
   let entries = 0;
@@ -112,7 +114,7 @@ function countRules(ports: StatuslinePorts, root: string): number {
       const kind = followedKind(ports, entry);
       if (kind === "directory") {
         count += walk(entry);
-      } else if (kind === "other" && name.endsWith(".md")) {
+      } else if (kind === "file" && name.endsWith(".md")) {
         const target = ports.realPath(entry);
         if (target !== undefined && !visited.has(target)) {
           visited.add(target);

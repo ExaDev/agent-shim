@@ -1,10 +1,15 @@
+import { execFileSync, spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { resolveStatusline, STATUSLINE_DEFAULTS, type StatuslineSettings } from "../config/statusline";
 import { ESCAPE } from "./ansi";
 import type { StatuslineSummary } from "./enrich";
 import { parseClientPayload, viewOf } from "./payload";
-import type { StatuslinePorts } from "./ports";
+import { realStatuslinePorts, type StatuslinePorts } from "./ports";
 import { renderStatuslineBlock } from "./render";
 import { fakeRangeReader, fakeStatuslinePorts, newReadLog, type ReadLog } from "./testing";
 
@@ -349,7 +354,7 @@ describe("the version segment", () => {
 describe("the output style segment", () => {
   const files = (contents: Readonly<Record<string, string>>): Partial<StatuslinePorts> => ({
     homeDirectory: "/home/ada",
-    readText: (path) => contents[path],
+    readText: (file) => contents[file],
   });
   const style = (name: string): string => JSON.stringify({ outputStyle: name });
 
@@ -399,6 +404,25 @@ describe("the output style segment", () => {
 
   it("strips control characters from the style", () => {
     expect(segments({ settings: onlyHeader("outputStyle"), ports: files({ "/home/ada/.claude/settings.json": style(`${ESCAPE}[1mBold`) }) })).toEqual(["style: Bold"]);
+  });
+
+  it.skipIf(process.platform === "win32")("reads the style from a settings file that is a FIFO, what its writer writes, as claude-hud reads it", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-style-"));
+    try {
+      const settingsFile = path.join(home, ".claude", "settings.local.json");
+      fs.mkdirSync(path.dirname(settingsFile));
+      execFileSync("mkfifo", [settingsFile]);
+      // A writer that writes the settings and exits once a reader opens the FIFO, as a tool feeding a settings file through one does.
+      const writer = spawn("/bin/sh", ["-c", 'printf %s "$1" > "$0"', settingsFile, style("Explanatory")], { stdio: "ignore" });
+      try {
+        const { readText } = realStatuslinePorts({}, path.join(home, "state"));
+        expect(segments({ settings: onlyHeader("outputStyle"), ports: { homeDirectory: home, readText } })).toEqual(["style: Explanatory"]);
+      } finally {
+        writer.kill("SIGKILL");
+      }
+    } finally {
+      fs.rmSync(home, { recursive: true });
+    }
   });
 });
 

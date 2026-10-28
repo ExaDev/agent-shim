@@ -97,6 +97,13 @@ describe("trackSpeed", () => {
     expect(disk.files.has(stale)).toBe(true);
   });
 
+  it("starts again when the kept sample holds a key it never writes, and measures against one it wrote", () => {
+    const file = cacheFileFor(fakeStatuslinePorts(), "speed", TRANSCRIPT);
+    const written = tokens(T0, BASE_TOKENS);
+    expect(trackSpeed(fakeStatuslinePorts(fakeStatuslineFilesystem({ [file]: JSON.stringify({ ...written, unwritten: 1 }) }).ports), TRANSCRIPT, tokens(T0 + GAP_MS, BASE_TOKENS + TOKENS))).toBeUndefined();
+    expect(trackSpeed(fakeStatuslinePorts(fakeStatuslineFilesystem({ [file]: JSON.stringify(written) }).ports), TRANSCRIPT, tokens(T0 + GAP_MS, BASE_TOKENS + TOKENS))).toBe(TOKENS);
+  });
+
   it("starts again when the kept sample is not one it wrote", () => {
     const ports = fakeStatuslinePorts(fakeStatuslineFilesystem({ [cacheFileFor(fakeStatuslinePorts(), "speed", TRANSCRIPT)]: '{"at":"yesterday"}' }).ports);
     expect(trackSpeed(ports, TRANSCRIPT, tokens(T0, BASE_TOKENS))).toBeUndefined();

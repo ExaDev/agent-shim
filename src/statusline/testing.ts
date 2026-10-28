@@ -2,8 +2,10 @@ import path from "node:path";
 
 import { resolveStatusline } from "../config/statusline";
 import type { RenderContext } from "./elements/context";
+import { drawnContextFrameOf } from "./elements/rows/context";
 import type { StatuslineSummary } from "./enrich";
 import { translatorFor } from "./messages/catalogues";
+import { once } from "./once";
 import { createPalette } from "./palette";
 import { parseClientPayload } from "./payload";
 import type { FileRange, StatuslinePorts } from "./ports";
@@ -66,10 +68,10 @@ export function fakeStatuslineSummary(overrides: Readonly<Partial<StatuslineSumm
   };
 }
 
-/** What an element is given, for a test: a session the door knows nothing about, an empty client payload, default settings, no colour and ports that read nothing, with any part replaceable. `payload` is the raw JSON the client would send. */
+/** What an element is given, for a test: a session the door knows nothing about, an empty client payload, default settings, no colour and ports that read nothing, with any part replaceable; the context frame drawn is worked out from the rest as a render works it out unless replaced. `payload` is the raw JSON the client would send. */
 export function fakeRenderContext(overrides: Readonly<Partial<Omit<RenderContext, "payload">>> & { readonly payload?: unknown } = {}): RenderContext {
   const settings = overrides.settings ?? resolveStatusline(undefined);
-  return {
+  const context: RenderContext = {
     summary: fakeStatuslineSummary(),
     view: { clientModelName: undefined, contextUsedPercentage: undefined, contextTotalTokens: undefined, contextWindowTokens: undefined, cacheHitRatio: undefined, cacheReadTokens: undefined, freshInputTokens: undefined },
     nowMs: 0,
@@ -80,13 +82,18 @@ export function fakeRenderContext(overrides: Readonly<Partial<Omit<RenderContext
     ports: fakeStatuslinePorts(),
     transcriptIdentity: () => ({ model: undefined, advisor: undefined }),
     transcript: () => undefined,
+    contextFrame: once(() => drawnContextFrameOf(context)),
     ...overrides,
     settings,
     payload: parseClientPayload(overrides.payload ?? {}),
   };
+  return context;
 }
 
-/** Ports for a test: an empty environment, a home directory that exists nowhere, a 24-hour British clock in UTC, no readable file or range of one, no listable directory, no program that runs, nothing on the file system and no memory figure, each replaceable. */
+/** The directory a fake statusline runs in, which a relative path is resolved against. */
+export const FAKE_WORKING_DIRECTORY = "/work/test";
+
+/** Ports for a test: an empty environment, a home directory that exists nowhere, a 24-hour British clock in UTC, a working directory of `FAKE_WORKING_DIRECTORY`, no readable file or range of one, no listable directory, no program that runs, nothing on the file system and no memory figure, each replaceable. */
 export function fakeStatuslinePorts(overrides: Readonly<Partial<StatuslinePorts>> = {}): StatuslinePorts {
   return {
     env: {},
@@ -102,6 +109,8 @@ export function fakeStatuslinePorts(overrides: Readonly<Partial<StatuslinePorts>
     entryKind: () => undefined,
     realPath: () => undefined,
     modifiedAtMs: () => undefined,
+    fileSize: () => undefined,
+    absolutePath: (target) => path.resolve(FAKE_WORKING_DIRECTORY, target),
     memoryUse: () => undefined,
     ...overrides,
   };
@@ -109,7 +118,7 @@ export function fakeStatuslinePorts(overrides: Readonly<Partial<StatuslinePorts>
 
 /** The filesystem ports of an in-memory tree, with the tree itself: `initial` maps absolute paths to their text, a directory exists wherever a file lies beneath it, `links` maps a path to the path it resolves to, and every write lands in `files`. */
 export interface FakeStatuslineFilesystem {
-  readonly ports: Pick<StatuslinePorts, "readText" | "readRange" | "entryKind" | "listDirectory" | "realPath" | "writeText" | "removePath">;
+  readonly ports: Pick<StatuslinePorts, "readText" | "readRange" | "fileSize" | "entryKind" | "listDirectory" | "realPath" | "writeText" | "removePath">;
   readonly files: Map<string, string>;
 }
 
@@ -132,6 +141,10 @@ export function fakeStatuslineFilesystem(initial: Readonly<Record<string, string
         const all = new TextEncoder().encode(text);
         return { size: all.length, bytes: all.subarray(start, start + length) };
       },
+      fileSize: (target) => {
+        const text = files.get(resolve(target));
+        return text === undefined ? undefined : new TextEncoder().encode(text).length;
+      },
       entryKind: (target) => {
         // Like lstat: a path that is itself a link is `other`, whatever it points at.
         if (target in links) {
@@ -139,7 +152,7 @@ export function fakeStatuslineFilesystem(initial: Readonly<Record<string, string
         }
         const resolved = resolve(target);
         if (files.has(resolved)) {
-          return "other";
+          return "file";
         }
         return beneath(resolved).length > 0 ? "directory" : undefined;
       },

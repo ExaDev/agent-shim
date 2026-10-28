@@ -14,7 +14,7 @@ const NOTHING: SessionTokens = { inputTokens: 0, outputTokens: 0, cacheCreationT
 const TRANSCRIPT_BYTES = 1_000;
 
 function facts(tokens: Readonly<SessionTokens>, complete = true): TranscriptFacts {
-  return { bytes: TRANSCRIPT_BYTES, complete, session: { title: undefined, startedAtMs: undefined, lastResponseAtMs: undefined, compactions: 0, promptCache: undefined }, tokens, activity: EMPTY_ACTIVITY_FACTS };
+  return { bytes: TRANSCRIPT_BYTES, complete, session: { title: undefined, startedAtMs: undefined, lastResponseAtMs: undefined, compactions: 0, lastCompaction: undefined, promptCache: undefined }, tokens, activity: EMPTY_ACTIVITY_FACTS };
 }
 
 /** The row drawn from the transcript facts given (none when the transcript cannot be read), with the label colour set when `label` is. */
@@ -41,6 +41,10 @@ describe("the session tokens row", () => {
   it("draws nothing without a transcript to read, or with nothing used", () => {
     expect(draw(undefined)).toEqual([]);
     expect(draw(facts(NOTHING))).toEqual([]);
+  });
+
+  it("draws a total that overflowed to Infinity as InfinityM, scaled to millions as claude-hud draws it", () => {
+    expect(draw(facts({ ...USED, inputTokens: Number.POSITIVE_INFINITY, cacheCreationTokens: 0, cacheReadTokens: 0 }))).toEqual(["Tokens InfinityM (in: InfinityM, out: 7.2k)"]);
   });
 
   it("paints the row in the label colour", () => {

@@ -13,6 +13,9 @@ const HELD = 90_000;
 const REPORTED_PERCENT = 45;
 const PERCENT = 100;
 const IN_WARNING_BAND = 75;
+/** A last request whose prompt was three quarters read from cache: its fresh input and its cache reads. */
+const QUARTER_FRESH_INPUT = 1_000;
+const QUARTER_FRESH_READS = 3_000;
 /** A use at or above claude-hud's context critical threshold and below the earlier one, where the earlier default drew neither the red nor the breakdown. */
 const BETWEEN_CRITICAL_THRESHOLDS = 87;
 const OWN_WARN_AT = 60;
@@ -41,6 +44,8 @@ const LOW_THRESHOLDS = { warnAt: 20, criticalAt: 40 };
 const HALF = 2;
 const QUARTER = 4;
 const JUST_CLEARED = 100;
+/** A percentage in use written as 0.3, so 100 less it as written is 99.7, where the percentage left, 99.75, is written as 99.8. */
+const QUARTER_POINT_IN_USE = 0.25;
 /** claude-hud's context thresholds (`display.contextWarningThreshold` and `display.contextCriticalThreshold` in its `DEFAULT_CONFIG`), which are the context bar's defaults. */
 const DEFAULT_WARN_AT = 70;
 const DEFAULT_CRITICAL_AT = 85;
@@ -95,9 +100,13 @@ describe("the context row's figure", () => {
     expect(stripAnsi(draw({ context: { value: "remaining" } })[0] ?? "")).toMatch(/^Ctx \[.*\] 55\.0%$/);
   });
 
-  it("writes the tokens alone for tokens when the client reports no window, and nothing when it reports no tokens", () => {
+  it("writes the tokens alone for tokens when the client does not report the window, and nothing when it does not report the tokens held", () => {
     expect(stripAnsi(draw({ context: { value: "tokens" } }, { contextWindowTokens: undefined })[0] ?? "")).toMatch(/\] 90k$/);
     expect(stripAnsi(draw({ context: { value: "tokens" } }, { contextTotalTokens: undefined })[0] ?? "")).toMatch(/^Ctx \[.*\]$/);
+  });
+
+  it("writes the percentage left rounded from 100 less the percentage in use, not 100 less the percentage in use as written", () => {
+    expect(stripAnsi(draw({ context: { value: "remaining" } }, { contextUsedPercentage: QUARTER_POINT_IN_USE })[0] ?? "")).toMatch(/\] 99\.8%$/);
   });
 
   it("does not let the remaining percentage go below nothing when the percentage reported is over the window", () => {
@@ -125,6 +134,11 @@ describe("the context row without its bar", () => {
     expect(draw({ context: { bar: "hidden", estimate: "never" } }, { contextUsedPercentage: undefined })).toEqual([]);
   });
 
+  it("draws the last request's share of prompt tokens read from cache when the client reports no hit ratio, and no share when it read none", () => {
+    expect(draw({ context: { bar: "hidden" } }, { cacheReadTokens: QUARTER_FRESH_READS, freshInputTokens: QUARTER_FRESH_INPUT }).map(stripAnsi)).toEqual(["Ctx 90k/200k 45.0% (Cache: 75%)"]);
+    expect(draw({ context: { bar: "hidden" } }, { cacheReadTokens: 0, freshInputTokens: QUARTER_FRESH_INPUT }).map(stripAnsi)).toEqual(["Ctx 90k/200k 45.0%"]);
+  });
+
   it("is a row of text, so it ends a run of bars rather than joining their grid", () => {
     const resolved = resolveStatusline({ context: { bar: "hidden" } });
     expect(contextRow(withColour(resolved, REPORTED, {})).kind).toBe("text");
@@ -133,7 +147,7 @@ describe("the context row without its bar", () => {
 });
 
 describe("the context row with nothing to show", () => {
-  it("draws nothing for tokens without a bar when the client reports no tokens, but still draws the bar with the percentage", () => {
+  it("draws nothing for tokens without a bar when the client does not report the tokens held, but still draws the bar with the percentage", () => {
     expect(draw({ context: { bar: "hidden", value: "tokens" } }, { contextTotalTokens: undefined, cacheHitRatio: 0.93 })).toEqual([]);
     expect(stripAnsi(draw({ context: { value: "tokens" } }, { contextTotalTokens: undefined })[0] ?? "")).toMatch(/^Ctx \[.*\]$/);
   });
@@ -208,7 +222,7 @@ describe("the context row measured against a window", () => {
     expect(stripAnsi(line ?? "")).toMatch(/\] 100\.0%$/);
   });
 
-  it("draws nothing while the client reports no tokens to measure, rather than the percentage against its own window", () => {
+  it("draws nothing while the client does not report the tokens held to measure, rather than the percentage against its own window", () => {
     expect(draw({ context: { autoCompactWindow: 100_000 } }, { contextTotalTokens: undefined })).toEqual([]);
     expect(draw({ context: { autoCompactWindow: 100_000, bar: "hidden" } }, { contextTotalTokens: undefined })).toEqual([]);
   });
@@ -245,7 +259,7 @@ describe("the context row when the client reports no percentage", () => {
     expect(stripAnsi(line)).toMatch(/\] 1\.0%$/);
   });
 
-  it("draws nothing when there is no window or no tokens to estimate from", () => {
+  it("draws nothing when the client does not report the window or the tokens held to estimate from", () => {
     expect(draw({ context: { estimate: "raw" } }, { ...unreported, contextWindowTokens: undefined })).toEqual([]);
     expect(draw({ context: { estimate: "raw" } }, { ...unreported, contextTotalTokens: undefined })).toEqual([]);
   });

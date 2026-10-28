@@ -2,16 +2,19 @@ import { z } from "zod";
 
 import type { TranscriptRecord } from "./record";
 
-/** A count of whole tokens: a state holding a fraction was folded before counts were truncated, so it is refused and rebuilt. */
-const tokenCount = z.number().int().nonnegative();
+/** A count of whole tokens: a state holding a fraction was folded before counts were truncated, so it is refused and rebuilt. Not `int()`, which also refuses a whole number past the safe integers, and a count the client writes can be one (the largest finite number, whose sum overflows). */
+const tokenCount = z.number().nonnegative().refine(Number.isInteger);
+
+/** A summed count as the cache holds it. A sum of finite counts can pass `Number.MAX_VALUE` and become Infinity, as claude-hud's sums do, and JSON writes Infinity as `null`; the counts summed are finite and never negative, so a sum is never NaN or below 0, and `null` can only be a sum that overflowed, which is read back as Infinity so the kept state loads again. */
+const totalCount = tokenCount.or(z.null().transform(() => Number.POSITIVE_INFINITY));
 
 /** The tokens a session has used, summed over every response its transcript records, by the four counts the API reports. */
 const SessionTokensSchema = z.strictObject({ inputTokens: tokenCount, outputTokens: tokenCount, cacheCreationTokens: tokenCount, cacheReadTokens: tokenCount });
 export type SessionTokens = z.infer<typeof SessionTokensSchema>;
 
-/** What folding the records so far has found: the totals, and the response whose records were read last, because more of its records may follow. It is JSON-serialisable, because the statusline keeps it between refreshes. */
+/** What folding the records so far has found: the totals, any of which is Infinity once its sum overflows, and the response whose records were read last, because more of its records may follow. It is JSON-serialisable, because the statusline keeps it between refreshes. */
 export const TokenStateSchema = z.strictObject({
-  totals: SessionTokensSchema,
+  totals: z.strictObject({ inputTokens: totalCount, outputTokens: totalCount, cacheCreationTokens: totalCount, cacheReadTokens: totalCount }),
   open: z.strictObject({ key: z.string(), usage: SessionTokensSchema }).optional(),
 });
 export type TokenState = z.infer<typeof TokenStateSchema>;

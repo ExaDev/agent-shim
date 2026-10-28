@@ -45,14 +45,22 @@ const FIRST_OUTPUT = 5;
 const SECOND_INPUT = 20;
 const GROWN_OUTPUT = 9;
 const CACHE_READ = 100;
+/** A fraction of a whole number, which no count the reader keeps holds, and a cache tier of neither five minutes nor an hour. */
+const A_FRACTION = 0.5;
+const UNKNOWN_TTL_SECONDS = 60;
+/** Tokens a kept cache is edited to say its compaction left, unlike any the transcript records. */
+const EDITED_POST_TOKENS = 60_000;
 /** How many times the filler repeats so a transcript is several reads long, and how many lines past one read another is. */
 const FILLER_READS = 3;
 const LINES_PAST_A_READ = 5;
 /** How many different skills the old part of the activity transcript uses, round and round. */
 const EARLY_SKILLS = 3;
 const THREE_BOUNDARIES = 3;
+/** Tokens a compaction might record past `Number.MAX_SAFE_INTEGER`: a whole number far beyond it, and the first integer beyond it. */
+const HUGE_POST_TOKENS = 1e20;
+const UNSAFE_POST_TOKENS = Number.MAX_SAFE_INTEGER + 1;
 /** The version of the cache the reader writes, and how many versions before it a cache of an older reader may have. */
-const CURRENT_CACHE_VERSION = 8;
+const CURRENT_CACHE_VERSION = 9;
 const EARLIER_VERSIONS = 2;
 /** A first line longer than the part of it that identifies a transcript. */
 const OVERSIZED_FIRST_LINE = 70_000;
@@ -84,6 +92,63 @@ function countingPorts(disk: FakeStatuslineFilesystem): { readonly ports: Status
     },
   });
   return { ports, listings, bytesRead: () => total };
+}
+
+/** Whether `value` is a JSON object, as opposed to an array or a scalar. */
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Every JSON object in `value`, at any depth, arrays' elements included. */
+function objectsIn(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(objectsIn);
+  }
+  return isJsonObject(value) ? [value, ...Object.values(value).flatMap(objectsIn)] : [];
+}
+
+/** The JSON object at `keys` under `object`, which the test expects the cache to hold. */
+function fieldAt(object: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  return keys.reduce<Record<string, unknown>>((held, key) => {
+    const next = held[key];
+    if (!isJsonObject(next)) {
+      throw new Error(`the kept cache holds no object at ${keys.join(".")}`);
+    }
+    return next;
+  }, object);
+}
+
+/** A transcript whose cache holds an object of every shape the reader keeps (a compaction, the prompt cache's clock, a response still being read, tool calls, an agent, a result whose call has not been read, a todo list, skills), read once so its cache is kept, and the cache as parsed. */
+function keptCache(): { readonly disk: FakeStatuslineFilesystem; readonly ports: StatuslinePorts; readonly cacheFile: string; readonly kept: unknown } {
+  const text =
+    line({ type: "user", timestamp: at(0), message: { content: "hi" } }) +
+    line({ type: "user", timestamp: at(0), message: { content: [{ type: "tool_result", tool_use_id: "unread", content: "ok" }] } }) +
+    line({ type: "assistant", timestamp: at(SECOND_MS), requestId: "r1", message: { id: "a1", usage: { input_tokens: FIRST_INPUT, output_tokens: FIRST_OUTPUT, cache_creation: { ephemeral_5m_input_tokens: FIRST_INPUT } }, content: [{ type: "tool_use", id: "read", name: "Read", input: { file_path: "/a/b.ts" } }, { type: "tool_use", id: "skill", name: "Skill", input: { skill: "commit" } }, { type: "tool_use", id: "agent", name: "Agent", input: { subagent_type: "Explore", description: "Look around" } }, { type: "tool_use", id: "todo", name: "TodoWrite", input: { todos: [{ content: "Write it", status: "pending" }] } }] } }) +
+    line({ type: "user", timestamp: at(2 * SECOND_MS), message: { content: [{ type: "tool_result", tool_use_id: "read", content: "ok" }] } }) +
+    line({ type: "system", subtype: "compact_boundary", timestamp: at(MINUTE), compactMetadata: { postTokens: SECOND_INPUT } }) +
+    line({ type: "custom-title", customTitle: "Kept" });
+  const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: text });
+  const ports = fakeStatuslinePorts(disk.ports);
+  if (readTranscript(ports, TRANSCRIPT, T0)?.session.lastCompaction?.postTokens !== SECOND_INPUT) {
+    throw new Error("the transcript's compaction was not read");
+  }
+  const cacheFile = cacheFileFor(ports, "transcript", TRANSCRIPT);
+  return { disk, ports, cacheFile, kept: JSON.parse(disk.files.get(cacheFile) ?? "") };
+}
+
+/** `kept` edited to say its compaction left `EDITED_POST_TOKENS`, unlike the transcript, so a cache read as it stands draws those tokens and one read as none draws the transcript's, and then edited by `edit`. */
+function editedCache(kept: unknown, edit: (cache: Record<string, unknown>) => void): string {
+  const copy = structuredClone(kept);
+  if (!isJsonObject(copy)) {
+    throw new Error("the kept cache is not a JSON object");
+  }
+  for (const object of objectsIn(copy)) {
+    if (isJsonObject(object.compaction)) {
+      object.compaction.postTokens = EDITED_POST_TOKENS;
+    }
+  }
+  edit(copy);
+  return JSON.stringify(copy);
 }
 
 /** A line of exactly `ODD_LINE_BYTES` bytes, newline included. */
@@ -120,6 +185,83 @@ describe("readTranscript", () => {
     disk.files.set(TRANSCRIPT, first + appended);
     expect(readTranscript(ports, TRANSCRIPT, T0)?.session.compactions).toBe(2);
     expect(bytesRead() - afterFirst).toBe(bytesOf(appended));
+  });
+
+  it.each([HUGE_POST_TOKENS, UNSAFE_POST_TOKENS])("keeps a cache it can load again when a compaction left %d tokens, beyond Number.MAX_SAFE_INTEGER",(postTokens) => {
+    const text = line({ type: "user", timestamp: at(0), message: { content: "hi" } }) + line({ type: "system", subtype: "compact_boundary", timestamp: at(MINUTE), compactMetadata: { postTokens } });
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: text });
+    const { ports, bytesRead } = countingPorts(disk);
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.session.lastCompaction).toEqual({ atMs: T0 + MINUTE, postTokens });
+    const afterFirst = bytesRead();
+
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.session.lastCompaction).toEqual({ atMs: T0 + MINUTE, postTokens });
+    expect(bytesRead() - afterFirst).toBe(0);
+  });
+
+  it("reads a kept cache as none when any object in it holds a key the reader never writes, and folds the transcript again", () => {
+    const { disk, ports, cacheFile, kept } = keptCache();
+    const objectCount = objectsIn(kept).length;
+    disk.files.set(cacheFile, editedCache(kept, () => undefined));
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.session.lastCompaction?.postTokens).toBe(EDITED_POST_TOKENS);
+    for (let index = 0; index < objectCount; index += 1) {
+      disk.files.set(
+        cacheFile,
+        editedCache(kept, (copy) => {
+          const object = objectsIn(copy)[index];
+          if (object === undefined) {
+            throw new Error(`the kept cache holds no object ${String(index)}`);
+          }
+          object.unwritten = 1;
+        }),
+      );
+      expect(readTranscript(ports, TRANSCRIPT, T0)?.session.lastCompaction?.postTokens, `object ${String(index)}`).toBe(SECOND_INPUT);
+    }
+  });
+
+  it.each<[string, (cache: Record<string, unknown>) => void]>([
+    ["a fraction of a compaction", (cache) => {
+      fieldAt(cache, ["session", "cumulative"]).compactions = A_FRACTION;
+    }],
+    ["a cache tier of neither five minutes nor an hour", (cache) => {
+      fieldAt(cache, ["session", "latest", "cache"]).ttlSeconds = UNKNOWN_TTL_SECONDS;
+    }],
+    ["a fraction of a byte in the offset read to", (cache) => {
+      cache.offset = Number(cache.offset) - A_FRACTION;
+    }],
+    ["a negative count in the response still being read", (cache) => {
+      fieldAt(cache, ["tokens", "open", "usage"]).inputTokens = -FIRST_INPUT;
+    }],
+  ])("reads a kept cache as none when it holds %s, which the reader never writes, and folds the transcript again", (_, edit) => {
+    const { disk, ports, cacheFile, kept } = keptCache();
+    disk.files.set(cacheFile, editedCache(kept, edit));
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.session.lastCompaction?.postTokens).toBe(SECOND_INPUT);
+  });
+
+  it("reads a kept cache as none when the fold of the end of a long transcript holds a key the reader never writes, and folds the transcript again", () => {
+    const records = Math.ceil((OVER_TWO_WINDOWS * MAX_TRANSCRIPT_READ_BYTES) / ODD_LINE_BYTES);
+    const old = Array.from({ length: records }, () => oddLine({ type: "user", timestamp: at(0), message: { content: "filler" } })).join("");
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: old + line({ type: "custom-title", customTitle: "Final name" }) });
+    const ports = fakeStatuslinePorts(disk.ports);
+    expect(readTranscript(ports, TRANSCRIPT, T0)).toMatchObject({ complete: false, session: { title: "Final name" } });
+    const cacheFile = cacheFileFor(ports, "transcript", TRANSCRIPT);
+    const kept: unknown = JSON.parse(disk.files.get(cacheFile) ?? "");
+    // The end's fold is edited to name the session otherwise, so a cache read as it stands draws that name and one read as none draws the transcript's.
+    const renamed = (unwritten: boolean): string => {
+      const copy = structuredClone(kept);
+      if (!isJsonObject(copy)) {
+        throw new Error("the kept cache is not a JSON object");
+      }
+      const newer = fieldAt(copy, ["newer"]);
+      fieldAt(newer, ["state"]).customTitle = "Edited";
+      if (unwritten) {
+        newer.unwritten = 1;
+      }
+      return JSON.stringify(copy);
+    };
+    disk.files.set(cacheFile, renamed(false));
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.session.title).toBe("Edited");
+    disk.files.set(cacheFile, renamed(true));
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.session.title).toBe("Final name");
   });
 
   it("leaves a record the client is still writing for the refresh that finds it whole", () => {
@@ -186,6 +328,18 @@ describe("readTranscript", () => {
     expect(readTranscript(ports, TRANSCRIPT, T0)?.tokens).toEqual({ inputTokens: FIRST_INPUT + SECOND_INPUT, outputTokens: FIRST_OUTPUT + 1, cacheCreationTokens: 0, cacheReadTokens: 2 * CACHE_READ });
     disk.files.set(TRANSCRIPT, (disk.files.get(TRANSCRIPT) ?? "") + response("b", SECOND_INPUT, GROWN_OUTPUT));
     expect(readTranscript(ports, TRANSCRIPT, T0)?.tokens).toEqual({ inputTokens: FIRST_INPUT + SECOND_INPUT, outputTokens: FIRST_OUTPUT + GROWN_OUTPUT, cacheCreationTokens: 0, cacheReadTokens: 2 * CACHE_READ });
+  });
+
+  it("sums tokens past the largest finite number to Infinity, as claude-hud does, and the cache it saves loads again", () => {
+    const response = (id: string): string => line({ type: "assistant", timestamp: at(0), message: { id, usage: { input_tokens: Number.MAX_VALUE, output_tokens: 1 } } });
+    const disk = fakeStatuslineFilesystem({ [TRANSCRIPT]: response("a") + response("b") });
+    const { ports, bytesRead } = countingPorts(disk);
+    const overflowed = { inputTokens: Number.POSITIVE_INFINITY, outputTokens: 2, cacheCreationTokens: 0, cacheReadTokens: 0 };
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.tokens).toEqual(overflowed);
+    const afterFirst = bytesRead();
+
+    expect(readTranscript(ports, TRANSCRIPT, T0)?.tokens).toEqual(overflowed);
+    expect(bytesRead() - afterFirst).toBe(0);
   });
 
   it("sums the tokens of a transcript bigger than a read over successive refreshes, short of the total until it has caught up and equal to it after", () => {

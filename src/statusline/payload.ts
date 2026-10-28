@@ -66,6 +66,9 @@ const ClientPayloadSchema = z
 
 export type ClientPayload = z.infer<typeof ClientPayloadSchema>;
 
+/** The context window as the client's payload reports it in one frame. */
+export type ContextWindowFrame = NonNullable<ClientPayload["context_window"]>;
+
 /** Reads the client's payload into the fields the statusline uses; anything that is not a JSON object reads as an empty payload. */
 export function parseClientPayload(raw: unknown): ClientPayload {
   return ClientPayloadSchema.parse(raw);
@@ -92,11 +95,18 @@ function nonBlank(value: string | undefined): string | undefined {
 export function viewOf(payload: ClientPayload): StatuslinePayloadView {
   return {
     clientModelName: nonBlank(payload.model?.display_name) ?? nonBlank(payload.model?.id),
-    contextUsedPercentage: reportedPercent(payload.context_window?.used_percentage),
-    contextTotalTokens: nonNegative(payload.context_window?.total_input_tokens),
-    contextWindowTokens: payload.context_window?.context_window_size,
+    ...contextViewOf(payload.context_window),
     cacheHitRatio: payload.prompt_cache?.hit_ratio,
-    cacheReadTokens: payload.context_window?.current_usage?.cache_read_input_tokens,
-    freshInputTokens: payload.context_window?.current_usage?.input_tokens,
+  };
+}
+
+/** The view's fields that come from the context window's frame, so a frame the context row draws in place of the payload's (see `contextFrameOf`) is read exactly as the payload's own would be. */
+export function contextViewOf(frame: ContextWindowFrame | undefined): Pick<StatuslinePayloadView, "contextUsedPercentage" | "contextTotalTokens" | "contextWindowTokens" | "cacheReadTokens" | "freshInputTokens"> {
+  return {
+    contextUsedPercentage: reportedPercent(frame?.used_percentage),
+    contextTotalTokens: nonNegative(frame?.total_input_tokens),
+    contextWindowTokens: frame?.context_window_size,
+    cacheReadTokens: frame?.current_usage?.cache_read_input_tokens,
+    freshInputTokens: frame?.current_usage?.input_tokens,
   };
 }

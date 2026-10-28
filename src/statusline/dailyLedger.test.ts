@@ -1,7 +1,13 @@
+import { execFileSync, spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import type { SessionCost } from "./cost";
 import { DAILY_LEDGER_DIRECTORY, recordDailySpend } from "./dailyLedger";
+import { realStatuslinePorts } from "./ports";
 import { fakeStatuslineFilesystem, fakeStatuslinePorts } from "./testing";
 
 const STATE = "/state/test";
@@ -15,6 +21,7 @@ const MIDDAY_HOUR = 12;
 const MORNING_HOUR = 9;
 const LATE_HOUR = 23;
 const TODAY = "2026-10-19";
+const YESTERDAY = "2026-10-18";
 const TOMORROW = "2026-10-20";
 /** Local noon, so a few hours either side stay on the same local day whatever the machine's time zone. */
 const NOON = new Date(YEAR, OCTOBER, DAY, MIDDAY_HOUR, 0, 0).getTime();
@@ -164,6 +171,33 @@ describe("recordDailySpend", () => {
       const { ports, files } = setup({ [`${ROOT}/${TODAY}/s1.json`]: damaged });
       expect(recordDailySpend(ports, NOON, "s1", native(THIRD_FIGURE))).toBe(0);
       expect(stored(files, TODAY, "s1"), damaged).toEqual({ baselineUsd: THIRD_FIGURE, totalUsd: THIRD_FIGURE, source: "native", seenAtMs: NOON });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("reads a FIFO at a session's file for today or the day before as no entry, without opening it, and replaces the session's own for today with its entry", () => {
+    const state = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ledger-"));
+    const writers: ReturnType<typeof spawn>[] = [];
+    try {
+      const ledger = path.join(state, DAILY_LEDGER_DIRECTORY);
+      const own = path.join(ledger, TODAY, "s1.json");
+      // An entry for each FIFO, written each time a reader opens it, keeps a regression from blocking this test: one that opens a FIFO counts or carries that entry's spend, where every FIFO must be read as none.
+      const fifos = [
+        [own, { baselineUsd: 1, totalUsd: THIRD_FIGURE, source: "native", seenAtMs: NOON }],
+        [path.join(ledger, TODAY, "s2.json"), { baselineUsd: 1, totalUsd: THIRD_FIGURE, source: "native", seenAtMs: NOON }],
+        [path.join(ledger, YESTERDAY, "s1.json"), { baselineUsd: 1, totalUsd: FIRST_FIGURE, source: "native", seenAtMs: NOON - HOUR_MS }],
+      ] as const;
+      for (const [file, entry] of fifos) {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        execFileSync("mkfifo", [file]);
+        writers.push(spawn("/bin/sh", ["-c", 'while :; do printf %s "$1" > "$0"; done', file, JSON.stringify(entry)], { stdio: "ignore" }));
+      }
+      expect(recordDailySpend(realStatuslinePorts({}, state), NOON, "s1", native(THIRD_FIGURE))).toBe(0);
+      expect(fs.lstatSync(own).isFile()).toBe(true);
+    } finally {
+      for (const writer of writers) {
+        writer.kill("SIGKILL");
+      }
+      fs.rmSync(state, { recursive: true });
     }
   });
 

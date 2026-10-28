@@ -26,9 +26,24 @@ const CumulativeStateSchema = z.strictObject({
   compactions: z.number().int().nonnegative(),
 });
 
-/** The facts that are the newest value of something, so the end of the transcript settles them whatever came before: the latest response, the names, and the prompt cache's clock. */
+/** A compaction the transcript records: when its `compact_boundary` record was written, and the tokens the context held once it was done, where the client recorded them (truncated to a whole token). The tokens are any whole number of 0 or more, beyond `Number.MAX_SAFE_INTEGER` included, which Zod's `int()` refuses: the fold keeps every `postTokens` the client writes that is a finite number of 0 or more, and keeps a boundary whose `postTokens` is anything else (a negative number, one JSON parses to Infinity, or not a number) with none, and a state it saves must load again. */
+const CompactionSchema = z.strictObject({
+  atMs: z.number(),
+  postTokens: z
+    .number()
+    .nonnegative()
+    .refine((tokens) => Number.isInteger(tokens))
+    .optional(),
+});
+
+/** A compaction the transcript records, as `CompactionSchema` describes it. */
+export type Compaction = z.infer<typeof CompactionSchema>;
+
+/** The facts that are the newest value of something rather than a total: the latest response, the names, the newest compaction, and the prompt cache's clock (see `foldLatest` for which records set each). */
 export const LatestStateSchema = z.strictObject({
   lastAssistantAtMs: z.number().optional(),
+  /** The compaction with the latest timestamp, as claude-hud picks it among boundaries stamped with a date string: a boundary stamped no later than the one held does not replace it, and one is counted, as on the compactions row, only when its timestamp is a string `Date.parse` reads as a date. claude-hud counts a boundary whose timestamp is truthy and which `new Date` reads as a valid date, whatever its type, so the two differ only on a timestamp that is truthy, is not a string and that `new Date` reads as a valid date, which Claude Code never writes (see the parity document's kept differences). */
+  compaction: CompactionSchema.optional(),
   customTitle: z.string().optional(),
   slug: z.string().optional(),
   aiTitle: z.string().optional(),
@@ -111,7 +126,12 @@ function foldCumulative(state: Readonly<CumulativeState>, record: TranscriptReco
   return next;
 }
 
-/** The latest-state facts after one more transcript record, read in file order. Folding the records of the end of a transcript alone gives the facts the whole of it would, as long as the end holds a record that sets each. */
+/** Of two compactions, the one stamped later, or the first when neither is later, as claude-hud keeps the first of boundaries stamped alike. */
+function laterCompaction(held: Compaction | undefined, met: Compaction | undefined): Compaction | undefined {
+  return held === undefined || (met !== undefined && met.atMs > held.atMs) ? met : held;
+}
+
+/** The latest-state facts after one more transcript record, read in file order. Folded from the end of a transcript alone, the latest response and the names are the ones the whole of it gives as long as the end holds a record that sets each; the prompt cache's clock is anchored to records within the end alone, and the newest compaction is the one stamped latest within the end, which can be earlier than one before it, so `sessionFactsOf` takes the later of the end's and the one the part read so far holds. */
 export function foldLatest(state: LatestState, record: TranscriptRecord): LatestState {
   const atMs = recordTimeMs(record);
   const next: LatestState = { ...state };
@@ -124,6 +144,10 @@ export function foldLatest(state: LatestState, record: TranscriptRecord): Latest
   }
   if (record.type === "assistant" && atMs !== undefined) {
     next.lastAssistantAtMs = atMs;
+  }
+  if (record.type === "system" && record.subtype === "compact_boundary" && atMs !== undefined) {
+    const postTokens = record.compactMetadata?.postTokens;
+    next.compaction = laterCompaction(state.compaction, { atMs, ...(postTokens === undefined ? {} : { postTokens: Math.trunc(postTokens) }) });
   }
   if (record.isSidechain !== true) {
     next.cache = foldPromptCache(state.cache, record, atMs);
@@ -144,6 +168,8 @@ export interface SessionFacts {
   /** When the latest assistant record was written, subagents' included. */
   readonly lastResponseAtMs: number | undefined;
   readonly compactions: number;
+  /** The compaction stamped latest among the records the reader has read: the whole transcript once `TranscriptFacts.complete` is true, and while it is catching up the part read so far and the end it folds alone, so a compaction in the part between is not counted until the reader reaches it (the parity document's kept difference on the transcript reader catching up). Undefined when none of those records is a `compact_boundary` with a timestamp. */
+  readonly lastCompaction: Compaction | undefined;
   /** The prompt cache's clock: when the request that last refreshed it was sent, and the tier its writes used (undefined until a write has shown one). Undefined when the main conversation has no request yet. */
   readonly promptCache: { readonly anchorAtMs: number; readonly ttlSeconds: number | undefined } | undefined;
 }
@@ -154,7 +180,7 @@ function hasRequest(cache: LatestState["cache"]): boolean {
 }
 
 /**
- * The facts a state holds. `newer`, when given, is the latest-state facts folded from the end of the transcript alone while the cumulative ones are still being caught up: each of its facts that is set replaces the state's, because the end of the transcript is later than anything the state has read, and one it lacks is left as the state has it.
+ * The facts a state holds. `newer`, when given, is the latest-state facts folded from the end of the transcript alone while the cumulative ones are still being caught up: each of its facts that is set replaces the state's, because the end of the transcript is later than anything the state has read, and one it lacks is left as the state has it (the prompt cache's clock is the end's once the end holds a request, with the state's tier where the end shows none); the newest compaction is the one of the two stamped later, as it is within either.
  */
 export function sessionFactsOf(state: SessionState, newer?: LatestState): SessionFacts {
   const { cumulative } = state;
@@ -168,6 +194,7 @@ export function sessionFactsOf(state: SessionState, newer?: LatestState): Sessio
     startedAtMs: cumulative.startedAtMs,
     lastResponseAtMs: latest.lastAssistantAtMs,
     compactions: cumulative.compactions,
+    lastCompaction: laterCompaction(state.latest.compaction, newer?.compaction),
     promptCache: anchorAtMs === undefined ? undefined : { anchorAtMs, ttlSeconds: cache.ttlSeconds },
   };
 }
