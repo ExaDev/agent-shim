@@ -1,3 +1,13 @@
+## [11.70.0](https://github.com/ExaDev/agent-shim/compare/v11.69.0...v11.70.0) (2026-10-28)
+
+### Features
+
+* **statusline:** keep the last good context frame and the post-compaction estimate ([1ae78f2](https://github.com/ExaDev/agent-shim/commit/1ae78f28aba8786312858120f8e94809aafdd80f)), references [#571](https://github.com/ExaDev/agent-shim/issues/571)
+
+### Documentation
+
+* **statusline:** describe the context frame drawn after a compaction ([1bf52e9](https://github.com/ExaDev/agent-shim/commit/1bf52e9298d7de3dec29119393ad6d0ddd68151a)), references [#571](https://github.com/ExaDev/agent-shim/issues/571)
+
 ## [11.69.0](https://github.com/ExaDev/agent-shim/compare/v11.68.3...v11.69.0) (2026-10-28)
 
 ### Features
