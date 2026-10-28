@@ -155,9 +155,9 @@ describe("the statusline in English", () => {
     const lines = draw({ language: "en", cost: COST_USD, disk });
     expect(lines).toEqual([
       "Sonnet 5.5 | via zeta/glm | headroom 42k saved \u00b7 3.5% overall \u00b7 $0.13 | work | \u25d1 high | Advisor: Opus 4.7 | CC v2.1.0 | style: concise | Cost $1.25 | Today $0.250 | renamed | \u23f1\ufe0f  4m",
-      expect.stringMatching(/^Ctx 634k\/1M \[.*\] 63\.4% \(Cache: 90%\) \(in: 12k, cache: 40k\) \| 5h \[.*\] 25\.0% \(resets in 1h 26m, at 11:30\) \| Wk \[.*\] 40\.0% \(available\)$/),
+      expect.stringMatching(/^Ctx 634k\/1M \[.*\] 63\.4% \(Cache: 90%\) \(in: 12k, cache: 40k\) \| 5h \[.*\] 25% \(resets in 1h 26m, at 11:30\) \| Wk \[.*\] 40% \(available\)$/),
       "Added dirs: d0, d1, d2, d3, d4, +3 more",
-      expect.stringMatching(/^RAM \[.*\] 50\.0% \(8\.0 GB \/ 16 GB\)$/),
+      expect.stringMatching(/^RAM \[.*\] 50% \(8\.0 GB \/ 16 GB\)$/),
       "2 CLAUDE.md | 2 rules | 1 MCP | 2 hooks",
       "Started: 10:00 \u2502 Last reply: 3m ago",
       "Cache \u23f1 until 10:05",
@@ -282,22 +282,22 @@ describe("the reset of a quota window", () => {
   const row = (language: StatuslineLanguage, usage: Readonly<NonNullable<StatuslineSettings["usage"]>>): string => draw({ language, settings: { ...RESETS, usage: { ...RESETS.usage, ...usage } }, summary: { ...SUMMARY, sevenDayUsed: undefined } })[0] ?? "";
 
   it("says that a wall-clock time is the reset, with the label and without it, in every language", () => {
-    expect(row("en", { timeFormat: "absolute" })).toBe("5h 25.0% (at 11:30)");
-    expect(row("en", { timeFormat: "absolute", resetLabel: true })).toBe("5h 25.0% (resets at 11:30)");
-    expect(row("zh-Hans", { timeFormat: "absolute" })).toBe("5\u5c0f\u65f6 25.0% (11:30 \u91cd\u7f6e)");
-    expect(row("zh-Hans", { timeFormat: "absolute", resetLabel: true })).toBe("5\u5c0f\u65f6 25.0% (\u91cd\u7f6e\u4e8e 11:30)");
-    expect(row("zh-Hant", { timeFormat: "absolute" })).toBe("5\u5c0f\u6642 25.0% (11:30 \u91cd\u8a2d)");
+    expect(row("en", { timeFormat: "absolute" })).toBe("5h 25% (at 11:30)");
+    expect(row("en", { timeFormat: "absolute", resetLabel: true })).toBe("5h 25% (resets at 11:30)");
+    expect(row("zh-Hans", { timeFormat: "absolute" })).toBe("5\u5c0f\u65f6 25% (11:30 \u91cd\u7f6e)");
+    expect(row("zh-Hans", { timeFormat: "absolute", resetLabel: true })).toBe("5\u5c0f\u65f6 25% (\u91cd\u7f6e\u4e8e 11:30)");
+    expect(row("zh-Hant", { timeFormat: "absolute" })).toBe("5\u5c0f\u6642 25% (11:30 \u91cd\u8a2d)");
   });
 
   it("keeps the meaning of a reset when the share elapsed and the time are told together", () => {
-    expect(row("en", { timeFormat: "elapsedAndAbsolute" })).toBe("5h 25.0% (71% elapsed, at 11:30)");
-    expect(row("zh-Hans", { timeFormat: "elapsedAndAbsolute" })).toBe("5\u5c0f\u65f6 25.0% (\u5df2\u8fc7 71%\uff0c11:30 \u91cd\u7f6e)");
+    expect(row("en", { timeFormat: "elapsedAndAbsolute" })).toBe("5h 25% (71% elapsed, at 11:30)");
+    expect(row("zh-Hans", { timeFormat: "elapsedAndAbsolute" })).toBe("5\u5c0f\u65f6 25% (\u5df2\u8fc7 71%\uff0c11:30 \u91cd\u7f6e)");
   });
 
   it("tells the time left and the time of day together, introduced when the label asks", () => {
-    expect(row("en", { timeFormat: "both", resetLabel: true })).toBe("5h 25.0% (resets in 1h 26m, at 11:30)");
-    expect(row("zh-Hans", { timeFormat: "both", resetLabel: true })).toBe("5\u5c0f\u65f6 25.0% (\u8ddd\u91cd\u7f6e 1h 26m\uff0c\u4e8e 11:30)");
-    expect(row("zh-Hans", { timeFormat: "both" })).toBe("5\u5c0f\u65f6 25.0% (1h 26m\uff0c11:30 \u91cd\u7f6e)");
+    expect(row("en", { timeFormat: "both", resetLabel: true })).toBe("5h 25% (resets in 1h 26m, at 11:30)");
+    expect(row("zh-Hans", { timeFormat: "both", resetLabel: true })).toBe("5\u5c0f\u65f6 25% (\u8ddd\u91cd\u7f6e 1h 26m\uff0c\u4e8e 11:30)");
+    expect(row("zh-Hans", { timeFormat: "both" })).toBe("5\u5c0f\u65f6 25% (1h 26m\uff0c11:30 \u91cd\u7f6e)");
   });
 });
 
@@ -319,8 +319,8 @@ describe("the punctuation between drawn items", () => {
 
   it("is the language's own after a window's name in the compact quota line, and between the parts of the token totals", () => {
     const compact = ROW("quota", { usage: { compact: true } });
-    expect(rowOf("en", compact)).toMatch(/^5h: 25\.0% \(1h 26m\) \| Wk: 40\.0% \(available\)$/);
-    expect(rowOf("zh-Hans", compact)).toMatch(/^5\u5C0F\u65F6\uFF1A25\.0% \(1h 26m\) \| \u672C\u5468\uFF1A40\.0% \(\u53EF\u7528\)$/);
+    expect(rowOf("en", compact)).toMatch(/^5h: 25% \(1h 26m\) \| Wk: 40% \(available\)$/);
+    expect(rowOf("zh-Hans", compact)).toMatch(/^5\u5C0F\u65F6\uFF1A25% \(1h 26m\) \| \u672C\u5468\uFF1A40% \(\u53EF\u7528\)$/);
     expect(rowOf("zh-Hans", ROW("tokens"))).toBe("\u8BCD\u5143 65\uFF08\u8F93\u5165 10\uFF0C\u8F93\u51FA 20\uFF0C\u7F13\u5B58 35\uFF09");
     expect(rowOf("en", ROW("tokens"))).toBe("Tokens 65 (in: 10, out: 20, cache: 35)");
   });

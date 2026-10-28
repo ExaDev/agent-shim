@@ -298,7 +298,7 @@ const SHAPES = {
   usage: {
     value: z.enum(STATUSLINE_USAGE_VALUES).describe("Whether a quota window's figure is the share of it used or the share left; the bar and the colour always follow the share used."),
     bar: z.boolean().describe("Whether each quota window is drawn as a bar, or as text alone."),
-    compact: z.boolean().describe("Whether the quota windows are drawn as one short line of text (`5h: 25.0% (1h 30m)`) in place of bars; it takes precedence over usage.bar."),
+    compact: z.boolean().describe("Whether the quota windows are drawn as one short line of text (`5h: 25% (1h 30m)`) in place of bars; it takes precedence over usage.bar."),
     resetLabel: z.boolean().describe("Whether a window's reset time is introduced with `resets in` (`resets` for a wall-clock time), as in `(resets in 1h 30m)`, rather than the bare `(1h 30m)`."),
     modelScoped: z.boolean().describe("Whether the per-model weekly windows the client reports (rate_limits.model_scoped) are drawn after the five-hour and weekly windows (one reported with a null, missing or non-numeric figure is drawn as two hyphens beside its reset); they describe the signed-in account, so a session that selected a provider never shows them, nor does a Bedrock session, whose subscription windows do not apply."),
     timeFormat: z.enum(STATUSLINE_TIME_FORMATS).describe("How a window's reset is shown: the time left (`1h 30m`), the wall-clock time (`at 14:30`), both, the share of the window already gone (`53% elapsed`), or that share and the wall-clock time. A window whose length is not known shows no share."),

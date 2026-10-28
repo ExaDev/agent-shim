@@ -49,7 +49,7 @@ export const FRACTION_OF_A_TOKEN_WINDOW = 0.5;
 export const ONE_TOKEN_WINDOW = 1;
 /** Tokens held that `context.estimate: raw` draws as a percentage above 0 but below 1 of `WINDOW`. */
 export const SLIVER_HELD = 600;
-/** The most tokens held whose estimate over `WINDOW` (below 0.05%) the row writes as `0.0%`, and the fewest whose estimate it writes as `0.1%`. */
+/** The most tokens held whose estimate over `WINDOW` (below 0.05%) the row writes as `0%`, and the fewest whose estimate it writes as `0.1%`. */
 export const MOST_HELD_WRITTEN_AS_NONE = 99;
 export const LEAST_HELD_WRITTEN_AS_SOME = 100;
 /** A quarter of `WINDOW`: the tokens held a frame reports that a window set to `WINDOW` measures as 25%. */

@@ -206,6 +206,6 @@ describe("the compaction of a transcript on the file system", () => {
     fs.symlinkSync(transcript, link);
     const payload = parseClientPayload({ transcript_path: link, context_window: ZERO });
     const line = renderStatuslineBlock({ summary: fakeStatuslineSummary(), view: viewOf(payload), payload, terminalWidth: 200, nowMs, settings: resolveStatusline({ layout: { header: [], rows: ["context"] }, bar: { width: 10 } }), ports });
-    expect(stripAnsi(line)).toMatch(/^Ctx 0\/200k \[.*\] 15\.0%$/);
+    expect(stripAnsi(line)).toMatch(/^Ctx 0\/200k \[.*\] 15%$/);
   });
 });

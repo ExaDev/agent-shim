@@ -128,7 +128,7 @@ describe("renderStatuslineBlock", () => {
     expect(lines[1]).not.toContain("Wk ");
     expect(lines[1]).not.toContain("Antigravity");
     const weeklyHigh = stripAnsi(renderStatuslineBlock({ ...SUMMARY, sevenDayUsed: 80 }, VIEW, WIDE_TERMINAL, NOW_MS)).split("\n");
-    expect(weeklyHigh.join("\n")).toContain("80.0% (resets in 6d 13h)");
+    expect(weeklyHigh.join("\n")).toContain("80% (resets in 6d 13h)");
     const bars = lines[1];
     if (bars !== undefined) {
       expect(bars.length).toBeLessThanOrEqual(WIDE_TERMINAL_MAX);
@@ -252,9 +252,9 @@ describe("renderStatuslineBlock", () => {
     ).split("\n");
     const bars = lines.join("\n");
     expect(bars).toContain("tokens [");
-    expect(bars).toContain("50.0% (resets in 38m)");
+    expect(bars).toContain("50% (resets in 38m)");
     expect(bars).toContain("tool-calls [");
-    expect(bars).toContain("4.0%");
+    expect(bars).toContain("4%");
     expect(bars).not.toContain("5h [");
   });
 
@@ -280,7 +280,7 @@ describe("renderStatuslineBlock", () => {
     expect(bars).toContain("3P 5h [");
     expect(bars).toContain("3P Wk [");
     expect(bars).toContain("1.5%");
-    expect(bars).not.toContain("28.0%");
+    expect(bars).not.toContain("28%");
   });
 
   it("lines the bars of the context row and the family windows up, starts and ends, whatever each row's label and figures", () => {
@@ -444,22 +444,22 @@ describe("statusline settings", () => {
       { barWidth: 10, width: 45, expected: [
         "Ctx 634k/1M [######....] 63.4% (Cache: 99%)",
         "5h [#........................] 3.6% (38m)",
-        "RAM [########.......] 50.0% (32 B / 64 B)",
+        "RAM [#########........] 50% (32 B / 64 B)",
       ] },
       { barWidth: 10, width: 60, expected: [
         "Ctx 634k/1M [###############........] 63.4% (Cache: 99%)",
         "5h [#.......................................] 3.6% (38m)",
-        "RAM [###############...............] 50.0% (32 B / 64 B)",
+        "RAM [################................] 50% (32 B / 64 B)",
       ] },
       { barWidth: 10, width: 109, expected: [
         "Ctx 634k/1M [##############################################..........................] 63.4% (Cache: 99%)",
         "5h [###......................................................................................] 3.6% (38m)",
-        "RAM [########################################.......................................] 50.0% (32 B / 64 B)",
+        "RAM [#########################################........................................] 50% (32 B / 64 B)",
       ] },
       { barWidth: 4, width: 80, expected: [
         "Ctx 634k/1M [###########################................] 63.4% (Cache: 99%)",
         "5h [##..........................................................] 3.6% (38m)",
-        "RAM [#########################.........................] 50.0% (32 B / 64 B)",
+        "RAM [##########################..........................] 50% (32 B / 64 B)",
       ] },
     ];
     for (const { barWidth, width, expected } of cases) {
@@ -537,7 +537,7 @@ describe("statusline settings", () => {
     const at = (used: number) => ({ ...SUMMARY, fiveHourUsed: used, sevenDayUsed: undefined });
     const quota = (settings: StatuslineSettings, used: number): string => render({ layout: { rows: ["quota"] }, ...settings }, at(used));
     const usedBetweenWarnAndCritical = 60;
-    const text = `${String(usedBetweenWarnAndCritical)}.0%`;
+    const text = `${String(usedBetweenWarnAndCritical)}%`;
     expect(quota({}, usedBetweenWarnAndCritical)).toContain(`[${GREEN_CODE}m${text}`);
     expect(quota({ bands: { warnAt: 50, criticalAt: 80 } }, usedBetweenWarnAndCritical)).toContain(`[${YELLOW_CODE}m${text}`);
     expect(quota({ bands: { warnAt: 50, criticalAt: 55 } }, usedBetweenWarnAndCritical)).toContain(`[${RED_CODE}m${text}`);
@@ -573,8 +573,8 @@ describe("statusline settings", () => {
   it("colours a bar at its warning and critical thresholds in their own roles", () => {
     const at = (used: number) => ({ ...SUMMARY, fiveHourUsed: used, sevenDayUsed: undefined });
     const colours = { usage: "blue", usageWarning: "magenta", critical: "cyan" } as const;
-    expect(render({ layout: { rows: ["quota"] }, colours }, at(USED_AT_WARNING))).toContain(`${ESCAPE}[35m${String(USED_AT_WARNING)}.0%`);
-    expect(render({ layout: { rows: ["quota"] }, colours }, at(USED_AT_CRITICAL))).toContain(`${ESCAPE}[36m${String(USED_AT_CRITICAL)}.0%`);
+    expect(render({ layout: { rows: ["quota"] }, colours }, at(USED_AT_WARNING))).toContain(`${ESCAPE}[35m${String(USED_AT_WARNING)}%`);
+    expect(render({ layout: { rows: ["quota"] }, colours }, at(USED_AT_CRITICAL))).toContain(`${ESCAPE}[36m${String(USED_AT_CRITICAL)}%`);
   });
 
   it("draws a bar with the characters set and colours its unused part in the empty role", () => {
