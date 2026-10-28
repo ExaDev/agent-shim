@@ -68,37 +68,78 @@ export function readUsageLog(fs: UsageReadFs, logDir: string, options: { readonl
     if (sinceMs !== undefined && segment.endsAt <= sinceMs) {
       continue;
     }
-    const contents = fs.readFileUtf8(path.join(logDir, segment.name));
-    if (contents === undefined) {
-      // Pruned between the listing and the read.
+    const read = readSegment(fs, logDir, segment);
+    if (read === undefined) {
       continue;
     }
-    const lines = contents.split("\n");
-    // Everything after the last newline is a write still in progress (or nothing at all).
-    lines.pop();
-    for (const line of lines) {
-      if (line === "") {
-        continue;
-      }
-      let raw: unknown;
-      try {
-        raw = JSON.parse(line);
-      } catch {
-        invalidLines += 1;
-        continue;
-      }
-      const parsed = UsageRecordSchema.safeParse(raw);
-      if (!parsed.success) {
-        invalidLines += 1;
-        continue;
-      }
-      if (sinceMs === undefined || Date.parse(parsed.data.at) >= sinceMs) {
-        records.push(parsed.data);
+    invalidLines += read.invalidLines;
+    for (const record of read.records) {
+      if (sinceMs === undefined || Date.parse(record.at) >= sinceMs) {
+        records.push(record);
       }
     }
   }
   records.sort((left, right) => left.at.localeCompare(right.at));
   return { records, invalidLines };
+}
+
+/** One segment's valid records in file order, and how many complete lines were not records; undefined for a segment pruned between the listing and the read. */
+function readSegment(fs: UsageReadFs, logDir: string, segment: LogSegment): UsageLogRead | undefined {
+  const contents = fs.readFileUtf8(path.join(logDir, segment.name));
+  if (contents === undefined) {
+    return undefined;
+  }
+  const records: UsageRecord[] = [];
+  let invalidLines = 0;
+  const lines = contents.split("\n");
+  // Everything after the last newline is a write still in progress (or nothing at all).
+  lines.pop();
+  for (const line of lines) {
+    if (line === "") {
+      continue;
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      invalidLines += 1;
+      continue;
+    }
+    const parsed = UsageRecordSchema.safeParse(raw);
+    if (!parsed.success) {
+      invalidLines += 1;
+      continue;
+    }
+    records.push(parsed.data);
+  }
+  return { records, invalidLines };
+}
+
+/**
+ * The newest `count` valid records, oldest first: exactly `readUsageLog(fs, logDir).records.slice(-count)`, without reading the segments that cannot hold one of them. Segments are read a day at a time, newest day first, and reading stops once the `count`-th newest record held is no earlier than the instant the next older day ends, because no record in an older segment is later than that instant (`LogSegment.endsAt`). A record is stamped before it is written, so a day's segments can hold records from just before the day began; that is why the stop test compares against the older day's end instead of assuming the days are disjoint.
+ */
+export function readRecentUsageRecords(fs: UsageReadFs, logDir: string, count: number): readonly UsageRecord[] {
+  const byDay = new Map<string, LogSegment[]>();
+  for (const segment of listLogSegments(fs, logDir)) {
+    byDay.set(segment.day, [...(byDay.get(segment.day) ?? []), segment]);
+  }
+  const days = [...byDay.values()];
+  // Oldest segment first, as `readUsageLog` concatenates, so the stable sort below breaks ties the same way.
+  let records: UsageRecord[] = [];
+  for (let index = days.length - 1; index >= 0; index -= 1) {
+    const dayRecords: UsageRecord[] = [];
+    for (const segment of days[index] ?? []) {
+      dayRecords.push(...(readSegment(fs, logDir, segment)?.records ?? []));
+    }
+    records = [...dayRecords, ...records];
+    records.sort((left, right) => left.at.localeCompare(right.at));
+    const olderDay = days[index - 1]?.[0];
+    const newestHeld = records[records.length - count];
+    if (olderDay === undefined || (newestHeld !== undefined && Date.parse(newestHeld.at) >= olderDay.endsAt)) {
+      break;
+    }
+  }
+  return records.slice(-count);
 }
 
 /** Raised for a snapshot file that exists but does not hold a snapshot of this schema version. */

@@ -4,6 +4,7 @@ import { createFakeFarmFs, DAY_MS, paths } from "../test-helpers";
 import {
   listLogSegments,
   listUsageSnapshots,
+  readRecentUsageRecords,
   readUsageLog,
   readUsageSnapshot,
   segmentDay,
@@ -154,6 +155,90 @@ describe("readUsageLog", () => {
 
     expect(read.records).toEqual([present]);
     expect(read.invalidLines).toBe(0);
+  });
+});
+
+describe("readRecentUsageRecords", () => {
+  /** The multiplier and increment of the Numerical Recipes linear congruential generator, which needs no more than a reproducible spread of layouts. */
+  const LCG_MULTIPLIER = 1_664_525;
+  const LCG_INCREMENT = 1_013_904_223;
+  const UINT32_BITS = 32;
+  const UINT32_SPAN = 2 ** UINT32_BITS;
+
+  /** A deterministic generator, so a failing layout is reproducible from its seed. */
+  function generator(seed: number): () => number {
+    let state = seed;
+    return () => {
+      state = (Math.imul(state, LCG_MULTIPLIER) + LCG_INCREMENT) >>> 0;
+      return state / UINT32_SPAN;
+    };
+  }
+
+  const LAYOUT_SEEDS = 40;
+  const LAYOUT_DAYS = 6;
+  const MAX_WRITERS_PER_DAY = 3;
+  const MAX_RECORDS_PER_SEGMENT = 6;
+  const MAX_COUNT = 14;
+  /** How long before its day began a record in that day's segment may be stamped: it is stamped, then written. */
+  const STAMP_LEAD_MS = 2 * HOUR_MS;
+  const CORRUPT_LINE_ONE_IN = 5;
+  const SECOND_MS = 1_000;
+  const HALF_SECOND_MS = SECOND_MS / 2;
+
+  function randomLayout(next: () => number): Record<string, string> {
+    const files: Record<string, string> = {};
+    for (let day = 0; day < LAYOUT_DAYS; day += 1) {
+      const dayStart = DAY_START + day * DAY_MS;
+      const writers = 1 + Math.floor(next() * MAX_WRITERS_PER_DAY);
+      for (let writer = 0; writer < writers; writer += 1) {
+        const records = Array.from({ length: Math.floor(next() * (MAX_RECORDS_PER_SEGMENT + 1)) }, () => recordAt(Math.floor(dayStart - STAMP_LEAD_MS + next() * (DAY_MS + STAMP_LEAD_MS))));
+        const corrupt = next() * CORRUPT_LINE_ONE_IN < 1 ? "{not json}\n" : "";
+        files[`${LOG_DIR}/${segmentDay(dayStart)}.${String(WRITER_PID + writer)}.jsonl`] = `${corrupt}${lines(...records)}`;
+      }
+    }
+    return files;
+  }
+
+  it("returns exactly the newest records the full read would, over many layouts", () => {
+    for (let seed = 1; seed <= LAYOUT_SEEDS; seed += 1) {
+      const next = generator(seed);
+      const fs = createFakeFarmFs(randomLayout(next));
+      for (let count = 1; count <= MAX_COUNT; count += 1) {
+        expect(readRecentUsageRecords(fs, LOG_DIR, count), `seed ${String(seed)}, count ${String(count)}`).toEqual(readUsageLog(fs, LOG_DIR).records.slice(-count));
+      }
+    }
+  });
+
+  it("opens only the newest day's segments when they already hold the records asked for", () => {
+    const files: Record<string, string> = {};
+    for (let day = 0; day < LAYOUT_DAYS; day += 1) {
+      files[`${LOG_DIR}/${segmentDay(DAY_START + day * DAY_MS)}.${String(WRITER_PID)}.jsonl`] = lines(recordAt(DAY_START + day * DAY_MS + HOUR_MS), recordAt(DAY_START + day * DAY_MS + 2 * HOUR_MS));
+    }
+    const base = createFakeFarmFs(files);
+    const opened: string[] = [];
+    const counting: UsageReadFs = {
+      readdir: base.readdir,
+      readFileUtf8: (file) => {
+        opened.push(file);
+        return base.readFileUtf8(file);
+      },
+    };
+
+    const recent = readRecentUsageRecords(counting, LOG_DIR, 2);
+
+    expect(recent).toHaveLength(2);
+    expect(opened).toEqual([`${LOG_DIR}/${segmentDay(DAY_START + (LAYOUT_DAYS - 1) * DAY_MS)}.${String(WRITER_PID)}.jsonl`]);
+  });
+
+  it("reads the older day when a record in it is later than the newest day's records, stamped before midnight and written after", () => {
+    const stampedLate = recordAt(DAY_START + DAY_MS - HALF_SECOND_MS, { requestId: "older-day-later-stamp" });
+    const writtenAfterMidnight = recordAt(DAY_START + DAY_MS - SECOND_MS, { requestId: "newer-day-earlier-stamp" });
+    const fs = createFakeFarmFs({
+      [`${LOG_DIR}/2026-01-15.1.jsonl`]: lines(stampedLate),
+      [`${LOG_DIR}/2026-01-16.1.jsonl`]: lines(writtenAfterMidnight),
+    });
+
+    expect(readRecentUsageRecords(fs, LOG_DIR, 1).map((record) => record.requestId)).toEqual(["older-day-later-stamp"]);
   });
 });
 

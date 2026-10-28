@@ -1,5 +1,5 @@
 import type { LayoutPaths } from "../paths";
-import { readUsageLog } from "../usage/read";
+import { readRecentUsageRecords } from "../usage/read";
 import type { FarmFs } from "../launcher/ports";
 import type { UsageRecord } from "../usage/schema";
 import { observeRecord, observationOf, type TargetObservation } from "./signals";
@@ -19,7 +19,7 @@ export interface TargetObservationStore {
 /** Builds the store over the door's filesystem, seeding from the usage log's recent records. */
 export function createTargetObservationStore(fs: FarmFs, paths: LayoutPaths): TargetObservationStore {
   let observations = new Map<string, readonly UsageRecord[]>();
-  const seeded = readUsageLog(fs, paths.usageLogDir, {}).records.slice(-SEED_LOOKBACK_RECORDS);
+  const seeded = readRecentUsageRecords(fs, paths.usageLogDir, SEED_LOOKBACK_RECORDS);
   for (const record of seeded) {
     observations = observeRecord(observations, record);
   }
