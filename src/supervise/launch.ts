@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool } from "../config/schema";
 import type { FarmRuntime, LaunchPlan } from "../launcher";
 import { hasSettingsArgument, initialConversationOf, type SupervisedLaunch } from "../launcher/claudeSession";
+import { isClaudeSubcommand } from "../launcher/claudeSubcommand";
 import { resolvePoolLaunch } from "../launcher/pool";
 import type { LogPort } from "../launcher/ports";
 import type { LayoutPaths } from "../paths";
@@ -17,6 +18,13 @@ import { createRealCompactor } from "./realCompact";
 import { realSignalPort, realSupervisedSpawnPort, realTimerPort, realWatchDirectory, resetTerminal } from "./realPorts";
 import { readModelMove, registerSupervised, removeModelMove, stateDirOf, unregisterSupervised } from "./registry";
 import { supervise, type CompactionDeps } from "./supervise";
+
+/**
+ * Whether a launch on `pool` is run under the supervisor: the pool resumes on a spent quota and the arguments start a session. A claude subcommand (`plugin install`, `auth status`) starts none, so there is no conversation to move to another member and the supervisor's `--session-id` would be rejected as an unknown option.
+ */
+export function supervisesLaunch(pool: Pick<Pool, "resumeOnLimit"> | undefined, passthrough: readonly string[]): boolean {
+  return pool?.resumeOnLimit === true && !isClaudeSubcommand(passthrough);
+}
 
 /** What `runSupervised` needs from the launcher that calls it. */
 export interface RunSupervisedParams {

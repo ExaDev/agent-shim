@@ -5,7 +5,7 @@ import { runIdentityWizard } from "./identityManager";
 import { buildFarmRuntime, realClaudeBinaryResolver, realPrepareLaunchParams } from "./launchWiring";
 import { resolveLayoutPaths } from "./paths";
 import { refreshPools } from "./poolUsageRefresh";
-import { runSupervised } from "./supervise/launch";
+import { runSupervised, supervisesLaunch } from "./supervise/launch";
 import { prepareLaunch, runLauncher } from "./launcher";
 import { parseLauncherArgv } from "./launcher/argv";
 import { runNativeLaunch } from "./launcher/native";
@@ -97,9 +97,9 @@ export async function runClaude(argvOverride?: readonly string[]): Promise<void>
     update: realLaunchUpdatePort(paths),
   };
 
-  // A pool that resumes on a spent quota runs its interactive launches under the supervisor, which moves the session to another member when its identity runs out. A launch it cannot supervise falls through to the ordinary one below.
+  // A pool that resumes on a spent quota runs its interactive session launches under the supervisor, which moves the session to another member when its identity runs out. A launch it cannot supervise falls through to the ordinary one below.
   const poolName = identityDecision.pool;
-  if (poolName !== undefined && farm.pools?.[poolName]?.resumeOnLimit === true) {
+  if (poolName !== undefined && farm.pools !== undefined && supervisesLaunch(farm.pools[poolName], nativeArgv.rest)) {
     const code = await runSupervised({
       paths,
       pool: poolName,

@@ -308,6 +308,29 @@ describe("runLauncher", () => {
     expect(options.env).toMatchObject({ CLAUDE_EXTRA_FLAGS: "--continue continue" });
   });
 
+  it("gives a claude subcommand only the arguments it was typed with, none of the options a session takes", () => {
+    const proc = fakeProc(
+      { AGENT_SHIM_SKIP_PERMISSIONS: "1", AGENT_SHIM_REMOTE_CONTROL: "1", CLAUDE_EXTRA_FLAGS: "--continue continue" },
+      ["plugin", "install", "miro@claude-plugins-official"],
+    );
+    const spawn = fakeSpawn();
+
+    runAndCaptureExit({
+      paths,
+      fs: fakeFs({}),
+      spawn,
+      proc,
+      log: fakeLog(),
+      resolveClaudeBinary: () => discovered,
+    });
+
+    const call = vi.mocked(spawn.spawnSync).mock.calls[0];
+    if (call === undefined) {
+      throw new Error("expected spawnSync to have been called");
+    }
+    expect(call[1]).toEqual(["plugin", "install", "miro@claude-plugins-official"]);
+  });
+
   it("propagates the real binary's own exit code when spawning succeeds but the child exits non-zero", () => {
     const proc = fakeProc({}, []);
     const log = fakeLog();

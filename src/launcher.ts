@@ -13,6 +13,7 @@ import { decideConfigProfile, decideIdentity, loadIdentity, type ConfigProfileDe
 import { buildArgv, buildEnv, buildFlagArgs, resolveLaunchFlags, type ResolvedLaunchFlags, type ResolvedProvider } from "./launcher/flags";
 import { splitExtraFlags } from "./launcher/extraFlags";
 import { hasSettingsArgument, mergeSettings, withLauncherSettings, withSupervision, type SupervisedLaunch } from "./launcher/claudeSession";
+import { isClaudeSubcommand } from "./launcher/claudeSubcommand";
 import { diagnosticLines, printDiagnosticLines, reportDiagnostics, type DiagnosticLine } from "./launcher/diagnostics";
 import { holdBeforeLaunch, LAUNCH_CANCELLED_EXIT, type HoldOutcome, type HoldPort } from "./launcher/hold";
 import type { Candidate } from "./usage/pick";
@@ -512,16 +513,20 @@ function decideLaunch(params: PrepareLaunchParams, readOnly: boolean): DecidedLa
   });
   const pickerSettings = modelPickerSettingsFromRows(routedModelRows(models ?? {}, listedProviders), selectedProvider !== undefined);
   const callerSettings = hasSettingsArgument(parsedArgv.rest);
-  if (pickerSettings !== undefined && callerSettings) {
+  const startsSession = !isClaudeSubcommand(parsedArgv.rest);
+  if (startsSession && pickerSettings !== undefined && callerSettings) {
     notes.push("--settings was passed, so /model keeps Claude Code's own model names");
   }
   const launcherSettings = mergeSettings([params.supervised?.settings, callerSettings ? undefined : pickerSettings]);
 
-  const args = buildArgv({
-    toolFlags: buildFlagArgs(flags),
-    extraFlags: splitExtraFlags(env.CLAUDE_EXTRA_FLAGS),
-    passthrough: withLauncherSettings(params.supervised === undefined ? parsedArgv.rest : withSupervision(parsedArgv.rest, params.supervised), launcherSettings),
-  });
+  // A claude subcommand (`plugin install`, `auth status`) starts no session and rejects the options a session takes, so it receives the caller's arguments as typed.
+  const args = startsSession
+    ? buildArgv({
+        toolFlags: buildFlagArgs(flags),
+        extraFlags: splitExtraFlags(env.CLAUDE_EXTRA_FLAGS),
+        passthrough: withLauncherSettings(params.supervised === undefined ? parsedArgv.rest : withSupervision(parsedArgv.rest, params.supervised), launcherSettings),
+      })
+    : [...parsedArgv.rest];
 
   // The configuration directory the child runs with, as `buildEnv` will set it: the identity's own directory unless the caller named one.
   const configDir = configDirEscapeHatchApplies || identityDecision.name === undefined ? env.CLAUDE_CONFIG_DIR : path.join(paths.identitiesDir, identityDecision.name);
