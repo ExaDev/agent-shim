@@ -1,3 +1,13 @@
+## [11.69.0](https://github.com/ExaDev/agent-shim/compare/v11.68.3...v11.69.0) (2026-10-28)
+
+### Features
+
+* **statusline:** read launch.statusline from the config on every render ([f706467](https://github.com/ExaDev/agent-shim/commit/f706467e7bb835d099f16b2abdeddfc4953d43bb))
+
+### Tests
+
+* **statusline:** list liveSettings.ts among the modules that write no words ([abd61ea](https://github.com/ExaDev/agent-shim/commit/abd61eaac46bb14847a3ad60b2d882f87c3fdfe2))
+
 ## [11.68.3](https://github.com/ExaDev/agent-shim/compare/v11.68.2...v11.68.3) (2026-10-28)
 
 ### Bug Fixes
