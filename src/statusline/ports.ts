@@ -159,6 +159,15 @@ function runWithOutputInFile(runRoot: string, timeoutMs: number, file: string, a
   }
 }
 
+/** Whether `file` is a regular file once a final symbolic link is followed. Checked before a file is opened, because opening a FIFO blocks until something opens its other end, which would hold the statusline for as long as a path it was handed names one. */
+function isRegularFile(file: string): boolean {
+  try {
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function readText(file: string): string | undefined {
   try {
     return fs.readFileSync(file, "utf8");
@@ -202,6 +211,9 @@ export function realStatuslinePorts(env: Readonly<Record<string, string | undefi
     readText,
     readRange: (file, start, length) => {
       try {
+        if (!isRegularFile(file)) {
+          return undefined;
+        }
         const descriptor = fs.openSync(file, "r");
         try {
           const { size } = fs.fstatSync(descriptor);
