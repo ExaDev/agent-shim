@@ -471,31 +471,47 @@ describe("the headroom hop", () => {
     }
   });
 
-  it("aborts the hop the moment the client disconnects, which is what cancels the daemon's request", async () => {
-    // This headroom never answers: it holds the request open, so the only way the test ends is the client's abort unwinding the hop.
-    const server = http.createServer(() => undefined);
+  it("cancels the daemon's request the moment the client disconnects, which is what stops the daemon's work", async () => {
+    let hopArrived: () => void = () => undefined;
+    let daemonRequestEnded: () => void = () => undefined;
+    const arrived = new Promise<void>((resolve) => {
+      hopArrived = resolve;
+    });
+    const ended = new Promise<void>((resolve) => {
+      daemonRequestEnded = resolve;
+    });
+    // This headroom never answers: it holds the request open, so the daemon's side of it ends only when the door tears the hop down.
+    const server = http.createServer((_request, response) => {
+      response.on("close", daemonRequestEnded);
+      hopArrived();
+    });
     await listenOnHeadroomSocket(server);
     const door = await startDoor({ files: { [`${PROVIDERS_DIR}/codex.json`]: codexProvider } });
     try {
       const abort = new AbortController();
       const pending = fetch(`${door.url}/providers/codex/v1/messages`, {
-        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY, signal: abort.signal });
-      await new Promise((resolve) => {
-        setTimeout(resolve, SETTLE_MS);
-      });
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY, signal: abort.signal });
+      await arrived;
       abort.abort();
       await pending.then(
         () => undefined,
         () => undefined,
       );
+      await ended;
     } finally {
       await door.close();
       await closeServer(server);
     }
   });
 
-  it("does not log the hop's own cancellation as a failure when the client disconnects", async () => {
-    const server = http.createServer(() => undefined);
+  it("logs a hop cut short by the client's disconnect as a request nobody was waiting on, once, naming that no response had started", async () => {
+    let hopArrived: () => void = () => undefined;
+    const arrived = new Promise<void>((resolve) => {
+      hopArrived = resolve;
+    });
+    const server = http.createServer(() => {
+      hopArrived();
+    });
     await listenOnHeadroomSocket(server);
     const logged: string[] = [];
     const door = await startDoor({
@@ -507,10 +523,8 @@ describe("the headroom hop", () => {
     try {
       const abort = new AbortController();
       const pending = fetch(`${door.url}/providers/codex/v1/messages`, {
-        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY, signal: abort.signal });
-      await new Promise((resolve) => {
-        setTimeout(resolve, SETTLE_MS);
-      });
+        dispatcher: trusting, method: "POST", headers: { "content-type": "application/json", [HEADROOM_FLAG_HEADER]: "1", [AUTH_HEADER]: LAUNCH_TOKEN }, body: MESSAGES_BODY, signal: abort.signal });
+      await arrived;
       abort.abort();
       await pending.then(
         () => undefined,
@@ -519,7 +533,10 @@ describe("the headroom hop", () => {
       await new Promise((resolve) => {
         setTimeout(resolve, SETTLE_MS);
       });
-      expect(logged.filter((line) => line.includes("headroom hop"))).toEqual([]);
+      const failures = logged.filter((line) => line.includes("headroom hop"));
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toContain("before the response started");
+      expect(failures[0]).toContain("first attempt, client had gone");
     } finally {
       await door.close();
       await closeServer(server);
