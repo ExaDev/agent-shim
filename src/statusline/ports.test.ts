@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 import { fileSizeLimitedCommand, realStatuslinePorts, RUN_MAX_OUTPUT_BYTES, RUN_TIMEOUT_MS, STALE_RUN_DIRECTORY_MS } from "./ports";
 
@@ -91,6 +91,23 @@ describe("realStatuslinePorts", () => {
       expect(text(PAST_END_RANGE)).toEqual({ size: 10, text: "" });
       expect(text({ start: 0, length: 0 })).toEqual({ size: 10, text: "" });
       expect(ports.readRange(path.join(dir, "missing.txt"), 0, MID_RANGE.length)).toBeUndefined();
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("reads nothing from a FIFO instead of blocking until something opens its other end", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "statusline-ports-"));
+    try {
+      const fifo = path.join(dir, "pipe");
+      execFileSync("mkfifo", [fifo]);
+      // Holding the FIFO open for reading and writing keeps a regression from blocking this test: an open for reading then succeeds at once and the reads below return something, where the ports must return nothing.
+      const held = fs.openSync(fifo, fs.constants.O_RDWR);
+      try {
+        expect(ports.readRange(fifo, 0, MID_RANGE.length)).toBeUndefined();
+      } finally {
+        fs.closeSync(held);
+      }
     } finally {
       fs.rmSync(dir, { recursive: true });
     }
