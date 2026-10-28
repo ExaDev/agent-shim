@@ -31,12 +31,39 @@ export interface RelayStep {
   readonly done: boolean;
 }
 
+/** A text block of the message the relay builds as it emits frames. */
+interface TextBlock {
+  readonly type: "text";
+  text: string;
+}
+
+/** A tool call of the message the relay builds as it emits frames. */
+interface ToolUseBlock {
+  readonly type: "tool_use";
+  readonly id: string;
+  readonly name: string;
+  readonly input: Readonly<Record<string, unknown>>;
+}
+
+/** The whole message a non-streaming request is answered with: what the frames of a streaming one add up to. */
+export interface RelayMessage {
+  readonly id: string;
+  readonly type: "message";
+  readonly role: "assistant";
+  readonly model: string;
+  readonly content: readonly (TextBlock | ToolUseBlock)[];
+  readonly stop_reason: StopReason;
+  readonly stop_sequence: null;
+  readonly usage: AnthropicUsage;
+}
+
 /**
- * State machine translating Gemini stream chunks into Anthropic SSE frames.
+ * State machine translating Gemini stream chunks into Anthropic SSE frames, and adding them up into the message a non-streaming request is answered with.
  */
 export function createAntigravityRelay(params: RelayParams): {
   readonly pushChunk: (chunk: GeminiGenerateContentResponseChunk) => RelayStep;
   readonly finish: () => RelayStep;
+  readonly message: () => RelayMessage;
 } {
   const messageId = params.fallbackId();
   let started = false;
@@ -44,6 +71,9 @@ export function createAntigravityRelay(params: RelayParams): {
   let currentBlockIndex = -1;
   let sawToolUse = false;
   let finished = false;
+  let stopReason: StopReason = "end_turn";
+  const content: (TextBlock | ToolUseBlock)[] = [];
+  let activeText: TextBlock | undefined;
   let usage: AnthropicUsage = {
     input_tokens: 0,
     cache_creation_input_tokens: 0,
@@ -112,6 +142,8 @@ export function createAntigravityRelay(params: RelayParams): {
             closeActiveBlock();
             currentBlockIndex += 1;
             activeBlockType = "text";
+            activeText = { type: "text", text: "" };
+            content.push(activeText);
             frames.push({
               event: "content_block_start",
               data: {
@@ -120,6 +152,9 @@ export function createAntigravityRelay(params: RelayParams): {
                 content_block: { type: "text", text: "" },
               },
             });
+          }
+          if (activeText !== undefined) {
+            activeText.text += part.text;
           }
           frames.push({
             event: "content_block_delta",
@@ -137,6 +172,7 @@ export function createAntigravityRelay(params: RelayParams): {
           const callName = part.functionCall.name;
           const originalName = params.toolNames.get(callName) ?? callName;
           const callId = params.fallbackId();
+          content.push({ type: "tool_use", id: callId, name: originalName, input: part.functionCall.args });
           if (typeof part.thoughtSignature === "string") {
             // The backend requires this signature echoed back with the call next turn, and the tool_use id is the one field that survives the round trip through Claude Code.
             rememberToolCallSignature(callId, part.thoughtSignature);
@@ -175,11 +211,7 @@ export function createAntigravityRelay(params: RelayParams): {
     }
 
     if (candidate?.finishReason !== undefined) {
-      const stopReason: StopReason = sawToolUse
-        ? "tool_use"
-        : candidate.finishReason === "MAX_TOKENS"
-        ? "max_tokens"
-        : "end_turn";
+      stopReason = sawToolUse ? "tool_use" : candidate.finishReason === "MAX_TOKENS" ? "max_tokens" : "end_turn";
 
       closeActiveBlock();
       frames.push({
@@ -205,7 +237,7 @@ export function createAntigravityRelay(params: RelayParams): {
     if (!finished) {
       ensureStarted();
       closeActiveBlock();
-      const stopReason: StopReason = sawToolUse ? "tool_use" : "end_turn";
+      stopReason = sawToolUse ? "tool_use" : "end_turn";
       frames.push({
         event: "message_delta",
         data: {
@@ -223,5 +255,7 @@ export function createAntigravityRelay(params: RelayParams): {
     return { frames: [...frames], done: true };
   };
 
-  return { pushChunk, finish };
+  const message = (): RelayMessage => ({ id: messageId, type: "message", role: "assistant", model: params.servedModel, content: [...content], stop_reason: stopReason, stop_sequence: null, usage });
+
+  return { pushChunk, finish, message };
 }

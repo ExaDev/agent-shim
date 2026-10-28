@@ -108,6 +108,7 @@ describe("createAntigravityRouteMount", () => {
     const reqBody = JSON.stringify({
       model: "claude-3-7-sonnet-20250219",
       max_tokens: 100,
+      stream: true,
       messages: [{ role: "user", content: "Hi" }],
     });
 
@@ -204,6 +205,7 @@ describe("a tier alias the translator resolved", () => {
     const reqBody = JSON.stringify({
       model: "auto",
       max_tokens: 100,
+      stream: true,
       messages: [{ role: "user", content: "Hi" }],
     });
 

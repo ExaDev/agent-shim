@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { parseProviderPath } from "../frontdoor/route";
 import { HTTP_STATUS } from "../codex/http";
 import { MessagesRequestSchema } from "../codex/anthropic";
-import { createAntigravityRelay, renderSseFrame } from "./relay";
+import { createAntigravityRelay, renderSseFrame, type SseFrame } from "./relay";
 import { translateRequest, type ResolvedAntigravityConfig } from "./translate";
 import { callCloudAntigravity, AntigravityUpstreamError } from "./cloudUpstream";
 import { callLocalAntigravity } from "./localUpstream";
@@ -188,12 +188,12 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
       model: translated.model,
     });
 
-    const stream = async function* () {
+    const frames = async function* (): AsyncGenerator<SseFrame> {
       try {
         if (firstResult.done !== true) {
           const step = relay.pushChunk(firstResult.value);
           for (const frame of step.frames) {
-            yield renderSseFrame(frame);
+            yield frame;
           }
           if (!step.done) {
             for (;;) {
@@ -206,7 +206,7 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
               }
               const nextStep = relay.pushChunk(nextResult.value);
               for (const frame of nextStep.frames) {
-                yield renderSseFrame(frame);
+                yield frame;
               }
               if (nextStep.done) {
                 break;
@@ -217,30 +217,44 @@ export function createAntigravityRoute(ports: AntigravityRoutePorts): (request: 
 
         const finalStep = relay.finish();
         for (const frame of finalStep.frames) {
-          yield renderSseFrame(frame);
+          yield frame;
         }
       } catch (error) {
         if (!request.signal.aborted) {
           const errMsg = error instanceof Error ? error.message : String(error);
-          yield renderSseFrame({
-            event: "error",
-            data: { type: "error", error: { type: "api_error", message: errMsg } },
-          });
+          yield { event: "error", data: { type: "error", error: { type: "api_error", message: errMsg } } };
         }
       }
     };
 
-    return {
-      status: HTTP_STATUS.ok,
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-        ...quotaHeaders,
-      },
-      body: stream(),
-      // The tier alias the session asked for, whenever the translation resolved it to a different model: the front door's mount turns it into the model choice the usage record keeps.
-      ...(requestedModel !== translated.model ? { requestedModel } : {}),
-    };
+    // The tier alias the session asked for, whenever the translation resolved it to a different model: the front door's mount turns it into the model choice the usage record keeps.
+    const served = requestedModel !== translated.model ? { requestedModel } : {};
+
+    // Only a request that asks for a stream gets one, as the Messages API answers; anything else (the auto mode classifier's side query, for one) is answered with the one message the frames add up to, which a client reads as JSON.
+    if (parsed.data.stream === true) {
+      const rendered = async function* (): AsyncGenerator<string> {
+        for await (const frame of frames()) {
+          yield renderSseFrame(frame);
+        }
+      };
+      return {
+        status: HTTP_STATUS.ok,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          ...quotaHeaders,
+        },
+        body: rendered(),
+        ...served,
+      };
+    }
+
+    for await (const frame of frames()) {
+      if (frame.event === "error") {
+        return { status: HTTP_STATUS.badGateway, headers: { "Content-Type": "application/json" }, body: JSON.stringify(frame.data) };
+      }
+    }
+    return { status: HTTP_STATUS.ok, headers: { "Content-Type": "application/json", ...quotaHeaders }, body: JSON.stringify(relay.message()), ...served };
   };
 }
