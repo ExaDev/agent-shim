@@ -263,6 +263,10 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
   }
   const attachments = new Map<string, Attachment>();
   let closed = false;
+  /**
+   * The bearer the host refused past the one retry, per session: redialling with the same value can only be refused again, so an attachment idles on this memory until the tracker presents a different bearer. It lives in the hub, not in an attachment, because the tracker's idle expiry ends the attachment while a persisted or re-observed copy of the same bearer comes back with the next exchange, and a fresh attachment that forgot the refusal would spend its dials relearning it. One entry per session this process has seen refused, dropped when the session presents a different bearer or the hub closes, which is the same order as the tracker's own per-session records.
+   */
+  const refusedAuthorizations = new Map<string, string>();
   /** The last cursor this hub persisted per session, so a boundary that moved nothing writes nothing: one write per boundary that advanced the cursor, not one per boundary. */
   const lastSavedSequenceNums = new Map<string, number>();
 
@@ -388,8 +392,6 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
   const runLoop = async (attachment: Attachment): Promise<void> => {
     // A 401 retries exactly once with a freshly read credential before any backoff, so a bearer that went stale between observation and dial is not punished with a wait.
     let retriedUnauthorized = false;
-    // The bearer the host refused past that retry: redialling with the same value can only be refused again, so the loop idles on memory alone until the tracker observes a different one.
-    let refusedAuthorization: string | undefined;
     for (;;) {
       if (attachment.isStopped()) {
         return;
@@ -407,11 +409,11 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
         }
         return;
       }
-      if (refusedAuthorization !== undefined && credential.authorization === refusedAuthorization) {
+      if (credential.authorization === refusedAuthorizations.get(attachment.sessionId)) {
         await deps.sleep(deps.backoffMs);
         continue;
       }
-      refusedAuthorization = undefined;
+      refusedAuthorizations.delete(attachment.sessionId);
       let outcome: AttemptOutcome;
       try {
         outcome = await attempt(attachment, credential);
@@ -441,7 +443,7 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
         continue;
       }
       deps.log?.(`rc stream ${attachment.sessionId}: the client read stream refused the observed Authorization bearer past one retry; waiting for a fresh one`);
-      refusedAuthorization = credential.authorization;
+      refusedAuthorizations.set(attachment.sessionId, credential.authorization);
       await deps.sleep(deps.backoffMs);
       retriedUnauthorized = false;
     }
@@ -483,6 +485,7 @@ export function createRcStreamHub(deps: RcStreamHubDeps): RcStreamHub {
         attachment.stop();
       }
       attachments.clear();
+      refusedAuthorizations.clear();
     },
   };
 }

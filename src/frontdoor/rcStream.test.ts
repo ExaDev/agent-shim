@@ -38,6 +38,8 @@ const STREAM_EVENT_LAST_SEQUENCE_NUM = 14;
 const BACKOFF_MS = 45_000;
 /** How many stream calls the 401 case ends having made: the refused pair, then the successful third after the backoff resolves. */
 const STREAM_CALLS_AFTER_BACKOFF = 3;
+/** How many stream calls a refused bearer costs before the attachment idles: the first 401 and its single immediate retry. */
+const REFUSED_PAIR_STREAM_CALLS = 2;
 /** How long a tick waits for the hub's detached loop to run its next steps: the scripted dial resolves immediately, so the loop's awaits are microtasks, and one macrotask turn covers any number of them plus the stream generator's own wake. */
 const TICK_MS = 20;
 /** The presence answer's stand-in refresh interval: the scripted dial answers the protocol's documented shape, and only the request's shape is asserted. */
@@ -519,6 +521,41 @@ describe("the client read stream attachment", () => {
     await tick();
     expect(scripted.streamCalls.length).toBe(STREAM_CALLS_AFTER_BACKOFF);
     expect(scripted.streamCalls[STREAM_CALLS_AFTER_BACKOFF - 1]?.headers.authorization).toBe(FRESH_BEARER);
+    hub.close();
+  });
+
+  it("remembers a refused bearer past the tracker's idle expiry, so the attachment born when the session is observed again does not redial it", async () => {
+    let now = CLOCK_START_MS;
+    const tracker = createRcSessionTracker({ now: () => now, idleMs: IDLE_MS });
+    birthSession(tracker);
+    const scripted = scriptedDial();
+    scripted.answerNextStreamWith({ status: HTTP_STATUS.unauthorized, chunks: NO_CHUNKS });
+    scripted.answerNextStreamWith({ status: HTTP_STATUS.unauthorized, chunks: NO_CHUNKS });
+    const { hub, order, resolveSleep } = hubOver(scripted, tracker);
+
+    hub.reconcile();
+    await tick();
+    expect(scripted.streamCalls.length).toBe(REFUSED_PAIR_STREAM_CALLS);
+
+    // The tracker gives the quiet session up, which stops the attachment idling on the refused bearer.
+    now += IDLE_MS;
+    hub.reconcile();
+    expect(tracker.list()).toEqual([]);
+
+    // The same bearer is observed again, as a client that kept sending it would: the new attachment idles on the refusal the hub remembers instead of spending two more dials to learn it.
+    birthSession(tracker);
+    hub.reconcile();
+    await tick();
+    expect(scripted.streamCalls.length).toBe(REFUSED_PAIR_STREAM_CALLS);
+    expect(scripted.presenceCalls.length).toBe(REFUSED_PAIR_STREAM_CALLS);
+    expect(order.at(-1)).toBe("sleep");
+
+    // A different bearer ends the wait.
+    exchange(tracker, { method: "POST", url: `/v1/code/sessions/${SESSION_ID}/events`, authorization: FRESH_BEARER }).respond(HTTP_STATUS.ok);
+    resolveSleep();
+    await tick();
+    expect(scripted.streamCalls.length).toBe(REFUSED_PAIR_STREAM_CALLS + 1);
+    expect(scripted.streamCalls.at(-1)?.headers.authorization).toBe(FRESH_BEARER);
     hub.close();
   });
 
