@@ -1,3 +1,9 @@
+## [11.71.0](https://github.com/ExaDev/agent-shim/compare/v11.70.1...v11.71.0) (2026-10-28)
+
+### Features
+
+* **statusline:** write a whole percentage without the decimal ([d858039](https://github.com/ExaDev/agent-shim/commit/d858039a3a43ab5c5c87bc486ecf2bb98bfe916b)), references [#631](https://github.com/ExaDev/agent-shim/issues/631)
+
 ## [11.70.1](https://github.com/ExaDev/agent-shim/compare/v11.70.0...v11.70.1) (2026-10-28)
 
 ### Bug Fixes
