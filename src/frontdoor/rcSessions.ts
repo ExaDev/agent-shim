@@ -19,6 +19,19 @@ import type { RcObservedCredential } from "./rcWrites";
 /** Every Remote Control exchange on the API host sits under this path prefix. */
 export const RC_SESSIONS_PATH_PREFIX = "/v1/code/sessions";
 
+/** The pathname of a request URL, whatever query follows it. */
+function pathnameOf(url: string | undefined): string {
+  return new URL(url ?? "/", "http://127.0.0.1").pathname;
+}
+
+/**
+ * Whether the tracker looks at an exchange for this URL: the session create and list (the bare prefix) and every call under a session. The one test both the tracker's own observation and the door's routing share, so a request is never observed by one and kept from the other's view.
+ */
+export function isRcSessionExchange(url: string | undefined): boolean {
+  const path = pathnameOf(url);
+  return path === RC_SESSIONS_PATH_PREFIX || path.startsWith(`${RC_SESSIONS_PATH_PREFIX}/`);
+}
+
 /** The id prefix the protocol's own clients validate before using a session id, so the tracker applies the same test before recording one. */
 const RC_SESSION_ID_PREFIX = "cse_";
 
@@ -400,11 +413,10 @@ export function createRcSessionTracker(deps: RcSessionTrackerDeps): RcSessionTra
 
   const observeExchange = (request: RcObservedRequest): RcExchangeObserver | undefined => {
     const method = (request.method ?? "").toUpperCase();
-    const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-    if (!path.startsWith(RC_SESSIONS_PATH_PREFIX)) {
+    if (!isRcSessionExchange(request.url)) {
       return undefined;
     }
-    const tail = path.slice(RC_SESSIONS_PATH_PREFIX.length);
+    const tail = pathnameOf(request.url).slice(RC_SESSIONS_PATH_PREFIX.length);
     const facts = {
       oauthAuthorization: oauthAuthorizationOf(request.headers),
       anthropicVersion: singleHeader(request.headers, "anthropic-version"),
