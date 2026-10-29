@@ -1,7 +1,7 @@
 /**
  * Measures what headroom's transforms are worth on real conversations, offline: replays requests rebuilt from local Claude Code transcripts through scratch headroom daemons, one per settings variant, with a local fake upstream standing in for the provider.
  *
- * Usage: node scripts/headroom-measure.mts [--transcript FILE]... [--projects-dir DIR]... [--sessions N] [--requests N] [--variant NAME]... [--out DIR] [--dry-run]
+ * Usage: node scripts/headroom-measure.mts [--transcript FILE]... [--projects-dir DIR]... [--sessions N] [--requests N] [--variant NAME]... [--out DIR [--resume]] [--dry-run]
  *
  * Nothing leaves the machine: each daemon runs with `HEADROOM_OFFLINE=1` (headroom's no-egress switch), no telemetry and a throwaway workspace, and it forwards only to the loopback fake upstream, which answers every request with a canned reply. The replayed conversations are your own transcripts, so the per-request records written to `--out` carry token counts, transform names and timings but never message content, and sessions are named s1, s2, ... rather than by file.
  *
@@ -16,6 +16,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
 
+import { z } from "zod";
+
 import { settingsArgs, settingsEnv, type HeadroomSettings } from "../src/headroom/settings";
 import {
   buildRequests,
@@ -27,6 +29,7 @@ import {
   pickTranscripts,
   placeholderPrefix,
   preservedPrefix,
+  RequestRecordSchema,
   renderTable,
   renderTransforms,
   segmentsOf,
@@ -38,6 +41,7 @@ import {
   type TranscriptCandidate,
   type TranscriptEntry,
   type Variant,
+  type VariantSummary,
 } from "./headroom-measure-core";
 
 /** How many sessions the default workload replays: enough to cover several kinds of work without making a run last hours. */
@@ -98,6 +102,8 @@ interface Options {
   readonly requests: number;
   readonly variants: readonly string[];
   readonly out: string | undefined;
+  /** Reuse the records an earlier run left in `out` for every variant it finished, so an interrupted run continues instead of starting over. */
+  readonly resume: boolean;
   readonly dryRun: boolean;
 }
 
@@ -109,6 +115,7 @@ function parseArgs(argv: readonly string[]): Options {
   const variants: string[] = [];
   let out: string | undefined;
   let dryRun = false;
+  let resume = false;
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === undefined) {
@@ -141,6 +148,9 @@ function parseArgs(argv: readonly string[]): Options {
       case "--out":
         out = value();
         break;
+      case "--resume":
+        resume = true;
+        break;
       case "--dry-run":
         dryRun = true;
         break;
@@ -148,7 +158,10 @@ function parseArgs(argv: readonly string[]): Options {
         throw new Error(`unknown argument ${flag}`);
     }
   }
-  return { transcripts, projectsDirs: projectsDirs.length > 0 ? projectsDirs : [path.join(os.homedir(), ".claude", "projects")], sessions, requests, variants, out, dryRun };
+  if (resume && out === undefined) {
+    throw new Error("--resume needs --out, the directory holding the records to reuse");
+  }
+  return { transcripts, projectsDirs: projectsDirs.length > 0 ? projectsDirs : [path.join(os.homedir(), ".claude", "projects")], sessions, requests, variants, out, resume, dryRun };
 }
 
 function discover(roots: readonly string[]): TranscriptCandidate[] {
@@ -465,6 +478,17 @@ function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
+/** Where a variant's usable records are written and, on `--resume`, read back. */
+function recordsPath(out: string, variant: Readonly<Variant>): string {
+  return path.join(out, `records-${slug(variant.name)}.json`);
+}
+
+/** The records an earlier run saved for the variant, or undefined when it has none, so the variant still has to run. A file that does not match the schema is an error, never silently re-measured. */
+function savedRecords(out: string, variant: Readonly<Variant>): RequestRecord[] | undefined {
+  const file = recordsPath(out, variant);
+  return fs.existsSync(file) ? z.array(RequestRecordSchema).parse(JSON.parse(fs.readFileSync(file, "utf8"))) : undefined;
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const prefix = placeholderPrefix({ systemTokens: DEFAULT_SYSTEM_TOKENS, toolsTokens: DEFAULT_TOOLS_TOKENS });
@@ -493,10 +517,19 @@ async function main(): Promise<void> {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "headroom-measure-"));
   const upstream = await startFakeUpstream();
   const warmup = warmupBody(prefix);
-  const summaries = [];
+  const summaries: { summary: VariantSummary; warmupMs: number | undefined }[] = [];
   const reference: RequestRecord[] = [];
   try {
     for (const variant of selected) {
+      const saved = options.resume && options.out !== undefined ? savedRecords(options.out, variant) : undefined;
+      if (saved !== undefined) {
+        console.log(`variant: ${variant.name} (resumed from saved records)`);
+        if (reference.length === 0) {
+          reference.push(...saved);
+        }
+        summaries.push({ summary: summarise(variant.name, saved, READ_RATIOS), warmupMs: undefined });
+        continue;
+      }
       console.log(`variant: ${variant.name}`);
       const daemon = await startDaemon(variant, upstream, scratch, warmup);
       try {
@@ -508,10 +541,10 @@ async function main(): Promise<void> {
         if (reference.length === 0) {
           reference.push(...usable);
         }
-        summaries.push({ summary: summarise(variant.name, usable, READ_RATIOS), warmupMs: daemon.warmupMs, failed });
+        summaries.push({ summary: summarise(variant.name, usable, READ_RATIOS), warmupMs: daemon.warmupMs });
         if (options.out !== undefined) {
           fs.mkdirSync(options.out, { recursive: true });
-          fs.writeFileSync(path.join(options.out, `records-${slug(variant.name)}.json`), `${JSON.stringify(usable, null, 2)}\n`);
+          fs.writeFileSync(recordsPath(options.out, variant), `${JSON.stringify(usable, null, 2)}\n`);
         }
       } finally {
         await daemon.close();
@@ -529,7 +562,7 @@ async function main(): Promise<void> {
   const all = [unmodified, ...summaries.map((entry) => entry.summary)];
   console.log(`\n${renderTable(all)}\n`);
   for (const entry of summaries) {
-    console.log(`warm-up (first request after start): ${entry.summary.name}: ${entry.warmupMs.toFixed(0)} ms`);
+    console.log(`warm-up (first request after start): ${entry.summary.name}: ${entry.warmupMs === undefined ? "not measured (resumed)" : `${entry.warmupMs.toFixed(0)} ms`}`);
   }
   for (const entry of summaries.slice(0, 1)) {
     console.log(`\ntransforms, ${entry.summary.name}:\n${renderTransforms(entry.summary)}`);

@@ -22,6 +22,7 @@ import {
   placeholderPrefix,
   preservedPrefix,
   renderTable,
+  RequestRecordSchema,
   replayableToolResult,
   segmentsOf,
   summarise,
@@ -431,5 +432,31 @@ describe("variantName", () => {
 
   it("orders the parts as mode, features with their channel, retrieval, then keep-ratio", () => {
     expect(variantName({ mode: "token", rolloutChannel: "beta", readMaturation: true, ccr: "none", targetRatio: 0.3 })).toBe("token, read maturation (beta), no retrieval, target ratio 0.3");
+  });
+});
+
+describe("RequestRecordSchema", () => {
+  const record: RequestRecord = {
+    session: "s1",
+    index: 0,
+    status: 200,
+    tokensBefore: 100,
+    tokensAfter: 80,
+    transforms: ["router:noop"],
+    preservedBytes: 10,
+    totalBytes: 20,
+    baselinePreservedBytes: 10,
+    baselineTotalBytes: 20,
+    throughMs: 5,
+    directMs: 1,
+  };
+
+  it("reads back what a run wrote", () => {
+    expect(RequestRecordSchema.parse(JSON.parse(JSON.stringify(record)))).toEqual(record);
+  });
+
+  it("refuses a record missing a field", () => {
+    const incomplete = Object.fromEntries(Object.entries(record).filter(([key]) => key !== "directMs"));
+    expect(RequestRecordSchema.safeParse(incomplete).success).toBe(false);
   });
 });
