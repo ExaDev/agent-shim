@@ -1,3 +1,9 @@
+## [11.72.0](https://github.com/ExaDev/agent-shim/compare/v11.71.1...v11.72.0) (2026-10-29)
+
+### Features
+
+* **headroom:** generate the measurement matrix from the settings schema ([1ea5b2d](https://github.com/ExaDev/agent-shim/commit/1ea5b2d6b01d9d53c4ae46b8ae54a471f89e2675))
+
 ## [11.71.1](https://github.com/ExaDev/agent-shim/compare/v11.71.0...v11.71.1) (2026-10-28)
 
 ### Bug Fixes
