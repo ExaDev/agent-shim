@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { HEADROOM_CCR_MODES, HEADROOM_MODES, HEADROOM_ROLLOUT_CHANNELS, HeadroomGlobalConfigSchema } from "../src/config/schema";
-import { hashSettings } from "../src/headroom/settings";
+import { hashSettings, type HeadroomSettings } from "../src/headroom/settings";
 import {
   baselineCost,
   buildRequests,
@@ -9,6 +9,9 @@ import {
   CACHE_READ_RATIO_OPUS,
   CACHE_WRITE_RATIO,
   cacheWeightedCost,
+  EXPERIMENTAL_FEATURES,
+  HEADROOM_DEFAULT_CCR,
+  HEADROOM_DEFAULT_MODE,
   mainChain,
   MEASURED_TARGET_RATIOS,
   OMITTED_TOOL_RESULT,
@@ -362,15 +365,13 @@ describe("pickTranscripts", () => {
   });
 });
 
-/** The experimental features a variant can enable, each independently on or off. */
-const EXPERIMENTAL_FEATURE_COUNT = 2;
-
 describe("variantMatrix", () => {
   const matrix = variantMatrix();
-  const find = (name: string) => matrix.find((variant) => variant.name === name);
+  const featureEnabled = (settings: Readonly<HeadroomSettings>): boolean => EXPERIMENTAL_FEATURES.some((feature) => settings[feature.key] === true);
 
   it("holds one variant per combination of mode, keep-ratio, retrieval and feature subset", () => {
-    const expected = HEADROOM_MODES.length * (1 + MEASURED_TARGET_RATIOS.length) * HEADROOM_CCR_MODES.length * 2 ** EXPERIMENTAL_FEATURE_COUNT;
+    // An explicit default is the omitted case of its setting, so each of mode and retrieval contributes its value count, not one more.
+    const expected = HEADROOM_MODES.length * (1 + MEASURED_TARGET_RATIOS.length) * HEADROOM_CCR_MODES.length * 2 ** EXPERIMENTAL_FEATURES.length;
     expect(matrix).toHaveLength(expected);
   });
 
@@ -385,27 +386,39 @@ describe("variantMatrix", () => {
     expect(new Set(matrix.map((variant) => hashSettings(variant.settings))).size).toBe(matrix.length);
   });
 
-  it("derives the least rollout channel that unlocks the enabled features", () => {
-    expect(find("cache (default)")?.settings).toEqual({});
-    expect(find("token, read maturation (beta)")?.settings).toEqual({ mode: "token", rolloutChannel: "beta", readMaturation: true });
-    expect(find("token, tool-result interceptors (canary)")?.settings).toEqual({ mode: "token", rolloutChannel: "canary", interceptToolResults: true });
-    expect(find("token, tool-result interceptors and read maturation (dev), lossless, target ratio 0.5")?.settings).toEqual({
-      mode: "token",
-      rolloutChannel: "dev",
-      interceptToolResults: true,
-      readMaturation: true,
-      ccr: "lossless",
-      targetRatio: 0.5,
-    });
+  it("names every variant after its own settings", () => {
+    for (const variant of matrix) {
+      expect(variant.name).toBe(variantName(variant.settings));
+    }
   });
 
-  it("never sets a rollout channel without a feature that needs it", () => {
-    for (const variant of matrix) {
-      const usesFeature = variant.settings.interceptToolResults === true || variant.settings.readMaturation === true;
-      expect(variant.settings.rolloutChannel !== undefined, variant.name).toBe(usesFeature);
-      if (variant.settings.rolloutChannel !== undefined) {
-        expect(HEADROOM_ROLLOUT_CHANNELS, variant.name).toContain(variant.settings.rolloutChannel);
+  it("derives the least rollout channel the schema accepts for the enabled features", () => {
+    for (const variant of matrix.filter((candidate) => featureEnabled(candidate.settings))) {
+      const chosen = HEADROOM_ROLLOUT_CHANNELS.findIndex((channel) => channel === variant.settings.rolloutChannel);
+      expect(chosen, variant.name).toBeGreaterThanOrEqual(0);
+      for (const weaker of HEADROOM_ROLLOUT_CHANNELS.slice(0, chosen)) {
+        expect(HeadroomGlobalConfigSchema.safeParse({ ...variant.settings, rolloutChannel: weaker }).success, `${variant.name} with ${weaker}`).toBe(false);
       }
+    }
+  });
+
+  it("sets a rollout channel exactly when a feature needs one", () => {
+    for (const variant of matrix) {
+      expect(variant.settings.rolloutChannel !== undefined, variant.name).toBe(featureEnabled(variant.settings));
+    }
+  });
+
+  it("never spells out a setting's default, so no two variants differ only in one", () => {
+    for (const variant of matrix) {
+      expect(variant.settings.mode, variant.name).not.toBe(HEADROOM_DEFAULT_MODE);
+      expect(variant.settings.ccr, variant.name).not.toBe(HEADROOM_DEFAULT_CCR);
+    }
+  });
+
+  it("covers every experimental feature as an independent switch", () => {
+    for (const feature of EXPERIMENTAL_FEATURES) {
+      expect(matrix.some((variant) => variant.settings[feature.key] === true), feature.key).toBe(true);
+      expect(matrix.some((variant) => variant.settings[feature.key] === undefined), feature.key).toBe(true);
     }
   });
 });
