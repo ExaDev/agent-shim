@@ -1,3 +1,9 @@
+## [11.72.2](https://github.com/ExaDev/agent-shim/compare/v11.72.1...v11.72.2) (2026-10-29)
+
+### Bug Fixes
+
+* **frontdoor:** keep Remote Control calls off the headroom hop so the tracker sees them ([cae09c1](https://github.com/ExaDev/agent-shim/commit/cae09c12edf41e488f35efe3869650abdfd81538))
+
 ## [11.72.1](https://github.com/ExaDev/agent-shim/compare/v11.72.0...v11.72.1) (2026-10-29)
 
 ### Bug Fixes
