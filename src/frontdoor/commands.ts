@@ -73,7 +73,7 @@ import { createRcClientPage } from "./rcClientPage";
 import { createRcSelfHostSurface, rcSelfHostFromEnv } from "./rcSelfHost";
 import { readRcSelfHostRecord } from "./rcSelfHostMint";
 import { realRcWebFetch, rcWebFetchAllowsPrivateFromEnv } from "./rcWebFetch";
-import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, observingRoutedRoute } from "./rcSessions";
+import { RC_IDLE_EXPIRY_MS, createRcSessionTracker, isRcSessionExchange, observingRoutedRoute } from "./rcSessions";
 import { targetRefs } from "../models/targets";
 import { answerRcControlRequest, authenticateRcSessionMcpServer, endRcSession, getRcSessionContextUsage, getRcSessionMcpStatus, getRcSessionUsage, injectRcUserMessage, interruptRcSession, readRcSessionFile, reconnectRcSessionMcpServer, sendRcKeepAlive, setRcSessionModel, setRcSessionPermissionMode, submitRcSessionMcpOAuthCallbackUrl, suggestRcSessionFiles, teleportRcSession, type RcAnswerDecision, type RcContextUsageDetail, type RcPermissionMode, type RcReadFileOptions } from "./rcWrites";
 import { RC_STREAM_BACKOFF_MS, createRcEventFanout, createRcStreamHub, type RcStreamHub } from "./rcStream";
@@ -129,9 +129,12 @@ export function rcObservingResolver(
 ): (request: RoutedRequest) => Promise<RouteResolution> {
   return async (request) => {
     const resolution = await resolve(request);
-    return resolution.ok
-      ? { ...resolution, route: observingRoutedRoute(resolution.route, tracker, hub === undefined ? undefined : { onExchangeSettled: () => { hub.reconcile(); } }) }
-      : resolution;
+    if (!resolution.ok) {
+      return resolution;
+    }
+    const observing = observingRoutedRoute(resolution.route, tracker, hub === undefined ? undefined : { onExchangeSettled: () => { hub.reconcile(); } });
+    // The observer lives in the route's own `serve`, and the headroom hop serves a request by forwarding it instead of calling `serve`, so an exchange the tracker reads must stay off the hop or the tracker never sees it. These calls carry no prompt for headroom to compress either, so nothing is lost by serving them directly.
+    return { ...resolution, route: isRcSessionExchange(request.url) ? { ...observing, headroomEligible: false } : observing };
   };
 }
 

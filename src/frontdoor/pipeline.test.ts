@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 
 import { HTTP_STATUS } from "../codex/http";
 import { admitEverything, followsLaunchFlag } from "../test-helpers";
+import { rcObservingResolver } from "./commands";
 import { createCredentialCustody } from "./custody";
 import { NO_ROUTING_SETTING } from "../headroom/routingSetting";
 import { createHeadroomDecision } from "./headroomDecision";
+import { RC_IDLE_EXPIRY_MS, createRcSessionTracker } from "./rcSessions";
 import { createRoutedResponse, serveRouted, type PipelineDeps, type PipelineRequest, type ResponseBodyObserver, type ResponseObserver, type RouteResolution, type RoutedResponseEvent } from "./pipeline";
 import { HEADROOM_FLAG_HEADER, IDENTITY_HEADER, PROVIDER_HEADER, SESSION_HEADER, type FrontDoorRoute, type RoutedRequest, type RoutedResponse  } from "./route";
 
@@ -516,5 +518,30 @@ describe("a model choice reaching the response observers", () => {
     }]).deps);
     expect(response.writtenHead?.status).toBe(HTTP_STATUS.ok);
     expect(choices).toEqual([{ requested: "sonnet", providers: ["antigravity"] }]);
+  });
+});
+
+describe("a session that wants headroom, served through the Remote Control observing resolver", () => {
+  const SESSION = "cse_00000000-0000-4000-8000-000000000001";
+  // A daemon that is not serving: a request that takes the hop is answered 502 by the hop itself and never reaches the route, which is what tells the two paths apart.
+  const headroom = { headroomSocket: () => undefined, hopSecret: "secret", custody: createCredentialCustody(() => "id"), log: () => undefined };
+
+  async function serveFlagged(url: string): Promise<{ readonly status: number | undefined; readonly routeServed: number; readonly tracked: readonly string[] }> {
+    const tracker = createRcSessionTracker({ now: () => 0, idleMs: RC_IDLE_EXPIRY_MS });
+    const route = recordingRoute();
+    const { deps: base } = deps({ ok: true, route });
+    const resolveRoute = rcObservingResolver(async () => await Promise.resolve({ ok: true as const, route }), tracker);
+    const { request, response } = pipelineRequest({ [HEADROOM_FLAG_HEADER]: "1" });
+    await serveRouted({ ...request, url }, { ...base, resolveRoute, headroom });
+    tracker.close();
+    return { status: response.writtenHead?.status, routeServed: route.seen.length, tracked: tracker.list().map((session) => session.id) };
+  }
+
+  it("serves a worker call from the route, where the tracker observes it, instead of the hop that bypasses it", async () => {
+    expect(await serveFlagged(`/v1/code/sessions/${SESSION}/worker/heartbeat`)).toEqual({ status: HTTP_STATUS.ok, routeServed: 1, tracked: [SESSION] });
+  });
+
+  it("still sends a model request over the hop", async () => {
+    expect(await serveFlagged("/v1/messages")).toEqual({ status: HTTP_STATUS.badGateway, routeServed: 0, tracked: [] });
   });
 });

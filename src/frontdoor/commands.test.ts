@@ -312,6 +312,22 @@ describe("the Remote Control observing resolver", () => {
     }
   });
 
+  it("keeps an exchange the tracker observes off the headroom hop, whose forwarding never reaches the route's own serve where the observer runs", async () => {
+    const resolve = rcObservingResolver(async () => await Promise.resolve({ ok: true as const, route }), createRcSessionTracker({ now: () => 0, idleMs: RC_IDLE_EXPIRY_MS }));
+    for (const url of ["/v1/code/sessions", "/v1/code/sessions/cse_x/worker/heartbeat", "/v1/code/sessions/cse_x/client/presence?x=1"]) {
+      const resolution = await resolve({ ...original, url });
+      expect(resolution.ok && resolution.route.headroomEligible, url).toBe(false);
+    }
+  });
+
+  it("leaves every other request eligible for the hop, since only a model request has a prompt headroom can compress", async () => {
+    const resolve = rcObservingResolver(async () => await Promise.resolve({ ok: true as const, route }), createRcSessionTracker({ now: () => 0, idleMs: RC_IDLE_EXPIRY_MS }));
+    for (const url of ["/v1/messages", "/v1/messages/count_tokens", "/v1/mcp_servers", "/v1/code/sessionsfoo"]) {
+      const resolution = await resolve({ ...original, url });
+      expect(resolution.ok && resolution.route.headroomEligible, url).toBe(true);
+    }
+  });
+
   it("passes a refusal through untouched", async () => {
     const refusal = { ok: false, status: 400, message: "no" } as const;
     const resolve = rcObservingResolver(async () => await Promise.resolve(refusal), createRcSessionTracker({ now: () => 0, idleMs: RC_IDLE_EXPIRY_MS }));
