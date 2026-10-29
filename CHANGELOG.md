@@ -1,3 +1,9 @@
+## [11.73.0](https://github.com/ExaDev/agent-shim/compare/v11.72.4...v11.73.0) (2026-10-29)
+
+### Features
+
+* **headroom:** resume an interrupted measurement from its saved records ([364e39b](https://github.com/ExaDev/agent-shim/commit/364e39bb7f646e6e09a780e8a8d2da20bb9c8deb))
+
 ## [11.72.4](https://github.com/ExaDev/agent-shim/compare/v11.72.3...v11.72.4) (2026-10-29)
 
 ### Build System
