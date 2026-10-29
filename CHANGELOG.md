@@ -1,3 +1,20 @@
+## [11.72.1](https://github.com/ExaDev/agent-shim/compare/v11.72.0...v11.72.1) (2026-10-29)
+
+### Bug Fixes
+
+* **antigravity:** answer a request that does not ask for a stream with one message ([9799c9b](https://github.com/ExaDev/agent-shim/commit/9799c9b96555262f529bcfaf2e6efde2c601ceeb)), references [#642](https://github.com/ExaDev/agent-shim/issues/642)
+* **frontdoor:** keep a refused bearer's memory across the attachment that learned it ([3a1e379](https://github.com/ExaDev/agent-shim/commit/3a1e37958fed89b52912f69d213cb714ac1291b8))
+* **frontdoor:** settle a request body the client destroyed before it was read ([2e4d4c9](https://github.com/ExaDev/agent-shim/commit/2e4d4c9c3247876321631a1260216cfb15201305))
+
+### Performance Improvements
+
+* **frontdoor:** drop the observation store nothing reads ([5ff2900](https://github.com/ExaDev/agent-shim/commit/5ff2900b3bdaa2060a68e5f8c7ce5d8ec05379a5))
+* **selection:** seed the target observations from the newest usage segments ([72360c8](https://github.com/ExaDev/agent-shim/commit/72360c8e9b4a62293c47df2c36b67e55cbbcad2c))
+
+### Tests
+
+* **frontdoor:** enter the hop in the client disconnect tests ([c55f033](https://github.com/ExaDev/agent-shim/commit/c55f0333b90470b8dcb1012c1d8875e209fa2b3e))
+
 ## [11.72.0](https://github.com/ExaDev/agent-shim/compare/v11.71.1...v11.72.0) (2026-10-29)
 
 ### Features
