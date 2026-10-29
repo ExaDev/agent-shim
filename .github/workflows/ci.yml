@@ -1286,3 +1286,24 @@ jobs:
             echo "error: 'claude' should be gone after shim disable -- found $(command -v claude)"
             exit 1
           fi
+
+  # One aggregate check for merge-when-green to wait on: it passes only when every other job succeeded or was skipped (the publishing jobs skip on a pull request). A job missing from `needs` would be ignored by the merge, so `src/ciRequiredChecks.test.ts` fails when this list drifts from the jobs above.
+  required-checks:
+    name: Required checks
+    if: always()
+    needs: [lint, typecheck, test, audit, knip, semantic-release, build-arm64, build-x64-best-effort, build-linux-x64, build-linux-arm64, build-windows-x64, build-windows-arm64, smoke-test-macos-arm64, smoke-test-macos-x64-best-effort, smoke-test-linux-x64, smoke-test-linux-arm64, smoke-test-windows-x64, smoke-test-windows-arm64, publish-npm, publish-npm-alias, publish-github-packages, release, update-tap, update-scoop, verify-tap-macos, verify-tap-macos-x64, verify-tap-linux, verify-scoop, verify-npm, verify-install-script, verify-install-script-macos-x64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless every job succeeded or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "error: a job finished as $result"
+                exit 1
+                ;;
+            esac
+          done
