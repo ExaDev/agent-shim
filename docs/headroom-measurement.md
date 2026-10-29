@@ -34,7 +34,7 @@ The multipliers are the documented ones (https://platform.claude.com/docs/en/bui
 
 ## Variants
 
-The matrix covers `cache` (headroom's default) and `token` modes, lower `--target-ratio` values, `--lossless` and `--no-ccr` (retrieval markers off), and the experimental `--intercept-tool-results` and `--read-maturation` behind their rollout channels. `--variant NAME` (repeatable) selects by name, and an unknown name is an error.
+The matrix covers `cache` (headroom's default) and `token` modes, lower `--target-ratio` values, `--lossless` and `--no-ccr` (retrieval markers off), and the experimental `--intercept-tool-results` and `--read-maturation` behind their rollout channels. The matrix is generated, not listed: [combinatrix](https://www.npmjs.com/package/combinatrix) enumerates every combination of those settings that headroom's settings schema accepts, so a rule added to the schema changes the matrix with no edit here, and the rollout channel each experimental feature needs is derived from the schema as the least channel that unlocks it. `--variant NAME` (repeatable) selects by name, and an unknown name is an error.
 
 ## Limits
 
