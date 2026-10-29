@@ -1,3 +1,13 @@
+## [11.72.3](https://github.com/ExaDev/agent-shim/compare/v11.72.2...v11.72.3) (2026-10-29)
+
+### Code Refactoring
+
+* **headroom:** generate the measurement matrix with combinatrix ([792815b](https://github.com/ExaDev/agent-shim/commit/792815b0d242ad40026ab3dcbd1ca7eff61decd0))
+
+### Build System
+
+* resolve combinatrix from the registry in the lockfile ([ec588b3](https://github.com/ExaDev/agent-shim/commit/ec588b31b947fbd82e1fdc2fe308b30ea2dbaab0))
+
 ## [11.72.2](https://github.com/ExaDev/agent-shim/compare/v11.72.1...v11.72.2) (2026-10-29)
 
 ### Bug Fixes
