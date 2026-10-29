@@ -1,3 +1,9 @@
+## [11.72.4](https://github.com/ExaDev/agent-shim/compare/v11.72.3...v11.72.4) (2026-10-29)
+
+### Build System
+
+* depend on combinatrix 2 ([a724b15](https://github.com/ExaDev/agent-shim/commit/a724b15b65862c294020a9bffea4fcd9a1594d75))
+
 ## [11.72.3](https://github.com/ExaDev/agent-shim/compare/v11.72.2...v11.72.3) (2026-10-29)
 
 ### Code Refactoring
