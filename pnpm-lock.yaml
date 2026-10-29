@@ -243,6 +243,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.1.12
         version: 4.1.12(vitest@4.1.12)
+      combinatrix:
+        specifier: 1.0.0
+        version: 1.0.0
       conventional-changelog-conventionalcommits:
         specifier: ^10.4.0
         version: 10.4.1
@@ -1911,6 +1914,10 @@ packages:
 
   color-name@1.1.4:
     resolution: {integrity: sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==}
+
+  combinatrix@1.0.0:
+    resolution: {integrity: sha512-lk48dsHFsJMWbv0BPDNFSG9aYETJd0MEKGyHLRYKayLbABRqdhu4EWhSsGekpCTpSddhgcynH8EfnoVtM+QH2w==}
+    engines: {node: '>=22'}
 
   commander@15.0.0:
     resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
@@ -5321,6 +5328,8 @@ snapshots:
   color-name@1.1.3: {}
 
   color-name@1.1.4: {}
+
+  combinatrix@1.0.0: {}
 
   commander@15.0.0: {}
 
