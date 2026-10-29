@@ -468,19 +468,22 @@ export function variantName(settings: Readonly<HeadroomSettings>): string {
   return parts.length === 1 && settings.mode === undefined ? `${HEADROOM_DEFAULT_MODE} (default)` : parts.join(", ");
 }
 
+/** A list of at least one value, as combinatrix's `choice` takes it: every measured list starts with the unset case, so none is ever empty. */
+type NonEmptyList<T> = readonly [T, ...T[]];
+
 /** An optional feature is either left unset or switched on. */
-const FEATURE_STATES = [undefined, true];
+const FEATURE_STATES: NonEmptyList<boolean | undefined> = [undefined, true];
 
 /** A setting's measured values when its default is the unset case: unset, then every value but the default. */
-function unsetOrNonDefault<const V extends string>(values: readonly V[], defaultValue: V): (V | undefined)[] {
+function unsetOrNonDefault<const V extends string>(values: readonly V[], defaultValue: V): NonEmptyList<V | undefined> {
   return [undefined, ...values.filter((value) => value !== defaultValue)];
 }
 
 /** The measured values of each free setting, and the rollout channels a feature may need. */
 const MEASURED_MODES = unsetOrNonDefault(HEADROOM_MODES, HEADROOM_DEFAULT_MODE);
-const MEASURED_RATIOS = [undefined, ...MEASURED_TARGET_RATIOS];
+const MEASURED_RATIOS: NonEmptyList<number | undefined> = [undefined, ...MEASURED_TARGET_RATIOS];
 const MEASURED_CCR_MODES = unsetOrNonDefault(HEADROOM_CCR_MODES, HEADROOM_DEFAULT_CCR);
-const ROLLOUT_CANDIDATES = [undefined, ...HEADROOM_ROLLOUT_CHANNELS];
+const ROLLOUT_CANDIDATES: NonEmptyList<(typeof HEADROOM_ROLLOUT_CHANNELS)[number] | undefined> = [undefined, ...HEADROOM_ROLLOUT_CHANNELS];
 
 /** The most variants the model can hold: the product of every dimension's domain, which no constraint can enlarge. */
 const VARIANT_LIMIT = MEASURED_MODES.length * MEASURED_RATIOS.length * MEASURED_CCR_MODES.length * FEATURE_STATES.length ** EXPERIMENTAL_FEATURES.length * ROLLOUT_CANDIDATES.length;

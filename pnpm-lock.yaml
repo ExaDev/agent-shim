@@ -244,8 +244,8 @@ importers:
         specifier: ^4.1.12
         version: 4.1.12(vitest@4.1.12)
       combinatrix:
-        specifier: 1.0.0
-        version: 1.0.0
+        specifier: 2.0.1
+        version: 2.0.1
       conventional-changelog-conventionalcommits:
         specifier: ^10.4.0
         version: 10.4.1
@@ -1915,8 +1915,8 @@ packages:
   color-name@1.1.4:
     resolution: {integrity: sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==}
 
-  combinatrix@1.0.0:
-    resolution: {integrity: sha512-lk48dsHFsJMWbv0BPDNFSG9aYETJd0MEKGyHLRYKayLbABRqdhu4EWhSsGekpCTpSddhgcynH8EfnoVtM+QH2w==}
+  combinatrix@2.0.1:
+    resolution: {integrity: sha512-mIPpES7RWB9VNy0w6uqSxQs9I7keMBVEI7BfiP5vPbM7PWtIaUX+yOzUmMx+lBrwPFvqMO3hqF0nA9XktaHnog==}
     engines: {node: '>=22'}
 
   commander@15.0.0:
@@ -3528,6 +3528,15 @@ packages:
   trilean-regex@1.0.13:
     resolution: {integrity: sha512-OZZhg3esrKbVpJb1nXh/zBOvBz5nMihCWPLVClGMRqpV15durs3yscBR7cr3iwjTLkoTGNsgDUYILBex6PxBXA==}
     engines: {node: '>=20'}
+
+  trilean-regex@1.0.16:
+    resolution: {integrity: sha512-SGsS1IUYIuy7i6c8d5BItYqNpjdbcyP+TBbEE983V6bGGujVo7+GTiVeZkLo5T3Dh7dXMk4hIG5awgPM/Zjrlg==}
+    engines: {node: '>=20'}
+
+  trilean@1.11.1:
+    resolution: {integrity: sha512-hWwxFZLaM1OeJv8e/9R+FwnsJPfsWss01Kvg+kZqADFOtvaCVBh2dE4ZHSq8nDsUWvNi+WgcpTmP0xauvXQdcg==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   trilean@1.9.0:
     resolution: {integrity: sha512-H0vIf/mAcEs3xvlItoaisdW5GtslufJS9VKTnt0IWzps+HOM0OO2E3hHqTFoEpGbJ3MisbjdQKSUmy+EiSzhgQ==}
@@ -5329,7 +5338,9 @@ snapshots:
 
   color-name@1.1.4: {}
 
-  combinatrix@1.0.0: {}
+  combinatrix@2.0.1:
+    dependencies:
+      trilean: 1.11.1
 
   commander@15.0.0: {}
 
@@ -6976,6 +6987,13 @@ snapshots:
   traverse@0.6.8: {}
 
   trilean-regex@1.0.13: {}
+
+  trilean-regex@1.0.16: {}
+
+  trilean@1.11.1:
+    dependencies:
+      trilean-regex: 1.0.16
+      zod: 4.6.7
 
   trilean@1.9.0:
     dependencies:
