@@ -3,10 +3,11 @@
  *
  * Why the cache is part of the metric: headroom's own stats report tokens removed, but an input token served from the provider's prefix cache costs a small fraction of an uncached one, so compression that rewrites earlier turns can lose more than it saves. A request is priced as reused-prefix tokens at the cache-read multiplier plus everything else at the cache-write multiplier.
  */
+import { choice, collect, defineModel, firstValid, predicate } from "combinatrix";
 import { z } from "zod";
 
 import { HEADROOM_CCR_MODES, HEADROOM_MODES, HEADROOM_ROLLOUT_CHANNELS, HeadroomGlobalConfigSchema } from "../src/config/schema";
-import type { HeadroomSettings } from "../src/headroom/settings";
+import { settingsOf, type HeadroomSettings } from "../src/headroom/settings";
 
 /** Anthropic's published multipliers on the base input-token price (https://platform.claude.com/docs/en/build-with-claude/prompt-caching, Pricing): a 5-minute cache write costs 1.25 times base. */
 export const CACHE_WRITE_RATIO = 1.25;
@@ -434,8 +435,8 @@ export interface Variant {
 }
 
 /** What headroom does when the setting is left out. Naming the default explicitly runs the same daemon as omitting it, so each default is the omitted case of its setting and never a second value. */
-const HEADROOM_DEFAULT_MODE = "cache";
-const HEADROOM_DEFAULT_CCR = "default";
+export const HEADROOM_DEFAULT_MODE = "cache";
+export const HEADROOM_DEFAULT_CCR = "default";
 
 /** The keep-ratios measured besides leaving it unset: a moderate point and an aggressive one, enough to show the direction of the trade without a sweep. */
 const MODERATE_TARGET_RATIO = 0.5;
@@ -443,26 +444,10 @@ const AGGRESSIVE_TARGET_RATIO = 0.3;
 export const MEASURED_TARGET_RATIOS: readonly number[] = [MODERATE_TARGET_RATIO, AGGRESSIVE_TARGET_RATIO];
 
 /** The two opt-in experimental features, each paired with the label its variants carry. */
-const EXPERIMENTAL_FEATURES = [
+export const EXPERIMENTAL_FEATURES = [
   { key: "interceptToolResults", label: "tool-result interceptors" },
   { key: "readMaturation", label: "read maturation" },
 ] as const;
-
-/** Every subset of the experimental features, as the settings that enable them. */
-function featureSubsets(): Partial<HeadroomSettings>[] {
-  return EXPERIMENTAL_FEATURES.reduce<Partial<HeadroomSettings>[]>((subsets, feature) => [...subsets, ...subsets.map((subset) => ({ ...subset, [feature.key]: true }))], [{}]);
-}
-
-/** The settings with the first rollout channel the schema accepts for them, or none when the settings are valid without one. The channel is derived from the schema's own rules, so it is the least channel that unlocks the features and never a restatement of which channel unlocks which. */
-function withUnlockingChannel(settings: Readonly<HeadroomSettings>): HeadroomSettings | undefined {
-  for (const channel of [undefined, ...HEADROOM_ROLLOUT_CHANNELS]) {
-    const candidate: HeadroomSettings = channel === undefined ? settings : { ...settings, rolloutChannel: channel };
-    if (HeadroomGlobalConfigSchema.safeParse(candidate).success) {
-      return candidate;
-    }
-  }
-  return undefined;
-}
 
 /** A readable name for one variant, built from the settings alone so the name and the settings cannot disagree. */
 export function variantName(settings: Readonly<HeadroomSettings>): string {
@@ -483,31 +468,54 @@ export function variantName(settings: Readonly<HeadroomSettings>): string {
   return parts.length === 1 && settings.mode === undefined ? `${HEADROOM_DEFAULT_MODE} (default)` : parts.join(", ");
 }
 
+/** An optional feature is either left unset or switched on. */
+const FEATURE_STATES = [undefined, true];
+
+/** A setting's measured values when its default is the unset case: unset, then every value but the default. */
+function unsetOrNonDefault<const V extends string>(values: readonly V[], defaultValue: V): (V | undefined)[] {
+  return [undefined, ...values.filter((value) => value !== defaultValue)];
+}
+
+/** The measured values of each free setting, and the rollout channels a feature may need. */
+const MEASURED_MODES = unsetOrNonDefault(HEADROOM_MODES, HEADROOM_DEFAULT_MODE);
+const MEASURED_RATIOS = [undefined, ...MEASURED_TARGET_RATIOS];
+const MEASURED_CCR_MODES = unsetOrNonDefault(HEADROOM_CCR_MODES, HEADROOM_DEFAULT_CCR);
+const ROLLOUT_CANDIDATES = [undefined, ...HEADROOM_ROLLOUT_CHANNELS];
+
+/** The most variants the model can hold: the product of every dimension's domain, which no constraint can enlarge. */
+const VARIANT_LIMIT = MEASURED_MODES.length * MEASURED_RATIOS.length * MEASURED_CCR_MODES.length * FEATURE_STATES.length ** EXPERIMENTAL_FEATURES.length * ROLLOUT_CANDIDATES.length;
+
 /**
- * Every combination of settings the schema accepts, generated rather than listed: the product of the mode, keep-ratio, retrieval and experimental-feature choices, each with the rollout channel the schema requires. A setting added to the schema's enums extends the matrix with no edit here, and a combination the schema refuses cannot appear. The rollout channel is not a dimension of its own: it only gates the two features, so a channel set without one would measure nothing the matrix does not already hold.
+ * The matrix as a constraint model. The schema decides validity through a predicate over every setting, so a combination it refuses cannot appear and a rule added to it applies here with no edit.
+ *
+ * The rollout channel is derived, not enumerated: it is the first candidate the schema accepts, which is unset when no feature is on and the least channel that unlocks the enabled features otherwise. It is therefore never a dimension that multiplies the matrix, and a channel set without a feature that needs it cannot appear.
+ *
+ * The last-declared dimension varies fastest, so the features are declared in reverse of `EXPERIMENTAL_FEATURES` to keep the first feature varying fastest among them.
+ */
+const MATRIX_MODEL = defineModel({
+  dimensions: [
+    choice("mode", MEASURED_MODES),
+    choice("targetRatio", MEASURED_RATIOS),
+    choice("ccr", MEASURED_CCR_MODES),
+    choice("readMaturation", FEATURE_STATES),
+    choice("interceptToolResults", FEATURE_STATES),
+    firstValid("rolloutChannel", ROLLOUT_CANDIDATES),
+  ],
+  constraints: [
+    predicate({
+      reads: ["mode", "targetRatio", "ccr", "interceptToolResults", "readMaturation", "rolloutChannel"],
+      test: (settings) => HeadroomGlobalConfigSchema.safeParse(settings).success,
+      name: "accepted by HeadroomGlobalConfigSchema",
+    }),
+  ],
+});
+
+/**
+ * Every combination of settings the schema accepts, generated rather than listed: the product of the mode, keep-ratio, retrieval and experimental-feature choices, each with the rollout channel the schema requires. A setting added to the schema's enums extends the matrix with no edit here, and a combination the schema refuses cannot appear. An explicit default is the omitted case of its setting, so no two variants differ only in a default.
  */
 export function variantMatrix(): Variant[] {
-  const modes: (HeadroomSettings["mode"])[] = [undefined, ...HEADROOM_MODES.filter((mode) => mode !== HEADROOM_DEFAULT_MODE)];
-  const ratios: (number | undefined)[] = [undefined, ...MEASURED_TARGET_RATIOS];
-  const retrievals: (HeadroomSettings["ccr"])[] = [undefined, ...HEADROOM_CCR_MODES.filter((ccr) => ccr !== HEADROOM_DEFAULT_CCR)];
-  const variants: Variant[] = [];
-  for (const mode of modes) {
-    for (const targetRatio of ratios) {
-      for (const ccr of retrievals) {
-        for (const features of featureSubsets()) {
-          const base: HeadroomSettings = {
-            ...(mode === undefined ? {} : { mode }),
-            ...(targetRatio === undefined ? {} : { targetRatio }),
-            ...(ccr === undefined ? {} : { ccr }),
-            ...features,
-          };
-          const settings = withUnlockingChannel(base);
-          if (settings !== undefined) {
-            variants.push({ name: variantName(settings), settings });
-          }
-        }
-      }
-    }
-  }
-  return variants;
+  return collect(MATRIX_MODEL, { limit: VARIANT_LIMIT }).map(({ values }) => {
+    const settings = settingsOf(values);
+    return { name: variantName(settings), settings };
+  });
 }

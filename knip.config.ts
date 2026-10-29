@@ -1,8 +1,9 @@
 import type { KnipConfig } from "knip";
 
 const config: KnipConfig = {
-  entry: ["src/cli.ts", "src/index.ts"],
-  project: ["src/**/*.ts"],
+  // The headroom measurement harness is bundled and run by scripts/headroom-measure.mts through a path string knip cannot follow. It is not part of the published package, so the dependencies only it imports are traced from its bundled entry and stay devDependencies.
+  entry: ["src/cli.ts", "src/index.ts", "scripts/headroom-measure-run.ts"],
+  project: ["src/**/*.ts", "scripts/headroom-measure-*.ts"],
   ignoreDependencies: [
     // Referenced by preset/plugin name in release.config.ts, not by import -- knip can't trace this.
     "@semantic-release/npm",
