@@ -729,13 +729,13 @@ export type PortableConfig = z.infer<typeof PortableConfigSchema>;
  * The user-global headroom daemon block: how agent-shim installs and supervises the local headroom proxy when a launch routes through it. Deliberately global-only: the daemon is one per machine (one per AGENT_SHIM_HOME), so a per-directory or per-profile setting would be a claim about the same singleton from several places at once.
  */
 /** `cache` freezes earlier turns for provider prefix-cache hits; `token` may rewrite them for more compression. */
-const HEADROOM_MODES = ["cache", "token"] as const;
+export const HEADROOM_MODES = ["cache", "token"] as const;
 
 /** `default` keeps headroom's retrieval markers and `headroom_retrieve` tool; `lossless` compacts tool output with no markers; `none` drops both the markers and the tool, so an original cannot be recovered. */
-const HEADROOM_CCR_MODES = ["default", "lossless", "none"] as const;
+export const HEADROOM_CCR_MODES = ["default", "lossless", "none"] as const;
 
 /** The release channels headroom gates its experimental features behind. `beta` unlocks read maturation, `canary` the tool-result interceptors, and `dev` both. */
-const HEADROOM_ROLLOUT_CHANNELS = ["beta", "canary", "dev"] as const;
+export const HEADROOM_ROLLOUT_CHANNELS = ["beta", "canary", "dev"] as const;
 
 /** Channels that unlock tool-result interceptors. */
 const INTERCEPT_CHANNELS: readonly string[] = ["canary", "dev"];
@@ -762,7 +762,7 @@ const HeadroomGlobalConfigObjectSchema = z.strictObject({
   readMaturation: z.boolean().optional(),
 });
 
-const HeadroomGlobalConfigSchema = HeadroomGlobalConfigObjectSchema.superRefine((config, context) => {
+export const HeadroomGlobalConfigSchema = HeadroomGlobalConfigObjectSchema.superRefine((config, context) => {
   if (config.interceptToolResults === true && !INTERCEPT_CHANNELS.includes(config.rolloutChannel ?? "")) {
     context.addIssue({ code: "custom", path: ["interceptToolResults"], message: "interceptToolResults needs rolloutChannel canary or dev" });
   }

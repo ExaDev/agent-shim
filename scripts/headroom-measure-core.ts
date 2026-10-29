@@ -5,6 +5,9 @@
  */
 import { z } from "zod";
 
+import { HEADROOM_CCR_MODES, HEADROOM_MODES, HEADROOM_ROLLOUT_CHANNELS, HeadroomGlobalConfigSchema } from "../src/config/schema";
+import type { HeadroomSettings } from "../src/headroom/settings";
+
 /** Anthropic's published multipliers on the base input-token price (https://platform.claude.com/docs/en/build-with-claude/prompt-caching, Pricing): a 5-minute cache write costs 1.25 times base. */
 export const CACHE_WRITE_RATIO = 1.25;
 
@@ -422,4 +425,89 @@ export function pickTranscripts(candidates: readonly TranscriptCandidate[], coun
     picked.push(candidate);
   }
   return picked;
+}
+
+/** One headroom configuration to measure. */
+export interface Variant {
+  readonly name: string;
+  readonly settings: HeadroomSettings;
+}
+
+/** What headroom does when the setting is left out. Naming the default explicitly runs the same daemon as omitting it, so each default is the omitted case of its setting and never a second value. */
+const HEADROOM_DEFAULT_MODE = "cache";
+const HEADROOM_DEFAULT_CCR = "default";
+
+/** The keep-ratios measured besides leaving it unset: a moderate point and an aggressive one, enough to show the direction of the trade without a sweep. */
+const MODERATE_TARGET_RATIO = 0.5;
+const AGGRESSIVE_TARGET_RATIO = 0.3;
+export const MEASURED_TARGET_RATIOS: readonly number[] = [MODERATE_TARGET_RATIO, AGGRESSIVE_TARGET_RATIO];
+
+/** The two opt-in experimental features, each paired with the label its variants carry. */
+const EXPERIMENTAL_FEATURES = [
+  { key: "interceptToolResults", label: "tool-result interceptors" },
+  { key: "readMaturation", label: "read maturation" },
+] as const;
+
+/** Every subset of the experimental features, as the settings that enable them. */
+function featureSubsets(): Partial<HeadroomSettings>[] {
+  return EXPERIMENTAL_FEATURES.reduce<Partial<HeadroomSettings>[]>((subsets, feature) => [...subsets, ...subsets.map((subset) => ({ ...subset, [feature.key]: true }))], [{}]);
+}
+
+/** The settings with the first rollout channel the schema accepts for them, or none when the settings are valid without one. The channel is derived from the schema's own rules, so it is the least channel that unlocks the features and never a restatement of which channel unlocks which. */
+function withUnlockingChannel(settings: Readonly<HeadroomSettings>): HeadroomSettings | undefined {
+  for (const channel of [undefined, ...HEADROOM_ROLLOUT_CHANNELS]) {
+    const candidate: HeadroomSettings = channel === undefined ? settings : { ...settings, rolloutChannel: channel };
+    if (HeadroomGlobalConfigSchema.safeParse(candidate).success) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+/** A readable name for one variant, built from the settings alone so the name and the settings cannot disagree. */
+export function variantName(settings: Readonly<HeadroomSettings>): string {
+  const parts: string[] = [settings.mode ?? HEADROOM_DEFAULT_MODE];
+  const features = EXPERIMENTAL_FEATURES.filter((feature) => settings[feature.key] === true).map((feature) => feature.label);
+  if (features.length > 0) {
+    const group = features.join(" and ");
+    parts.push(settings.rolloutChannel === undefined ? group : `${group} (${settings.rolloutChannel})`);
+  }
+  if (settings.ccr === "lossless") {
+    parts.push("lossless");
+  } else if (settings.ccr === "none") {
+    parts.push("no retrieval");
+  }
+  if (settings.targetRatio !== undefined) {
+    parts.push(`target ratio ${String(settings.targetRatio)}`);
+  }
+  return parts.length === 1 && settings.mode === undefined ? `${HEADROOM_DEFAULT_MODE} (default)` : parts.join(", ");
+}
+
+/**
+ * Every combination of settings the schema accepts, generated rather than listed: the product of the mode, keep-ratio, retrieval and experimental-feature choices, each with the rollout channel the schema requires. A setting added to the schema's enums extends the matrix with no edit here, and a combination the schema refuses cannot appear. The rollout channel is not a dimension of its own: it only gates the two features, so a channel set without one would measure nothing the matrix does not already hold.
+ */
+export function variantMatrix(): Variant[] {
+  const modes: (HeadroomSettings["mode"])[] = [undefined, ...HEADROOM_MODES.filter((mode) => mode !== HEADROOM_DEFAULT_MODE)];
+  const ratios: (number | undefined)[] = [undefined, ...MEASURED_TARGET_RATIOS];
+  const retrievals: (HeadroomSettings["ccr"])[] = [undefined, ...HEADROOM_CCR_MODES.filter((ccr) => ccr !== HEADROOM_DEFAULT_CCR)];
+  const variants: Variant[] = [];
+  for (const mode of modes) {
+    for (const targetRatio of ratios) {
+      for (const ccr of retrievals) {
+        for (const features of featureSubsets()) {
+          const base: HeadroomSettings = {
+            ...(mode === undefined ? {} : { mode }),
+            ...(targetRatio === undefined ? {} : { targetRatio }),
+            ...(ccr === undefined ? {} : { ccr }),
+            ...features,
+          };
+          const settings = withUnlockingChannel(base);
+          if (settings !== undefined) {
+            variants.push({ name: variantName(settings), settings });
+          }
+        }
+      }
+    }
+  }
+  return variants;
 }

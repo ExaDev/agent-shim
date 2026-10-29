@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { HEADROOM_CCR_MODES, HEADROOM_MODES, HEADROOM_ROLLOUT_CHANNELS, HeadroomGlobalConfigSchema } from "../src/config/schema";
+import { hashSettings } from "../src/headroom/settings";
 import {
   baselineCost,
   buildRequests,
@@ -8,6 +10,7 @@ import {
   CACHE_WRITE_RATIO,
   cacheWeightedCost,
   mainChain,
+  MEASURED_TARGET_RATIOS,
   OMITTED_TOOL_RESULT,
   parseTranscript,
   parseTransforms,
@@ -20,6 +23,8 @@ import {
   segmentsOf,
   summarise,
   toMessages,
+  variantMatrix,
+  variantName,
   type ChatMessage,
   type RequestRecord,
   type TranscriptEntry,
@@ -354,5 +359,64 @@ describe("pickTranscripts", () => {
       { file: "d1", project: "d", bytes: LOWER_BYTES },
     ];
     expect(pickTranscripts(candidates, PICK_COUNT, MINIMUM_BYTES).map((pick) => pick.file)).toEqual(["a1", "b1", "d1"]);
+  });
+});
+
+/** The experimental features a variant can enable, each independently on or off. */
+const EXPERIMENTAL_FEATURE_COUNT = 2;
+
+describe("variantMatrix", () => {
+  const matrix = variantMatrix();
+  const find = (name: string) => matrix.find((variant) => variant.name === name);
+
+  it("holds one variant per combination of mode, keep-ratio, retrieval and feature subset", () => {
+    const expected = HEADROOM_MODES.length * (1 + MEASURED_TARGET_RATIOS.length) * HEADROOM_CCR_MODES.length * 2 ** EXPERIMENTAL_FEATURE_COUNT;
+    expect(matrix).toHaveLength(expected);
+  });
+
+  it("only holds settings the schema accepts", () => {
+    for (const variant of matrix) {
+      expect(HeadroomGlobalConfigSchema.safeParse(variant.settings).success, variant.name).toBe(true);
+    }
+  });
+
+  it("names and settings are each unique", () => {
+    expect(new Set(matrix.map((variant) => variant.name)).size).toBe(matrix.length);
+    expect(new Set(matrix.map((variant) => hashSettings(variant.settings))).size).toBe(matrix.length);
+  });
+
+  it("derives the least rollout channel that unlocks the enabled features", () => {
+    expect(find("cache (default)")?.settings).toEqual({});
+    expect(find("token, read maturation (beta)")?.settings).toEqual({ mode: "token", rolloutChannel: "beta", readMaturation: true });
+    expect(find("token, tool-result interceptors (canary)")?.settings).toEqual({ mode: "token", rolloutChannel: "canary", interceptToolResults: true });
+    expect(find("token, tool-result interceptors and read maturation (dev), lossless, target ratio 0.5")?.settings).toEqual({
+      mode: "token",
+      rolloutChannel: "dev",
+      interceptToolResults: true,
+      readMaturation: true,
+      ccr: "lossless",
+      targetRatio: 0.5,
+    });
+  });
+
+  it("never sets a rollout channel without a feature that needs it", () => {
+    for (const variant of matrix) {
+      const usesFeature = variant.settings.interceptToolResults === true || variant.settings.readMaturation === true;
+      expect(variant.settings.rolloutChannel !== undefined, variant.name).toBe(usesFeature);
+      if (variant.settings.rolloutChannel !== undefined) {
+        expect(HEADROOM_ROLLOUT_CHANNELS, variant.name).toContain(variant.settings.rolloutChannel);
+      }
+    }
+  });
+});
+
+describe("variantName", () => {
+  it("names a bare mode and the unset baseline", () => {
+    expect(variantName({})).toBe("cache (default)");
+    expect(variantName({ mode: "token" })).toBe("token");
+  });
+
+  it("orders the parts as mode, features with their channel, retrieval, then keep-ratio", () => {
+    expect(variantName({ mode: "token", rolloutChannel: "beta", readMaturation: true, ccr: "none", targetRatio: 0.3 })).toBe("token, read maturation (beta), no retrieval, target ratio 0.3");
   });
 });
