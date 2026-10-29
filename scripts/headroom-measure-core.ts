@@ -281,24 +281,25 @@ export function cacheWeightedCost(tokens: number, preservedFraction: number, rea
   return tokens * preservedFraction * readRatio + tokens * (1 - preservedFraction) * CACHE_WRITE_RATIO;
 }
 
-/** What headroom reported for one replayed request, parsed from its `x-headroom-*` response headers, plus what the replay observed. */
-export interface RequestRecord {
-  readonly session: string;
-  readonly index: number;
-  readonly status: number;
-  readonly tokensBefore: number;
-  readonly tokensAfter: number;
-  readonly transforms: readonly string[];
+/** What headroom reported for one replayed request, parsed from its `x-headroom-*` response headers, plus what the replay observed. A schema as well as a type, because a resumed run reads these back from the records an earlier run wrote. */
+export const RequestRecordSchema = z.object({
+  session: z.string(),
+  index: z.number(),
+  status: z.number(),
+  tokensBefore: z.number(),
+  tokensAfter: z.number(),
+  transforms: z.array(z.string()),
   /** Bytes of the segments identical to the previous request's, and the request's total bytes, as the upstream received them. */
-  readonly preservedBytes: number;
-  readonly totalBytes: number;
+  preservedBytes: z.number(),
+  totalBytes: z.number(),
   /** The same two figures for the request as it was sent, before headroom touched it: what the unmodified conversation would have reused, since its newest messages are never cached yet. */
-  readonly baselinePreservedBytes: number;
-  readonly baselineTotalBytes: number;
+  baselinePreservedBytes: z.number(),
+  baselineTotalBytes: z.number(),
   /** Round trip through headroom and the same body sent straight to the upstream, in milliseconds. */
-  readonly throughMs: number;
-  readonly directMs: number;
-}
+  throughMs: z.number(),
+  directMs: z.number(),
+});
+export type RequestRecord = z.infer<typeof RequestRecordSchema>;
 
 /** Splits `x-headroom-transforms` (a comma-separated list such as `router:tool_result:smart_crusher,cache_mode:prefix_frozen`) into its names. */
 export function parseTransforms(header: string | null | undefined): string[] {
