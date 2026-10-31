@@ -2,10 +2,23 @@ import type { StatuslineSummary } from "../../enrich";
 import { graphemesOf } from "../../graphemes";
 import type { RenderContext } from "../context";
 
-/** The multiplier suffix of a rate-limit tier: `default_claude_max_20x` carries `20x`. */
-function tierSuffixOf(tier: string | undefined): string | undefined {
-  const match = /_(\d+x)$/i.exec(tier ?? "");
+/** The multiplier of a rate-limit tier: `default_claude_max_20x` carries `20`. */
+function tierMultiplierOf(tier: string | undefined): string | undefined {
+  const match = /_(\d+)x$/i.exec(tier ?? "");
   return match === null ? undefined : match[1];
+}
+
+/** The Max plan's name by its rate-limit multiplier: the 5x plan is sold as Max and the 20x plan as Ultra, while a multiplier with no product name keeps its figure so an unexpected plan stays visible. */
+function maxPlanLabel(multiplier: string | undefined): string {
+  switch (multiplier) {
+    case undefined:
+    case "5":
+      return "Max";
+    case "20":
+      return "Ultra";
+    default:
+      return `Max ${multiplier}x`;
+  }
 }
 
 /**
@@ -16,8 +29,7 @@ function accountPlanLabel(summary: StatuslineSummary): string | undefined {
     case undefined:
       return planLabelOf(summary.loginRateLimitTier);
     case "claude_max": {
-      const tier = tierSuffixOf(summary.loginRateLimitTier);
-      return tier === undefined ? "Max" : `Max ${tier}`;
+      return maxPlanLabel(tierMultiplierOf(summary.loginRateLimitTier));
     }
     case "claude_pro":
       return "Pro";
@@ -47,10 +59,10 @@ function planLabelOf(tier: string | undefined): string | undefined {
   }
   const maxWithMultiplier = /^claude_max_(\d+)x$/.exec(cleaned);
   if (maxWithMultiplier !== null) {
-    return `Max ${maxWithMultiplier[1] ?? ""}x`;
+    return maxPlanLabel(maxWithMultiplier[1]);
   }
   if (cleaned === "claude_max") {
-    return "Max";
+    return maxPlanLabel(undefined);
   }
   if (cleaned === "claude_pro") {
     return "Pro";

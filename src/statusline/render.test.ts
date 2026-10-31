@@ -195,9 +195,9 @@ describe("renderStatuslineBlock", () => {
     ).split("\n");
     const header = lines[0] ?? "";
     expect(header.startsWith("Sonnet 5.5")).toBe(true);
-    expect(header.endsWith("Max 20x"));
+    expect(header.endsWith("Ultra"));
     expect(header).not.toContain("zai");
-    expect(header).toContain("ada@example.com · Max 20x");
+    expect(header).toContain("ada@example.com · Ultra");
     expect(header.length).toBe(WIDE_TERMINAL_MAX);
   });
 
@@ -212,7 +212,7 @@ describe("renderStatuslineBlock", () => {
     ).split("\n");
     const header = lines[0] ?? "";
     expect(header).toContain("ada@example.com · ExampleOrg · Team Premium");
-    expect(header).not.toContain("Max 5x");
+    expect(header).not.toContain("Max");
     expect(header).not.toContain("ada@example.com_team");
     expect(header.endsWith("Team Premium")).toBe(true);
   });
@@ -228,7 +228,7 @@ describe("renderStatuslineBlock", () => {
     ).split("\n");
     const header = lines[0] ?? "";
     expect(header).toContain("ada@example.com");
-    expect(header).not.toContain("Max 20x");
+    expect(header).not.toContain("Ultra");
   });
 
   it("draws a provider's own quota windows as bars when it reports no unified window", () => {

@@ -8,7 +8,7 @@ import type { AccountMetadata } from "./schema";
 export const PlanClassSchema = z.union([
   z.strictObject({
     kind: z.literal("subscription"),
-    /** The plan's size as a multiple of the smallest subscription tier (Max 5x is 5, Max 20x is 20). */
+    /** The plan's size as a multiple of the smallest subscription tier (Max is 5, Ultra is 20). */
     capacity: z.number().positive(),
     /** False when the tier string named no multiplier and no tier this project knows, so `capacity` is the neutral 1 rather than a reading. */
     recognised: z.boolean(),
