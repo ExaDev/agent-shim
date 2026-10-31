@@ -42,7 +42,13 @@ let root: string;
 let paths: LayoutPaths;
 let executable: string;
 
+/** The platform and architecture the real command reads from the process; pinned to a channel that updates in place, since the macOS x64 refusal would otherwise fail every test below on an Intel Mac. */
+const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+const originalArch = Object.getOwnPropertyDescriptor(process, "arch");
+
 beforeEach(() => {
+  Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+  Object.defineProperty(process, "arch", { value: "x64", configurable: true });
   root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-shim-update-command-"));
   paths = buildLayoutPaths(root);
   executable = path.join(root, "bin", "agent-shim");
@@ -53,6 +59,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalPlatform !== undefined) {
+    Object.defineProperty(process, "platform", originalPlatform);
+  }
+  if (originalArch !== undefined) {
+    Object.defineProperty(process, "arch", originalArch);
+  }
   vi.restoreAllMocks();
   process.exitCode = undefined;
   fs.rmSync(root, { recursive: true, force: true });
