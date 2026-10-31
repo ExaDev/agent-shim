@@ -100,16 +100,21 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: [lint, typecheck, test, audit, knip]
     runs-on: ubuntu-latest
+    # The deploy key lives in this environment, whose deployment branches are limited to main, so no other branch's workflow can read it.
+    environment: release
     permissions:
-      contents: write
+      contents: write # to create the GitHub Release; the release commit and tags are pushed over SSH with the deploy key
     outputs:
       published: ${{ steps.check-tag.outputs.published }}
       version: ${{ steps.check-tag.outputs.version }}
       tag: ${{ steps.check-tag.outputs.tag }}
     steps:
+      # The default GITHUB_TOKEN cannot bypass a repository ruleset (GitHub does not support naming the github-actions[bot] identity as a bypass actor), so the release commit and tags are pushed over SSH with a deploy key, which a ruleset can name as a bypass actor. The key lives in the `release` environment, whose deployment branches are limited to main.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # Credentials are not persisted: checkout fetches with the job's own token and then removes it, leaving nothing in git config for later steps. The deploy key is provisioned apart, below.
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v6
 
@@ -120,9 +125,27 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: npx semantic-release
+      # The last step before Release and the only place the key is provisioned: written to the runner's temp directory with mode 600 from the step's env (never a command line), together with GitHub's ed25519 host key, pinned so the connection is verified rather than trusted on first use (fingerprint SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU, as published at https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints). The step then proves the key has write access to the repository, because semantic-release falls back to an https URL with GITHUB_TOKEN embedded when its own SSH push check fails, and the ruleset would reject that push only after the release had started. The dry run targets a ref name that does not exist, so it can never be rejected as non-fast-forward when main has moved on since checkout (semantic-release itself skips that case cleanly, and the step must not turn it into a failure). GitHub does not evaluate rulesets on a dry run, so this does not prove the key is a bypass actor. BASH_ENV is blanked and ssh and git are called by absolute path so that a variable or PATH entry set by an earlier step does not redirect them.
+      - name: Provision the deploy key for the Release step
+        env:
+          RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
+          # Blanked so a BASH_ENV exported by an earlier step cannot run in the shell that holds the key.
+          BASH_ENV: ""
+        run: |
+          install -d -m 700 "$RUNNER_TEMP/release-ssh"
+          (umask 077 && printf '%s\n' "${RELEASE_DEPLOY_KEY%$'\n'}" > "$RUNNER_TEMP/release-ssh/id")
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$RUNNER_TEMP/release-ssh/known_hosts"
+          # Must match the GIT_SSH_COMMAND of the Release step.
+          GIT_SSH_COMMAND="/usr/bin/ssh -i $RUNNER_TEMP/release-ssh/id -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/release-ssh/known_hosts -o StrictHostKeyChecking=yes" \
+            /usr/bin/git push --dry-run --no-verify "git@github.com:$GITHUB_REPOSITORY.git" "HEAD:refs/heads/release-key-probe-$GITHUB_RUN_ID"
+          git remote set-url origin "git@github.com:$GITHUB_REPOSITORY.git"
+      - name: Release
+        # semantic-release pushes to its repositoryUrl, which defaults to package.json's https repository field rather than to origin, so the SSH URL is passed explicitly for the push to use the deploy key.
+        run: npx semantic-release --repository-url "git@github.com:$GITHUB_REPOSITORY.git"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Must match the GIT_SSH_COMMAND of the provisioning step.
+          GIT_SSH_COMMAND: /usr/bin/ssh -i ${{ runner.temp }}/release-ssh/id -o IdentitiesOnly=yes -o UserKnownHostsFile=${{ runner.temp }}/release-ssh/known_hosts -o StrictHostKeyChecking=yes
 
       - id: check-tag
         name: Check whether semantic-release just tagged a release
@@ -136,7 +159,9 @@ jobs:
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
-
+      - name: Remove the deploy key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/release-ssh"
   # The six build jobs below (build-arm64 through build-windows-arm64) run on every PR too, not just a published release, and each has its own dedicated smoke-test-* job further down that downloads the artifact and directly executes it -- kept as a separate job rather than a step inside the build job so a smoke-test failure shows as its own line in the PR checks list, distinct from "did it build." This is what catches an architecture-specific regression (a bad esbuild target, a cache collision serving another architecture's binary -- confirmed to actually happen once, see setup-and-run/action.yml's own comment) before merge rather than after a real release ships a broken binary. On a PR, each job checks out the PR's own head commit; on a push to main, `ref: main` picks up the post-release HEAD semantic-release just pushed (see the semantic-release job's own comment above for why that's a separate commit from the one that triggered this run). Publishing -- npm, GitHub Packages, the GitHub Release itself, and the Homebrew/Scoop tap updates -- stays gated on `needs.semantic-release.outputs.published == 'true'` alone and never runs on a PR, since those all have real, one-way side effects a PR must never trigger.
 
   # macOS arm64 is the only target Node core itself tests and verifies `--build-sea` against upstream. This job's binary is the one this project actually stands behind. Runs on GitHub's standard hosted `macos-latest` (Apple Silicon by default) -- this repo is public, so standard hosted runners are free and unmetered on every plan, and GitHub manages the rolling image migration this label implies, so there's no version-pinned image for this project to keep bumping as older ones deprecate.
