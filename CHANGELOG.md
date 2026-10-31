@@ -1,3 +1,24 @@
+## [11.74.0](https://github.com/ExaDev/agent-shim/compare/v11.73.0...v11.74.0) (2026-10-31)
+
+### Features
+
+* **statusline:** name the Max 5x plan Max and the Max 20x plan Ultra ([17cdaff](https://github.com/ExaDev/agent-shim/commit/17cdaff1dd56bfde599ee3071351a5df1df87580))
+
+### Bug Fixes
+
+* **deps:** override minimatch below the patched release of GHSA-g3hv-75wg-m249 ([0afc6d9](https://github.com/ExaDev/agent-shim/commit/0afc6d9355b641c579816ecae87b00e6f1a8bb6c))
+
+### Continuous Integration
+
+* aggregate every job into one required check ([121fb2d](https://github.com/ExaDev/agent-shim/commit/121fb2d6ca76a531275adc54f9032df49f016dbd))
+* merge labelled pull requests with merge-when-green ([5aa0feb](https://github.com/ExaDev/agent-shim/commit/5aa0feb08c82df3f76cb900c3cf06af673d4ad2d))
+* push the release over SSH with a deploy key ([937a73a](https://github.com/ExaDev/agent-shim/commit/937a73a42a5c062129bd7f17ac6c3cb05616b063))
+* rebase labelled pull requests that fall behind main ([2382c43](https://github.com/ExaDev/agent-shim/commit/2382c4350eee27825df04375f1beef7f59786918))
+
+### Tests
+
+* **update:** pin the platform the update command tests run under ([9282033](https://github.com/ExaDev/agent-shim/commit/928203384a813690297624ba1bcebc6ee946aba3))
+
 ## [11.73.0](https://github.com/ExaDev/agent-shim/compare/v11.72.4...v11.73.0) (2026-10-29)
 
 ### Features
